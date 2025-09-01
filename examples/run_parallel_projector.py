@@ -24,6 +24,17 @@ import numpy as np
 import psutil
 import tifffile as tiff
 
+# Add parent directory to path to import projector_parallel_jax
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from projector_parallel_jax import (
+    rot_x, rot_y, rot_z, compose_R,
+    default_volume_origin, build_detector_grid,
+    trilinear_gather, forward_project_view,
+    _flat_index
+)
+
 
 # ----------------------------
 # Utilities: memory and timing
@@ -261,180 +272,6 @@ def add_fov_outline(vol, line_value=0.5):
     
     return vol
 
-
-# ----------------------------
-# Rotations and geometry
-# ----------------------------
-def rot_x(a: jnp.ndarray) -> jnp.ndarray:
-    c, s = jnp.cos(a), jnp.sin(a)
-    return jnp.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]], dtype=jnp.float32)
-
-
-def rot_y(b: jnp.ndarray) -> jnp.ndarray:
-    c, s = jnp.cos(b), jnp.sin(b)
-    return jnp.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], dtype=jnp.float32)
-
-
-def rot_z(p: jnp.ndarray) -> jnp.ndarray:
-    c, s = jnp.cos(p), jnp.sin(p)
-    return jnp.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float32)
-
-
-def compose_R(alpha: jnp.ndarray, beta: jnp.ndarray, phi: jnp.ndarray) -> jnp.ndarray:
-    # Eq. (1) convention: R = R_y(β) R_x(α) R_z(φ)
-    return rot_y(beta) @ rot_x(alpha) @ rot_z(phi)
-
-
-def default_volume_origin(nx: int, ny: int, nz: int, vx: float, vy: float, vz: float) -> jnp.ndarray:
-    # Center volume about (0,0,0) with voxel centers aligned
-    ox = -((nx / 2.0) - 0.5) * vx
-    oy = -((ny / 2.0) - 0.5) * vy
-    oz = -((nz / 2.0) - 0.5) * vz
-    return jnp.array([ox, oy, oz], dtype=jnp.float32)
-
-
-def build_detector_grid(
-    nu: int, nv: int, du: float, dv: float, det_center_x: float = 0.0, det_center_z: float = 0.0
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    # Detector pixel centers in (x,z), flattened (nu*nv,)
-    u = (jnp.arange(nu, dtype=jnp.float32) - (nu / 2.0 - 0.5)) * du + jnp.float32(det_center_x)
-    v = (jnp.arange(nv, dtype=jnp.float32) - (nv / 2.0 - 0.5)) * dv + jnp.float32(det_center_z)
-    X = jnp.tile(u, nv)
-    Z = jnp.repeat(v, nu)
-    return X, Z
-
-
-# ----------------------------
-# Trilinear gather
-# ----------------------------
-def _flat_index(ix, iy, iz, nx, ny, nz):
-    return ix * (ny * nz) + iy * nz + iz
-
-
-@partial(
-    jax.jit,
-    static_argnames=(
-        "nx",
-        "ny",
-        "nz",
-    ),
-)
-def trilinear_gather(
-    recon_flat: jnp.ndarray,
-    ix_f: jnp.ndarray,
-    iy_f: jnp.ndarray,
-    iz_f: jnp.ndarray,
-    nx: int,
-    ny: int,
-    nz: int,
-) -> jnp.ndarray:
-    fx = jnp.floor(ix_f).astype(jnp.int32)
-    fy = jnp.floor(iy_f).astype(jnp.int32)
-    fz = jnp.floor(iz_f).astype(jnp.int32)
-    cx, cy, cz = fx + 1, fy + 1, fz + 1
-
-    wx1 = ix_f - fx.astype(jnp.float32)
-    wy1 = iy_f - fy.astype(jnp.float32)
-    wz1 = iz_f - fz.astype(jnp.float32)
-    wx0 = 1.0 - wx1
-    wy0 = 1.0 - wy1
-    wz0 = 1.0 - wz1
-
-    def gather(ix, iy, iz):
-        inb = (
-            (ix >= 0)
-            & (ix < nx)
-            & (iy >= 0)
-            & (iy < ny)
-            & (iz >= 0)
-            & (iz < nz)
-        ).astype(jnp.float32)
-        idx = _flat_index(ix, iy, iz, nx, ny, nz)
-        val = jnp.take(recon_flat, idx, mode="clip")
-        return inb * val
-
-    c000 = gather(fx, fy, fz) * (wx0 * wy0 * wz0)
-    c001 = gather(fx, fy, cz) * (wx0 * wy0 * wz1)
-    c010 = gather(fx, cy, fz) * (wx0 * wy1 * wz0)
-    c011 = gather(fx, cy, cz) * (wx0 * wy1 * wz1)
-    c100 = gather(cx, fy, fz) * (wx1 * wy0 * wz0)
-    c101 = gather(cx, fy, cz) * (wx1 * wy0 * wz1)
-    c110 = gather(cx, cy, fz) * (wx1 * wy1 * wz0)
-    c111 = gather(cx, cy, cz) * (wx1 * wy1 * wz1)
-
-    return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
-
-
-# ----------------------------
-# Forward projector: single view (scan over y)
-# ----------------------------
-from functools import partial
-
-
-@partial(
-    jax.jit,
-    static_argnames=(
-        "nx",
-        "ny",
-        "nz",
-        "nu",
-        "nv",
-        "n_steps",
-        "use_checkpoint",
-    ),
-)
-def forward_project_view(
-    params: jnp.ndarray,  # (alpha, beta, phi, dx, dz)
-    recon_flat: jnp.ndarray,  # (nx*ny*nz,)
-    nx: int,
-    ny: int,
-    nz: int,
-    vx: float,
-    vy: float,
-    vz: float,
-    nu: int,
-    nv: int,
-    du: float,
-    dv: float,
-    vol_origin: jnp.ndarray,  # (3,)
-    det_center: jnp.ndarray,  # (2,) (x,z)
-    step_size: float,
-    n_steps: int,
-    use_checkpoint: bool = True,
-) -> jnp.ndarray:
-    alpha, beta, phi, dx, dz = params
-    R = compose_R(alpha, beta, phi)
-    Rinv = R.T
-    t = jnp.array([dx, 0.0, dz], dtype=jnp.float32)
-
-    Xr, Zr = build_detector_grid(nu, nv, du, dv, det_center[0], det_center[1])
-    n_rays = Xr.shape[0]
-
-    y0 = vol_origin[1]
-    ys = y0 + step_size * jnp.arange(n_steps, dtype=jnp.float32)
-
-    # Stop gradients w.r.t. recon when optimizing geometry
-    recon_c = jax.lax.stop_gradient(recon_flat)
-
-    def step(carry, y):
-        w = jnp.stack([Xr, jnp.full((n_rays,), y, dtype=jnp.float32), Zr], axis=0)
-        q = Rinv @ (w - t[:, None])  # world -> object coords
-
-        ix = (q[0, :] - vol_origin[0]) / vx
-        iy = (q[1, :] - vol_origin[1]) / vy
-        iz = (q[2, :] - vol_origin[2]) / vz
-
-        samp = trilinear_gather(recon_c, ix, iy, iz, nx, ny, nz)
-        return carry + samp * jnp.float32(step_size), None
-
-    step_fn = step
-    if use_checkpoint:
-        step_fn = jax.checkpoint(step_fn)
-
-    acc0 = jnp.zeros((n_rays,), dtype=jnp.float32)
-    acc, _ = jax.lax.scan(step_fn, acc0, ys)
-
-    return acc.reshape((nv, nu))
 
 
 # ----------------------------

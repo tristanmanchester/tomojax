@@ -18,7 +18,7 @@
 # - grid and detector are simple dicts
 # - angles in radians; translations in same units as voxel/detector units
 #
-# Tested with JAX 0.4.x on CPU and GPU.
+# Tested with JAX >=0.7.0,<0.8 on CPU and GPU.
 
 from __future__ import annotations
 
