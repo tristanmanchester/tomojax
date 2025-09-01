@@ -29,4 +29,4 @@ In short: plug in a 3D volume, get projections and gradients; plug in projection
 | Phantom | Projections | Sinogram | Reconstruction |
 |---------|-------------|----------|----------------|
 | <img src="images/phantom_slice.png" width="200"><br><img src="images/phantom_volume.png" width="200"> | <img src="images/projections.gif" width="200"> | <img src="images/sinogram.png" width="200"> | <img src="images/recon_slice.png" width="200"><br><img src="images/recon_volume.png" width="200"> |
-| Top: slice<br>Bottom: volume | Animated over 180° | Angle vs detector | Top: slice<br>Bottom: volume |
+| Top: slice<br>Bottom: volume projection | Animated over 360° | Angle vs detector | Top: slice<br>Bottom: volume projection |

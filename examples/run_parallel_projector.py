@@ -3,6 +3,7 @@
 # Memory-efficient, differentiable parallel-beam projector demo in JAX
 # - Creates a 3D phantom (cubes + spheres)
 # - Projects N views over 180 degrees
+# - Applies physically accurate Poisson noise to projections
 # - Saves phantom and projections as 3D TIFF stacks
 # - Prints stats, timings, and memory usage
 
@@ -151,8 +152,6 @@ def make_phantom(
     min_value: float = 0.3,
     max_value: float = 1.0,
     background_value: float = 0.0,
-    add_noise: bool = False,
-    noise_std: float = 0.01,
     seed: int = 42,
     max_rotation_angle: float = np.pi,  # Maximum rotation angle in radians
     use_inscribed_fov: bool = True,     # Constrain objects to inscribed circle
@@ -239,11 +238,6 @@ def make_phantom(
         dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2 + (Z - cz) ** 2)
         vol[dist <= radius] = val
 
-    if add_noise and noise_std > 0:
-        vol = np.clip(vol + rng.normal(0.0, noise_std, vol.shape).astype(np.float32), 0.0, np.inf)
-
-    return vol.astype(np.float32)
-
     return vol.astype(np.float32)
 
 def add_fov_outline(vol, line_value=0.5):
@@ -266,7 +260,6 @@ def add_fov_outline(vol, line_value=0.5):
         vol[ring_mask.T, z] = np.maximum(vol[ring_mask.T, z], line_value)
     
     return vol
-
 
 
 # ----------------------------
@@ -445,6 +438,53 @@ def forward_project_view(
 
 
 # ----------------------------
+# Poisson noise application
+# ----------------------------
+@jax.jit
+def apply_poisson_noise(projection: jnp.ndarray, I0: float, key: jax.random.PRNGKey) -> jnp.ndarray:
+    """
+    Apply physically accurate Poisson noise to a projection.
+    
+    Parameters:
+    -----------
+    projection : jnp.ndarray
+        Clean projection (line integrals)
+    I0 : float
+        Incident photon count per pixel
+    key : jax.random.PRNGKey
+        Random key for Poisson sampling
+    
+    Returns:
+    --------
+    Noisy projection with Poisson statistics
+    """
+    # Convert projection to transmitted intensity using Beer-Lambert law
+    # projection contains line integrals (μ * length)
+    transmitted_intensity = I0 * jnp.exp(-projection)
+    
+    # Apply Poisson noise (photon counting statistics)
+    # Note: JAX's poisson expects lambda parameter (mean count)
+    noisy_intensity = jax.random.poisson(key, transmitted_intensity)
+    
+    # Handle low photon counts more realistically
+    # When we detect 0 photons, we know at least the true value was very small
+    # Use a minimum that scales with I0 to prevent blow-out
+    # This represents the detection limit of our system
+    min_detected = jnp.maximum(1.0, I0 * 1e-6)  # At least 1 photon or 0.0001% of I0
+    noisy_intensity = jnp.maximum(noisy_intensity, min_detected)
+    
+    # For very high attenuation, cap the projection value to prevent blow-out
+    # This represents the maximum measurable attenuation of the system
+    max_projection = -jnp.log(min_detected / I0)
+    
+    # Convert back to projection space with capping
+    noisy_projection = -jnp.log(noisy_intensity / I0)
+    noisy_projection = jnp.minimum(noisy_projection, max_projection)
+    
+    return noisy_projection
+
+
+# ----------------------------
 # Main driver
 # ----------------------------
 def save_tiff3d(filepath: Path, array_3d: np.ndarray) -> dict:
@@ -460,7 +500,7 @@ def save_tiff3d(filepath: Path, array_3d: np.ndarray) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Parallel-beam JAX projector demo")
+    parser = argparse.ArgumentParser(description="Parallel-beam JAX projector demo with Poisson noise")
     # Volume/grid
     parser.add_argument("--nx", type=int, default=128, help="Volume size in x")
     parser.add_argument("--ny", type=int, default=128, help="Volume size in y")
@@ -472,11 +512,9 @@ def main():
     parser.add_argument("--n-cubes", type=int, default=8, help="# cubes")
     parser.add_argument("--n-spheres", type=int, default=7, help="# spheres")
     parser.add_argument("--min-size", type=int, default=4, help="Min object size")
-    parser.add_argument("--max-size", type=int, default=12, help="Max object size")
-    parser.add_argument("--min-value", type=float, default=0.3, help="Min density")
-    parser.add_argument("--max-value", type=float, default=1.0, help="Max density")
-    parser.add_argument("--add-noise", action="store_true", help="Add Gaussian noise")
-    parser.add_argument("--noise-std", type=float, default=0.01, help="Noise std")
+    parser.add_argument("--max-size", type=int, default=24, help="Max object size")
+    parser.add_argument("--min-value", type=float, default=0.01, help="Min attenuation coefficient")
+    parser.add_argument("--max-value", type=float, default=0.1, help="Max attenuation coefficient")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     # Detector
     parser.add_argument("--nu", type=int, default=None, help="Detector width (default: nx)")
@@ -488,6 +526,10 @@ def main():
     parser.add_argument("--step-size", type=float, default=None, help="Integration step (default: vy)")
     parser.add_argument("--n-steps", type=int, default=None, help="# steps (default: ceil(ny*vy/step))")
     parser.add_argument("--checkpoint", action="store_true", help="Use remat checkpointing in scan")
+    # Poisson noise parameters (replacing old noise parameters)
+    parser.add_argument("--add-projection-noise", action="store_true", help="Add Poisson noise to projections")
+    parser.add_argument("--incident-photons", type=float, default=10000, 
+                        help="Incident photon count I0 per pixel (lower = more noise, typical: 1e4 to 1e6)")
     # Output
     parser.add_argument("--output-dir", type=str, default="parallel_proj_test", help="Output folder")
 
@@ -509,17 +551,25 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("=== Parallel-beam JAX Projector Demo ===")
+    print("=== Parallel-beam JAX Projector Demo (with Poisson Noise) ===")
     print(f"Device: {jax.devices()[0]}")
     print(f"Volume: {nx} x {ny} x {nz}  voxels")
     print(f"Detector: {nu} x {nv}  pixels")
     print(f"Projections: {n_proj} over 180 degrees")
     print(f"Step size: {step_size} | Steps: {n_steps}")
+    if args.add_projection_noise:
+        print(f"Poisson noise: ON | I0 = {args.incident_photons} photons/pixel")
+    else:
+        print(f"Poisson noise: OFF")
     print(f"Output: {out_dir}")
     print(f"Initial RSS memory: {get_memory_usage_mb():.1f} MB")
     print()
 
-    # 1) Build phantom
+    # Initialize JAX random key if noise is enabled
+    if args.add_projection_noise:
+        rng_key = jax.random.PRNGKey(args.seed)
+
+    # 1) Build phantom (now without noise)
     t0 = tic()
     phantom = make_phantom(
         nx=nx,
@@ -532,8 +582,6 @@ def main():
         min_value=args.min_value,
         max_value=args.max_value,
         background_value=0.0,
-        add_noise=args.add_noise,
-        noise_std=args.noise_std,
         seed=args.seed,
     )
     t_phantom = toc(t0)
@@ -586,13 +634,18 @@ def main():
     jax.block_until_ready(_)
     print(f"JIT warmup done. RSS: {get_memory_usage_mb():.1f} MB")
 
-    projections = np.zeros((n_proj, nv, nu), dtype=np.float32)
+    # Arrays for clean and noisy projections
+    projections_clean = np.zeros((n_proj, nv, nu), dtype=np.float32)
+    projections_noisy = np.zeros((n_proj, nv, nu), dtype=np.float32) if args.add_projection_noise else None
+    
     t_all = tic()
     peak_mb = get_memory_usage_mb()
 
     for i, phi in enumerate(phis):
         params = params_template.at[2].set(phi)  # (alpha,beta,phi,dx,dz)
         t0 = tic()
+        
+        # Compute clean projection
         img = forward_project_view(
             params=params,
             recon_flat=recon_flat,
@@ -612,8 +665,16 @@ def main():
             n_steps=n_steps,
             use_checkpoint=bool(args.checkpoint),
         )
+        
+        # Apply Poisson noise if requested
+        if args.add_projection_noise:
+            rng_key, subkey = jax.random.split(rng_key)
+            img_noisy = apply_poisson_noise(img, args.incident_photons, subkey)
+            img_noisy_np = np.asarray(jax.block_until_ready(img_noisy))
+            projections_noisy[i] = img_noisy_np
+        
         img_np = np.asarray(jax.block_until_ready(img))
-        projections[i] = img_np
+        projections_clean[i] = img_np
         dt = toc(t0)
 
         curr_mb = get_memory_usage_mb()
@@ -626,22 +687,47 @@ def main():
 
     total_time = toc(t_all)
     avg_time = total_time / max(1, n_proj)
+    
+    # Decide which projections to save and report stats for
+    projections_to_save = projections_noisy if args.add_projection_noise else projections_clean
+    
     print()
     print("Forward projection complete.")
+    
+    # Report stats for clean projections
+    print(f"Clean projections stats:")
     print(
-        f"  projections stats: min={projections.min():.4f} "
-        f"max={projections.max():.4f} mean={projections.mean():.4f} "
-        f"std={projections.std():.4f}"
+        f"  min={projections_clean.min():.4f} "
+        f"max={projections_clean.max():.4f} mean={projections_clean.mean():.4f} "
+        f"std={projections_clean.std():.4f}"
     )
+    
+    # Report stats for noisy projections if applicable
+    if args.add_projection_noise:
+        print(f"Noisy projections stats:")
+        print(
+            f"  min={projections_noisy.min():.4f} "
+            f"max={projections_noisy.max():.4f} mean={projections_noisy.mean():.4f} "
+            f"std={projections_noisy.std():.4f}"
+        )
+        print(f"  SNR = {projections_noisy.mean() / projections_noisy.std():.2f}")
+    
     print(
-        f"  total={total_time:.3f} s | per-view={avg_time:.3f} s "
-        f"| RSS peak increase ~ {peak_mb - get_memory_usage_mb():.1f} MB"
+        f"Timing: total={total_time:.3f} s | per-view={avg_time:.3f} s "
+        f"| RSS peak ~ {peak_mb:.1f} MB"
     )
-    print(f"  current RSS: {get_memory_usage_mb():.1f} MB")
+    print(f"Current RSS: {get_memory_usage_mb():.1f} MB")
 
     # 4) Save projections and metadata
     proj_path = out_dir / "projections.tiff"  # (n_proj, nv, nu) pages=angle
-    info_pr = save_tiff3d(proj_path, projections)
+    info_pr = save_tiff3d(proj_path, projections_to_save)
+    
+    # Optionally save clean projections separately if noise was added
+    if args.add_projection_noise:
+        clean_proj_path = out_dir / "projections_clean.tiff"
+        info_pr_clean = save_tiff3d(clean_proj_path, projections_clean)
+        print(f"Saved clean projections TIFF: {clean_proj_path}")
+    
     np.save(out_dir / "angles.npy", phis)
 
     metadata = {
@@ -663,11 +749,18 @@ def main():
             "max_size": args.max_size,
             "min_value": args.min_value,
             "max_value": args.max_value,
-            "add_noise": bool(args.add_noise),
-            "noise_std": args.noise_std,
             "seed": args.seed,
         },
-        "paths": {"phantom_tiff": str(tiff_path), "projections_tiff": str(proj_path), "angles_npy": str(out_dir / "angles.npy")},
+        "noise": {
+            "add_projection_noise": bool(args.add_projection_noise),
+            "incident_photons": args.incident_photons if args.add_projection_noise else None,
+        },
+        "paths": {
+            "phantom_tiff": str(tiff_path), 
+            "projections_tiff": str(proj_path), 
+            "projections_clean_tiff": str(clean_proj_path) if args.add_projection_noise else None,
+            "angles_npy": str(out_dir / "angles.npy")
+        },
         "timing": {
             "phantom_build_s": t_phantom,
             "total_projection_s": total_time,
@@ -686,7 +779,9 @@ def main():
     print()
     print("Saved outputs:")
     print(f"  Phantom:      {tiff_path}")
-    print(f"  Projections:  {proj_path}")
+    print(f"  Projections:  {proj_path} {'(noisy)' if args.add_projection_noise else '(clean)'}")
+    if args.add_projection_noise:
+        print(f"  Clean proj:   {clean_proj_path}")
     print(f"  Angles:       {out_dir / 'angles.npy'}")
     print(f"  Metadata:     {out_dir / 'metadata.json'}")
 
