@@ -2,3 +2,11 @@
 # pixi environments
 .pixi
 *.egg-info
+
+# Large test data files
+*.tiff
+parallel_proj_test/
+parallel_recon_test/
+
+# System files
+.DS_Store
