@@ -55,58 +55,40 @@ def rot_z(p: jnp.ndarray) -> jnp.ndarray:
 
 
 def compose_R(alpha: jnp.ndarray, beta: jnp.ndarray, phi: jnp.ndarray) -> jnp.ndarray:
-    # Eq. (1) convention: R = R_y(β) R_x(α) R_z(φ)
+    # Eq. (1): R = R_y(β) R_x(α) R_z(φ)
     return rot_y(beta) @ rot_x(alpha) @ rot_z(phi)
 
 
 # ----------------------------
 # Geometry helpers
 # ----------------------------
-def default_volume_origin(
-    nx: int, ny: int, nz: int, vx: float, vy: float, vz: float
-) -> jnp.ndarray:
-    # Center the volume at world (0,0,0) with voxel centers aligned
+def default_volume_origin(nx: int, ny: int, nz: int, vx: float, vy: float, vz: float) -> jnp.ndarray:
+    # Center volume at world (0,0,0) with voxel centers aligned
     ox = -((nx / 2.0) - 0.5) * vx
     oy = -((ny / 2.0) - 0.5) * vy
     oz = -((nz / 2.0) - 0.5) * vz
     return jnp.array([ox, oy, oz], dtype=jnp.float32)
 
 
-def default_detector_centers(nu: int, nv: int, du: float, dv: float) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    # Detector pixel centers centered at (0, 0) in (x,z)
-    u = (jnp.arange(nu, dtype=jnp.float32) - (nu / 2.0 - 0.5)) * du
-    v = (jnp.arange(nv, dtype=jnp.float32) - (nv / 2.0 - 0.5)) * dv
-    return u, v
-
-
 def build_detector_grid(
     nu: int, nv: int, du: float, dv: float, det_center_x: float = 0.0, det_center_z: float = 0.0
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    # Returns per-ray (x,z) world coordinates for detector pixels (flattened)
-    u, v = default_detector_centers(nu, nv, du, dv)
-    u = u + jnp.float32(det_center_x)
-    v = v + jnp.float32(det_center_z)
-    # Flattened grid: X repeats across z, Z repeats across x
-    X = jnp.tile(u, nv)          # length = nu * nv
-    Z = jnp.repeat(v, nu)        # length = nu * nv
+    # Detector pixel centers in (x,z), flattened (nu*nv,)
+    u = (jnp.arange(nu, dtype=jnp.float32) - (nu / 2.0 - 0.5)) * du + jnp.float32(det_center_x)
+    v = (jnp.arange(nv, dtype=jnp.float32) - (nv / 2.0 - 0.5)) * dv + jnp.float32(det_center_z)
+    X = jnp.tile(u, nv)
+    Z = jnp.repeat(v, nu)
     return X, Z
 
 
 # ----------------------------
-# Trilinear sampling (gather)
+# Trilinear gather
 # ----------------------------
 def _flat_index(ix, iy, iz, nx, ny, nz):
     return ix * (ny * nz) + iy * nz + iz
 
 
-@partial(
-    jax.jit,
-    static_argnames=(
-        "nx",
-        "ny",
-        "nz",
-    ),
-)
+@partial(jax.jit, static_argnames=("nx", "ny", "nz"))
 def trilinear_gather(
     recon_flat: jnp.ndarray,
     ix_f: jnp.ndarray,
@@ -116,10 +98,6 @@ def trilinear_gather(
     ny: int,
     nz: int,
 ) -> jnp.ndarray:
-    """
-    Gather trilinear samples from recon_flat at fractional indices (ix_f, iy_f, iz_f).
-    Shapes: ix_f,iy_f,iz_f: (n,), recon_flat: (nx*ny*nz,) -> returns (n,)
-    """
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
     fz = jnp.floor(iz_f).astype(jnp.int32)
@@ -158,7 +136,7 @@ def trilinear_gather(
 
 
 # ----------------------------
-# Forward projector: single view
+# Forward projector: single view (scan over y)
 # ----------------------------
 @partial(
     jax.jit,
@@ -170,11 +148,12 @@ def trilinear_gather(
         "nv",
         "n_steps",
         "use_checkpoint",
+        "stop_grad_recon",
     ),
 )
 def forward_project_view(
     params: jnp.ndarray,  # (alpha, beta, phi, dx, dz)
-    recon_flat: jnp.ndarray,  # (nx*ny*nz,) float32 (will stop_gradient)
+    recon_flat: jnp.ndarray,  # (nx*ny*nz,)
     nx: int,
     ny: int,
     nz: int,
@@ -185,46 +164,30 @@ def forward_project_view(
     nv: int,
     du: float,
     dv: float,
-    vol_origin: jnp.ndarray,  # (3,) world coords of voxel (0,0,0) center
-    det_center: jnp.ndarray,  # (2,) world coords (x,z) of detector center
+    vol_origin: jnp.ndarray,  # (3,)
+    det_center: jnp.ndarray,  # (2,) (x,z)
     step_size: float,
     n_steps: int,
     use_checkpoint: bool = True,
+    stop_grad_recon: bool = True,
 ) -> jnp.ndarray:
-    """
-    Parallel-beam forward projection for one view.
-
-    - World frame beam direction: +y.
-    - View transform: T x = R_y(β) R_x(α) R_z(φ) x + t, with t = [dx, 0, dz].
-    - Integral along y with step_size scaling.
-
-    Returns: projection image (nv, nu) float32.
-    """
-    # Unpack params (α, β, φ, Δx, Δz)
     alpha, beta, phi, dx, dz = params
     R = compose_R(alpha, beta, phi)
-    Rinv = R.T  # orthonormal
+    Rinv = R.T
     t = jnp.array([dx, 0.0, dz], dtype=jnp.float32)
 
-    # Build detector grid (flattened per-ray (x,z) world coords)
     Xr, Zr = build_detector_grid(nu, nv, du, dv, det_center[0], det_center[1])
     n_rays = Xr.shape[0]
 
-    # Precompute y samples
     y0 = vol_origin[1]
     ys = y0 + step_size * jnp.arange(n_steps, dtype=jnp.float32)
 
-    # Make recon a constant for geometry gradient steps
-    recon_c = jax.lax.stop_gradient(recon_flat)
+    recon_c = recon_flat if not stop_grad_recon else jax.lax.stop_gradient(recon_flat)
 
-    # Step integrator over y (streaming)
     def step(carry, y):
-        # Rays at world positions (x = Xr, y, z = Zr) for all rays
         w = jnp.stack([Xr, jnp.full((n_rays,), y, dtype=jnp.float32), Zr], axis=0)
-        # Map world -> original volume coordinates via inverse rigid transform
-        q = Rinv @ (w - t[:, None])
+        q = Rinv @ (w - t[:, None])  # world -> object coords
 
-        # Convert world coords to fractional voxel indices
         ix = (q[0, :] - vol_origin[0]) / vx
         iy = (q[1, :] - vol_origin[1]) / vy
         iz = (q[2, :] - vol_origin[2]) / vz
@@ -232,9 +195,7 @@ def forward_project_view(
         samp = trilinear_gather(recon_c, ix, iy, iz, nx, ny, nz)
         return carry + samp * jnp.float32(step_size), None
 
-    step_fn = step
-    if use_checkpoint:
-        step_fn = jax.checkpoint(step_fn)
+    step_fn = step if not use_checkpoint else jax.checkpoint(step)
 
     acc0 = jnp.zeros((n_rays,), dtype=jnp.float32)
     acc, _ = jax.lax.scan(step_fn, acc0, ys)

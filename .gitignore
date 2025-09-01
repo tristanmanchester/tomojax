@@ -7,9 +7,11 @@
 *.tiff
 parallel_proj_test/
 parallel_recon_test/
+fista_tv_recon/
 
 # System files
 .DS_Store
 
 *.pyc
 __pycache__/
+.DS_Store
