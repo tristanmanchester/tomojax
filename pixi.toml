@@ -1,0 +1,17 @@
+[project]
+authors = ["Tristan Manchester <tristan.manchester@diamond.ac.uk>"]
+channels = ["conda-forge"]
+name = "tomojax"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+jax = ">=0.7.0,<0.8"
+tifffile = ">=2025.8.28,<2026"
+matplotlib = ">=3.10.5,<4"
+numpy = ">=2.3.2,<3"
+scikit-image = ">=0.25.2,<0.26"
+psutil = ">=7.0.0,<8"
+scipy = ">=1.16.1,<2"
