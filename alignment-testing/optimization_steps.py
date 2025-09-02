@@ -13,6 +13,7 @@ from typing import Dict, List, Tuple
 import jax
 import jax.numpy as jnp
 import numpy as np
+from tqdm import tqdm
 
 # Add parent directories to path
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +25,123 @@ from run_fista_tv import (
     prox_tv_cp, data_f_grad_vjp, estimate_L_power
 )
 from projector_parallel_jax import forward_project_view
+
+
+def build_aligned_loss_and_grad_scan(
+    projections: np.ndarray,  # (n_views, nv, nu)
+    alignment_params: np.ndarray,  # (n_views, 5) [alpha, beta, phi, dx, dz]
+    nx: int,
+    ny: int,
+    nz: int,
+    vx: float,
+    vy: float,
+    vz: float,
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    vol_origin: jnp.ndarray,  # (3,)
+    det_center: jnp.ndarray,  # (2,)
+    step_size: float,
+    n_steps: int,
+):
+    """
+    Returns a compiled function loss_and_grad(x_flat) -> (fval, grad)
+    that computes f(x) = 0.5 * sum_i ||A_i x - y_i||^2 and its grad via
+    AD through a lax.scan over views.
+    """
+    # Device arrays once; keep shapes fixed for the compilation.
+    y_stack = jnp.asarray(projections, dtype=jnp.float32)  # (n, nv, nu)
+    params_stack = jnp.asarray(alignment_params, dtype=jnp.float32)  # (n, 5)
+
+    # Flatten detector dims for lighter carries
+    y_flat = y_stack.reshape(y_stack.shape[0], -1)  # (n, nv*nu)
+
+    def loss_fn(x_flat: jnp.ndarray) -> jnp.ndarray:
+        # Accumulate scalar loss over views via scan
+        def body(f_acc, inputs):
+            p_i, y_i = inputs  # (5,), (nv*nu,)
+            pred_i = forward_project_view(
+                params=p_i,
+                recon_flat=x_flat,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+                vx=jnp.float32(vx),
+                vy=jnp.float32(vy),
+                vz=jnp.float32(vz),
+                nu=nu,
+                nv=nv,
+                du=jnp.float32(du),
+                dv=jnp.float32(dv),
+                vol_origin=vol_origin,
+                det_center=det_center,
+                step_size=jnp.float32(step_size),
+                n_steps=int(n_steps),
+                use_checkpoint=True,
+                stop_grad_recon=False,  # need grad wrt x
+            )
+            r = pred_i.reshape(-1) - y_i
+            l_i = 0.5 * jnp.vdot(r, r).real
+            return f_acc + l_i, None
+
+        f_sum, _ = jax.lax.scan(body, jnp.float32(0.0), (params_stack, y_flat))
+        return f_sum
+
+    # Single compile; reuse across all FISTA iterations at this level
+    loss_and_grad = jax.jit(jax.value_and_grad(loss_fn))
+    return loss_and_grad
+
+
+def build_AtA_scan(
+    alignment_params: np.ndarray,
+    nx: int,
+    ny: int,
+    nz: int,
+    vx: float,
+    vy: float,
+    vz: float,
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    vol_origin: jnp.ndarray,
+    det_center: jnp.ndarray,
+    step_size: float,
+    n_steps: int,
+):
+    """
+    Returns a compiled A^T A operator using scan over views.
+    Used for power method Lipschitz constant estimation.
+    """
+    # Zero sinogram -> f(x) = 0.5 * ||A x||^2, grad = A^T A x
+    zeros = jnp.zeros((alignment_params.shape[0], nv, nu), dtype=jnp.float32)
+
+    loss_and_grad = build_aligned_loss_and_grad_scan(
+        projections=zeros,
+        alignment_params=alignment_params,
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        vx=vx,
+        vy=vy,
+        vz=vz,
+        nu=nu,
+        nv=nv,
+        du=du,
+        dv=dv,
+        vol_origin=vol_origin,
+        det_center=det_center,
+        step_size=step_size,
+        n_steps=n_steps,
+    )
+
+    @jax.jit
+    def AtA(x_flat: jnp.ndarray) -> jnp.ndarray:
+        _, g = loss_and_grad(x_flat)
+        return g
+
+    return AtA
 
 
 def compute_view_loss(
@@ -93,6 +211,14 @@ def fista_tv_reconstruction(
     
     # Use alignment-aware functions if parameters provided
     if alignment_params is not None:
+        # Extract constants and device arrays for scan-based approach
+        vx, vy, vz = float(grid["vx"]), float(grid["vy"]), float(grid["vz"])
+        nu, nv = int(det["nu"]), int(det["nv"])
+        du, dv = float(det["du"]), float(det["dv"])
+
+        vol_origin = jnp.asarray(grid["vol_origin"], dtype=jnp.float32)
+        det_center = jnp.asarray(det.get("det_center", [0.0, 0.0]), dtype=jnp.float32)
+
         # Use precomputed L or estimate it if not provided
         if precomputed_L is not None:
             L = precomputed_L
@@ -100,16 +226,40 @@ def fista_tv_reconstruction(
                 print(f"  Using precomputed Lipschitz constant L = {L:.3e}")
         else:
             if verbose:
-                print(f"  Estimating Lipschitz constant ({power_iters} iterations)...")
-            L = estimate_L_power_aligned(grid_hashable, det_hashable, angles, 
-                                       alignment_params, step_size, n_steps, 
-                                       n_iter=power_iters, seed=42)
+                print(f"  Estimating Lipschitz constant using scan-based AtA ({power_iters} iterations)...")
+            L = estimate_L_power_scan(alignment_params, nx, ny, nz, vx, vy, vz,
+                                    nu, nv, du, dv, vol_origin, det_center,
+                                    step_size, n_steps, n_iter=power_iters, seed=42)
             if verbose:
                 print(f"  L = {L:.3e} (estimated)")
         
         alpha = step_scale / L
         if verbose:
             print(f"  alpha = {alpha:.3e}")
+
+        # Build scan-based loss and gradient function once for this level
+        if verbose:
+            print(f"  Compiling scan-based loss and gradient function for {len(alignment_params)} views...")
+        loss_and_grad_scan = build_aligned_loss_and_grad_scan(
+            projections=projections,
+            alignment_params=alignment_params,
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            vx=vx,
+            vy=vy,
+            vz=vz,
+            nu=nu,
+            nv=nv,
+            du=du,
+            dv=dv,
+            vol_origin=vol_origin,
+            det_center=det_center,
+            step_size=step_size,
+            n_steps=n_steps,
+        )
+        if verbose:
+            print(f"  Compilation complete, starting FISTA iterations...")
         
         # FISTA variables
         xk = initial_recon.ravel()
@@ -123,9 +273,8 @@ def fista_tv_reconstruction(
             beta = (tk - 1.0) / t_next
             zk = xk + jnp.float32(beta) * (xk - xk_prev)
             
-            # Gradient step using alignment parameters
-            fval, grad = data_f_grad_vjp_aligned(zk, projections, angles, alignment_params, 
-                                               grid_hashable, det_hashable, step_size, n_steps)
+            # Gradient step using scan-based loss and gradient
+            fval, grad = loss_and_grad_scan(zk)  # single compiled call
             yk = zk - jnp.float32(alpha) * grad
             
             # TV proximal step
@@ -278,6 +427,55 @@ def apply_AtA_vjp_aligned(v: jnp.ndarray,
     return g
 
 
+def estimate_L_power_scan(
+    alignment_params: np.ndarray,
+    nx: int, ny: int, nz: int,
+    vx: float, vy: float, vz: float,
+    nu: int, nv: int,
+    du: float, dv: float,
+    vol_origin: jnp.ndarray,
+    det_center: jnp.ndarray,
+    step_size: float, n_steps: int,
+    n_iter: int = 3, seed: int = 0
+) -> float:
+    """Estimate Lipschitz constant using scan-based A^T A operator."""
+    rng = np.random.default_rng(seed)
+    v = jnp.asarray(rng.standard_normal(nx * ny * nz).astype(np.float32))
+    v = v / (jnp.linalg.norm(v) + 1e-8)
+
+    print(f"\n=== Estimating Lipschitz constant L (scan-based power method, {n_iter} iterations) ===")
+    print(f"Processing all {len(alignment_params)} views in compiled scan")
+    
+    # Build compiled A^T A operator once
+    AtA = build_AtA_scan(
+        alignment_params=alignment_params,
+        nx=nx, ny=ny, nz=nz,
+        vx=vx, vy=vy, vz=vz,
+        nu=nu, nv=nv,
+        du=du, dv=dv,
+        vol_origin=vol_origin,
+        det_center=det_center,
+        step_size=step_size,
+        n_steps=n_steps,
+    )
+    
+    lam = 0.0
+    for k in range(n_iter):
+        import time
+        t_iter = time.time()
+        print(f"\nPower iteration {k+1}/{n_iter}:")
+        
+        w = AtA(v)  # Single compiled call for A^T A v
+        lam = float(jnp.vdot(v, w).real / (jnp.vdot(v, v).real + 1e-8))
+        w_norm = jnp.linalg.norm(w)
+        v = w / (w_norm + 1e-8)
+        
+        print(f"  Lambda estimate: {lam:.6e} | ||w||: {float(w_norm):.6e} | Iter time: {time.time() - t_iter:.2f}s")
+
+    print(f"\n=== Power method complete ===")
+    return max(lam, 1e-6)
+
+
 def estimate_L_power_aligned(grid, det, angles: np.ndarray,
                            alignment_params: np.ndarray,
                            step_size: float, n_steps: int,
@@ -368,7 +566,12 @@ def optimize_alignment_params(
     # JIT compile once for this resolution level - reuse for all views and iterations
     loss_and_grad = jax.jit(jax.value_and_grad(_single_view_loss))
     
-    for it in range(max_iters):
+    # Create progress bar for alignment iterations
+    pbar_desc = f"Alignment ({n_proj} views)"
+    pbar = tqdm(range(max_iters), desc=pbar_desc, leave=False, 
+                disable=not verbose, ascii=True, ncols=80)
+    
+    for it in pbar:
         total_loss = 0.0
         
         # Update each view's parameters
@@ -407,21 +610,25 @@ def optimize_alignment_params(
         
         objective_history.append(total_loss / n_proj)
         
-        if verbose and (it % max(1, max_iters // 5) == 0 or it == max_iters - 1):
-            # Compute parameter statistics for debugging
-            rot_params = params[:, [0, 1]]  # alpha, beta
-            trans_params = params[:, [3, 4]]  # dx, dz
-            
-            rot_rms = float(jnp.sqrt(jnp.mean(rot_params**2)))
-            trans_rms = float(jnp.sqrt(jnp.mean(trans_params**2)))
-            
-            print(f"    Alignment iter {it+1:2d}/{max_iters} | loss={total_loss/n_proj:.6e} | "
-                  f"rot_rms={rot_rms:.4f}rad({np.rad2deg(rot_rms):.2f}°) | trans_rms={trans_rms:.4f}")
-            
-            # Warning if parameters are getting too large
-            if rot_rms > 0.1:  # > ~6 degrees
-                print(f"      WARNING: Rotation parameters getting large (RMS={np.rad2deg(rot_rms):.1f}°)")
-            if trans_rms > 10.0:  # > 10 world units
-                print(f"      WARNING: Translation parameters getting large (RMS={trans_rms:.1f})")
+        # Update progress bar with current stats
+        rot_params = params[:, [0, 1]]  # alpha, beta
+        trans_params = params[:, [3, 4]]  # dx, dz
+        
+        rot_rms = float(jnp.sqrt(jnp.mean(rot_params**2)))
+        trans_rms = float(jnp.sqrt(jnp.mean(trans_params**2)))
+        
+        pbar.set_postfix({
+            'loss': f'{total_loss/n_proj:.2e}',
+            'rot': f'{np.rad2deg(rot_rms):.2f}°', 
+            'trans': f'{trans_rms:.3f}'
+        })
+        
+        # Warning if parameters are getting too large
+        if rot_rms > 0.1:  # > ~6 degrees
+            pbar.write(f"      WARNING: Rotation parameters getting large (RMS={np.rad2deg(rot_rms):.1f}°)")
+        if trans_rms > 10.0:  # > 10 world units
+            pbar.write(f"      WARNING: Translation parameters getting large (RMS={trans_rms:.1f})")
+    
+    pbar.close()
     
     return np.asarray(params), objective_history

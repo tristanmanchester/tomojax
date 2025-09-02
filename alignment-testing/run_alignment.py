@@ -138,7 +138,7 @@ def run_alternating_optimization(
                 current_params, grid_binned, det_binned,
                 max_iters=align_iters, 
                 rot_learning_rate=0.001,   # 0.001 rad ≈ 0.057° per step
-                trans_learning_rate=0.01,  # 0.01 world units per step
+                trans_learning_rate=0.1,  # 0.01 world units per step
                 verbose=True  # Enable verbose mode to see parameter evolution
             )
             
