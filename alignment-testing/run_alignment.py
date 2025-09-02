@@ -260,14 +260,18 @@ def main():
     results["algorithm_params"] = vars(args)
     
     with open(output_dir / "results.json", "w") as f:
-        # Convert numpy arrays to lists for JSON serialization
+        # Convert numpy and JAX arrays to lists for JSON serialization
         def convert_arrays(obj):
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
+            if isinstance(obj, (np.ndarray, jnp.ndarray)) or hasattr(obj, '__array__'):
+                return np.asarray(obj).tolist()
             elif isinstance(obj, dict):
                 return {k: convert_arrays(v) for k, v in obj.items()}
             elif isinstance(obj, list):
                 return [convert_arrays(item) for item in obj]
+            elif isinstance(obj, (np.floating, np.integer)):
+                return obj.item()  # Convert numpy scalars to Python types
+            elif hasattr(obj, 'item'):  # JAX scalars
+                return obj.item()
             else:
                 return obj
         
