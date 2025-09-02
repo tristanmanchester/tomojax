@@ -3,15 +3,83 @@
 .pixi
 *.egg-info
 
-# Large test data files
+# Large test data files and output directories
 *.tiff
+*.npy
 parallel_proj_test/
 parallel_recon_test/
 fista_tv_recon/
+fista_tv_recon_*/
+parallel_proj_test_*/
+parallel_recon_test_*/
+parallel_proj_misaligned/
+parallel_recon_comparison/
+misaligned_test/
+comparison_results/
+*_noisy/
+*_misaligned/
+*_test/
+*_results/
+
+# Python cache and compiled files
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # System files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-*.pyc
-__pycache__/
-.DS_Store
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment files
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/

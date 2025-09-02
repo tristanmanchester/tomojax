@@ -221,6 +221,10 @@ def main():
                         help="Power iterations to estimate L")
     parser.add_argument("--step-scale", type=float, default=0.9,
                         help="Safety scale for step size: alpha = step_scale / L")
+    parser.add_argument("--checkpoint-interval", type=int, default=0,
+                        help="Save reconstruction every n iterations (0=disabled)")
+    parser.add_argument("--save-convergence-plot", action="store_true",
+                        help="Save convergence plot with objective values")
     args = parser.parse_args()
 
     in_dir = Path(args.input_dir)
@@ -292,9 +296,17 @@ def main():
 
     # FISTA variables
     print("\n=== Starting FISTA iterations ===")
+    if args.checkpoint_interval > 0:
+        print(f"Checkpoints will be saved every {args.checkpoint_interval} iterations")
+    
     xk = jnp.zeros((nx * ny * nz,), dtype=jnp.float32)
     xk_prev = xk
     tk = 1.0
+    
+    # For tracking convergence
+    objective_values = []
+    gradient_norms = []
+    iteration_times = []
 
     t_all = tic()
     for it in range(1, args.max_iters + 1):
@@ -326,10 +338,50 @@ def main():
         tk = t_next
 
         iter_time = time.time() - t_iter
+        grad_norm = float(jnp.linalg.norm(grad))
+        
+        # Track convergence
+        objective_values.append(fval)
+        gradient_norms.append(grad_norm)
+        iteration_times.append(iter_time)
+        
         print(
-            f"iter {it:3d} | f={fval:.6e} | ||grad||={float(jnp.linalg.norm(grad)):.3e} "
+            f"iter {it:3d} | f={fval:.6e} | ||grad||={grad_norm:.3e} "
             f"| iter_time={iter_time:.2f}s | RSS={get_memory_usage_mb():.1f} MB"
         )
+        
+        # Save checkpoint if requested
+        if args.checkpoint_interval > 0 and it % args.checkpoint_interval == 0:
+            print(f"\n  Saving checkpoint at iteration {it}...")
+            x_vol = np.asarray(xk).reshape(nx, ny, nz)
+            checkpoint_stack = np.transpose(x_vol, (2, 1, 0)).astype(np.float32)
+            checkpoint_path = out_dir / f"reconstruction_iter_{it:04d}.tiff"
+            tiff.imwrite(str(checkpoint_path), checkpoint_stack)
+            print(f"  Checkpoint saved: {checkpoint_path}")
+            
+            # Also save current convergence data
+            conv_data = {
+                "iteration": it,
+                "objective_values": objective_values,
+                "gradient_norms": gradient_norms,
+                "iteration_times": iteration_times,
+                "total_time_so_far": time.time() - t_all,
+            }
+            with open(out_dir / f"convergence_iter_{it:04d}.json", "w") as f:
+                json.dump(conv_data, f, indent=2)
+            
+            # Estimate time remaining
+            avg_iter_time = sum(iteration_times) / len(iteration_times)
+            remaining_iters = args.max_iters - it
+            eta_seconds = avg_iter_time * remaining_iters
+            eta_hours = eta_seconds / 3600
+            print(f"  Estimated time remaining: {eta_hours:.1f} hours ({eta_seconds/60:.0f} minutes)")
+            
+            # Check convergence (optional early stopping hint)
+            if len(objective_values) > 5:
+                recent_change = abs(objective_values[-1] - objective_values[-5]) / abs(objective_values[-5])
+                if recent_change < 1e-4:
+                    print(f"  Note: Objective change over last 5 iterations: {recent_change:.2e} (converging)")
 
     t_recon = toc(t_all)
     print(f"\n=== FISTA complete ===")
@@ -343,6 +395,36 @@ def main():
     tif_kwargs = {}
     tiff.imwrite(str(out_path), out_stack, **tif_kwargs)
     print(f"Saved reconstruction: {out_path}")
+    
+    # Save convergence plot if requested
+    if args.save_convergence_plot and len(objective_values) > 0:
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Non-interactive backend
+            import matplotlib.pyplot as plt
+            
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+            
+            # Objective values
+            ax1.semilogy(range(1, len(objective_values) + 1), objective_values, 'b-', linewidth=2)
+            ax1.set_xlabel('Iteration')
+            ax1.set_ylabel('Objective Value')
+            ax1.set_title('FISTA-TV Convergence')
+            ax1.grid(True, alpha=0.3)
+            
+            # Gradient norms
+            ax2.semilogy(range(1, len(gradient_norms) + 1), gradient_norms, 'r-', linewidth=2)
+            ax2.set_xlabel('Iteration')
+            ax2.set_ylabel('Gradient Norm')
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plot_path = out_dir / "convergence_plot.png"
+            plt.savefig(plot_path, dpi=150)
+            plt.close()
+            print(f"Saved convergence plot: {plot_path}")
+        except ImportError:
+            print("Matplotlib not available, skipping convergence plot")
 
     meta_out = {
         "method": "FISTA-TV (VJP-based)",
@@ -359,7 +441,18 @@ def main():
         "n_proj": n_proj,
         "step_size": step_size,
         "n_steps": n_steps,
-        "timing": {"total_seconds": t_recon},
+        "timing": {
+            "total_seconds": t_recon,
+            "per_iteration_avg": t_recon/max(1,args.max_iters),
+            "iteration_times": iteration_times if 'iteration_times' in locals() else []
+        },
+        "convergence": {
+            "objective_values": objective_values if 'objective_values' in locals() else [],
+            "gradient_norms": gradient_norms if 'gradient_norms' in locals() else [],
+            "final_objective": objective_values[-1] if 'objective_values' in locals() and objective_values else None,
+            "final_gradient_norm": gradient_norms[-1] if 'gradient_norms' in locals() and gradient_norms else None,
+        },
+        "checkpoint_interval": args.checkpoint_interval,
         "device": str(jax.devices()[0]),
     }
     with open(out_dir / "metadata.json", "w") as f:
@@ -367,6 +460,10 @@ def main():
     print("Saved metadata.json")
 
     print("\n=== All done! ===")
+    if args.checkpoint_interval > 0:
+        print(f"Checkpoints saved every {args.checkpoint_interval} iterations in {out_dir}/")
+        print("You can view intermediate results with: ")
+        print(f"  ls {out_dir}/reconstruction_iter_*.tiff")
 
 
 if __name__ == "__main__":
