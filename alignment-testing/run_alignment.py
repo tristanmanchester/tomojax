@@ -102,17 +102,34 @@ def run_alternating_optimization(
             "final_params": None
         }
         
+        # Initialize Lipschitz constant tracking
+        cached_L = None
+        L_recompute_interval = 3  # Re-estimate L every 3 outer iterations
+        
         # Outer loop alternating optimization
         for outer_iter in range(outer_iters):
             print(f"\nOuter iteration {outer_iter+1}/{outer_iters}")
             
+            # Determine whether to recompute Lipschitz constant
+            should_recompute_L = (outer_iter == 0 or outer_iter % L_recompute_interval == 0)
+            
             # 1. Reconstruction step (fix alignment, update reconstruction)
             print(f"  Reconstruction step ({recon_iters} FISTA-TV iterations)...")
-            current_recon, recon_obj_hist = fista_tv_reconstruction(
-                projs_binned, angles, current_recon, grid_binned, det_binned,
-                lambda_tv=lambda_tv, max_iters=recon_iters, verbose=False,
-                alignment_params=current_params
-            )
+            if should_recompute_L:
+                # Estimate L and cache it
+                current_recon, recon_obj_hist, cached_L = fista_tv_reconstruction(
+                    projs_binned, angles, current_recon, grid_binned, det_binned,
+                    lambda_tv=lambda_tv, max_iters=recon_iters, verbose=False,
+                    alignment_params=current_params, precomputed_L=None
+                )
+                print(f"  L = {cached_L:.3e} cached for next {L_recompute_interval-1} iterations")
+            else:
+                # Reuse cached L
+                current_recon, recon_obj_hist, _ = fista_tv_reconstruction(
+                    projs_binned, angles, current_recon, grid_binned, det_binned,
+                    lambda_tv=lambda_tv, max_iters=recon_iters, verbose=False,
+                    alignment_params=current_params, precomputed_L=cached_L
+                )
             
             # 2. Alignment step (fix reconstruction, update alignment)
             print(f"  Alignment step ({align_iters} iterations)...")

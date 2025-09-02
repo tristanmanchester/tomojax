@@ -73,8 +73,9 @@ def fista_tv_reconstruction(
     step_scale: float = 0.9,
     power_iters: int = 3,
     verbose: bool = True,
-    alignment_params: np.ndarray = None
-) -> Tuple[jnp.ndarray, List[float]]:
+    alignment_params: np.ndarray = None,
+    precomputed_L: float = None
+) -> Tuple[jnp.ndarray, List[float], float]:
     """Run FISTA-TV reconstruction for given projections and alignment."""
     
     nx, ny, nz = int(grid["nx"]), int(grid["ny"]), int(grid["nz"])
@@ -92,16 +93,23 @@ def fista_tv_reconstruction(
     
     # Use alignment-aware functions if parameters provided
     if alignment_params is not None:
-        # Estimate Lipschitz constant using current alignment parameters
-        if verbose:
-            print(f"  Estimating Lipschitz constant ({power_iters} iterations)...")
-        L = estimate_L_power_aligned(grid_hashable, det_hashable, angles, 
-                                   alignment_params, step_size, n_steps, 
-                                   n_iter=power_iters, seed=42)
-        alpha = step_scale / L
+        # Use precomputed L or estimate it if not provided
+        if precomputed_L is not None:
+            L = precomputed_L
+            if verbose:
+                print(f"  Using precomputed Lipschitz constant L = {L:.3e}")
+        else:
+            if verbose:
+                print(f"  Estimating Lipschitz constant ({power_iters} iterations)...")
+            L = estimate_L_power_aligned(grid_hashable, det_hashable, angles, 
+                                       alignment_params, step_size, n_steps, 
+                                       n_iter=power_iters, seed=42)
+            if verbose:
+                print(f"  L = {L:.3e} (estimated)")
         
+        alpha = step_scale / L
         if verbose:
-            print(f"  L = {L:.3e}, alpha = {alpha:.3e}")
+            print(f"  alpha = {alpha:.3e}")
         
         # FISTA variables
         xk = initial_recon.ravel()
@@ -176,7 +184,7 @@ def fista_tv_reconstruction(
                 grad_norm = float(jnp.linalg.norm(grad))
                 print(f"    FISTA iter {it:3d}/{max_iters} | f={fval:.6e} | ||grad||={grad_norm:.3e}")
     
-    return xk.reshape(nx, ny, nz), objective_history
+    return xk.reshape(nx, ny, nz), objective_history, L
 
 
 def data_f_grad_vjp_aligned(x_flat: jnp.ndarray,
@@ -331,28 +339,49 @@ def optimize_alignment_params(
     vol_origin = jnp.asarray(grid["vol_origin"], dtype=jnp.float32)
     det_center = jnp.asarray(det.get("det_center", [0.0, 0.0]), dtype=jnp.float32)
     
+    # Pre-convert data to device arrays once per level to reduce host↔device churn
+    projections_jnp = jax.device_put(jnp.asarray(projections, dtype=jnp.float32))
+    angles_jnp = jax.device_put(jnp.asarray(angles, dtype=jnp.float32))
+    
+    # Compile a single-view loss+grad function once per resolution level
+    # Avoid passing dicts to static_argnames - use closed-over constants instead
+    def _single_view_loss(align_only, angle, measured, recon_flat):
+        """Single view loss function with geometry constants closed over."""
+        full_params = jnp.array(
+            [align_only[0], align_only[1], angle, align_only[2], align_only[3]],
+            dtype=jnp.float32,
+        )
+        return compute_view_loss(
+            full_params,
+            measured,
+            recon_flat,
+            nx, ny, nz,
+            vx, vy, vz,
+            nu, nv,
+            du, dv,
+            vol_origin,
+            det_center,
+            step_size,
+            n_steps,
+        )
+    
+    # JIT compile once for this resolution level - reuse for all views and iterations
+    loss_and_grad = jax.jit(jax.value_and_grad(_single_view_loss))
+    
     for it in range(max_iters):
         total_loss = 0.0
-        total_grad = jnp.zeros_like(params)
         
         # Update each view's parameters
         for i in range(n_proj):
-            measured = jnp.asarray(projections[i], dtype=jnp.float32)
+            measured = projections_jnp[i]
+            angle = angles_jnp[i]
+            align_only = jnp.array(
+                [params[i, 0], params[i, 1], params[i, 3], params[i, 4]],
+                dtype=jnp.float32,
+            )
             
-            # Compute loss and gradient w.r.t. alignment parameters (not phi)
-            def view_loss_fn(align_params):
-                full_params = jnp.array([
-                    align_params[0], align_params[1], angles[i], align_params[2], align_params[3]
-                ], dtype=jnp.float32)
-                return compute_view_loss(
-                    full_params, measured, recon_flat,
-                    nx, ny, nz, vx, vy, vz, nu, nv, du, dv,
-                    vol_origin, det_center, step_size, n_steps
-                )
-            
-            # Extract alignment-only parameters (alpha, beta, dx, dz)
-            align_only = jnp.array([params[i, 0], params[i, 1], params[i, 3], params[i, 4]])
-            loss_val, grad_align = jax.value_and_grad(view_loss_fn)(align_only)
+            # Use pre-compiled loss+grad function
+            loss_val, grad_align = loss_and_grad(align_only, angle, measured, recon_flat)
             
             # Clip gradients to prevent explosion
             grad_clip_norm = 1.0
@@ -361,11 +390,18 @@ def optimize_alignment_params(
                                  grad_align * (grad_clip_norm / grad_norm), 
                                  grad_align)
             
-            # Update parameters with different learning rates for rotation vs translation
-            params = params.at[i, 0].set(params[i, 0] - rot_learning_rate * grad_align[0])    # alpha
-            params = params.at[i, 1].set(params[i, 1] - rot_learning_rate * grad_align[1])    # beta  
-            params = params.at[i, 3].set(params[i, 3] - trans_learning_rate * grad_align[2])  # dx
-            params = params.at[i, 4].set(params[i, 4] - trans_learning_rate * grad_align[3])  # dz
+            # Do a single fused update for this view to avoid 4 separate scatters
+            delta = jnp.array(
+                [
+                    rot_learning_rate * grad_align[0],   # alpha
+                    rot_learning_rate * grad_align[1],   # beta
+                    0.0,                                 # phi (unchanged)
+                    trans_learning_rate * grad_align[2], # dx
+                    trans_learning_rate * grad_align[3], # dz
+                ],
+                dtype=jnp.float32,
+            )
+            params = params.at[i].add(-delta)
             
             total_loss += float(loss_val)
         

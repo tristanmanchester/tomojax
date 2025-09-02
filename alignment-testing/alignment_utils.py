@@ -168,10 +168,9 @@ def create_resolution_pyramid(projections: np.ndarray,
         det_binned['du'] = det['du'] * bin_factor
         det_binned['dv'] = det['dv'] * bin_factor
         
-        # Scale detector center if present
+        # Detector center is in world units: do NOT scale with binning
         if 'det_center' in det:
-            det_center = np.asarray(det['det_center'])
-            det_binned['det_center'] = det_center * bin_factor
+            det_binned['det_center'] = np.asarray(det['det_center'])
         
         pyramid.append((binned_projs, grid_binned, det_binned))
     
@@ -204,14 +203,8 @@ def transfer_alignment_params(params: np.ndarray,
     scaled_params = params.copy()
     
     # Rotational parameters (alpha, beta, phi) stay the same
-    # Only translational parameters (dx, dz) need scaling
-    
-    # Scale translations by the change in pixel size
-    old_du, old_dv = old_det['du'], old_det['dv']
-    new_du, new_dv = new_det['du'], new_det['dv']
-    
-    scaled_params[:, 3] *= (old_du / new_du)  # dx scaling
-    scaled_params[:, 4] *= (old_dv / new_dv)  # dz scaling
+    # Translational parameters (dx, dz) are in world units already, so leave unchanged
+    # (metrics convert to pixels by dividing by du/dv when needed)
     
     return scaled_params
 
