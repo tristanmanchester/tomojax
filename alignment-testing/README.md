@@ -13,13 +13,45 @@ Using multi-resolution strategy: 4x → 2x → 1x binning for robust convergence
 ## Files
 
 ### Core Implementation
-- `run_alignment.py` - Main alignment script with multi-resolution optimization
-- `optimization_steps.py` - FISTA-TV reconstruction and alignment optimization functions
-- `alignment_utils.py` - Multi-resolution utilities (binning, upsampling, metrics)
 
-### Testing Scripts
-- `test_synthetic_alignment.py` - Comprehensive validation with ground truth comparison
-- `run_quick_test.py` - Fast debugging test (32³ volume, 64 projections)
+**`run_alignment.py`** - Main alternating optimization script
+- Implements multi-resolution alternating minimization algorithm
+- Coordinates between FISTA-TV reconstruction and per-view alignment optimization
+- Manages resolution pyramid (4x → 2x → 1x binning) with parameter transfer
+- Handles Lipschitz constant caching across outer iterations for efficiency
+
+**`optimization_steps.py`** - Core optimization algorithms
+- `fista_tv_reconstruction()`: FISTA with TV regularization using scan-based projector compilation
+- `optimize_alignment_params()`: Gradient descent on 5-DOF rigid parameters per view
+- `build_aligned_loss_and_grad_scan()`: Compiled JAX scan for efficient multi-view loss computation
+- `estimate_L_power_scan()`: Power method for Lipschitz constant estimation using compiled A^T A operator
+
+**`alignment_utils.py`** - Multi-resolution and geometric utilities
+- `create_resolution_pyramid()`: Generates binned projections with consistent physical coordinate scaling
+- `transfer_alignment_params()`: Transfers parameters between resolution levels (world coordinates preserved)
+- `bin_projections()` / `bin_volume()`: Spatial binning with proper averaging
+- `compute_alignment_metrics()`: RMSE computation for rotations (degrees) and translations (pixels)
+
+### Testing and Debug Scripts
+
+**`test_synthetic_alignment.py`** - Validation framework
+- Runs multiple test configurations (fast/standard) with ground truth comparison
+- Generates alignment parameter comparison plots and convergence history visualization
+- Computes quantitative error metrics and timing benchmarks
+
+**`run_quick_test.py`** - Fast debugging workflow
+- Creates 32³ volume with 64 projections (8x spatial + angular downsampling)
+- Minimal iterations for rapid algorithm validation (~1-2 min runtime)
+- Tests core functionality without full computational cost
+
+**`debug_geometry.py`** - Geometric parameter debugging
+- Compares grid and detector parameters between test configurations
+- Validates coordinate system consistency across resolution levels
+- Helps debug scaling issues in multi-resolution optimization
+
+**`setup_jax_cache.sh`** - Performance optimization
+- Configures JAX compilation cache to avoid recompilation across runs
+- Reduces startup time for repeated algorithm execution
 
 ## Usage
 
@@ -86,36 +118,55 @@ Good alignment should achieve:
 - Rotation RMSE: < 0.1° (true misalignment: ±1°)
 - Translation RMSE: < 0.5 pixels (true misalignment: ±2 pixels)
 
-## Output Files
+## Mathematical Framework
 
-### Alignment Results
-- `final_reconstruction.tiff` - Final reconstructed volume
-- `final_alignment_params.npy` - Estimated alignment parameters (n_proj, 5)
-- `results.json` - Complete results with convergence history
-- `resolution_*/` - Intermediate results per resolution level
+### Objective Function
+Joint optimization of reconstruction x and alignment parameters θ:
+```
+min_{x,θ} Σᵢ ½||Aᵢ(θᵢ)x - yᵢ||² + λ_TV · TV(x)
+```
+where Aᵢ(θᵢ) is the projection operator for view i with 5-DOF rigid parameters θᵢ = [α, β, φ, Δx, Δz].
 
-### Validation Results  
-- `alignment_comparison_*.png` - Parameter comparison plots
-- `convergence_history_*.png` - Objective function convergence
-- `metrics_*.json` - Quantitative error metrics
+### FISTA-TV Reconstruction
+Proximal gradient method with isotropic total variation regularization:
+- **Data fidelity**: f(x) = ½Σᵢ||Aᵢ(θᵢ)x - yᵢ||² with gradient ∇f(x) = Σᵢ Aᵢᵀ(Aᵢx - yᵢ)
+- **TV regularization**: Isotropic total variation TV(x) = Σ||∇x|| with Chambolle-Pock proximal operator
+- **FISTA acceleration**: Momentum step zₖ = xₖ + βₖ(xₖ - xₖ₋₁) with adaptive βₖ
+- **Lipschitz estimation**: Power method on A^T A operator, cached across outer iterations for efficiency
+- **JAX scan implementation**: Compiled scan over views for memory-efficient gradient computation
 
-## Algorithm Details
+### Alignment Parameter Optimization  
+Gradient descent on 5-DOF rigid-body parameters per view:
+- **Parameter space**: θᵢ = [αᵢ, βᵢ, φᵢ, Δxᵢ, Δzᵢ] per projection i
+- **Loss function**: Lᵢ(θᵢ) = ½||Aᵢ(θᵢ)x - yᵢ||² (reconstruction x fixed)
+- **Gradient computation**: ∇_θᵢ Lᵢ via JAX autodiff through projector
+- **Learning rates**: Separate rates for rotations (0.001 rad) and translations (0.1 world units)
+- **Gradient clipping**: L2 norm clipping at 1.0 to prevent parameter explosion
 
-### Multi-Resolution Strategy
-1. **Level 1 (4x binning)**: 64³ volume, fast convergence, avoid local minima
-2. **Level 2 (2x binning)**: 128³ volume, refine alignment
-3. **Level 3 (1x binning)**: 256³ volume, final precision
+## Algorithm Implementation
 
-### Parameter Space
-5 DOF per projection: (α, β, φ, Δx, Δz)
-- α, β: In-plane rotations (radians)
-- φ: Projection angle (fixed)  
-- Δx, Δz: Detector translations (world units)
+### Alternating Optimization Strategy
+1. **Reconstruction step**: Fix alignment parameters θ, optimize volume x using FISTA-TV
+2. **Alignment step**: Fix reconstruction x, optimize each θᵢ independently via gradient descent
+3. **Multi-resolution**: Coarse-to-fine optimization avoiding local minima
 
-### Optimization
-- **Reconstruction**: FISTA with isotropic TV regularization
-- **Alignment**: Gradient descent using JAX autodiff
-- **Convergence**: Objective function relative change < 1e-5
+### Multi-Resolution Pyramid
+- **Level 0 (4x binning)**: 64³ → 64² projections, robust initialization
+- **Level 1 (2x binning)**: 128³ → 128² projections, parameter refinement  
+- **Level 2 (1x binning)**: 256³ → 256² projections, final precision
+- **Parameter transfer**: World coordinates preserved, detector scaling automatic
+
+### Computational Efficiency
+- **JAX scan compilation**: Single compiled function processes all views sequentially
+- **Lipschitz caching**: Recompute L every 3 outer iterations, reuse cached value otherwise
+- **Memory optimization**: Streaming integration via scan avoids materializing ray tensors
+- **Gradient checkpointing**: Optional checkpointing during backpropagation for memory reduction
+
+### Convergence and Stability
+- **Early stopping**: Relative objective change < 1e-5 over 3 iterations
+- **Parameter initialization**: Small random perturbations to avoid zero gradients
+- **Learning rate adaptation**: Separate rates for rotation (0.001 rad ≈ 0.057°) and translation (0.1 world units)
+- **Robust metrics**: RMSE computation in physically meaningful units (degrees, pixels)
 
 ## Troubleshooting
 

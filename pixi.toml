@@ -1,11 +1,10 @@
 [project]
 authors = ["Tristan Manchester <tristan.manchester@diamond.ac.uk>"]
-channels = ["conda-forge", "nvidia"]
 name = "tomojax"
-platforms = ["osx-arm64", "linux-64"]
 version = "0.1.0"
+channels = ["conda-forge", "nvidia"]
+platforms = ["linux-64"]
 
-# Common dependencies
 [dependencies]
 python = "3.12.*"
 tifffile = ">=2025.8.28,<2026"
@@ -15,18 +14,12 @@ scikit-image = ">=0.25.2,<0.26"
 psutil = ">=7.0.0,<8"
 scipy = ">=1.16.1,<2"
 tqdm = ">=4.67.1,<5"
-
-# Platform-specific JAX installations
-[target.osx-arm64.dependencies]
-jax = ">=0.7.0,<0.8"
-
-[target.linux-64.dependencies]
 cudnn = "*"
 
-[target.linux-64.pypi-dependencies]
+[pypi-dependencies]
 jax = { version = ">=0.4.23", extras = ["cuda12"] }
 
-[target.linux-64.system-requirements]
+[system-requirements]
 cuda = "12"
 
 [tasks]
