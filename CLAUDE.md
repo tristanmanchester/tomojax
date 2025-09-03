@@ -101,10 +101,18 @@ loss, grad = view_loss_value_and_grad(
 ## Dependencies
 
 Managed via `pixi.toml`:
-- JAX ≥0.7.0 (core computation)
+- JAX 0.5.3 (core computation with CUDA support)
+- optax 0.2.5 (gradient-based optimization)
 - NumPy ≥2.3.2 (data handling) 
 - SciPy ≥1.16.1 (reconstruction filters)
 - tifffile ≥2025.8.28 (I/O)
 - matplotlib ≥3.10.5 (visualization)
 - scikit-image ≥0.25.2 (phantom generation)
 - psutil ≥7.0.0 (memory monitoring)
+
+### Important Note on JAX/Optax Compatibility
+JAX is constrained to `>=0.5.3,<0.6` to maintain compatibility with both:
+- System gRPC libraries (conda-installed version 2301.0.0)  
+- Optax requirements (needs jax≥0.5.3)
+
+See `JAX_OPTAX_COMPATIBILITY_FIX.md` for details on version compatibility issues and solutions.

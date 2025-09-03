@@ -17,7 +17,8 @@ tqdm = ">=4.67.1,<5"
 cudnn = "*"
 
 [pypi-dependencies]
-jax = { version = ">=0.4.23", extras = ["cuda12"] }
+jax = { version = ">=0.5.3,<0.6", extras = ["cuda12"] }
+optax = "*"
 
 [system-requirements]
 cuda = "12"
