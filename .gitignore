@@ -6,6 +6,7 @@
 # Large test data files and output directories
 *.tiff
 *.npy
+*.nxs
 parallel_proj_test/
 parallel_recon_test/
 fista_tv_recon/
@@ -16,10 +17,14 @@ parallel_proj_misaligned/
 parallel_recon_comparison/
 misaligned_test/
 comparison_results/
+alignment_results*/
+test_data_real/
 *_noisy/
 *_misaligned/
 *_test/
 *_results/
+*_alignment/
+*_lamino/
 
 # Python cache and compiled files
 *.pyc
