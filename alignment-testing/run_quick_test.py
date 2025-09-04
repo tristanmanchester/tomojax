@@ -107,7 +107,9 @@ def run_quick_test(data_dir: str = "../misaligned_test") -> Dict:
         "lambda_tv": 0.01,               # Slightly higher for faster convergence
         "recon_iters_schedule": [3, 5],  # Very few FISTA iterations
         "align_iters_schedule": [5, 8],  # More alignment iterations to see convergence
-        "output_dir": "quick_test_results"
+        "output_dir": "quick_test_results",
+        "alignment_optimizer": "adabelief",  # Test the fastest optimizer
+        "optimize_phi": False,                # Test 5-DOF optimization
     }
     
     print(f"\nQuick test configuration:")

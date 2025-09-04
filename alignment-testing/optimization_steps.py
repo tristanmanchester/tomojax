@@ -8,12 +8,15 @@ from __future__ import annotations
 import math
 import os
 import sys
+import time
 from typing import Dict, List, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
 from tqdm import tqdm
+from typing import Optional, Union
 
 # Add parent directories to path
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -508,6 +511,69 @@ def estimate_L_power_aligned(grid, det, angles: np.ndarray,
     return max(lam, 1e-6)
 
 
+def create_optimizer(opt_name: str, lr: float):
+    """Create the specified optimizer with correct parameters."""
+    
+    if opt_name == "adabelief":
+        return optax.adabelief(lr, b1=0.9, b2=0.999, eps=1e-16, eps_root=1e-16)
+    elif opt_name == "adam":
+        return optax.adam(lr, b1=0.9, b2=0.999, eps=1e-8)
+    elif opt_name == "nadam":
+        return optax.nadam(lr, b1=0.9, b2=0.999, eps=1e-8)
+    elif opt_name == "yogi":
+        return optax.yogi(lr, b1=0.9, b2=0.999, eps=0.001)
+    elif opt_name == "lbfgs":
+        # L-BFGS handles learning rate through linesearch
+        return optax.lbfgs(
+            learning_rate=None,  # None for linesearch-based LR
+            memory_size=20,
+            scale_init_precond=True,
+            linesearch=optax.scale_by_zoom_linesearch(
+                max_linesearch_steps=20,
+                initial_guess_strategy="one"
+            )
+        )
+    elif opt_name == "gd":
+        return optax.sgd(lr)  # Simple SGD without momentum
+    else:
+        raise ValueError(f"Unknown optimizer: {opt_name}. Choose from: adabelief, adam, nadam, yogi, lbfgs, gd")
+
+
+def compute_batch_loss_and_grad(
+    params_flat: jnp.ndarray,
+    projections_jnp: jnp.ndarray,
+    angles_jnp: jnp.ndarray, 
+    recon_flat: jnp.ndarray,
+    optimize_phi: bool,
+    original_angles: jnp.ndarray,
+    nx: int, ny: int, nz: int,
+    vx: float, vy: float, vz: float,
+    nu: int, nv: int,
+    du: float, dv: float,
+    vol_origin: jnp.ndarray,
+    det_center: jnp.ndarray,
+    step_size: float, n_steps: int
+) -> jnp.ndarray:
+    """Compute total loss for all views at once."""
+    n_views = projections_jnp.shape[0]
+    params = params_flat.reshape(n_views, 5)
+    
+    # If not optimizing phi, restore original angles
+    if not optimize_phi:
+        params = params.at[:, 2].set(original_angles)
+    
+    # Vectorized loss computation
+    def single_view_loss(i):
+        return compute_view_loss(
+            params[i], projections_jnp[i], recon_flat,
+            nx, ny, nz, vx, vy, vz, nu, nv, du, dv,
+            vol_origin, det_center, step_size, n_steps
+        )
+    
+    losses = jax.vmap(single_view_loss)(jnp.arange(n_views))
+    return jnp.mean(losses)
+
+
 def optimize_alignment_params(
     projections: np.ndarray,
     angles: np.ndarray,
@@ -519,7 +585,16 @@ def optimize_alignment_params(
     trans_learning_rate: float = 0.01,  # Larger for translations (world units)
     verbose: bool = True
 ) -> Tuple[np.ndarray, List[float]]:
-    """Optimize alignment parameters for all views using gradient descent."""
+    """
+    [DEPRECATED] Use optimize_alignment_params_optax or optimize_alignment_hybrid instead.
+    
+    Original gradient descent implementation kept for backward compatibility.
+    This function only optimizes 4 DOF (alpha, beta, dx, dz) and uses basic gradient descent.
+    
+    For better performance, use:
+    - optimize_alignment_params_optax: Multiple optimizer choices including AdaBelief, L-BFGS
+    - optimize_alignment_hybrid: Two-stage optimization for best results
+    """
     
     n_proj = len(angles)
     params = jnp.asarray(initial_params.copy(), dtype=jnp.float32)
@@ -632,3 +707,303 @@ def optimize_alignment_params(
     pbar.close()
     
     return np.asarray(params), objective_history
+
+
+def run_lbfgs_optimization(
+    params_flat: jnp.ndarray,
+    loss_fn,
+    n_proj: int,
+    max_iters: int,
+    optimize_phi: bool,
+    verbose: bool,
+    tol: float = 1e-6
+) -> Tuple[np.ndarray, List[float]]:
+    """Special handling for L-BFGS with correct API."""
+    
+    # Create L-BFGS optimizer
+    opt = optax.lbfgs(
+        learning_rate=None,
+        memory_size=20,
+        scale_init_precond=True,
+        linesearch=optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=20,
+            initial_guess_strategy="one"
+        )
+    )
+    opt_state = opt.init(params_flat)
+    
+    # Use value_and_grad_from_state for L-BFGS
+    val_and_grad = optax.value_and_grad_from_state(loss_fn)
+    
+    def cond(carry):
+        params, state = carry
+        count = optax.tree.get(state, "count")
+        grad = optax.tree.get(state, "grad")
+        err = optax.tree.norm(grad)
+        return jnp.logical_or(
+            count == 0,
+            jnp.logical_and(count < max_iters, err >= tol)
+        )
+    
+    def body(carry):
+        params, state = carry
+        # L-BFGS special: uses value_and_grad_from_state
+        value, grad = val_and_grad(params, state=state)
+        # L-BFGS special: MUST pass value, grad, and value_fn to update
+        updates, state = opt.update(
+            grad, state, params, 
+            value=value, grad=grad, value_fn=loss_fn
+        )
+        params = optax.apply_updates(params, updates)
+        return params, state
+    
+    @jax.jit
+    def run(p0):
+        s0 = opt.init(p0)
+        return jax.lax.while_loop(cond, body, (p0, s0))
+    
+    if verbose:
+        print(f"  Running L-BFGS optimization (max_iters={max_iters})...")
+    
+    t_start = time.time()
+    params_final, state_final = run(params_flat)
+    t_elapsed = time.time() - t_start
+    
+    # Extract results
+    grad_norm = float(optax.tree.norm(optax.tree.get(state_final, "grad")))
+    iters = int(optax.tree.get(state_final, "count"))
+    final_loss = float(loss_fn(params_final))
+    
+    if verbose:
+        print(f"  L-BFGS completed in {t_elapsed:.2f}s: {iters} iters, "
+              f"loss={final_loss:.3e}, ||grad||={grad_norm:.3e}")
+    
+    # Display parameter statistics
+    if verbose:
+        params = params_final.reshape(n_proj, 5)
+        rot_params = params[:, [0, 1]]
+        trans_params = params[:, [3, 4]]
+        rot_rms = float(jnp.sqrt(jnp.mean(rot_params**2)))
+        trans_rms = float(jnp.sqrt(jnp.mean(trans_params**2)))
+        
+        if optimize_phi:
+            phi_params = params[:, 2]
+            phi_rms = float(jnp.sqrt(jnp.mean(phi_params**2)))
+            print(f"  Final RMS: rot={np.rad2deg(rot_rms):.2f}°, "
+                  f"phi={np.rad2deg(phi_rms):.2f}°, trans={trans_rms:.3f}")
+        else:
+            print(f"  Final RMS: rot={np.rad2deg(rot_rms):.2f}°, trans={trans_rms:.3f}")
+    
+    return np.asarray(params_final.reshape(n_proj, 5)), [final_loss]
+
+
+def optimize_alignment_params_optax(
+    projections: np.ndarray,
+    angles: np.ndarray,
+    recon_flat: jnp.ndarray,
+    initial_params: np.ndarray,
+    grid: Dict, det: Dict,
+    optimizer: str = "adabelief",
+    max_iters: int = 100,
+    learning_rate: float = 0.01,
+    optimize_phi: bool = False,
+    rot_scale: float = 0.1,
+    trans_scale: float = 1.0,
+    verbose: bool = True
+) -> Tuple[np.ndarray, List[float]]:
+    """Optimize alignment parameters using Optax optimizers with full 5-DOF support.
+    
+    Args:
+        projections: (n_proj, nv, nu) measured projections
+        angles: (n_proj,) projection angles in radians
+        recon_flat: flattened reconstruction volume
+        initial_params: (n_proj, 5) initial alignment parameters
+        grid, det: geometry dictionaries
+        optimizer: Optimizer name (adabelief, adam, nadam, yogi, lbfgs, gd)
+        max_iters: Maximum optimization iterations
+        learning_rate: Base learning rate
+        optimize_phi: Whether to optimize phi (5th DOF)
+        rot_scale: Scale factor for rotation parameter learning rates
+        trans_scale: Scale factor for translation parameter learning rates
+        verbose: Whether to show progress
+        
+    Returns:
+        Optimized parameters (n_proj, 5) and loss history
+    """
+    
+    n_proj = len(angles)
+    step_size = float(grid.get("step_size", grid["vy"]))
+    n_steps = int(grid.get("n_steps", math.ceil((grid["ny"] * grid["vy"]) / step_size)))
+    
+    # Extract parameters to avoid dictionary hashability issues
+    nx, ny, nz = int(grid["nx"]), int(grid["ny"]), int(grid["nz"])
+    vx, vy, vz = float(grid["vx"]), float(grid["vy"]), float(grid["vz"])
+    nu, nv = int(det["nu"]), int(det["nv"])
+    du, dv = float(det["du"]), float(det["dv"])
+    
+    # Convert arrays to JAX arrays
+    vol_origin = jnp.asarray(grid["vol_origin"], dtype=jnp.float32)
+    det_center = jnp.asarray(det.get("det_center", [0.0, 0.0]), dtype=jnp.float32)
+    
+    # Pre-convert data to device arrays
+    projections_jnp = jax.device_put(jnp.asarray(projections, dtype=jnp.float32))
+    angles_jnp = jax.device_put(jnp.asarray(angles, dtype=jnp.float32))
+    
+    # Initialize parameters
+    params = jnp.asarray(initial_params.copy(), dtype=jnp.float32)
+    params_flat = params.ravel()
+    
+    # Create loss closure
+    def compute_loss(p_flat):
+        return compute_batch_loss_and_grad(
+            p_flat, projections_jnp, angles_jnp, recon_flat,
+            optimize_phi, angles_jnp,
+            nx, ny, nz, vx, vy, vz, nu, nv, du, dv,
+            vol_origin, det_center, step_size, n_steps
+        )
+    
+    # Handle L-BFGS separately
+    if optimizer == "lbfgs":
+        return run_lbfgs_optimization(
+            params_flat, compute_loss, n_proj, max_iters,
+            optimize_phi, verbose
+        )
+    
+    # Initialize standard optimizer
+    opt = create_optimizer(optimizer, learning_rate)
+    opt_state = opt.init(params_flat)
+    objective_history = []
+    
+    # Compile optimization step
+    @jax.jit
+    def step(params_flat, opt_state):
+        loss, grads = jax.value_and_grad(compute_loss)(params_flat)
+        
+        # Apply different scaling for rotations vs translations
+        grads_reshaped = grads.reshape(n_proj, 5)
+        grads_reshaped = grads_reshaped.at[:, :3].multiply(rot_scale)  # Rotations
+        grads_reshaped = grads_reshaped.at[:, 3:].multiply(trans_scale)  # Translations
+        
+        # Zero out phi gradients if not optimizing
+        if not optimize_phi:
+            grads_reshaped = grads_reshaped.at[:, 2].set(0.0)
+        
+        grads = grads_reshaped.ravel()
+        
+        # Update parameters
+        updates, opt_state = opt.update(grads, opt_state, params_flat)
+        params_flat = optax.apply_updates(params_flat, updates)
+        return params_flat, opt_state, loss
+    
+    # Create progress bar
+    pbar_desc = f"{optimizer.upper()} ({n_proj} views)"
+    pbar = tqdm(range(max_iters), desc=pbar_desc, leave=False, 
+                disable=not verbose, ascii=True, ncols=80)
+    
+    # Run optimization
+    for it in pbar:
+        params_flat, opt_state, loss = step(params_flat, opt_state)
+        objective_history.append(float(loss))
+        
+        # Update progress display
+        params = params_flat.reshape(n_proj, 5)
+        rot_params = params[:, [0, 1]]  # alpha, beta
+        trans_params = params[:, [3, 4]]  # dx, dz
+        
+        rot_rms = float(jnp.sqrt(jnp.mean(rot_params**2)))
+        trans_rms = float(jnp.sqrt(jnp.mean(trans_params**2)))
+        
+        if optimize_phi:
+            phi_params = params[:, 2]  # phi
+            phi_rms = float(jnp.sqrt(jnp.mean(phi_params**2)))
+            pbar.set_postfix({
+                'loss': f'{loss:.2e}',
+                'rot': f'{np.rad2deg(rot_rms):.2f}°',
+                'phi': f'{np.rad2deg(phi_rms):.2f}°',
+                'trans': f'{trans_rms:.3f}'
+            })
+        else:
+            pbar.set_postfix({
+                'loss': f'{loss:.2e}',
+                'rot': f'{np.rad2deg(rot_rms):.2f}°',
+                'trans': f'{trans_rms:.3f}'
+            })
+        
+        # Early stopping for convergence
+        if it > 10 and len(objective_history) > 5:
+            recent_change = abs(objective_history[-1] - objective_history[-5]) / objective_history[-5]
+            if recent_change < 1e-6:
+                if verbose:
+                    pbar.write(f"  Converged after {it+1} iterations (relative change < 1e-6)")
+                break
+        
+        # Warning if parameters are getting too large
+        if rot_rms > 0.1:  # > ~6 degrees
+            pbar.write(f"      WARNING: Rotation parameters getting large (RMS={np.rad2deg(rot_rms):.1f}°)")
+        if trans_rms > 10.0:  # > 10 world units
+            pbar.write(f"      WARNING: Translation parameters getting large (RMS={trans_rms:.1f})")
+    
+    pbar.close()
+    
+    return np.asarray(params), objective_history
+
+def optimize_alignment_hybrid(
+    projections: np.ndarray,
+    angles: np.ndarray,
+    recon_flat: jnp.ndarray,
+    initial_params: np.ndarray,
+    grid: Dict,
+    det: Dict,
+    optimize_phi: bool = True,
+    verbose: bool = True
+) -> Tuple[np.ndarray, List[float]]:
+    """
+    Hybrid optimization strategy based on testing results.
+    Stage 1: AdaBelief for speed (300 iters)
+    Stage 2: NAdam for refinement (100 iters)
+    
+    This approach balances speed and quality:
+    - AdaBelief converges quickly to a good solution
+    - NAdam refines to get the best final objective
+    """
+    
+    # Stage 1: Fast convergence with AdaBelief
+    if verbose:
+        print("  Stage 1: Fast optimization with AdaBelief...")
+    
+    params, history1 = optimize_alignment_params_optax(
+        projections, angles, recon_flat, initial_params,
+        grid, det,
+        optimizer="adabelief",
+        max_iters=300,
+        learning_rate=0.01,
+        optimize_phi=optimize_phi,
+        rot_scale=0.1,
+        trans_scale=1.0,
+        verbose=verbose
+    )
+    
+    # Stage 2: Refinement with NAdam for best quality
+    if verbose:
+        print("  Stage 2: Refinement with NAdam...")
+    
+    params, history2 = optimize_alignment_params_optax(
+        projections, angles, recon_flat, params,
+        grid, det,
+        optimizer="nadam",  # NAdam had best final objective in testing
+        max_iters=100,
+        learning_rate=0.005,  # Smaller LR for refinement
+        optimize_phi=optimize_phi,
+        rot_scale=0.1,
+        trans_scale=1.0,
+        verbose=verbose
+    )
+    
+    # Combine histories
+    total_history = history1 + history2
+    
+    if verbose:
+        final_loss = total_history[-1] if total_history else float('nan')
+        print(f"  Hybrid optimization complete: final loss = {final_loss:.3e}")
+    
+    return params, total_history

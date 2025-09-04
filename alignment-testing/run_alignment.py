@@ -31,7 +31,12 @@ from alignment_utils import (
     bin_volume, upsample_volume, check_convergence,
     save_intermediate_results, compute_alignment_metrics
 )
-from optimization_steps import fista_tv_reconstruction, optimize_alignment_params
+from optimization_steps import (
+    fista_tv_reconstruction, 
+    optimize_alignment_params,
+    optimize_alignment_params_optax,
+    optimize_alignment_hybrid
+)
 
 
 def run_alternating_optimization(
@@ -43,7 +48,11 @@ def run_alternating_optimization(
     recon_iters_schedule: List[int] = [10, 20, 30],
     align_iters_schedule: List[int] = [5, 10, 15],
     lambda_tv: float = 0.005,
-    output_dir: str = "alignment_results"
+    output_dir: str = "alignment_results",
+    # ADD THESE NEW PARAMETERS:
+    alignment_optimizer: str = "adabelief",  
+    optimize_phi: bool = False,              
+    **kwargs                                 
 ) -> Tuple[jnp.ndarray, np.ndarray, Dict]:
     """Main alternating optimization algorithm with multi-resolution."""
     
@@ -132,15 +141,42 @@ def run_alternating_optimization(
                 )
             
             # 2. Alignment step (fix reconstruction, update alignment)
-            print(f"  Alignment step ({align_iters} iterations)...")
-            current_params, align_obj_hist = optimize_alignment_params(
-                projs_binned, angles, current_recon.ravel(), 
-                current_params, grid_binned, det_binned,
-                max_iters=align_iters, 
-                rot_learning_rate=0.001,   # 0.001 rad ≈ 0.057° per step
-                trans_learning_rate=0.1,  # 0.01 world units per step
-                verbose=True  # Enable verbose mode to see parameter evolution
-            )
+            print(f"  Alignment step ({align_iters} iterations, optimizer={alignment_optimizer})...")
+
+            # Choose optimization function based on specified optimizer
+            if alignment_optimizer == "hybrid":
+                current_params, align_obj_hist = optimize_alignment_hybrid(
+                    projs_binned, angles, current_recon.ravel(),
+                    current_params, grid_binned, det_binned,
+                    optimize_phi=optimize_phi,
+                    verbose=True
+                )
+            elif alignment_optimizer in ["adabelief", "adam", "nadam", "yogi", "lbfgs", "gd"]:
+                # Adjust iterations for L-BFGS (needs fewer)
+                actual_align_iters = align_iters if alignment_optimizer != "lbfgs" else min(align_iters, 50)
+                
+                current_params, align_obj_hist = optimize_alignment_params_optax(
+                    projs_binned, angles, current_recon.ravel(),
+                    current_params, grid_binned, det_binned,
+                    optimizer=alignment_optimizer,
+                    max_iters=actual_align_iters,
+                    learning_rate=0.01,  # Default learning rate
+                    optimize_phi=optimize_phi,
+                    rot_scale=0.1,       # Scale for rotation learning rate
+                    trans_scale=1.0,     # Scale for translation learning rate
+                    verbose=True
+                )
+            else:
+                # Fall back to original implementation
+                print(f"  WARNING: Unknown optimizer '{alignment_optimizer}', using original gradient descent")
+                current_params, align_obj_hist = optimize_alignment_params(
+                    projs_binned, angles, current_recon.ravel(),
+                    current_params, grid_binned, det_binned,
+                    max_iters=align_iters,
+                    rot_learning_rate=0.001,
+                    trans_learning_rate=0.1,
+                    verbose=True
+                )
             
             # Save intermediate results
             save_intermediate_results(
@@ -193,6 +229,13 @@ def main():
                         help="FISTA-TV iterations per resolution level")
     parser.add_argument("--align-iters", type=int, nargs="+", default=[5, 10, 15],
                         help="Alignment iterations per resolution level")
+    parser.add_argument("--optimizer", type=str, default="adabelief",
+                        choices=["adabelief", "adam", "nadam", "yogi", "lbfgs", "gd", "hybrid", "original"],
+                        help="Optimizer for alignment (default: adabelief)")
+    parser.add_argument("--optimize-phi", action="store_true",
+                        help="Optimize phi angle (5 DOF instead of 4)")
+    parser.add_argument("--learning-rate", type=float, default=0.01,
+                        help="Base learning rate for optimizer")
     
     args = parser.parse_args()
     
@@ -231,7 +274,9 @@ def main():
         recon_iters_schedule=args.recon_iters,
         align_iters_schedule=args.align_iters,
         lambda_tv=args.lambda_tv,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        alignment_optimizer=args.optimizer if args.optimizer != "original" else None,
+        optimize_phi=args.optimize_phi   
     )
     total_time = time.time() - start_time
     
@@ -258,6 +303,8 @@ def main():
     results["final_metrics"] = metrics
     results["total_time_seconds"] = total_time
     results["algorithm_params"] = vars(args)
+    results["optimizer_used"] = args.optimizer
+    results["optimize_phi"] = args.optimize_phi
     
     with open(output_dir / "results.json", "w") as f:
         # Convert numpy and JAX arrays to lists for JSON serialization
