@@ -24,7 +24,10 @@ test_data_real/
 *_test/
 *_results/
 *_alignment/
+
 *_lamino/
+noisy-misaligned/
+noise-misaligned-fbp/
 
 # Python cache and compiled files
 *.pyc
