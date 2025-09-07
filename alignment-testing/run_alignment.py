@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Joint iterative reconstruction and 3D rigid alignment for X-ray tomography
-# Implementation of Pande et al. (2022) algorithm using JAX projector
-# Multi-resolution alternating optimization: FISTA-TV reconstruction + per-view alignment
+"""
+Joint iterative reconstruction and 3D rigid alignment for X-ray tomography.
+Implementation of Pande et al. (2022) algorithm using JAX projector.
+Multi-resolution alternating optimization: FISTA-TV reconstruction + per-view alignment.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +36,6 @@ from alignment_utils import (
 from optimization_steps import (
     fista_tv_reconstruction, 
     optimize_alignment_params,
-    optimize_alignment_params_optax,
     optimize_alignment_hybrid
 )
 
@@ -49,12 +50,25 @@ def run_alternating_optimization(
     align_iters_schedule: List[int] = [5, 10, 15],
     lambda_tv: float = 0.005,
     output_dir: str = "alignment_results",
-    # ADD THESE NEW PARAMETERS:
     alignment_optimizer: str = "adabelief",  
     optimize_phi: bool = False,              
-    **kwargs                                 
 ) -> Tuple[jnp.ndarray, np.ndarray, Dict]:
-    """Main alternating optimization algorithm with multi-resolution."""
+    """
+    Main alternating optimization algorithm with multi-resolution.
+    
+    Args:
+        projections: Input projections
+        angles: Projection angles
+        grid, det: Geometry dictionaries
+        bin_factors: Multi-resolution pyramid factors
+        outer_iters: Outer iterations per level
+        recon_iters_schedule: FISTA iterations per level
+        align_iters_schedule: Alignment iterations per level
+        lambda_tv: TV regularization weight
+        output_dir: Output directory path
+        alignment_optimizer: Optimizer for alignment (adabelief, adam, nadam, lbfgs, hybrid)
+        optimize_phi: Whether to optimize phi angle (5 DOF vs 4 DOF)
+    """
     
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
@@ -77,8 +91,10 @@ def run_alternating_optimization(
     
     results = {"resolution_levels": [], "final_metrics": {}}
     
-    print(f"\n=== Multi-resolution alignment optimization ===")
+    print(f"\n=== Multi-resolution alignment optimisation ===")
     print(f"Resolution levels: {bin_factors}")
+    print(f"Optimizer: {alignment_optimizer}")
+    print(f"Optimize phi: {optimize_phi}")
     
     for level, (bin_factor, (projs_binned, grid_binned, det_binned)) in enumerate(zip(bin_factors, pyramid)):
         print(f"\n--- Resolution level {level+1}/{len(bin_factors)}: {bin_factor}x binning ---")
@@ -124,57 +140,54 @@ def run_alternating_optimization(
             
             # 1. Reconstruction step (fix alignment, update reconstruction)
             print(f"  Reconstruction step ({recon_iters} FISTA-TV iterations)...")
+            
             if should_recompute_L:
                 # Estimate L and cache it
                 current_recon, recon_obj_hist, cached_L = fista_tv_reconstruction(
                     projs_binned, angles, current_recon, grid_binned, det_binned,
-                    lambda_tv=lambda_tv, max_iters=recon_iters, verbose=False,
-                    alignment_params=current_params, precomputed_L=None
+                    lambda_tv=lambda_tv, 
+                    max_iters=recon_iters, 
+                    verbose=False,
+                    alignment_params=current_params,  # Always required in clean version
+                    precomputed_L=None
                 )
-                print(f"  L = {cached_L:.3e} cached for next {L_recompute_interval-1} iterations")
+                print(f"    L = {cached_L:.3e} (will cache for {L_recompute_interval} iterations)")
             else:
                 # Reuse cached L
                 current_recon, recon_obj_hist, _ = fista_tv_reconstruction(
                     projs_binned, angles, current_recon, grid_binned, det_binned,
-                    lambda_tv=lambda_tv, max_iters=recon_iters, verbose=False,
-                    alignment_params=current_params, precomputed_L=cached_L
+                    lambda_tv=lambda_tv, 
+                    max_iters=recon_iters, 
+                    verbose=False,
+                    alignment_params=current_params,  # Always required in clean version
+                    precomputed_L=cached_L
                 )
             
             # 2. Alignment step (fix reconstruction, update alignment)
-            print(f"  Alignment step ({align_iters} iterations, optimizer={alignment_optimizer})...")
+            print(f"  Alignment step (optimizer={alignment_optimizer})...")
 
-            # Choose optimization function based on specified optimizer
             if alignment_optimizer == "hybrid":
+                # Use two-stage hybrid optimization
                 current_params, align_obj_hist = optimize_alignment_hybrid(
                     projs_binned, angles, current_recon.ravel(),
                     current_params, grid_binned, det_binned,
                     optimize_phi=optimize_phi,
                     verbose=True
                 )
-            elif alignment_optimizer in ["adabelief", "adam", "nadam", "yogi", "lbfgs", "gd"]:
+            else:
+                # Use single optimizer
                 # Adjust iterations for L-BFGS (needs fewer)
                 actual_align_iters = align_iters if alignment_optimizer != "lbfgs" else min(align_iters, 50)
                 
-                current_params, align_obj_hist = optimize_alignment_params_optax(
+                current_params, align_obj_hist = optimize_alignment_params(
                     projs_binned, angles, current_recon.ravel(),
                     current_params, grid_binned, det_binned,
                     optimizer=alignment_optimizer,
                     max_iters=actual_align_iters,
-                    learning_rate=0.01,  # Default learning rate
+                    learning_rate=0.01,
                     optimize_phi=optimize_phi,
-                    rot_scale=0.1,       # Scale for rotation learning rate
-                    trans_scale=1.0,     # Scale for translation learning rate
-                    verbose=True
-                )
-            else:
-                # Fall back to original implementation
-                print(f"  WARNING: Unknown optimizer '{alignment_optimizer}', using original gradient descent")
-                current_params, align_obj_hist = optimize_alignment_params(
-                    projs_binned, angles, current_recon.ravel(),
-                    current_params, grid_binned, det_binned,
-                    max_iters=align_iters,
-                    rot_learning_rate=0.001,
-                    trans_learning_rate=0.1,
+                    rot_scale=0.1,
+                    trans_scale=1.0,
                     verbose=True
                 )
             
@@ -219,29 +232,30 @@ def main():
                         help="Directory with misaligned projections")
     parser.add_argument("--output-dir", type=str, default="alignment_results",
                         help="Output directory")
+    parser.add_argument("--projections-file", type=str, default="projections_misaligned.tiff",
+                        help="Filename of the projections TIFF file (default: projections_misaligned.tiff)")
     parser.add_argument("--bin-factors", type=int, nargs="+", default=[4, 2, 1],
                         help="Multi-resolution binning factors")
     parser.add_argument("--outer-iters", type=int, default=15,
                         help="Outer iterations per resolution level")
     parser.add_argument("--lambda-tv", type=float, default=0.005,
-                        help="TV regularization weight")
+                        help="TV regularisation weight")
     parser.add_argument("--recon-iters", type=int, nargs="+", default=[10, 20, 30],
                         help="FISTA-TV iterations per resolution level")
     parser.add_argument("--align-iters", type=int, nargs="+", default=[5, 10, 15],
                         help="Alignment iterations per resolution level")
     parser.add_argument("--optimizer", type=str, default="adabelief",
-                        choices=["adabelief", "adam", "nadam", "yogi", "lbfgs", "gd", "hybrid", "original"],
+                        choices=["adabelief", "adam", "nadam", "lbfgs", "hybrid"],
                         help="Optimizer for alignment (default: adabelief)")
     parser.add_argument("--optimize-phi", action="store_true",
-                        help="Optimize phi angle (5 DOF instead of 4)")
-    parser.add_argument("--learning-rate", type=float, default=0.01,
-                        help="Base learning rate for optimizer")
+                        help="Optimise phi angle (5 DOF instead of 4)")
     
     args = parser.parse_args()
     
     print("=== Joint Iterative Reconstruction and 3D Rigid Alignment ===")
     print(f"Input: {args.input_dir}")
     print(f"Output: {args.output_dir}")
+    print(f"Projections file: {args.projections_file}")
     print(f"Device: {jax.devices()[0]}")
     
     # Load data
@@ -249,15 +263,29 @@ def main():
     with open(input_dir / "metadata.json", "r") as f:
         metadata = json.load(f)
     
-    # Load projections and parameters
-    projections_misaligned = tiff.imread(input_dir / "projections_misaligned.tiff")
+    # Load projections with specified filename
+    projections_path = input_dir / args.projections_file
+    if not projections_path.exists():
+        print(f"ERROR: Projections file not found: {projections_path}")
+        sys.exit(1)
+    
+    projections_misaligned = tiff.imread(projections_path)
     angles = np.load(input_dir / "angles.npy").astype(np.float32)
-    true_params = np.load(input_dir / "misalignment_params.npy").astype(np.float32)
-    true_params[:, 2] = angles  # Set phi angles
+    
+    # Try to load true parameters if they exist (may not exist for real data)
+    true_params_path = input_dir / "misalignment_params.npy"
+    if true_params_path.exists():
+        true_params = np.load(true_params_path).astype(np.float32)
+        true_params[:, 2] = angles  # Set phi angles
+        has_ground_truth = True
+        print(f"True misalignment range: ±{metadata['misalignment']['max_trans_pixels']} pixels, "
+              f"±{metadata['misalignment']['max_rot_degrees']}°")
+    else:
+        print("No ground truth misalignment parameters found - running on real data")
+        true_params = None
+        has_ground_truth = False
     
     print(f"Loaded {projections_misaligned.shape[0]} projections, shape: {projections_misaligned.shape}")
-    print(f"True misalignment range: ±{metadata['misalignment']['max_trans_pixels']} pixels, "
-          f"±{metadata['misalignment']['max_rot_degrees']}°")
     
     # Setup grid and detector
     grid = metadata["grid"]
@@ -275,19 +303,24 @@ def main():
         align_iters_schedule=args.align_iters,
         lambda_tv=args.lambda_tv,
         output_dir=args.output_dir,
-        alignment_optimizer=args.optimizer if args.optimizer != "original" else None,
+        alignment_optimizer=args.optimizer,
         optimize_phi=args.optimize_phi   
     )
     total_time = time.time() - start_time
     
-    # Compute final metrics
-    metrics = compute_alignment_metrics(final_params, true_params, det)
-    
-    print("\n=== Final Results ===")
-    print(f"Total time: {total_time:.2f} seconds")
-    print(f"Alignment errors (RMSE):")
-    print(f"  Rotation: {metrics['rot_rmse_deg']:.4f}°")
-    print(f"  Translation: {metrics['trans_rmse_pix']:.4f} pixels")
+    # Compute final metrics if ground truth is available
+    if has_ground_truth:
+        metrics = compute_alignment_metrics(final_params, true_params, det)
+        print("\n=== Final Results ===")
+        print(f"Total time: {total_time:.2f} seconds")
+        print(f"Alignment errors (RMSE):")
+        print(f"  Rotation: {metrics['rot_rmse_deg']:.4f}°")
+        print(f"  Translation: {metrics['trans_rmse_pix']:.4f} pixels")
+    else:
+        metrics = None
+        print("\n=== Final Results ===")
+        print(f"Total time: {total_time:.2f} seconds")
+        print("No ground truth available - cannot compute alignment errors")
     
     # Save final results
     output_dir = Path(args.output_dir)
@@ -296,15 +329,18 @@ def main():
     final_stack = np.transpose(np.asarray(final_recon), (2, 1, 0))
     tiff.imwrite(str(output_dir / "final_reconstruction.tiff"), final_stack.astype(np.float32))
     
-    # Save alignment parameters and results
+    # Save alignment parameters
     np.save(output_dir / "final_alignment_params.npy", final_params)
-    np.save(output_dir / "true_alignment_params.npy", true_params)
+    if has_ground_truth:
+        np.save(output_dir / "true_alignment_params.npy", true_params)
     
-    results["final_metrics"] = metrics
+    # Prepare results dictionary
+    results["final_metrics"] = metrics if has_ground_truth else "No ground truth available"
     results["total_time_seconds"] = total_time
     results["algorithm_params"] = vars(args)
     results["optimizer_used"] = args.optimizer
     results["optimize_phi"] = args.optimize_phi
+    results["projections_file"] = args.projections_file
     
     with open(output_dir / "results.json", "w") as f:
         # Convert numpy and JAX arrays to lists for JSON serialization
@@ -316,7 +352,7 @@ def main():
             elif isinstance(obj, list):
                 return [convert_arrays(item) for item in obj]
             elif isinstance(obj, (np.floating, np.integer)):
-                return obj.item()  # Convert numpy scalars to Python types
+                return obj.item()
             elif hasattr(obj, 'item'):  # JAX scalars
                 return obj.item()
             else:

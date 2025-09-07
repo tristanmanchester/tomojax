@@ -63,7 +63,7 @@ def filter_sinogram_ram_lak(
 
 
 def build_xy_grids(nx: int, ny: int, vx: float, vy: float) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """World-coordinate grids for (x, y) voxel centers, shape (ny, nx)."""
+    """World-coordinate grids for (x, y) voxel centres, shape (ny, nx)."""
     x = (np.arange(nx, dtype=np.float32) - (nx / 2.0 - 0.5)) * vx
     y = (np.arange(ny, dtype=np.float32) - (ny / 2.0 - 0.5)) * vy
     X, Y = np.meshgrid(x, y, indexing="xy")  # (ny, nx)
@@ -132,6 +132,12 @@ def main():
         help="Directory to save reconstruction",
     )
     parser.add_argument(
+        "--projections-file",
+        type=str,
+        default="projections.tiff",
+        help="Filename of the projections TIFF file (default: projections.tiff)",
+    )
+    parser.add_argument(
         "--nu-pad-factor", type=int, default=2, help="Zero-padding factor along detector axis"
     )
     parser.add_argument(
@@ -149,6 +155,7 @@ def main():
     print("=== Parallel-beam 3D FBP Reconstruction (Ram-Lak) ===")
     print(f"Input:  {in_dir}")
     print(f"Output: {out_dir}")
+    print(f"Projections file: {args.projections_file}")
     print(f"Device: {jax.devices()[0]}")
     print(f"Initial RSS memory: {get_memory_usage_mb():.1f} MB")
 
@@ -168,7 +175,7 @@ def main():
     )
     print(f"Detector: {nu} x {nv} | pix = ({du:.3f}, {dv:.3f})")
 
-    projections = tiff.imread(in_dir / "projections.tiff")  # (n_proj, nv, nu)
+    projections = tiff.imread(in_dir / args.projections_file)  # (n_proj, nv, nu)
     angles = np.load(in_dir / "angles.npy").astype(np.float32)  # (n_proj,)
     print(
         f"Loaded projections: shape={projections.shape}, angles={angles.shape} | RSS={get_memory_usage_mb():.1f} MB"
@@ -266,6 +273,7 @@ def main():
         "method": "parallel_fbp_ram-lak",
         "input_dir": str(in_dir),
         "output_dir": str(out_dir),
+        "projections_file": args.projections_file,
         "grid": {"nx": nx, "ny": ny, "nz": nz, "vx": vx, "vy": vy, "vz": vz},
         "detector": {"nu": nu, "nv": nv, "du": du, "dv": dv},
         "angles": {

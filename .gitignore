@@ -1,3 +1,6 @@
+misaligned-alignment/
+misaligned_recon/
+noisy_misaligned_recon/
 
 # pixi environments
 .pixi
