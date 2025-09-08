@@ -23,10 +23,10 @@ pixi run python examples/run_parallel_reconstruction.py --input-dir noisy-misali
 
 For iterative alignment and reconstruction of the misaligned data:
 ```
-pixi run python alignment-testing/run_alignment.py --optimizer lbfgs --input-dir noisy-misaligned --projections-file projections_misaligned.tiff --output-dir misaligned-alignment --optimize-phi --bin-factors 3 2 1 --recon-iters 10 20 30 --align-iters 10 15 20 --outer-iters 15 --lambda-tv 0.001 --optimizer adabelief
+pixi run python alignment-testing/run_alignment.py --optimizer lbfgs --input-dir noisy-misaligned --projections-file projections_misaligned.tiff --output-dir misaligned-alignment --bin-factors 4 2 1 --recon-iters 30 15 5 --align-iters 3 7 15 --outer-iters 15 --lambda-tv 0.001 
 ```
 
 For iterative alignment and reconstruction of the noisy misaligned data:
 ```
-pixi run python alignment-testing/run_alignment.py --optimizer lbfgs --input-dir noisy-misaligned --projections-file projections_noisy.tiff --output-dir noisy-alignment --optimize-phi --bin-factors 8 4 2 1 --recon-iters 10 10 20 30 --align-iters 5 5 10 15 --outer-iters 20 --lambda-tv 0.01
+pixi run python alignment-testing/run_alignment.py --optimizer lbfgs --input-dir noisy-misaligned --projections-file projections_noisy.tiff --output-dir noisy-alignment --bin-factors 8 4 2 1 --recon-iters 10 10 20 30 --align-iters 5 5 10 15 --outer-iters 20 --lambda-tv 0.01
 ```
