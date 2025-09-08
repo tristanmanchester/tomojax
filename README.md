@@ -4,20 +4,20 @@
 
 ## Key Features
 
-### 🔧 **Core Projector**
+### **Core Projector**
 - **Differentiable forward projection** with exact gradients via JAX autodiff
 - **5-DOF rigid-body parameterization**: `T x = R_y(β) R_x(α) R_z(φ) x + t` where `t = (Δx, 0, Δz)`
 - **Memory efficient**: Streaming integration via `lax.scan` — O(detector pixels) memory usage
 - **Trilinear interpolation** with analytical derivatives
 - **CPU/GPU support** with JIT compilation
 
-### 🎯 **Joint Reconstruction & Alignment**
+### **Joint Reconstruction & Alignment**
 - **Multi-resolution approach**: Hierarchical optimization (4x → 2x → 1x binning)
 - **Alternating optimization**: FISTA-TV reconstruction + per-view alignment
-- **Multiple optimizers**: AdaBelief (recommended), Adam, L-BFGS, hybrid approaches
-- **4-DOF or 5-DOF**: Option to optimize projection angle φ or keep fixed
+- **Multiple optimisers**: AdaBelief (recommended), Adam, L-BFGS, hybrid approaches
+- **4-DOF or 5-DOF**: Option to optimise projection angle φ or keep fixed
 
-### 🔍 **Alignment Capabilities**
+### **Alignment Capabilities**
 - **Per-view misalignment correction** for all 5 rigid-body parameters:
   - **α** (pitch): rotation around x-axis  
   - **β** (roll): rotation around y-axis
@@ -27,7 +27,7 @@
 - **Automatic parameter scaling** for different parameter sensitivities
 - **Alignment accuracy metrics** (RMSE in degrees/pixels)
 
-### 🏗️ **Advanced Reconstruction**
+### 🏗**Reconstruction**
 - **FISTA-TV regularization** with Chambolle-Pock proximal operator
 - **Automatic Lipschitz estimation** for optimal step sizes
 - **Alignment-aware reconstruction** with exact gradients
@@ -63,7 +63,7 @@ python examples/run_parallel_projector_misaligned.py \
     --max-trans-pixels 3.0 --max-rot-degrees 2.0 \
     --output-dir misaligned_test
 
-# Run joint optimization
+# Run joint optimisation
 python alignment-testing/run_alignment.py \
     --input-dir misaligned_test \
     --bin-factors 4 2 1 \
@@ -74,19 +74,15 @@ python alignment-testing/run_alignment.py \
 
 ## Alignment Algorithm
 
-The implementation follows **Pande et al. (2022)** with multi-resolution alternating optimization:
+The implementation uses multi-resolution alternating optimisation:
 
 1. **Multi-resolution pyramid**: Start at coarse resolution for global alignment
 2. **Alternating steps**: 
    - Fix alignment → FISTA-TV reconstruction
-   - Fix reconstruction → optimize alignment parameters
+   - Fix reconstruction → optimise alignment parameters
 3. **Parameter transfer**: Scale alignment between resolution levels
 4. **Convergence**: Monitor objective function and parameter changes
 
-### Optimizer Recommendations
-- **AdaBelief**: Best overall performance for alignment (default)
-- **Hybrid**: AdaBelief (300 iters) → NAdam refinement (100 iters)  
-- **L-BFGS**: Most robust but slower convergence
 
 ## Examples & Usage
 
