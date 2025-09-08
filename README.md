@@ -2,6 +2,12 @@
 
 **TomoJAX** is a fully differentiable, memory-efficient parallel-beam CT projector implemented in JAX. It provides exact gradients for **5-DOF rigid-body alignment optimization**, making it ideal for CT reconstruction, view alignment, and deep learning applications requiring data consistency.
 
+#### Alignment demonstration
+<img src="images/montage_scroll.gif" width="1000">
+
+**Left to Right**: Ground truth phantom → Naive reconstructions (misaligned & added noise) → Aligned reconstructions
+
+
 ## Key Features
 
 ### **Core Projector**
@@ -122,8 +128,3 @@ The implementation uses multi-resolution alternating optimisation:
 |---------------------|---------------------|
 | <img src="images/alignment_process_misaligned.gif" width="300"> | <img src="images/alignment_process_noisy.gif" width="300"> |
 | 4x → 2x → 1x resolution refinement | Robust alignment despite noise |
-
-#### Final Comparison
-<img src="images/montage_scroll.gif" width="800">
-
-**Left to Right**: Ground truth phantom → Naive reconstruction (misaligned) → Naive reconstruction (noisy) → Aligned reconstruction (clean) → Aligned reconstruction (noisy)
