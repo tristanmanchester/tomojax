@@ -33,7 +33,7 @@
 - **Automatic parameter scaling** for different parameter sensitivities
 - **Alignment accuracy metrics** (RMSE in degrees/pixels)
 
-### 🏗**Reconstruction**
+### **Reconstruction**
 - **FISTA-TV regularization** with Chambolle-Pock proximal operator
 - **Automatic Lipschitz estimation** for optimal step sizes
 - **Alignment-aware reconstruction** with exact gradients
