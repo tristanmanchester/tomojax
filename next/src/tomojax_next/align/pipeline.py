@@ -7,8 +7,9 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
-from ..core.projector import forward_project_view
+from ..core.projector import forward_project_view, forward_project_view_T
 from ..recon.fista_tv import fista_tv
+from ..utils.logging import progress_iter
 from .parametrizations import se3_from_5d
 
 
@@ -64,21 +65,30 @@ def align(
 
     loss_hist = []
 
-    def single_view_loss(p5, i, vol):
-        class _G:
-            def pose_for_view(self, _):
-                T_nom = jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32)
-                T_al = se3_from_5d(p5)
-                return tuple(map(tuple, T_nom @ T_al))
+    # Precompute nominal poses once
+    n_views = int(projections.shape[0])
+    T_nom_all = jnp.stack(
+        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
+        axis=0,
+    )
 
-            def rays_for_view(self, _):
-                return geometry.rays_for_view(i)
+    # Vmapped projector across views (pose-aware)
+    vm_project = jax.vmap(
+        lambda T, vol: forward_project_view_T(T, grid, detector, vol, use_checkpoint=True),
+        in_axes=(0, None),
+    )
 
-        pred = forward_project_view(_G(), grid, detector, vol, view_index=0)
-        resid = (pred - projections[i]).astype(jnp.float32)
+    def align_loss(params5, vol):
+        # Compose augmented poses and project all views at once
+        T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)  # (n_views, 4, 4)
+        pred = vm_project(T_aug, vol)  # (n_views, nv, nu)
+        resid = (pred - projections).astype(jnp.float32)
         return 0.5 * jnp.vdot(resid, resid).real
 
-    for it in range(cfg.outer_iters):
+    grad_all = jax.jit(jax.grad(align_loss, argnums=0))
+    align_loss_jit = jax.jit(align_loss)
+
+    for it in progress_iter(range(cfg.outer_iters), total=cfg.outer_iters, desc="Align: outer iters"):
         # Reconstruction step
         class _GAll:
             def pose_for_view(self, i):
@@ -91,18 +101,15 @@ def align(
 
         x, info_rec = fista_tv(_GAll(), grid, detector, projections, iters=cfg.recon_iters, lambda_tv=cfg.lambda_tv)
 
-        # Alignment step: simple gradient descent per view
-        for i in range(n_views):
-            grad_params_i = jax.grad(lambda p: single_view_loss(p, i, x))
-            g = grad_params_i(params5[i])
-            # Separate scales for rot (first 3) and trans (last 2)
-            upd = jnp.array([cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32) * g
-            params5 = params5.at[i].add(-upd)
+        # Alignment step: single vmapped gradient over all views
+        g_params = grad_all(params5, x)
+        scales = jnp.array(
+            [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32
+        )
+        params5 = params5 - g_params * scales
 
         # Track overall data loss
-        total_loss = 0.0
-        for i in range(n_views):
-            total_loss = total_loss + float(single_view_loss(params5[i], i, x))
+        total_loss = float(align_loss_jit(params5, x))
         loss_hist.append(total_loss)
 
     info = {"loss": loss_hist}

@@ -8,6 +8,9 @@ import jax.numpy as jnp
 
 from .geometry.base import Grid, Detector, Geometry
 
+# Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
+_DET_GRID_CACHE: Dict[Tuple[int, int, float, float, float, float], Tuple[jnp.ndarray, jnp.ndarray]] = {}
+
 
 def _default_volume_origin(grid: Grid) -> jnp.ndarray:
     ox = -((grid.nx / 2.0) - 0.5) * grid.vx
@@ -17,6 +20,17 @@ def _default_volume_origin(grid: Grid) -> jnp.ndarray:
 
 
 def _build_detector_grid(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    key = (
+        int(det.nu),
+        int(det.nv),
+        float(det.du),
+        float(det.dv),
+        float(det.det_center[0]),
+        float(det.det_center[1]),
+    )
+    cached = _DET_GRID_CACHE.get(key)
+    if cached is not None:
+        return cached
     nu, nv = int(det.nu), int(det.nv)
     du, dv = float(det.du), float(det.dv)
     cx, cz = float(det.det_center[0]), float(det.det_center[1])
@@ -24,6 +38,7 @@ def _build_detector_grid(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
     v = (jnp.arange(nv, dtype=jnp.float32) - (nv / 2.0 - 0.5)) * jnp.float32(dv) + jnp.float32(cz)
     X = jnp.tile(u, nv)
     Z = jnp.repeat(v, nu)
+    _DET_GRID_CACHE[key] = (X, Z)
     return X, Z
 
 
@@ -79,32 +94,26 @@ def _apply_Tinv(Tinv, pts):
     return R @ pts + t
 
 
-def forward_project_view(
-    geometry: Geometry,
+def forward_project_view_T(
+    T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
-    volume: jnp.ndarray,  # (nz, ny, nx) or (ny, nx, nz)? We use (nx,ny,nz) flattened consistent with existing.
-    view_index: int,
+    volume: jnp.ndarray,
     *,
     step_size: float | None = None,
     n_steps: int | None = None,
     use_checkpoint: bool = True,
+    unroll: int | None = None,
 ) -> jnp.ndarray:
-    """Forward project a single view using the provided geometry.
+    """Forward project a single view given pose `T` (4x4, row-major).
 
-    Current implementation assumes parallel rays along +y in world (as in our
-    Parallel and Laminography geometries) and streams integration across the y
-    extent of the volume. This will be generalized alongside geometry evolution.
+    Uses incremental stepping in object coordinates to avoid a matmul per step.
     """
-    # Ensure volume flattening convention (nx,ny,nz) -> flatten x-major
-    # Accept both (nx, ny, nz) or (ny, nx, nz); require/note shape in docs later
     vol = volume
     if vol.ndim != 3:
         raise ValueError("volume must be 3D array")
     nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
-    # Expect volume organized as (nx, ny, nz)
     if vol.shape != (nx, ny, nz):
-        # Try (ny, nx, nz) -> transpose to (nx, ny, nz)
         if vol.shape == (ny, nx, nz):
             vol = jnp.transpose(vol, (1, 0, 2))
         else:
@@ -126,28 +135,55 @@ def forward_project_view(
     if n_steps is None:
         n_steps = int(math.ceil((ny * vy) / float(step_size)))
 
-    # Build per-y samples
-    y0 = vol_origin[1]
-    ys = y0 + jnp.arange(n_steps, dtype=jnp.float32) * jnp.float32(step_size)
-
-    # Inverse object pose (world -> object) for this view
-    T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
+    # Inverse pose and incremental stepping set-up
     R = T[:3, :3]
     t = T[:3, 3]
-    Tinv = jnp.eye(4, dtype=jnp.float32).at[:3, :3].set(R.T).at[:3, 3].set(-(R.T @ t))
+    Rinv = R.T
+    tinv = -(Rinv @ t)
+    ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame
 
-    @jax.jit
-    def step(acc, y):
-        w = jnp.stack([Xr, jnp.full((n_rays,), y, dtype=jnp.float32), Zr], axis=0)  # (3, N)
-        q = _apply_Tinv(Tinv, w)  # (3, N) in object frame
-        ix = (q[0, :] - vol_origin[0]) / jnp.float32(grid.vx)
-        iy = (q[1, :] - vol_origin[1]) / jnp.float32(grid.vy)
-        iz = (q[2, :] - vol_origin[2]) / jnp.float32(grid.vz)
+    base = Rinv @ jnp.stack([Xr, jnp.zeros_like(Xr), Zr], axis=0) + tinv[:, None]
+    y0 = vol_origin[1]
+    q0 = base + y0 * ey_obj[:, None]
+    dq = (step_size * ey_obj)[:, None]
+
+    def step(carry, _):
+        acc, q = carry
+        ix = (q[0] - vol_origin[0]) / jnp.float32(grid.vx)
+        iy = (q[1] - vol_origin[1]) / jnp.float32(grid.vy)
+        iz = (q[2] - vol_origin[2]) / jnp.float32(grid.vz)
         samp = _trilinear_gather(recon_flat, ix, iy, iz, nx, ny, nz)
-        return acc + samp * jnp.float32(step_size), None
+        return (acc + samp * jnp.float32(step_size), q + dq), None
 
     scan_step = step if not use_checkpoint else jax.checkpoint(step)
     acc0 = jnp.zeros((n_rays,), dtype=jnp.float32)
-    acc, _ = jax.lax.scan(scan_step, acc0, ys)
+    (acc, _), _ = jax.lax.scan(
+        scan_step, (acc0, q0), None, length=n_steps, unroll=unroll or 1
+    )
     return acc.reshape((detector.nv, detector.nu))
 
+
+def forward_project_view(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    view_index: int,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    use_checkpoint: bool = True,
+    unroll: int | None = None,
+) -> jnp.ndarray:
+    """Wrapper that fetches pose from geometry and calls pose-aware variant."""
+    T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
+    return forward_project_view_T(
+        T,
+        grid,
+        detector,
+        volume,
+        step_size=step_size,
+        n_steps=n_steps,
+        use_checkpoint=use_checkpoint,
+        unroll=unroll,
+    )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 
 from ..data.simulate import SimConfig, simulate_to_file
 from ..utils.logging import setup_logging, log_jax_env
@@ -31,10 +32,13 @@ def main() -> None:
     p.add_argument("--noise", choices=["none", "gaussian", "poisson"], default="none")
     p.add_argument("--noise-level", type=float, default=0.0)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
 
     setup_logging()
     log_jax_env()
+    if args.progress:
+        os.environ["TOMOJAX_PROGRESS"] = "1"
 
     cfg = SimConfig(
         nx=args.nx, ny=args.ny, nz=args.nz,

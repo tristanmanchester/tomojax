@@ -8,6 +8,7 @@ import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..core.projector import forward_project_view
+from ..utils.logging import progress_iter
 from .phantoms import cube, blobs, shepp_logan_3d, random_cubes_spheres
 from .io_hdf5 import save_nxtomo
 
@@ -80,7 +81,7 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
     vol = make_phantom(cfg)
 
     projs = []
-    for i in range(cfg.n_views):
+    for i in progress_iter(range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"):
         p = forward_project_view(geom, grid, det, vol, view_index=i)
         projs.append(p)
     proj = jnp.stack(projs, axis=0)

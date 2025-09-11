@@ -4,6 +4,7 @@ import argparse
 import logging
 import numpy as np
 import jax.numpy as jnp
+import os
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
@@ -33,9 +34,12 @@ def main() -> None:
     p.add_argument("--iters", type=int, default=50, help="FISTA iterations")
     p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight")
     p.add_argument("--out", required=True, help="Output .nxs containing recon (and copying projections)")
+    p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
+    if args.progress:
+        os.environ["TOMOJAX_PROGRESS"] = "1"
 
     meta = load_nxtomo(args.data)
     grid, detector, geom = build_geometry(meta)
@@ -60,4 +64,3 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

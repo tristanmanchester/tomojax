@@ -6,9 +6,10 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, Geometry
-from ..core.projector import forward_project_view
+from ..core.projector import forward_project_view, forward_project_view_T
 from ..core.operators import view_loss
 from .filters import get_filter
+from ..utils.logging import progress_iter
 
 
 def _fft_filter_sinogram(sino: jnp.ndarray, du: float, filter_name: str) -> jnp.ndarray:
@@ -28,33 +29,21 @@ def _fft_filter_sinogram(sino: jnp.ndarray, du: float, filter_name: str) -> jnp.
     return out
 
 
-def backproject_vjp(
-    geometry: Geometry,
+def backproject_vjp_T(
+    T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     filtered: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Backprojection via autodiff VJP of the forward projector (single view).
-
-    filtered: (nv, nu)
-    Returns: volume (nx, ny, nz)
-    """
+    """Backprojection via autodiff VJP of pose-aware forward projector (single view)."""
     nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
     zero_vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
 
     def fwd(vol):
-        return forward_project_view(
-            geometry=geometry,
-            grid=grid,
-            detector=detector,
-            volume=vol,
-            view_index=0,
-            use_checkpoint=True,
-        )
+        return forward_project_view_T(T, grid, detector, vol, use_checkpoint=True)
 
     _, vjp = jax.vjp(fwd, zero_vol)
-    ATy = vjp(filtered.astype(jnp.float32))[0]
-    return ATy
+    return vjp(filtered.astype(jnp.float32))[0]
 
 
 def fbp(
@@ -77,16 +66,9 @@ def fbp(
     filt = _fft_filter_sinogram(proj, du=float(detector.du), filter_name=filter_name)
 
     acc = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    for i in range(n_views):
-        # Wrap a single-view geometry by adjusting view index through a closure
-        class _G:
-            def pose_for_view(self, _):
-                return geometry.pose_for_view(i)
-
-            def rays_for_view(self, _):
-                return geometry.rays_for_view(i)
-
-        bp = backproject_vjp(_G(), grid, detector, filt[i])
+    for i in progress_iter(range(n_views), total=n_views, desc="FBP: backproject views"):
+        T_i = jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32)
+        bp = backproject_vjp_T(T_i, grid, detector, filt[i])
         acc = acc + bp
 
     if scale is None:

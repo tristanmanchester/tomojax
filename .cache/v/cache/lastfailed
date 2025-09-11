@@ -1,0 +1,11 @@
+{
+  "next/tests/test_align_quick.py": true, 
+  "next/tests/test_geometry.py": true, 
+  "next/tests/test_integration.py": true, 
+  "next/tests/test_multires.py": true, 
+  "next/tests/test_phantoms_random_shapes.py": true, 
+  "next/tests/test_projector.py": true, 
+  "next/tests/test_recon.py": true, 
+  "next/tests/test_schema_negative.py": true, 
+  "next/tests/test_simulate.py": true
+}

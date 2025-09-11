@@ -7,6 +7,7 @@ import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, Geometry
 from .fista_tv import fista_tv, grad_data_term
+from ..utils.logging import progress_iter
 
 
 def scale_grid(grid: Grid, factor: int) -> Grid:
@@ -102,7 +103,7 @@ def fista_multires(
     levels = create_resolution_pyramid(grid, detector, projections, factors)
     x_init = None
     loss_hist = []
-    for lvl, iters in zip(levels, iters_per_level):
+    for lvl, iters in progress_iter(list(zip(levels, iters_per_level)), total=len(levels), desc="Multires: levels"):
         g = lvl["grid"]
         d = lvl["detector"]
         y = lvl["projections"]
@@ -128,4 +129,3 @@ def fista_multires(
 
     info_all = {"loss": loss_hist, "factors": list(factors)}
     return x_final, info_all
-
