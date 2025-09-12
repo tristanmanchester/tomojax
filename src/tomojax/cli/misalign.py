@@ -62,7 +62,7 @@ def main() -> None:
 
     # Random per-view parameters
     rng = np.random.default_rng(args.seed)
-    rot_scale = np.deg2rad(float(args.rot_deg)).astype(np.float32)
+    rot_scale = np.float32(np.deg2rad(float(args.rot_deg)))
     params5 = np.zeros((n_views, 5), np.float32)
     params5[:, 0] = rng.uniform(-rot_scale, rot_scale, n_views)  # alpha
     params5[:, 1] = rng.uniform(-rot_scale, rot_scale, n_views)  # beta

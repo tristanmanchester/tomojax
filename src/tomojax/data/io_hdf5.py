@@ -159,8 +159,9 @@ def save_nxtomo(
         if align_params is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
-            dset = tj.create_dataset(
-                "align/thetas",
+            align_grp = _ensure_group(tj, "align", "NXcollection")
+            dset = align_grp.create_dataset(
+                "thetas",
                 data=np.asarray(align_params, dtype=np.float32),
                 chunks=True,
                 compression=compression,
