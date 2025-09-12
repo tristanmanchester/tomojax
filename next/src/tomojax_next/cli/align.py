@@ -33,6 +33,9 @@ def main() -> None:
     p.add_argument("--lambda-tv", type=float, default=0.005)
     p.add_argument("--lr-rot", type=float, default=1e-3)
     p.add_argument("--lr-trans", type=float, default=1e-1)
+    p.add_argument("--levels", type=int, nargs="+", default=None, help="Optional multires factors, e.g., 4 2 1")
+    p.add_argument("--views-per-batch", type=int, default=0, help="Batch views to control memory (0=all)")
+    p.add_argument("--projector-unroll", type=int, default=1, help="Unroll factor inside projector scan")
     p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
@@ -50,8 +53,14 @@ def main() -> None:
         lambda_tv=args.lambda_tv,
         lr_rot=args.lr_rot,
         lr_trans=args.lr_trans,
+        views_per_batch=int(args.views_per_batch),
+        projector_unroll=int(args.projector_unroll),
     )
-    x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
+    if args.levels is not None and len(args.levels) > 0:
+        from ..align.pipeline import align_multires
+        x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
+    else:
+        x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
 
     save_nxtomo(
         args.out,

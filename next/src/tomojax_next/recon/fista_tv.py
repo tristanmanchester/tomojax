@@ -40,8 +40,14 @@ def grad_data_term(
     detector: Detector,
     projections: jnp.ndarray,
     x: jnp.ndarray,
+    *,
+    views_per_batch: int | None = None,
+    projector_unroll: int = 1,
 ) -> Tuple[jnp.ndarray, float]:
-    """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss via vmapped projector."""
+    """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss via vmapped projector.
+
+    Supports view chunking to control memory via `views_per_batch`.
+    """
     n_views = int(projections.shape[0])
     T_all = jnp.stack(
         [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
@@ -49,14 +55,21 @@ def grad_data_term(
     )
 
     vm_project = jax.vmap(
-        lambda T, vol: forward_project_view_T(T, grid, detector, vol, use_checkpoint=True),
+        lambda T, vol: forward_project_view_T(
+            T, grid, detector, vol, use_checkpoint=True, unroll=int(projector_unroll)
+        ),
         in_axes=(0, None),
     )
 
     def data_loss(vol):
-        pred = vm_project(T_all, vol)
-        resid = (pred - projections).astype(jnp.float32)
-        return 0.5 * jnp.vdot(resid, resid).real
+        n = T_all.shape[0]
+        b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
+        loss = jnp.float32(0.0)
+        for s in range(0, n, b):
+            pred = vm_project(T_all[s : s + b], vol)
+            resid = (pred - projections[s : s + b]).astype(jnp.float32)
+            loss = loss + 0.5 * jnp.vdot(resid, resid).real
+        return loss
 
     val, grad = jax.value_and_grad(data_loss)(x)
     return grad, float(val)
@@ -117,6 +130,8 @@ def fista_tv(
     L: float | None = None,
     callback: Callable[[int, float], None] | None = None,
     init_x: jnp.ndarray | None = None,
+    views_per_batch: int | None = None,
+    projector_unroll: int = 1,
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization for parallel-ray geometry.
 
@@ -132,23 +147,14 @@ def fista_tv(
     t = 1.0
     if L is None:
         L = power_method_L(geometry, grid, detector, projections.shape, iters=5)
-    # Precompute nominal poses and set up jitted loss/grad and prox
-    n_views = int(projections.shape[0])
-    T_all = jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
-    vm_project = jax.vmap(
-        lambda T, vol: forward_project_view_T(T, grid, detector, vol, use_checkpoint=True),
-        in_axes=(0, None),
-    )
-
-    def data_loss(vol):
-        pred = vm_project(T_all, vol)
-        resid = (pred - projections).astype(jnp.float32)
-        return 0.5 * jnp.vdot(resid, resid).real
-
-    val_and_grad = jax.jit(jax.value_and_grad(data_loss))
+    # Precompute jitted loss/grad using the chunked grad_data_term
+    def val_and_grad_fn(z):
+        g, v = grad_data_term(
+            geometry, grid, detector, projections, z,
+            views_per_batch=views_per_batch, projector_unroll=projector_unroll
+        )
+        return v, g
+    val_and_grad = jax.jit(val_and_grad_fn)
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
     def step(carry, k):

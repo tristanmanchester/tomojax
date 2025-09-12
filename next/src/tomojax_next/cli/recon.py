@@ -33,6 +33,8 @@ def main() -> None:
     p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
     p.add_argument("--iters", type=int, default=50, help="FISTA iterations")
     p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight")
+    p.add_argument("--views-per-batch", type=int, default=0, help="Batch views to control memory (FISTA)")
+    p.add_argument("--projector-unroll", type=int, default=1, help="Unroll factor inside projector scan")
     p.add_argument("--out", required=True, help="Output .nxs containing recon (and copying projections)")
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
@@ -48,7 +50,17 @@ def main() -> None:
     if args.algo == "fbp":
         vol = fbp(geom, grid, detector, proj, filter_name=args.filter)
     else:
-        vol, info = fista_tv(geom, grid, detector, proj, iters=args.iters, lambda_tv=args.lambda_tv)
+        vpb = int(args.views_per_batch) if int(args.views_per_batch) > 0 else None
+        vol, info = fista_tv(
+            geom,
+            grid,
+            detector,
+            proj,
+            iters=args.iters,
+            lambda_tv=args.lambda_tv,
+            views_per_batch=vpb,
+            projector_unroll=int(args.projector_unroll),
+        )
 
     save_nxtomo(
         args.out,

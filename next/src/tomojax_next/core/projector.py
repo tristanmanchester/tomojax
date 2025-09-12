@@ -86,9 +86,9 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
     return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
 
 
+# (kept for potential legacy callers; not used by the new incremental projector)
 @jax.jit
 def _apply_Tinv(Tinv, pts):
-    # pts: (3, N)
     R = Tinv[:3, :3]
     t = Tinv[:3, 3:4]
     return R @ pts + t
