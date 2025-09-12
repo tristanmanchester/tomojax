@@ -41,4 +41,15 @@ simulate-example = "python -m tomojax.cli.simulate --nx 32 --ny 32 --nz 32 --nu 
 recon-example = "python -m tomojax.cli.recon --data data/sim_v2.nxs --algo fbp --filter ramp --out runs/fbp_v2.nxs"
 align-example = "python -m tomojax.cli.align --data data/sim_v2.nxs --outer-iters 2 --recon-iters 5 --lambda-tv 0.001 --out runs/align_v2.nxs"
 
+# Convenience pass-through tasks (accept additional args)
+simulate = "python -m tomojax.cli.simulate"
+misalign = "python -m tomojax.cli.misalign"
+recon = "python -m tomojax.cli.recon"
+align = "python -m tomojax.cli.align"
+convert = "python -m tomojax.cli.convert"
+
 # (No legacy aliases; v2 is primary)
+
+# Performance harness
+perf-sweep = "python scripts/perf_harness.py --data data/sim_v2.nxs --outdir runs/perf"
+perf-demo = "python -m tomojax.cli.simulate --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 128 --geometry parallel --phantom random_shapes --n-cubes 16 --n-spheres 16 --min-size 4 --max-size 12 --out data/sim_perf.nxs && python scripts/perf_harness.py --data data/sim_perf.nxs --outdir runs/perf"

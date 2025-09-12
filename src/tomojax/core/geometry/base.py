@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol, Tuple
 
 
-@dataclass
+@dataclass(frozen=True)
 class Grid:
     nx: int
     ny: int
@@ -37,7 +37,7 @@ class Grid:
         return d
 
 
-@dataclass
+@dataclass(frozen=True)
 class Detector:
     nu: int
     nv: int
@@ -72,4 +72,3 @@ class Geometry(Protocol):
 
         origin_fn(u,v) -> (x,y,z); dir_fn(u,v) -> (dx,dy,dz) normalized.
         """
-

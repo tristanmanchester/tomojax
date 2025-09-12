@@ -43,6 +43,8 @@ def grad_data_term(
     *,
     views_per_batch: int | None = None,
     projector_unroll: int = 1,
+    checkpoint_projector: bool = True,
+    gather_dtype: str = "fp32",
 ) -> Tuple[jnp.ndarray, float]:
     """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss via vmapped projector.
 
@@ -56,7 +58,13 @@ def grad_data_term(
 
     vm_project = jax.vmap(
         lambda T, vol: forward_project_view_T(
-            T, grid, detector, vol, use_checkpoint=True, unroll=int(projector_unroll)
+            T,
+            grid,
+            detector,
+            vol,
+            use_checkpoint=checkpoint_projector,
+            unroll=int(projector_unroll),
+            gather_dtype=gather_dtype,
         ),
         in_axes=(0, None),
     )
@@ -84,6 +92,8 @@ def power_method_L(
     iters: int = 10,
     views_per_batch: int | None = None,
     projector_unroll: int = 1,
+    checkpoint_projector: bool = True,
+    gather_dtype: str = "fp32",
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     n_views, nv, nu = projections_shape
@@ -99,6 +109,8 @@ def power_method_L(
             v,
             views_per_batch=views_per_batch,
             projector_unroll=projector_unroll,
+            checkpoint_projector=checkpoint_projector,
+            gather_dtype=gather_dtype,
         )
         v = g / (jnp.linalg.norm(g.ravel()) + 1e-12)
     # Rayleigh quotient
@@ -110,6 +122,8 @@ def power_method_L(
         v,
         views_per_batch=views_per_batch,
         projector_unroll=projector_unroll,
+        checkpoint_projector=checkpoint_projector,
+        gather_dtype=gather_dtype,
     )
     L = float(jnp.vdot(v, g).real)
     return max(L, 1e-6)
@@ -150,6 +164,8 @@ def fista_tv(
     init_x: jnp.ndarray | None = None,
     views_per_batch: int | None = None,
     projector_unroll: int = 1,
+    checkpoint_projector: bool = True,
+    gather_dtype: str = "fp32",
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization for parallel-ray geometry.
 
@@ -172,12 +188,21 @@ def fista_tv(
             iters=5,
             views_per_batch=views_per_batch,
             projector_unroll=projector_unroll,
+            checkpoint_projector=checkpoint_projector,
+            gather_dtype=gather_dtype,
         )
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
         g, v = grad_data_term(
-            geometry, grid, detector, projections, z,
-            views_per_batch=views_per_batch, projector_unroll=projector_unroll
+            geometry,
+            grid,
+            detector,
+            projections,
+            z,
+            views_per_batch=views_per_batch,
+            projector_unroll=projector_unroll,
+            checkpoint_projector=checkpoint_projector,
+            gather_dtype=gather_dtype,
         )
         return v, g
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))

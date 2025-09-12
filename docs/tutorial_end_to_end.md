@@ -19,6 +19,8 @@ All commands assume you are inside the pixi environment.
   - `tomojax.cli.simulate` — create NXtomo datasets (.nxs)
   - `tomojax.cli.recon` — FBP or FISTA reconstructions
   - `tomojax.cli.align` — joint alignment + reconstruction
+  - `tomojax.cli.misalign` — generate per-view perturbations and reproject
+  - Convenience pixi tasks mirror these modules: `simulate`, `recon`, `align`, `misalign`
 - Python APIs (for custom steps):
   - `tomojax.data.io_hdf5` — read/write .nxs
   - `tomojax.core.projector` + `align.parametrizations` — misalign + project
@@ -39,7 +41,7 @@ Note: the first projector/align call compiles with XLA and takes longer; subsequ
 runs are faster. The preflight helps warm the cache.
 
 
-## 1) Simulate a 128³ Phantom (20 spheres + 20 cubes, values 0.01–0.1)
+## 1) Simulate a 256³ Phantom (40 spheres + 40 cubes, values 0.01–0.1)
 
 We use the “random_shapes” phantom with controlled counts and value range.
 
@@ -91,7 +93,7 @@ pixi run misalign \
 ```
 
 
-## 4) Naive FBP Reconstructions
+## 4) Naive FBP Reconstructions (batched)
 
 Run FBP on both the misaligned and the noisy+misaligned datasets.
 
@@ -100,6 +102,7 @@ Run FBP on both the misaligned and the noisy+misaligned datasets.
 pixi run recon \
   --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp \
+  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector \
   --out out/fbp_misaligned.nxs \
   --progress
 
@@ -107,6 +110,7 @@ pixi run recon \
 pixi run recon \
   --data data/sim_misaligned_poisson5k.nxs \
   --algo fbp --filter ramp \
+  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector \
   --out out/fbp_misaligned_noisy.nxs \
   --progress
 ```
@@ -114,7 +118,7 @@ pixi run recon \
 
 ## 5) Iterative Alignment + Reconstruction (Levels [4, 2, 1])
 
-Use multires alignment with Gauss–Newton updates and view batching for speed.
+Use multires alignment with Gauss–Newton updates, auto-batched views, and bf16 gather for speed.
 
 ```
 # Misaligned (clean)
@@ -123,7 +127,7 @@ pixi run align \
   --levels 4 2 1 \
   --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch 16 --projector-unroll 4 \
+  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
   --log-summary \
   --out out/align_misaligned.nxs \
   --progress
@@ -134,7 +138,7 @@ pixi run align \
   --levels 4 2 1 \
   --outer-iters 5 --recon-iters 30 --lambda-tv 0.01 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch 16 --projector-unroll 4 \
+  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
   --log-summary \
   --out out/align_misaligned_noisy.nxs \
   --progress
@@ -163,11 +167,12 @@ ccpi, tomviz) or by writing a small slice/isosurface notebook.
 
 ## Appendix — Knobs That Matter
 
-- `--views-per-batch`: trades memory for throughput by chunking views.
-- `--projector-unroll`: unroll factor for the projector’s `lax.scan` (4–8 is good on GPUs).
+- `--views-per-batch` or `auto`: trades memory for throughput by chunking views; `auto` chooses a safe batch from detected free memory.
+- `--projector-unroll`: unroll factor for the projector’s `lax.scan` (2–4 is a good starting point on GPUs).
+- `--gather-dtype {fp32,bf16,fp16}`: reduces projector gather bandwidth; accumulation remains fp32 (bf16 recommended on modern GPUs).
+- `--[no-]checkpoint-projector`: toggles rematerialization to cut activation memory at ~10–25% extra compute.
 - `--lambda-tv`: increase for noisy data; keep accumulations in fp32.
 - `--opt-method`: `gn` is robust and fast; `gd` is simpler but may need more outer iterations.
-- Mixed precision gather (advanced): the projector supports `gather_dtype="bf16"` internally; if you want a CLI flag for this, we can expose it easily.
 
 Logging and progress
 - Add `--log-summary` to print per‑outer summaries:

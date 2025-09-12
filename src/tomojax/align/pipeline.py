@@ -25,6 +25,8 @@ class AlignConfig:
     # Memory/throughput knobs
     views_per_batch: int = 0  # 0 -> all views at once
     projector_unroll: int = 4
+    checkpoint_projector: bool = True
+    gather_dtype: str = "fp32"
     # Solver & regularization
     opt_method: str = "gd"  # default to GD for test compatibility
     gn_damping: float = 1e-6
@@ -80,7 +82,15 @@ def align(
 
     # Vmapped projector across views (pose-aware). Closure captures unroll as a static constant.
     def _project_batch(T_batch, vol):
-        f = lambda T: forward_project_view_T(T, grid, detector, vol, use_checkpoint=True, unroll=int(cfg.projector_unroll))
+        f = lambda T: forward_project_view_T(
+            T,
+            grid,
+            detector,
+            vol,
+            use_checkpoint=cfg.checkpoint_projector,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+        )
         return jax.vmap(f, in_axes=0)(T_batch)
 
     def align_loss(params5, vol):
@@ -108,7 +118,15 @@ def align(
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
     def _pred_flat(T_i, vol):
-        return forward_project_view_T(T_i, grid, detector, vol, use_checkpoint=True, unroll=int(cfg.projector_unroll)).ravel()
+        return forward_project_view_T(
+            T_i,
+            grid,
+            detector,
+            vol,
+            use_checkpoint=cfg.checkpoint_projector,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+        ).ravel()
 
     def _gn_update_one(p5_i, T_nom_i, y_i, vol):
         def f(p5):
@@ -152,6 +170,8 @@ def align(
             init_x=x,
             views_per_batch=(cfg.views_per_batch if cfg.views_per_batch > 0 else None),
             projector_unroll=int(cfg.projector_unroll),
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
         )
         if cfg.log_summary:
             if info_rec and "loss" in info_rec and info_rec["loss"]:
@@ -287,15 +307,37 @@ def align_multires(
         params0 = params5
         if li == 0 and cfg.seed_translations:
             # quick seed recon to project nominal poses
-            x_seed, _ = fista_tv(geometry, g, d, y, iters=max(3, cfg.recon_iters // 2), lambda_tv=cfg.lambda_tv, init_x=x0)
-            T_nom = jnp.stack([jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(y.shape[0])], axis=0)
+            x_seed, _ = fista_tv(
+                geometry,
+                g,
+                d,
+                y,
+                iters=max(3, cfg.recon_iters // 2),
+                lambda_tv=cfg.lambda_tv,
+                init_x=x0,
+                projector_unroll=int(cfg.projector_unroll),
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=cfg.gather_dtype,
+            )
+            T_nom = jnp.stack(
+                [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(y.shape[0])],
+                axis=0,
+            )
             from ..utils.phasecorr import phase_corr_shift
-            shifts = []
-            for i in range(y.shape[0]):
-                pred = forward_project_view_T(T_nom[i], g, d, x_seed, use_checkpoint=True)
-                du, dv = phase_corr_shift(pred, y[i])
-                shifts.append((du, dv))
-            shifts = jnp.asarray(shifts, dtype=jnp.float32)
+            vm_pred = jax.vmap(
+                lambda T: forward_project_view_T(
+                    T,
+                    g,
+                    d,
+                    x_seed,
+                    use_checkpoint=cfg.checkpoint_projector,
+                    gather_dtype=cfg.gather_dtype,
+                ),
+                in_axes=0,
+            )
+            preds = vm_pred(T_nom)
+            shift_uv = jax.vmap(phase_corr_shift)(preds, y)  # returns (du, dv)
+            shifts = jnp.stack(shift_uv, axis=1).astype(jnp.float32)  # (n, 2)
             # Convert pixel shifts to world units using detector spacing
             dx = shifts[:, 0] * jnp.float32(d.du)
             dz = shifts[:, 1] * jnp.float32(d.dv)
