@@ -1,5 +1,7 @@
 # TomoJAX: Differentiable CT Projector with Alignment
 
+TomoJAX v2 is the primary package at import path `tomojax`. CLIs run via `python -m tomojax.cli.<cmd>` and a full, copy‑paste tutorial lives in `docs/tutorial_end_to_end.md`.
+
 **TomoJAX** is a fully differentiable, memory-efficient parallel-beam CT projector implemented in JAX. It provides exact gradients for **5-DOF rigid-body alignment optimization**, making it ideal for CT reconstruction, view alignment, and deep learning applications requiring data consistency.
 
 #### Alignment demonstration
@@ -41,41 +43,24 @@
 
 ## Quick Start
 
-### Basic Forward Projection
-```python
-import jax.numpy as jnp
-from projector_parallel_jax import forward_project_view
-
-# Project single view with alignment parameters
-proj = forward_project_view(
-    params=jnp.array([alpha, beta, phi, dx, dz]),  # 5-DOF rigid params
-    recon_flat=volume.ravel(),                     # Flattened volume
-    nx=nx, ny=ny, nz=nz,                          # Grid dimensions
-    vx=vx, vy=vy, vz=vz,                          # Voxel sizes
-    nu=nu, nv=nv,                                 # Detector size
-    du=du, dv=dv,                                 # Detector pixel size
-    vol_origin=vol_origin,                        # Volume origin
-    det_center=det_center,                        # Detector center
-    step_size=step_size,                          # Integration step
-    n_steps=n_steps                               # Steps count
-)
-```
-
-### Joint Reconstruction & Alignment
 ```bash
-# Generate misaligned test data
-python examples/run_parallel_projector_misaligned.py \
-    --nx 128 --ny 128 --nz 128 --n-proj 128 \
-    --max-trans-pixels 3.0 --max-rot-degrees 2.0 \
-    --output-dir misaligned_test
+# Inside pixi environment
+pixi run install-root
 
-# Run joint optimisation
-python alignment-testing/run_alignment.py \
-    --input-dir misaligned_test \
-    --bin-factors 4 2 1 \
-    --outer-iters 15 \
-    --optimizer adabelief \
-    --lambda-tv 0.005
+# Simulate, misalign/noise, reconstruct, and align
+python -m tomojax.cli.simulate --help
+python -m tomojax.cli.misalign --help
+python -m tomojax.cli.recon --help
+python -m tomojax.cli.align --help
+
+# Or use pixi tasks
+pixi run simulate
+pixi run misalign
+pixi run recon
+pixi run align
+
+# Full tutorial
+less docs/tutorial_end_to_end.md
 ```
 
 ## Alignment Algorithm
@@ -90,16 +75,9 @@ The implementation uses multi-resolution alternating optimisation:
 4. **Convergence**: Monitor objective function and parameter changes
 
 
-## Examples & Usage
+## Notes
 
-| Script | Description |
-|--------|-------------|
-| `examples/run_parallel_projector.py` | Basic projection demo |
-| `examples/run_parallel_projector_misaligned.py` | Generate misaligned test data |
-| `examples/run_parallel_reconstruction.py` | FBP reconstruction |
-| `examples/run_fista_tv.py` | TV-regularized iterative reconstruction |
-| `alignment-testing/run_alignment.py` | **Joint reconstruction & alignment** |
-| `alignment-testing/optimizer_comparison.py` | Benchmark alignment optimizers |
+- Legacy experimental scripts were removed. Use the CLIs above or the Python APIs under `tomojax.*`.
 
 ## Visual Examples
 

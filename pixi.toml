@@ -17,6 +17,7 @@ tqdm = ">=4.67.1,<5"
 cudnn = "*"
 h5py = ">=3.14.0,<4"
 pytest = ">=8,<9"
+pip = ">=25.2,<26"
 
 [pypi-dependencies]
 jax = { version = ">=0.5.3,<0.6", extras = ["cuda12"] }
@@ -27,10 +28,17 @@ cuda = "12"
 
 [tasks]
 test-gpu = "python -c \"import jax; print(f'JAX backend: {jax.default_backend()}'); print(f'Devices: {jax.devices()}')\""
-test-next = "PYTHONPATH=next/src pytest -q next/tests"
-convert-example = "PYTHONPATH=next/src python -m tomojax_next.cli.convert --in data/sim.npz --out data/sim.nxs"
 test-cpu = "JAX_PLATFORM_NAME=cpu python -c \"import jax; print(f'JAX backend: {jax.default_backend()}'); print(f'Devices: {jax.devices()}')\""
-simulate-example = "PYTHONPATH=next/src python -m tomojax_next.cli.simulate --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 16 --geometry parallel --phantom random_shapes --n-cubes 8 --n-spheres 8 --min-size 3 --max-size 8 --out data/sim_v2.nxs" 
-recon-example = "PYTHONPATH=next/src python -m tomojax_next.cli.recon --data data/sim_v2.nxs --algo fbp --filter ramp --out runs/fbp_v2.nxs"
-align-example = "PYTHONPATH=next/src python -m tomojax_next.cli.align --data data/sim_v2.nxs --outer-iters 2 --recon-iters 5 --lambda-tv 0.001 --out runs/align_v2.nxs"
-test-multires = "PYTHONPATH=next/src pytest -q next/tests/test_multires.py"
+
+# Root install and tests
+install-root = "pip install -e ."
+test = "pytest -q tests"
+test-multires = "pytest -q tests/test_multires.py"
+
+# Examples using tomojax CLI modules
+convert-example = "python -m tomojax.cli.convert --in data/sim.npz --out data/sim.nxs"
+simulate-example = "python -m tomojax.cli.simulate --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 16 --geometry parallel --phantom random_shapes --n-cubes 8 --n-spheres 8 --min-size 3 --max-size 8 --out data/sim_v2.nxs"
+recon-example = "python -m tomojax.cli.recon --data data/sim_v2.nxs --algo fbp --filter ramp --out runs/fbp_v2.nxs"
+align-example = "python -m tomojax.cli.align --data data/sim_v2.nxs --outer-iters 2 --recon-iters 5 --lambda-tv 0.001 --out runs/align_v2.nxs"
+
+# (No legacy aliases; v2 is primary)

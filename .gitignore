@@ -10,6 +10,8 @@ noisy_misaligned_recon/
 *.tiff
 *.npy
 *.nxs
+out/
+runs/
 parallel_proj_test/
 parallel_recon_test/
 fista_tv_recon/
