@@ -1,32 +1,35 @@
-To generate noisy misaligned projections:
+This guide is now covered by the new v2 CLIs and tutorial. Use the commands below or open `docs/tutorial_end_to_end.md` for a copy‑paste workflow.
+
+Quick reference (inside `pixi shell`):
 
 ```
-pixi run python examples/run_parallel_projector_misaligned.py --nx 256 --ny 256 --nz 256 --n-cubes 40 --n-spheres 40 --max-size 64 --min-size 4 --max-value 0.01 --min-value 0.001 --n-proj 512 --step-size 1 --checkpoint --max-trans-pixels 10 --max-rot-degrees 1 --add-projection-noise --incident-photons 100 --output-dir noisy-misaligned
+# Simulate
+pixi run simulate \
+  --out data/sim_aligned.nxs \
+  --nx 256 --ny 256 --nz 256 --nu 256 --nv 256 --n-views 200 \
+  --phantom random_shapes --n-cubes 40 --n-spheres 40 --min-size 4 --max-size 64 \
+  --min-value 0.01 --max-value 0.1 --seed 42
+
+# Misalign (and optionally add Poisson noise)
+pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \
+  --rot-deg 1.0 --trans-px 10 --seed 0
+pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson5k.nxs \
+  --rot-deg 1.0 --trans-px 10 --poisson 100 --seed 0
+
+# Reconstructions
+pixi run recon --data data/sim_misaligned.nxs \
+  --algo fbp --filter ramp --views-per-batch auto --gather-dtype bf16 \
+  --checkpoint-projector --out out/fbp_misaligned.nxs
+
+# Alignment + reconstruction (multires)
+pixi run align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
+  --opt-method gn --gn-damping 1e-3 \
+  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
+  --log-summary --out out/align_misaligned.nxs
 ```
 
-This will create 3D tiffs with:
-- a phantom
-- clean projections
-- misaligned projections
-- misaligned noisy projections
-
-
-For naive reconstructions of the misaligned data:
-```
-pixi run python examples/run_parallel_reconstruction.py --input-dir noisy-misaligned --output-dir misaligned_recon --projections-file projections_misaligned.tiff
-```
-
-For naive reconstructions of the noisy misaligned data:
-```
-pixi run python examples/run_parallel_reconstruction.py --input-dir noisy-misaligned --output-dir noisy_misaligned_recon --projections-file projections_noisy.tiff
-```
-
-For iterative alignment and reconstruction of the misaligned data:
-```
-pixi run python alignment-testing/run_alignment.py --optimizer lbfgs --input-dir noisy-misaligned --projections-file projections_misaligned.tiff --output-dir misaligned-alignment --bin-factors 4 2 1 --recon-iters 30 15 5 --align-iters 3 7 15 --outer-iters 15 --lambda-tv 0.001 
-```
-
-For iterative alignment and reconstruction of the noisy misaligned data:
-```
-pixi run python alignment-testing/run_alignment.py --optimizer lbfgs --input-dir noisy-misaligned --projections-file projections_noisy.tiff --output-dir noisy-alignment --bin-factors 8 4 2 1 --recon-iters 10 10 20 30 --align-iters 5 5 10 15 --outer-iters 20 --lambda-tv 0.01
-```
+Further details:
+- Tutorial: `docs/tutorial_end_to_end.md`
+- Data schema: `docs/schema_nxtomo.md`
+- FAQ/Troubleshooting: `docs/faq_troubleshooting.md`
