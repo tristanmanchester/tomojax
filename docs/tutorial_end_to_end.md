@@ -85,7 +85,7 @@ To add Poisson noise (e.g., 5000 photons/pixel) directly:
 ```
 pixi run misalign \
   --data data/sim_aligned.nxs \
-  --out data/sim_misaligned_poisson5k.nxs \
+  --out data/sim_misaligned_poisson.nxs \
   --rot-deg 1.0 --trans-px 10 \
   --poisson 100 \
   --seed 0 \
@@ -108,7 +108,7 @@ pixi run recon \
 
 # Noisy + misaligned
 pixi run recon \
-  --data data/sim_misaligned_poisson5k.nxs \
+  --data data/sim_misaligned_poisson.nxs \
   --algo fbp --filter ramp \
   --views-per-batch auto --gather-dtype bf16 --checkpoint-projector \
   --out out/fbp_misaligned_noisy.nxs \
@@ -134,9 +134,9 @@ pixi run align \
 
 # Noisy + misaligned (stronger TV and a few more iters)
 pixi run align \
-  --data data/sim_misaligned_poisson5k.nxs \
+  --data data/sim_misaligned_poisson.nxs \
   --levels 4 2 1 \
-  --outer-iters 5 --recon-iters 30 --lambda-tv 0.01 \
+  --outer-iters 5 --recon-iters 30 --lambda-tv 0.03 --tv-prox-iters 20 \
   --opt-method gn --gn-damping 1e-3 \
   --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
   --log-summary \
@@ -172,6 +172,7 @@ ccpi, tomviz) or by writing a small slice/isosurface notebook.
 - `--gather-dtype {fp32,bf16,fp16}`: reduces projector gather bandwidth; accumulation remains fp32 (bf16 recommended on modern GPUs).
 - `--[no-]checkpoint-projector`: toggles rematerialization to cut activation memory at ~10–25% extra compute.
 - `--lambda-tv`: increase for noisy data; keep accumulations in fp32.
+- `--tv-prox-iters`: increase (e.g., 20–30) for heavy noise to strengthen the TV prox effect.
 - `--opt-method`: `gn` is robust and fast; `gd` is simpler but may need more outer iterations.
 
 Logging and progress

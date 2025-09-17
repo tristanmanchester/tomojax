@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
-from typing import Dict, Tuple, Iterable, List
+import time
+from typing import Any, Dict, Tuple, Iterable, List
 
 import jax
 import jax.numpy as jnp
@@ -10,7 +11,7 @@ import jax.numpy as jnp
 from ..core.geometry import Geometry, Grid, Detector
 from ..core.projector import forward_project_view_T
 from ..recon.fista_tv import fista_tv
-from ..utils.logging import progress_iter
+from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
 
 
@@ -19,6 +20,7 @@ class AlignConfig:
     outer_iters: int = 5
     recon_iters: int = 10
     lambda_tv: float = 0.005
+    tv_prox_iters: int = 10
     # Alignment step sizes
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
@@ -37,6 +39,13 @@ class AlignConfig:
     log_summary: bool = False
     # Reconstruction Lipschitz (optional override to skip power-method)
     recon_L: float | None = None
+    # Early stopping across outers (alignment phase)
+    early_stop: bool = True
+    early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
+    early_stop_patience: int = 2
+    # GN acceptance: only apply step if it reduces the alignment loss
+    gn_accept_only_improving: bool = True
+    gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
 
 
  # (Removed: AugmentedGeometry legacy wrapper; new alignment path uses pose-aware projector directly)
@@ -148,7 +157,81 @@ def align(
 
     _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None)))
 
+    # Reuse measured Lipschitz across outer iterations to avoid repeated power-method
+    L_prev = cfg.recon_L
+    small_impr_streak = 0
+    opt_mode = str(cfg.opt_method).lower()
+    outer_stats: List[Dict[str, Any]] = []
+    wall_start = time.perf_counter()
+
+    def _log_outer_summary(stat: Dict[str, Any]) -> None:
+        outer_idx = int(stat.get("outer_idx", 0))
+        total_iters = int(cfg.outer_iters)
+        total_time = format_duration(stat.get("outer_time"))
+        elapsed = format_duration(stat.get("cumulative_time"))
+        logging.info(
+            "Outer %d/%d | total %s | elapsed %s",
+            outer_idx,
+            total_iters,
+            total_time,
+            elapsed,
+        )
+
+        recon_parts: List[str] = []
+        recon_time = stat.get("recon_time")
+        if recon_time is not None:
+            recon_parts.append(f"time {format_duration(recon_time)}")
+        if stat.get("recon_retry"):
+            recon_parts.append("fallback retry")
+        l_meas = stat.get("L_meas")
+        l_next = stat.get("L_next")
+        if (l_meas is not None) and (l_next is not None):
+            recon_parts.append(f"L {l_meas:.3e}->{l_next:.3e}")
+        f_first = stat.get("fista_first")
+        f_last = stat.get("fista_last")
+        f_min = stat.get("fista_min")
+        if (f_first is not None) and (f_last is not None):
+            if f_min is not None:
+                recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e} (min {f_min:.3e})")
+            else:
+                recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e}")
+        logging.info("  Recon | %s", " | ".join(recon_parts) if recon_parts else "-")
+
+        align_parts: List[str] = []
+        align_time = stat.get("align_time")
+        if align_time is not None:
+            align_parts.append(f"time {format_duration(align_time)}")
+        step_kind = stat.get("step_kind")
+        if step_kind == "gn":
+            rot_mean = stat.get("rot_mean")
+            trans_mean = stat.get("trans_mean")
+            if rot_mean is not None:
+                align_parts.append(f"|drot|_mean {rot_mean:.3e} rad")
+            if trans_mean is not None:
+                align_parts.append(f"|dtrans|_mean {trans_mean:.3e}")
+        elif step_kind == "gd":
+            rot_rms = stat.get("rot_rms")
+            trans_rms = stat.get("trans_rms")
+            if rot_rms is not None:
+                align_parts.append(f"rot RMS {rot_rms:.3e}")
+            if trans_rms is not None:
+                align_parts.append(f"trans RMS {trans_rms:.3e}")
+        loss_before = stat.get("loss_before")
+        loss_after = stat.get("loss_after")
+        loss_delta = stat.get("loss_delta")
+        rel_pct = stat.get("loss_rel_pct")
+        if (loss_before is not None) and (loss_after is not None):
+            rel_str = f", {rel_pct:+.2f}%" if rel_pct is not None else ""
+            align_parts.append(
+                f"loss {loss_before:.3e}->{loss_after:.3e} (Δ {loss_delta:+.3e}{rel_str})"
+            )
+        logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
+
     for it in progress_iter(range(cfg.outer_iters), total=cfg.outer_iters, desc="Align: outer iters"):
+        outer_idx = it + 1
+        stat: Dict[str, Any] = {"outer_idx": outer_idx}
+        outer_start = time.perf_counter()
+
         # Reconstruction step
         class _GAll:
             def pose_for_view(self, i):
@@ -159,61 +242,101 @@ def align(
             def rays_for_view(self, i):
                 return geometry.rays_for_view(i)
 
-        x, info_rec = fista_tv(
-            _GAll(),
-            grid,
-            detector,
-            projections,
-            iters=cfg.recon_iters,
-            lambda_tv=cfg.lambda_tv,
-            L=cfg.recon_L,
-            init_x=x,
-            views_per_batch=(cfg.views_per_batch if cfg.views_per_batch > 0 else None),
-            projector_unroll=int(cfg.projector_unroll),
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-        )
-        if cfg.log_summary:
-            if info_rec and "loss" in info_rec and info_rec["loss"]:
+        def _run_fista_safe(vpb: int | None, unroll: int, gather: str, gm: str):
+            return fista_tv(
+                _GAll(),
+                grid,
+                detector,
+                projections,
+                iters=cfg.recon_iters,
+                lambda_tv=cfg.lambda_tv,
+                L=L_prev,
+                init_x=x,
+                views_per_batch=vpb,
+                projector_unroll=int(unroll),
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=gather,
+                grad_mode=gm,
+                tv_prox_iters=int(cfg.tv_prox_iters),
+            )
+
+        vpb0 = (cfg.views_per_batch if cfg.views_per_batch > 0 else None)
+        recon_retry = False
+        recon_start = time.perf_counter()
+        try:
+            x, info_rec = _run_fista_safe(vpb0, int(cfg.projector_unroll), cfg.gather_dtype, "auto")
+        except Exception as e:
+            msg = str(e)
+            if ("RESOURCE_EXHAUSTED" in msg) or ("Out of memory" in msg) or ("Allocator" in msg):
+                logging.warning("FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)")
+                try:
+                    recon_retry = True
+                    x, info_rec = _run_fista_safe(1, 1, cfg.gather_dtype, "stream")
+                except Exception as e2:
+                    msg2 = str(e2)
+                    if ("RESOURCE_EXHAUSTED" in msg2) or ("Out of memory" in msg2) or ("Allocator" in msg2):
+                        logging.error(
+                            "FISTA still OOM at finest level. Suggest reducing --views-per-batch, setting --projector-unroll 1, or pinning --recon-L to skip power-method."
+                        )
+                    raise
+            else:
+                raise
+        recon_time = time.perf_counter() - recon_start
+        stat["recon_time"] = recon_time
+        stat["recon_retry"] = recon_retry
+        # Capture and reuse measured L next iteration (with small safety margin)
+        try:
+            L_meas = float(info_rec.get("L", 0.0))
+            if L_meas > 0.0:
+                L_prev = 1.2 * L_meas
+                stat["L_meas"] = L_meas
+                stat["L_next"] = L_prev
+        except Exception:
+            pass
+        if info_rec and "loss" in info_rec and info_rec["loss"]:
+            try:
                 lhist = info_rec["loss"]
-                logging.info(
-                    "FISTA summary (outer %d/%d): first=%.4e last=%.4e min=%.4e",
-                    it + 1,
-                    cfg.outer_iters,
-                    float(lhist[0]),
-                    float(lhist[-1]),
-                    float(min(lhist)),
-                )
+                stat["fista_first"] = float(lhist[0])
+                stat["fista_last"] = float(lhist[-1])
+                stat["fista_min"] = float(min(lhist))
+            except Exception:
+                pass
 
         # Alignment step: Gauss–Newton or gradient descent
-        loss_before = None
-        if cfg.log_summary:
-            try:
-                loss_before = float(align_loss_jit(params5, x))
-            except Exception:
-                loss_before = None
-        if cfg.opt_method.lower() == "gn":
+        # Evaluate alignment loss before update (needed for GN acceptance / early stop)
+        align_start = time.perf_counter()
+        try:
+            loss_before = float(align_loss_jit(params5, x))
+        except Exception:
+            loss_before = None
+        stat["loss_before"] = loss_before
+        step_kind = opt_mode
+        loss_after = None
+        if step_kind == "gn":
             n = params5.shape[0]
             b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n
             dp_all = []
+            params5_prev = params5
             for s in range(0, n, b):
                 dp_chunk = _gn_update_batch(
                     params5[s : s + b], T_nom_all[s : s + b], projections[s : s + b], x
                 )
                 params5 = params5.at[s : s + b].add(dp_chunk)
                 dp_all.append(dp_chunk)
-            if cfg.log_summary and dp_all:
+            # Compute post-update loss and accept/reject
+            loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
+            if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
+                tol = float(cfg.gn_accept_tol) * abs(loss_before)
+                if not (loss_after < loss_before - tol):
+                    # Reject step
+                    params5 = params5_prev
+                    loss_after = loss_before
+            # Log step stats
+            if dp_all:
                 try:
                     dp_cat = jnp.concatenate(dp_all, axis=0)
-                    rot_mean = float(jnp.mean(jnp.abs(dp_cat[:, :3])))
-                    trans_mean = float(jnp.mean(jnp.abs(dp_cat[:, 3:])))
-                    logging.info(
-                        "GN step stats (outer %d/%d): |drot|_mean=%.3e rad, |dtrans|_mean=%.3e",
-                        it + 1,
-                        cfg.outer_iters,
-                        rot_mean,
-                        trans_mean,
-                    )
+                    stat["rot_mean"] = float(jnp.mean(jnp.abs(dp_cat[:, :3])))
+                    stat["trans_mean"] = float(jnp.mean(jnp.abs(dp_cat[:, 3:])))
                 except Exception:
                     pass
         else:
@@ -229,35 +352,96 @@ def align(
             cand_params = params5 - 2.0 * g_params * eff_scales
             cand_loss = align_loss_jit(cand_params, x)
             params5 = jax.lax.cond(cand_loss < best_loss, lambda _: cand_params, lambda _: best_params, operand=None)
-            if cfg.log_summary:
-                try:
-                    rot_rms = float(jnp.mean(rms[:3]))
-                    trans_rms = float(jnp.mean(rms[3:]))
-                    logging.info(
-                        "GD grad RMS (outer %d/%d): rot=%.3e, trans=%.3e",
-                        it + 1,
-                        cfg.outer_iters,
-                        rot_rms,
-                        trans_rms,
-                    )
-                except Exception:
-                    pass
+            loss_after = float(jnp.minimum(best_loss, cand_loss)) if loss_before is not None else None
+            try:
+                stat["rot_rms"] = float(jnp.mean(rms[:3]))
+                stat["trans_rms"] = float(jnp.mean(rms[3:]))
+            except Exception:
+                pass
+        stat["step_kind"] = step_kind
+        stat["loss_after_step"] = loss_after
+        stat["align_time"] = time.perf_counter() - align_start
 
         # Track overall data loss
         total_loss = float(align_loss_jit(params5, x))
         loss_hist.append(total_loss)
-        if cfg.log_summary:
-            if loss_before is not None:
-                logging.info(
-                    "Align loss (outer %d/%d): before=%.4e after=%.4e delta=%.4e",
-                    it + 1,
-                    cfg.outer_iters,
-                    float(loss_before),
-                    float(total_loss),
-                    float(total_loss - loss_before),
-                )
+        stat["loss_after"] = total_loss
+        if loss_before is not None:
+            delta = total_loss - loss_before
+            stat["loss_delta"] = delta
+            stat["loss_rel_pct"] = (delta / loss_before) * 100.0 if abs(loss_before) > 1e-12 else None
+            rel_impr = (loss_before - total_loss) / max(loss_before, 1.0)
+        else:
+            stat["loss_delta"] = None
+            stat["loss_rel_pct"] = None
+            rel_impr = None
+        stat["rel_impr"] = rel_impr
 
-    info = {"loss": loss_hist}
+        outer_time = time.perf_counter() - outer_start
+        stat["outer_time"] = outer_time
+        stat["cumulative_time"] = time.perf_counter() - wall_start
+        outer_stats.append(stat)
+
+        if cfg.log_summary:
+            _log_outer_summary(stat)
+
+        # Early stopping based on alignment improvement during GN/GD step
+        if cfg.early_stop and (rel_impr is not None):
+            if rel_impr < float(cfg.early_stop_rel_impr):
+                small_impr_streak += 1
+            else:
+                small_impr_streak = 0
+            if small_impr_streak >= int(cfg.early_stop_patience):
+                if cfg.log_summary:
+                    logging.info(
+                        "Early stop after %d outer iters (%s elapsed): rel_impr=%.3e < %.3e for %d consecutive outers",
+                        outer_idx,
+                        format_duration(stat.get("cumulative_time")),
+                        float(rel_impr),
+                        float(cfg.early_stop_rel_impr),
+                        int(cfg.early_stop_patience),
+                    )
+                break
+        elif cfg.early_stop:
+            small_impr_streak = 0
+
+    if cfg.log_summary and outer_stats:
+        recon_total = sum(float(s.get("recon_time", 0.0)) for s in outer_stats if s.get("recon_time") is not None)
+        align_total = sum(float(s.get("align_time", 0.0)) for s in outer_stats if s.get("align_time") is not None)
+        wall_total = time.perf_counter() - wall_start
+        logging.info(
+            "Alignment completed in %s (recon %s, align %s over %d outer iters)",
+            format_duration(wall_total),
+            format_duration(recon_total),
+            format_duration(align_total),
+            len(outer_stats),
+        )
+        first_loss = outer_stats[0].get("loss_before") if outer_stats else None
+        final_loss = outer_stats[-1].get("loss_after") if outer_stats else None
+        if (first_loss is not None) and (final_loss is not None):
+            total_delta = final_loss - first_loss
+            rel_pct = (total_delta / first_loss) * 100.0 if abs(first_loss) > 1e-12 else None
+            rel_str = f", {rel_pct:+.2f}%" if rel_pct is not None else ""
+            logging.info(
+                "  Loss %s -> %s (Δ %s%s)",
+                f"{first_loss:.3e}",
+                f"{final_loss:.3e}",
+                f"{total_delta:+.3e}",
+                rel_str,
+            )
+        best_loss = min(
+            (s.get("loss_after") for s in outer_stats if s.get("loss_after") is not None),
+            default=None,
+        )
+        if best_loss is not None and final_loss is not None and best_loss < final_loss:
+            logging.info("  Best loss observed: %.3e", best_loss)
+
+    # Provide last measured/reused L for potential reuse across levels
+    info = {
+        "loss": loss_hist,
+        "L": (float(L_prev) if L_prev is not None else None),
+        "outer_stats": outer_stats,
+    }
     return x, params5, info
 
 
@@ -346,8 +530,10 @@ def align_multires(
             params0 = params0.at[:, 4].set(dz)
 
         # Run alignment at this level
+        # Re-estimate L at each level using a fresh (streamed) power-method for stability
+        cfg_level = replace(cfg, recon_L=None)
         x_lvl, params5, info = align(
-            geometry, g, d, y, cfg=cfg, init_x=x0, init_params5=params0
+            geometry, g, d, y, cfg=cfg_level, init_x=x0, init_params5=params0
         )
         loss_hist.extend(info.get("loss", []))
         x_init = x_lvl

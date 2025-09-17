@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import Iterable, Iterator, Optional
 
@@ -52,3 +53,28 @@ def progress_iter(iterable: Iterable, *, total: Optional[int] = None, desc: str 
                 if i == 1 or i == total or i % step == 0:
                     print(f"{desc} {i}/{total}", flush=True)
                 yield x
+
+
+def format_duration(seconds: float | None) -> str:
+    """Render a wall-clock duration as a compact human-readable string."""
+    if seconds is None:
+        return "-"
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return "-"
+    if not math.isfinite(value):
+        return "-"
+    value = max(value, 0.0)
+    if value < 1e-3:
+        return f"{value * 1e6:.0f}µs"
+    if value < 1.0:
+        return f"{value * 1e3:.0f}ms" if value < 0.1 else f"{value:.2f}s"
+
+    minutes, seconds_rem = divmod(value, 60.0)
+    hours, minutes = divmod(minutes, 60.0)
+    if hours >= 1.0:
+        return f"{int(hours)}h{int(minutes):02d}m{seconds_rem:04.1f}s"
+    if minutes >= 1.0:
+        return f"{int(minutes)}m{seconds_rem:04.1f}s"
+    return f"{seconds_rem:.1f}s"

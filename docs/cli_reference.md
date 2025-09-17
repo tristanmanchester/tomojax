@@ -76,7 +76,7 @@ Usage
 ```
 python -m tomojax.cli.recon --data <in.nxs> \
   [--algo fbp|fista] [--filter ramp|shepp|hann] \
-  [--iters <int>] [--lambda-tv <float>] [--L <float>] \
+  [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
   [--views-per-batch <int|auto>] [--projector-unroll <int>] \
   [--gather-dtype fp32|bf16|fp16] [--checkpoint-projector|--no-checkpoint-projector] \
   --out <out.nxs> [--progress]
@@ -85,7 +85,7 @@ python -m tomojax.cli.recon --data <in.nxs> \
 Key options
 - Algorithm: `--algo fbp` (default) or `fista`.
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
-- FISTA: `--iters` (50), `--lambda-tv` (0.005), optional fixed `--L` to skip power‑method.
+- FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method.
 - Memory/performance: `--views-per-batch auto` (recommended), `--projector-unroll` (1–4), `--gather-dtype` (bf16 recommended on modern GPUs), projector checkpointing on by default.
 
 Examples
@@ -111,6 +111,7 @@ Usage
 ```
 python -m tomojax.cli.align --data <in.nxs> \
   [--outer-iters <int>] [--recon-iters <int>] [--lambda-tv <float>] \
+  [--tv-prox-iters <int>] \
   [--lr-rot <float>] [--lr-trans <float>] \
   [--opt-method gd|gn] [--gn-damping <float>] \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
@@ -121,12 +122,17 @@ python -m tomojax.cli.align --data <in.nxs> \
 ```
 
 Key options
-- Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005).
+- Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--tv-prox-iters` (10; increase to 20–30 for noisy data).
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
 - Smoothness across views: `--w-rot`, `--w-trans` (default 1e‑3 in CLI).
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
 - Memory/performance: same knobs as recon; prefer `--views-per-batch auto`.
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
+- Early stopping and GN acceptance are enabled by default during alignment: outers stop when relative improvement is tiny, and GN steps are rejected if they don’t reduce loss.
+  Use `--log-summary` to see when early stopping triggers.
+
+Notes
+- The align CLI initializes a persistent JAX compilation cache automatically. Set `TOMOJAX_JAX_CACHE_DIR` to control the cache location.
 
 Examples
 ```
@@ -168,4 +174,3 @@ pixi run python -m tomojax.cli.convert --in data/sim_aligned.npz --out data/sim_
 - `TOMOJAX_JAX_CACHE_DIR=<path>` — persistent JAX compilation cache directory.
 - `JAX_PLATFORM_NAME=cpu` or `JAX_PLATFORMS=cuda` — pin backend selection.
 - `XLA_PYTHON_CLIENT_PREALLOCATE=false` — disable device memory preallocation.
-

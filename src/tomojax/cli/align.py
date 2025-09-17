@@ -12,6 +12,31 @@ from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
 
 
+def _init_jax_compilation_cache() -> None:
+    """Enable JAX persistent compilation cache for faster re-runs.
+
+    Directory precedence:
+    - TOMOJAX_JAX_CACHE_DIR if set
+    - ${XDG_CACHE_HOME:-~/.cache}/tomojax/jax_cache
+    """
+    try:
+        # Avoid noisy logs on environments without this feature
+        from jax.experimental import compilation_cache as cc  # type: ignore
+    except Exception:
+        return
+    try:
+        cache_dir = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
+        if not cache_dir:
+            base = os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
+            cache_dir = os.path.join(base, "tomojax", "jax_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        cc.initialize_cache(cache_dir)
+        logging.info("JAX compilation cache: %s", cache_dir)
+    except Exception:
+        # Best-effort; skip on any failure silently
+        pass
+
+
 def build_geometry(meta: dict):
     grid_d = meta["grid"]; det_d = meta["detector"]; thetas = meta["thetas_deg"]; gtype = meta.get("geometry_type", "parallel")
     grid = Grid(**{k: grid_d[k] for k in ("nx","ny","nz","vx","vy","vz")})
@@ -31,6 +56,7 @@ def main() -> None:
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
     p.add_argument("--lambda-tv", type=float, default=0.005)
+    p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator")
     p.add_argument("--lr-rot", type=float, default=1e-3)
     p.add_argument("--lr-trans", type=float, default=1e-1)
     p.add_argument("--levels", type=int, nargs="+", default=None, help="Optional multires factors, e.g., 4 2 1")
@@ -53,6 +79,7 @@ def main() -> None:
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
+    _init_jax_compilation_cache()
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
     meta = load_nxtomo(args.data)
@@ -78,6 +105,7 @@ def main() -> None:
         outer_iters=args.outer_iters,
         recon_iters=args.recon_iters,
         lambda_tv=args.lambda_tv,
+        tv_prox_iters=int(args.tv_prox_iters),
         lr_rot=args.lr_rot,
         lr_trans=args.lr_trans,
         views_per_batch=int(vpb_est),

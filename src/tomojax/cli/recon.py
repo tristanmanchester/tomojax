@@ -33,6 +33,7 @@ def main() -> None:
     p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
     p.add_argument("--iters", type=int, default=50, help="FISTA iterations")
     p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight")
+    p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator")
     p.add_argument("--L", type=float, default=None, help="Fixed Lipschitz constant for FISTA (skip power-method)")
     p.add_argument("--views-per-batch", default="0", help="Batch views to control memory (applies to FISTA and FBP). Use 'auto' to estimate.")
     p.add_argument("--projector-unroll", type=int, default=1, help="Unroll factor inside projector scan")
@@ -96,6 +97,7 @@ def main() -> None:
             projector_unroll=int(args.projector_unroll),
             checkpoint_projector=bool(args.checkpoint_projector),
             gather_dtype=str(args.gather_dtype),
+            tv_prox_iters=int(args.tv_prox_iters),
         )
 
     save_nxtomo(

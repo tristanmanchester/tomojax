@@ -144,6 +144,7 @@ See `docs/schema_nxtomo.md` for the HDF5/NXtomo format used by the CLIs.
 - Keep `--checkpoint-projector` enabled to reduce activation memory at small extra compute.
 - Mixed precision gather (`--gather-dtype bf16`) reduces bandwidth while accumulating in fp32.
 - To avoid JAX preallocation spikes: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+- For noisy data, increase `--lambda-tv` and consider raising `--tv-prox-iters` to 20–30 to strengthen the TV proximal step.
 
 Troubleshooting tips live in `docs/faq_troubleshooting.md`.
 
