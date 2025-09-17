@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Sequence, Tuple
+from typing import Callable, Sequence, Tuple, Literal
 
 import jax
 import jax.numpy as jnp
@@ -45,10 +45,15 @@ def grad_data_term(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
+    grad_mode: Literal["auto", "batched", "stream"] = "auto",
 ) -> Tuple[jnp.ndarray, float]:
-    """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss via vmapped projector.
+    """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
 
-    Supports view chunking to control memory via `views_per_batch`.
+    Two execution modes:
+    - batched: vmap over a chunk of views. Fast but higher peak memory.
+    - stream: process one view at a time via lax.scan and per-view VJP. Low peak memory.
+
+    When grad_mode="auto", selects stream if the effective batch is 1, else batched.
     """
     n_views = int(projections.shape[0])
     T_all = jnp.stack(
@@ -56,20 +61,19 @@ def grad_data_term(
         axis=0,
     )
 
-    vm_project = jax.vmap(
-        lambda T, vol: forward_project_view_T(
-            T,
-            grid,
-            detector,
-            vol,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-        ),
-        in_axes=(0, None),
-    )
-
-    def data_loss(vol):
+    def batched_loss(vol):
+        vm_project = jax.vmap(
+            lambda T, v: forward_project_view_T(
+                T,
+                grid,
+                detector,
+                v,
+                use_checkpoint=checkpoint_projector,
+                unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
+            ),
+            in_axes=(0, None),
+        )
         n = T_all.shape[0]
         b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
         loss = jnp.float32(0.0)
@@ -79,8 +83,44 @@ def grad_data_term(
             loss = loss + 0.5 * jnp.vdot(resid, resid).real
         return loss
 
-    val, grad = jax.value_and_grad(data_loss)(x)
-    return grad, val
+    def stream_loss_and_grad(vol):
+        def one_view(carry, i):
+            loss_acc, g_acc = carry
+            T_i = T_all[i]
+            y_i = projections[i]
+            def fwd(v):
+                return forward_project_view_T(
+                    T_i,
+                    grid,
+                    detector,
+                    v,
+                    use_checkpoint=checkpoint_projector,
+                    unroll=int(projector_unroll),
+                    gather_dtype=gather_dtype,
+                )
+            pred_i = fwd(vol)
+            resid_i = (pred_i - y_i).astype(jnp.float32)
+            loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
+            # Vectorize VJP via ravel to a single 1D cotangent
+            _, vjp = jax.vjp(lambda vv: fwd(vv).ravel(), vol)
+            g_i = vjp(resid_i.ravel())[0]
+            return (loss_acc + loss_i, g_acc + g_i), None
+        init = (jnp.float32(0.0), jnp.zeros_like(vol))
+        (loss_tot, g_tot), _ = jax.lax.scan(one_view, init, jnp.arange(T_all.shape[0]))
+        return loss_tot, g_tot
+
+    # Select execution mode
+    eff_b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else T_all.shape[0]
+    mode = grad_mode
+    if grad_mode == "auto":
+        mode = "stream" if eff_b <= 1 else "batched"
+
+    if mode == "stream":
+        loss_val, grad = stream_loss_and_grad(x)
+        return grad, loss_val
+    else:
+        val, grad = jax.value_and_grad(batched_loss)(x)
+        return grad, val
 
 
 def power_method_L(
@@ -94,6 +134,7 @@ def power_method_L(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
+    grad_mode: Literal["auto", "batched", "stream"] = "auto",
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     n_views, nv, nu = projections_shape
@@ -111,6 +152,7 @@ def power_method_L(
             projector_unroll=projector_unroll,
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
+            grad_mode=grad_mode,
         )
         v = g / (jnp.linalg.norm(g.ravel()) + 1e-12)
     # Rayleigh quotient
@@ -124,31 +166,39 @@ def power_method_L(
         projector_unroll=projector_unroll,
         checkpoint_projector=checkpoint_projector,
         gather_dtype=gather_dtype,
+        grad_mode=grad_mode,
     )
     L = float(jnp.vdot(v, g).real)
     return max(L, 1e-6)
 
 
 def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarray:
-    """Isotropic TV proximal via Chambolle's algorithm using lax.scan."""
-    tau = jnp.float32(0.25)
+    """Isotropic TV proximal via Chambolle's dual ascent."""
+    lam = jnp.asarray(lam_over_L, dtype=x.dtype)
+    tau = jnp.asarray(1.0 / (2.0 * x.ndim), dtype=x.dtype)
+    eps = jnp.asarray(jnp.finfo(x.dtype).eps, dtype=x.dtype)
 
-    def body(carry, _):
-        u, p1, p2, p3 = carry
+    def prox_impl(lam_val):
+        lam_safe = jnp.maximum(lam_val, eps)
+
+        def body(carry, _):
+            p1, p2, p3 = carry
+            div_p = _div3(p1, p2, p3)
+            u = x - div_p
+            gx, gy, gz = _grad3(u)
+            norm = jnp.sqrt(gx * gx + gy * gy + gz * gz)
+            denom = 1.0 + (tau / lam_safe) * norm
+            p1_n = (p1 - tau * gx) / denom
+            p2_n = (p2 - tau * gy) / denom
+            p3_n = (p3 - tau * gz) / denom
+            return (p1_n, p2_n, p3_n), None
+
+        init = (jnp.zeros_like(x), jnp.zeros_like(x), jnp.zeros_like(x))
+        (p1, p2, p3), _ = jax.lax.scan(body, init, None, length=int(iters))
         div_p = _div3(p1, p2, p3)
-        w = u - lam_over_L * div_p
-        gx, gy, gz = _grad3(w)
-        denom = jnp.maximum(1.0, jnp.sqrt(gx * gx + gy * gy + gz * gz))
-        p1_n = (p1 + tau * gx) / denom
-        p2_n = (p2 + tau * gy) / denom
-        p3_n = (p3 + tau * gz) / denom
-        return (u, p1_n, p2_n, p3_n), None
+        return x - div_p
 
-    p1 = jnp.zeros_like(x)
-    p2 = jnp.zeros_like(x)
-    p3 = jnp.zeros_like(x)
-    (u, p1, p2, p3), _ = jax.lax.scan(body, (x, p1, p2, p3), None, length=int(iters))
-    return u - lam_over_L * _div3(p1, p2, p3)
+    return jax.lax.cond(lam > 0, prox_impl, lambda _: x, lam)
 
 
 def fista_tv(
@@ -166,6 +216,8 @@ def fista_tv(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
+    grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    tv_prox_iters: int = 10,
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization for parallel-ray geometry.
 
@@ -180,6 +232,7 @@ def fista_tv(
     z = x
     t = 1.0
     if L is None:
+        # Use streamed gradient in power-method to avoid batched VJP memory spikes
         L = power_method_L(
             geometry,
             grid,
@@ -190,6 +243,7 @@ def fista_tv(
             projector_unroll=projector_unroll,
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
+            grad_mode="stream",
         )
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
@@ -203,6 +257,7 @@ def fista_tv(
             projector_unroll=projector_unroll,
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
+            grad_mode=grad_mode,
         )
         return v, g
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
@@ -212,7 +267,7 @@ def fista_tv(
         x_c, z_c, t_c, loss_arr = carry
         data_loss_val, g = val_and_grad(z_c)
         y = z_c - (1.0 / L) * g
-        x_new = tv_prox_jit(y, lambda_tv / L, iters=10)
+        x_new = tv_prox_jit(y, lambda_tv / L, iters=int(tv_prox_iters))
         t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_c * t_c))
         z_new = x_new + ((t_c - 1.0) / t_new) * (x_new - x_c)
         gx, gy, gz = _grad3(x_new)

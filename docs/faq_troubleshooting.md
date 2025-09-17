@@ -31,10 +31,12 @@
   - Switch to Gauss–Newton: `--opt-method gn --gn-damping 1e-3`.
   - Increase outer iterations: `--outer-iters`.
   - Strengthen TV for noisy data: increase `--lambda-tv`.
+  - Increase TV proximal inner iterations: `--tv-prox-iters 20` (or 30) to realize stronger denoising at high noise.
 
 - Coarse-to-fine strategy:
   - Use `--levels` (e.g., `4 2 1`).
   - Optionally seed translations at the coarsest level: `--seed-translations`.
+  - Early stopping is active by default; add `--log-summary` to see when it triggers.
 
 
 ## Data I/O
@@ -64,4 +66,3 @@
     --levels 4 2 1 --outer-iters 15 --lambda-tv 0.005 \
     --opt-method gn --gn-damping 1e-3 --seed-translations
   ```
-

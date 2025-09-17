@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Iterable, List, Tuple
 
 import jax.numpy as jnp
+import jax.image as jimage
 
 from ..core.geometry import Grid, Detector, Geometry
 from .fista_tv import fista_tv, grad_data_term
@@ -70,11 +71,10 @@ def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
 def upsample_volume(vol: jnp.ndarray, factor: int, target_shape: Tuple[int, int, int]) -> jnp.ndarray:
     if factor == 1:
         return vol
-    v = jnp.repeat(vol, factor, axis=0)
-    v = jnp.repeat(v, factor, axis=1)
-    v = jnp.repeat(v, factor, axis=2)
-    # Crop in case of rounding (should match exactly when divisible)
-    return v[: target_shape[0], : target_shape[1], : target_shape[2]]
+    # Trilinear resize to avoid nearest-neighbor blockiness when moving to finer levels
+    out_shape = (int(target_shape[0]), int(target_shape[1]), int(target_shape[2]))
+    v = jimage.resize(vol, out_shape, method="linear", antialias=False)
+    return v
 
 
 def create_resolution_pyramid(

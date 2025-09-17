@@ -6,11 +6,12 @@ from collections import OrderedDict
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .geometry.base import Grid, Detector, Geometry
 
 # Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
-_DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[jnp.ndarray, jnp.ndarray]]" = OrderedDict()
+_DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
 _DET_GRID_CACHE_CAP = 8
 
 
@@ -21,7 +22,7 @@ def _default_volume_origin(grid: Grid) -> jnp.ndarray:
     return jnp.array([ox, oy, oz], dtype=jnp.float32)
 
 
-def _build_detector_grid(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
     key = (
         int(det.nu),
         int(det.nv),
@@ -36,10 +37,11 @@ def _build_detector_grid(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
     nu, nv = int(det.nu), int(det.nv)
     du, dv = float(det.du), float(det.dv)
     cx, cz = float(det.det_center[0]), float(det.det_center[1])
-    u = (jnp.arange(nu, dtype=jnp.float32) - (nu / 2.0 - 0.5)) * jnp.float32(du) + jnp.float32(cx)
-    v = (jnp.arange(nv, dtype=jnp.float32) - (nv / 2.0 - 0.5)) * jnp.float32(dv) + jnp.float32(cz)
-    X = jnp.tile(u, nv)
-    Z = jnp.repeat(v, nu)
+    # Build on host as NumPy to avoid capturing JAX tracers in global cache under jit
+    u = (np.arange(nu, dtype=np.float32) - (nu / 2.0 - 0.5)) * np.float32(du) + np.float32(cx)
+    v = (np.arange(nv, dtype=np.float32) - (nv / 2.0 - 0.5)) * np.float32(dv) + np.float32(cz)
+    X = np.tile(u, nv)
+    Z = np.repeat(v, nu)
     _DET_GRID_CACHE[key] = (X, Z)
     if len(_DET_GRID_CACHE) > _DET_GRID_CACHE_CAP:
         _DET_GRID_CACHE.popitem(last=False)
@@ -134,8 +136,11 @@ def forward_project_view_T(
         else _default_volume_origin(grid)
     )
 
-    Xr, Zr = _build_detector_grid(detector)
-    n_rays = Xr.shape[0]
+    Xr_np, Zr_np = _build_detector_grid(detector)
+    # Convert to device arrays inside the jitted function scope
+    Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
+    Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
+    n_rays = int(Xr_np.shape[0])
 
     vy = float(grid.vy)
     if step_size is None:
