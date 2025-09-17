@@ -173,30 +173,42 @@ def power_method_L(
 
 
 def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarray:
-    """Isotropic TV proximal via Chambolle's dual ascent."""
+    """Apply the isotropic TV proximal via a PDHG (Chambolle-Pock) update."""
     lam = jnp.asarray(lam_over_L, dtype=x.dtype)
-    tau = jnp.asarray(1.0 / (2.0 * x.ndim), dtype=x.dtype)
+    tau = jnp.asarray(0.25, dtype=x.dtype)
+    sigma = jnp.asarray(0.25, dtype=x.dtype)
+    theta = jnp.asarray(1.0, dtype=x.dtype)
     eps = jnp.asarray(jnp.finfo(x.dtype).eps, dtype=x.dtype)
 
     def prox_impl(lam_val):
         lam_safe = jnp.maximum(lam_val, eps)
 
         def body(carry, _):
-            p1, p2, p3 = carry
-            div_p = _div3(p1, p2, p3)
-            u = x - div_p
-            gx, gy, gz = _grad3(u)
-            norm = jnp.sqrt(gx * gx + gy * gy + gz * gz)
-            denom = 1.0 + (tau / lam_safe) * norm
-            p1_n = (p1 - tau * gx) / denom
-            p2_n = (p2 - tau * gy) / denom
-            p3_n = (p3 - tau * gz) / denom
-            return (p1_n, p2_n, p3_n), None
+            u, u_bar, p1, p2, p3 = carry
+            gx, gy, gz = _grad3(u_bar)
+            p1_n = p1 + sigma * gx
+            p2_n = p2 + sigma * gy
+            p3_n = p3 + sigma * gz
+            norm = jnp.maximum(1.0, jnp.sqrt(p1_n * p1_n + p2_n * p2_n + p3_n * p3_n) / lam_safe)
+            p1_n = p1_n / norm
+            p2_n = p2_n / norm
+            p3_n = p3_n / norm
+            div_p = _div3(p1_n, p2_n, p3_n)
+            u_prev = u
+            u_minus = u + tau * div_p
+            u_n = (u_minus + tau * x) / (1.0 + tau)
+            u_bar_n = u_n + theta * (u_n - u_prev)
+            return (u_n, u_bar_n, p1_n, p2_n, p3_n), None
 
-        init = (jnp.zeros_like(x), jnp.zeros_like(x), jnp.zeros_like(x))
-        (p1, p2, p3), _ = jax.lax.scan(body, init, None, length=int(iters))
-        div_p = _div3(p1, p2, p3)
-        return x - div_p
+        init = (
+            x,
+            x,
+            jnp.zeros_like(x),
+            jnp.zeros_like(x),
+            jnp.zeros_like(x),
+        )
+        (u, _, _, _, _), _ = jax.lax.scan(body, init, None, length=int(iters))
+        return u
 
     return jax.lax.cond(lam > 0, prox_impl, lambda _: x, lam)
 
