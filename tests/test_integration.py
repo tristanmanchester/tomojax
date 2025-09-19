@@ -1,10 +1,13 @@
+import os
+os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
+
 import sys
 import numpy as np
 import pytest
 import jax.numpy as jnp
 
 from tomojax.data.simulate import SimConfig, simulate
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
@@ -35,6 +38,34 @@ def test_integration_parallel_fbp_psnr_from_sim():
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
     rec = fbp(geom, grid, det, jnp.asarray(data["projections"]))
     assert psnr(rec, data["volume"]) > 10.0
+
+
+def test_integration_lamino_fbp_psnr_from_sim():
+    cfg = SimConfig(
+        nx=16,
+        ny=16,
+        nz=16,
+        nu=16,
+        nv=16,
+        n_views=16,
+        phantom="cube",
+        geometry="lamino",
+        tilt_deg=30.0,
+        seed=4,
+    )
+    data = simulate(cfg)
+    grid_d, det_d = data["grid"], data["detector"]
+    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
+    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    geom = LaminographyGeometry(
+        grid=grid,
+        detector=det,
+        thetas_deg=data["thetas_deg"],
+        tilt_deg=30.0,
+        tilt_about="x",
+    )
+    rec = fbp(geom, grid, det, jnp.asarray(data["projections"]))
+    assert psnr(rec, data["volume"]) > 3.0
 
 
 def test_integration_parallel_fista_decreases_from_sim():

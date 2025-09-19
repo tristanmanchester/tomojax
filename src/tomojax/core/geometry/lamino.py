@@ -9,14 +9,62 @@ from .base import Grid, Detector, Geometry
 from .transforms import rot_axis_angle
 
 
+def laminography_tilt_matrix(tilt_deg: float, tilt_about: str) -> np.ndarray:
+    tilt = float(np.deg2rad(tilt_deg))
+    if abs(tilt) < 1e-12:
+        return np.eye(3, dtype=np.float64)
+    if tilt_about == "x":
+        c, s = np.cos(tilt), np.sin(tilt)
+        return np.array([[1.0, 0.0, 0.0], [0.0, c, s], [0.0, -s, c]], dtype=np.float64)
+    if tilt_about == "z":
+        c, s = np.cos(tilt), np.sin(tilt)
+        return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]], dtype=np.float64)
+    raise ValueError("tilt_about must be 'x' or 'z'")
+
+
+def laminography_axis_unit(tilt_deg: float, tilt_about: str) -> np.ndarray:
+    R_tilt = laminography_tilt_matrix(tilt_deg, tilt_about)
+    ax = R_tilt @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    return ax / (np.linalg.norm(ax) + 1e-12)
+
+def _align_u_to_v(u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Small utility: rotation matrix mapping unit vector u to unit vector v."""
+    u = u / (np.linalg.norm(u) + 1e-12)
+    v = v / (np.linalg.norm(v) + 1e-12)
+    c = float(np.dot(u, v))
+    if c > 1.0 - 1e-12:
+        return np.eye(3, dtype=np.float64)
+    if c < -1.0 + 1e-12:
+        # 180-degree: pick any axis orthogonal to u
+        tmp = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(np.dot(tmp, u)) > 0.9:
+            tmp = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        k = tmp - np.dot(tmp, u) * u
+        k = k / (np.linalg.norm(k) + 1e-12)
+        K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
+        return np.eye(3) + 2.0 * (K @ K)
+    k = np.cross(u, v)
+    s = float(np.linalg.norm(k))  # = sin(theta)
+    # Unit rotation axis
+    k = k / (s + 1e-12)
+    K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
+    # Rodrigues' rotation formula with unit K: R = I + sin(theta)K + (1-cos(theta))K^2
+    return np.eye(3, dtype=np.float64) + s * K + (1.0 - c) * (K @ K)
+
 @dataclass
 class LaminographyGeometry:
     """Laminography geometry with tilted rotation axis (parallel-ray model).
 
     - Beam direction is fixed along +y (as in ParallelGeometry).
-    - Rotation axis is tilted by `tilt_deg` around the chosen axis (x or z),
-      forming a unit vector `axis_unit` in world coordinates. Each view rotates
-      the object around this axis by angle `thetas_deg[i]`.
+    - Rotation axis is tilted away from +z by `tilt_deg` within a chosen plane.
+      With `tilt_about='x'` the axis leans towards +y (beam-aligned laminography);
+      with `tilt_about='z'` the axis leans towards +x. Each view rotates the
+      object around this axis by angle `thetas_deg[i]`.
+    
+    Frame convention:
+    - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
+      object's +y axis equals the nominal rotation axis. At theta=0, T is the
+      fixed alignment S (generally not identity) that maps e_y -> axis.
     """
 
     grid: Grid
@@ -25,22 +73,27 @@ class LaminographyGeometry:
     tilt_deg: float = 30.0
     tilt_about: str = "x"  # or "z"
 
+    def _tilt_matrix(self) -> np.ndarray:
+        return laminography_tilt_matrix(self.tilt_deg, self.tilt_about)
+
     def _axis_unit(self) -> np.ndarray:
-        tilt = np.deg2rad(self.tilt_deg)
-        if self.tilt_about == "x":
-            # start from +z, tilt towards +x by tilt degrees
-            ax = np.array([np.sin(tilt), 0.0, np.cos(tilt)], dtype=np.float64)
-        elif self.tilt_about == "z":
-            # start from +y, tilt towards +z by tilt degrees (alternative)
-            ax = np.array([0.0, np.sin(tilt), np.cos(tilt)], dtype=np.float64)
-        else:
-            raise ValueError("tilt_about must be 'x' or 'z'")
-        return ax / (np.linalg.norm(ax) + 1e-12)
+        return laminography_axis_unit(self.tilt_deg, self.tilt_about)
 
     def pose_for_view(self, i: int):
+        """World-from-object pose in sample frame; rotation about object +y.
+
+        We align the object's +y axis to the laminography axis once via S, then
+        rotate around +y by view angle theta: R = S @ R_y(theta). The returned
+        4x4 poses are suitable for the projector contract (world_from_object).
+        """
         theta = float(np.deg2rad(self.thetas_deg[i]))
         axis = self._axis_unit()
-        T = rot_axis_angle(axis, theta)
+        ey = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        S = _align_u_to_v(ey, axis)
+        Ry = rot_axis_angle(ey, theta)[:3, :3]
+        R = S @ Ry
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = R
         return tuple(map(tuple, T))  # 4x4
 
     def rays_for_view(self, i: int):

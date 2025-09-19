@@ -38,7 +38,8 @@ def progress_iter(iterable: Iterable, *, total: Optional[int] = None, desc: str 
     try:
         from tqdm import tqdm  # type: ignore
 
-        for x in tqdm(iterable, total=total, desc=desc, dynamic_ncols=True, leave=False):
+        leave = os.environ.get("TOMOJAX_PROGRESS_LEAVE", "0").lower() in ("1","true","yes","on")
+        for x in tqdm(iterable, total=total, desc=desc, dynamic_ncols=True, leave=leave):
             yield x
     except Exception:
         # Lightweight fallback: print at ~10% increments

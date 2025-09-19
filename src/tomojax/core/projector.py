@@ -10,6 +10,13 @@ import numpy as np
 
 from .geometry.base import Grid, Detector, Geometry
 
+# Frame conventions:
+# - geometry.pose_for_view(i) must return a 4x4 transform T_world_from_obj that maps
+#   object (sample) coordinates into world (lab) coordinates for view i.
+# - Rays are defined in the world frame with directions along +y (parallel beam).
+# - We compute object_from_world = inv(T_world_from_obj) and sample the volume in the
+#   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
+
 # Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
 _DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
 _DET_GRID_CACHE_CAP = 8
@@ -107,7 +114,10 @@ def forward_project_view_T(
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
-    Uses incremental stepping in object coordinates to avoid a matmul per step.
+    Contract: T is world_from_object for the view. The projector constructs detector
+    rays in world coordinates and transforms them into object coordinates using
+    inv(T), then performs incremental stepping along the beam direction expressed
+    in the object frame. This avoids a matmul per step and keeps gradients clean.
     """
     vol = volume
     if vol.ndim != 3:
@@ -146,7 +156,7 @@ def forward_project_view_T(
     t = T[:3, 3]
     Rinv = R.T
     tinv = -(Rinv @ t)
-    ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame
+    ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
 
     base = Rinv @ jnp.stack([Xr, jnp.zeros_like(Xr), Zr], axis=0) + tinv[:, None]
     y0 = vol_origin[1]

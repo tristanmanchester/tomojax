@@ -61,8 +61,10 @@ def save_nxtomo(
     grid: Optional[Grid | Dict[str, Any]] = None,
     detector: Optional[Detector | Dict[str, Any]] = None,
     geometry_type: str = "parallel",
+    geometry_meta: Optional[Dict[str, Any]] = None,
     volume: Optional[np.ndarray] = None,
     align_params: Optional[np.ndarray] = None,
+    frame: Optional[str] = None,
     compression: str = "lzf",
     overwrite: bool = True,
 ) -> None:
@@ -71,9 +73,10 @@ def save_nxtomo(
     - projections: (n_views, nv, nu) float32
     - thetas_deg: (n_views,) rotation angles in degrees (around +z by default)
     - grid/detector: voxel and detector definitions
-    - volume: optional ground-truth volume (nz, ny, nx)
+    - volume: optional ground-truth volume (nx, ny, nz) in the declared frame
     - align_params: optional (n_views, 5) [alpha,beta,phi,dx,dz] in radians/world units
     - geometry_type: "parallel" | "lamino" | "custom"
+    - geometry_meta: Optional dict with extra geometry metadata (e.g., lamino tilt)
     """
     # Ensure parent directory exists
     parent = os.path.dirname(path)
@@ -96,6 +99,8 @@ def save_nxtomo(
         # Geometry metadata
         geom = entry.require_group("geometry")
         _write_string_attr(geom, "type", geometry_type)
+        if geometry_meta:
+            geom.attrs["geometry_meta_json"] = json.dumps(geometry_meta)
 
         # Instrument / detector
         inst = _ensure_group(entry, "instrument", "NXinstrument")
@@ -143,7 +148,7 @@ def save_nxtomo(
             grid_meta = gdict
             entry.attrs["grid_meta_json"] = json.dumps(gdict)
 
-        # Optional GT volume
+        # Optional GT / reconstructed volume and TomoJAX metadata
         if volume is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
@@ -154,6 +159,9 @@ def save_nxtomo(
                 compression=compression,
             )
             vol.attrs["long_name"] = "ground_truth_volume"
+            # Persist volume frame metadata if provided (e.g., 'sample' or 'lab')
+            if frame is not None:
+                _write_string_attr(tj, "frame", str(frame))
 
         # Optional alignment params
         if align_params is not None:
@@ -207,6 +215,19 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
             if s:
                 geom_type = s
         out["geometry_type"] = geom_type
+        if geom is not None:
+            meta_attr = geom.attrs.get("geometry_meta_json")
+            if meta_attr is not None:
+                s = _attr_to_str(meta_attr)
+                if s:
+                    try:
+                        meta_dict = json.loads(s)
+                    except Exception:
+                        meta_dict = None
+                    if isinstance(meta_dict, dict):
+                        out["geometry_meta"] = meta_dict
+                        for key, val in meta_dict.items():
+                            out.setdefault(key, val)
 
         # Grid / Detector metadata (JSON blobs if present)
         grid_meta = entry.attrs.get("grid_meta_json")
@@ -241,6 +262,12 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                 tj = entry["processing/tomojax"]
                 if "volume" in tj:
                     out["volume"] = tj["volume"][...]
+                # Frame metadata for the volume if present
+                fr_attr = tj.attrs.get("frame")
+                if fr_attr is not None:
+                    s = _attr_to_str(fr_attr)
+                    if s:
+                        out["frame"] = s
                 if "align" in tj and "thetas" in tj["align"]:
                     out["align_params"] = tj["align/thetas"][...]
         except Exception:

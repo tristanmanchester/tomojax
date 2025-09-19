@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..core.geometry.lamino import laminography_axis_unit
+
 
 def cube(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed: int | None = None) -> np.ndarray:
     """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
@@ -187,4 +189,65 @@ def random_cubes_spheres(
         dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2 + (Z - cz) ** 2)
         vol[dist <= radius] = np.maximum(vol[dist <= radius], val)
 
+    return vol.astype(np.float32)
+
+
+def lamino_disk(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    thickness_ratio: float = 0.2,
+    seed: int = 0,
+    n_cubes: int = 8,
+    n_spheres: int = 7,
+    min_size: int = 4,
+    max_size: int = 32,
+    min_value: float = 0.1,
+    max_value: float = 1.0,
+    max_rot_degrees: float = 180.0,
+    tilt_deg: float = 30.0,
+    tilt_about: str = "x",
+) -> np.ndarray:
+    """Random cubes+spheres phantom constrained to a thin central slab.
+
+    Sample-frame convention: the reconstructed/object volume is in (x, y, z)
+    coordinates, and the nominal rotation axis is the +y axis. The thin slab is
+    therefore orthogonal to +y, i.e., confined to the central few y-slices.
+
+    Note: `tilt_deg`/`tilt_about` are ignored for the slab orientation (kept for
+    signature/backward-compat) since the sample-frame axis is +y regardless of
+    lamino tilt in world coordinates.
+    """
+
+    ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
+    ny_thin = int(round(ratio * ny))
+    ny_thin = max(1, min(ny, ny_thin))
+
+    vol = random_cubes_spheres(
+        nx,
+        ny,
+        nz,
+        n_cubes=n_cubes,
+        n_spheres=n_spheres,
+        min_size=int(round(min_size)),
+        max_size=int(round(max_size)),
+        min_value=min_value,
+        max_value=max_value,
+        max_rot_degrees=max_rot_degrees,
+        use_inscribed_fov=True,
+        seed=seed,
+    )
+
+    # Constrain to a slab orthogonal to the sample-frame rotation axis (+y).
+    # Keep only central ny_thin slices along y (object frame).
+    cy = (ny - 1) / 2.0
+    half_thickness = max(0.5, ny_thin * 0.5)
+    ys = np.arange(ny, dtype=np.float32)
+    mask_y = np.abs(ys - cy) <= half_thickness
+    vol[:, ~mask_y, :] = 0.0
+
+    vmax = float(vol.max())
+    if vmax > 0:
+        vol = vol / vmax
     return vol.astype(np.float32)

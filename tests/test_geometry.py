@@ -8,7 +8,9 @@ from tomojax.core.geometry import (
     ParallelGeometry,
     LaminographyGeometry,
 )
-from tomojax.core.geometry.transforms import rotz, exp_se3, invert, compose
+from tomojax.core.geometry.lamino import laminography_tilt_matrix
+from tomojax.core.geometry.transforms import rotz, rot_axis_angle, exp_se3, invert, compose
+import numpy as np
 
 
 if sys.version_info < (3, 8):
@@ -46,10 +48,36 @@ def test_lamino_axis_tilt_and_pose():
     det = Detector(nu=4, nv=4, du=1.0, dv=1.0)
     geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=[0.0, 10.0], tilt_deg=30.0, tilt_about="x")
 
+    ax = geom._axis_unit()
+    exp_ax = np.array([0.0, np.sin(np.deg2rad(30.0)), np.cos(np.deg2rad(30.0))])
+    assert np.allclose(ax, exp_ax, atol=1e-7)
+
     T0 = np.array(geom.pose_for_view(0))
-    assert np.allclose(T0, np.eye(4), atol=1e-7)
+    # At theta=0 the pose equals the fixed alignment S that maps e_y to axis
+    ey = np.array([0.0, 1.0, 0.0, 1.0])
+    t0_ey = T0 @ ey
+    assert np.allclose(t0_ey[:3], ax, atol=1e-6)
 
     T1 = np.array(geom.pose_for_view(1))
+    # In sample-frame parametrization: R = S @ R_y(theta), S aligns e_y -> axis
+    ey = np.array([0.0, 1.0, 0.0])
+    theta = np.deg2rad(10.0)
+    # Build S by aligning e_y to axis via cross-product formula
+    u = ey / np.linalg.norm(ey)
+    v = ax / np.linalg.norm(ax)
+    c = np.dot(u, v)
+    if c > 1.0 - 1e-12:
+        S = np.eye(3)
+    elif c < -1.0 + 1e-12:
+        S = np.diag([1.0, -1.0, -1.0])
+    else:
+        k = np.cross(u, v); s = np.linalg.norm(k); k = k / s
+        K = np.array([[0,-k[2],k[1]],[k[2],0,-k[0]],[-k[1],k[0],0]],float)
+        # Proper Rodrigues formula for aligning u->v
+        S = np.eye(3) + s * K + (1 - c) * (K @ K)
+    Ry = rot_axis_angle(ey, theta)[:3, :3]
+    R_ref = S @ Ry
+    assert np.allclose(T1[:3, :3], R_ref, atol=1e-7)
     # Rotation angle should be 10 deg around some axis; check orthonormality
     R = T1[:3, :3]
     assert np.allclose(np.dot(R.T, R), np.eye(3), atol=1e-6)

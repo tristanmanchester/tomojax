@@ -38,6 +38,13 @@ Notes
 - Trilinear interpolation with analytical derivatives
 - CPU/GPU support via JIT
 
+### Laminography (Parallel‑Beam)
+- Tilted rotation‑axis geometry (x/z tilt) with consistent sample‑frame parametrization
+- Simulation helpers for thin‑slab phantoms aligned to the sample rotation axis
+- Default 360° rotation span (configurable via `--rotation-deg`)
+- Reconstructions saved in the sample frame by default (FBP and FISTA‑TV)
+- Tutorial: `docs/tutorial_laminography.md`
+
 ### Joint Reconstruction & Alignment
 - Multi‑resolution: hierarchical optimisation (e.g., 4× → 2× → 1×)
 - Alternating steps: FISTA‑TV reconstruction + per‑view alignment
@@ -69,6 +76,9 @@ pixi run align    ...
 # Full step‑by‑step tutorial
 less docs/tutorial_end_to_end.md
 
+# Laminography tutorial
+less docs/tutorial_laminography.md
+
 # CLI reference
 less docs/cli_reference.md
 ```
@@ -76,13 +86,22 @@ less docs/cli_reference.md
 Common examples
 
 ```bash
-# Simulate a 256³ phantom and projections
+# Simulate a 256³ phantom and projections (parallel CT)
 pixi run simulate \
   --out data/sim_aligned.nxs \
   --nx 256 --ny 256 --nz 256 \
   --nu 256 --nv 256 --n-views 200 \
   --phantom random_shapes --n-cubes 40 --n-spheres 40 \
   --min-size 4 --max-size 64 --min-value 0.01 --max-value 0.1 --seed 42
+
+# Simulate laminography (tilt about x, 360°)
+pixi run simulate \
+  --out runs/lamino_demo.nxs \
+  --nx 128 --ny 128 --nz 128 \
+  --nu 128 --nv 128 --n-views 360 \
+  --geometry lamino --tilt-deg 35 --tilt-about x \
+  --phantom lamino_disk --lamino-thickness-ratio 0.15 \
+  --n-cubes 60 --n-spheres 60 --min-size 4 --max-size 14 --seed 3
 
 # Create misaligned (and optionally noisy) projections
 pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \

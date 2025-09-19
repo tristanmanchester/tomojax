@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence
+from typing import Dict
 
 import numpy as np
 import jax.numpy as jnp
@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..core.projector import forward_project_view
 from ..utils.logging import progress_iter
-from .phantoms import cube, blobs, shepp_logan_3d, random_cubes_spheres
+from .phantoms import cube, blobs, shepp_logan_3d, random_cubes_spheres, lamino_disk
 from .io_hdf5 import save_nxtomo
 
 
@@ -26,6 +26,7 @@ class SimConfig:
     vx: float = 1.0
     vy: float = 1.0
     vz: float = 1.0
+    rotation_deg: float | None = None  # total rotation range; defaults by geometry
     geometry: str = "parallel"  # or "lamino"
     tilt_deg: float = 30.0  # lamino
     tilt_about: str = "x"
@@ -41,6 +42,7 @@ class SimConfig:
     noise: str = "none"  # none|poisson|gaussian
     noise_level: float = 0.0  # gaussian sigma or poisson scale
     seed: int = 0
+    lamino_thickness_ratio: float = 0.2
 
 
 def make_phantom(cfg: SimConfig) -> jnp.ndarray:
@@ -59,6 +61,21 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
             max_rot_degrees=cfg.max_rot_deg,
             use_inscribed_fov=True, seed=cfg.seed,
         )
+    elif cfg.phantom == "lamino_disk":
+        vol = lamino_disk(
+            cfg.nx, cfg.ny, cfg.nz,
+            thickness_ratio=cfg.lamino_thickness_ratio,
+            seed=cfg.seed,
+            n_cubes=cfg.n_cubes,
+            n_spheres=cfg.n_spheres,
+            min_size=cfg.min_size,
+            max_size=cfg.max_size,
+            min_value=cfg.min_value,
+            max_value=cfg.max_value,
+            max_rot_degrees=cfg.max_rot_deg,
+            tilt_deg=cfg.tilt_deg,
+            tilt_about=cfg.tilt_about,
+        )
     else:
         raise ValueError(f"unknown phantom {cfg.phantom}")
     return jnp.asarray(vol, dtype=jnp.float32)
@@ -67,14 +84,21 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
 def simulate(cfg: SimConfig) -> Dict[str, object]:
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
     det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, det_center=(0.0, 0.0))
-    thetas = np.linspace(0.0, 180.0, cfg.n_views, endpoint=False).astype(np.float32)
+    # Determine total rotation based on geometry unless overridden
+    if cfg.rotation_deg is not None:
+        total_deg = float(cfg.rotation_deg)
+    else:
+        total_deg = 180.0 if cfg.geometry == "parallel" else 360.0
+    thetas = np.linspace(0.0, total_deg, cfg.n_views, endpoint=False).astype(np.float32)
 
+    geometry_meta: Dict[str, object] | None = None
     if cfg.geometry == "parallel":
         geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     elif cfg.geometry == "lamino":
         geom = LaminographyGeometry(
             grid=grid, detector=det, thetas_deg=thetas, tilt_deg=cfg.tilt_deg, tilt_about=cfg.tilt_about
         )
+        geometry_meta = {"tilt_deg": float(cfg.tilt_deg), "tilt_about": str(cfg.tilt_about)}
     else:
         raise ValueError("geometry must be 'parallel' or 'lamino'")
 
@@ -102,6 +126,7 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
         "detector": det.to_dict(),
         "geometry_type": cfg.geometry,
         "volume": vol,
+        "geometry_meta": geometry_meta,
         "meta": {"seed": cfg.seed, "noise": cfg.noise, "noise_level": cfg.noise_level},
     }
 
@@ -115,6 +140,8 @@ def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
         grid=data["grid"],
         detector=data["detector"],
         geometry_type=data["geometry_type"],
+        geometry_meta=data.get("geometry_meta"),
         volume=np.asarray(data["volume"]),
+        frame="sample",
     )
     return out_path

@@ -43,6 +43,12 @@ def main() -> None:
     ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false", help="Disable projector checkpointing")
     p.set_defaults(checkpoint_projector=True)
     p.add_argument("--out", required=True, help="Output .nxs containing recon (and copying projections)")
+    p.add_argument(
+        "--frame",
+        choices=["sample", "lab"],
+        default="sample",
+        help="Frame to record for saved volume (default: sample).",
+    )
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
 
@@ -100,6 +106,9 @@ def main() -> None:
             tv_prox_iters=int(args.tv_prox_iters),
         )
 
+    # Note: Reconstructions are computed on the object (sample) frame. We persist that by default.
+    # If a lab-frame export is desired, we currently only record metadata; a resampling export
+    # may be added later if needed for interop.
     save_nxtomo(
         args.out,
         projections=np.asarray(proj),
@@ -107,7 +116,9 @@ def main() -> None:
         grid=meta.get("grid"),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
+        geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(vol),
+        frame=str(args.frame),
     )
     logging.info("Saved reconstruction to %s", args.out)
 

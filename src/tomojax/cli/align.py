@@ -133,8 +133,10 @@ def main() -> None:
         grid=meta.get("grid"),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
+        geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(x),
         align_params=np.asarray(params5),
+        frame=str(meta.get("frame", "sample")),
     )
     logging.info("Saved alignment results to %s", args.out)
 
