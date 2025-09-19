@@ -70,3 +70,36 @@ def test_align_quick_recovers_small_misalignments():
     assert trans_rmse < 1.5
     # Loss should decrease overall
     assert info["loss"][-1] <= info["loss"][0]
+
+
+def test_align_reports_true_relative_improvement_scaling():
+    grid, det, geom, vol, projs, _ = make_misaligned_case(6, 6, 6, 6, 2)
+    projs = (projs * 1e-3).astype(jnp.float32)
+    cfg = AlignConfig(
+        outer_iters=2,
+        recon_iters=2,
+        lambda_tv=0.0,
+        lr_rot=5e-3,
+        lr_trans=1e-1,
+        early_stop=False,
+    )
+    _, _, info = align(geom, grid, det, projs, cfg=cfg)
+    stats = info.get("outer_stats", [])
+    assert stats, "align() should report per-outer statistics"
+
+    saw_small_loss = False
+    for s in stats:
+        loss_before = s.get("loss_before")
+        loss_after = s.get("loss_after")
+        rel_impr = s.get("rel_impr")
+        if loss_before is None or loss_after is None or rel_impr is None:
+            continue
+        if not np.isfinite(loss_before) or not np.isfinite(loss_after):
+            continue
+        denom = max(abs(loss_before), 1e-12)
+        expected = (loss_before - loss_after) / denom
+        assert rel_impr == pytest.approx(expected)
+        if abs(loss_before) < 1.0:
+            saw_small_loss = True
+
+    assert saw_small_loss, "Test case should exercise small-loss relative scaling"

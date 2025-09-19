@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import logging
+import math
 import time
 from typing import Any, Dict, Tuple, Iterable, List
 
@@ -376,8 +377,15 @@ def align(
         if loss_before is not None:
             delta = total_loss - loss_before
             stat["loss_delta"] = delta
-            stat["loss_rel_pct"] = (delta / loss_before) * 100.0 if abs(loss_before) > 1e-12 else None
-            rel_impr = (loss_before - total_loss) / max(loss_before, 1.0)
+            if math.isfinite(loss_before) and abs(loss_before) > 1e-12:
+                stat["loss_rel_pct"] = (delta / loss_before) * 100.0
+            else:
+                stat["loss_rel_pct"] = None
+            if math.isfinite(loss_before) and math.isfinite(total_loss):
+                denom = max(abs(loss_before), 1e-12)
+                rel_impr = (loss_before - total_loss) / denom
+            else:
+                rel_impr = None
         else:
             stat["loss_delta"] = None
             stat["loss_rel_pct"] = None
@@ -394,7 +402,10 @@ def align(
 
         # Early stopping based on alignment improvement during GN/GD step
         if cfg.early_stop and (rel_impr is not None):
-            if rel_impr < float(cfg.early_stop_rel_impr):
+            rel_for_patience = rel_impr
+            if (not math.isfinite(rel_for_patience)) or (rel_for_patience < 0.0):
+                rel_for_patience = 0.0
+            if rel_for_patience < float(cfg.early_stop_rel_impr):
                 small_impr_streak += 1
             else:
                 small_impr_streak = 0
