@@ -112,18 +112,35 @@ def align(
         # frame and are post-multiplied: T_world_from_obj_aug = T_nom @ T_delta.
         # This is consistent across parallel CT and laminography sample-frame.
         T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)  # (n_views, 4, 4)
-        n = params5.shape[0]
-        b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n
-        loss = jnp.float32(0.0)
-        # Chunk over views to control peak memory; Python loop is unrolled at trace-time using static shape
-        for s in range(0, n, b):
-            T_chunk = T_aug[s : s + b]
-            y_chunk = projections[s : s + b]
+        n = jnp.int32(params5.shape[0])
+        b_py = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else int(n)
+        b = jnp.int32(b_py)
+
+        # Prepare padded arrays to get a uniform chunk size
+        m = jnp.int32((n + b - 1) // b)
+        pad = jnp.int32(m * b - n)
+        T_pad = jnp.pad(T_aug, ((0, pad), (0, 0), (0, 0)))
+        y_pad = jnp.pad(projections, ((0, pad), (0, 0), (0, 0)))
+
+        def body(loss_acc, i):
+            i = jnp.int32(i)
+            start = i * b
+            T_chunk = jax.lax.dynamic_slice(T_pad, (start, 0, 0), (b, 4, 4))
+            y_chunk = jax.lax.dynamic_slice(y_pad, (start, 0, 0), (b, projections.shape[1], projections.shape[2]))
             pred = _project_batch(T_chunk, vol)
-            resid = (pred - y_chunk).astype(jnp.float32)
-            loss = loss + 0.5 * jnp.vdot(resid, resid).real
+            remaining = jnp.maximum(0, n - start)
+            valid = jnp.minimum(b, remaining)
+            mask = (jnp.arange(b) < valid)[:, None, None]
+            resid = (pred - y_chunk).astype(jnp.float32) * mask
+            loss_batch = 0.5 * jnp.vdot(resid, resid).real
+            return (loss_acc + loss_batch, None)
+
+        loss0 = jnp.float32(0.0)
+        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
+
         # Smoothness prior across views (2nd difference)
-        if n >= 3:
+        loss = loss_tot
+        if int(params5.shape[0]) >= 3:
             d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
             W = jnp.array([cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32)
             loss = loss + jnp.sum((d2 * W) ** 2)
