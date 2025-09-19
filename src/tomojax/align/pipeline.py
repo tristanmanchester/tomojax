@@ -136,7 +136,7 @@ def align(
             return (loss_acc + loss_batch, None)
 
         loss0 = jnp.float32(0.0)
-        loss_tot, _ = jax.lax.scan(body, loss0, None, length=m)
+        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
 
         # Smoothness prior across views (2nd difference)
         loss = loss_tot

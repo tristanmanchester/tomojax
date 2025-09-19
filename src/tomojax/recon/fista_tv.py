@@ -106,7 +106,7 @@ def grad_data_term(
             return (loss_acc + loss_batch, None)
 
         loss0 = jnp.float32(0.0)
-        loss_tot, _ = jax.lax.scan(body, loss0, None, length=m)
+        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
         return loss_tot
 
     def stream_loss_and_grad(vol):
