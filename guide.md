@@ -33,3 +33,6 @@ Further details:
 - Tutorial: `docs/tutorial_end_to_end.md`
 - Data schema: `docs/schema_nxtomo.md`
 - FAQ/Troubleshooting: `docs/faq_troubleshooting.md`
+
+Tip: expose `recon_rel_tol` / `recon_patience` via `AlignConfig`
+(or pass them directly to `fista_tv`) to short-circuit reconstructions once the objective plateaus.

@@ -230,12 +230,20 @@ def fista_tv(
     gather_dtype: str = "fp32",
     grad_mode: Literal["auto", "batched", "stream"] = "auto",
     tv_prox_iters: int = 10,
+    recon_rel_tol: float | None = None,
+    recon_patience: int = 0,
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization for parallel-ray geometry.
 
-    Returns (x, info) where info contains loss history.
+    Args:
+        recon_rel_tol: Relative tolerance on successive objectives for early termination. ``None`` disables.
+        recon_patience: Number of consecutive tolerance hits required before stopping early.
+
+    Returns:
+        Tuple of reconstructed volume and metadata. ``info`` includes the full loss history, the
+        measured/assumed Lipschitz constant, whether early stopping triggered, and the effective
+        iteration count.
     """
-    n_views, nv, nu = projections.shape
     x = (
         jnp.asarray(init_x, dtype=jnp.float32)
         if init_x is not None
@@ -275,26 +283,135 @@ def fista_tv(
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
+    use_early_stop = (
+        (recon_rel_tol is not None)
+        and float(recon_rel_tol) > 0.0
+        and int(recon_patience) > 0
+    )
+    tol = jnp.float32(float(recon_rel_tol) if use_early_stop else 0.0)
+    patience = jnp.int32(int(recon_patience) if use_early_stop else 0)
+    early_flag = jnp.bool_(use_early_stop)
+
     def step(carry, k):
-        x_c, z_c, t_c, loss_arr = carry
-        data_loss_val, g = val_and_grad(z_c)
-        y = z_c - (1.0 / L) * g
-        x_new = tv_prox_jit(y, lambda_tv / L, iters=int(tv_prox_iters))
-        t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_c * t_c))
-        z_new = x_new + ((t_c - 1.0) / t_new) * (x_new - x_c)
-        gx, gy, gz = _grad3(x_new)
-        tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))
-        obj = data_loss_val + lambda_tv * tv_norm
-        loss_arr = loss_arr.at[k].set(obj.astype(jnp.float32))
-        return (x_new, z_new, t_new, loss_arr), None
+        x_c, z_c, t_c, loss_arr, prev_obj, streak, done, has_prev, last_obj, iters_done = carry
+
+        def run_active(state):
+            (
+                x_a,
+                z_a,
+                t_a,
+                loss_a,
+                prev_a,
+                streak_a,
+                done_a,
+                has_prev_a,
+                last_a,
+                iters_a,
+            ) = state
+            data_loss_val, g = val_and_grad(z_a)
+            y = z_a - (1.0 / L) * g
+            x_new = tv_prox_jit(y, lambda_tv / L, iters=int(tv_prox_iters))
+            t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
+            z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
+            gx, gy, gz = _grad3(x_new)
+            tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))
+            obj = data_loss_val + lambda_tv * tv_norm
+            obj32 = obj.astype(jnp.float32)
+            rel_change = jnp.abs(obj - prev_a) / jnp.maximum(jnp.abs(prev_a), 1e-6)
+            small = jnp.logical_and(
+                early_flag, jnp.logical_and(has_prev_a, rel_change <= tol)
+            )
+            streak_next = jnp.where(
+                early_flag,
+                jnp.where(small, jnp.minimum(streak_a + 1, patience), jnp.int32(0)),
+                streak_a,
+            )
+            done_next = jnp.logical_or(done_a, jnp.logical_and(early_flag, streak_next >= patience))
+            loss_next = loss_a.at[k].set(obj32)
+            return (
+                x_new,
+                z_new,
+                t_new,
+                loss_next,
+                obj,
+                streak_next,
+                done_next,
+                jnp.bool_(True),
+                obj,
+                iters_a + jnp.int32(1),
+            ), None
+
+        def run_skip(state):
+            (
+                x_s,
+                z_s,
+                t_s,
+                loss_s,
+                prev_s,
+                streak_s,
+                done_s,
+                has_prev_s,
+                last_s,
+                iters_s,
+            ) = state
+            loss_next = loss_s.at[k].set(last_s.astype(jnp.float32))
+            return (
+                x_s,
+                z_s,
+                t_s,
+                loss_next,
+                prev_s,
+                streak_s,
+                done_s,
+                has_prev_s,
+                last_s,
+                iters_s,
+            ), None
+
+        new_state, _ = jax.lax.cond(
+            done,
+            run_skip,
+            run_active,
+            (x_c, z_c, t_c, loss_arr, prev_obj, streak, done, has_prev, last_obj, iters_done),
+        )
+        return new_state, None
 
     loss_arr0 = jnp.zeros((iters,), dtype=jnp.float32)
-    (x_f, _, _, loss_arr), _ = jax.lax.scan(step, (x, z, t, loss_arr0), jnp.arange(iters))
+    init_carry = (
+        x,
+        z,
+        t,
+        loss_arr0,
+        jnp.float32(0.0),
+        jnp.int32(0),
+        jnp.bool_(False),
+        jnp.bool_(False),
+        jnp.float32(0.0),
+        jnp.int32(0),
+    )
+    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(iters))
+    (
+        x_f,
+        _,
+        _,
+        loss_arr,
+        _,
+        _,
+        done_flag,
+        _,
+        _,
+        iters_done,
+    ) = carry_final
 
     # Fire optional callbacks on endpoints only (avoid per-iter host sync)
     if callback is not None:
         callback(0, float(loss_arr[0]))
         callback(iters - 1, float(loss_arr[-1]))
 
-    info = {"loss": [float(v) for v in list(loss_arr)], "L": L}
+    info = {
+        "loss": [float(v) for v in list(loss_arr)],
+        "L": L,
+        "effective_iters": int(iters_done),
+        "early_stop": bool(done_flag),
+    }
     return x_f, info

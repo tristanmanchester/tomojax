@@ -127,10 +127,25 @@ p0 = forward_project_view(geom, grid, det, vol, view_index=0)
 
 # FBP and FISTA reconstructions
 x_fbp = fbp(geom, grid, det, p0[None, ...])
-x_fista, info = fista_tv(geom, grid, det, p0[None, ...], iters=10, lambda_tv=0.001)
+x_fista, info = fista_tv(
+    geom,
+    grid,
+    det,
+    p0[None, ...],
+    iters=10,
+    lambda_tv=0.001,
+    recon_rel_tol=1e-4,
+    recon_patience=3,
+)
 
 # Alignment (toy 1-view example; use many views in practice)
-cfg = AlignConfig(outer_iters=1, recon_iters=5, lambda_tv=0.001)
+cfg = AlignConfig(
+    outer_iters=1,
+    recon_iters=5,
+    lambda_tv=0.001,
+    recon_rel_tol=1e-4,
+    recon_patience=3,
+)
 x_aligned, params5, info = align(geom, grid, det, p0[None, ...], cfg=cfg)
 ```
 
@@ -145,6 +160,8 @@ See `docs/schema_nxtomo.md` for the HDF5/NXtomo format used by the CLIs.
 - Mixed precision gather (`--gather-dtype bf16`) reduces bandwidth while accumulating in fp32.
 - To avoid JAX preallocation spikes: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 - For noisy data, increase `--lambda-tv` and consider raising `--tv-prox-iters` to 20–30 to strengthen the TV proximal step.
+- When the FISTA loss stabilizes, set `AlignConfig.recon_rel_tol` / `recon_patience` (or pass the same kwargs to `fista_tv`) to
+  terminate reconstructions early and skip redundant iterations.
 
 Troubleshooting tips live in `docs/faq_troubleshooting.md`.
 
