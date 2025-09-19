@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Sequence, Tuple
+ 
 
 import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, Geometry
-from ..core.projector import forward_project_view, forward_project_view_T
-from ..core.operators import view_loss
+from ..core.projector import forward_project_view_T
 from .filters import get_filter
 from ..utils.logging import progress_iter
 

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Sequence, Tuple, Literal
+from typing import Callable, Literal
 
 import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
-from ..core.projector import forward_project_view, forward_project_view_T
-from ..utils.logging import progress_iter
+from ..core.projector import forward_project_view_T
+ 
 
 
 def _grad3(u: jnp.ndarray):

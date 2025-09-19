@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import math
-from typing import Dict
-
 import jax
 import jax.numpy as jnp
 
@@ -76,4 +73,3 @@ def adjoint_test_once(
     rhs = jnp.vdot(volume, ATy)
     rel = float(jnp.abs(lhs - rhs) / (jnp.abs(lhs) + 1e-12))
     return rel
-
