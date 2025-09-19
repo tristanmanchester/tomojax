@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Tuple, Sequence
+from typing import Tuple, Sequence
 
 import numpy as np
 
@@ -46,4 +46,3 @@ class ParallelGeometry:
             return (0.0, 1.0, 0.0)
 
         return origin_fn, dir_fn
-

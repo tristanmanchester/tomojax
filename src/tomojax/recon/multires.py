@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Iterable, List, Tuple
 
 import jax.numpy as jnp

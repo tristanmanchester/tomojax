@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Tuple
+from typing import Tuple
 from collections import OrderedDict
 
 import jax
@@ -91,13 +91,6 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
 
     return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
 
-
-# (kept for potential legacy callers; not used by the new incremental projector)
-@jax.jit
-def _apply_Tinv(Tinv, pts):
-    R = Tinv[:3, :3]
-    t = Tinv[:3, 3:4]
-    return R @ pts + t
 
 
 def forward_project_view_T(
