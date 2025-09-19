@@ -18,6 +18,7 @@ python -m tomojax.cli.simulate --out <path.nxs> \
   --nx <int> --ny <int> --nz <int> \
   --nu <int> --nv <int> --n-views <int> \
   [--geometry parallel|lamino] [--tilt-deg <float>] [--tilt-about x|z] \
+  [--rotation-deg <float>] \
   [--phantom shepp|cube|blobs|random_shapes] [phantom-args...] \
   [--noise none|gaussian|poisson] [--noise-level <float>] \
   [--seed <int>] [--progress]
@@ -25,6 +26,7 @@ python -m tomojax.cli.simulate --out <path.nxs> \
 
 Key options
 - Geometry: `--geometry parallel` (default) or `lamino` with `--tilt-deg` (default 30) about axis `--tilt-about` (`x` default).
+- Rotation span: `--rotation-deg` sets the total angular range. Defaults to 180 for `parallel` and 360 for `lamino`.
 - Phantom: `--phantom random_shapes` with controls:
   - `--n-cubes` (8), `--n-spheres` (7), `--min-size` (4), `--max-size` (32)
   - `--min-value` (0.1), `--max-value` (1.0), `--max-rot-deg` (180)
@@ -79,7 +81,7 @@ python -m tomojax.cli.recon --data <in.nxs> \
   [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
   [--views-per-batch <int|auto>] [--projector-unroll <int>] \
   [--gather-dtype fp32|bf16|fp16] [--checkpoint-projector|--no-checkpoint-projector] \
-  --out <out.nxs> [--progress]
+  --out <out.nxs> [--frame sample|lab] [--progress]
 ```
 
 Key options
@@ -87,6 +89,7 @@ Key options
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
 - FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method.
 - Memory/performance: `--views-per-batch auto` (recommended), `--projector-unroll` (1–4), `--gather-dtype` (bf16 recommended on modern GPUs), projector checkpointing on by default.
+- Frame: `--frame sample` (default; recommended) records that the saved volume is in the sample/object frame. `lab` is recorded for compatibility exports.
 
 Examples
 ```

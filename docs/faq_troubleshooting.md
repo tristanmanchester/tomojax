@@ -66,3 +66,15 @@
     --levels 4 2 1 --outer-iters 15 --lambda-tv 0.005 \
     --opt-method gn --gn-damping 1e-3 --seed-translations
   ```
+
+## Laminography specifics
+
+- Recon volume orientation looks “wrong” in a viewer:
+  - TomoJAX saves volumes in the sample frame (x,y,z). Some viewers assume a different axis order. If needed, transpose axes when viewing or export with a desired order. The NX attribute `/entry/processing/tomojax@frame` records the intended frame.
+  - For laminography, slices advance parallel to the rotation axis (thin slab visible in each slice).
+
+- Why 360° for laminography?
+  - Parallel‑beam laminography benefits from full 360° coverage. Use `--rotation-deg 360` (default for `--geometry lamino`). Tomography defaults to 180°.
+
+- No alignment progress shown:
+  - Use `--progress --log-summary` to see per‑outer summaries and keep bars visible by setting `TOMOJAX_PROGRESS_LEAVE=1`.

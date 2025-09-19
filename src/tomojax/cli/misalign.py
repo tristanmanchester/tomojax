@@ -89,8 +89,10 @@ def main() -> None:
         grid=grid.to_dict(),
         detector=det.to_dict(),
         geometry_type=geom_type,
+        geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(vol),
         align_params=np.asarray(params5),
+        frame=str(meta.get("frame", "sample")),
     )
     logging.info("Wrote dataset: %s", args.out)
 

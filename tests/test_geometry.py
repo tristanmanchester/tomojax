@@ -73,7 +73,8 @@ def test_lamino_axis_tilt_and_pose():
     else:
         k = np.cross(u, v); s = np.linalg.norm(k); k = k / s
         K = np.array([[0,-k[2],k[1]],[k[2],0,-k[0]],[-k[1],k[0],0]],float)
-        S = np.eye(3) + K + (1-c)/(s*s) * (K @ K)
+        # Proper Rodrigues formula for aligning u->v
+        S = np.eye(3) + s * K + (1 - c) * (K @ K)
     Ry = rot_axis_angle(ey, theta)[:3, :3]
     R_ref = S @ Ry
     assert np.allclose(T1[:3, :3], R_ref, atol=1e-7)

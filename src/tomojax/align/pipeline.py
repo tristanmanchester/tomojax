@@ -104,6 +104,9 @@ def align(
 
     def align_loss(params5, vol):
         # Compose augmented poses
+        # Current convention: per-view misalignment parameters act in the object
+        # frame and are post-multiplied: T_world_from_obj_aug = T_nom @ T_delta.
+        # This is consistent across parallel CT and laminography sample-frame.
         T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)  # (n_views, 4, 4)
         n = params5.shape[0]
         b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n

@@ -17,6 +17,12 @@ def main() -> None:
     p.add_argument("--nu", type=int, required=True)
     p.add_argument("--nv", type=int, required=True)
     p.add_argument("--n-views", type=int, required=True)
+    p.add_argument(
+        "--rotation-deg",
+        type=float,
+        default=None,
+        help="Total rotation range in degrees. Defaults: 180 for parallel, 360 for lamino.",
+    )
     p.add_argument("--geometry", choices=["parallel", "lamino"], default="parallel")
     p.add_argument("--tilt-deg", type=float, default=30.0)
     p.add_argument("--tilt-about", choices=["x", "z"], default="x")
@@ -54,6 +60,7 @@ def main() -> None:
         nx=args.nx, ny=args.ny, nz=args.nz,
         nu=args.nu, nv=args.nv, n_views=args.n_views,
         geometry=args.geometry, tilt_deg=args.tilt_deg, tilt_about=args.tilt_about,
+        rotation_deg=(float(args.rotation_deg) if args.rotation_deg is not None else None),
         phantom=args.phantom, noise=args.noise, noise_level=args.noise_level, seed=args.seed,
         n_cubes=args.n_cubes, n_spheres=args.n_spheres,
         min_size=args.min_size, max_size=args.max_size,

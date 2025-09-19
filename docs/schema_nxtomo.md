@@ -21,18 +21,20 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
 
 ## TomoJAX Extras
 - `/entry/geometry/type = "parallel" | "lamino" | "custom"`
+- `/entry/geometry/@geometry_meta_json` (optional): JSON with geometry‑specific metadata, e.g., for laminography `{ "tilt_deg": <float>, "tilt_about": "x"|"z" }`
 - `/entry/@grid_meta_json`: JSON-serialized Grid
   - `{ nx, ny, nz, vx, vy, vz, vol_origin?, vol_center? }`
 - `/entry/instrument/detector/@detector_meta_json`: JSON-serialized Detector
   - `{ nu, nv, du, dv, det_center }`
 - `/entry/processing (NXprocess)/tomojax (NXcollection)`
-  - `volume` (optional GT, shape `(nz,ny,nx)`, compression `lzf`)
+  - `volume` (optional GT or reconstruction, shape `(nx,ny,nz)`, compression `lzf`)
+  - `@frame` (optional attr on `tomojax`): `"sample"|"lab"` indicates the frame of the saved volume (default `sample`)
   - `align/thetas` (optional, shape `(n_views,5)`, columns=`[alpha,beta,phi,dx,dz]`)
 
 ## Units & Conventions
 - Angles stored in degrees (NX convention). Internal math uses radians.
 - Voxel/detector sizes: units `pixel` for simulated data unless specified.
-- Rotation axis defaults to world +z; laminography adds tilt via geometry metadata.
+- Transformations: `rotation_angle` is stored in degrees; a default `rotation_axis=[0,0,1]` is written for NX compatibility. The exact geometry (e.g., laminography tilt) is described in `/entry/geometry` and used by TomoJAX.
 
 ## Notes
 - Use `lzf` compression by default; `gzip(level=4)` for smaller files if needed.

@@ -15,6 +15,7 @@ class ParallelGeometry:
 
     - World frame: detector lies in (x,z) plane; rays along +y.
     - Object pose per view is rotation around +z by angle phi (radians).
+      pose_for_view returns T_world_from_obj = Rz(phi). At theta=0, T = I.
     """
 
     grid: Grid

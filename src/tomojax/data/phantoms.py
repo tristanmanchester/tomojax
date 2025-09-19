@@ -209,7 +209,16 @@ def lamino_disk(
     tilt_deg: float = 30.0,
     tilt_about: str = "x",
 ) -> np.ndarray:
-    """Random cubes+spheres phantom constrained to a thin central slab."""
+    """Random cubes+spheres phantom constrained to a thin central slab.
+
+    Sample-frame convention: the reconstructed/object volume is in (x, y, z)
+    coordinates, and the nominal rotation axis is the +y axis. The thin slab is
+    therefore orthogonal to +y, i.e., confined to the central few y-slices.
+
+    Note: `tilt_deg`/`tilt_about` are ignored for the slab orientation (kept for
+    signature/backward-compat) since the sample-frame axis is +y regardless of
+    lamino tilt in world coordinates.
+    """
 
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
     ny_thin = int(round(ratio * ny))
@@ -230,18 +239,13 @@ def lamino_disk(
         seed=seed,
     )
 
-    # Constrain to a slab orthogonal to the laminography rotation axis.
-    axis = laminography_axis_unit(tilt_deg, tilt_about).astype(np.float32)
-    coords = [np.arange(nx, dtype=np.float32), np.arange(ny, dtype=np.float32), np.arange(nz, dtype=np.float32)]
-    X, Y, Z = np.meshgrid(*coords, indexing="ij")
-    center = np.array([(nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0], dtype=np.float32)
-    rel_x = X - center[0]
-    rel_y = Y - center[1]
-    rel_z = Z - center[2]
-    dist_axis = rel_x * axis[0] + rel_y * axis[1] + rel_z * axis[2]
+    # Constrain to a slab orthogonal to the sample-frame rotation axis (+y).
+    # Keep only central ny_thin slices along y (object frame).
+    cy = (ny - 1) / 2.0
     half_thickness = max(0.5, ny_thin * 0.5)
-    slab_mask = np.abs(dist_axis) <= half_thickness
-    vol = vol * slab_mask.astype(np.float32)
+    ys = np.arange(ny, dtype=np.float32)
+    mask_y = np.abs(ys - cy) <= half_thickness
+    vol[:, ~mask_y, :] = 0.0
 
     vmax = float(vol.max())
     if vmax > 0:

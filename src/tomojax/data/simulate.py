@@ -26,6 +26,7 @@ class SimConfig:
     vx: float = 1.0
     vy: float = 1.0
     vz: float = 1.0
+    rotation_deg: float | None = None  # total rotation range; defaults by geometry
     geometry: str = "parallel"  # or "lamino"
     tilt_deg: float = 30.0  # lamino
     tilt_about: str = "x"
@@ -83,7 +84,12 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
 def simulate(cfg: SimConfig) -> Dict[str, object]:
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
     det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, det_center=(0.0, 0.0))
-    thetas = np.linspace(0.0, 180.0, cfg.n_views, endpoint=False).astype(np.float32)
+    # Determine total rotation based on geometry unless overridden
+    if cfg.rotation_deg is not None:
+        total_deg = float(cfg.rotation_deg)
+    else:
+        total_deg = 180.0 if cfg.geometry == "parallel" else 360.0
+    thetas = np.linspace(0.0, total_deg, cfg.n_views, endpoint=False).astype(np.float32)
 
     geometry_meta: Dict[str, object] | None = None
     if cfg.geometry == "parallel":
@@ -136,5 +142,6 @@ def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
         geometry_type=data["geometry_type"],
         geometry_meta=data.get("geometry_meta"),
         volume=np.asarray(data["volume"]),
+        frame="sample",
     )
     return out_path

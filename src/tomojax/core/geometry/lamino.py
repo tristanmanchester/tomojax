@@ -44,10 +44,12 @@ def _align_u_to_v(u: np.ndarray, v: np.ndarray) -> np.ndarray:
         K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
         return np.eye(3) + 2.0 * (K @ K)
     k = np.cross(u, v)
-    s = float(np.linalg.norm(k))
+    s = float(np.linalg.norm(k))  # = sin(theta)
+    # Unit rotation axis
     k = k / (s + 1e-12)
     K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
-    return np.eye(3) + K + ((1.0 - c) / (s * s + 1e-12)) * (K @ K)
+    # Rodrigues' rotation formula with unit K: R = I + sin(theta)K + (1-cos(theta))K^2
+    return np.eye(3, dtype=np.float64) + s * K + (1.0 - c) * (K @ K)
 
 @dataclass
 class LaminographyGeometry:
@@ -58,6 +60,11 @@ class LaminographyGeometry:
       With `tilt_about='x'` the axis leans towards +y (beam-aligned laminography);
       with `tilt_about='z'` the axis leans towards +x. Each view rotates the
       object around this axis by angle `thetas_deg[i]`.
+    
+    Frame convention:
+    - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
+      object's +y axis equals the nominal rotation axis. At theta=0, T is the
+      fixed alignment S (generally not identity) that maps e_y -> axis.
     """
 
     grid: Grid
@@ -73,10 +80,11 @@ class LaminographyGeometry:
         return laminography_axis_unit(self.tilt_deg, self.tilt_about)
 
     def pose_for_view(self, i: int):
-        """Object->world pose in a sample frame: rotate around object +y.
+        """World-from-object pose in sample frame; rotation about object +y.
 
-        We align the object's +y axis to the laminography axis once (S), then
-        rotate around +y by view angle theta: R = S @ R_y(theta).
+        We align the object's +y axis to the laminography axis once via S, then
+        rotate around +y by view angle theta: R = S @ R_y(theta). The returned
+        4x4 poses are suitable for the projector contract (world_from_object).
         """
         theta = float(np.deg2rad(self.thetas_deg[i]))
         axis = self._axis_unit()

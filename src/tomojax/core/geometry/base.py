@@ -59,10 +59,12 @@ class Geometry(Protocol):
     """Common interface for CT, laminography, and custom geometries.
 
     Implementations describe per-view pose and per-pixel rays.
+    Contract: pose_for_view(i) returns a 4x4 world_from_object transform suitable
+    for the projector; rays_for_view(i) must define world-frame rays.
     """
 
     def pose_for_view(self, i: int) -> Tuple[Tuple[float, ...], ...]:
-        """Returns a 4x4 homogeneous transform (row-major) for view i."""
+        """Returns a 4x4 homogeneous transform world_from_object (row-major)."""
 
     def rays_for_view(self, i: int) -> Tuple[
         Callable[[int, int], Tuple[float, float, float]],
