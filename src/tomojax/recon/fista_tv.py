@@ -79,35 +79,34 @@ def grad_data_term(
             ),
             in_axes=(0, None),
         )
-        n = jnp.int32(T_all.shape[0])
-        b_py = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else int(n)
-        b = jnp.int32(b_py)
-        # Number of chunks (ceil division) as scalar
-        m = jnp.int32((n + b - 1) // b)
-
-        # Pad T_all and projections to multiples of b for uniform chunk shape
-        pad = jnp.int32(m * b - n)
-        # Shapes: (n, 4, 4) and (n, nv, nu)
-        T_pad = jnp.pad(T_all, ((0, pad), (0, 0), (0, 0)))
-        y_pad = jnp.pad(projections, ((0, pad), (0, 0), (0, 0)))
+        # Use Python ints for sizes to keep them static at trace time
+        n = int(T_all.shape[0])
+        nv = int(projections.shape[1])
+        nu = int(projections.shape[2])
+        b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
+        m = (n + b - 1) // b
 
         def body(loss_acc, i):
             i = jnp.int32(i)
-            start = i * b
-            # Dynamic slice a (b, ...) chunk
-            T_chunk = jax.lax.dynamic_slice(T_pad, (start, 0, 0), (b, 4, 4))
-            y_chunk = jax.lax.dynamic_slice(y_pad, (start, 0, 0), (b, projections.shape[1], projections.shape[2]))
+            start = i * jnp.int32(b)
+            remaining = jnp.maximum(0, jnp.int32(n) - start)
+            valid = jnp.minimum(jnp.int32(b), remaining)
+            # Shift start so that we always take a full-size window of length b ending at start+valid
+            shift = jnp.int32(b) - valid
+            start_shifted = jnp.maximum(0, start - shift)
+            # Slice fixed-size (b, ...) window
+            T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
+            y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = vm_project(T_chunk, vol)
-            # Mask out padded rows in the last chunk
-            remaining = jnp.maximum(0, n - start)
-            valid = jnp.minimum(b, remaining)
-            mask = (jnp.arange(b) < valid)[:, None, None]
+            # Keep only the last `valid` rows in the chunk
+            idx = jnp.arange(b)
+            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
             return (loss_acc + loss_batch, None)
 
         loss0 = jnp.float32(0.0)
-        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
+        loss_tot, _ = jax.lax.scan(body, loss0, None, length=m)
         return loss_tot
 
     def stream_loss_and_grad(vol):
