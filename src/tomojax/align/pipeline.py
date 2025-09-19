@@ -21,6 +21,9 @@ class AlignConfig:
     recon_iters: int = 10
     lambda_tv: float = 0.005
     tv_prox_iters: int = 10
+    # Reconstruction stopping criteria
+    recon_rel_tol: float | None = None
+    recon_patience: int = 2
     # Alignment step sizes
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
@@ -258,6 +261,10 @@ def align(
                 gather_dtype=gather,
                 grad_mode=gm,
                 tv_prox_iters=int(cfg.tv_prox_iters),
+                recon_rel_tol=cfg.recon_rel_tol,
+                recon_patience=(
+                    int(cfg.recon_patience) if cfg.recon_patience is not None else 0
+                ),
             )
 
         vpb0 = (cfg.views_per_batch if cfg.views_per_batch > 0 else None)
@@ -502,6 +509,10 @@ def align_multires(
                 projector_unroll=int(cfg.projector_unroll),
                 checkpoint_projector=cfg.checkpoint_projector,
                 gather_dtype=cfg.gather_dtype,
+                recon_rel_tol=cfg.recon_rel_tol,
+                recon_patience=(
+                    int(cfg.recon_patience) if cfg.recon_patience is not None else 0
+                ),
             )
             T_nom = jnp.stack(
                 [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(y.shape[0])],

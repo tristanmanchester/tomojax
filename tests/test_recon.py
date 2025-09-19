@@ -54,3 +54,25 @@ def test_fista_loss_decreases():
     assert len(loss) == 5
     # Allow some noise, but expect decreasing trend
     assert loss[-1] <= loss[0]
+
+
+def test_fista_early_stop_triggers():
+    grid, det, geom, _, projs = make_simple_case(8, 8, 8, 8)
+    zero_projs = jnp.zeros_like(projs)
+    _, info = fista_tv(
+        geom,
+        grid,
+        det,
+        zero_projs,
+        iters=8,
+        lambda_tv=0.0,
+        recon_rel_tol=1e-6,
+        recon_patience=1,
+    )
+    assert info["early_stop"] is True
+    assert info["effective_iters"] <= 2
+    assert info["effective_iters"] >= 1
+    loss = info["loss"]
+    assert len(loss) == 8
+    last_active = loss[info["effective_iters"] - 1]
+    assert loss[-1] == pytest.approx(last_active)
