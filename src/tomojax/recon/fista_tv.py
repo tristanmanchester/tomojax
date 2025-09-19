@@ -84,6 +84,7 @@ def grad_data_term(
         nv = int(projections.shape[1])
         nu = int(projections.shape[2])
         b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
+        b = min(b, n)
         m = (n + b - 1) // b
 
         def body(loss_acc, i):
