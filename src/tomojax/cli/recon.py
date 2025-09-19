@@ -107,6 +107,7 @@ def main() -> None:
         grid=meta.get("grid"),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
+        geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(vol),
     )
     logging.info("Saved reconstruction to %s", args.out)

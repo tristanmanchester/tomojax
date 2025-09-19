@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..core.geometry.lamino import laminography_axis_unit
+
 
 def cube(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed: int | None = None) -> np.ndarray:
     """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
@@ -187,4 +189,61 @@ def random_cubes_spheres(
         dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2 + (Z - cz) ** 2)
         vol[dist <= radius] = np.maximum(vol[dist <= radius], val)
 
+    return vol.astype(np.float32)
+
+
+def lamino_disk(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    thickness_ratio: float = 0.2,
+    seed: int = 0,
+    n_cubes: int = 8,
+    n_spheres: int = 7,
+    min_size: int = 4,
+    max_size: int = 32,
+    min_value: float = 0.1,
+    max_value: float = 1.0,
+    max_rot_degrees: float = 180.0,
+    tilt_deg: float = 30.0,
+    tilt_about: str = "x",
+) -> np.ndarray:
+    """Random cubes+spheres phantom constrained to a thin central slab."""
+
+    ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
+    ny_thin = int(round(ratio * ny))
+    ny_thin = max(1, min(ny, ny_thin))
+
+    vol = random_cubes_spheres(
+        nx,
+        ny,
+        nz,
+        n_cubes=n_cubes,
+        n_spheres=n_spheres,
+        min_size=int(round(min_size)),
+        max_size=int(round(max_size)),
+        min_value=min_value,
+        max_value=max_value,
+        max_rot_degrees=max_rot_degrees,
+        use_inscribed_fov=True,
+        seed=seed,
+    )
+
+    # Constrain to a slab orthogonal to the laminography rotation axis.
+    axis = laminography_axis_unit(tilt_deg, tilt_about).astype(np.float32)
+    coords = [np.arange(nx, dtype=np.float32), np.arange(ny, dtype=np.float32), np.arange(nz, dtype=np.float32)]
+    X, Y, Z = np.meshgrid(*coords, indexing="ij")
+    center = np.array([(nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0], dtype=np.float32)
+    rel_x = X - center[0]
+    rel_y = Y - center[1]
+    rel_z = Z - center[2]
+    dist_axis = rel_x * axis[0] + rel_y * axis[1] + rel_z * axis[2]
+    half_thickness = max(0.5, ny_thin * 0.5)
+    slab_mask = np.abs(dist_axis) <= half_thickness
+    vol = vol * slab_mask.astype(np.float32)
+
+    vmax = float(vol.max())
+    if vmax > 0:
+        vol = vol / vmax
     return vol.astype(np.float32)

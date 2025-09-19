@@ -61,6 +61,7 @@ def save_nxtomo(
     grid: Optional[Grid | Dict[str, Any]] = None,
     detector: Optional[Detector | Dict[str, Any]] = None,
     geometry_type: str = "parallel",
+    geometry_meta: Optional[Dict[str, Any]] = None,
     volume: Optional[np.ndarray] = None,
     align_params: Optional[np.ndarray] = None,
     compression: str = "lzf",
@@ -74,6 +75,7 @@ def save_nxtomo(
     - volume: optional ground-truth volume (nz, ny, nx)
     - align_params: optional (n_views, 5) [alpha,beta,phi,dx,dz] in radians/world units
     - geometry_type: "parallel" | "lamino" | "custom"
+    - geometry_meta: Optional dict with extra geometry metadata (e.g., lamino tilt)
     """
     # Ensure parent directory exists
     parent = os.path.dirname(path)
@@ -96,6 +98,8 @@ def save_nxtomo(
         # Geometry metadata
         geom = entry.require_group("geometry")
         _write_string_attr(geom, "type", geometry_type)
+        if geometry_meta:
+            geom.attrs["geometry_meta_json"] = json.dumps(geometry_meta)
 
         # Instrument / detector
         inst = _ensure_group(entry, "instrument", "NXinstrument")
@@ -207,6 +211,19 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
             if s:
                 geom_type = s
         out["geometry_type"] = geom_type
+        if geom is not None:
+            meta_attr = geom.attrs.get("geometry_meta_json")
+            if meta_attr is not None:
+                s = _attr_to_str(meta_attr)
+                if s:
+                    try:
+                        meta_dict = json.loads(s)
+                    except Exception:
+                        meta_dict = None
+                    if isinstance(meta_dict, dict):
+                        out["geometry_meta"] = meta_dict
+                        for key, val in meta_dict.items():
+                            out.setdefault(key, val)
 
         # Grid / Detector metadata (JSON blobs if present)
         grid_meta = entry.attrs.get("grid_meta_json")

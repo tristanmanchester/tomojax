@@ -20,7 +20,11 @@ def main() -> None:
     p.add_argument("--geometry", choices=["parallel", "lamino"], default="parallel")
     p.add_argument("--tilt-deg", type=float, default=30.0)
     p.add_argument("--tilt-about", choices=["x", "z"], default="x")
-    p.add_argument("--phantom", choices=["shepp", "cube", "blobs", "random_shapes"], default="shepp")
+    p.add_argument(
+        "--phantom",
+        choices=["shepp", "cube", "blobs", "random_shapes", "lamino_disk"],
+        default="shepp",
+    )
     # random_shapes args
     p.add_argument("--n-cubes", type=int, default=8)
     p.add_argument("--n-spheres", type=int, default=7)
@@ -29,6 +33,12 @@ def main() -> None:
     p.add_argument("--min-value", type=float, default=0.1)
     p.add_argument("--max-value", type=float, default=1.0)
     p.add_argument("--max-rot-deg", type=float, default=180.0)
+    p.add_argument(
+        "--lamino-thickness-ratio",
+        type=float,
+        default=0.2,
+        help="Relative slab thickness (0-1) used by the lamino disk phantom",
+    )
     p.add_argument("--noise", choices=["none", "gaussian", "poisson"], default="none")
     p.add_argument("--noise-level", type=float, default=0.0)
     p.add_argument("--seed", type=int, default=0)
@@ -49,6 +59,7 @@ def main() -> None:
         min_size=args.min_size, max_size=args.max_size,
         min_value=args.min_value, max_value=args.max_value,
         max_rot_deg=args.max_rot_deg,
+        lamino_thickness_ratio=args.lamino_thickness_ratio,
     )
     out = simulate_to_file(cfg, args.out)
     logging.info("Wrote dataset: %s", out)
