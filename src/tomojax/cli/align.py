@@ -80,7 +80,12 @@ def main() -> None:
     p.add_argument("--lr-rot", type=float, default=1e-3)
     p.add_argument("--lr-trans", type=float, default=1e-1)
     p.add_argument("--levels", type=int, nargs="+", default=None, help="Optional multires factors, e.g., 4 2 1")
-    p.add_argument("--gather-dtype", choices=["fp32", "bf16", "fp16"], default="fp32", help="Projector gather dtype")
+    p.add_argument(
+        "--gather-dtype",
+        choices=["auto", "fp32", "bf16", "fp16"],
+        default="auto",
+        help="Projector gather dtype (auto: bf16 on GPU/TPU, else fp32)",
+    )
     ck = p.add_mutually_exclusive_group()
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
     ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false")
@@ -113,6 +118,12 @@ def main() -> None:
     # Hidden defaults: stream one view at a time; unroll=1
     vpb_est = 1
 
+    # Resolve default gather dtype lazily at runtime
+    from ..utils.memory import default_gather_dtype as _default_gather_dtype
+    _gather = str(args.gather_dtype)
+    if _gather == "auto":
+        _gather = _default_gather_dtype()
+
     cfg = AlignConfig(
         outer_iters=args.outer_iters,
         recon_iters=args.recon_iters,
@@ -123,7 +134,7 @@ def main() -> None:
         views_per_batch=int(vpb_est),
         projector_unroll=1,
         checkpoint_projector=bool(args.checkpoint_projector),
-        gather_dtype=str(args.gather_dtype),
+        gather_dtype=_gather,
         opt_method=str(args.opt_method),
         gn_damping=float(args.gn_damping),
         w_rot=float(args.w_rot),

@@ -55,7 +55,12 @@ def main() -> None:
     p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight")
     p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator")
     p.add_argument("--L", type=float, default=None, help="Fixed Lipschitz constant for FISTA (skip power-method)")
-    p.add_argument("--gather-dtype", choices=["fp32", "bf16", "fp16"], default="fp32", help="Projector gather dtype (accumulation stays fp32)")
+    p.add_argument(
+        "--gather-dtype",
+        choices=["auto", "fp32", "bf16", "fp16"],
+        default="auto",
+        help="Projector gather dtype (auto: bf16 on GPU/TPU, else fp32; accumulation stays fp32)",
+    )
     ck = p.add_mutually_exclusive_group()
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true", help="Enable projector checkpointing")
     ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false", help="Disable projector checkpointing")
@@ -87,6 +92,11 @@ def main() -> None:
     # Hidden defaults: stream one view at a time; unroll=1
     vpb_val: int | None = 1
 
+    from ..utils.memory import default_gather_dtype as _default_gather_dtype
+    _gather = str(args.gather_dtype)
+    if _gather == "auto":
+        _gather = _default_gather_dtype()
+
     if args.algo == "fbp":
         with _transfer_guard_ctx(args.transfer_guard):
             vol = fbp(
@@ -98,7 +108,7 @@ def main() -> None:
                 views_per_batch=int(vpb_val),
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
-                gather_dtype=str(args.gather_dtype),
+                gather_dtype=_gather,
             )
     else:
         vpb = int(vpb_val) if int(vpb_val) > 0 else None
@@ -114,7 +124,7 @@ def main() -> None:
                 views_per_batch=vpb,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
-                gather_dtype=str(args.gather_dtype),
+                gather_dtype=_gather,
                 tv_prox_iters=int(args.tv_prox_iters),
             )
 
