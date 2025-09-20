@@ -100,6 +100,13 @@ def main() -> None:
                    help="Use compact one-line per-outer summary when --log-summary is set (default: on)")
     p.add_argument("--no-log-compact", dest="log_compact", action="store_false")
     p.add_argument("--recon-L", type=float, default=None, help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)")
+    # Early stopping controls (alignment phase)
+    es = p.add_mutually_exclusive_group()
+    es.add_argument("--early-stop", dest="early_stop", action="store_true", help="Enable early stopping across outers (default)")
+    es.add_argument("--no-early-stop", dest="early_stop", action="store_false", help="Disable early stopping across outers")
+    p.set_defaults(early_stop=True)
+    p.add_argument("--early-stop-rel", type=float, default=None, help="Relative improvement threshold for early stop (default 1e-3)")
+    p.add_argument("--early-stop-patience", type=int, default=None, help="Consecutive outers below threshold before stopping (default 2)")
     p.add_argument(
         "--transfer-guard",
         choices=["off", "log", "disallow"],
@@ -146,6 +153,9 @@ def main() -> None:
         log_summary=bool(args.log_summary),
         log_compact=bool(args.log_compact),
         recon_L=(float(args.recon_L) if args.recon_L is not None else None),
+        early_stop=bool(args.early_stop),
+        early_stop_rel_impr=(float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3),
+        early_stop_patience=(int(args.early_stop_patience) if args.early_stop_patience is not None else 2),
     )
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
