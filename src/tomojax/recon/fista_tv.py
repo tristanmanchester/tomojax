@@ -251,7 +251,7 @@ def fista_tv(
     L: float | None = None,
     callback: Callable[[int, float], None] | None = None,
     init_x: jnp.ndarray | None = None,
-    views_per_batch: int | None = None,
+    views_per_batch: int | None = 1,
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",

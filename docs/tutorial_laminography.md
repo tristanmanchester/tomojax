@@ -31,7 +31,6 @@ pixi run python -m tomojax.cli.recon \
 --data runs/lamino_demo.nxs \
 --algo fbp \
 --filter ramp \
---views-per-batch auto \
 --out runs/lamino_demo_fbp.nxs
 ```
 
@@ -62,7 +61,6 @@ pixi run python -m tomojax.cli.recon \
   --data runs/lamino_demo_misaligned.nxs \
   --algo fbp \
   --filter ramp \
-  --views-per-batch auto \
   --out runs/lamino_demo_misaligned_fbp.nxs
 ```
 
@@ -72,7 +70,6 @@ pixi run python -m tomojax.cli.recon \
   --data runs/lamino_demo_misaligned_noisy.nxs \
   --algo fbp \
   --filter ramp \
-  --views-per-batch auto \
   --out runs/lamino_demo_misaligned_noisy_fbp.nxs
 ```
 
@@ -83,7 +80,6 @@ pixi run align \
   --outer-iters 4 --recon-iters 10 \
   --lambda-tv 5e-3 --tv-prox-iters 10 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch auto \
   --out runs/lamino_demo_aligned.nxs \
   --progress --log-summary
 ```
@@ -95,11 +91,10 @@ pixi run align \
   --outer-iters 4 --recon-iters 20 \
   --lambda-tv 5e-2 --tv-prox-iters 15 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch auto \
   --out runs/lamino_demo_noisy_aligned.nxs \
   --progress --log-summary
 ```
 
 Tips
 - Reconstructions are saved in the sample frame; use consistent axis order when viewing.
-- For memory-constrained runs, use --views-per-batch auto and keep projector checkpointing enabled.
+- For memory-constrained runs, keep projector checkpointing enabled.

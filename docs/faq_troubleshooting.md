@@ -14,15 +14,12 @@
 ## Memory / OOM
 
 - Out of memory (RESOURCE_EXHAUSTED) during FBP or FISTA:
-  - Use `--views-per-batch auto` (recommended) or a small integer (e.g., 4 or 8).
-  - Reduce `--projector-unroll` to 1–2.
   - Keep `--checkpoint-projector` enabled.
   - Prefer `--gather-dtype bf16` on newer GPUs.
   - Disable JAX preallocation: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+  - Reduce problem size (coarser levels, fewer views) if needed.
 
-- Auto batch seems too large:
-  - Clamp with `export TOMOJAX_MAX_VIEWS_PER_BATCH=4`.
-  - For very large volumes (≥256³), expect conservative caps by design.
+\
 
 
 ## Alignment Convergence

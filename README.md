@@ -111,14 +111,14 @@ pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson5
 
 # Naive reconstructions (FBP)
 pixi run recon --data data/sim_misaligned.nxs \
-  --algo fbp --filter ramp --views-per-batch auto --gather-dtype bf16 \
+  --algo fbp --filter ramp --gather-dtype bf16 \
   --checkpoint-projector --out out/fbp_misaligned.nxs
 
 # Iterative alignment + reconstruction (multires)
 pixi run align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
+  --gather-dtype bf16 --checkpoint-projector \
   --log-summary --out out/align_misaligned.nxs
 ```
 
@@ -173,8 +173,6 @@ See `docs/schema_nxtomo.md` for the HDF5/NXtomo format used by the CLIs.
 
 ## Memory and Performance
 
-- Use `--views-per-batch auto` to automatically choose a safe batch size; set `TOMOJAX_MAX_VIEWS_PER_BATCH` to clamp the auto choice (default 8).
-- Reduce `--projector-unroll` (1–2) when close to memory limits.
 - Keep `--checkpoint-projector` enabled to reduce activation memory at small extra compute.
 - Mixed precision gather (`--gather-dtype bf16`) reduces bandwidth while accumulating in fp32.
 - To avoid JAX preallocation spikes: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
