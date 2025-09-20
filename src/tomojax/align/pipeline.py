@@ -147,10 +147,12 @@ def align(
             loss = loss + jnp.sum((d2 * W) ** 2)
         return loss
 
-    # Donate params5 buffer into the compiled grad to reduce peak memory
-    @jax.jit(donate_argnums=(0,))
-    def grad_all(params5, vol):
+    # Donate params5 buffer into the compiled grad to reduce peak memory.
+    # Use assignment-style jit for wider JAX version compatibility (some versions
+    # require `fun` positional arg and don't support decorator factory with kwargs).
+    def _grad_all_impl(params5, vol):
         return jax.grad(align_loss, argnums=0)(params5, vol)
+    grad_all = jax.jit(_grad_all_impl, donate_argnums=(0,))
     align_loss_jit = jax.jit(align_loss)
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
