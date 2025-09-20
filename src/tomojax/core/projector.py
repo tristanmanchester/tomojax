@@ -19,8 +19,6 @@ from .geometry.base import Grid, Detector, Geometry
 
 # Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
 _DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
-# Optional device cache to avoid repeated host→device transfers under jit
-_DET_GRID_CACHE_JAX: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[jnp.ndarray, jnp.ndarray]]" = OrderedDict()
 _DET_GRID_CACHE_CAP = 8
 
 
@@ -57,28 +55,7 @@ def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
     return X, Z
 
 
-def _get_detector_grid_device(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    key = (
-        int(det.nu),
-        int(det.nv),
-        float(det.du),
-        float(det.dv),
-        float(det.det_center[0]),
-        float(det.det_center[1]),
-    )
-    # Populate host cache first
-    X_np, Z_np = _build_detector_grid(det)
-    # Serve from device cache if available
-    if key in _DET_GRID_CACHE_JAX:
-        _DET_GRID_CACHE_JAX.move_to_end(key)
-        return _DET_GRID_CACHE_JAX[key]
-    # Otherwise, transfer once to device and cache
-    X = jnp.asarray(X_np, dtype=jnp.float32)
-    Z = jnp.asarray(Z_np, dtype=jnp.float32)
-    _DET_GRID_CACHE_JAX[key] = (X, Z)
-    if len(_DET_GRID_CACHE_JAX) > _DET_GRID_CACHE_CAP:
-        _DET_GRID_CACHE_JAX.popitem(last=False)
-    return X, Z
+    
 
 
 @jax.jit
@@ -165,9 +142,11 @@ def forward_project_view_T(
         else _default_volume_origin(grid)
     )
 
-    # Use device-cached detector grid to avoid repeated host→device transfers
-    Xr, Zr = _get_detector_grid_device(detector)
-    n_rays = int(Xr.shape[0])
+    Xr_np, Zr_np = _build_detector_grid(detector)
+    # Convert to device arrays inside the jitted function scope
+    Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
+    Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
+    n_rays = int(Xr_np.shape[0])
 
     vy = float(grid.vy)
     if step_size is None:
