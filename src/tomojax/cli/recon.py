@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
+from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
@@ -24,6 +25,20 @@ def build_geometry(meta: dict):
         tilt_about = str(meta.get("tilt_about", "x"))
         geom = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
     return grid, detector, geom
+
+def _transfer_guard_ctx(mode: str = "log"):
+    try:
+        import jax as _jax  # local import for flexibility
+        tg = getattr(_jax, "transfer_guard", None)
+        if tg is not None:
+            return tg(mode)
+        try:
+            from jax.experimental import transfer_guard as _tg  # type: ignore
+            return _tg(mode)
+        except Exception:
+            return _nullcontext()
+    except Exception:
+        return _nullcontext()
 
 
 def main() -> None:
@@ -62,33 +77,35 @@ def main() -> None:
     vpb_val: int | None = 1
 
     if args.algo == "fbp":
-        vol = fbp(
-            geom,
-            grid,
-            detector,
-            proj,
-            filter_name=args.filter,
-            views_per_batch=int(vpb_val),
-            projector_unroll=1,
-            checkpoint_projector=bool(args.checkpoint_projector),
-            gather_dtype=str(args.gather_dtype),
-        )
+        with _transfer_guard_ctx("log"):
+            vol = fbp(
+                geom,
+                grid,
+                detector,
+                proj,
+                filter_name=args.filter,
+                views_per_batch=int(vpb_val),
+                projector_unroll=1,
+                checkpoint_projector=bool(args.checkpoint_projector),
+                gather_dtype=str(args.gather_dtype),
+            )
     else:
         vpb = int(vpb_val) if int(vpb_val) > 0 else None
-        vol, info = fista_tv(
-            geom,
-            grid,
-            detector,
-            proj,
-            iters=args.iters,
-            lambda_tv=args.lambda_tv,
-            L=(float(args.L) if args.L is not None else None),
-            views_per_batch=vpb,
-            projector_unroll=1,
-            checkpoint_projector=bool(args.checkpoint_projector),
-            gather_dtype=str(args.gather_dtype),
-            tv_prox_iters=int(args.tv_prox_iters),
-        )
+        with _transfer_guard_ctx("log"):
+            vol, info = fista_tv(
+                geom,
+                grid,
+                detector,
+                proj,
+                iters=args.iters,
+                lambda_tv=args.lambda_tv,
+                L=(float(args.L) if args.L is not None else None),
+                views_per_batch=vpb,
+                projector_unroll=1,
+                checkpoint_projector=bool(args.checkpoint_projector),
+                gather_dtype=str(args.gather_dtype),
+                tv_prox_iters=int(args.tv_prox_iters),
+            )
 
     # Note: Reconstructions are computed on the object (sample) frame. We persist that by default.
     # If a lab-frame export is desired, we currently only record metadata; a resampling export

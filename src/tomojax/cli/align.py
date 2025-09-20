@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
+from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
@@ -48,6 +49,20 @@ def build_geometry(meta: dict):
         tilt_about = str(meta.get("tilt_about", "x"))
         geom = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
     return grid, detector, geom
+
+def _transfer_guard_ctx(mode: str = "log"):
+    try:
+        import jax as _jax  # local import to avoid hard dep at import time
+        tg = getattr(_jax, "transfer_guard", None)
+        if tg is not None:
+            return tg(mode)
+        try:
+            from jax.experimental import transfer_guard as _tg  # type: ignore
+            return _tg(mode)
+        except Exception:
+            return _nullcontext()
+    except Exception:
+        return _nullcontext()
 
 
 def main() -> None:
@@ -108,9 +123,11 @@ def main() -> None:
     )
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
-        x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
+        with _transfer_guard_ctx("log"):
+            x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
     else:
-        x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
+        with _transfer_guard_ctx("log"):
+            x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
 
     save_nxtomo(
         args.out,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from contextlib import nullcontext as _nullcontext
 
 from ..data.simulate import SimConfig, simulate_to_file
 from ..utils.logging import setup_logging, log_jax_env
@@ -68,7 +69,22 @@ def main() -> None:
         max_rot_deg=args.max_rot_deg,
         lamino_thickness_ratio=args.lamino_thickness_ratio,
     )
-    out = simulate_to_file(cfg, args.out)
+    def _transfer_guard_ctx(mode: str = "log"):
+        try:
+            import jax as _jax
+            tg = getattr(_jax, "transfer_guard", None)
+            if tg is not None:
+                return tg(mode)
+            try:
+                from jax.experimental import transfer_guard as _tg  # type: ignore
+                return _tg(mode)
+            except Exception:
+                return _nullcontext()
+        except Exception:
+            return _nullcontext()
+
+    with _transfer_guard_ctx("log"):
+        out = simulate_to_file(cfg, args.out)
     logging.info("Wrote dataset: %s", out)
 
 

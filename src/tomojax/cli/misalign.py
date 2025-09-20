@@ -6,6 +6,7 @@ import os
 import numpy as np
 import jax
 import jax.numpy as jnp
+from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
@@ -71,9 +72,10 @@ def main() -> None:
     params5[:, 4] = rng.uniform(-float(args.trans_px), float(args.trans_px), n_views).astype(np.float32) * float(det.dv)
     params5 = jnp.asarray(params5, jnp.float32)
 
-    T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
-    vm_project = jax.vmap(lambda T, v: forward_project_view_T(T, grid, det, v, use_checkpoint=True), in_axes=(0, None))
-    proj = vm_project(T_aug, vol).astype(jnp.float32)
+    with _transfer_guard_ctx("log"):
+        T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
+        vm_project = jax.vmap(lambda T, v: forward_project_view_T(T, grid, det, v, use_checkpoint=True), in_axes=(0, None))
+        proj = vm_project(T_aug, vol).astype(jnp.float32)
 
     # Optional noise
     if args.poisson and float(args.poisson) > 0:
@@ -99,3 +101,15 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+def _transfer_guard_ctx(mode: str = "log"):
+    try:
+        tg = getattr(jax, "transfer_guard", None)
+        if tg is not None:
+            return tg(mode)
+        try:
+            from jax.experimental import transfer_guard as _tg  # type: ignore
+            return _tg(mode)
+        except Exception:
+            return _nullcontext()
+    except Exception:
+        return _nullcontext()
