@@ -166,19 +166,42 @@ def align(
         def f(p5):
             T_i = T_nom_i @ se3_from_5d(p5)
             return _pred_flat(T_i, vol) - y_i.ravel()
-        # J^T r
+
+        # Residual and linear operators without forming J or H explicitly
         r = f(p5_i)
         _, vjp = jax.vjp(f, p5_i)
-        g = vjp(r)[0]
-        # J^T J via 5 JVPs
-        eye5 = jnp.eye(5, dtype=jnp.float32)
-        def jvp_col(v):
-            return jax.jvp(f, (p5_i,), (v,))[1]
-        cols = jax.vmap(jvp_col)(eye5)
-        H = cols @ cols.T
+
+        def JTv(v):  # (nv*nu,) -> (5,)
+            return vjp(v)[0]
+
+        def Jv(vec5):  # (5,) -> (nv*nu,)
+            return jax.jvp(f, (p5_i,), (vec5,))[1]
+
         lam = jnp.float32(cfg.gn_damping)
-        dp = jnp.linalg.solve(H + lam * jnp.eye(5, dtype=H.dtype), -g)
-        return dp
+
+        def A(vec5):  # (J^T J + lam I) @ vec5
+            return JTv(Jv(vec5)) + lam * vec5
+
+        b = -JTv(r)  # -J^T r
+
+        # Small 5D conjugate gradient (fixed iters, allocation-light)
+        def cg_step(carry, _):
+            x, r_cg, p, rs = carry
+            Ap = A(p)
+            alpha = rs / (jnp.dot(p, Ap) + 1e-8)
+            x2 = x + alpha * p
+            r2 = r_cg - alpha * Ap
+            rs2 = jnp.dot(r2, r2)
+            beta = rs2 / (rs + 1e-8)
+            p2 = r2 + beta * p
+            return (x2, r2, p2, rs2), None
+
+        x0 = jnp.zeros_like(b)
+        r0 = b - A(x0)
+        p0 = r0
+        rs0 = jnp.dot(r0, r0)
+        (xf, _, _, _), _ = jax.lax.scan(cg_step, (x0, r0, p0, rs0), None, length=10)
+        return xf
 
     _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None)))
 
