@@ -41,19 +41,17 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     combos = []
-    vpbs = ["0", "8", "16", "auto"]
     dtypes = ["fp32", "bf16"]
     ckpts = [True, False]
 
     for algo in args.modes:
-        for vpb in vpbs:
-            for dt in dtypes:
-                for ck in ckpts:
-                    combos.append((algo, vpb, dt, ck))
+        for dt in dtypes:
+            for ck in ckpts:
+                combos.append((algo, dt, ck))
 
     results = []
-    for algo, vpb, dt, ck in combos:
-        out = outdir / f"{algo}_vpb{vpb}_{dt}_{'ck' if ck else 'nock'}.nxs"
+    for algo, dt, ck in combos:
+        out = outdir / f"{algo}_{dt}_{'ck' if ck else 'nock'}.nxs"
         if algo == "fbp":
             cmd = [
                 "python",
@@ -65,8 +63,6 @@ def main() -> None:
                 "fbp",
                 "--filter",
                 "ramp",
-                "--views-per-batch",
-                str(vpb),
                 "--gather-dtype",
                 dt,
                 ("--checkpoint-projector" if ck else "--no-checkpoint-projector"),
@@ -86,8 +82,6 @@ def main() -> None:
                 "20",
                 "--lambda-tv",
                 "0.001",
-                "--views-per-batch",
-                str(vpb),
                 "--gather-dtype",
                 dt,
                 ("--checkpoint-projector" if ck else "--no-checkpoint-projector"),
@@ -97,7 +91,6 @@ def main() -> None:
         res = run(cmd)
         results.append({
             "algo": algo,
-            "views_per_batch": vpb,
             "gather_dtype": dt,
             "checkpoint": ck,
             **res,
@@ -107,7 +100,7 @@ def main() -> None:
         json.dump(results, f, indent=2)
     # Print concise table to stdout
     rows = [
-        f"{r['algo']:5s} vpb={str(r['views_per_batch']):>4s} dt={r['gather_dtype']:5s} ck={str(r['checkpoint']):5s} t={r['secs']:7.3f}s rc={r['rc']}"
+        f"{r['algo']:5s} dt={r['gather_dtype']:5s} ck={str(r['checkpoint']):5s} t={r['secs']:7.3f}s rc={r['rc']}"
         for r in results
     ]
     print("\n".join(rows))
@@ -115,4 +108,3 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

@@ -93,7 +93,7 @@ pixi run misalign \
 ```
 
 
-## 4) Naive FBP Reconstructions (batched)
+## 4) Naive FBP Reconstructions
 
 Run FBP on both the misaligned and the noisy+misaligned datasets.
 
@@ -102,7 +102,7 @@ Run FBP on both the misaligned and the noisy+misaligned datasets.
 pixi run recon \
   --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector \
+  --gather-dtype bf16 --checkpoint-projector \
   --out out/fbp_misaligned.nxs \
   --progress
 
@@ -110,7 +110,7 @@ pixi run recon \
 pixi run recon \
   --data data/sim_misaligned_poisson.nxs \
   --algo fbp --filter ramp \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector \
+  --gather-dtype bf16 --checkpoint-projector \
   --out out/fbp_misaligned_noisy.nxs \
   --progress
 ```
@@ -118,7 +118,7 @@ pixi run recon \
 
 ## 5) Iterative Alignment + Reconstruction (Levels [4, 2, 1])
 
-Use multires alignment with Gauss–Newton updates, auto-batched views, and bf16 gather for speed.
+Use multires alignment with Gauss–Newton updates and bf16 gather.
 
 ```
 # Misaligned (clean)
@@ -127,7 +127,7 @@ pixi run align \
   --levels 4 2 1 \
   --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
+  --gather-dtype bf16 --checkpoint-projector \
   --log-summary \
   --out out/align_misaligned.nxs \
   --progress
@@ -138,14 +138,14 @@ pixi run align \
   --levels 4 2 1 \
   --outer-iters 5 --recon-iters 30 --lambda-tv 0.03 --tv-prox-iters 20 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
+  --gather-dtype bf16 --checkpoint-projector \
   --log-summary \
   --out out/align_misaligned_noisy.nxs \
   --progress
 ```
 
 Tips
-- If memory is tight, reduce `--views-per-batch` (e.g., 8) or `--projector-unroll` (e.g., 2).
+- If memory is tight, keep projector checkpointing enabled and prefer `--gather-dtype bf16`.
 - If convergence stalls under GD, switch to GN (`--opt-method gn`) or increase `--outer-iters`.
 
 
@@ -167,8 +167,6 @@ ccpi, tomviz) or by writing a small slice/isosurface notebook.
 
 ## Appendix — Knobs That Matter
 
-- `--views-per-batch` or `auto`: trades memory for throughput by chunking views; `auto` chooses a safe batch from detected free memory.
-- `--projector-unroll`: unroll factor for the projector’s `lax.scan` (2–4 is a good starting point on GPUs).
 - `--gather-dtype {fp32,bf16,fp16}`: reduces projector gather bandwidth; accumulation remains fp32 (bf16 recommended on modern GPUs).
 - `--[no-]checkpoint-projector`: toggles rematerialization to cut activation memory at ~10–25% extra compute.
 - `--lambda-tv`: increase for noisy data; keep accumulations in fp32.

@@ -28,9 +28,9 @@ class AlignConfig:
     # Alignment step sizes
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
-    # Memory/throughput knobs
-    views_per_batch: int = 0  # 0 -> all views at once
-    projector_unroll: int = 4
+    # Memory/throughput knobs (hidden defaults)
+    views_per_batch: int = 1  # stream one view at a time
+    projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     # Solver & regularization
@@ -305,7 +305,7 @@ def align(
                     msg2 = str(e2)
                     if ("RESOURCE_EXHAUSTED" in msg2) or ("Out of memory" in msg2) or ("Allocator" in msg2):
                         logging.error(
-                            "FISTA still OOM at finest level. Suggest reducing --views-per-batch, setting --projector-unroll 1, or pinning --recon-L to skip power-method."
+                            "FISTA still OOM at finest level. Reduce memory pressure (smaller problem size or lower internal batching), or provide --recon-L to skip power-method."
                         )
                     raise
             else:

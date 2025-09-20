@@ -19,7 +19,7 @@
 - Run tests: `pixi run test` or target a file, e.g., `pixi run python -m pytest -q tests/test_projector.py`.
 - CLI workflows (examples; see `README.md` for more):
   - Simulate: `pixi run simulate --help`
-  - Recon: `pixi run recon --data data/sim.nxs --algo fbp --views-per-batch auto --out runs/fbp.nxs`
+  - Recon: `pixi run recon --data data/sim.nxs --algo fbp --out runs/fbp.nxs`
   - Align: `pixi run align --data data/sim_misaligned.nxs --levels 2 1 --outer-iters 4 --out runs/align.nxs`
 
 ## Coding Style & Naming Conventions

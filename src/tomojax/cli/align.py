@@ -60,8 +60,6 @@ def main() -> None:
     p.add_argument("--lr-rot", type=float, default=1e-3)
     p.add_argument("--lr-trans", type=float, default=1e-1)
     p.add_argument("--levels", type=int, nargs="+", default=None, help="Optional multires factors, e.g., 4 2 1")
-    p.add_argument("--views-per-batch", default="0", help="Batch views to control memory (0=all). Use 'auto' to estimate.")
-    p.add_argument("--projector-unroll", type=int, default=1, help="Unroll factor inside projector scan")
     p.add_argument("--gather-dtype", choices=["fp32", "bf16", "fp16"], default="fp32", help="Projector gather dtype")
     ck = p.add_mutually_exclusive_group()
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
@@ -86,20 +84,8 @@ def main() -> None:
     grid, detector, geom = build_geometry(meta)
     proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
 
-    # Resolve views_per_batch (int or 'auto')
-    vpb_str = str(args.views_per_batch)
-    if vpb_str.strip().lower() == "auto":
-        from ..utils.memory import estimate_views_per_batch
-        vpb_est = estimate_views_per_batch(
-            n_views=int(proj.shape[0]),
-            grid_nxyz=(int(grid.nx), int(grid.ny), int(grid.nz)),
-            det_nuv=(int(detector.nv), int(detector.nu)),
-            gather_dtype=str(args.gather_dtype),
-            checkpoint_projector=bool(args.checkpoint_projector),
-            algo="fista",
-        )
-    else:
-        vpb_est = int(vpb_str)
+    # Hidden defaults: stream one view at a time; unroll=1
+    vpb_est = 1
 
     cfg = AlignConfig(
         outer_iters=args.outer_iters,
@@ -109,7 +95,7 @@ def main() -> None:
         lr_rot=args.lr_rot,
         lr_trans=args.lr_trans,
         views_per_batch=int(vpb_est),
-        projector_unroll=int(args.projector_unroll),
+        projector_unroll=1,
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=str(args.gather_dtype),
         opt_method=str(args.opt_method),

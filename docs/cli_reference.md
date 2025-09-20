@@ -4,7 +4,7 @@ All commands run inside the pixi environment. Either use `python -m tomojax.cli.
 
 Common tips
 - Show progress bars: add `--progress` or set `TOMOJAX_PROGRESS=1`.
-- Memory safety: prefer `--views-per-batch auto`, keep `--checkpoint-projector` on, and consider `--gather-dtype bf16`.
+- Keep `--checkpoint-projector` on for lower memory, and consider `--gather-dtype bf16`.
 - Disable JAX preallocation to reduce spikes: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 
 
@@ -79,7 +79,6 @@ Usage
 python -m tomojax.cli.recon --data <in.nxs> \
   [--algo fbp|fista] [--filter ramp|shepp|hann] \
   [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
-  [--views-per-batch <int|auto>] [--projector-unroll <int>] \
   [--gather-dtype fp32|bf16|fp16] [--checkpoint-projector|--no-checkpoint-projector] \
   --out <out.nxs> [--frame sample|lab] [--progress]
 ```
@@ -88,20 +87,20 @@ Key options
 - Algorithm: `--algo fbp` (default) or `fista`.
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
 - FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method.
-- Memory/performance: `--views-per-batch auto` (recommended), `--projector-unroll` (1–4), `--gather-dtype` (bf16 recommended on modern GPUs), projector checkpointing on by default.
+- Memory/performance: use `--gather-dtype` (bf16 recommended on modern GPUs) and keep projector checkpointing on by default.
 - Frame: `--frame sample` (default; recommended) records that the saved volume is in the sample/object frame. `lab` is recorded for compatibility exports.
 
 Examples
 ```
-# FBP with auto batching and bf16 gathers
+# FBP with bf16 gathers
 pixi run recon --data data/sim_misaligned.nxs \
-  --algo fbp --filter ramp --views-per-batch auto --gather-dtype bf16 \
+  --algo fbp --filter ramp --gather-dtype bf16 \
   --checkpoint-projector --out out/fbp_misaligned.nxs --progress
 
-# FISTA with TV
+# FISTA with TV (streamed)
 pixi run recon --data data/sim_misaligned.nxs \
   --algo fista --iters 60 --lambda-tv 0.005 \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector \
+  --gather-dtype bf16 --checkpoint-projector \
   --out out/fista_misaligned.nxs --progress
 ```
 
@@ -118,8 +117,7 @@ python -m tomojax.cli.align --data <in.nxs> \
   [--lr-rot <float>] [--lr-trans <float>] \
   [--opt-method gd|gn] [--gn-damping <float>] \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
-  [--levels <ints...>] [--views-per-batch <int|auto>] \
-  [--projector-unroll <int>] [--gather-dtype fp32|bf16|fp16] \
+  [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
   --out <out.nxs> [--progress]
 ```
@@ -129,7 +127,7 @@ Key options
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
 - Smoothness across views: `--w-rot`, `--w-trans` (default 1e‑3 in CLI).
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
-- Memory/performance: same knobs as recon; prefer `--views-per-batch auto`.
+- Memory/performance: same knobs as recon (gather dtype and checkpointing).
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
 - Early stopping and GN acceptance are enabled by default during alignment: outers stop when relative improvement is tiny, and GN steps are rejected if they don’t reduce loss.
   Use `--log-summary` to see when early stopping triggers.
@@ -139,18 +137,18 @@ Notes
 
 Examples
 ```
-# GN, multires, auto batching
+# GN, multires
 pixi run align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
-  --views-per-batch auto --gather-dtype bf16 --checkpoint-projector --projector-unroll 4 \
+  --gather-dtype bf16 --checkpoint-projector \
   --log-summary --out out/align_misaligned.nxs --progress
 
 # GD with learning rates (single level)
 pixi run align --data data/sim_misaligned.nxs \
   --outer-iters 6 --recon-iters 30 --lambda-tv 0.005 \
   --opt-method gd --lr-rot 3e-3 --lr-trans 1e-1 \
-  --views-per-batch auto --out out/align_gd.nxs --progress
+  --out out/align_gd.nxs --progress
 ```
 
 
@@ -173,7 +171,6 @@ pixi run python -m tomojax.cli.convert --in data/sim_aligned.npz --out data/sim_
 ## Environment variables
 
 - `TOMOJAX_PROGRESS=1` — enable progress bars.
-- `TOMOJAX_MAX_VIEWS_PER_BATCH=<int>` — upper clamp for `--views-per-batch auto` (default 8; auto further tightens for very large volumes).
 - `TOMOJAX_JAX_CACHE_DIR=<path>` — persistent JAX compilation cache directory.
 - `JAX_PLATFORM_NAME=cpu` or `JAX_PLATFORMS=cuda` — pin backend selection.
 - `XLA_PYTHON_CLIENT_PREALLOCATE=false` — disable device memory preallocation.

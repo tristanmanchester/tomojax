@@ -74,7 +74,7 @@ def fbp(
     *,
     filter_name: str = "ramp",
     scale: float | None = None,
-    views_per_batch: int = 0,
+    views_per_batch: int = 1,
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",

@@ -35,8 +35,6 @@ def main() -> None:
     p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight")
     p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator")
     p.add_argument("--L", type=float, default=None, help="Fixed Lipschitz constant for FISTA (skip power-method)")
-    p.add_argument("--views-per-batch", default="0", help="Batch views to control memory (applies to FISTA and FBP). Use 'auto' to estimate.")
-    p.add_argument("--projector-unroll", type=int, default=1, help="Unroll factor inside projector scan")
     p.add_argument("--gather-dtype", choices=["fp32", "bf16", "fp16"], default="fp32", help="Projector gather dtype (accumulation stays fp32)")
     ck = p.add_mutually_exclusive_group()
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true", help="Enable projector checkpointing")
@@ -60,22 +58,8 @@ def main() -> None:
     grid, detector, geom = build_geometry(meta)
     proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
 
-    # Resolve views_per_batch (int or 'auto')
-    vpb_str = str(args.views_per_batch)
-    vpb_val: int | None
-    if vpb_str.strip().lower() == "auto":
-        from ..utils.memory import estimate_views_per_batch
-        est = estimate_views_per_batch(
-            n_views=int(proj.shape[0]),
-            grid_nxyz=(int(grid.nx), int(grid.ny), int(grid.nz)),
-            det_nuv=(int(detector.nv), int(detector.nu)),
-            gather_dtype=str(args.gather_dtype),
-            checkpoint_projector=bool(args.checkpoint_projector),
-            algo=str(args.algo),
-        )
-        vpb_val = est
-    else:
-        vpb_val = int(vpb_str)
+    # Hidden defaults: stream one view at a time; unroll=1
+    vpb_val: int | None = 1
 
     if args.algo == "fbp":
         vol = fbp(
@@ -85,7 +69,7 @@ def main() -> None:
             proj,
             filter_name=args.filter,
             views_per_batch=int(vpb_val),
-            projector_unroll=int(args.projector_unroll),
+            projector_unroll=1,
             checkpoint_projector=bool(args.checkpoint_projector),
             gather_dtype=str(args.gather_dtype),
         )
@@ -100,7 +84,7 @@ def main() -> None:
             lambda_tv=args.lambda_tv,
             L=(float(args.L) if args.L is not None else None),
             views_per_batch=vpb,
-            projector_unroll=int(args.projector_unroll),
+            projector_unroll=1,
             checkpoint_projector=bool(args.checkpoint_projector),
             gather_dtype=str(args.gather_dtype),
             tv_prox_iters=int(args.tv_prox_iters),
