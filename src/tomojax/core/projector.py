@@ -184,9 +184,10 @@ def forward_project_view_T(
 
     scan_step = step if not use_checkpoint else jax.checkpoint(step)
     acc0 = jnp.zeros((n_rays,), dtype=jnp.float32)
-    (acc, _), _ = jax.lax.scan(
+    (carry_final, _), _ = jax.lax.scan(
         scan_step, (acc0, ix0, iy0, iz0), None, length=n_steps, unroll=unroll or 1
     )
+    acc, _, _, _ = carry_final
     return acc.reshape((detector.nv, detector.nu))
 
 
