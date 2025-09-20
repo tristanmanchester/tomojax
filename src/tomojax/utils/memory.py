@@ -121,3 +121,22 @@ def estimate_views_per_batch(
         cap_env = min(cap_env, 2)
     cap = max(1, cap_env)
     return max(1, min(int(n_views), cap, b))
+
+
+def default_gather_dtype() -> str:
+    """Choose a default gather dtype based on the active JAX backend.
+
+    Returns "bf16" on GPU/TPU (mixed-precision gather with fp32 accumulation)
+    and "fp32" on CPU or if backend detection fails.
+    """
+    try:
+        import jax  # type: ignore
+
+        backend = getattr(jax, "default_backend", lambda: None)()
+        if isinstance(backend, str):
+            b = backend.lower()
+            if b in ("gpu", "tpu"):
+                return "bf16"
+    except Exception:
+        pass
+    return "fp32"

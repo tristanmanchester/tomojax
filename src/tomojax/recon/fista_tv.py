@@ -46,6 +46,7 @@ def grad_data_term(
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
     grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    T_all: jnp.ndarray | None = None,
 ) -> Tuple[jnp.ndarray, float]:
     """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
 
@@ -56,10 +57,11 @@ def grad_data_term(
     When grad_mode="auto", selects stream if the effective batch is 1, else batched.
     """
     n_views = int(projections.shape[0])
-    T_all = jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
+    if T_all is None:
+        T_all = jnp.stack(
+            [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
+            axis=0,
+        )
 
     det_grid = get_detector_grid_device(detector)
 
@@ -166,6 +168,7 @@ def power_method_L(
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
     grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    T_all: jnp.ndarray | None = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     n_views, nv, nu = projections_shape
@@ -184,6 +187,7 @@ def power_method_L(
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
             grad_mode=grad_mode,
+            T_all=T_all,
         )
         v = g / (jnp.linalg.norm(g.ravel()) + 1e-12)
     # Rayleigh quotient
@@ -198,6 +202,7 @@ def power_method_L(
         checkpoint_projector=checkpoint_projector,
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
+        T_all=T_all,
     )
     L = float(jnp.vdot(v, g).real)
     return max(L, 1e-6)
@@ -282,6 +287,14 @@ def fista_tv(
     )
     z = x
     t = 1.0
+    # Precompute poses once and thread them through the projector calls to avoid
+    # repeatedly stacking in inner loops.
+    n_views = int(projections.shape[0])
+    T_all = jnp.stack(
+        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
+        axis=0,
+    )
+
     if L is None:
         # Use streamed gradient in power-method to avoid batched VJP memory spikes
         L = power_method_L(
@@ -295,6 +308,7 @@ def fista_tv(
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
             grad_mode="stream",
+            T_all=T_all,
         )
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
@@ -309,6 +323,7 @@ def fista_tv(
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
             grad_mode=grad_mode,
+            T_all=T_all,
         )
         return v, g
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))

@@ -5,12 +5,15 @@ from typing import Dict
 
 import numpy as np
 import jax.numpy as jnp
+import jax
 
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
-from ..core.projector import forward_project_view
+from ..core.projector import forward_project_view, forward_project_view_T, get_detector_grid_device
 from ..utils.logging import progress_iter
 from .phantoms import cube, blobs, shepp_logan_3d, random_cubes_spheres, lamino_disk
 from .io_hdf5 import save_nxtomo
+from ..utils.memory import default_gather_dtype
+import os
 
 
 @dataclass
@@ -104,11 +107,36 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
 
     vol = make_phantom(cfg)
 
-    projs = []
-    for i in progress_iter(range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"):
-        p = forward_project_view(geom, grid, det, vol, view_index=i)
-        projs.append(p)
-    proj = jnp.stack(projs, axis=0)
+    # Choose a default mixed-precision gather on accelerators
+    gather = default_gather_dtype()
+
+    # Fast path: build all poses and optionally vmapped/jitted projector
+    T_all = jnp.stack([jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(cfg.n_views)], axis=0)
+    det_grid = get_detector_grid_device(det)
+
+    use_fast = (cfg.n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
+    if use_fast:
+        @jax.jit
+        def project_all(vol_in):
+            f = lambda T: forward_project_view_T(
+                T,
+                grid,
+                det,
+                vol_in,
+                use_checkpoint=True,
+                gather_dtype=gather,
+                det_grid=det_grid,
+            )
+            return jax.vmap(f, in_axes=0)(T_all)
+
+        proj = project_all(vol)
+    else:
+        # Fallback path with per-view progress logging
+        projs = []
+        for i in progress_iter(range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"):
+            p = forward_project_view(geom, grid, det, vol, view_index=i)
+            projs.append(p)
+        proj = jnp.stack(projs, axis=0)
 
     rng = np.random.default_rng(cfg.seed)
     if cfg.noise == "gaussian" and cfg.noise_level > 0:
