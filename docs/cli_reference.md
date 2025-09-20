@@ -19,7 +19,7 @@ python -m tomojax.cli.simulate --out <path.nxs> \
   --nu <int> --nv <int> --n-views <int> \
   [--geometry parallel|lamino] [--tilt-deg <float>] [--tilt-about x|z] \
   [--rotation-deg <float>] \
-  [--phantom shepp|cube|blobs|random_shapes] [phantom-args...] \
+  [--phantom shepp|cube|sphere|blobs|random_shapes|lamino_disk] [phantom-args...] \
   [--noise none|gaussian|poisson] [--noise-level <float>] \
   [--seed <int>] [--progress]
 ```
@@ -27,9 +27,12 @@ python -m tomojax.cli.simulate --out <path.nxs> \
 Key options
 - Geometry: `--geometry parallel` (default) or `lamino` with `--tilt-deg` (default 30) about axis `--tilt-about` (`x` default).
 - Rotation span: `--rotation-deg` sets the total angular range. Defaults to 180 for `parallel` and 360 for `lamino`.
-- Phantom: `--phantom random_shapes` with controls:
-  - `--n-cubes` (8), `--n-spheres` (7), `--min-size` (4), `--max-size` (32)
-  - `--min-value` (0.1), `--max-value` (1.0), `--max-rot-deg` (180)
+- Phantom:
+  - Single centered object: `--phantom cube|sphere` with `--single-size` (relative fraction of min dim; side for cube, diameter for sphere) and `--single-value`. For `cube`, a random 3D rotation is applied by default; disable with `--no-single-rotate`.
+  - Random shapes: `--phantom random_shapes` with controls:
+    - `--n-cubes` (8), `--n-spheres` (7), `--min-size` (4), `--max-size` (32)
+    - `--min-value` (0.1), `--max-value` (1.0), `--max-rot-deg` (180)
+  - Laminography slab: `--phantom lamino_disk` with `--lamino-thickness-ratio` and the random_shapes knobs above.
 - Noise: `--noise gaussian --noise-level <sigma>` or `--noise poisson --noise-level <scale>`.
 
 Example
@@ -50,6 +53,7 @@ Usage
 ```
 python -m tomojax.cli.misalign --data <in.nxs> --out <out.nxs> \
   [--rot-deg <float>] [--trans-px <float>] [--poisson <float>] \
+  [--pert dof:shape[:k=v[,k=v...]]] [--spec schedules.json] [--with-random] \
   [--seed <int>] [--progress]
 ```
 
@@ -57,6 +61,10 @@ Key options
 - `--rot-deg`: max absolute per‑view rotation in degrees for α, β, φ (default 1.0).
 - `--trans-px`: max absolute per‑view translation in detector pixels for (dx, dz) (default 10.0). Converted to world units via detector spacing.
 - `--poisson`: incident intensity scale s for Poisson noise. Data are treated as intensities; noise is sampled as `Poisson(proj * s) / s`. Larger `s` → lower relative noise. Set 0 to disable.
+- Deterministic schedules:
+  - `--pert dof:shape[:k=v,...]` to add a schedule; repeatable. DOFs: `angle,alpha,beta,phi,dx,dz`. Shapes: `linear`, `sin-window`, `step`, `box`.
+  - `--spec <json>` to load schedules from a file. See `docs/misalign_modes.md`.
+  - `--with-random` to add random jitter on top of deterministic schedules (by default, schedules alone are used when present).
 
 Examples
 ```
@@ -67,6 +75,14 @@ pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \
 # Misalignment + Poisson noise
 pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson.nxs \
   --rot-deg 1.0 --trans-px 10 --poisson 5000 --seed 0 --progress
+
+# Deterministic schedules (see docs/misalign_modes.md)
+# Linear angle drift 0→+5° across the scan
+pixi run misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
+  --pert angle:linear:delta=5deg
+# Sudden dx shift of +5 px at 90° (held to end)
+pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_step.nxs \
+  --pert dx:step:at=90deg,to=5px
 ```
 
 

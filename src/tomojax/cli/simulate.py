@@ -29,9 +29,17 @@ def main() -> None:
     p.add_argument("--tilt-about", choices=["x", "z"], default="x")
     p.add_argument(
         "--phantom",
-        choices=["shepp", "cube", "blobs", "random_shapes", "lamino_disk"],
+        choices=["shepp", "cube", "sphere", "blobs", "random_shapes", "lamino_disk"],
         default="shepp",
+        help="Phantom type. Use 'cube' or 'sphere' for a single centered object.",
     )
+    # rotate the single cube randomly by default; sphere is unaffected
+    p.add_argument("--single-rotate", dest="single_rotate", action="store_true", default=True,
+                   help="Rotate the single cube randomly in 3D (default: on)")
+    p.add_argument("--no-single-rotate", dest="single_rotate", action="store_false")
+    # single-object phantom args (used for phantom=cube|sphere)
+    p.add_argument("--single-size", type=float, default=0.5, help="Relative size of cube side or sphere diameter (0-1). Default 0.5")
+    p.add_argument("--single-value", type=float, default=1.0, help="Intensity value for the single object")
     # random_shapes args
     p.add_argument("--n-cubes", type=int, default=8)
     p.add_argument("--n-spheres", type=int, default=7)
@@ -69,6 +77,7 @@ def main() -> None:
         geometry=args.geometry, tilt_deg=args.tilt_deg, tilt_about=args.tilt_about,
         rotation_deg=(float(args.rotation_deg) if args.rotation_deg is not None else None),
         phantom=args.phantom, noise=args.noise, noise_level=args.noise_level, seed=args.seed,
+        single_size=args.single_size, single_value=args.single_value, single_rotate=bool(args.single_rotate),
         n_cubes=args.n_cubes, n_spheres=args.n_spheres,
         min_size=args.min_size, max_size=args.max_size,
         min_value=args.min_value, max_value=args.max_value,

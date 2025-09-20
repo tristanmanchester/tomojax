@@ -120,6 +120,14 @@ pixi run align --data data/sim_misaligned.nxs \
   --opt-method gn --gn-damping 1e-3 \
   --gather-dtype bf16 --checkpoint-projector \
   --log-summary --out out/align_misaligned.nxs
+
+# Deterministic misalignment schedules (see docs/misalign_modes.md)
+# Linear angle drift 0→+5° across the scan
+pixi run misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
+  --pert angle:linear:delta=5deg
+# Sinusoidal dx drift peaking +5 px at mid‑scan
+pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
+  --pert dx:sin-window:amp=5px
 ```
 
 
