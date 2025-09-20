@@ -383,13 +383,15 @@ def align(
             scales = jnp.array(
                 [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32
             )
+            # Keep a copy for line search; donated arg may be reused internally
+            p5_in = params5
             g_params = grad_all(params5, x)
             rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
             eff_scales = scales / rms
             # Simple 2-point line search on step factor to improve single-iter progress
-            best_params = params5 - g_params * eff_scales
+            best_params = p5_in - g_params * eff_scales
             best_loss = align_loss_jit(best_params, x)
-            cand_params = params5 - 2.0 * g_params * eff_scales
+            cand_params = p5_in - 2.0 * g_params * eff_scales
             cand_loss = align_loss_jit(cand_params, x)
             params5 = jax.lax.cond(cand_loss < best_loss, lambda _: cand_params, lambda _: best_params, operand=None)
             loss_after = float(jnp.minimum(best_loss, cand_loss)) if loss_before is not None else None
