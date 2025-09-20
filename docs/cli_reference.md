@@ -19,7 +19,7 @@ python -m tomojax.cli.simulate --out <path.nxs> \
   --nu <int> --nv <int> --n-views <int> \
   [--geometry parallel|lamino] [--tilt-deg <float>] [--tilt-about x|z] \
   [--rotation-deg <float>] \
-  [--phantom shepp|cube|blobs|random_shapes] [phantom-args...] \
+  [--phantom shepp|cube|sphere|blobs|random_shapes|lamino_disk] [phantom-args...] \
   [--noise none|gaussian|poisson] [--noise-level <float>] \
   [--seed <int>] [--progress]
 ```
@@ -27,9 +27,12 @@ python -m tomojax.cli.simulate --out <path.nxs> \
 Key options
 - Geometry: `--geometry parallel` (default) or `lamino` with `--tilt-deg` (default 30) about axis `--tilt-about` (`x` default).
 - Rotation span: `--rotation-deg` sets the total angular range. Defaults to 180 for `parallel` and 360 for `lamino`.
-- Phantom: `--phantom random_shapes` with controls:
-  - `--n-cubes` (8), `--n-spheres` (7), `--min-size` (4), `--max-size` (32)
-  - `--min-value` (0.1), `--max-value` (1.0), `--max-rot-deg` (180)
+- Phantom:
+  - Single centered object: `--phantom cube|sphere` with `--single-size` (relative fraction of min dim; side for cube, diameter for sphere) and `--single-value`. For `cube`, a random 3D rotation is applied by default; disable with `--no-single-rotate`.
+  - Random shapes: `--phantom random_shapes` with controls:
+    - `--n-cubes` (8), `--n-spheres` (7), `--min-size` (4), `--max-size` (32)
+    - `--min-value` (0.1), `--max-value` (1.0), `--max-rot-deg` (180)
+  - Laminography slab: `--phantom lamino_disk` with `--lamino-thickness-ratio` and the random_shapes knobs above.
 - Noise: `--noise gaussian --noise-level <sigma>` or `--noise poisson --noise-level <scale>`.
 
 Example

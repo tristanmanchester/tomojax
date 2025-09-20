@@ -41,6 +41,7 @@ class AlignConfig:
     seed_translations: bool = False
     # Logging
     log_summary: bool = False
+    log_compact: bool = True  # print one compact line per outer when log_summary is enabled
     # Reconstruction Lipschitz (optional override to skip power-method)
     recon_L: float | None = None
     # Early stopping across outers (alignment phase)
@@ -208,6 +209,50 @@ def align(
         total_iters = int(cfg.outer_iters)
         total_time = format_duration(stat.get("outer_time"))
         elapsed = format_duration(stat.get("cumulative_time"))
+        if cfg.log_compact:
+            # Build compact one-liner with key fields
+            parts: List[str] = [f"Outer {outer_idx}/{total_iters}"]
+            # Recon summary
+            rbits: List[str] = []
+            rt = stat.get("recon_time")
+            if rt is not None:
+                rbits.append(f"{format_duration(rt)}")
+            if stat.get("recon_retry"):
+                rbits.append("retry")
+            lm = stat.get("L_meas"); ln = stat.get("L_next")
+            if (lm is not None) and (ln is not None):
+                rbits.append(f"L {lm:.2e}->{ln:.2e}")
+            ff = stat.get("fista_first"); fl = stat.get("fista_last"); fm = stat.get("fista_min")
+            if (ff is not None) and (fl is not None):
+                if fm is not None:
+                    rbits.append(f"loss {ff:.2e}->{fl:.2e} (min {fm:.2e})")
+                else:
+                    rbits.append(f"loss {ff:.2e}->{fl:.2e}")
+            if rbits:
+                parts.append("recon " + " ".join(rbits))
+            # Align summary
+            abits: List[str] = []
+            at = stat.get("align_time")
+            if at is not None:
+                abits.append(f"{format_duration(at)}")
+            sk = stat.get("step_kind")
+            if sk == "gn":
+                rm = stat.get("rot_mean"); tm = stat.get("trans_mean")
+                if rm is not None: abits.append(f"|drot| {rm:.2e}")
+                if tm is not None: abits.append(f"|dtrans| {tm:.2e}")
+            elif sk == "gd":
+                rr = stat.get("rot_rms"); tr = stat.get("trans_rms")
+                if rr is not None: abits.append(f"rotRMS {rr:.2e}")
+                if tr is not None: abits.append(f"transRMS {tr:.2e}")
+            lb = stat.get("loss_before"); la = stat.get("loss_after"); ld = stat.get("loss_delta"); rp = stat.get("loss_rel_pct")
+            if (lb is not None) and (la is not None):
+                rel = f" {rp:+.2f}%" if rp is not None else ""
+                abits.append(f"loss {lb:.2e}->{la:.2e} (Δ {ld:+.2e}{rel})")
+            if abits:
+                parts.append("align " + " ".join(abits))
+            parts.append(f"elapsed {elapsed}")
+            logging.info(" | ".join(parts))
+            return
         logging.info(
             "Outer %d/%d | total %s | elapsed %s",
             outer_idx,
