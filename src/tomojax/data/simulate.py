@@ -10,7 +10,7 @@ import jax
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..core.projector import forward_project_view, forward_project_view_T, get_detector_grid_device
 from ..utils.logging import progress_iter
-from .phantoms import cube, blobs, shepp_logan_3d, random_cubes_spheres, lamino_disk
+from .phantoms import cube, rotated_centered_cube, sphere, blobs, shepp_logan_3d, random_cubes_spheres, lamino_disk
 from .io_hdf5 import save_nxtomo
 from ..utils.memory import default_gather_dtype
 import os
@@ -34,6 +34,10 @@ class SimConfig:
     tilt_deg: float = 30.0  # lamino
     tilt_about: str = "x"
     phantom: str = "shepp"
+    # single-object phantom parameters (for cube/sphere)
+    single_size: float = 0.5  # relative size (cube side or sphere diameter as fraction of min dim)
+    single_value: float = 1.0
+    single_rotate: bool = True  # rotate cube randomly (ignored for sphere)
     # random_shapes parameters
     n_cubes: int = 8
     n_spheres: int = 7
@@ -52,7 +56,15 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
     if cfg.phantom == "shepp":
         vol = shepp_logan_3d(cfg.nx, cfg.ny, cfg.nz)
     elif cfg.phantom == "cube":
-        vol = cube(cfg.nx, cfg.ny, cfg.nz)
+        if cfg.single_rotate:
+            vol = rotated_centered_cube(
+                cfg.nx, cfg.ny, cfg.nz,
+                size=float(cfg.single_size), value=float(cfg.single_value), seed=int(cfg.seed),
+            )
+        else:
+            vol = cube(cfg.nx, cfg.ny, cfg.nz, size=float(cfg.single_size), value=float(cfg.single_value))
+    elif cfg.phantom == "sphere":
+        vol = sphere(cfg.nx, cfg.ny, cfg.nz, size=float(cfg.single_size), value=float(cfg.single_value))
     elif cfg.phantom == "blobs":
         vol = blobs(cfg.nx, cfg.ny, cfg.nz, seed=cfg.seed)
     elif cfg.phantom == "random_shapes":

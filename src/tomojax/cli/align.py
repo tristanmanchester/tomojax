@@ -96,6 +96,9 @@ def main() -> None:
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
     p.add_argument("--seed-translations", action="store_true", help="Phase-correlation init for dx,dz at coarsest level")
     p.add_argument("--log-summary", action="store_true", help="Print per-outer summaries (FISTA loss, alignment loss before/after)")
+    p.add_argument("--log-compact", dest="log_compact", action="store_true", default=True,
+                   help="Use compact one-line per-outer summary when --log-summary is set (default: on)")
+    p.add_argument("--no-log-compact", dest="log_compact", action="store_false")
     p.add_argument("--recon-L", type=float, default=None, help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)")
     p.add_argument(
         "--transfer-guard",
@@ -141,6 +144,7 @@ def main() -> None:
         w_trans=float(args.w_trans),
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
+        log_compact=bool(args.log_compact),
         recon_L=(float(args.recon_L) if args.recon_L is not None else None),
     )
     if args.levels is not None and len(args.levels) > 0:

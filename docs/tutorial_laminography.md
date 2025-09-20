@@ -44,6 +44,17 @@ pixi run misalign \
   --progress
 ```
 
+Deterministic misalignment schedules
+- For systematic drifts/steps, use `--pert`/`--spec` (see `docs/misalign_modes.md`). Examples:
+```bash
+# Angle linear drift 0→+5° across 360° scan
+pixi run misalign --data runs/lamino_demo.nxs --out runs/lamino_mis_angle_lin.nxs \
+  --pert angle:linear:delta=5deg
+# dz box pulse −4 px between ~60° and ~80°
+pixi run misalign --data runs/lamino_demo.nxs --out runs/lamino_mis_dz_box.nxs \
+  --pert dz:box:at=60deg,width_deg=20,delta=-4px
+```
+
 ## Create misaligend noisy dataset
 ```bash
 pixi run misalign \

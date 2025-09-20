@@ -9,6 +9,16 @@ from typing import Iterable, Iterator, Optional
 def setup_logging(level: str = "INFO") -> None:
     lvl = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(level=lvl, format="%(asctime)s | %(levelname)s | %(message)s")
+    # Quiet noisy backend probe logs from JAX unless explicitly enabled
+    if os.environ.get("TOMOJAX_BACKEND_LOG", "0").lower() not in ("1", "true", "yes", "on"):
+        for name in (
+            "jax._src.xla_bridge",
+            "jax._src.xla_client",
+        ):
+            try:
+                logging.getLogger(name).setLevel(logging.WARNING)
+            except Exception:
+                pass
 
 
 def log_jax_env() -> None:

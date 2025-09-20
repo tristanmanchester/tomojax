@@ -64,6 +64,8 @@ def save_nxtomo(
     geometry_meta: Optional[Dict[str, Any]] = None,
     volume: Optional[np.ndarray] = None,
     align_params: Optional[np.ndarray] = None,
+    angle_offset_deg: Optional[np.ndarray] = None,
+    misalign_spec: Optional[Dict[str, Any]] = None,
     frame: Optional[str] = None,
     compression: str = "lzf",
     overwrite: bool = True,
@@ -163,18 +165,28 @@ def save_nxtomo(
             if frame is not None:
                 _write_string_attr(tj, "frame", str(frame))
 
-        # Optional alignment params
-        if align_params is not None:
+        # Optional alignment params and misalignment metadata
+        if align_params is not None or angle_offset_deg is not None or misalign_spec is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
             align_grp = _ensure_group(tj, "align", "NXcollection")
-            dset = align_grp.create_dataset(
-                "thetas",
-                data=np.asarray(align_params, dtype=np.float32),
-                chunks=True,
-                compression=compression,
-            )
-            dset.attrs["columns"] = np.array(["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype())
+            if align_params is not None:
+                dset = align_grp.create_dataset(
+                    "thetas",
+                    data=np.asarray(align_params, dtype=np.float32),
+                    chunks=True,
+                    compression=compression,
+                )
+                dset.attrs["columns"] = np.array(["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype())
+            if angle_offset_deg is not None:
+                align_grp.create_dataset(
+                    "angle_offset_deg",
+                    data=np.asarray(angle_offset_deg, dtype=np.float32),
+                    chunks=True,
+                    compression=compression,
+                )
+            if misalign_spec is not None:
+                align_grp.attrs["misalign_spec_json"] = json.dumps(misalign_spec)
 
 
 def load_nxtomo(path: str) -> Dict[str, Any]:
@@ -268,8 +280,19 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                     s = _attr_to_str(fr_attr)
                     if s:
                         out["frame"] = s
-                if "align" in tj and "thetas" in tj["align"]:
-                    out["align_params"] = tj["align/thetas"][...]
+                if "align" in tj:
+                    if "thetas" in tj["align"]:
+                        out["align_params"] = tj["align/thetas"][...]
+                    if "angle_offset_deg" in tj["align"]:
+                        out["angle_offset_deg"] = tj["align/angle_offset_deg"][...]
+                    spec_attr = tj["align"].attrs.get("misalign_spec_json")
+                    if spec_attr is not None:
+                        s = _attr_to_str(spec_attr)
+                        if s:
+                            try:
+                                out["misalign_spec"] = json.loads(s)
+                            except Exception:
+                                pass
         except Exception:
             pass
 

@@ -5,6 +5,29 @@ import numpy as np
 from ..core.geometry.lamino import laminography_axis_unit
 
 
+def sphere(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0) -> np.ndarray:
+    """Centered solid sphere in a zero background.
+
+    The sphere diameter is ``size * min(nx, ny, nz)`` so that ``size`` matches the
+    semantics of :func:`cube` (whose side length uses the same scale). The sphere is
+    centered in the volume and clamped to fit. Returns float32 array of shape
+    ``(nx, ny, nz)``.
+    """
+    X = np.zeros((nx, ny, nz), dtype=np.float32)
+    # diameter matches cube's "size" scale; radius is half that in voxels
+    diam = max(1.0, float(size) * float(min(nx, ny, nz)))
+    r = 0.5 * diam
+    cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
+    xs = np.arange(nx, dtype=np.float32) - cx
+    ys = np.arange(ny, dtype=np.float32) - cy
+    zs = np.arange(nz, dtype=np.float32) - cz
+    # Compute squared distance grid lazily via broadcasting
+    dist2 = (xs[:, None, None] ** 2) + (ys[None, :, None] ** 2) + (zs[None, None, :] ** 2)
+    mask = dist2 <= (r * r)
+    X[mask] = float(value)
+    return X
+
+
 def cube(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed: int | None = None) -> np.ndarray:
     """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
 
@@ -17,6 +40,32 @@ def cube(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed:
     sz = (nz - s) // 2
     x[sx : sx + s, sy : sy + s, sz : sz + s] = value
     return x
+
+
+def rotated_centered_cube(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    size: float = 0.5,
+    value: float = 1.0,
+    angles: tuple[float, float, float] | None = None,
+    seed: int | None = 0,
+    edge_softness: float = 1.0,
+) -> np.ndarray:
+    """Centered cube with random 3D rotation.
+
+    - ``size`` is side length as a fraction of ``min(nx, ny, nz)`` (matches :func:`cube`).
+    - If ``angles`` is None, sample rx, ry, rz uniformly in [-pi, pi] using ``seed``.
+    """
+    vol = np.zeros((nx, ny, nz), dtype=np.float32)
+    side = int(max(1, round(float(size) * float(min(nx, ny, nz)))))
+    cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
+    if angles is None:
+        rng = np.random.default_rng(seed)
+        angles = tuple(rng.uniform(-np.pi, np.pi, size=3).tolist())  # type: ignore
+    _add_rotated_cube_soft(vol, (cx, cy, cz), float(side), float(value), angles, edge_softness=edge_softness)
+    return vol.astype(np.float32)
 
 
 def blobs(nx: int, ny: int, nz: int, n_blobs: int = 5, seed: int | None = 0) -> np.ndarray:

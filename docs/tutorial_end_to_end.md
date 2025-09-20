@@ -75,6 +75,19 @@ pixi run misalign \
   --rot-deg 1.0 --trans-px 10 \
   --seed 0 \
   --progress
+
+Deterministic misalignment schedules
+- For systematic drifts or steps, use `--pert` and/or `--spec` (see `docs/misalign_modes.md`). Examples:
+
+```
+# Linear angle drift 0→+5° across the scan
+pixi run misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
+  --pert angle:linear:delta=5deg
+
+# Sinusoidal dx drift peaking at +5 px mid‑scan
+pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
+  --pert dx:sin-window:amp=5px
+```
 ```
 
 
