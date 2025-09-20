@@ -163,20 +163,31 @@ def forward_project_view_T(
     q0 = base + y0 * ey_obj[:, None]
     dq = (step_size * ey_obj)[:, None]
 
+    # Precompute reciprocal voxel sizes to avoid divides in inner loop
+    inv_vx = jnp.float32(1.0 / grid.vx)
+    inv_vy = jnp.float32(1.0 / grid.vy)
+    inv_vz = jnp.float32(1.0 / grid.vz)
+
+    # Optional incremental index updates to avoid repeated subtracts
+    ix0 = (q0[0] - vol_origin[0]) * inv_vx
+    iy0 = (q0[1] - vol_origin[1]) * inv_vy
+    iz0 = (q0[2] - vol_origin[2]) * inv_vz
+    dix = dq[0] * inv_vx
+    diy = dq[1] * inv_vy
+    diz = dq[2] * inv_vz
+
     def step(carry, _):
-        acc, q = carry
-        ix = (q[0] - vol_origin[0]) / jnp.float32(grid.vx)
-        iy = (q[1] - vol_origin[1]) / jnp.float32(grid.vy)
-        iz = (q[2] - vol_origin[2]) / jnp.float32(grid.vz)
+        acc, ix, iy, iz = carry
         samp = _trilinear_gather(recon_flat, ix, iy, iz, nx, ny, nz)
         samp32 = samp.astype(jnp.float32)
-        return (acc + samp32 * jnp.float32(step_size), q + dq), None
+        return (acc + samp32 * jnp.float32(step_size), ix + dix, iy + diy, iz + diz), None
 
     scan_step = step if not use_checkpoint else jax.checkpoint(step)
     acc0 = jnp.zeros((n_rays,), dtype=jnp.float32)
-    (acc, _), _ = jax.lax.scan(
-        scan_step, (acc0, q0), None, length=n_steps, unroll=unroll or 1
+    carry_final, _ = jax.lax.scan(
+        scan_step, (acc0, ix0, iy0, iz0), None, length=n_steps, unroll=unroll or 1
     )
+    acc, _, _, _ = carry_final
     return acc.reshape((detector.nv, detector.nu))
 
 
