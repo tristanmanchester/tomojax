@@ -173,7 +173,9 @@ def align(
     # require `fun` positional arg and don't support decorator factory with kwargs).
     def _grad_all_impl(params5, vol):
         return jax.grad(align_loss, argnums=0)(params5, vol)
-    grad_all = jax.jit(_grad_all_impl, donate_argnums=(0,))
+    # Donation of params buffer can delete arrays that we still read on Python side
+    # in GD updates, causing RuntimeError on CPU. Avoid donating here for safety.
+    grad_all = jax.jit(_grad_all_impl)
     align_loss_jit = jax.jit(align_loss)
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
