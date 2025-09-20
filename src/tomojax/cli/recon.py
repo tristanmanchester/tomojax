@@ -115,9 +115,10 @@ def main() -> None:
     # Note: Reconstructions are computed on the object (sample) frame. We persist that by default.
     # If a lab-frame export is desired, we currently only record metadata; a resampling export
     # may be added later if needed for interop.
+    # Avoid copying projections back from device: reuse host array from metadata
     save_nxtomo(
         args.out,
-        projections=np.asarray(proj),
+        projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
         grid=meta.get("grid"),
         detector=meta.get("detector"),

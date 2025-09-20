@@ -134,9 +134,10 @@ def main() -> None:
         with _transfer_guard_ctx("log"):
             x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
 
+    # Avoid copying projections back from device: reuse host array from metadata
     save_nxtomo(
         args.out,
-        projections=np.asarray(proj),
+        projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
         grid=meta.get("grid"),
         detector=meta.get("detector"),
