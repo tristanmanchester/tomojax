@@ -92,6 +92,12 @@ def main() -> None:
     p.add_argument("--seed-translations", action="store_true", help="Phase-correlation init for dx,dz at coarsest level")
     p.add_argument("--log-summary", action="store_true", help="Print per-outer summaries (FISTA loss, alignment loss before/after)")
     p.add_argument("--recon-L", type=float, default=None, help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)")
+    p.add_argument(
+        "--transfer-guard",
+        choices=["off", "log", "disallow"],
+        default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
+        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+    )
     p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
@@ -128,10 +134,10 @@ def main() -> None:
     )
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
-        with _transfer_guard_ctx("log"):
+        with _transfer_guard_ctx(args.transfer_guard):
             x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
     else:
-        with _transfer_guard_ctx("log"):
+        with _transfer_guard_ctx(args.transfer_guard):
             x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
 
     # Avoid copying projections back from device: reuse host array from metadata

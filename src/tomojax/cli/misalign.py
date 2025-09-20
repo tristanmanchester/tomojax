@@ -24,6 +24,12 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0, help="RNG seed for misalignment")
     p.add_argument("--poisson", type=float, default=0.0, help="Photons per pixel for Poisson noise (0 disables)")
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--transfer-guard",
+        choices=["off", "log", "disallow"],
+        default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
+        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+    )
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
@@ -72,7 +78,7 @@ def main() -> None:
     params5[:, 4] = rng.uniform(-float(args.trans_px), float(args.trans_px), n_views).astype(np.float32) * float(det.dv)
     params5 = jnp.asarray(params5, jnp.float32)
 
-    with _transfer_guard_ctx("log"):
+    with _transfer_guard_ctx(args.transfer_guard):
         T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
         from ..core.projector import get_detector_grid_device
         det_grid = get_detector_grid_device(det)

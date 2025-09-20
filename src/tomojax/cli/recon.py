@@ -68,6 +68,12 @@ def main() -> None:
         help="Frame to record for saved volume (default: sample).",
     )
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--transfer-guard",
+        choices=["off", "log", "disallow"],
+        default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
+        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+    )
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
@@ -82,7 +88,7 @@ def main() -> None:
     vpb_val: int | None = 1
 
     if args.algo == "fbp":
-        with _transfer_guard_ctx("log"):
+        with _transfer_guard_ctx(args.transfer_guard):
             vol = fbp(
                 geom,
                 grid,
@@ -96,7 +102,7 @@ def main() -> None:
             )
     else:
         vpb = int(vpb_val) if int(vpb_val) > 0 else None
-        with _transfer_guard_ctx("log"):
+        with _transfer_guard_ctx(args.transfer_guard):
             vol, info = fista_tv(
                 geom,
                 grid,
