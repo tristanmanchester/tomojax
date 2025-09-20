@@ -119,8 +119,17 @@ def main() -> None:
     p.add_argument("--outer-iters", type=int, default=4)
     p.add_argument("--recon-iters", type=int, default=10)
     p.add_argument("--progress", action="store_true")
-    p.add_argument("--losses", nargs="*", default=["l2", "charbonnier", "huber", "cauchy", "zncc", "ssim", "l2_otsu"],
-                   help="Subset of losses to run; default is all supported")
+    p.add_argument(
+        "--losses",
+        nargs="*",
+        default=[
+            "l2","charbonnier","huber","cauchy","barron","student_t","correntropy",
+            "zncc","ssim","ms-ssim","mi","nmi","renyi_mi",
+            "grad_l1","edge_l2","ngf","grad_orient","phasecorr","fft_mag","chamfer_edge",
+            "l2_otsu","ssim_otsu","tversky","swd","mind","pwls","poisson"
+        ],
+        help="Subset of losses to run; default is a comprehensive set",
+    )
     args = p.parse_args()
 
     _ensure_dir(args.expdir); _ensure_dir(os.path.join(args.expdir, "logs"))
@@ -251,4 +260,3 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-
