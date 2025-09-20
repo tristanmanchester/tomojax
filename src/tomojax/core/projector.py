@@ -55,6 +55,16 @@ def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
     return X, Z
 
 
+def get_detector_grid_device(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Return detector coordinate grids as device arrays.
+
+    Note: call this outside of any JAX-transformed context (jit/grad/scan) to avoid
+    side effects during tracing. Safe to cache at the application level.
+    """
+    X_np, Z_np = _build_detector_grid(det)
+    return jnp.asarray(X_np, dtype=jnp.float32), jnp.asarray(Z_np, dtype=jnp.float32)
+
+
     
 
 
@@ -114,6 +124,7 @@ def forward_project_view_T(
     use_checkpoint: bool = True,
     unroll: int | None = None,
     gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
@@ -142,11 +153,15 @@ def forward_project_view_T(
         else _default_volume_origin(grid)
     )
 
-    Xr_np, Zr_np = _build_detector_grid(detector)
-    # Convert to device arrays inside the jitted function scope
-    Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
-    Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
-    n_rays = int(Xr_np.shape[0])
+    if det_grid is None:
+        Xr_np, Zr_np = _build_detector_grid(detector)
+        # Convert to device arrays inside the jitted function scope
+        Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
+        Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
+        n_rays = int(Xr_np.shape[0])
+    else:
+        Xr, Zr = det_grid
+        n_rays = int(Xr.shape[0])
 
     vy = float(grid.vy)
     if step_size is None:

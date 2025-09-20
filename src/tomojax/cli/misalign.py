@@ -74,7 +74,9 @@ def main() -> None:
 
     with _transfer_guard_ctx("log"):
         T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
-        vm_project = jax.vmap(lambda T, v: forward_project_view_T(T, grid, det, v, use_checkpoint=True), in_axes=(0, None))
+        from ..core.projector import get_detector_grid_device
+        det_grid = get_detector_grid_device(det)
+        vm_project = jax.vmap(lambda T, v: forward_project_view_T(T, grid, det, v, use_checkpoint=True, det_grid=det_grid), in_axes=(0, None))
         proj = vm_project(T_aug, vol).astype(jnp.float32)
 
     # Optional noise
