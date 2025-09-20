@@ -110,6 +110,11 @@ def align(
         )
         return jax.vmap(f, in_axes=0)(T_batch)
 
+    # Static smoothness weights to avoid rebuilding inside jitted loss
+    W_weights = jnp.array(
+        [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32
+    )
+
     def align_loss(params5, vol):
         # Compose augmented poses
         # Current convention: per-view misalignment parameters act in the object
@@ -147,8 +152,7 @@ def align(
         loss = loss_tot
         if int(params5.shape[0]) >= 3:
             d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
-            W = jnp.array([cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32)
-            loss = loss + jnp.sum((d2 * W) ** 2)
+            loss = loss + jnp.sum((d2 * W_weights) ** 2)
         return loss
 
     # Donate params5 buffer into the compiled grad to reduce peak memory.

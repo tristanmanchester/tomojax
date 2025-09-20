@@ -140,12 +140,15 @@ def forward_project_view_T(
     if vol.shape != (nx, ny, nz):
         raise ValueError(f"Volume must be (nx,ny,nz)={nx,ny,nz}, got {vol.shape}")
     # Mixed-precision gather option (accumulate in fp32)
-    if gather_dtype.lower() in ("bf16", "bfloat16"):
-        recon_flat = jnp.ravel(vol.astype(jnp.bfloat16), order="C")
-    elif gather_dtype.lower() in ("fp16", "float16", "half"):
-        recon_flat = jnp.ravel(vol.astype(jnp.float16), order="C")
+    gd = gather_dtype.lower()
+    if gd in ("bf16", "bfloat16"):
+        target = jnp.bfloat16
+    elif gd in ("fp16", "float16", "half"):
+        target = jnp.float16
     else:
-        recon_flat = jnp.ravel(vol.astype(jnp.float32), order="C")
+        target = jnp.float32
+    vol_cast = vol if vol.dtype == target else vol.astype(target)
+    recon_flat = jnp.ravel(vol_cast, order="C")
 
     vol_origin = (
         jnp.asarray(grid.vol_origin, dtype=jnp.float32)

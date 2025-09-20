@@ -1,26 +1,52 @@
 from __future__ import annotations
 
- 
+from collections import OrderedDict
+from typing import Tuple
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, Geometry
 from ..core.projector import forward_project_view_T
-from .filters import get_filter
+from .filters import get_filter, get_filter_np
 from ..utils.logging import progress_iter
+
+_RFFT_FILTER_CACHE: "OrderedDict[Tuple[str, int, float, str], np.ndarray]" = OrderedDict()
+_RFFT_FILTER_CACHE_CAP = 8
+
+
+def _get_rfft_filter_cached(filter_name: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
+    """Return one-sided RFFT filter H_r with interior doubled, cached by key.
+
+    - Key: (name, nu, du, dtype)
+    - Returns a JAX array of shape (nu//2 + 1,) with dtype matching rows dtype.
+    """
+    key = (str(filter_name).lower(), int(nu), float(du), str(dtype))
+    if key in _RFFT_FILTER_CACHE:
+        _RFFT_FILTER_CACHE.move_to_end(key)
+        Hr_np = _RFFT_FILTER_CACHE[key]
+    else:
+        H_np = get_filter_np(filter_name, int(nu), float(du))  # np.float32 length nu
+        n_r = int(nu) // 2 + 1
+        Hr_np = H_np[:n_r].astype(np.float32, copy=False)
+        if n_r > 2:
+            Hr_np = Hr_np.copy()
+            Hr_np[1:-1] *= np.float32(2.0)
+        # Promote to float64 if rows dtype requests it
+        if str(dtype) in ("float64", "complex128"):
+            Hr_np = Hr_np.astype(np.float64, copy=False)
+        _RFFT_FILTER_CACHE[key] = Hr_np
+        if len(_RFFT_FILTER_CACHE) > _RFFT_FILTER_CACHE_CAP:
+            _RFFT_FILTER_CACHE.popitem(last=False)
+    return jnp.asarray(Hr_np, dtype=dtype)
 
 
 def _fft_filter_rows(rows: jnp.ndarray, du: float, filter_name: str) -> jnp.ndarray:
     """Filter last axis of (..., nu) rows in frequency domain (rfft/irfft)."""
-    nu = rows.shape[-1]
-    H = get_filter(filter_name, int(nu), du)
-    Hc = jnp.asarray(H, dtype=rows.dtype)
+    nu = int(rows.shape[-1])
+    H_r = _get_rfft_filter_cached(filter_name, nu, du, rows.dtype)
     F = jnp.fft.rfft(rows, axis=-1)
-    n_r = F.shape[-1]
-    H_r = Hc[:n_r]
-    if n_r > 2:
-        H_r = H_r.at[1:-1].set(2.0 * H_r[1:-1])
     out = jnp.fft.irfft(F * H_r, n=int(nu), axis=-1)
     return out
 

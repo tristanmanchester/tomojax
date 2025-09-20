@@ -57,6 +57,8 @@ def grad_data_term(
     When grad_mode="auto", selects stream if the effective batch is 1, else batched.
     """
     n_views = int(projections.shape[0])
+    nv = int(projections.shape[1])
+    nu = int(projections.shape[2])
     if T_all is None:
         T_all = jnp.stack(
             [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
@@ -118,8 +120,9 @@ def grad_data_term(
     def stream_loss_and_grad(vol):
         def one_view(carry, i):
             loss_acc, g_acc = carry
-            T_i = T_all[i]
-            y_i = projections[i]
+            # Use dynamic slices in jitted context instead of array indexing
+            T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
+            y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
             def fwd(v):
                 return forward_project_view_T(
                     T_i,
