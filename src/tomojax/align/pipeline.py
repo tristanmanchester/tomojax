@@ -310,6 +310,12 @@ def align(
                     raise
             else:
                 raise
+        # Ensure device work is finished before timing recon
+        try:
+            x.block_until_ready()
+        except Exception:
+            # Fallback if x is not a DeviceArray-like object
+            jax.block_until_ready(x)
         recon_time = time.perf_counter() - recon_start
         stat["recon_time"] = recon_time
         stat["recon_retry"] = recon_retry
@@ -389,6 +395,11 @@ def align(
                 pass
         stat["step_kind"] = step_kind
         stat["loss_after_step"] = loss_after
+        # Ensure device work from alignment step is finished before timing
+        try:
+            jax.block_until_ready(params5)
+        except Exception:
+            pass
         stat["align_time"] = time.perf_counter() - align_start
 
         # Track overall data loss
