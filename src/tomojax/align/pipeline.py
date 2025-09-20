@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
-from ..core.projector import forward_project_view_T
+from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..recon.fista_tv import fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
@@ -93,6 +93,9 @@ def align(
         axis=0,
     )
 
+    # Precompute detector grid once (device arrays) to avoid repeated transfers/logging
+    det_grid = get_detector_grid_device(detector)
+
     # Vmapped projector across views (pose-aware). Closure captures unroll as a static constant.
     def _project_batch(T_batch, vol):
         f = lambda T: forward_project_view_T(
@@ -103,6 +106,7 @@ def align(
             use_checkpoint=cfg.checkpoint_projector,
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
         )
         return jax.vmap(f, in_axes=0)(T_batch)
 
@@ -165,6 +169,7 @@ def align(
             use_checkpoint=cfg.checkpoint_projector,
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
         ).ravel()
 
     def _gn_update_one(p5_i, T_nom_i, y_i, vol):

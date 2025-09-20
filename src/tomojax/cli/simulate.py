@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from contextlib import nullcontext as _nullcontext
 
 from ..data.simulate import SimConfig, simulate_to_file
 from ..utils.logging import setup_logging, log_jax_env
@@ -49,6 +50,12 @@ def main() -> None:
     p.add_argument("--noise-level", type=float, default=0.0)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--transfer-guard",
+        choices=["off", "log", "disallow"],
+        default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
+        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+    )
     args = p.parse_args()
 
     setup_logging()
@@ -68,7 +75,27 @@ def main() -> None:
         max_rot_deg=args.max_rot_deg,
         lamino_thickness_ratio=args.lamino_thickness_ratio,
     )
-    out = simulate_to_file(cfg, args.out)
+    def _transfer_guard_ctx(mode: str | None = None):
+        # Allow overriding via env var: off|log|disallow
+        if mode is None:
+            mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
+        if mode in ("off", "none", "disable", "disabled"):
+            return _nullcontext()
+        try:
+            import jax as _jax
+            tg = getattr(_jax, "transfer_guard", None)
+            if tg is not None:
+                return tg(mode)
+            try:
+                from jax.experimental import transfer_guard as _tg  # type: ignore
+                return _tg(mode)
+            except Exception:
+                return _nullcontext()
+        except Exception:
+            return _nullcontext()
+
+    with _transfer_guard_ctx(args.transfer_guard):
+        out = simulate_to_file(cfg, args.out)
     logging.info("Wrote dataset: %s", out)
 
 

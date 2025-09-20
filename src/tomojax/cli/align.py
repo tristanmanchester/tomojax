@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
+from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
@@ -49,6 +50,25 @@ def build_geometry(meta: dict):
         geom = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
     return grid, detector, geom
 
+def _transfer_guard_ctx(mode: str | None = None):
+    # Allow overriding via env var to control verbosity: off|log|disallow
+    if mode is None:
+        mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
+    if mode in ("off", "none", "disable", "disabled"):
+        return _nullcontext()
+    try:
+        import jax as _jax  # local import to avoid hard dep at import time
+        tg = getattr(_jax, "transfer_guard", None)
+        if tg is not None:
+            return tg(mode)
+        try:
+            from jax.experimental import transfer_guard as _tg  # type: ignore
+            return _tg(mode)
+        except Exception:
+            return _nullcontext()
+    except Exception:
+        return _nullcontext()
+
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
@@ -72,6 +92,12 @@ def main() -> None:
     p.add_argument("--seed-translations", action="store_true", help="Phase-correlation init for dx,dz at coarsest level")
     p.add_argument("--log-summary", action="store_true", help="Print per-outer summaries (FISTA loss, alignment loss before/after)")
     p.add_argument("--recon-L", type=float, default=None, help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)")
+    p.add_argument(
+        "--transfer-guard",
+        choices=["off", "log", "disallow"],
+        default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
+        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+    )
     p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     args = p.parse_args()
@@ -108,13 +134,16 @@ def main() -> None:
     )
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
-        x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
+        with _transfer_guard_ctx(args.transfer_guard):
+            x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
     else:
-        x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
+        with _transfer_guard_ctx(args.transfer_guard):
+            x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
 
+    # Avoid copying projections back from device: reuse host array from metadata
     save_nxtomo(
         args.out,
-        projections=np.asarray(proj),
+        projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
         grid=meta.get("grid"),
         detector=meta.get("detector"),

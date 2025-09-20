@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
-from ..core.projector import forward_project_view_T
+from ..core.projector import forward_project_view_T, get_detector_grid_device
  
 
 
@@ -61,6 +61,8 @@ def grad_data_term(
         axis=0,
     )
 
+    det_grid = get_detector_grid_device(detector)
+
     def batched_loss(vol):
         """Loss over views batched in chunks, using a scan to keep jaxpr compact.
 
@@ -76,6 +78,7 @@ def grad_data_term(
                 use_checkpoint=checkpoint_projector,
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
+                det_grid=det_grid,
             ),
             in_axes=(0, None),
         )
@@ -124,6 +127,7 @@ def grad_data_term(
                     use_checkpoint=checkpoint_projector,
                     unroll=int(projector_unroll),
                     gather_dtype=gather_dtype,
+                    det_grid=det_grid,
                 )
             pred_i = fwd(vol)
             resid_i = (pred_i - y_i).astype(jnp.float32)
