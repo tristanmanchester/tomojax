@@ -101,7 +101,12 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-def _transfer_guard_ctx(mode: str = "log"):
+def _transfer_guard_ctx(mode: str | None = None):
+    # Allow overriding via env var: off|log|disallow
+    if mode is None:
+        mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
+    if mode in ("off", "none", "disable", "disabled"):
+        return _nullcontext()
     try:
         tg = getattr(jax, "transfer_guard", None)
         if tg is not None:

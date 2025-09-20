@@ -69,7 +69,12 @@ def main() -> None:
         max_rot_deg=args.max_rot_deg,
         lamino_thickness_ratio=args.lamino_thickness_ratio,
     )
-    def _transfer_guard_ctx(mode: str = "log"):
+    def _transfer_guard_ctx(mode: str | None = None):
+        # Allow overriding via env var: off|log|disallow
+        if mode is None:
+            mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
+        if mode in ("off", "none", "disable", "disabled"):
+            return _nullcontext()
         try:
             import jax as _jax
             tg = getattr(_jax, "transfer_guard", None)

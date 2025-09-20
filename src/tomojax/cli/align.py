@@ -50,7 +50,12 @@ def build_geometry(meta: dict):
         geom = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
     return grid, detector, geom
 
-def _transfer_guard_ctx(mode: str = "log"):
+def _transfer_guard_ctx(mode: str | None = None):
+    # Allow overriding via env var to control verbosity: off|log|disallow
+    if mode is None:
+        mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
+    if mode in ("off", "none", "disable", "disabled"):
+        return _nullcontext()
     try:
         import jax as _jax  # local import to avoid hard dep at import time
         tg = getattr(_jax, "transfer_guard", None)
