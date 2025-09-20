@@ -91,5 +91,40 @@ Align: outer iters:  75%|██████████████████�
 2025-09-20 07:26:40,885 | INFO | Alignment completed in 11m47.1s (recon 9m13.0s, align 2m31.0s over 4 outer iters)
 2025-09-20 07:26:40,885 | INFO |   Loss 5.086e+06 -> 7.214e+04 (Δ -5.014e+06, -98.58%)
 2025-09-20 07:26:42,233 | INFO | Saved alignment results to out/align_misaligned.nxs
+```
 
+
+## Test 3
+- Alignment gradient now donates params5 into the JIT:
+  - File: src/tomojax/align/pipeline.py:152
+  - Replaced grad_all = jax.jit(jax.grad(...)) with:
+      - @jax.jit(donate_argnums=(0,))
+      - def grad_all(params5, vol): return jax.grad(align_loss, argnums=0)(params5,
+vol)
+- FISTA already donates z in val_and_grad (confirmed in src/tomojax/recon/
+fista_tv.py:310); left unchanged.
+
+```
+✨ Pixi task (align): python -m tomojax.cli.align --data data/sim_misaligned.nxs --levels 1 --outer-iters 4 --recon-iters 10 --lambda-tv 0.003 --opt-method gn --gn-damping 1e-3 --gather-dtype bf16 --checkpoint-projector --log-summary --out out/align_misaligned.nxs --progress
+INFO:2025-09-20 07:38:52,430:jax._src.xla_bridge:925: Unable to initialize backend 'rocm': module 'jaxlib.xla_extension' has no attribute 'GpuAllocatorConfig'
+2025-09-20 07:38:52,430 | INFO | Unable to initialize backend 'rocm': module 'jaxlib.xla_extension' has no attribute 'GpuAllocatorConfig'
+INFO:2025-09-20 07:38:52,431:jax._src.xla_bridge:925: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+2025-09-20 07:38:52,431 | INFO | Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+2025-09-20 07:38:52,441 | INFO | JAX backend: gpu
+2025-09-20 07:38:52,441 | INFO | Devices: [CudaDevice(id=0)]
+Align: outer iters:   0%|                                         | 0/4 [00:00<?, ?it/s]2025-09-20 07:41:54,245 | INFO | Outer 1/4 | total 3m01.2s | elapsed 3m01.2s
+2025-09-20 07:41:54,245 | INFO |   Recon | time 2m48.2s | L 4.573e+04->5.488e+04 | loss 9.743e+07->5.104e+06 (min 5.104e+06)
+2025-09-20 07:41:54,245 | INFO |   Align | time 12.2s | |drot|_mean 1.640e-02 rad | |dtrans|_mean 4.978e+00 | loss 5.086e+06->1.259e+06 (Δ -3.826e+06, -75.24%)
+Align: outer iters:  25%|████████                        | 1/4 [03:01<09:03, 181.20s/it]2025-09-20 07:44:12,171 | INFO | Outer 2/4 | total 2m17.9s | elapsed 5m19.2s
+2025-09-20 07:44:12,171 | INFO |   Recon | time 2m10.2s | L 5.488e+04->6.585e+04 | loss 1.260e+06->3.144e+05 (min 3.144e+05)
+2025-09-20 07:44:12,171 | INFO |   Align | time 6.9s | |drot|_mean 4.997e-03 rad | |dtrans|_mean 5.221e-01 | loss 3.027e+05->2.485e+05 (Δ -5.422e+04, -17.91%)
+Align: outer iters:  50%|████████████████                | 2/4 [05:19<05:11, 155.74s/it]2025-09-20 07:46:30,069 | INFO | Outer 3/4 | total 2m17.9s | elapsed 7m37.0s
+2025-09-20 07:46:30,069 | INFO |   Recon | time 2m10.2s | L 6.585e+04->7.902e+04 | loss 2.486e+05->1.224e+05 (min 1.224e+05)
+2025-09-20 07:46:30,069 | INFO |   Align | time 6.9s | |drot|_mean 9.055e-04 rad | |dtrans|_mean 9.993e-02 | loss 1.187e+05->1.167e+05 (Δ -2.005e+03, -1.69%)
+Align: outer iters:  75%|████████████████████████        | 3/4 [07:37<02:27, 147.59s/it]2025-09-20 07:48:48,072 | INFO | Outer 4/4 | total 2m18.0s | elapsed 9m55.1s
+2025-09-20 07:48:48,072 | INFO |   Recon | time 2m10.3s | L 7.902e+04->9.483e+04 | loss 1.167e+05->7.409e+04 (min 7.409e+04)
+2025-09-20 07:48:48,073 | INFO |   Align | time 6.9s | |drot|_mean 3.113e-04 rad | |dtrans|_mean 4.583e-02 | loss 7.248e+04->7.214e+04 (Δ -3.377e+02, -0.47%)
+2025-09-20 07:48:48,073 | INFO | Alignment completed in 9m55.1s (recon 9m18.9s, align 32.9s over 4 outer iters)
+2025-09-20 07:48:48,073 | INFO |   Loss 5.086e+06 -> 7.214e+04 (Δ -5.014e+06, -98.58%)
+2025-09-20 07:48:49,408 | INFO | Saved alignment results to out/align_misaligned.nxs
 ```

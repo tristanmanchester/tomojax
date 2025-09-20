@@ -402,9 +402,13 @@ def align(
         stat["loss_after_step"] = loss_after
         # Ensure device work from alignment step is finished before timing
         try:
-            jax.block_until_ready(params5)
+            # Prefer object method if available (propagates device errors correctly)
+            params5.block_until_ready()  # type: ignore[attr-defined]
         except Exception:
-            pass
+            try:
+                jax.block_until_ready(params5)
+            except Exception:
+                pass
         stat["align_time"] = time.perf_counter() - align_start
 
         # Track overall data loss
