@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import Any, Dict, Tuple, Iterable, List
+from typing import Any, Dict, Tuple, Iterable, List, Optional
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,7 @@ from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..recon.fista_tv import fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
+from .losses import build_loss
 
 
 @dataclass
@@ -51,6 +52,9 @@ class AlignConfig:
     # GN acceptance: only apply step if it reduces the alignment loss
     gn_accept_only_improving: bool = True
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
+    # Data term / similarity
+    loss_kind: str = "l2"
+    loss_params: Optional[Dict[str, float]] = None
 
 
  # (Removed: AugmentedGeometry legacy wrapper; new alignment path uses pose-aware projector directly)
@@ -116,6 +120,9 @@ def align(
         [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32
     )
 
+    # Build per-view loss once (may precompute masks on targets)
+    per_view_loss_fn, loss_state = build_loss(cfg.loss_kind, cfg.loss_params, projections)
+
     def align_loss(params5, vol):
         # Compose augmented poses
         # Current convention: per-view misalignment parameters act in the object
@@ -140,10 +147,15 @@ def align(
             T_chunk = jax.lax.dynamic_slice(T_aug, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = _project_batch(T_chunk, vol)
+            # Optional per-view mask slice (for Otsu-masked L2)
+            mask_chunk = None
+            if getattr(loss_state, "mask", None) is not None:
+                mask_chunk = jax.lax.dynamic_slice(loss_state.mask, (start_shifted, 0, 0), (b, nv, nu))
+            # Compute per-view losses, then zero-out invalid padded items
+            lvec = per_view_loss_fn(pred, y_chunk, mask_chunk)  # (b,)
             idx = jnp.arange(b)
-            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
-            resid = (pred - y_chunk).astype(jnp.float32) * mask
-            loss_batch = 0.5 * jnp.vdot(resid, resid).real
+            vmask = (idx >= (jnp.int32(b) - valid)).astype(jnp.float32)
+            loss_batch = jnp.sum(lvec * vmask)
             return (loss_acc + loss_batch, None)
 
         loss0 = jnp.float32(0.0)
@@ -404,7 +416,8 @@ def align(
         except Exception:
             loss_before = None
         stat["loss_before"] = loss_before
-        step_kind = opt_mode
+        # GN only valid for pure L2; otherwise force GD
+        step_kind = ("gn" if (opt_mode == "gn" and str(cfg.loss_kind).lower() == "l2") else "gd") if opt_mode in ("gn", "gd") else "gd"
         loss_after = None
         if step_kind == "gn":
             n = params5.shape[0]

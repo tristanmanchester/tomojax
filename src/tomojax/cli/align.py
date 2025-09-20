@@ -90,7 +90,7 @@ def main() -> None:
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
     ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false")
     p.set_defaults(checkpoint_projector=True)
-    p.add_argument("--opt-method", choices=["gd", "gn"], default="gd", help="Alignment optimizer: gd or gn")
+    p.add_argument("--opt-method", choices=["gd", "gn"], default="gd", help="Alignment optimizer: gd or gn (gn only valid with --loss l2)")
     p.add_argument("--gn-damping", type=float, default=1e-3, help="Levenberg-Marquardt damping for GN")
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
@@ -100,6 +100,9 @@ def main() -> None:
                    help="Use compact one-line per-outer summary when --log-summary is set (default: on)")
     p.add_argument("--no-log-compact", dest="log_compact", action="store_false")
     p.add_argument("--recon-L", type=float, default=None, help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)")
+    # Data term / similarity
+    p.add_argument("--loss", choices=["l2", "charbonnier", "huber", "cauchy", "zncc", "ssim", "l2_otsu"], default="l2", help="Data term / similarity to optimize")
+    p.add_argument("--loss-param", action="append", default=[], help="Loss parameter as k=v (repeatable), e.g., delta=1.0, eps=1e-3, window=7, temp=0.5")
     # Early stopping controls (alignment phase)
     es = p.add_mutually_exclusive_group()
     es.add_argument("--early-stop", dest="early_stop", action="store_true", help="Enable early stopping across outers (default)")
@@ -149,6 +152,8 @@ def main() -> None:
         gn_damping=float(args.gn_damping),
         w_rot=float(args.w_rot),
         w_trans=float(args.w_trans),
+        loss_kind=str(args.loss),
+        loss_params=loss_params if loss_params else None,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
         log_compact=bool(args.log_compact),
@@ -183,3 +188,13 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+    # Parse loss params (k=v -> float)
+    loss_params = {}
+    for kv in args.loss_param:
+        if "=" not in kv:
+            raise SystemExit(f"--loss-param must be k=v, got: {kv}")
+        k, v = kv.split("=", 1)
+        try:
+            loss_params[k.strip()] = float(v)
+        except ValueError:
+            raise SystemExit(f"--loss-param value must be numeric: {kv}")
