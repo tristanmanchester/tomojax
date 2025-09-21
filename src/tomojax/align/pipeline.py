@@ -480,13 +480,15 @@ def align(
             dp_all = []
             params5_prev = params5
             for s in range(0, n, b):
+                chunk_len = min(b, n - s)
+                idx = slice(s, s + chunk_len)
                 # Build per-pixel weights (sqrt of LS weight) for LS-like losses
-                y_chunk = projections[s : s + b]
+                y_chunk = projections[idx]
                 if loss_kind_norm in ("l2",):
                     w_chunk = jnp.ones_like(y_chunk)
                 elif loss_kind_norm in ("l2_otsu", "l2-otsu", "otsu-l2") and getattr(loss_state, "mask", None) is not None:
                     # Loss implemented as 0.5 * sum (w * r)^2; here w = mask in [0,1]
-                    w_chunk = loss_state.mask[s : s + b]
+                    w_chunk = loss_state.mask[idx]
                 elif loss_kind_norm == "pwls":
                     a = jnp.float32((cfg.loss_params or {}).get("a", 1.0))
                     bpar = jnp.float32((cfg.loss_params or {}).get("b", 0.0))
@@ -503,10 +505,31 @@ def align(
                     w_chunk = jnp.sqrt(1.0 + mag)
                 else:
                     w_chunk = jnp.ones_like(y_chunk)
-                dp_chunk = _gn_update_batch(
-                    params5[s : s + b], T_nom_all[s : s + b], y_chunk, x, w_chunk
+                params_chunk = params5[idx]
+                T_chunk = T_nom_all[idx]
+
+                if chunk_len != b:
+                    pad_count = b - chunk_len
+
+                    def _pad_repeat_last(arr: jnp.ndarray) -> jnp.ndarray:
+                        pad_vals = jnp.repeat(arr[-1:], pad_count, axis=0)
+                        return jnp.concatenate([arr, pad_vals], axis=0)
+
+                    params_chunk_in = _pad_repeat_last(params_chunk)
+                    T_chunk_in = _pad_repeat_last(T_chunk)
+                    y_chunk_in = _pad_repeat_last(y_chunk)
+                    w_chunk_in = _pad_repeat_last(w_chunk)
+                else:
+                    params_chunk_in = params_chunk
+                    T_chunk_in = T_chunk
+                    y_chunk_in = y_chunk
+                    w_chunk_in = w_chunk
+
+                dp_chunk_full = _gn_update_batch(
+                    params_chunk_in, T_chunk_in, y_chunk_in, x, w_chunk_in
                 )
-                params5 = params5.at[s : s + b].add(dp_chunk)
+                dp_chunk = dp_chunk_full[:chunk_len]
+                params5 = params5.at[idx].add(dp_chunk)
                 dp_all.append(dp_chunk)
             # Compute post-update loss and accept/reject
             loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
