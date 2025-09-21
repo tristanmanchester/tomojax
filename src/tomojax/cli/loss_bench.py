@@ -156,7 +156,29 @@ def main() -> None:
         geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
     projections = jnp.asarray(meta_mis["projections"], jnp.float32)
 
-    # 3) Run alignment for each loss
+    # 3) Loss-specific configuration (tiered settings)
+    gn_losses = {"l2", "poisson", "pwls"}
+    high_iter_losses = {"l2", "poisson", "pwls", "ms-ssim", "ssim", "ssim_otsu"}
+    default_levels = {
+        "l2": (4, 2, 1),
+        "poisson": (4, 2, 1),
+        "pwls": (4, 2, 1),
+        "ms-ssim": (2, 1),
+        "ssim": (2, 1),
+        "ssim_otsu": (2, 1),
+    }
+    rot_rates = {
+        "l2": 5e-4,
+        "poisson": 5e-4,
+        "pwls": 5e-4,
+    }
+    trans_rates = {
+        "l2": 5e-2,
+        "poisson": 5e-2,
+        "pwls": 5e-2,
+    }
+
+    # 4) Run alignment for each loss
     results: List[Dict[str, object]] = []
     for loss in args.losses:
         run_name = str(loss).lower()
@@ -172,18 +194,22 @@ def main() -> None:
         metrics = {}
         try:
             # Reasonable defaults for small problems; use GD for all losses
+            is_gn = run_name in gn_losses
+            outer_iters = args.outer_iters if run_name not in high_iter_losses else max(args.outer_iters, 8)
+            recon_iters = args.recon_iters if run_name not in high_iter_losses else max(args.recon_iters, 30)
+            levels = default_levels.get(run_name)
             cfg = AlignConfig(
-                outer_iters=args.outer_iters,
-                recon_iters=args.recon_iters,
+                outer_iters=outer_iters,
+                recon_iters=recon_iters,
                 lambda_tv=0.005,
                 tv_prox_iters=10,
-                lr_rot=1e-3,
-                lr_trans=1e-1,
+                lr_rot=rot_rates.get(run_name, 2e-4 if not is_gn else 5e-4),
+                lr_trans=trans_rates.get(run_name, 5e-2 if not is_gn else 5e-2),
                 views_per_batch=1,
                 projector_unroll=1,
                 checkpoint_projector=True,
                 gather_dtype="auto",
-                opt_method="gd",
+                opt_method="gn" if is_gn else "gd",
                 gn_damping=1e-3,
                 w_rot=1e-3,
                 w_trans=1e-3,
@@ -197,7 +223,14 @@ def main() -> None:
                 loss_kind=run_name,
                 loss_params=None,
             )
-            x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
+            align_kwargs = {}
+            if levels is not None:
+                align_kwargs["levels"] = levels
+            if levels is not None:
+                from ..align.pipeline import align_multires
+                x_est, p_est, info = align_multires(geom, grid, det, projections, factors=levels, cfg=cfg)
+            else:
+                x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
             # Save output
             save_nxtomo(
                 out_path,
