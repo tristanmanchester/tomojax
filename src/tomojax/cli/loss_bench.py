@@ -93,11 +93,15 @@ def _metrics(params_true: np.ndarray, params_est: np.ndarray, du: float, dv: flo
     dz_px = d[:, 4] / max(1e-12, float(dv))
     rot_rmse = float(np.sqrt(np.mean(d_deg ** 2)))
     trans_rmse = float(np.sqrt(np.mean(np.stack([dx_px, dz_px], axis=1) ** 2)))
+    rot_mse = float(np.mean(d_deg ** 2))
+    trans_mse = float(np.mean(np.stack([dx_px, dz_px], axis=1) ** 2))
     rot_mae = float(np.mean(np.abs(d_deg)))
     trans_mae = float(np.mean(np.abs(np.stack([dx_px, dz_px], axis=1))))
     return {
         "rot_rmse_deg": rot_rmse,
         "trans_rmse_px": trans_rmse,
+        "rot_mse_deg": rot_mse,
+        "trans_mse_px": trans_mse,
         "rot_mae_deg": rot_mae,
         "trans_mae_px": trans_mae,
     }
@@ -190,15 +194,18 @@ def main() -> None:
         fh.setLevel(logging.INFO)
         fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
         logging.getLogger().addHandler(fh)
+        is_gn = run_name in gn_losses
+        levels = default_levels.get(run_name)
+        logging.info("=== [%s] starting (%s) ===", run_name.upper(), "GN" if is_gn else "LBFGS")
+        if levels is not None:
+            logging.info("[%s] multires levels: %s", run_name, levels)
         start = time.perf_counter()
         status = "ok"; err_msg = None
         metrics = {}
         try:
             # Reasonable defaults for small problems; use GD for all losses
-            is_gn = run_name in gn_losses
             outer_iters = args.outer_iters if run_name not in high_iter_losses else max(args.outer_iters, 8)
             recon_iters = args.recon_iters if run_name not in high_iter_losses else max(args.recon_iters, 30)
-            levels = default_levels.get(run_name)
             opt_method = "gn" if is_gn else "lbfgs"
             lbfgs_iters = max(5, default_lbfgs_iters) if not is_gn else AlignConfig.lbfgs_iters
             cfg = AlignConfig(
@@ -217,7 +224,7 @@ def main() -> None:
                 w_rot=1e-3,
                 w_trans=1e-3,
                 seed_translations=False,
-                log_summary=True,
+                log_summary=False,
                 log_compact=True,
                 recon_L=None,
                 early_stop=True,
@@ -265,6 +272,16 @@ def main() -> None:
             fh.close()
         except Exception:
             pass
+        logging.info(
+            "[%s] status=%s time=%.2fs rot_rmse=%.3f° rot_mse=%.4f trans_rmse=%.3fpx trans_mse=%.4f",
+            run_name,
+            status,
+            elapsed,
+            metrics.get("rot_rmse_deg", float("nan")),
+            metrics.get("rot_mse_deg", float("nan")),
+            metrics.get("trans_rmse_px", float("nan")),
+            metrics.get("trans_mse_px", float("nan")),
+        )
         rec = {
             "loss": run_name,
             "status": status,
@@ -282,7 +299,20 @@ def main() -> None:
         json.dump({"results": results, "config": {k: getattr(args, k) for k in vars(args)}}, f, indent=2)
     # Simple CSV too
     csv_path = os.path.join(args.expdir, "results.csv")
-    keys = ["loss", "status", "seconds", "rot_rmse_deg", "trans_rmse_px", "rot_mae_deg", "trans_mae_px", "log", "output", "error"]
+    keys = [
+        "loss",
+        "status",
+        "seconds",
+        "rot_rmse_deg",
+        "rot_mse_deg",
+        "trans_rmse_px",
+        "trans_mse_px",
+        "rot_mae_deg",
+        "trans_mae_px",
+        "log",
+        "output",
+        "error",
+    ]
     with open(csv_path, "w", encoding="utf-8") as f:
         f.write(",".join(keys) + "\n")
         for r in results:
