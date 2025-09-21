@@ -132,6 +132,7 @@ python -m tomojax.cli.align --data <in.nxs> \
   [--tv-prox-iters <int>] \
   [--lr-rot <float>] [--lr-trans <float>] \
   [--opt-method gd|gn] [--gn-damping <float>] \
+  [--early-stop|--no-early-stop] [--early-stop-rel <float>] [--early-stop-patience <int>] \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
@@ -141,6 +142,9 @@ python -m tomojax.cli.align --data <in.nxs> \
 Key options
 - Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--tv-prox-iters` (10; increase to 20–30 for noisy data).
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
+- Early stopping (alignment across outers):
+  - Enable/disable: `--early-stop` (default) or `--no-early-stop`.
+  - Threshold and patience: `--early-stop-rel` (default 1e-3), `--early-stop-patience` (default 2).
 - Smoothness across views: `--w-rot`, `--w-trans` (default 1e‑3 in CLI).
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).

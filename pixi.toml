@@ -47,6 +47,7 @@ misalign = "python -m tomojax.cli.misalign"
 recon = "python -m tomojax.cli.recon"
 align = "python -m tomojax.cli.align"
 convert = "python -m tomojax.cli.convert"
+loss-bench = "python -m tomojax.cli.loss_bench"
 
 # (No legacy aliases; v2 is primary)
 

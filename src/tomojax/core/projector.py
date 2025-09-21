@@ -141,7 +141,18 @@ def forward_project_view_T(
         raise ValueError(f"Volume must be (nx,ny,nz)={nx,ny,nz}, got {vol.shape}")
     # Mixed-precision gather option (accumulate in fp32)
     gd = gather_dtype.lower()
-    if gd in ("bf16", "bfloat16"):
+    if gd == "auto":
+        # Choose mixed precision on accelerators; fp32 on CPU for numerical stability
+        try:
+            platform = jax.devices()[0].platform if jax.devices() else "cpu"
+        except Exception:
+            platform = "cpu"
+        if platform in ("gpu", "tpu"):
+            # Prefer bf16 on TPU, fp16 on GPU
+            target = jnp.bfloat16 if platform == "tpu" else jnp.float16
+        else:
+            target = jnp.float32
+    elif gd in ("bf16", "bfloat16"):
         target = jnp.bfloat16
     elif gd in ("fp16", "float16", "half"):
         target = jnp.float16
