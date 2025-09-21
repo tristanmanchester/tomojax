@@ -11,6 +11,12 @@ from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
+from ..utils.fov import (
+    compute_roi,
+    grid_from_detector_fov_slices,
+    grid_from_detector_fov,
+    cylindrical_mask_xy,
+)
 
 
 def _init_jax_compilation_cache() -> None:
@@ -92,9 +98,9 @@ def main() -> None:
     p.set_defaults(checkpoint_projector=True)
     p.add_argument(
         "--opt-method",
-        choices=["gd", "gn", "lbfgs"],
-        default="gd",
-        help="Alignment optimizer: gd, gn (only for --loss l2), or lbfgs",
+        choices=["gd", "gn"],
+        default="gn",
+        help="Alignment optimizer: gd or gn (GN supported for L2-like losses: l2, l2_otsu, edge_l2, pwls)",
     )
     p.add_argument("--gn-damping", type=float, default=1e-3, help="Levenberg-Marquardt damping for GN")
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
@@ -114,16 +120,11 @@ def main() -> None:
             "grad_l1","edge_l2","ngf","grad_orient","phasecorr","fft_mag","chamfer_edge",
             "l2_otsu","ssim_otsu","tversky","swd","mind","pwls","poisson"
         ],
-        default="l2",
-        help="Data term / similarity to optimize",
+        default="l2_otsu",
+        help="Data term / similarity to optimize (default: l2_otsu)",
     )
     p.add_argument("--loss-param", action="append", default=[], help="Loss parameter as k=v (repeatable), e.g., delta=1.0, eps=1e-3, window=7, temp=0.5")
-    # LBFGS tuning (optional)
-    p.add_argument("--lbfgs-iters", type=int, default=None, help="LBFGS iterations per outer step (default 5)")
-    p.add_argument("--lbfgs-history", type=int, default=None, help="LBFGS history size (default 10)")
-    p.add_argument("--lbfgs-linesearch-steps", type=int, default=None, help="LBFGS line-search steps (default 20)")
-    p.add_argument("--lbfgs-rot-scale", type=float, default=None, help="Gradient scaling factor for rotation params in LBFGS (default 0.1)")
-    p.add_argument("--lbfgs-trans-scale", type=float, default=None, help="Gradient scaling factor for translation params in LBFGS (default 1.0)")
+    # (LBFGS options removed)
     # Early stopping controls (alignment phase)
     es = p.add_mutually_exclusive_group()
     es.add_argument("--early-stop", dest="early_stop", action="store_true", help="Enable early stopping across outers (default)")
@@ -139,6 +140,16 @@ def main() -> None:
     )
     p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--roi",
+        choices=["auto", "off", "cube", "bbox", "cyl"],
+        default="auto",
+        help=(
+            "Region to reconstruct: auto: square x–y slices + z from detector height; "
+            "off: use full grid; cube: same as auto; bbox: rectangular FOV bbox; "
+            "cyl: auto + zero outside cylindrical FOV"
+        ),
+    )
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
@@ -186,11 +197,6 @@ def main() -> None:
         w_trans=float(args.w_trans),
         loss_kind=str(args.loss),
         loss_params=loss_params if loss_params else None,
-        lbfgs_iters=int(args.lbfgs_iters) if args.lbfgs_iters is not None else AlignConfig.lbfgs_iters,
-        lbfgs_history=int(args.lbfgs_history) if args.lbfgs_history is not None else AlignConfig.lbfgs_history,
-        lbfgs_linesearch_steps=int(args.lbfgs_linesearch_steps) if args.lbfgs_linesearch_steps is not None else AlignConfig.lbfgs_linesearch_steps,
-        lbfgs_rot_scale=float(args.lbfgs_rot_scale) if args.lbfgs_rot_scale is not None else AlignConfig.lbfgs_rot_scale,
-        lbfgs_trans_scale=float(args.lbfgs_trans_scale) if args.lbfgs_trans_scale is not None else AlignConfig.lbfgs_trans_scale,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
         log_compact=bool(args.log_compact),
@@ -199,20 +205,51 @@ def main() -> None:
         early_stop_rel_impr=(float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3),
         early_stop_patience=(int(args.early_stop_patience) if args.early_stop_patience is not None else 2),
     )
+    # ROI handling (align on realistic FOV)
+    roi_mode = str(args.roi).lower()
+    try:
+        roi = compute_roi(grid, detector)
+        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+        det_smaller = (roi.r_u + 1e-6) < full_half_x or (roi.r_v + 1e-6) < full_half_z
+    except Exception:
+        det_smaller = False
+    recon_grid = grid
+    apply_cyl_mask = False
+    if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
+        recon_grid = grid_from_detector_fov_slices(grid, detector)
+    elif roi_mode == "bbox":
+        recon_grid = grid_from_detector_fov(grid, detector)
+    elif roi_mode == "cyl":
+        recon_grid = grid_from_detector_fov_slices(grid, detector)
+        apply_cyl_mask = True
+
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
         with _transfer_guard_ctx(args.transfer_guard):
-            x, params5, info = align_multires(geom, grid, detector, proj, factors=args.levels, cfg=cfg)
+            x, params5, info = align_multires(geom, recon_grid, detector, proj, factors=args.levels, cfg=cfg)
     else:
         with _transfer_guard_ctx(args.transfer_guard):
-            x, params5, info = align(geom, grid, detector, proj, cfg=cfg)
+            x, params5, info = align(geom, recon_grid, detector, proj, cfg=cfg)
+
+    # Optional cylindrical mask in x–y
+    if apply_cyl_mask:
+        import numpy as _np
+        try:
+            m_xy = cylindrical_mask_xy(recon_grid, detector)
+            m = jnp.asarray(m_xy, dtype=x.dtype)[:, :, None]
+            x = x * m
+        except Exception:
+            m_xy = cylindrical_mask_xy(recon_grid, detector)
+            m = _np.asarray(m_xy, dtype=_np.float32)[:, :, None]
+            x = jnp.asarray(_np.asarray(x) * m)
 
     # Avoid copying projections back from device: reuse host array from metadata
     save_nxtomo(
         args.out,
         projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
-        grid=meta.get("grid"),
+        grid=recon_grid.to_dict(),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
         geometry_meta=meta.get("geometry_meta"),

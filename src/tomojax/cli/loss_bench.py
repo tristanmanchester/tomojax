@@ -84,8 +84,8 @@ def _make_misaligned_dataset(expdir: str, gt_path: str, *, rot_deg: float, trans
     return mis_path
 
 
-def _metrics(params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float) -> Dict[str, float]:
-    # angles in deg, translations in pixels
+def _metrics_abs(params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float) -> Dict[str, float]:
+    """Absolute parameter RMSE/MAE in degrees/pixels (gauge-sensitive)."""
     assert params_true.shape == params_est.shape
     d = params_est - params_true
     d_deg = np.rad2deg(d[:, :3])
@@ -107,6 +107,125 @@ def _metrics(params_true: np.ndarray, params_est: np.ndarray, du: float, dv: flo
     }
 
 
+def _so3_geodesic_deg(R: np.ndarray) -> float:
+    """Angle in degrees of rotation matrix R (assumes proper rotation)."""
+    tr = np.clip((np.trace(R[:3, :3]) - 1.0) * 0.5, -1.0, 1.0)
+    return float(np.degrees(np.arccos(tr)))
+
+
+def _inv_T(T: np.ndarray) -> np.ndarray:
+    R = T[:3, :3]; t = T[:3, 3]
+    Rt = R.T
+    Ti = np.eye(4, dtype=np.float32)
+    Ti[:3, :3] = Rt
+    Ti[:3, 3] = -Rt @ t
+    return Ti
+
+
+def _params_to_T(params: np.ndarray) -> np.ndarray:
+    """Convert (N,5) params to (N,4,4) transforms using se3_from_5d."""
+    p_j = jnp.asarray(params, jnp.float32)
+    T = jax.vmap(se3_from_5d)(p_j)
+    return np.asarray(T)
+
+
+def _metrics_relative(params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float, *, k_step: int = 1) -> Dict[str, float]:
+    """Gauge-invariant relative-motion error over k-step differences.
+
+    Computes D_true = T_{i+k} T_i^{-1} and D_est analogously, then errors from
+    E_i = D_true^{-1} D_est.
+    """
+    assert params_true.shape == params_est.shape
+    n = params_true.shape[0]
+    if n <= k_step:
+        return {"rot_rel_rmse_deg": float("nan"), "trans_rel_rmse_px": float("nan")}
+    Tt = _params_to_T(params_true)
+    Te = _params_to_T(params_est)
+    rot_errs: List[float] = []
+    trans_errs_sq: List[float] = []
+    for i in range(n - k_step):
+        Dt = Tt[i + k_step] @ _inv_T(Tt[i])
+        De = Te[i + k_step] @ _inv_T(Te[i])
+        E = _inv_T(Dt) @ De
+        rot_errs.append(_so3_geodesic_deg(E))
+        tx, tz = float(E[0, 3]), float(E[2, 3])
+        ex = tx / max(1e-12, float(du))
+        ez = tz / max(1e-12, float(dv))
+        trans_errs_sq.append(ex * ex + ez * ez)
+    rot_rel_rmse = float(np.sqrt(np.mean(np.square(rot_errs)))) if rot_errs else float("nan")
+    trans_rel_rmse = float(np.sqrt(np.mean(trans_errs_sq))) if trans_errs_sq else float("nan")
+    return {
+        "rot_rel_rmse_deg": rot_rel_rmse,
+        "trans_rel_rmse_px": trans_rel_rmse,
+    }
+
+
+def _metrics_gauge_fixed(params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float) -> Dict[str, float]:
+    """Gauge-fixed error by solving a single global G that aligns est to true.
+
+    Rotation via orthogonal Procrustes on SO(3); translation by mean residual.
+    """
+    Tt = _params_to_T(params_true)
+    Te = _params_to_T(params_est)
+    Rsum = np.zeros((3, 3), dtype=np.float64)
+    for i in range(Tt.shape[0]):
+        Rsum += Tt[i, :3, :3] @ Te[i, :3, :3].T
+    U, _, Vt = np.linalg.svd(Rsum)
+    Rg = U @ Vt
+    if np.linalg.det(Rg) < 0:
+        U[:, -1] *= -1
+        Rg = U @ Vt
+    # Translation offset
+    t_res = []
+    for i in range(Tt.shape[0]):
+        t_true = Tt[i, :3, 3]
+        t_est = Te[i, :3, 3]
+        t_res.append(t_true - Rg @ t_est)
+    t_res = np.asarray(t_res)
+    tg = np.mean(t_res, axis=0)
+    G = np.eye(4, dtype=np.float32)
+    G[:3, :3] = Rg.astype(np.float32)
+    G[:3, 3] = tg.astype(np.float32)
+    # Residuals after gauge-fix
+    rot_errs: List[float] = []
+    trans_errs_sq: List[float] = []
+    for i in range(Tt.shape[0]):
+        E = _inv_T(Tt[i]) @ (G @ Te[i])
+        rot_errs.append(_so3_geodesic_deg(E))
+        tx, tz = float(E[0, 3]), float(E[2, 3])
+        ex = tx / max(1e-12, float(du))
+        ez = tz / max(1e-12, float(dv))
+        trans_errs_sq.append(ex * ex + ez * ez)
+    rot_rmse = float(np.sqrt(np.mean(np.square(rot_errs)))) if rot_errs else float("nan")
+    trans_rmse = float(np.sqrt(np.mean(trans_errs_sq))) if trans_errs_sq else float("nan")
+    return {
+        "rot_gf_rmse_deg": rot_rmse,
+        "trans_gf_rmse_px": trans_rmse,
+    }
+
+
+def _gt_projection_mse(
+    x_gt: jnp.ndarray,
+    grid: Grid,
+    det: Detector,
+    geom: ParallelGeometry | LaminographyGeometry,
+    params_est: np.ndarray,
+) -> float:
+    """Forward-project the GT volume with estimated poses; return MSE vs measured proj.
+
+    Uses current process device; modest sizes recommended.
+    """
+    thetas = np.asarray(geom.thetas_deg, dtype=np.float32)
+    T_nom = jnp.stack([jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(len(thetas))], axis=0)
+    S_est = jax.vmap(se3_from_5d)(jnp.asarray(params_est, jnp.float32))
+    T_est_full = T_nom @ S_est
+    det_grid = get_detector_grid_device(det)
+    vm_project = jax.vmap(lambda T: forward_project_view_T(T, grid, det, x_gt, use_checkpoint=True, det_grid=det_grid), in_axes=0)
+    y_hat = vm_project(T_est_full).astype(jnp.float32)
+    # Measured projections must be fetched from geom context; caller will provide via closure
+    return y_hat
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Benchmark multiple alignment losses on a small misaligned phantom.")
     p.add_argument("--expdir", default="runs/loss_experiment", help="Experiment output directory (datasets, logs, results)")
@@ -123,18 +242,16 @@ def main() -> None:
     p.add_argument("--outer-iters", type=int, default=4)
     p.add_argument("--recon-iters", type=int, default=10)
     p.add_argument("--progress", action="store_true")
+    p.add_argument("--metrics-only", action="store_true", help="Do not run alignment; only (re)compute metrics for existing outputs")
+    p.add_argument("--k-step", type=int, default=1, help="k-step for relative-motion metric (default: 1)")
+    p.add_argument("--gt-metric", choices=["none","mse"], default="mse", help="Physics-aware metric against GT projections")
+    p.add_argument("--levels", type=int, nargs="*", default=None, help="Optional multiresolution pyramid factors (e.g., 4 2 1). Applied to all losses.")
     p.add_argument(
         "--losses",
         nargs="*",
-        default=[
-            "l2","charbonnier","huber","cauchy","barron","student_t","correntropy",
-            "zncc","ssim","ms-ssim","mi","nmi","renyi_mi",
-            "grad_l1","edge_l2","ngf","grad_orient","phasecorr","fft_mag","chamfer_edge",
-            "l2_otsu","ssim_otsu","tversky","swd","mind","pwls","poisson"
-        ],
-        help="Subset of losses to run; default is a comprehensive set",
+        default=["l2", "l2_otsu", "pwls"],
+        help="Subset of losses to run; default tests LS-like losses (GN-only)",
     )
-    p.add_argument("--force-lbfgs", action="store_true", help="Run every loss with LBFGS (override GN defaults)")
     args = p.parse_args()
 
     _ensure_dir(args.expdir); _ensure_dir(os.path.join(args.expdir, "logs"))
@@ -162,29 +279,29 @@ def main() -> None:
     projections = jnp.asarray(meta_mis["projections"], jnp.float32)
 
     # 3) Loss-specific configuration (tiered settings)
-    gn_losses = {"l2", "poisson", "pwls"}
-    high_iter_losses = {"l2", "poisson", "pwls", "ms-ssim", "ssim", "ssim_otsu"}
+    gn_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
+    high_iter_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
     default_levels = {
         "l2": (4, 2, 1),
-        "poisson": (4, 2, 1),
+        "l2_otsu": (4, 2, 1),
+        "edge_l2": (4, 2, 1),
         "pwls": (4, 2, 1),
-        "ms-ssim": (2, 1),
-        "ssim": (2, 1),
-        "ssim_otsu": (2, 1),
     }
     rot_rates = {
         "l2": 5e-4,
-        "poisson": 5e-4,
+        "l2_otsu": 5e-4,
+        "edge_l2": 5e-4,
         "pwls": 5e-4,
     }
     trans_rates = {
         "l2": 5e-2,
-        "poisson": 5e-2,
+        "l2_otsu": 5e-2,
+        "edge_l2": 5e-2,
         "pwls": 5e-2,
     }
-    default_lbfgs_iters = 7
+    # LBFGS removed
 
-    # 4) Run alignment for each loss
+    # 4) Run alignment for each loss or load existing outputs
     results: List[Dict[str, object]] = []
     for loss in args.losses:
         run_name = str(loss).lower()
@@ -195,73 +312,99 @@ def main() -> None:
         fh.setLevel(logging.INFO)
         fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
         logging.getLogger().addHandler(fh)
-        is_gn = (run_name in gn_losses) and (not args.force_lbfgs)
+        is_gn = (run_name in gn_losses)
         levels = default_levels.get(run_name)
-        logging.info("=== [%s] starting (%s) ===", run_name.upper(), "GN" if is_gn else "LBFGS")
+        if args.levels is not None and len(args.levels) > 0:
+            levels = tuple(int(v) for v in args.levels)
+        logging.info("=== [%s] starting (GN) ===", run_name.upper())
         if levels is not None:
             logging.info("[%s] multires levels: %s", run_name, levels)
         start = time.perf_counter()
         status = "ok"; err_msg = None
-        metrics = {}
+        metrics: Dict[str, float] = {}
         try:
-            # Reasonable defaults for small problems; use GD for all losses
-            outer_iters = args.outer_iters if run_name not in high_iter_losses else max(args.outer_iters, 8)
-            recon_iters = args.recon_iters if run_name not in high_iter_losses else max(args.recon_iters, 30)
-            opt_method = "gn" if is_gn else "lbfgs"
-            lbfgs_iters = max(5, default_lbfgs_iters) if not is_gn else AlignConfig.lbfgs_iters
-            cfg = AlignConfig(
-                outer_iters=outer_iters,
-                recon_iters=recon_iters,
-                lambda_tv=0.005,
-                tv_prox_iters=10,
-                lr_rot=rot_rates.get(run_name, 2e-4 if not is_gn else 5e-4),
-                lr_trans=trans_rates.get(run_name, 5e-2 if not is_gn else 5e-2),
-                views_per_batch=1,
-                projector_unroll=1,
-                checkpoint_projector=True,
-                gather_dtype="auto",
-                opt_method=opt_method,
-                gn_damping=1e-3,
-                w_rot=1e-3,
-                w_trans=1e-3,
-                seed_translations=False,
-                log_summary=True,
-                log_compact=True,
-                recon_L=None,
-                early_stop=True,
-                early_stop_rel_impr=1e-3,
-                early_stop_patience=2,
-                loss_kind=run_name,
-                loss_params=None,
-                lbfgs_iters=lbfgs_iters,
-                lbfgs_history=15 if not is_gn else AlignConfig.lbfgs_history,
-                lbfgs_linesearch_steps=30 if not is_gn else AlignConfig.lbfgs_linesearch_steps,
-                lbfgs_rot_scale=0.1 if not is_gn else AlignConfig.lbfgs_rot_scale,
-                lbfgs_trans_scale=1.0 if not is_gn else AlignConfig.lbfgs_trans_scale,
-            )
-            align_kwargs = {}
-            if levels is not None:
-                align_kwargs["levels"] = levels
-            if levels is not None:
-                from ..align.pipeline import align_multires
-                x_est, p_est, info = align_multires(geom, grid, det, projections, factors=levels, cfg=cfg)
+            p_est_np: np.ndarray
+            x_est_np: np.ndarray | None = None
+            if os.path.exists(out_path):
+                logging.info("[%s] output exists; skipping alignment and recomputing metrics", run_name)
+                meta_out = load_nxtomo(out_path)
+                p_est_np = np.asarray(meta_out.get("align_params"), dtype=np.float32)
+                # prefer saved recon if present for possible future metrics
+                x_est_np = np.asarray(meta_out.get("volume")) if meta_out.get("volume") is not None else None
+            elif args.metrics_only:
+                logging.warning("[%s] metrics-only set and output missing; skipping (status=missing)", run_name)
+                status = "missing"
+                p_est_np = None  # type: ignore
             else:
-                x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
-            # Save output
-            save_nxtomo(
-                out_path,
-                projections=np.asarray(meta_mis["projections"]),
-                thetas_deg=np.asarray(thetas),
-                grid=meta_mis.get("grid"),
-                detector=meta_mis.get("detector"),
-                geometry_type=meta_mis.get("geometry_type", "parallel"),
-                geometry_meta=meta_mis.get("geometry_meta"),
-                volume=np.asarray(x_est),
-                align_params=np.asarray(p_est),
-                frame=str(meta_mis.get("frame", "sample")),
-            )
-            # Metrics
-            metrics = _metrics(true_params, np.asarray(p_est), du=du, dv=dv)
+                # Run alignment (GN-only for LS-like losses)
+                if not is_gn:
+                    logging.warning("[%s] skipped: not an LS-like loss (GN-only mode)", run_name)
+                    status = "skipped"
+                    p_est_np = None  # type: ignore
+                else:
+                    outer_iters = args.outer_iters if run_name not in high_iter_losses else max(args.outer_iters, 8)
+                    recon_iters = args.recon_iters if run_name not in high_iter_losses else max(args.recon_iters, 30)
+                    opt_method = "gn"
+                    cfg = AlignConfig(
+                        outer_iters=outer_iters,
+                        recon_iters=recon_iters,
+                        lambda_tv=0.005,
+                        tv_prox_iters=10,
+                        lr_rot=rot_rates.get(run_name, 2e-4 if not is_gn else 5e-4),
+                        lr_trans=trans_rates.get(run_name, 5e-2 if not is_gn else 5e-2),
+                        views_per_batch=1,
+                        projector_unroll=1,
+                        checkpoint_projector=True,
+                        gather_dtype="auto",
+                        opt_method=opt_method,
+                        gn_damping=1e-3,
+                        w_rot=1e-3,
+                        w_trans=1e-3,
+                        seed_translations=False,
+                        log_summary=True,
+                        log_compact=True,
+                        recon_L=None,
+                        early_stop=True,
+                        early_stop_rel_impr=1e-3,
+                        early_stop_patience=2,
+                        loss_kind=run_name,
+                        loss_params=None,
+                    )
+                    if levels is not None:
+                        from ..align.pipeline import align_multires
+                        x_est, p_est, info = align_multires(geom, grid, det, projections, factors=levels, cfg=cfg)
+                    else:
+                        x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
+                    p_est_np = np.asarray(p_est)
+                    x_est_np = np.asarray(x_est)
+                    # Save output
+                    save_nxtomo(
+                        out_path,
+                        projections=np.asarray(meta_mis["projections"]),
+                        thetas_deg=np.asarray(thetas),
+                        grid=meta_mis.get("grid"),
+                        detector=meta_mis.get("detector"),
+                        geometry_type=meta_mis.get("geometry_type", "parallel"),
+                        geometry_meta=meta_mis.get("geometry_meta"),
+                        volume=x_est_np,
+                        align_params=p_est_np,
+                        frame=str(meta_mis.get("frame", "sample")),
+                    )
+
+            # Metrics (only if we have estimates)
+            if status != "missing":
+                abs_m = _metrics_abs(true_params, p_est_np, du=du, dv=dv)
+                rel_m = _metrics_relative(true_params, p_est_np, du=du, dv=dv, k_step=args.k_step)
+                gf_m = _metrics_gauge_fixed(true_params, p_est_np, du=du, dv=dv)
+                metrics.update(abs_m)
+                metrics.update(rel_m)
+                metrics.update(gf_m)
+                if args.gt_metric != "none":
+                    # Compute physics-aware GT projection MSE
+                    y_hat = _gt_projection_mse(jnp.asarray(meta_mis["volume"], jnp.float32), grid, det, geom, p_est_np)
+                    y = jnp.asarray(meta_mis["projections"], jnp.float32)
+                    gt_mse = float(jnp.mean((y_hat - y) ** 2).item())
+                    metrics["gt_mse"] = gt_mse
         except Exception as e:
             status = "error"
             err_msg = str(e)
@@ -274,14 +417,18 @@ def main() -> None:
         except Exception:
             pass
         logging.info(
-            "[%s] status=%s time=%.2fs rot_rmse=%.3f° rot_mse=%.4f trans_rmse=%.3fpx trans_mse=%.4f",
+            "[%s] status=%s time=%.2fs | abs: rot_rmse=%.3f° trans_rmse=%.3fpx | rel(k=%d): rot=%.3f° trans=%.3fpx | gf: rot=%.3f° trans=%.3fpx | gt_mse=%.3e",
             run_name,
             status,
             elapsed,
             metrics.get("rot_rmse_deg", float("nan")),
-            metrics.get("rot_mse_deg", float("nan")),
             metrics.get("trans_rmse_px", float("nan")),
-            metrics.get("trans_mse_px", float("nan")),
+            args.k_step,
+            metrics.get("rot_rel_rmse_deg", float("nan")),
+            metrics.get("trans_rel_rmse_px", float("nan")),
+            metrics.get("rot_gf_rmse_deg", float("nan")),
+            metrics.get("trans_gf_rmse_px", float("nan")),
+            metrics.get("gt_mse", float("nan")),
         )
         rec = {
             "loss": run_name,
@@ -310,6 +457,11 @@ def main() -> None:
         "trans_mse_px",
         "rot_mae_deg",
         "trans_mae_px",
+        "rot_rel_rmse_deg",
+        "trans_rel_rmse_px",
+        "rot_gf_rmse_deg",
+        "trans_gf_rmse_px",
+        "gt_mse",
         "log",
         "output",
         "error",

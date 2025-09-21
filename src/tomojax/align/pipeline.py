@@ -35,8 +35,8 @@ class AlignConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
-    # Solver & regularization
-    opt_method: str = "gd"  # default to GD for test compatibility
+    # Solver & regularization (GN and GD only; LBFGS removed)
+    opt_method: str = "gn"
     gn_damping: float = 1e-6
     w_rot: float = 0.0
     w_trans: float = 0.0
@@ -54,14 +54,9 @@ class AlignConfig:
     gn_accept_only_improving: bool = True
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
-    loss_kind: str = "l2"
+    loss_kind: str = "l2_otsu"
     loss_params: Optional[Dict[str, float]] = None
-    # LBFGS settings
-    lbfgs_iters: int = 5
-    lbfgs_history: int = 10
-    lbfgs_linesearch_steps: int = 20
-    lbfgs_rot_scale: float = 0.1
-    lbfgs_trans_scale: float = 1.0
+    # (LBFGS settings removed)
 
 
  # (Removed: AugmentedGeometry legacy wrapper; new alignment path uses pose-aware projector directly)
@@ -175,15 +170,60 @@ def align(
             loss = loss + jnp.sum((d2 * W_weights) ** 2)
         return loss
 
-    # Donate params5 buffer into the compiled grad to reduce peak memory.
-    # Use assignment-style jit for wider JAX version compatibility (some versions
-    # require `fun` positional arg and don't support decorator factory with kwargs).
-    def _grad_all_impl(params5, vol):
-        return jax.grad(align_loss, argnums=0)(params5, vol)
-    # Donation of params buffer can delete arrays that we still read on Python side
-    # in GD updates, causing RuntimeError on CPU. Avoid donating here for safety.
-    grad_all = jax.jit(_grad_all_impl)
+    # Value function for whole batch (forward only) kept for logging and line search
     align_loss_jit = jax.jit(align_loss)
+
+    # Memory-safe gradient: compute per-view grads in a Python loop, add smoothness analytic grad.
+    # This avoids reverse-mode backprop across the full scan of all views at once.
+    def _one_view_loss(p5_i, T_nom_i, y_i, vol, mask_i):
+        T_i = T_nom_i @ se3_from_5d(p5_i)
+        pred_i = forward_project_view_T(
+            T_i,
+            grid,
+            detector,
+            vol,
+            use_checkpoint=cfg.checkpoint_projector,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
+        )
+        # Reuse the built per-view loss function; feed as a single-item batch
+        lvec = per_view_loss_fn(pred_i[None, ...], y_i[None, ...], mask_i[None, ...])
+        return lvec[0]
+
+    one_view_val_and_grad = jax.jit(jax.value_and_grad(_one_view_loss))
+
+    def loss_and_grad_manual(params5, vol):
+        # Data term: sum over views
+        n = int(params5.shape[0])
+        total = jnp.float32(0.0)
+        g = jnp.zeros_like(params5)
+        for i in range(n):
+            y_i = projections[i]
+            T_nom_i = T_nom_all[i]
+            # Provide a concrete mask slice even if unused by the loss
+            if getattr(loss_state, "mask", None) is not None:
+                mask_i = loss_state.mask[i]
+            else:
+                mask_i = jnp.zeros_like(y_i)
+            li, gi = one_view_val_and_grad(params5[i], T_nom_i, y_i, vol, mask_i)
+            total = total + li
+            g = g.at[i].set(gi)
+        # Smoothness prior gradient (second difference): tridiagonal conv with [-1, 2, -1]
+        if int(params5.shape[0]) >= 3:
+            d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+            w = jnp.array([cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], jnp.float32)
+            total = total + jnp.sum((d2 * w) ** 2)
+            # Gradient contribution
+            # For middle points i in [1..n-2]: grad += 2*w^2 * ( -1*(p[i-1]-2p[i]+p[i+1]) *(-2) + ... )
+            # Easier via explicit accumulation
+            ww = (w ** 2) * 2.0
+            n = params5.shape[0]
+            # i term contributes: +(-2)*d2[i] to grad[i+1], +(1)*d2[i] to grad[i], +(1)*d2[i] to grad[i+2]
+            g = g.at[1:-1].add(-2.0 * d2 * ww)
+            g = g.at[0:-2].add(1.0 * d2 * ww)
+            g = g.at[2:].add(1.0 * d2 * ww)
+        return total, g
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
     def _pred_flat(T_i, vol):
@@ -198,10 +238,11 @@ def align(
             det_grid=det_grid,
         ).ravel()
 
-    def _gn_update_one(p5_i, T_nom_i, y_i, vol):
+    def _gn_update_one(p5_i, T_nom_i, y_i, vol, w_i):
         def f(p5):
             T_i = T_nom_i @ se3_from_5d(p5)
-            return _pred_flat(T_i, vol) - y_i.ravel()
+            r = _pred_flat(T_i, vol) - y_i.ravel()
+            return w_i.ravel() * r
         # J^T r
         r = f(p5_i)
         _, vjp = jax.vjp(f, p5_i)
@@ -216,7 +257,7 @@ def align(
         dp = jnp.linalg.solve(H + lam * jnp.eye(5, dtype=H.dtype), -g)
         return dp
 
-    _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None)))
+    _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
 
     # Reuse measured Lipschitz across outer iterations to avoid repeated power-method
     L_prev = cfg.recon_L
@@ -426,14 +467,10 @@ def align(
             loss_before = None
         stat["loss_before"] = loss_before
         loss_kind_norm = str(cfg.loss_kind).lower()
-        if opt_mode == "lbfgs":
-            step_kind = "lbfgs"
-        elif opt_mode == "gn" and loss_kind_norm == "l2":
+        # GN supported for LS-like losses: l2, l2_otsu (masked L2), pwls
+        ls_like = loss_kind_norm in ("l2", "l2_otsu", "l2-otsu", "otsu-l2", "pwls", "edge_l2", "edge_aware_l2")
+        if opt_mode == "gn" and ls_like:
             step_kind = "gn"
-        elif opt_mode == "gn":
-            step_kind = "gd"
-        elif opt_mode == "gd":
-            step_kind = "gd"
         else:
             step_kind = "gd"
         loss_after = None
@@ -443,8 +480,31 @@ def align(
             dp_all = []
             params5_prev = params5
             for s in range(0, n, b):
+                # Build per-pixel weights (sqrt of LS weight) for LS-like losses
+                y_chunk = projections[s : s + b]
+                if loss_kind_norm in ("l2",):
+                    w_chunk = jnp.ones_like(y_chunk)
+                elif loss_kind_norm in ("l2_otsu", "l2-otsu", "otsu-l2") and getattr(loss_state, "mask", None) is not None:
+                    # Loss implemented as 0.5 * sum (w * r)^2; here w = mask in [0,1]
+                    w_chunk = loss_state.mask[s : s + b]
+                elif loss_kind_norm == "pwls":
+                    a = jnp.float32((cfg.loss_params or {}).get("a", 1.0))
+                    bpar = jnp.float32((cfg.loss_params or {}).get("b", 0.0))
+                    w = 1.0 / (a * jnp.clip(y_chunk, 0.0) + bpar + 1e-6)
+                    w_chunk = jnp.sqrt(w)
+                elif loss_kind_norm in ("edge_l2", "edge_aware_l2"):
+                    # Sobel gradients of target to form weights: r_w = sqrt(1 + ||∇y||) * r
+                    kx = jnp.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]], jnp.float32) / 8.0
+                    ky = jnp.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], jnp.float32) / 8.0
+                    y4 = y_chunk[..., None]  # (b, nv, nu, 1)
+                    gx = jax.lax.conv_general_dilated(y4, kx[:, :, None, None], (1, 1), padding="SAME", dimension_numbers=("NHWC", "HWIO", "NHWC"))
+                    gy = jax.lax.conv_general_dilated(y4, ky[:, :, None, None], (1, 1), padding="SAME", dimension_numbers=("NHWC", "HWIO", "NHWC"))
+                    mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
+                    w_chunk = jnp.sqrt(1.0 + mag)
+                else:
+                    w_chunk = jnp.ones_like(y_chunk)
                 dp_chunk = _gn_update_batch(
-                    params5[s : s + b], T_nom_all[s : s + b], projections[s : s + b], x
+                    params5[s : s + b], T_nom_all[s : s + b], y_chunk, x, w_chunk
                 )
                 params5 = params5.at[s : s + b].add(dp_chunk)
                 dp_all.append(dp_chunk)
@@ -464,75 +524,14 @@ def align(
                     stat["trans_mean"] = float(jnp.mean(jnp.abs(dp_cat[:, 3:])))
                 except Exception:
                     pass
-        elif step_kind == "lbfgs":
-            lbs_iters = max(1, int(cfg.lbfgs_iters))
-            memory = max(1, int(cfg.lbfgs_history))
-            ls_steps = max(1, int(cfg.lbfgs_linesearch_steps))
-            rot_scale = jnp.float32(cfg.lbfgs_rot_scale)
-            trans_scale = jnp.float32(cfg.lbfgs_trans_scale)
-            params_shape = params5.shape
-            flat0 = params5.reshape(-1)
-
-            linesearch = optax.scale_by_zoom_linesearch(max_linesearch_steps=ls_steps)
-            lbfgs_opt = optax.lbfgs(
-                learning_rate=None,
-                memory_size=memory,
-                scale_init_precond=True,
-                linesearch=linesearch,
-            )
-
-            def _loss_flat(flat_params):
-                return align_loss_jit(flat_params.reshape(params_shape), x)
-
-            loss_and_grad_flat = jax.value_and_grad(_loss_flat)
-
-            @jax.jit
-            def run_lbfgs(flat_params):
-                opt_state = lbfgs_opt.init(flat_params)
-
-                def body(carry, _):
-                    flat, state = carry
-                    loss_val, grad = loss_and_grad_flat(flat)
-                    grad = grad.reshape(params_shape)
-                    grad = grad.at[:, :3].multiply(rot_scale)
-                    grad = grad.at[:, 3:].multiply(trans_scale)
-                    grad_flat = grad.reshape(-1)
-                    updates, state = lbfgs_opt.update(
-                        grad_flat,
-                        state,
-                        flat,
-                        value=loss_val,
-                        grad=grad_flat,
-                        value_fn=_loss_flat,
-                    )
-                    flat = optax.apply_updates(flat, updates)
-                    return (flat, state), (loss_val, grad_flat)
-
-                (flat_final, _), (loss_hist, grad_hist) = jax.lax.scan(
-                    body,
-                    (flat_params, opt_state),
-                    xs=None,
-                    length=lbs_iters,
-                )
-                return flat_final, loss_hist[-1], grad_hist[-1]
-
-            flat_after, loss_lbfgs, grad_last_flat = run_lbfgs(flat0)
-            params_prev = params5
-            params5 = flat_after.reshape(params_shape)
-            loss_after = float(loss_lbfgs)
-            dp = params5 - params_prev
-            try:
-                stat["rot_rms"] = float(jnp.sqrt(jnp.mean(dp[:, :3] ** 2)))
-                stat["trans_rms"] = float(jnp.sqrt(jnp.mean(dp[:, 3:] ** 2)))
-            except Exception:
-                pass
+        
         else:
             scales = jnp.array(
                 [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32
             )
             # Keep a copy for line search; donated arg may be reused internally
             p5_in = params5
-            g_params = grad_all(params5, x)
+            _, g_params = loss_and_grad_manual(params5, x)
             rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
             eff_scales = scales / rms
             # Simple 2-point line search on step factor to improve single-iter progress
