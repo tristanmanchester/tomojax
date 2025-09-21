@@ -134,6 +134,7 @@ def main() -> None:
         ],
         help="Subset of losses to run; default is a comprehensive set",
     )
+    p.add_argument("--force-lbfgs", action="store_true", help="Run every loss with LBFGS (override GN defaults)")
     args = p.parse_args()
 
     _ensure_dir(args.expdir); _ensure_dir(os.path.join(args.expdir, "logs"))
@@ -194,7 +195,7 @@ def main() -> None:
         fh.setLevel(logging.INFO)
         fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
         logging.getLogger().addHandler(fh)
-        is_gn = run_name in gn_losses
+        is_gn = (run_name in gn_losses) and (not args.force_lbfgs)
         levels = default_levels.get(run_name)
         logging.info("=== [%s] starting (%s) ===", run_name.upper(), "GN" if is_gn else "LBFGS")
         if levels is not None:
@@ -224,7 +225,7 @@ def main() -> None:
                 w_rot=1e-3,
                 w_trans=1e-3,
                 seed_translations=False,
-                log_summary=False,
+                log_summary=True,
                 log_compact=True,
                 recon_L=None,
                 early_stop=True,
