@@ -90,7 +90,12 @@ def main() -> None:
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
     ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false")
     p.set_defaults(checkpoint_projector=True)
-    p.add_argument("--opt-method", choices=["gd", "gn"], default="gd", help="Alignment optimizer: gd or gn (gn only valid with --loss l2)")
+    p.add_argument(
+        "--opt-method",
+        choices=["gd", "gn", "lbfgs"],
+        default="gd",
+        help="Alignment optimizer: gd, gn (only for --loss l2), or lbfgs",
+    )
     p.add_argument("--gn-damping", type=float, default=1e-3, help="Levenberg-Marquardt damping for GN")
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
@@ -113,6 +118,12 @@ def main() -> None:
         help="Data term / similarity to optimize",
     )
     p.add_argument("--loss-param", action="append", default=[], help="Loss parameter as k=v (repeatable), e.g., delta=1.0, eps=1e-3, window=7, temp=0.5")
+    # LBFGS tuning (optional)
+    p.add_argument("--lbfgs-iters", type=int, default=None, help="LBFGS iterations per outer step (default 5)")
+    p.add_argument("--lbfgs-history", type=int, default=None, help="LBFGS history size (default 10)")
+    p.add_argument("--lbfgs-linesearch-steps", type=int, default=None, help="LBFGS line-search steps (default 20)")
+    p.add_argument("--lbfgs-rot-scale", type=float, default=None, help="Gradient scaling factor for rotation params in LBFGS (default 0.1)")
+    p.add_argument("--lbfgs-trans-scale", type=float, default=None, help="Gradient scaling factor for translation params in LBFGS (default 1.0)")
     # Early stopping controls (alignment phase)
     es = p.add_mutually_exclusive_group()
     es.add_argument("--early-stop", dest="early_stop", action="store_true", help="Enable early stopping across outers (default)")
@@ -175,6 +186,11 @@ def main() -> None:
         w_trans=float(args.w_trans),
         loss_kind=str(args.loss),
         loss_params=loss_params if loss_params else None,
+        lbfgs_iters=int(args.lbfgs_iters) if args.lbfgs_iters is not None else AlignConfig.lbfgs_iters,
+        lbfgs_history=int(args.lbfgs_history) if args.lbfgs_history is not None else AlignConfig.lbfgs_history,
+        lbfgs_linesearch_steps=int(args.lbfgs_linesearch_steps) if args.lbfgs_linesearch_steps is not None else AlignConfig.lbfgs_linesearch_steps,
+        lbfgs_rot_scale=float(args.lbfgs_rot_scale) if args.lbfgs_rot_scale is not None else AlignConfig.lbfgs_rot_scale,
+        lbfgs_trans_scale=float(args.lbfgs_trans_scale) if args.lbfgs_trans_scale is not None else AlignConfig.lbfgs_trans_scale,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
         log_compact=bool(args.log_compact),

@@ -177,6 +177,7 @@ def main() -> None:
         "poisson": 5e-2,
         "pwls": 5e-2,
     }
+    default_lbfgs_iters = 7
 
     # 4) Run alignment for each loss
     results: List[Dict[str, object]] = []
@@ -198,6 +199,8 @@ def main() -> None:
             outer_iters = args.outer_iters if run_name not in high_iter_losses else max(args.outer_iters, 8)
             recon_iters = args.recon_iters if run_name not in high_iter_losses else max(args.recon_iters, 30)
             levels = default_levels.get(run_name)
+            opt_method = "gn" if is_gn else "lbfgs"
+            lbfgs_iters = max(5, default_lbfgs_iters) if not is_gn else AlignConfig.lbfgs_iters
             cfg = AlignConfig(
                 outer_iters=outer_iters,
                 recon_iters=recon_iters,
@@ -209,7 +212,7 @@ def main() -> None:
                 projector_unroll=1,
                 checkpoint_projector=True,
                 gather_dtype="auto",
-                opt_method="gn" if is_gn else "gd",
+                opt_method=opt_method,
                 gn_damping=1e-3,
                 w_rot=1e-3,
                 w_trans=1e-3,
@@ -222,6 +225,11 @@ def main() -> None:
                 early_stop_patience=2,
                 loss_kind=run_name,
                 loss_params=None,
+                lbfgs_iters=lbfgs_iters,
+                lbfgs_history=15 if not is_gn else AlignConfig.lbfgs_history,
+                lbfgs_linesearch_steps=30 if not is_gn else AlignConfig.lbfgs_linesearch_steps,
+                lbfgs_rot_scale=0.1 if not is_gn else AlignConfig.lbfgs_rot_scale,
+                lbfgs_trans_scale=1.0 if not is_gn else AlignConfig.lbfgs_trans_scale,
             )
             align_kwargs = {}
             if levels is not None:

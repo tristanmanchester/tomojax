@@ -8,6 +8,7 @@ from typing import Any, Dict, Tuple, Iterable, List, Optional
 
 import jax
 import jax.numpy as jnp
+import optax
 
 from ..core.geometry import Geometry, Grid, Detector
 from ..core.projector import forward_project_view_T, get_detector_grid_device
@@ -55,6 +56,12 @@ class AlignConfig:
     # Data term / similarity
     loss_kind: str = "l2"
     loss_params: Optional[Dict[str, float]] = None
+    # LBFGS settings
+    lbfgs_iters: int = 5
+    lbfgs_history: int = 10
+    lbfgs_linesearch_steps: int = 20
+    lbfgs_rot_scale: float = 0.1
+    lbfgs_trans_scale: float = 1.0
 
 
  # (Removed: AugmentedGeometry legacy wrapper; new alignment path uses pose-aware projector directly)
@@ -410,7 +417,7 @@ def align(
             except Exception:
                 pass
 
-        # Alignment step: Gauss–Newton or gradient descent
+        # Alignment step: Gauss–Newton, LBFGS, or gradient descent
         # Evaluate alignment loss before update (needed for GN acceptance / early stop)
         align_start = time.perf_counter()
         try:
@@ -418,8 +425,17 @@ def align(
         except Exception:
             loss_before = None
         stat["loss_before"] = loss_before
-        # GN only valid for pure L2; otherwise force GD
-        step_kind = ("gn" if (opt_mode == "gn" and str(cfg.loss_kind).lower() == "l2") else "gd") if opt_mode in ("gn", "gd") else "gd"
+        loss_kind_norm = str(cfg.loss_kind).lower()
+        if opt_mode == "lbfgs":
+            step_kind = "lbfgs"
+        elif opt_mode == "gn" and loss_kind_norm == "l2":
+            step_kind = "gn"
+        elif opt_mode == "gn":
+            step_kind = "gd"
+        elif opt_mode == "gd":
+            step_kind = "gd"
+        else:
+            step_kind = "gd"
         loss_after = None
         if step_kind == "gn":
             n = params5.shape[0]
@@ -448,6 +464,68 @@ def align(
                     stat["trans_mean"] = float(jnp.mean(jnp.abs(dp_cat[:, 3:])))
                 except Exception:
                     pass
+        elif step_kind == "lbfgs":
+            lbs_iters = max(1, int(cfg.lbfgs_iters))
+            memory = max(1, int(cfg.lbfgs_history))
+            ls_steps = max(1, int(cfg.lbfgs_linesearch_steps))
+            rot_scale = jnp.float32(cfg.lbfgs_rot_scale)
+            trans_scale = jnp.float32(cfg.lbfgs_trans_scale)
+            params_shape = params5.shape
+            flat0 = params5.reshape(-1)
+
+            linesearch = optax.scale_by_zoom_linesearch(max_linesearch_steps=ls_steps)
+            lbfgs_opt = optax.lbfgs(
+                learning_rate=None,
+                memory_size=memory,
+                scale_init_precond=True,
+                linesearch=linesearch,
+            )
+
+            def _loss_flat(flat_params):
+                return align_loss_jit(flat_params.reshape(params_shape), x)
+
+            loss_and_grad_flat = jax.value_and_grad(_loss_flat)
+
+            @jax.jit
+            def run_lbfgs(flat_params):
+                opt_state = lbfgs_opt.init(flat_params)
+
+                def body(carry, _):
+                    flat, state = carry
+                    loss_val, grad = loss_and_grad_flat(flat)
+                    grad = grad.reshape(params_shape)
+                    grad = grad.at[:, :3].multiply(rot_scale)
+                    grad = grad.at[:, 3:].multiply(trans_scale)
+                    grad_flat = grad.reshape(-1)
+                    updates, state = lbfgs_opt.update(
+                        grad_flat,
+                        state,
+                        flat,
+                        value=loss_val,
+                        grad=grad_flat,
+                        value_fn=_loss_flat,
+                    )
+                    flat = optax.apply_updates(flat, updates)
+                    return (flat, state), (loss_val, grad_flat)
+
+                (flat_final, _), (loss_hist, grad_hist) = jax.lax.scan(
+                    body,
+                    (flat_params, opt_state),
+                    xs=None,
+                    length=lbs_iters,
+                )
+                return flat_final, loss_hist[-1], grad_hist[-1]
+
+            flat_after, loss_lbfgs, grad_last_flat = run_lbfgs(flat0)
+            params_prev = params5
+            params5 = flat_after.reshape(params_shape)
+            loss_after = float(loss_lbfgs)
+            dp = params5 - params_prev
+            try:
+                stat["rot_rms"] = float(jnp.sqrt(jnp.mean(dp[:, :3] ** 2)))
+                stat["trans_rms"] = float(jnp.sqrt(jnp.mean(dp[:, 3:] ** 2)))
+            except Exception:
+                pass
         else:
             scales = jnp.array(
                 [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32
