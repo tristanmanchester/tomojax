@@ -152,6 +152,15 @@ def main() -> None:
         ),
     )
     p.add_argument(
+        "--mask-vol",
+        choices=["off", "cyl"],
+        default="off",
+        help=(
+            "Mask the volume before forward projection in alignment: "
+            "off (default), or cyl for cylindrical x–y mask broadcast along z."
+        ),
+    )
+    p.add_argument(
         "--grid", type=int, nargs=3, metavar=("NX","NY","NZ"), default=None,
         help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata."
     )
@@ -215,6 +224,7 @@ def main() -> None:
         early_stop=bool(args.early_stop),
         early_stop_rel_impr=(float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3),
         early_stop_patience=(int(args.early_stop_patience) if args.early_stop_patience is not None else 2),
+        mask_vol=str(args.mask_vol),
     )
     # ROI handling (align on realistic FOV)
     roi_mode = str(args.roi).lower()

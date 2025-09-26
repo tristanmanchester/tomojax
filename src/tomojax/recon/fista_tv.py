@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable, Literal, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -47,6 +47,7 @@ def grad_data_term(
     gather_dtype: str = "fp32",
     grad_mode: Literal["auto", "batched", "stream"] = "auto",
     T_all: jnp.ndarray | None = None,
+    vol_mask: Optional[jnp.ndarray] = None,
 ) -> Tuple[jnp.ndarray, float]:
     """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
 
@@ -105,7 +106,8 @@ def grad_data_term(
             # Slice fixed-size (b, ...) window
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-            pred = vm_project(T_chunk, vol)
+            v_in = vol * vol_mask if vol_mask is not None else vol
+            pred = vm_project(T_chunk, v_in)
             # Keep only the last `valid` rows in the chunk
             idx = jnp.arange(b)
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
@@ -124,11 +126,12 @@ def grad_data_term(
             T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
             y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
             def fwd(v):
+                v_in = v * vol_mask if vol_mask is not None else v
                 return forward_project_view_T(
                     T_i,
                     grid,
                     detector,
-                    v,
+                    v_in,
                     use_checkpoint=checkpoint_projector,
                     unroll=int(projector_unroll),
                     gather_dtype=gather_dtype,
@@ -172,6 +175,7 @@ def power_method_L(
     gather_dtype: str = "fp32",
     grad_mode: Literal["auto", "batched", "stream"] = "auto",
     T_all: jnp.ndarray | None = None,
+    vol_mask: Optional[jnp.ndarray] = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     n_views, nv, nu = projections_shape
@@ -191,6 +195,7 @@ def power_method_L(
             gather_dtype=gather_dtype,
             grad_mode=grad_mode,
             T_all=T_all,
+            vol_mask=vol_mask,
         )
         v = g / (jnp.linalg.norm(g.ravel()) + 1e-12)
     # Rayleigh quotient
@@ -206,6 +211,7 @@ def power_method_L(
         gather_dtype=gather_dtype,
         grad_mode=grad_mode,
         T_all=T_all,
+        vol_mask=vol_mask,
     )
     L = float(jnp.vdot(v, g).real)
     return max(L, 1e-6)
@@ -271,6 +277,7 @@ def fista_tv(
     tv_prox_iters: int = 10,
     recon_rel_tol: float | None = None,
     recon_patience: int = 0,
+    vol_mask: Optional[jnp.ndarray] = None,
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization for parallel-ray geometry.
 
@@ -312,6 +319,7 @@ def fista_tv(
             gather_dtype=gather_dtype,
             grad_mode="stream",
             T_all=T_all,
+            vol_mask=vol_mask,
         )
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
@@ -327,6 +335,7 @@ def fista_tv(
             gather_dtype=gather_dtype,
             grad_mode=grad_mode,
             T_all=T_all,
+            vol_mask=vol_mask,
         )
         return v, g
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))

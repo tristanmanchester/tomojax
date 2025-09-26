@@ -16,6 +16,7 @@ from ..recon.fista_tv import fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
 from .losses import build_loss
+from ..utils.fov import cylindrical_mask_xy
 
 
 @dataclass
@@ -41,6 +42,9 @@ class AlignConfig:
     w_rot: float = 0.0
     w_trans: float = 0.0
     seed_translations: bool = False
+    # Volume masking before forward projection (modeling for ROI/truncation)
+    # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
+    mask_vol: str = "off"
     # Logging
     log_summary: bool = False
     log_compact: bool = True  # print one compact line per outer when log_summary is enabled
@@ -122,6 +126,15 @@ def align(
         [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32
     )
 
+    # Optional static volume mask before projection
+    vol_mask = None
+    try:
+        if str(getattr(cfg, "mask_vol", "off")).lower() in ("cyl", "cylindrical"):
+            m_xy = cylindrical_mask_xy(grid, detector)
+            vol_mask = jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
+    except Exception:
+        vol_mask = None
+
     # Build per-view loss once (may precompute masks on targets)
     per_view_loss_fn, loss_state = build_loss(cfg.loss_kind, cfg.loss_params, projections)
 
@@ -148,7 +161,8 @@ def align(
             start_shifted = jnp.maximum(0, start - shift)
             T_chunk = jax.lax.dynamic_slice(T_aug, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-            pred = _project_batch(T_chunk, vol)
+            v_in = vol * vol_mask if vol_mask is not None else vol
+            pred = _project_batch(T_chunk, v_in)
             # Optional per-view mask slice (for Otsu-masked L2)
             mask_chunk = None
             if getattr(loss_state, "mask", None) is not None:
@@ -177,11 +191,12 @@ def align(
     # This avoids reverse-mode backprop across the full scan of all views at once.
     def _one_view_loss(p5_i, T_nom_i, y_i, vol, mask_i):
         T_i = T_nom_i @ se3_from_5d(p5_i)
+        v_in = vol * vol_mask if vol_mask is not None else vol
         pred_i = forward_project_view_T(
             T_i,
             grid,
             detector,
-            vol,
+            v_in,
             use_checkpoint=cfg.checkpoint_projector,
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,
@@ -227,11 +242,12 @@ def align(
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
     def _pred_flat(T_i, vol):
+        v_in = vol * vol_mask if vol_mask is not None else vol
         return forward_project_view_T(
             T_i,
             grid,
             detector,
-            vol,
+            v_in,
             use_checkpoint=cfg.checkpoint_projector,
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,

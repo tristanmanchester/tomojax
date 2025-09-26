@@ -18,6 +18,7 @@ from ..utils.fov import (
     grid_from_detector_fov_slices,
     grid_from_detector_fov,
 )
+from ..utils.fov import cylindrical_mask_xy
 
 
 def build_geometry(meta: dict):
@@ -107,6 +108,15 @@ def main() -> None:
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
         help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
     )
+    p.add_argument(
+        "--mask-vol",
+        choices=["off", "cyl"],
+        default="off",
+        help=(
+            "Mask the volume during forward projection (FISTA) or on output (FBP): "
+            "off (default), cyl for cylindrical x–y mask broadcast along z."
+        ),
+    )
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
@@ -160,6 +170,15 @@ def main() -> None:
             tilt_about = str(meta.get("tilt_about", "x"))
             geom = LaminographyGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"], tilt_deg=tilt_deg, tilt_about=tilt_about)
 
+    # Prepare optional volume mask
+    vol_mask = None
+    try:
+        if str(args.mask_vol).lower() in ("cyl", "cylindrical"):
+            m_xy = cylindrical_mask_xy(recon_grid, detector)
+            vol_mask = jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
+    except Exception:
+        vol_mask = None
+
     if args.algo == "fbp":
         with _transfer_guard_ctx(args.transfer_guard):
             vol = fbp(
@@ -173,6 +192,9 @@ def main() -> None:
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
             )
+        # For FBP, apply mask post-hoc if requested for parity
+        if vol_mask is not None:
+            vol = vol * vol_mask
     else:
         vpb = int(vpb_val) if int(vpb_val) > 0 else None
         with _transfer_guard_ctx(args.transfer_guard):
@@ -189,6 +211,7 @@ def main() -> None:
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
                 tv_prox_iters=int(args.tv_prox_iters),
+                vol_mask=vol_mask,
             )
 
     # Note: Reconstructions are computed on the object (sample) frame. We persist that by default.
