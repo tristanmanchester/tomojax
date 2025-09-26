@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Iterable, List, Tuple
+import math
 
 import jax.numpy as jnp
 import jax.image as jimage
@@ -11,13 +12,20 @@ from ..utils.logging import progress_iter
 
 
 def scale_grid(grid: Grid, factor: int) -> Grid:
+    """Scale grid for a coarser multires level, tolerating non-divisible dims.
+
+    - New dims use ceil division to retain coverage when dims aren't divisible.
+    - Voxel sizes are multiplied by the factor to preserve physical extent.
+    """
     assert factor >= 1 and int(factor) == factor
     f = int(factor)
-    assert grid.nx % f == 0 and grid.ny % f == 0 and grid.nz % f == 0, "Grid dims must be divisible by factor"
+    nx = int(math.ceil(grid.nx / f))
+    ny = int(math.ceil(grid.ny / f))
+    nz = int(math.ceil(grid.nz / f))
     return Grid(
-        nx=grid.nx // f,
-        ny=grid.ny // f,
-        nz=grid.nz // f,
+        nx=nx,
+        ny=ny,
+        nz=nz,
         vx=grid.vx * f,
         vy=grid.vy * f,
         vz=grid.vz * f,
@@ -27,43 +35,72 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
 
 
 def scale_detector(det: Detector, factor: int) -> Detector:
+    """Scale detector for a coarser multires level.
+
+    Supports non-divisible sizes by using ceil(n/f) and increasing pixel size.
+    The projector operates in world units; increasing du/dv by `factor` keeps
+    per-ray spacing consistent with decimated projections.
+    """
     assert factor >= 1 and int(factor) == factor
     f = int(factor)
-    assert det.nu % f == 0 and det.nv % f == 0, "Detector dims must be divisible by factor"
+    nu = int(math.ceil(det.nu / f))
+    nv = int(math.ceil(det.nv / f))
     return Detector(
-        nu=det.nu // f,
-        nv=det.nv // f,
+        nu=nu,
+        nv=nv,
         du=det.du * f,
         dv=det.dv * f,
         det_center=det.det_center,
     )
 
 
-def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
-    """Downsample projections by strided pick to preserve per-ray amplitude.
+def _pad_to_multiple_jnp(arr: jnp.ndarray, m_v: int, m_u: int) -> jnp.ndarray:
+    """Symmetrically pad last two dims to multiples of (m_v, m_u) using edge mode."""
+    if m_v <= 1 and m_u <= 1:
+        return arr
+    nv = arr.shape[-2]
+    nu = arr.shape[-1]
+    pad_v = (m_v - (nv % m_v)) % m_v if m_v > 1 else 0
+    pad_u = (m_u - (nu % m_u)) % m_u if m_u > 1 else 0
+    if pad_v == 0 and pad_u == 0:
+        return arr
+    pv0 = pad_v // 2
+    pv1 = pad_v - pv0
+    pu0 = pad_u // 2
+    pu1 = pad_u - pu0
+    pad_width = ((0, 0), (pv0, pv1), (pu0, pu1))
+    return jnp.pad(arr, pad_width, mode="edge")
 
-    Using mean pooling can reduce per-ray amplitude; for our forward model,
-    each pixel is an independent ray integral, so stride-based decimation is
-    a better coarse approximation.
+
+def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
+    """Downsample projections by strided pick with symmetric edge padding.
+
+    - Pads to make dims divisible by `factor` (edge mode), then takes one pixel
+      per f×f block using a centered offset (f//2). This preserves per-ray scale
+      better than averaging while tolerating arbitrary input sizes.
     """
     if factor == 1:
         return proj
-    n_views, nv, nu = proj.shape
     f = int(factor)
-    assert nv % f == 0 and nu % f == 0
+    y = _pad_to_multiple_jnp(proj, f, f)
     v0 = f // 2
     u0 = f // 2
-    return proj[:, v0::f, u0::f]
+    return y[:, v0::f, u0::f]
 
 
 def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
     if factor == 1:
         return vol
-    nx, ny, nz = vol.shape
     f = int(factor)
-    assert nx % f == 0 and ny % f == 0 and nz % f == 0
+    # Pad to multiples on all three dims (edge) then average f^3 blocks
+    nx, ny, nz = vol.shape
+    px = (f - (nx % f)) % f
+    py = (f - (ny % f)) % f
+    pz = (f - (nz % f)) % f
+    if px or py or pz:
+        vol = jnp.pad(vol, ((0, px), (0, py), (0, pz)), mode="edge")
+    nx, ny, nz = vol.shape
     v = vol.reshape(nx // f, f, ny // f, f, nz // f, f)
-    # Average within f^3 blocks
     return v.mean(axis=(1, 3, 5))
 
 

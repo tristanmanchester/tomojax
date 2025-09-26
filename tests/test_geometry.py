@@ -53,17 +53,17 @@ def test_lamino_axis_tilt_and_pose():
     assert np.allclose(ax, exp_ax, atol=1e-7)
 
     T0 = np.array(geom.pose_for_view(0))
-    # At theta=0 the pose equals the fixed alignment S that maps e_y to axis
-    ey = np.array([0.0, 1.0, 0.0, 1.0])
-    t0_ey = T0 @ ey
-    assert np.allclose(t0_ey[:3], ax, atol=1e-6)
+    # At theta=0 the pose equals the fixed alignment S that maps e_z to axis
+    ez = np.array([0.0, 0.0, 1.0, 1.0])
+    t0_ez = T0 @ ez
+    assert np.allclose(t0_ez[:3], ax, atol=1e-6)
 
     T1 = np.array(geom.pose_for_view(1))
-    # In sample-frame parametrization: R = S @ R_y(theta), S aligns e_y -> axis
-    ey = np.array([0.0, 1.0, 0.0])
+    # Sample-frame parametrization: R = S @ R_z(theta), S aligns e_z -> axis
+    ez = np.array([0.0, 0.0, 1.0])
     theta = np.deg2rad(10.0)
-    # Build S by aligning e_y to axis via cross-product formula
-    u = ey / np.linalg.norm(ey)
+    # Build S by aligning e_z to axis via cross-product formula
+    u = ez / np.linalg.norm(ez)
     v = ax / np.linalg.norm(ax)
     c = np.dot(u, v)
     if c > 1.0 - 1e-12:
@@ -75,8 +75,8 @@ def test_lamino_axis_tilt_and_pose():
         K = np.array([[0,-k[2],k[1]],[k[2],0,-k[0]],[-k[1],k[0],0]],float)
         # Proper Rodrigues formula for aligning u->v
         S = np.eye(3) + s * K + (1 - c) * (K @ K)
-    Ry = rot_axis_angle(ey, theta)[:3, :3]
-    R_ref = S @ Ry
+    Rz = rot_axis_angle(ez, theta)[:3, :3]
+    R_ref = S @ Rz
     assert np.allclose(T1[:3, :3], R_ref, atol=1e-7)
     # Rotation angle should be 10 deg around some axis; check orthonormality
     R = T1[:3, :3]

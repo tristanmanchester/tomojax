@@ -261,17 +261,17 @@ def lamino_disk(
     """Random cubes+spheres phantom constrained to a thin central slab.
 
     Sample-frame convention: the reconstructed/object volume is in (x, y, z)
-    coordinates, and the nominal rotation axis is the +y axis. The thin slab is
-    therefore orthogonal to +y, i.e., confined to the central few y-slices.
+    coordinates, and the nominal rotation axis is the +z axis. The thin slab is
+    therefore orthogonal to +z, i.e., confined to the central few z-slices.
 
     Note: `tilt_deg`/`tilt_about` are ignored for the slab orientation (kept for
-    signature/backward-compat) since the sample-frame axis is +y regardless of
+    signature/backward-compat) since the sample-frame axis is +z regardless of
     lamino tilt in world coordinates.
     """
 
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
-    ny_thin = int(round(ratio * ny))
-    ny_thin = max(1, min(ny, ny_thin))
+    nz_thin = int(round(ratio * nz))
+    nz_thin = max(1, min(nz, nz_thin))
 
     vol = random_cubes_spheres(
         nx,
@@ -288,13 +288,13 @@ def lamino_disk(
         seed=seed,
     )
 
-    # Constrain to a slab orthogonal to the sample-frame rotation axis (+y).
-    # Keep only central ny_thin slices along y (object frame).
-    cy = (ny - 1) / 2.0
-    half_thickness = max(0.5, ny_thin * 0.5)
-    ys = np.arange(ny, dtype=np.float32)
-    mask_y = np.abs(ys - cy) <= half_thickness
-    vol[:, ~mask_y, :] = 0.0
+    # Constrain to a slab orthogonal to the sample-frame rotation axis (+z).
+    # Keep only central nz_thin slices along z (object frame).
+    cz = (nz - 1) / 2.0
+    half_thickness = max(0.5, nz_thin * 0.5)
+    zs = np.arange(nz, dtype=np.float32)
+    mask_z = np.abs(zs - cz) <= half_thickness
+    vol[:, :, ~mask_z] = 0.0
 
     vmax = float(vol.max())
     if vmax > 0:
