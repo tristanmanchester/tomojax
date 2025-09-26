@@ -531,7 +531,7 @@ def align(
                 dp_chunk = dp_chunk_full[:chunk_len]
                 params5 = params5.at[idx].add(dp_chunk)
                 dp_all.append(dp_chunk)
-            # Compute post-update loss and accept/reject
+        # Compute post-update loss and accept/reject
             loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
             if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
                 tol = float(cfg.gn_accept_tol) * abs(loss_before)

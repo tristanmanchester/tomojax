@@ -20,23 +20,25 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
     - `signal = "projections"`
 
 ## TomoJAX Extras
-- `/entry/geometry/type = "parallel" | "lamino" | "custom"`
+- `/entry/geometry (NXcollection)/type = "parallel" | "lamino" | "custom"`
 - `/entry/geometry/@geometry_meta_json` (optional): JSON with geometry‑specific metadata, e.g., for laminography `{ "tilt_deg": <float>, "tilt_about": "x"|"z" }`
 - `/entry/@grid_meta_json`: JSON-serialized Grid
   - `{ nx, ny, nz, vx, vy, vz, vol_origin?, vol_center? }`
 - `/entry/instrument/detector/@detector_meta_json`: JSON-serialized Detector
   - `{ nu, nv, du, dv, det_center }`
 - `/entry/processing (NXprocess)/tomojax (NXcollection)`
-  - `volume` (optional GT or reconstruction, shape `(nx,ny,nz)`, compression `lzf`)
+  - `volume` (optional GT or reconstruction, stored in-memory as `(nx,ny,nz)`; written on disk as `(nz,ny,nx)` when `@volume_axes_order="zyx"`, compression `lzf`)
+  - `@volume_axes_order` (attr on `tomojax`, default `"zyx"`; loaders always return internal `xyz` volume order)
   - `@frame` (optional attr on `tomojax`): `"sample"|"lab"` indicates the frame of the saved volume (default `sample`)
   - `align/thetas` (optional, shape `(n_views,5)`, columns=`[alpha,beta,phi,dx,dz]`)
 
 ## Units & Conventions
 - Angles stored in degrees (NX convention). Internal math uses radians.
 - Voxel/detector sizes: units `pixel` for simulated data unless specified.
-- Transformations: `rotation_angle` is stored in degrees; a default `rotation_axis=[0,0,1]` is written for NX compatibility. The exact geometry (e.g., laminography tilt) is described in `/entry/geometry` and used by TomoJAX.
+- Transformations: `rotation_angle` is stored in degrees; a default `rotation_axis=[0,0,1]` is written for NX compatibility. The exact geometry (e.g., laminography tilt) is described in `/entry/geometry` (tagged `NXcollection`) and used by TomoJAX.
 
 ## Notes
 - Use `lzf` compression by default; `gzip(level=4)` for smaller files if needed.
 - Prefer local SSD for writing to avoid NFS locking issues.
 - Keep arrays float32 for interoperability and performance.
+- Set `TOMOJAX_AXES_SILENCE=1` to silence heuristic load-time warnings when processing large batches.

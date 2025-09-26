@@ -19,10 +19,10 @@ def test_lamino_disk_thickness_centered():
     assert vol.shape == (nx, ny, nz)
     assert np.isclose(vol.max(), 1.0, atol=1e-6)
 
-    # In sample frame, slab is orthogonal to +y, confined to central y slices
-    ys = np.argwhere(vol.max(axis=(0,2)) > 1e-4).ravel()
-    assert ys.size > 0
-    cy = (ny - 1) / 2.0
-    dist = np.abs(ys - cy)
-    expected = max(1, int(round(ratio * ny))) * 0.5 + 0.75
+    # In sample frame, slab is orthogonal to +z, confined to central z slices
+    zs = np.argwhere(vol.max(axis=(0,1)) > 1e-4).ravel()
+    assert zs.size > 0
+    cz = (nz - 1) / 2.0
+    dist = np.abs(zs - cz)
+    expected = max(1, int(round(ratio * nz))) * 0.5 + 0.75
     assert dist.max() <= expected

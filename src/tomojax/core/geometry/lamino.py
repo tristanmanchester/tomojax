@@ -60,11 +60,11 @@ class LaminographyGeometry:
       With `tilt_about='x'` the axis leans towards +y (beam-aligned laminography);
       with `tilt_about='z'` the axis leans towards +x. Each view rotates the
       object around this axis by angle `thetas_deg[i]`.
-    
+
     Frame convention:
     - pose_for_view(i) returns T_world_from_obj for the sample frame, where the
-      object's +y axis equals the nominal rotation axis. At theta=0, T is the
-      fixed alignment S (generally not identity) that maps e_y -> axis.
+      object's +z axis equals the nominal rotation axis. At theta=0, T is the
+      fixed alignment S (generally not identity) that maps e_z -> axis.
     """
 
     grid: Grid
@@ -88,10 +88,10 @@ class LaminographyGeometry:
         """
         theta = float(np.deg2rad(self.thetas_deg[i]))
         axis = self._axis_unit()
-        ey = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-        S = _align_u_to_v(ey, axis)
-        Ry = rot_axis_angle(ey, theta)[:3, :3]
-        R = S @ Ry
+        ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        S = _align_u_to_v(ez, axis)
+        Rz = rot_axis_angle(ez, theta)[:3, :3]
+        R = S @ Rz
         T = np.eye(4, dtype=np.float64)
         T[:3, :3] = R
         return tuple(map(tuple, T))  # 4x4

@@ -12,6 +12,12 @@ from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeomet
 from ..recon.fbp import fbp
 from ..recon.fista_tv import fista_tv
 from ..utils.logging import setup_logging, log_jax_env
+from ..utils.axes import DISK_VOLUME_AXES
+from ..utils.fov import (
+    compute_roi,
+    grid_from_detector_fov_slices,
+    grid_from_detector_fov,
+)
 
 
 def build_geometry(meta: dict):
@@ -67,10 +73,32 @@ def main() -> None:
     p.set_defaults(checkpoint_projector=True)
     p.add_argument("--out", required=True, help="Output .nxs containing recon (and copying projections)")
     p.add_argument(
+        "--roi",
+        choices=["off", "auto", "cube", "bbox"],
+        default="auto",
+        help=(
+
+            "Optional ROI cropping based on detector FOV (default: auto). "
+            "auto: square x–y slices + z from detector height if detector < grid; "
+            "cube: force cubic ROI (nx=ny=nz) inside FOV; "
+            "bbox: rectangular FOV bbox; off: keep original grid"
+        ),
+    )
+    p.add_argument(
+        "--grid", type=int, nargs=3, metavar=("NX","NY","NZ"), default=None,
+        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata."
+    )
+    p.add_argument(
         "--frame",
         choices=["sample", "lab"],
         default="sample",
         help="Frame to record for saved volume (default: sample).",
+    )
+    p.add_argument(
+        "--volume-axes",
+        choices=["zyx", "xyz"],
+        default=DISK_VOLUME_AXES,
+        help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
     )
     p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
     p.add_argument(
@@ -97,11 +125,46 @@ def main() -> None:
     if _gather == "auto":
         _gather = _default_gather_dtype()
 
+    # Optional ROI selection
+    recon_grid = grid
+    roi_mode = str(args.roi).lower()
+    if roi_mode != "off":
+        try:
+            info = compute_roi(grid, detector)
+            # Only crop when detector FOV is smaller than current grid (auto)
+            full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+            full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+            det_smaller = (info.r_u + 1e-6) < full_half_x or (info.r_v + 1e-6) < full_half_z
+            if roi_mode == "auto" and det_smaller:
+                recon_grid = grid_from_detector_fov_slices(grid, detector)
+            elif roi_mode == "cube":
+                # Same as align default policy for cubic volumes
+                from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
+                recon_grid = _grid_cube(grid, detector)
+            elif roi_mode == "bbox":
+                recon_grid = grid_from_detector_fov(grid, detector)
+        except Exception:
+            # Fall back silently if FOV computation fails
+            recon_grid = grid
+
+    # Rebuild geometry if grid changed
+    if args.grid is not None:
+        NX, NY, NZ = map(int, args.grid)
+        recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
+
+    if recon_grid is not grid:
+        if meta.get("geometry_type", "parallel") == "parallel":
+            geom = ParallelGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]) 
+        else:
+            tilt_deg = float(meta.get("tilt_deg", 30.0))
+            tilt_about = str(meta.get("tilt_about", "x"))
+            geom = LaminographyGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"], tilt_deg=tilt_deg, tilt_about=tilt_about)
+
     if args.algo == "fbp":
         with _transfer_guard_ctx(args.transfer_guard):
             vol = fbp(
                 geom,
-                grid,
+                recon_grid,
                 detector,
                 proj,
                 filter_name=args.filter,
@@ -115,7 +178,7 @@ def main() -> None:
         with _transfer_guard_ctx(args.transfer_guard):
             vol, info = fista_tv(
                 geom,
-                grid,
+                recon_grid,
                 detector,
                 proj,
                 iters=args.iters,
@@ -136,12 +199,13 @@ def main() -> None:
         args.out,
         projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
-        grid=meta.get("grid"),
+        grid=recon_grid.to_dict(),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
         geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(vol),
         frame=str(args.frame),
+        volume_axes_order=str(args.volume_axes),
     )
     logging.info("Saved reconstruction to %s", args.out)
 

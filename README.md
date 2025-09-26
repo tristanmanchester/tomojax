@@ -178,6 +178,7 @@ x_aligned, params5, info = align(geom, grid, det, p0[None, ...], cfg=cfg)
 
 See `docs/schema_nxtomo.md` for the HDF5/NXtomo format used by the CLIs.
 
+Viewer tip: saved reconstructions write volumes in `(nz, ny, nx)` order with `@volume_axes_order="zyx"`, so most NX/HDF5 tools display slice counts matching `nz`. `load_nxtomo()` always returns `(nx, ny, nz)` arrays for compute.
 
 ## Memory and Performance
 

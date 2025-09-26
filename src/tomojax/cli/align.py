@@ -11,6 +11,7 @@ from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
+from ..utils.axes import DISK_VOLUME_AXES
 from ..utils.fov import (
     compute_roi,
     grid_from_detector_fov_slices,
@@ -150,6 +151,16 @@ def main() -> None:
             "cyl: auto + zero outside cylindrical FOV"
         ),
     )
+    p.add_argument(
+        "--grid", type=int, nargs=3, metavar=("NX","NY","NZ"), default=None,
+        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata."
+    )
+    p.add_argument(
+        "--volume-axes",
+        choices=["zyx", "xyz"],
+        default=DISK_VOLUME_AXES,
+        help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
+    )
     args = p.parse_args()
 
     setup_logging(); log_jax_env()
@@ -224,6 +235,20 @@ def main() -> None:
         recon_grid = grid_from_detector_fov_slices(grid, detector)
         apply_cyl_mask = True
 
+    # Optional explicit grid override (takes precedence over ROI)
+    if args.grid is not None:
+        NX, NY, NZ = map(int, args.grid)
+        recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
+
+    # Rebuild geometry if grid changed
+    if recon_grid is not grid:
+        if meta.get("geometry_type", "parallel") == "parallel":
+            geom = ParallelGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]) 
+        else:
+            tilt_deg = float(meta.get("tilt_deg", 30.0))
+            tilt_about = str(meta.get("tilt_about", "x"))
+            geom = LaminographyGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"], tilt_deg=tilt_deg, tilt_about=tilt_about)
+
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
         with _transfer_guard_ctx(args.transfer_guard):
@@ -256,6 +281,7 @@ def main() -> None:
         volume=np.asarray(x),
         align_params=np.asarray(params5),
         frame=str(meta.get("frame", "sample")),
+        volume_axes_order=str(args.volume_axes),
     )
     logging.info("Saved alignment results to %s", args.out)
 
