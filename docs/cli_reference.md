@@ -88,22 +88,27 @@ pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_step.nxs \
 
 ## recon
 
-Reconstruct a volume from projections via FBP or FISTA‑TV. Saves a new `.nxs` with the reconstruction.
+Reconstruct a volume from projections via FBP, FISTA‑TV, or SPDHG‑TV. Saves a new `.nxs` with the reconstruction.
 
 Usage
 ```
 python -m tomojax.cli.recon --data <in.nxs> \
-  [--algo fbp|fista] [--filter ramp|shepp|hann] \
+  [--algo fbp|fista|spdhg] [--filter ramp|shepp|hann] \
   [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
+  [--views-per-batch <int>] [--theta <float>] \
+  [--spdhg-seed <int>] [--spdhg-tau <float>] [--spdhg-sigma-data <float>] [--spdhg-sigma-tv <float>] \
+  [--roi off|auto|cube|bbox] [--mask-vol off|cyl] [--grid NX NY NZ] \
   [--gather-dtype fp32|bf16|fp16] [--checkpoint-projector|--no-checkpoint-projector] \
   --out <out.nxs> [--frame sample|lab] [--progress]
 ```
 
 Key options
-- Algorithm: `--algo fbp` (default) or `fista`.
+- Algorithm: `--algo fbp` (default), `fista`, or `spdhg`.
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
 - FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method.
+- SPDHG‑TV: `--iters` (outer PDHG steps), `--lambda-tv` (TV weight), `--views-per-batch` (stochastic block size, e.g. 16–64), `--theta` (extrapolation, e.g. 0.5–1.0). Step sizes default to operator‑norm‑based auto; override with `--spdhg-tau`, `--spdhg-sigma-data`, `--spdhg-sigma-tv`. Use `--spdhg-seed` to fix block order.
 - Memory/performance: use `--gather-dtype` (bf16 recommended on modern GPUs) and keep projector checkpointing on by default.
+- ROI/masking: `--roi auto|cube|bbox|off` to crop the recon grid to the detector FOV; `--mask-vol cyl` applies a cylindrical x–y mask (used as a support in SPDHG and post‑hoc for FBP).
 - Frame: `--frame sample` (default; recommended) records that the saved volume is in the sample/object frame. `lab` is recorded for compatibility exports.
 
 Examples
@@ -118,6 +123,14 @@ pixi run recon --data data/sim_misaligned.nxs \
   --algo fista --iters 60 --lambda-tv 0.005 \
   --gather-dtype bf16 --checkpoint-projector \
   --out out/fista_misaligned.nxs --progress
+
+# SPDHG‑TV with moderate block size
+pixi run recon --data data/sim_aligned.nxs \
+  --algo spdhg --iters 300 --lambda-tv 0.005 \
+  --views-per-batch 32 --theta 0.5 \
+  --gather-dtype bf16 --checkpoint-projector \
+  --roi auto --mask-vol cyl \
+  --out out/spdhg_aligned.nxs --progress
 ```
 
 
