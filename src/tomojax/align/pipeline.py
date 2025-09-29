@@ -424,6 +424,7 @@ def align(
                 recon_patience=(
                     int(cfg.recon_patience) if cfg.recon_patience is not None else 0
                 ),
+                vol_mask=vol_mask,
             )
 
         vpb0 = (cfg.views_per_batch if cfg.views_per_batch > 0 else None)
@@ -503,8 +504,10 @@ def align(
                 if loss_kind_norm in ("l2",):
                     w_chunk = jnp.ones_like(y_chunk)
                 elif loss_kind_norm in ("l2_otsu", "l2-otsu", "otsu-l2") and getattr(loss_state, "mask", None) is not None:
-                    # Loss implemented as 0.5 * sum (w * r)^2; here w = mask in [0,1]
-                    w_chunk = loss_state.mask[idx]
+                    # Match the masked L2 used in losses: w_eff = sigmoid((base - 0.5)/temp)
+                    temp = jnp.float32((cfg.loss_params or {}).get("temp", 0.5))
+                    base = loss_state.mask[idx].astype(jnp.float32)
+                    w_chunk = jax.nn.sigmoid((base - 0.5) / jnp.maximum(temp, 1e-6))
                 elif loss_kind_norm == "pwls":
                     a = jnp.float32((cfg.loss_params or {}).get("a", 1.0))
                     bpar = jnp.float32((cfg.loss_params or {}).get("b", 0.0))
@@ -547,14 +550,32 @@ def align(
                 dp_chunk = dp_chunk_full[:chunk_len]
                 params5 = params5.at[idx].add(dp_chunk)
                 dp_all.append(dp_chunk)
-        # Compute post-update loss and accept/reject
+            # Compute post-update loss and accept/reject with simple backtracking on step scale
             loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
             if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
                 tol = float(cfg.gn_accept_tol) * abs(loss_before)
                 if not (loss_after < loss_before - tol):
-                    # Reject step
-                    params5 = params5_prev
-                    loss_after = loss_before
+                    # Try scaled steps: 0.5, 0.25
+                    try:
+                        dp_cat = jnp.concatenate(dp_all, axis=0)
+                        params_try = params5_prev + 0.5 * dp_cat
+                        loss_try = float(align_loss_jit(params_try, x))
+                        if loss_try < loss_before - tol:
+                            params5 = params_try
+                            loss_after = loss_try
+                        else:
+                            params_try2 = params5_prev + 0.25 * dp_cat
+                            loss_try2 = float(align_loss_jit(params_try2, x))
+                            if loss_try2 < loss_before - tol:
+                                params5 = params_try2
+                                loss_after = loss_try2
+                            else:
+                                # Reject step
+                                params5 = params5_prev
+                                loss_after = loss_before
+                    except Exception:
+                        params5 = params5_prev
+                        loss_after = loss_before
             # Log step stats
             if dp_all:
                 try:

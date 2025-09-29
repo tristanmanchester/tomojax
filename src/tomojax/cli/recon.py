@@ -11,6 +11,7 @@ from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..recon.fbp import fbp
 from ..recon.fista_tv import fista_tv
+from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ..utils.fov import (
@@ -56,12 +57,20 @@ def _transfer_guard_ctx(mode: str | None = None):
 def main() -> None:
     p = argparse.ArgumentParser(description="Reconstruct volume from dataset (.nxs)")
     p.add_argument("--data", required=True, help="Input .nxs")
-    p.add_argument("--algo", choices=["fbp", "fista"], default="fbp")
+    p.add_argument("--algo", choices=["fbp", "fista", "spdhg"], default="fbp")
     p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
-    p.add_argument("--iters", type=int, default=50, help="FISTA iterations")
-    p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight")
-    p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator")
+    p.add_argument("--iters", type=int, default=50, help="Iterations for iterative algos (FISTA/SPDHG)")
+    p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight (FISTA/SPDHG)")
+    p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator (FISTA)")
     p.add_argument("--L", type=float, default=None, help="Fixed Lipschitz constant for FISTA (skip power-method)")
+    # SPDHG-specific knobs
+    p.add_argument("--views-per-batch", type=int, default=16, help="SPDHG: views per stochastic block")
+    p.add_argument("--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar")
+    p.add_argument("--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order")
+    p.add_argument("--spdhg-tau", type=float, default=None, help="SPDHG: override primal step size (auto if None)")
+    p.add_argument("--spdhg-sigma-data", type=float, default=None, help="SPDHG: override data dual step (auto if None)")
+    p.add_argument("--spdhg-sigma-tv", type=float, default=None, help="SPDHG: override TV dual step (auto if None)")
+    p.add_argument("--warm-start", choices=["none", "fbp"], default="none", help="Initialize iterative algo from this method (spdhg only): none|fbp")
     p.add_argument(
         "--gather-dtype",
         choices=["auto", "fp32", "bf16", "fp16"],
@@ -195,7 +204,7 @@ def main() -> None:
         # For FBP, apply mask post-hoc if requested for parity
         if vol_mask is not None:
             vol = vol * vol_mask
-    else:
+    elif args.algo == "fista":
         vpb = int(vpb_val) if int(vpb_val) > 0 else None
         with _transfer_guard_ctx(args.transfer_guard):
             vol, info = fista_tv(
@@ -212,6 +221,52 @@ def main() -> None:
                 gather_dtype=_gather,
                 tv_prox_iters=int(args.tv_prox_iters),
                 vol_mask=vol_mask,
+            )
+    else:  # spdhg
+        # Build SPDHG config
+        cfg = SPDHGConfig(
+            iters=int(args.iters),
+            lambda_tv=float(args.lambda_tv),
+            theta=float(args.theta),
+            views_per_batch=int(max(1, args.views_per_batch)),
+            seed=int(args.spdhg_seed),
+            tau=(float(args.spdhg_tau) if args.spdhg_tau is not None else None),
+            sigma_data=(float(args.spdhg_sigma_data) if args.spdhg_sigma_data is not None else None),
+            sigma_tv=(float(args.spdhg_sigma_tv) if args.spdhg_sigma_tv is not None else None),
+            projector_unroll=1,
+            checkpoint_projector=bool(args.checkpoint_projector),
+            gather_dtype=_gather,
+            positivity=True,
+            support=vol_mask if vol_mask is not None else None,
+            log_every=1,
+        )
+        # Optional warm-start for SPDHG
+        init_x = None
+        if str(args.warm_start).lower() == "fbp":
+            # Compute a quick FBP and use as initialization
+            init_x = fbp(
+                geom,
+                recon_grid,
+                detector,
+                proj,
+                filter_name=str(args.filter),
+                views_per_batch=int(vpb_val),
+                projector_unroll=1,
+                checkpoint_projector=bool(args.checkpoint_projector),
+                gather_dtype=_gather,
+            )
+            if vol_mask is not None:
+                init_x = init_x * vol_mask
+            # Enforce positivity for a clean start (harmless if TV/signal expects nonnegative)
+            init_x = jnp.maximum(init_x, 0.0)
+        with _transfer_guard_ctx(args.transfer_guard):
+            vol, info = spdhg_tv(
+                geom,
+                recon_grid,
+                detector,
+                proj,
+                init_x=init_x,
+                config=cfg,
             )
 
     # Note: Reconstructions are computed on the object (sample) frame. We persist that by default.
