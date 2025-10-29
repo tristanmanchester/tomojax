@@ -5,6 +5,7 @@
 - Recon CLI now crops to detector FOV by default (`--roi auto`); pass `--roi off` to keep legacy behavior.
 - Normalize NX volume IO: write volumes on disk in `zyx` order with `@volume_axes_order` metadata, transpose on load, and warn (silence via `TOMOJAX_AXES_SILENCE`).
 - Add CLI `--volume-axes` override for `recon`/`align` and update NX data wrangler to tag volumes.
+- Fix CUDA “invalid image” faults on Turing GPUs by replacing the projector’s small GEMM with element-wise transforms, ensuring SPDHG/FWD projections compile cleanly on RTX 6000/8000 while keeping mixed-precision gather heuristics.
 
 ## 0.2.0 — v2 at repo root
 - Promote the v2 implementation to the primary package at `tomojax`.

@@ -90,6 +90,9 @@ def _estimate_norm_A2(
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
+    key: jax.Array | None = None,
+    power_iters: int = 20,
+    safety: float = 1.05,
 ) -> float:
     """Reuse your power method to estimate ||A||^2 (i.e., Lipschitz of ∇(1/2||Ax||^2))."""
     # Minimal reimplementation: apply A^T A via VJP in streamed fashion over all views
@@ -138,14 +141,15 @@ def _estimate_norm_A2(
         g_final, _ = jax.lax.scan(body, g0, jnp.arange(m))
         return g_final
 
-    v = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    v = v.at[grid.nx//2, grid.ny//2, grid.nz//2].set(1.0)
+    if key is None:
+        key = jax.random.PRNGKey(0)
+    v = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     v = v / (jnp.linalg.norm(v) + 1e-12)
-    for _ in range(5):
+    for _ in range(max(1, power_iters)):
         w = AtranA(v)
         v = w / (jnp.linalg.norm(w) + 1e-12)
     Aw = AtranA(v)
-    L = float(jnp.vdot(v, Aw).real)  # ~||A||^2
+    L = float(jnp.vdot(v, Aw).real) * float(safety ** 2)  # ~||A||^2 with margin
     return max(L, 1e-6)
 
 
@@ -219,21 +223,24 @@ def spdhg_tv(
             projector_unroll=config.projector_unroll,
             checkpoint_projector=config.checkpoint_projector,
             gather_dtype=config.gather_dtype,
+            key=jax.random.PRNGKey(config.seed),
+            power_iters=20,
+            safety=1.05,
         )
         L_A = float(np.sqrt(L_A2))
         rho = 0.99
         tau = rho / (L_A + L_grad)
-        n_views_safe = max(n_views, 1)
-        p_ref = float(b) / float(n_views_safe)
-        sigma_data = rho * p_ref / max(L_A, 1e-6)
+        sigma_data_base = rho / max(L_A, 1e-6)
         sigma_tv = rho / L_grad
     else:
         tau = float(config.tau)
-        sigma_data = float(config.sigma_data)
+        sigma_data_base = float(config.sigma_data)
         sigma_tv = float(config.sigma_tv)
 
     # stochastic block schedule = random permutation of contiguous blocks per epoch
     m = (n_views + b - 1) // b
+    p_prob = 1.0 / float(max(m, 1))
+    sigma_data_eff = sigma_data_base * p_prob
     rng = np.random.default_rng(config.seed)
     epochs = (config.iters + m - 1) // m
     block_ids = []
@@ -277,9 +284,8 @@ def spdhg_tv(
         row_mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
         row_mask = row_mask.astype(jnp.float32)
 
-        # DATA DUAL UPDATE (scaled by 1/p, p = valid/n_views)
-        p_block = jnp.maximum(valid.astype(jnp.float32) / float(n_views), 1e-8)
-        sigma_eff = sigma_data / p_block
+        # DATA DUAL UPDATE (constant step scaled by selection probability)
+        sigma_eff = jnp.asarray(sigma_data_eff, dtype=x_bar.dtype)
 
         pred = project_chunk(T_chunk, x_bar)
         u = y_dual_old + sigma_eff * pred
@@ -315,7 +321,8 @@ def spdhg_tv(
         x_new = _proj_pos_support(x_minus, config.positivity, support)
 
         # EXTRAGRAD
-        x_bar_new = x_new + jnp.asarray(config.theta, x_new.dtype) * (x_new - x)
+        x_bar_candidate = x_new + jnp.asarray(config.theta, x_new.dtype) * (x_new - x)
+        x_bar_new = _proj_pos_support(x_bar_candidate, config.positivity, support)
 
         # write back data dual window
         y_data_new = jax.lax.dynamic_update_slice(y_data, y_dual_new, (start_shifted, 0, 0))
@@ -351,9 +358,14 @@ def spdhg_tv(
 
     info = {
         "loss": [float(v) for v in list(losses_f)],
-        "tau": float(tau), "sigma_data": float(sigma_data), "sigma_tv": float(sigma_tv),
+        "tau": float(tau),
+        "sigma_data": float(sigma_data_eff),
+        "sigma_data_base": float(sigma_data_base),
+        "sigma_tv": float(sigma_tv),
         "lambda_tv": float(config.lambda_tv),
         "views_per_batch": int(b), "num_blocks": int(m),
-        "A_norm": (float(L_A) if L_A is not None else None), "grad_norm": float(L_grad),
+        "A_norm": (float(L_A) if L_A is not None else None),
+        "grad_norm": float(L_grad),
+        "selection_prob": float(p_prob),
     }
     return x_f, info

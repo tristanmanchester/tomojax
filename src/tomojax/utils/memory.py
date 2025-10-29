@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Optional
 import os
-
 import math
+from functools import lru_cache
+import subprocess
 
 
 def _bytes_per(dtype: str) -> int:
@@ -26,7 +27,7 @@ def device_free_memory_bytes() -> Optional[int]:
         import jax  # type: ignore
 
         if hasattr(jax, "device_get_memory_info"):
-            devs = jax.devices()
+            devs = jax.devices("gpu")
             if devs:
                 free, total = jax.device_get_memory_info(devs[0])  # type: ignore[attr-defined]
                 # On CPU backends, this may reflect host RAM; still usable as a bound
@@ -129,14 +130,77 @@ def default_gather_dtype() -> str:
     Returns "bf16" on GPU/TPU (mixed-precision gather with fp32 accumulation)
     and "fp32" on CPU or if backend detection fails.
     """
+    backend = _current_backend()
+    if isinstance(backend, str) and backend.lower() in ("gpu", "tpu"):
+        if backend.lower() == "tpu":
+            return "bf16"
+        cc = _gpu_compute_capability()
+        if cc and cc < (8, 0):
+            if _device_supports_dtype("float16"):
+                return "fp16"
+            return "fp32"
+        # GPU: prefer bf16 if the device JIT supports it, else fp16/fp32.
+        if _device_supports_dtype("bfloat16"):
+            return "bf16"
+        if _device_supports_dtype("float16"):
+            return "fp16"
+    return "fp32"
+
+
+@lru_cache(maxsize=None)
+def _device_supports_dtype(dtype_name: str) -> bool:
+    """Heuristic check whether the active accelerator can JIT kernels with `dtype`."""
+    try:
+        import jax  # type: ignore
+        import jax.numpy as jnp  # type: ignore
+    except Exception:
+        return False
+    try:
+        devs = jax.devices("gpu")
+    except Exception:
+        return False
+    if not devs:
+        return False
+    if devs[0].platform != "gpu":
+        return False
+    try:
+        # Simple kernel to trigger compilation in the requested dtype.
+        fn = jax.jit(lambda x: x + x)
+        dtype = getattr(jnp, dtype_name)
+        arr = jnp.ones((1,), dtype=dtype)
+        fn(arr).block_until_ready()
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=None)
+def _gpu_compute_capability() -> Optional[tuple[int, int]]:
+    """Return (major, minor) compute capability for the first CUDA device, if available."""
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        first_line = output.strip().splitlines()[0]
+        parts = first_line.replace(" ", "").split(".")
+        if len(parts) >= 2:
+            major, minor = int(parts[0]), int(parts[1])
+            return major, minor
+    except Exception:
+        pass
+    return None
+
+
+def _current_backend() -> Optional[str]:
+    """Best-effort helper to query the active JAX backend name."""
     try:
         import jax  # type: ignore
 
         backend = getattr(jax, "default_backend", lambda: None)()
-        if isinstance(backend, str):
-            b = backend.lower()
-            if b in ("gpu", "tpu"):
-                return "bf16"
+        if backend:
+            return backend
+        return os.environ.get("JAX_PLATFORM_NAME")
     except Exception:
-        pass
-    return "fp32"
+        return None
