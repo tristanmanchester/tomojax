@@ -35,7 +35,9 @@ def _init_jax_compilation_cache() -> None:
     try:
         cache_dir = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
         if not cache_dir:
-            base = os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
+            base = os.environ.get(
+                "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
+            )
             cache_dir = os.path.join(base, "tomojax", "jax_cache")
         os.makedirs(cache_dir, exist_ok=True)
         cc.initialize_cache(cache_dir)
@@ -46,16 +48,29 @@ def _init_jax_compilation_cache() -> None:
 
 
 def build_geometry(meta: dict):
-    grid_d = meta["grid"]; det_d = meta["detector"]; thetas = meta["thetas_deg"]; gtype = meta.get("geometry_type", "parallel")
-    grid = Grid(**{k: grid_d[k] for k in ("nx","ny","nz","vx","vy","vz")})
-    detector = Detector(**{k: det_d[k] for k in ("nu","nv","du","dv")}, det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid_d = meta["grid"]
+    det_d = meta["detector"]
+    thetas = meta["thetas_deg"]
+    gtype = meta.get("geometry_type", "parallel")
+    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
+    detector = Detector(
+        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     if gtype == "parallel":
         geom = ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
     else:
         tilt_deg = float(meta.get("tilt_deg", 30.0))
         tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
+        geom = LaminographyGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas,
+            tilt_deg=tilt_deg,
+            tilt_about=tilt_about,
+        )
     return grid, detector, geom
+
 
 def _transfer_guard_ctx(mode: str | None = None):
     # Allow overriding via env var to control verbosity: off|log|disallow
@@ -65,11 +80,13 @@ def _transfer_guard_ctx(mode: str | None = None):
         return _nullcontext()
     try:
         import jax as _jax  # local import to avoid hard dep at import time
+
         tg = getattr(_jax, "transfer_guard", None)
         if tg is not None:
             return tg(mode)
         try:
             from jax.experimental import transfer_guard as _tg  # type: ignore
+
             return _tg(mode)
         except Exception:
             return _nullcontext()
@@ -78,15 +95,28 @@ def _transfer_guard_ctx(mode: str | None = None):
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
+    p = argparse.ArgumentParser(
+        description="Joint reconstruction + alignment on dataset (.nxs)"
+    )
     p.add_argument("--data", required=True, help="Input .nxs")
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
     p.add_argument("--lambda-tv", type=float, default=0.005)
-    p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator")
+    p.add_argument(
+        "--tv-prox-iters",
+        type=int,
+        default=10,
+        help="Inner iterations for TV proximal operator",
+    )
     p.add_argument("--lr-rot", type=float, default=1e-3)
     p.add_argument("--lr-trans", type=float, default=1e-1)
-    p.add_argument("--levels", type=int, nargs="+", default=None, help="Optional multires factors, e.g., 4 2 1")
+    p.add_argument(
+        "--levels",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Optional multires factors, e.g., 4 2 1",
+    )
     p.add_argument(
         "--gather-dtype",
         choices=["auto", "fp32", "bf16", "fp16"],
@@ -94,8 +124,12 @@ def main() -> None:
         help="Projector gather dtype (auto: bf16 on GPU/TPU, else fp32)",
     )
     ck = p.add_mutually_exclusive_group()
-    ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
-    ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false")
+    ck.add_argument(
+        "--checkpoint-projector", dest="checkpoint_projector", action="store_true"
+    )
+    ck.add_argument(
+        "--no-checkpoint-projector", dest="checkpoint_projector", action="store_false"
+    )
     p.set_defaults(checkpoint_projector=True)
     p.add_argument(
         "--opt-method",
@@ -103,44 +137,125 @@ def main() -> None:
         default="gn",
         help="Alignment optimizer: gd or gn (GN supported for L2-like losses: l2, l2_otsu, edge_l2, pwls)",
     )
-    p.add_argument("--gn-damping", type=float, default=1e-3, help="Levenberg-Marquardt damping for GN")
-    p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
-    p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
-    p.add_argument("--seed-translations", action="store_true", help="Phase-correlation init for dx,dz at coarsest level")
-    p.add_argument("--log-summary", action="store_true", help="Print per-outer summaries (FISTA loss, alignment loss before/after)")
-    p.add_argument("--log-compact", dest="log_compact", action="store_true", default=True,
-                   help="Use compact one-line per-outer summary when --log-summary is set (default: on)")
+    p.add_argument(
+        "--gn-damping",
+        type=float,
+        default=1e-3,
+        help="Levenberg-Marquardt damping for GN",
+    )
+    p.add_argument(
+        "--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations"
+    )
+    p.add_argument(
+        "--w-trans", type=float, default=1e-3, help="Smoothness weight for translations"
+    )
+    p.add_argument(
+        "--seed-translations",
+        action="store_true",
+        help="Phase-correlation init for dx,dz at coarsest level",
+    )
+    p.add_argument(
+        "--log-summary",
+        action="store_true",
+        help="Print per-outer summaries (FISTA loss, alignment loss before/after)",
+    )
+    p.add_argument(
+        "--log-compact",
+        dest="log_compact",
+        action="store_true",
+        default=True,
+        help="Use compact one-line per-outer summary when --log-summary is set (default: on)",
+    )
     p.add_argument("--no-log-compact", dest="log_compact", action="store_false")
-    p.add_argument("--recon-L", type=float, default=None, help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)")
+    p.add_argument(
+        "--recon-L",
+        type=float,
+        default=None,
+        help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)",
+    )
     # Data term / similarity
     p.add_argument(
         "--loss",
         choices=[
-            "l2","charbonnier","huber","cauchy","barron","student_t","correntropy",
-            "zncc","ssim","ms-ssim","mi","nmi","renyi_mi",
-            "grad_l1","edge_l2","ngf","grad_orient","phasecorr","fft_mag","chamfer_edge",
-            "l2_otsu","ssim_otsu","tversky","swd","mind","pwls","poisson"
+            "l2",
+            "charbonnier",
+            "huber",
+            "cauchy",
+            "barron",
+            "student_t",
+            "correntropy",
+            "zncc",
+            "ssim",
+            "ms-ssim",
+            "mi",
+            "nmi",
+            "renyi_mi",
+            "grad_l1",
+            "edge_l2",
+            "ngf",
+            "grad_orient",
+            "phasecorr",
+            "fft_mag",
+            "chamfer_edge",
+            "l2_otsu",
+            "ssim_otsu",
+            "tversky",
+            "swd",
+            "mind",
+            "pwls",
+            "poisson",
         ],
         default="l2_otsu",
         help="Data term / similarity to optimize (default: l2_otsu)",
     )
-    p.add_argument("--loss-param", action="append", default=[], help="Loss parameter as k=v (repeatable), e.g., delta=1.0, eps=1e-3, window=7, temp=0.5")
+    p.add_argument(
+        "--loss-param",
+        action="append",
+        default=[],
+        help="Loss parameter as k=v (repeatable), e.g., delta=1.0, eps=1e-3, window=7, temp=0.5",
+    )
     # (LBFGS options removed)
     # Early stopping controls (alignment phase)
     es = p.add_mutually_exclusive_group()
-    es.add_argument("--early-stop", dest="early_stop", action="store_true", help="Enable early stopping across outers (default)")
-    es.add_argument("--no-early-stop", dest="early_stop", action="store_false", help="Disable early stopping across outers")
+    es.add_argument(
+        "--early-stop",
+        dest="early_stop",
+        action="store_true",
+        help="Enable early stopping across outers (default)",
+    )
+    es.add_argument(
+        "--no-early-stop",
+        dest="early_stop",
+        action="store_false",
+        help="Disable early stopping across outers",
+    )
     p.set_defaults(early_stop=True)
-    p.add_argument("--early-stop-rel", type=float, default=None, help="Relative improvement threshold for early stop (default 1e-3)")
-    p.add_argument("--early-stop-patience", type=int, default=None, help="Consecutive outers below threshold before stopping (default 2)")
+    p.add_argument(
+        "--early-stop-rel",
+        type=float,
+        default=None,
+        help="Relative improvement threshold for early stop (default 1e-3)",
+    )
+    p.add_argument(
+        "--early-stop-patience",
+        type=int,
+        default=None,
+        help="Consecutive outers below threshold before stopping (default 2)",
+    )
     p.add_argument(
         "--transfer-guard",
         choices=["off", "log", "disallow"],
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
         help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
     )
-    p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
-    p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--out", required=True, help="Output .nxs with recon and alignment params"
+    )
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show progress bars if tqdm is available",
+    )
     p.add_argument(
         "--roi",
         choices=["auto", "off", "cube", "bbox", "cyl"],
@@ -152,8 +267,21 @@ def main() -> None:
         ),
     )
     p.add_argument(
-        "--grid", type=int, nargs=3, metavar=("NX","NY","NZ"), default=None,
-        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata."
+        "--mask-vol",
+        choices=["off", "cyl"],
+        default="off",
+        help=(
+            "Mask the volume before forward projection in alignment: "
+            "off (default), or cyl for cylindrical x–y mask broadcast along z."
+        ),
+    )
+    p.add_argument(
+        "--grid",
+        type=int,
+        nargs=3,
+        metavar=("NX", "NY", "NZ"),
+        default=None,
+        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata.",
     )
     p.add_argument(
         "--volume-axes",
@@ -163,7 +291,8 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    setup_logging(); log_jax_env()
+    setup_logging()
+    log_jax_env()
     _init_jax_compilation_cache()
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
@@ -187,6 +316,7 @@ def main() -> None:
 
     # Resolve default gather dtype lazily at runtime
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
+
     _gather = str(args.gather_dtype)
     if _gather == "auto":
         _gather = _default_gather_dtype()
@@ -213,8 +343,13 @@ def main() -> None:
         log_compact=bool(args.log_compact),
         recon_L=(float(args.recon_L) if args.recon_L is not None else None),
         early_stop=bool(args.early_stop),
-        early_stop_rel_impr=(float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3),
-        early_stop_patience=(int(args.early_stop_patience) if args.early_stop_patience is not None else 2),
+        early_stop_rel_impr=(
+            float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3
+        ),
+        early_stop_patience=(
+            int(args.early_stop_patience) if args.early_stop_patience is not None else 2
+        ),
+        mask_vol=str(args.mask_vol),
     )
     # ROI handling (align on realistic FOV)
     roi_mode = str(args.roi).lower()
@@ -243,16 +378,27 @@ def main() -> None:
     # Rebuild geometry if grid changed
     if recon_grid is not grid:
         if meta.get("geometry_type", "parallel") == "parallel":
-            geom = ParallelGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]) 
+            geom = ParallelGeometry(
+                grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]
+            )
         else:
             tilt_deg = float(meta.get("tilt_deg", 30.0))
             tilt_about = str(meta.get("tilt_about", "x"))
-            geom = LaminographyGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"], tilt_deg=tilt_deg, tilt_about=tilt_about)
+            geom = LaminographyGeometry(
+                grid=recon_grid,
+                detector=detector,
+                thetas_deg=meta["thetas_deg"],
+                tilt_deg=tilt_deg,
+                tilt_about=tilt_about,
+            )
 
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
+
         with _transfer_guard_ctx(args.transfer_guard):
-            x, params5, info = align_multires(geom, recon_grid, detector, proj, factors=args.levels, cfg=cfg)
+            x, params5, info = align_multires(
+                geom, recon_grid, detector, proj, factors=args.levels, cfg=cfg
+            )
     else:
         with _transfer_guard_ctx(args.transfer_guard):
             x, params5, info = align(geom, recon_grid, detector, proj, cfg=cfg)
@@ -260,6 +406,7 @@ def main() -> None:
     # Optional cylindrical mask in x–y
     if apply_cyl_mask:
         import numpy as _np
+
         try:
             m_xy = cylindrical_mask_xy(recon_grid, detector)
             m = jnp.asarray(m_xy, dtype=x.dtype)[:, :, None]
@@ -274,13 +421,20 @@ def main() -> None:
         args.out,
         projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
+        image_key=meta.get("image_key"),
         grid=recon_grid.to_dict(),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
         geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(x),
         align_params=np.asarray(params5),
+        angle_offset_deg=meta.get("angle_offset_deg"),
+        misalign_spec=meta.get("misalign_spec"),
         frame=str(meta.get("frame", "sample")),
+        sample_name=meta.get("sample_name"),
+        source_name=meta.get("source_name"),
+        source_type=meta.get("source_type"),
+        source_probe=meta.get("source_probe"),
         volume_axes_order=str(args.volume_axes),
     )
     logging.info("Saved alignment results to %s", args.out)

@@ -7,6 +7,13 @@
   - Force CPU: `JAX_PLATFORM_NAME=cpu pixi run test-cpu`.
   - Ensure NVIDIA driver and CUDA 12 runtime compatible with your hardware.
 
+- `CUDA_ERROR_INVALID_IMAGE` or “Failed to load in-memory CUBIN” when launching a projector kernel:
+  - These binaries were cached for a different GPU. Remove all caches before rerunning:
+    ```bash
+    rm -rf ~/.cache/tomojax ~/.cache/jax ~/.cache/xla ~/.nv/ComputeCache
+    ```
+  - Rerun the CLI; XLA will rebuild kernels for the current device. If the cache is needed later, set `TOMOJAX_JAX_CACHE_DIR=/path/to/cache` once the matching kernels are regenerated.
+
 - Slow first run: JAX/XLA compilation is cached; subsequent runs are faster.
   - Enable a persistent cache for repeated runs: set `TOMOJAX_JAX_CACHE_DIR` (or rely on the default at `~/.cache/tomojax/jax_cache`).
 

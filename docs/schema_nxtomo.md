@@ -7,7 +7,7 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
   - `definition = "NXtomo"`
   - `/instrument (NXinstrument)`
     - `/detector (NXdetector)`
-      - `data` (float32, shape `(n_views, nv, nu)`, chunks `(1,256,256)`) — projections
+      - `data` (float32, shape `(n_views, nv, nu)`, chunks `(1,256,256)`) — absorption projections (`-log` transmission)
       - `x_pixel_size` (float, units: `pixel`)
       - `y_pixel_size` (float, units: `pixel`)
   - `/sample (NXsample)`

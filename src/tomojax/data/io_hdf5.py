@@ -29,7 +29,12 @@ from ..utils.axes import (
 
 
 LOG = logging.getLogger(__name__)
-_AXES_SILENCE = os.environ.get("TOMOJAX_AXES_SILENCE", "").lower() in {"1", "true", "yes", "on"}
+_AXES_SILENCE = os.environ.get("TOMOJAX_AXES_SILENCE", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _axes_log_warning(message: str, *args: Any) -> None:
@@ -59,7 +64,9 @@ def _attr_to_str(v: Any, default: str | None = None) -> str | None:
         return default
 
 
-def _ensure_group(root: h5py.Group, name: str, nx_class: Optional[str] = None) -> h5py.Group:
+def _ensure_group(
+    root: h5py.Group, name: str, nx_class: Optional[str] = None
+) -> h5py.Group:
     g = root.require_group(name)
     if nx_class:
         g.attrs["NX_class"] = nx_class
@@ -75,6 +82,7 @@ def save_nxtomo(
     projections: np.ndarray,
     *,
     thetas_deg: Optional[np.ndarray] = None,
+    image_key: Optional[np.ndarray] = None,
     grid: Optional[Grid | Dict[str, Any]] = None,
     detector: Optional[Detector | Dict[str, Any]] = None,
     geometry_type: str = "parallel",
@@ -84,6 +92,10 @@ def save_nxtomo(
     angle_offset_deg: Optional[np.ndarray] = None,
     misalign_spec: Optional[Dict[str, Any]] = None,
     frame: Optional[str] = None,
+    sample_name: Optional[str] = "sample",
+    source_name: Optional[str] = "TomoJAX source",
+    source_type: Optional[str] = None,
+    source_probe: Optional[str] = "x-ray",
     compression: str = "lzf",
     overwrite: bool = True,
     volume_axes_order: str = DISK_VOLUME_AXES,
@@ -136,8 +148,20 @@ def save_nxtomo(
         # Instrument / detector
         inst = _ensure_group(entry, "instrument", "NXinstrument")
         det = _ensure_group(inst, "detector", "NXdetector")
-        det.create_dataset("data", data=proj, chunks=(1, min(256, nv), min(256, nu)), compression=compression)
+        det.create_dataset(
+            "data",
+            data=proj,
+            chunks=(1, min(256, nv), min(256, nu)),
+            compression=compression,
+        )
         det["data"].attrs["long_name"] = "projections"
+        if image_key is None:
+            im_key = np.zeros((n_views,), dtype=np.int32)
+        else:
+            im_key = np.asarray(image_key, dtype=np.int32)
+            if im_key.shape != (n_views,):
+                raise ValueError("image_key must be shape (n_views,)")
+        det.create_dataset("image_key", data=im_key, dtype=np.int32)
 
         # Pixel geometry if provided
         det_meta: Dict[str, Any] = {}
@@ -163,14 +187,45 @@ def save_nxtomo(
         d_angle.attrs["units"] = "degree"
         _write_string_attr(d_angle, "transformation_type", "rotation")
         # Rotation around +z by default (matching phi in current code)
-        trans.create_dataset("rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32))
+        trans.create_dataset(
+            "rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
+        )
         _write_string_attr(trans, "depends_on", "rotation_angle")
+        sample_name_str = "sample" if sample_name is None else str(sample_name)
+        sample.create_dataset(
+            "name",
+            data=np.array(sample_name_str, dtype=h5py.string_dtype(encoding="utf-8")),
+        )
 
         # NXdata linking for default plot (optional)
         data_grp = _ensure_group(entry, "data", "NXdata")
         # store projections also under /entry/data/projections for convenience
         data_grp["projections"] = det["data"]
         _write_string_attr(data_grp, "signal", "projections")
+
+        # Source metadata (optional but recommended)
+        src_grp = _ensure_group(inst, "SOURCE", "NXsource")
+        if source_name is not None:
+            src_grp.create_dataset(
+                "name",
+                data=np.array(
+                    str(source_name), dtype=h5py.string_dtype(encoding="utf-8")
+                ),
+            )
+        if source_type is not None:
+            src_grp.create_dataset(
+                "type",
+                data=np.array(
+                    str(source_type), dtype=h5py.string_dtype(encoding="utf-8")
+                ),
+            )
+        if source_probe is not None:
+            src_grp.create_dataset(
+                "probe",
+                data=np.array(
+                    str(source_probe), dtype=h5py.string_dtype(encoding="utf-8")
+                ),
+            )
 
         # Grid metadata
         grid_meta: Dict[str, Any] = {}
@@ -187,7 +242,9 @@ def save_nxtomo(
             if vol_data.ndim != 3:
                 raise ValueError("volume must be 3D (nx, ny, nz)")
             if disk_axes != INTERNAL_VOLUME_AXES:
-                vol_data = np.asarray(transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes))
+                vol_data = np.asarray(
+                    transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes)
+                )
             vol = tj.create_dataset(
                 "volume",
                 data=vol_data,
@@ -201,7 +258,11 @@ def save_nxtomo(
                 _write_string_attr(tj, "frame", str(frame))
 
         # Optional alignment params and misalignment metadata
-        if align_params is not None or angle_offset_deg is not None or misalign_spec is not None:
+        if (
+            align_params is not None
+            or angle_offset_deg is not None
+            or misalign_spec is not None
+        ):
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
             align_grp = _ensure_group(tj, "align", "NXcollection")
@@ -212,7 +273,9 @@ def save_nxtomo(
                     chunks=True,
                     compression=compression,
                 )
-                dset.attrs["columns"] = np.array(["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype())
+                dset.attrs["columns"] = np.array(
+                    ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
+                )
             if angle_offset_deg is not None:
                 align_grp.create_dataset(
                     "angle_offset_deg",
@@ -250,6 +313,12 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
             raise KeyError("Could not find projections dataset under /entry")
         out["projections"] = proj
         n_views = proj.shape[0]
+        # Image key
+        try:
+            im_key = entry["instrument/detector/image_key"][...]
+            out["image_key"] = np.asarray(im_key, dtype=np.int32)
+        except Exception:
+            out["image_key"] = np.zeros((n_views,), dtype=np.int32)
         # Angles with fallback
         thetas = None
         try:
@@ -305,6 +374,27 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                 "dv": 1.0,
                 "det_center": [0.0, 0.0],
             }
+        # Source metadata if present
+        try:
+            inst_grp = entry.get("instrument")
+            source_grp = None
+            if inst_grp is not None:
+                source_grp = inst_grp.get("SOURCE") or inst_grp.get("source")
+            if source_grp is not None:
+                source_info: Dict[str, Any] = {}
+                for key in ("name", "type", "probe"):
+                    if key in source_grp:
+                        source_info[key] = _attr_to_str(source_grp[key][()])
+                if source_info:
+                    out["source"] = source_info
+                    if "name" in source_info:
+                        out["source_name"] = source_info["name"]
+                    if "type" in source_info:
+                        out["source_type"] = source_info["type"]
+                    if "probe" in source_info:
+                        out["source_probe"] = source_info["probe"]
+        except Exception:
+            pass
 
         # Optional volume (used also to infer grid fallback)
         try:
@@ -335,6 +425,14 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
         except Exception:
             pass
 
+        # Sample metadata
+        try:
+            sample_grp = entry.get("sample")
+            if sample_grp is not None and "name" in sample_grp:
+                out["sample_name"] = _attr_to_str(sample_grp["name"][()], default=None)
+        except Exception:
+            pass
+
         # Normalize volume axes if present
         if volume_raw is not None:
             grid_hint = out.get("grid")
@@ -345,7 +443,9 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                     attr_norm = volume_axes_attr.lower()
                 except ValueError:
                     _axes_log_warning(
-                        "Ignoring malformed volume_axes_order=%r on %s", volume_axes_attr, path
+                        "Ignoring malformed volume_axes_order=%r on %s",
+                        volume_axes_attr,
+                        path,
                     )
             disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, grid_hint)
             source = "attr" if attr_norm else "heuristic"
@@ -357,11 +457,16 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                         "load_nxtomo: inferred disk volume axes zyx for %s; transposing to internal xyz",
                         path,
                     )
-                volume_np = np.asarray(transpose_volume(volume_np, DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES))
+                volume_np = np.asarray(
+                    transpose_volume(volume_np, DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES)
+                )
                 disk_order = DISK_VOLUME_AXES
             elif disk_axes == INTERNAL_VOLUME_AXES:
                 if source == "heuristic":
-                    _axes_log_warning("load_nxtomo: assuming legacy xyz disk volume order for %s", path)
+                    _axes_log_warning(
+                        "load_nxtomo: assuming legacy xyz disk volume order for %s",
+                        path,
+                    )
                 disk_order = INTERNAL_VOLUME_AXES if source == "attr" else "xyz_legacy"
             elif disk_axes is None:
                 disk_order = "unknown"
@@ -371,7 +476,9 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                     volume_raw.shape,
                 )
             else:
-                volume_np = np.asarray(transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES))
+                volume_np = np.asarray(
+                    transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES)
+                )
                 disk_order = disk_axes
             out["volume"] = volume_np
             out["volume_axes_order"] = INTERNAL_VOLUME_AXES
@@ -382,7 +489,14 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
         if "grid" not in out and volume_raw is not None and "volume" in out:
             vol = out["volume"]
             nx, ny, nz = int(vol.shape[0]), int(vol.shape[1]), int(vol.shape[2])
-            out["grid"] = {"nx": nx, "ny": ny, "nz": nz, "vx": 1.0, "vy": 1.0, "vz": 1.0}
+            out["grid"] = {
+                "nx": nx,
+                "ny": ny,
+                "nz": nz,
+                "vx": 1.0,
+                "vy": 1.0,
+                "vz": 1.0,
+            }
     return out
 
 
@@ -395,16 +509,53 @@ def validate_nxtomo(path: str) -> Dict[str, Any]:
                 report["issues"].append("Missing /entry")
                 return report
             e = f["/entry"]
+            definition = _attr_to_str(e.attrs.get("definition"))
+            if definition != "NXtomo":
+                report["issues"].append("entry/definition must be 'NXtomo'")
             # Required datasets
             if "instrument/detector/data" not in e:
                 report["issues"].append("Missing instrument/detector/data")
             if "sample/transformations/rotation_angle" not in e:
                 report["issues"].append("Missing sample/transformations/rotation_angle")
+            if "instrument/detector/image_key" not in e:
+                report["issues"].append("Missing instrument/detector/image_key")
+            if "sample" not in e or "name" not in e["sample"]:
+                report["issues"].append("Missing sample/name")
             # Basic shapes
+            n_views = None
             if "instrument/detector/data" in e:
                 d = e["instrument/detector/data"]
                 if d.ndim != 3:
-                    report["issues"].append("projections must be 3D (n_views,nv,nu)")
+                    report["issues"].append(
+                        "instrument/detector/data must be 3D (n_views, nv, nu)"
+                    )
+                else:
+                    n_views = d.shape[0]
+            if "instrument/detector/image_key" in e:
+                ik = e["instrument/detector/image_key"]
+                if ik.ndim != 1:
+                    report["issues"].append(
+                        "instrument/detector/image_key must be 1D (n_views,)"
+                    )
+                if n_views is not None and ik.shape[0] != n_views:
+                    report["issues"].append(
+                        "image_key length must match #views in detector/data"
+                    )
+                if ik.dtype.kind not in {"i", "u"}:
+                    report["issues"].append("image_key must use integer dtype")
+            if "sample/transformations/rotation_angle" in e:
+                ang = e["sample/transformations/rotation_angle"]
+                if ang.ndim != 1:
+                    report["issues"].append("rotation_angle must be 1D (n_views,)")
+                if n_views is not None and ang.shape[0] != n_views:
+                    report["issues"].append(
+                        "rotation_angle length must match #views in detector/data"
+                    )
+                units = _attr_to_str(ang.attrs.get("units"))
+                if units != "degree":
+                    report["issues"].append(
+                        "rotation_angle units attr should be 'degree'"
+                    )
     except Exception as exc:  # pragma: no cover (defensive)
         report["issues"].append(f"Exception during validation: {exc}")
     return report
@@ -426,18 +577,34 @@ def convert(in_path: str, out_path: str) -> None:
         data = load_npz(in_path)
         projections = data["projections"]
         thetas_deg = data.get("thetas_deg")
+        image_key = data.get("image_key")
         grid = data.get("grid")
         detector = data.get("detector")
+        geometry_type = data.get("geometry_type", "parallel")
+        geometry_meta = data.get("geometry_meta")
         volume = data.get("volume")
         align_params = data.get("align_params")
+        angle_offset_deg = data.get("angle_offset_deg")
+        misalign_spec = data.get("misalign_spec")
+        frame = data.get("frame")
         save_nxtomo(
             out_path,
             projections,
             thetas_deg=thetas_deg,
+            image_key=image_key,
             grid=grid,
             detector=detector,
+            geometry_type=geometry_type,
+            geometry_meta=geometry_meta,
             volume=volume,
             align_params=align_params,
+            angle_offset_deg=angle_offset_deg,
+            misalign_spec=misalign_spec,
+            frame=frame,
+            sample_name=data.get("sample_name"),
+            source_name=data.get("source_name"),
+            source_type=data.get("source_type"),
+            source_probe=data.get("source_probe"),
         )
     elif in_path.endswith((".nxs", ".h5", ".hdf5")) and out_path.endswith(".npz"):
         data = load_nxtomo(in_path)

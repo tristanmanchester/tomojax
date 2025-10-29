@@ -27,6 +27,7 @@ def _transfer_guard_ctx(mode: str | None = None):
             return tg(mode)
         try:
             from jax.experimental import transfer_guard as _tg  # type: ignore
+
             return _tg(mode)
         except Exception:
             return _nullcontext()
@@ -119,7 +120,9 @@ def _window_indices_for_domain(
     return 0, n_views - 1
 
 
-def _apply_linear(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
+def _apply_linear(
+    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
+) -> None:
     """Apply a linear ramp inside a window to the given schedule array (in-place)."""
     n = schedule.shape[0]
     si, ei = _window_indices_for_domain(thetas_deg, n, params)
@@ -144,7 +147,9 @@ def _apply_linear(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[st
     schedule[si : ei + 1] += vals
 
 
-def _apply_sin_window(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
+def _apply_sin_window(
+    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
+) -> None:
     """Apply a single-lobe sine window (0->amp->0) within a window."""
     n = schedule.shape[0]
     si, ei = _window_indices_for_domain(thetas_deg, n, params)
@@ -157,7 +162,9 @@ def _apply_sin_window(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dic
     schedule[si : ei + 1] += vals
 
 
-def _apply_step(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
+def _apply_step(
+    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
+) -> None:
     """Apply a step at angle or index.
 
     Params:
@@ -173,7 +180,9 @@ def _apply_step(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str,
         at = max(0, min(n - 1, at))
     else:
         th = np.asarray(thetas_deg)
-        at_deg = float(_parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0])
+        at_deg = float(
+            _parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0]
+        )
         at = int(np.argmin(np.abs(th - at_deg)))
     if at >= n:
         return
@@ -182,7 +191,7 @@ def _apply_step(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str,
         if "width_index" in params:
             end = min(n - 1, at + int(params["width_index"]))
         elif "until_index" in params:
-            end = max(at, min(n - 1, int(params["until_index"])) )
+            end = max(at, min(n - 1, int(params["until_index"])))
         else:
             end = n - 1
     else:
@@ -209,7 +218,9 @@ def _apply_step(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str,
     schedule[at : end + 1] += delta
 
 
-def _apply_box(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
+def _apply_box(
+    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
+) -> None:
     """Apply a box pulse: step up by delta at 'at', then down after a width."""
     # Step up
     _apply_step(schedule, thetas_deg, params)
@@ -218,7 +229,10 @@ def _apply_box(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, 
     end_params = dict(params)
     if "width_index" in params or "until_index" in params:
         if "width_index" in params:
-            end_params["at_index"] = str(int(params.get("at_index", params.get("at", 0))) + int(params["width_index"]))
+            end_params["at_index"] = str(
+                int(params.get("at_index", params.get("at", 0)))
+                + int(params["width_index"])
+            )
         # if until_index is present, we step down at that index
         if "until_index" in params:
             end_params["at_index"] = params["until_index"]
@@ -226,8 +240,12 @@ def _apply_box(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, 
         # angle domain width
         if "width_deg" in params:
             # at + width
-            at_deg = float(_parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0])
-            end_params["at"] = str(at_deg + float(_parse_number_with_unit(params["width_deg"])[0]))
+            at_deg = float(
+                _parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0]
+            )
+            end_params["at"] = str(
+                at_deg + float(_parse_number_with_unit(params["width_deg"])[0])
+            )
         elif "until_deg" in params:
             end_params["at"] = params["until_deg"]
     # invert the step
@@ -246,7 +264,10 @@ def _build_schedules(
     perts: list[tuple[str, str, dict[str, str]]],
 ) -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, str]]]]:
     """Construct per-DOF schedules and return also a normalized spec for metadata."""
-    schedules: dict[str, np.ndarray] = {k: np.zeros((n_views,), np.float32) for k in ("angle", "alpha", "beta", "phi", "dx", "dz")}
+    schedules: dict[str, np.ndarray] = {
+        k: np.zeros((n_views,), np.float32)
+        for k in ("angle", "alpha", "beta", "phi", "dx", "dz")
+    }
     norm_spec: dict[str, list[dict[str, str]]] = {}
     for dof, shape, params in perts:
         if dof not in schedules:
@@ -268,13 +289,16 @@ def _build_schedules(
 
 def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
     import json
+
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     out: list[tuple[str, str, dict[str, str]]] = []
     # Two accepted layouts:
     # 1) { "dx": [{"kind":"step", ...}], "angle": [{...}], ... }
     # 2) { "schedules": [{"dof":"dx","kind":"step",...}, ...] }
-    if isinstance(data, dict) and any(k in data for k in ("angle", "alpha", "beta", "phi", "dx", "dz")):
+    if isinstance(data, dict) and any(
+        k in data for k in ("angle", "alpha", "beta", "phi", "dx", "dz")
+    ):
         for dof, lst in data.items():
             if dof not in ("angle", "alpha", "beta", "phi", "dx", "dz"):
                 continue
@@ -283,11 +307,15 @@ def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
             for item in lst:
                 if not isinstance(item, dict) or "kind" not in item:
                     raise ValueError(f"Spec items for {dof} must be dicts with 'kind'")
-                    
+
                 kind = str(item["kind"]).lower()
                 params = {k: str(v) for k, v in item.items() if k != "kind"}
                 out.append((dof, kind, params))
-    elif isinstance(data, dict) and "schedules" in data and isinstance(data["schedules"], list):
+    elif (
+        isinstance(data, dict)
+        and "schedules" in data
+        and isinstance(data["schedules"], list)
+    ):
         for it in data["schedules"]:
             if not isinstance(it, dict) or "dof" not in it or "kind" not in it:
                 raise ValueError("Each schedule must have 'dof' and 'kind'")
@@ -309,18 +337,57 @@ def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Create a misaligned (and optionally noisy) dataset from a ground-truth NXtomo file.")
-    p.add_argument("--data", required=True, help="Input .nxs containing ground-truth volume and geometry")
+    p = argparse.ArgumentParser(
+        description="Create a misaligned (and optionally noisy) dataset from a ground-truth NXtomo file."
+    )
+    p.add_argument(
+        "--data",
+        required=True,
+        help="Input .nxs containing ground-truth volume and geometry",
+    )
     p.add_argument("--out", required=True, help="Output .nxs path")
-    p.add_argument("--rot-deg", type=float, default=1.0, help="Max abs rotation per-axis (alpha,beta,phi) in degrees (used for --with-random)")
-    p.add_argument("--trans-px", type=float, default=10.0, help="Max abs translation in detector pixels (dx,dz) (used for --with-random)")
+    p.add_argument(
+        "--rot-deg",
+        type=float,
+        default=1.0,
+        help="Max abs rotation per-axis (alpha,beta,phi) in degrees (used for --with-random)",
+    )
+    p.add_argument(
+        "--trans-px",
+        type=float,
+        default=10.0,
+        help="Max abs translation in detector pixels (dx,dz) (used for --with-random)",
+    )
     # New deterministic perturbation modes
-    p.add_argument("--pert", action="append", default=[], help="Additive schedule spec: dof:shape[:k=v[,k=v...]]; dof in {angle,alpha,beta,phi,dx,dz}")
-    p.add_argument("--spec", type=str, default=None, help="JSON file with schedules; see docs/misalign_modes.md")
-    p.add_argument("--with-random", action="store_true", help="Combine random misalignment on top of deterministic schedules")
+    p.add_argument(
+        "--pert",
+        action="append",
+        default=[],
+        help="Additive schedule spec: dof:shape[:k=v[,k=v...]]; dof in {angle,alpha,beta,phi,dx,dz}",
+    )
+    p.add_argument(
+        "--spec",
+        type=str,
+        default=None,
+        help="JSON file with schedules; see docs/misalign_modes.md",
+    )
+    p.add_argument(
+        "--with-random",
+        action="store_true",
+        help="Combine random misalignment on top of deterministic schedules",
+    )
     p.add_argument("--seed", type=int, default=0, help="RNG seed for misalignment")
-    p.add_argument("--poisson", type=float, default=0.0, help="Photons per pixel for Poisson noise (0 disables)")
-    p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--poisson",
+        type=float,
+        default=0.0,
+        help="Photons per pixel for Poisson noise (0 disables)",
+    )
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show progress bars if tqdm is available",
+    )
     p.add_argument(
         "--transfer-guard",
         choices=["off", "log", "disallow"],
@@ -329,28 +396,43 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    setup_logging(); log_jax_env()
+    setup_logging()
+    log_jax_env()
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     meta = load_nxtomo(args.data)
-    grid_d = meta.get("grid"); det_d = meta.get("detector")
+    grid_d = meta.get("grid")
+    det_d = meta.get("detector")
     # Grid: infer from volume if not provided
     if grid_d is None:
         if "volume" in meta:
             nx, ny, nz = map(int, meta["volume"].shape)
             grid_d = {"nx": nx, "ny": ny, "nz": nz, "vx": 1.0, "vy": 1.0, "vz": 1.0}
         else:
-            raise ValueError("Missing grid metadata and no ground-truth volume to infer from.")
+            raise ValueError(
+                "Missing grid metadata and no ground-truth volume to infer from."
+            )
     if det_d is None:
         # Fallback: infer from projections shape
         n_views, nv, nu = meta["projections"].shape
-        det_d = {"nu": int(nu), "nv": int(nv), "du": 1.0, "dv": 1.0, "det_center": (0.0, 0.0)}
+        det_d = {
+            "nu": int(nu),
+            "nv": int(nv),
+            "du": 1.0,
+            "dv": 1.0,
+            "det_center": (0.0, 0.0),
+        }
     if "volume" not in meta:
-        raise ValueError("Input file does not contain a ground-truth volume under /entry/processing/tomojax/volume.")
+        raise ValueError(
+            "Input file does not contain a ground-truth volume under /entry/processing/tomojax/volume."
+        )
 
-    grid = Grid(**{k: grid_d[k] for k in ("nx","ny","nz","vx","vy","vz")})
-    det = Detector(**{k: det_d[k] for k in ("nu","nv","du","dv")}, det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
+    det = Detector(
+        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     thetas = meta.get("thetas_deg")
     geom_type = meta.get("geometry_type", "parallel")
     if geom_type == "parallel":
@@ -358,7 +440,13 @@ def main() -> None:
     else:
         tilt_deg = float(meta.get("tilt_deg", 30.0))
         tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
+        geom = LaminographyGeometry(
+            grid=grid,
+            detector=det,
+            thetas_deg=thetas,
+            tilt_deg=tilt_deg,
+            tilt_about=tilt_about,
+        )
 
     vol = jnp.asarray(meta["volume"], jnp.float32)
     n_views = int(len(thetas))
@@ -377,7 +465,9 @@ def main() -> None:
 
     misalign_spec_dict = None
     if pert_specs:
-        schedules, norm_spec = _build_schedules(jnp.asarray(thetas, jnp.float32), n_views, pert_specs)
+        schedules, norm_spec = _build_schedules(
+            jnp.asarray(thetas, jnp.float32), n_views, pert_specs
+        )
         misalign_spec_dict = norm_spec
         # Apply angle offset
         angle_offset = schedules.get("angle", angle_offset).astype(np.float32)
@@ -398,11 +488,21 @@ def main() -> None:
     if (not pert_specs) or args.with_random:
         rng = np.random.default_rng(args.seed)
         rot_scale = np.float32(np.deg2rad(float(args.rot_deg)))
-        params5_np[:, 0] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # alpha
-        params5_np[:, 1] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # beta
-        params5_np[:, 2] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # phi
-        params5_np[:, 3] += rng.uniform(-float(args.trans_px), float(args.trans_px), n_views).astype(np.float32) * float(det.du)
-        params5_np[:, 4] += rng.uniform(-float(args.trans_px), float(args.trans_px), n_views).astype(np.float32) * float(det.dv)
+        params5_np[:, 0] += rng.uniform(-rot_scale, rot_scale, n_views).astype(
+            np.float32
+        )  # alpha
+        params5_np[:, 1] += rng.uniform(-rot_scale, rot_scale, n_views).astype(
+            np.float32
+        )  # beta
+        params5_np[:, 2] += rng.uniform(-rot_scale, rot_scale, n_views).astype(
+            np.float32
+        )  # phi
+        params5_np[:, 3] += rng.uniform(
+            -float(args.trans_px), float(args.trans_px), n_views
+        ).astype(np.float32) * float(det.du)
+        params5_np[:, 4] += rng.uniform(
+            -float(args.trans_px), float(args.trans_px), n_views
+        ).astype(np.float32) * float(det.dv)
 
     # Rebuild T_nom with possibly modified thetas
     if geom_type == "parallel":
@@ -410,30 +510,48 @@ def main() -> None:
     else:
         tilt_deg = float(meta.get("tilt_deg", 30.0))
         tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=thetas_used, tilt_deg=tilt_deg, tilt_about=tilt_about)
+        geom = LaminographyGeometry(
+            grid=grid,
+            detector=det,
+            thetas_deg=thetas_used,
+            tilt_deg=tilt_deg,
+            tilt_about=tilt_about,
+        )
 
     # Recompute nominal poses with final geometry (possibly modified angles)
-    T_nom = jnp.stack([jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(n_views)], axis=0)
+    T_nom = jnp.stack(
+        [jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(n_views)],
+        axis=0,
+    )
     params5 = jnp.asarray(params5_np, jnp.float32)
 
     with _transfer_guard_ctx(args.transfer_guard):
         T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
         from ..core.projector import get_detector_grid_device
+
         det_grid = get_detector_grid_device(det)
-        vm_project = jax.vmap(lambda T, v: forward_project_view_T(T, grid, det, v, use_checkpoint=True, det_grid=det_grid), in_axes=(0, None))
+        vm_project = jax.vmap(
+            lambda T, v: forward_project_view_T(
+                T, grid, det, v, use_checkpoint=True, det_grid=det_grid
+            ),
+            in_axes=(0, None),
+        )
         proj = vm_project(T_aug, vol).astype(jnp.float32)
 
     # Optional noise
     if args.poisson and float(args.poisson) > 0:
         s = float(args.poisson)
         lam = np.clip(np.asarray(proj), 0.0, None) * s
-        noisy = np.random.default_rng(args.seed + 1).poisson(lam=lam).astype(np.float32) / max(1e-6, s)
+        noisy = np.random.default_rng(args.seed + 1).poisson(lam=lam).astype(
+            np.float32
+        ) / max(1e-6, s)
         proj = jnp.asarray(noisy, jnp.float32)
 
     save_nxtomo(
         args.out,
         projections=np.asarray(proj),
         thetas_deg=np.asarray(thetas_used),
+        image_key=meta.get("image_key"),
         grid=grid.to_dict(),
         detector=det.to_dict(),
         geometry_type=geom_type,
@@ -443,6 +561,10 @@ def main() -> None:
         angle_offset_deg=np.asarray(angle_offset) if pert_specs else None,
         misalign_spec=misalign_spec_dict,
         frame=str(meta.get("frame", "sample")),
+        sample_name=meta.get("sample_name"),
+        source_name=meta.get("source_name"),
+        source_type=meta.get("source_type"),
+        source_probe=meta.get("source_probe"),
     )
     logging.info("Wrote dataset: %s", args.out)
 
