@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal, Tuple
+from typing import Callable, Tuple
 
 import numpy as np
 import jax
@@ -19,9 +19,35 @@ def _grad3(u: jnp.ndarray):
     return dx, dy, dz
 
 def _div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
-    dx = px - jnp.pad(px[:-1, :, :], ((1, 0), (0, 0), (0, 0)))
-    dy = py - jnp.pad(py[:, :-1, :], ((0, 0), (1, 0), (0, 0)))
-    dz = pz - jnp.pad(pz[:, :, :-1], ((0, 0), (0, 0), (1, 0)))
+    if px.shape[0] == 1:
+        dx = jnp.zeros_like(px)
+    else:
+        first_x = px[0:1, :, :]
+        if px.shape[0] > 2:
+            mid_x = px[1:-1, :, :] - px[0:-2, :, :]
+            dx = jnp.concatenate([first_x, mid_x, -px[-2:-1, :, :]], axis=0)
+        else:
+            dx = jnp.concatenate([first_x, -px[-2:-1, :, :]], axis=0)
+
+    if py.shape[1] == 1:
+        dy = jnp.zeros_like(py)
+    else:
+        first_y = py[:, 0:1, :]
+        if py.shape[1] > 2:
+            mid_y = py[:, 1:-1, :] - py[:, 0:-2, :]
+            dy = jnp.concatenate([first_y, mid_y, -py[:, -2:-1, :]], axis=1)
+        else:
+            dy = jnp.concatenate([first_y, -py[:, -2:-1, :]], axis=1)
+
+    if pz.shape[2] == 1:
+        dz = jnp.zeros_like(pz)
+    else:
+        first_z = pz[:, :, 0:1]
+        if pz.shape[2] > 2:
+            mid_z = pz[:, :, 1:-1] - pz[:, :, 0:-2]
+            dz = jnp.concatenate([first_z, mid_z, -pz[:, :, -2:-1]], axis=2)
+        else:
+            dz = jnp.concatenate([first_z, -pz[:, :, -2:-1]], axis=2)
     return dx + dy + dz
 
 
@@ -185,6 +211,7 @@ def spdhg_tv(
     # Step sizes and optional operator norm estimate
     L_grad = float(np.sqrt(12.0))  # 3D forward/backward diffs (safe upper bound)
     L_A: float | None = None
+    b = int(max(1, min(config.views_per_batch, n_views)))
     if config.tau is None or config.sigma_data is None or config.sigma_tv is None:
         L_A2 = _estimate_norm_A2(
             geometry, grid, detector, y_meas.shape, T_all,
@@ -196,7 +223,9 @@ def spdhg_tv(
         L_A = float(np.sqrt(L_A2))
         rho = 0.99
         tau = rho / (L_A + L_grad)
-        sigma_data = rho / max(L_A, 1e-6)
+        n_views_safe = max(n_views, 1)
+        p_ref = float(b) / float(n_views_safe)
+        sigma_data = rho * p_ref / max(L_A, 1e-6)
         sigma_tv = rho / L_grad
     else:
         tau = float(config.tau)
@@ -204,7 +233,6 @@ def spdhg_tv(
         sigma_tv = float(config.sigma_tv)
 
     # stochastic block schedule = random permutation of contiguous blocks per epoch
-    b = int(max(1, min(config.views_per_batch, n_views)))
     m = (n_views + b - 1) // b
     rng = np.random.default_rng(config.seed)
     epochs = (config.iters + m - 1) // m

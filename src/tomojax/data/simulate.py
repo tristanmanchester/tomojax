@@ -8,9 +8,21 @@ import jax.numpy as jnp
 import jax
 
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
-from ..core.projector import forward_project_view, forward_project_view_T, get_detector_grid_device
+from ..core.projector import (
+    forward_project_view,
+    forward_project_view_T,
+    get_detector_grid_device,
+)
 from ..utils.logging import progress_iter
-from .phantoms import cube, rotated_centered_cube, sphere, blobs, shepp_logan_3d, random_cubes_spheres, lamino_disk
+from .phantoms import (
+    cube,
+    rotated_centered_cube,
+    sphere,
+    blobs,
+    shepp_logan_3d,
+    random_cubes_spheres,
+    lamino_disk,
+)
 from .io_hdf5 import save_nxtomo
 from ..utils.memory import default_gather_dtype
 import os
@@ -35,7 +47,9 @@ class SimConfig:
     tilt_about: str = "x"
     phantom: str = "shepp"
     # single-object phantom parameters (for cube/sphere)
-    single_size: float = 0.5  # relative size (cube side or sphere diameter as fraction of min dim)
+    single_size: float = (
+        0.5  # relative size (cube side or sphere diameter as fraction of min dim)
+    )
     single_value: float = 1.0
     single_rotate: bool = True  # rotate cube randomly (ignored for sphere)
     # random_shapes parameters
@@ -58,27 +72,51 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
     elif cfg.phantom == "cube":
         if cfg.single_rotate:
             vol = rotated_centered_cube(
-                cfg.nx, cfg.ny, cfg.nz,
-                size=float(cfg.single_size), value=float(cfg.single_value), seed=int(cfg.seed),
+                cfg.nx,
+                cfg.ny,
+                cfg.nz,
+                size=float(cfg.single_size),
+                value=float(cfg.single_value),
+                seed=int(cfg.seed),
             )
         else:
-            vol = cube(cfg.nx, cfg.ny, cfg.nz, size=float(cfg.single_size), value=float(cfg.single_value))
+            vol = cube(
+                cfg.nx,
+                cfg.ny,
+                cfg.nz,
+                size=float(cfg.single_size),
+                value=float(cfg.single_value),
+            )
     elif cfg.phantom == "sphere":
-        vol = sphere(cfg.nx, cfg.ny, cfg.nz, size=float(cfg.single_size), value=float(cfg.single_value))
+        vol = sphere(
+            cfg.nx,
+            cfg.ny,
+            cfg.nz,
+            size=float(cfg.single_size),
+            value=float(cfg.single_value),
+        )
     elif cfg.phantom == "blobs":
         vol = blobs(cfg.nx, cfg.ny, cfg.nz, seed=cfg.seed)
     elif cfg.phantom == "random_shapes":
         vol = random_cubes_spheres(
-            cfg.nx, cfg.ny, cfg.nz,
-            n_cubes=cfg.n_cubes, n_spheres=cfg.n_spheres,
-            min_size=cfg.min_size, max_size=cfg.max_size,
-            min_value=cfg.min_value, max_value=cfg.max_value,
+            cfg.nx,
+            cfg.ny,
+            cfg.nz,
+            n_cubes=cfg.n_cubes,
+            n_spheres=cfg.n_spheres,
+            min_size=cfg.min_size,
+            max_size=cfg.max_size,
+            min_value=cfg.min_value,
+            max_value=cfg.max_value,
             max_rot_degrees=cfg.max_rot_deg,
-            use_inscribed_fov=True, seed=cfg.seed,
+            use_inscribed_fov=True,
+            seed=cfg.seed,
         )
     elif cfg.phantom == "lamino_disk":
         vol = lamino_disk(
-            cfg.nx, cfg.ny, cfg.nz,
+            cfg.nx,
+            cfg.ny,
+            cfg.nz,
             thickness_ratio=cfg.lamino_thickness_ratio,
             seed=cfg.seed,
             n_cubes=cfg.n_cubes,
@@ -111,9 +149,16 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
         geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     elif cfg.geometry == "lamino":
         geom = LaminographyGeometry(
-            grid=grid, detector=det, thetas_deg=thetas, tilt_deg=cfg.tilt_deg, tilt_about=cfg.tilt_about
+            grid=grid,
+            detector=det,
+            thetas_deg=thetas,
+            tilt_deg=cfg.tilt_deg,
+            tilt_about=cfg.tilt_about,
         )
-        geometry_meta = {"tilt_deg": float(cfg.tilt_deg), "tilt_about": str(cfg.tilt_about)}
+        geometry_meta = {
+            "tilt_deg": float(cfg.tilt_deg),
+            "tilt_about": str(cfg.tilt_about),
+        }
     else:
         raise ValueError("geometry must be 'parallel' or 'lamino'")
 
@@ -123,11 +168,15 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
     gather = default_gather_dtype()
 
     # Fast path: build all poses and optionally vmapped/jitted projector
-    T_all = jnp.stack([jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(cfg.n_views)], axis=0)
+    T_all = jnp.stack(
+        [jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(cfg.n_views)],
+        axis=0,
+    )
     det_grid = get_detector_grid_device(det)
 
     use_fast = (cfg.n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
     if use_fast:
+
         @jax.jit
         def project_all(vol_in):
             f = lambda T: forward_project_view_T(
@@ -145,14 +194,18 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
     else:
         # Fallback path with per-view progress logging
         projs = []
-        for i in progress_iter(range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"):
+        for i in progress_iter(
+            range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"
+        ):
             p = forward_project_view(geom, grid, det, vol, view_index=i)
             projs.append(p)
         proj = jnp.stack(projs, axis=0)
 
     rng = np.random.default_rng(cfg.seed)
     if cfg.noise == "gaussian" and cfg.noise_level > 0:
-        proj = proj + jnp.asarray(rng.normal(scale=cfg.noise_level, size=proj.shape), dtype=proj.dtype)
+        proj = proj + jnp.asarray(
+            rng.normal(scale=cfg.noise_level, size=proj.shape), dtype=proj.dtype
+        )
     elif cfg.noise == "poisson" and cfg.noise_level > 0:
         s = cfg.noise_level
         lam = np.maximum(0.0, np.asarray(proj)) * s
@@ -177,11 +230,16 @@ def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
         out_path,
         projections=np.asarray(data["projections"]),
         thetas_deg=np.asarray(data["thetas_deg"]),
+        image_key=np.zeros((cfg.n_views,), dtype=np.int32),
         grid=data["grid"],
         detector=data["detector"],
         geometry_type=data["geometry_type"],
         geometry_meta=data.get("geometry_meta"),
         volume=np.asarray(data["volume"]),
         frame="sample",
+        sample_name=str(cfg.phantom),
+        source_name="TomoJAX simulator",
+        source_type="simulation",
+        source_probe="x-ray",
     )
     return out_path

@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
 
-from tomojax.data.io_hdf5 import save_nxtomo, load_nxtomo
+from tomojax.data.io_hdf5 import save_nxtomo, load_nxtomo, validate_nxtomo
 from tomojax.utils.axes import DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES
 
 
@@ -15,9 +15,9 @@ def _basic_projections():
 
 def test_save_volume_writes_zyx_and_attr(tmp_path):
     path = tmp_path / "sample_zyx.nxs"
-    volume_xyz = np.arange(np.prod([GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]]), dtype=np.float32).reshape(
-        GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]
-    )
+    volume_xyz = np.arange(
+        np.prod([GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]]), dtype=np.float32
+    ).reshape(GRID_META["nx"], GRID_META["ny"], GRID_META["nz"])
 
     save_nxtomo(
         path,
@@ -38,13 +38,20 @@ def test_save_volume_writes_zyx_and_attr(tmp_path):
         elif isinstance(attr, np.ndarray):
             attr = attr.astype(str)[()]
         assert attr == DISK_VOLUME_AXES
+        image_key = f["/entry/instrument/detector/image_key"][...]
+        assert image_key.shape == (5,)
+        assert np.all(image_key == 0)
+        sample_name = f["/entry/sample/name"][()]
+        if isinstance(sample_name, bytes):
+            sample_name = sample_name.decode("utf-8")
+        assert sample_name == "sample"
 
 
 def test_load_legacy_xyz_without_attr(tmp_path):
     path = tmp_path / "legacy_xyz.nxs"
-    volume_xyz = np.arange(np.prod([GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]]), dtype=np.float32).reshape(
-        GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]
-    )
+    volume_xyz = np.arange(
+        np.prod([GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]]), dtype=np.float32
+    ).reshape(GRID_META["nx"], GRID_META["ny"], GRID_META["nz"])
     save_nxtomo(
         path,
         projections=_basic_projections(),
@@ -68,7 +75,11 @@ def test_load_legacy_xyz_without_attr(tmp_path):
 
 def test_roundtrip_xyz_to_zyx_to_xyz(tmp_path):
     path = tmp_path / "roundtrip.nxs"
-    volume_xyz = np.random.default_rng(42).normal(size=(GRID_META["nx"], GRID_META["ny"], GRID_META["nz"])).astype(np.float32)
+    volume_xyz = (
+        np.random.default_rng(42)
+        .normal(size=(GRID_META["nx"], GRID_META["ny"], GRID_META["nz"]))
+        .astype(np.float32)
+    )
 
     save_nxtomo(
         path,
@@ -85,6 +96,9 @@ def test_roundtrip_xyz_to_zyx_to_xyz(tmp_path):
     assert meta["volume_axes_order"] == INTERNAL_VOLUME_AXES
     assert meta["disk_volume_axes_order"] == DISK_VOLUME_AXES
     assert meta["volume_axes_source"] == "attr"
+    assert meta["image_key"].shape == (5,)
+    assert np.all(meta["image_key"] == 0)
+    assert meta["sample_name"] == "sample"
 
 
 def test_no_change_for_projections_shape(tmp_path):
@@ -100,3 +114,20 @@ def test_no_change_for_projections_shape(tmp_path):
     )
     meta = load_nxtomo(path)
     assert meta["projections"].shape == projections.shape
+
+
+def test_validate_detects_missing_image_key(tmp_path):
+    path = tmp_path / "missing_image_key.nxs"
+    save_nxtomo(
+        path,
+        projections=_basic_projections(),
+        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
+        grid=GRID_META,
+        detector=DET_META,
+        geometry_type="parallel",
+    )
+    with h5py.File(path, "r+") as f:
+        del f["/entry/instrument/detector/image_key"]
+
+    report = validate_nxtomo(path)
+    assert any("image_key" in issue for issue in report["issues"])

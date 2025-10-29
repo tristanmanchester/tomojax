@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
 from ..core.projector import forward_project_view_T, get_detector_grid_device
- 
+
 
 
 def _grad3(u: jnp.ndarray):
@@ -19,9 +19,35 @@ def _grad3(u: jnp.ndarray):
 
 
 def _div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
-    dx = px - jnp.pad(px[:-1, :, :], ((1, 0), (0, 0), (0, 0)))
-    dy = py - jnp.pad(py[:, :-1, :], ((0, 0), (1, 0), (0, 0)))
-    dz = pz - jnp.pad(pz[:, :, :-1], ((0, 0), (0, 0), (1, 0)))
+    if px.shape[0] == 1:
+        dx = jnp.zeros_like(px)
+    else:
+        first_x = px[0:1, :, :]
+        if px.shape[0] > 2:
+            mid_x = px[1:-1, :, :] - px[0:-2, :, :]
+            dx = jnp.concatenate([first_x, mid_x, -px[-2:-1, :, :]], axis=0)
+        else:
+            dx = jnp.concatenate([first_x, -px[-2:-1, :, :]], axis=0)
+
+    if py.shape[1] == 1:
+        dy = jnp.zeros_like(py)
+    else:
+        first_y = py[:, 0:1, :]
+        if py.shape[1] > 2:
+            mid_y = py[:, 1:-1, :] - py[:, 0:-2, :]
+            dy = jnp.concatenate([first_y, mid_y, -py[:, -2:-1, :]], axis=1)
+        else:
+            dy = jnp.concatenate([first_y, -py[:, -2:-1, :]], axis=1)
+
+    if pz.shape[2] == 1:
+        dz = jnp.zeros_like(pz)
+    else:
+        first_z = pz[:, :, 0:1]
+        if pz.shape[2] > 2:
+            mid_z = pz[:, :, 1:-1] - pz[:, :, 0:-2]
+            dz = jnp.concatenate([first_z, mid_z, -pz[:, :, -2:-1]], axis=2)
+        else:
+            dz = jnp.concatenate([first_z, -pz[:, :, -2:-1]], axis=2)
     return dx + dy + dz
 
 

@@ -37,6 +37,7 @@ import h5py
 from pathlib import Path
 
 from tomojax.utils.axes import DISK_VOLUME_AXES, VOLUME_AXES_ATTR
+from tomojax.data.contrast import flat_dark_to_absorption
 
 
 def load_raw(input_path, proj_path, ang_path, key_path):
@@ -64,25 +65,16 @@ def flat_dark_correct_to_absorption(data, image_key, min_intensity=1e-6):
     if flats.size == 0:
         raise RuntimeError("No flat fields found (image_key==1). Cannot normalise.")
     if darks.size == 0:
-        # Allow missing darks by using zeros, but warn user
         print("WARNING: No dark fields found (image_key==2). Using zeros for dark correction.")
-        dark_avg = 0.0
-    else:
-        dark_avg = np.mean(darks.astype(np.float32), axis=0)
+        darks = np.zeros_like(flats[:1])
 
-    flat_avg = np.mean(flats.astype(np.float32), axis=0)
-
-    proj = proj.astype(np.float32)
-    # Normalise: (I - D) / (F - D)
-    denom = flat_avg - dark_avg
-    denom = np.maximum(denom, min_intensity)
-    norm = (proj - dark_avg) / denom
-
-    # Clip and convert to absorption contrast: -log(norm)
-    norm = np.clip(norm, min_intensity, None)
-    absorption = -np.log(norm, dtype=np.float32)
-
-    # Clean up any residual NaNs/Infs
+    absorption = flat_dark_to_absorption(
+        proj.astype(np.float32, copy=False),
+        flats.astype(np.float32, copy=False),
+        darks.astype(np.float32, copy=False),
+        min_intensity=float(min_intensity),
+    )
+    absorption = np.asarray(absorption, dtype=np.float32)
     absorption[~np.isfinite(absorption)] = 0.0
     return absorption
 
@@ -185,6 +177,11 @@ def write_nexus_h5(
     tilt_about="x",
     grid=(128, 128, 128),
     voxels=(1.0, 1.0, 1.0),
+    image_key=None,
+    sample_name="sample",
+    source_name="TomoJAX source",
+    source_type=None,
+    source_probe="x-ray",
 ):
     """
     projections: float32 [P, ny, nx] absorption
@@ -193,6 +190,12 @@ def write_nexus_h5(
     voxels: (vx, vy, vz) physical voxel sizes in same units as pixel_size_pixels_*
     """
     P, ny, nx = projections.shape
+    if image_key is None:
+        image_key_arr = np.zeros((P,), dtype=np.int32)
+    else:
+        image_key_arr = np.asarray(image_key, dtype=np.int32)
+        if image_key_arr.shape != (P,):
+            raise ValueError("image_key must have shape (n_views,)")
     nx_grid, ny_grid, nz_grid = grid
     vx, vy, vz = voxels
 
@@ -233,6 +236,7 @@ def write_nexus_h5(
             fletcher32=False,
         )
         dset.attrs["long_name"] = "projections"
+        det.create_dataset("image_key", data=image_key_arr.astype(np.int32))
 
         # Pixel sizes (kept as 'pixel' units per your example)
         xps = det.create_dataset("x_pixel_size", data=np.array([pixel_size_pixels_x], dtype=np.float32))
@@ -244,9 +248,19 @@ def write_nexus_h5(
             {"nu": int(nx), "nv": int(ny), "du": float(pixel_size_pixels_x), "dv": float(pixel_size_pixels_y), "det_center": [0.0, 0.0]}
         )
 
+        src = instr.create_group("SOURCE")
+        src.attrs["NX_class"] = "NXsource"
+        if source_name is not None:
+            src.create_dataset("name", data=np.array(str(source_name), dtype=h5py.string_dtype(encoding="utf-8")))
+        if source_type is not None:
+            src.create_dataset("type", data=np.array(str(source_type), dtype=h5py.string_dtype(encoding="utf-8")))
+        if source_probe is not None:
+            src.create_dataset("probe", data=np.array(str(source_probe), dtype=h5py.string_dtype(encoding="utf-8")))
+
         # /entry/sample/transformations
         sample = entry.create_group("sample")
         sample.attrs["NX_class"] = "NXsample"
+        sample.create_dataset("name", data=np.array(str(sample_name), dtype=h5py.string_dtype(encoding="utf-8")))
         trans = sample.create_group("transformations")
         trans.attrs["NX_class"] = "NXtransformations"
 
@@ -366,6 +380,8 @@ def main():
     else:
         vox = (float(args.pixel_size) * float(bx), float(args.pixel_size) * float(bx), float(args.pixel_size) * float(by))
 
+    proj_image_key = np.zeros((angles.shape[0],), dtype=np.int32)
+
     write_nexus_h5(
         output_path=args.output_path,
         projections=absorption,
@@ -376,6 +392,11 @@ def main():
         tilt_about=str(args.tilt_about),
         grid=grid,
         voxels=vox,
+        image_key=proj_image_key,
+        sample_name="sample",
+        source_name="TomoJAX pipeline",
+        source_type="experiment",
+        source_probe="x-ray",
     )
 
 

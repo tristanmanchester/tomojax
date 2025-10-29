@@ -23,16 +23,29 @@ from ..utils.fov import cylindrical_mask_xy
 
 
 def build_geometry(meta: dict):
-    grid_d = meta["grid"]; det_d = meta["detector"]; thetas = meta["thetas_deg"]; gtype = meta.get("geometry_type", "parallel")
-    grid = Grid(**{k: grid_d[k] for k in ("nx","ny","nz","vx","vy","vz")})
-    detector = Detector(**{k: det_d[k] for k in ("nu","nv","du","dv")}, det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid_d = meta["grid"]
+    det_d = meta["detector"]
+    thetas = meta["thetas_deg"]
+    gtype = meta.get("geometry_type", "parallel")
+    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
+    detector = Detector(
+        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     if gtype == "parallel":
         geom = ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
     else:
         tilt_deg = float(meta.get("tilt_deg", 30.0))
         tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=tilt_deg, tilt_about=tilt_about)
+        geom = LaminographyGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas,
+            tilt_deg=tilt_deg,
+            tilt_about=tilt_about,
+        )
     return grid, detector, geom
+
 
 def _transfer_guard_ctx(mode: str | None = None):
     # Allow overriding via env var: off|log|disallow
@@ -42,11 +55,13 @@ def _transfer_guard_ctx(mode: str | None = None):
         return _nullcontext()
     try:
         import jax as _jax  # local import for flexibility
+
         tg = getattr(_jax, "transfer_guard", None)
         if tg is not None:
             return tg(mode)
         try:
             from jax.experimental import transfer_guard as _tg  # type: ignore
+
             return _tg(mode)
         except Exception:
             return _nullcontext()
@@ -59,18 +74,67 @@ def main() -> None:
     p.add_argument("--data", required=True, help="Input .nxs")
     p.add_argument("--algo", choices=["fbp", "fista", "spdhg"], default="fbp")
     p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
-    p.add_argument("--iters", type=int, default=50, help="Iterations for iterative algos (FISTA/SPDHG)")
-    p.add_argument("--lambda-tv", type=float, default=0.005, help="TV regularization weight (FISTA/SPDHG)")
-    p.add_argument("--tv-prox-iters", type=int, default=10, help="Inner iterations for TV proximal operator (FISTA)")
-    p.add_argument("--L", type=float, default=None, help="Fixed Lipschitz constant for FISTA (skip power-method)")
+    p.add_argument(
+        "--iters",
+        type=int,
+        default=50,
+        help="Iterations for iterative algos (FISTA/SPDHG)",
+    )
+    p.add_argument(
+        "--lambda-tv",
+        type=float,
+        default=0.005,
+        help="TV regularization weight (FISTA/SPDHG)",
+    )
+    p.add_argument(
+        "--tv-prox-iters",
+        type=int,
+        default=10,
+        help="Inner iterations for TV proximal operator (FISTA)",
+    )
+    p.add_argument(
+        "--L",
+        type=float,
+        default=None,
+        help="Fixed Lipschitz constant for FISTA (skip power-method)",
+    )
     # SPDHG-specific knobs
-    p.add_argument("--views-per-batch", type=int, default=16, help="SPDHG: views per stochastic block")
-    p.add_argument("--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar")
-    p.add_argument("--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order")
-    p.add_argument("--spdhg-tau", type=float, default=None, help="SPDHG: override primal step size (auto if None)")
-    p.add_argument("--spdhg-sigma-data", type=float, default=None, help="SPDHG: override data dual step (auto if None)")
-    p.add_argument("--spdhg-sigma-tv", type=float, default=None, help="SPDHG: override TV dual step (auto if None)")
-    p.add_argument("--warm-start", choices=["none", "fbp"], default="none", help="Initialize iterative algo from this method (spdhg only): none|fbp")
+    p.add_argument(
+        "--views-per-batch",
+        type=int,
+        default=16,
+        help="SPDHG: views per stochastic block",
+    )
+    p.add_argument(
+        "--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar"
+    )
+    p.add_argument(
+        "--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order"
+    )
+    p.add_argument(
+        "--spdhg-tau",
+        type=float,
+        default=None,
+        help="SPDHG: override primal step size (auto if None)",
+    )
+    p.add_argument(
+        "--spdhg-sigma-data",
+        type=float,
+        default=None,
+        help="SPDHG: override data dual step (auto if None)",
+    )
+    p.add_argument(
+        "--spdhg-sigma-tv",
+        type=float,
+        default=None,
+        help="SPDHG: override TV dual step (auto if None)",
+    )
+    p.add_argument(
+        "--warm-start",
+        choices=["none", "fbp"],
+        default="none",
+        help="Initialize iterative algo from this method (spdhg only): none|fbp",
+    )
     p.add_argument(
         "--gather-dtype",
         choices=["auto", "fp32", "bf16", "fp16"],
@@ -78,16 +142,29 @@ def main() -> None:
         help="Projector gather dtype (auto: bf16 on GPU/TPU, else fp32; accumulation stays fp32)",
     )
     ck = p.add_mutually_exclusive_group()
-    ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true", help="Enable projector checkpointing")
-    ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false", help="Disable projector checkpointing")
+    ck.add_argument(
+        "--checkpoint-projector",
+        dest="checkpoint_projector",
+        action="store_true",
+        help="Enable projector checkpointing",
+    )
+    ck.add_argument(
+        "--no-checkpoint-projector",
+        dest="checkpoint_projector",
+        action="store_false",
+        help="Disable projector checkpointing",
+    )
     p.set_defaults(checkpoint_projector=True)
-    p.add_argument("--out", required=True, help="Output .nxs containing recon (and copying projections)")
+    p.add_argument(
+        "--out",
+        required=True,
+        help="Output .nxs containing recon (and copying projections)",
+    )
     p.add_argument(
         "--roi",
         choices=["off", "auto", "cube", "bbox"],
         default="auto",
         help=(
-
             "Optional ROI cropping based on detector FOV (default: auto). "
             "auto: square x–y slices + z from detector height if detector < grid; "
             "cube: force cubic ROI (nx=ny=nz) inside FOV; "
@@ -95,8 +172,12 @@ def main() -> None:
         ),
     )
     p.add_argument(
-        "--grid", type=int, nargs=3, metavar=("NX","NY","NZ"), default=None,
-        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata."
+        "--grid",
+        type=int,
+        nargs=3,
+        metavar=("NX", "NY", "NZ"),
+        default=None,
+        help="Override reconstruction grid size (nx ny nz). Voxel sizes stay as in input metadata.",
     )
     p.add_argument(
         "--frame",
@@ -110,7 +191,11 @@ def main() -> None:
         default=DISK_VOLUME_AXES,
         help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
     )
-    p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show progress bars if tqdm is available",
+    )
     p.add_argument(
         "--transfer-guard",
         choices=["off", "log", "disallow"],
@@ -128,7 +213,8 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    setup_logging(); log_jax_env()
+    setup_logging()
+    log_jax_env()
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
@@ -140,6 +226,7 @@ def main() -> None:
     vpb_val: int | None = 1
 
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
+
     _gather = str(args.gather_dtype)
     if _gather == "auto":
         _gather = _default_gather_dtype()
@@ -153,12 +240,15 @@ def main() -> None:
             # Only crop when detector FOV is smaller than current grid (auto)
             full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
             full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-            det_smaller = (info.r_u + 1e-6) < full_half_x or (info.r_v + 1e-6) < full_half_z
+            det_smaller = (info.r_u + 1e-6) < full_half_x or (
+                info.r_v + 1e-6
+            ) < full_half_z
             if roi_mode == "auto" and det_smaller:
                 recon_grid = grid_from_detector_fov_slices(grid, detector)
             elif roi_mode == "cube":
                 # Same as align default policy for cubic volumes
                 from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
+
                 recon_grid = _grid_cube(grid, detector)
             elif roi_mode == "bbox":
                 recon_grid = grid_from_detector_fov(grid, detector)
@@ -173,11 +263,19 @@ def main() -> None:
 
     if recon_grid is not grid:
         if meta.get("geometry_type", "parallel") == "parallel":
-            geom = ParallelGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]) 
+            geom = ParallelGeometry(
+                grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]
+            )
         else:
             tilt_deg = float(meta.get("tilt_deg", 30.0))
             tilt_about = str(meta.get("tilt_about", "x"))
-            geom = LaminographyGeometry(grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"], tilt_deg=tilt_deg, tilt_about=tilt_about)
+            geom = LaminographyGeometry(
+                grid=recon_grid,
+                detector=detector,
+                thetas_deg=meta["thetas_deg"],
+                tilt_deg=tilt_deg,
+                tilt_about=tilt_about,
+            )
 
     # Prepare optional volume mask
     vol_mask = None
@@ -231,8 +329,14 @@ def main() -> None:
             views_per_batch=int(max(1, args.views_per_batch)),
             seed=int(args.spdhg_seed),
             tau=(float(args.spdhg_tau) if args.spdhg_tau is not None else None),
-            sigma_data=(float(args.spdhg_sigma_data) if args.spdhg_sigma_data is not None else None),
-            sigma_tv=(float(args.spdhg_sigma_tv) if args.spdhg_sigma_tv is not None else None),
+            sigma_data=(
+                float(args.spdhg_sigma_data)
+                if args.spdhg_sigma_data is not None
+                else None
+            ),
+            sigma_tv=(
+                float(args.spdhg_sigma_tv) if args.spdhg_sigma_tv is not None else None
+            ),
             projector_unroll=1,
             checkpoint_projector=bool(args.checkpoint_projector),
             gather_dtype=_gather,
@@ -277,12 +381,19 @@ def main() -> None:
         args.out,
         projections=meta["projections"],
         thetas_deg=np.asarray(meta["thetas_deg"]),
+        image_key=meta.get("image_key"),
         grid=recon_grid.to_dict(),
         detector=meta.get("detector"),
         geometry_type=meta.get("geometry_type", "parallel"),
         geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(vol),
+        angle_offset_deg=meta.get("angle_offset_deg"),
+        misalign_spec=meta.get("misalign_spec"),
         frame=str(args.frame),
+        sample_name=meta.get("sample_name"),
+        source_name=meta.get("source_name"),
+        source_type=meta.get("source_type"),
+        source_probe=meta.get("source_probe"),
         volume_axes_order=str(args.volume_axes),
     )
     logging.info("Saved reconstruction to %s", args.out)
