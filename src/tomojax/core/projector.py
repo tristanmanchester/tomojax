@@ -190,7 +190,13 @@ def forward_project_view_T(
     tinv = -(Rinv @ t)
     ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
 
-    base = Rinv @ jnp.stack([Xr, jnp.zeros_like(Xr), Zr], axis=0) + tinv[:, None]
+    xr = Xr[jnp.newaxis, :]
+    zr = Zr[jnp.newaxis, :]
+    base = (
+        Rinv[:, 0:1] * xr
+        + Rinv[:, 2:3] * zr
+        + tinv[:, None]
+    )
     y0 = vol_origin[1]
     q0 = base + y0 * ey_obj[:, None]
     dq = (step_size * ey_obj)[:, None]
