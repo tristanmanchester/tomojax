@@ -1,3 +1,4 @@
+import h5py
 import numpy as np
 
 from tomojax.core.geometry.base import Detector, Grid
@@ -51,6 +52,15 @@ def test_grid_from_detector_fov_cube_does_not_keep_cubic_grid_when_y_exceeds_fov
     assert (roi.nx, roi.ny, roi.nz) == (2, 2, 2)
 
 
+def test_grid_from_detector_fov_cube_never_grows_beyond_input_y_extent():
+    grid = Grid(nx=100, ny=10, nz=100, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1000, nv=1000, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+
+    roi = grid_from_detector_fov_cube(grid, detector)
+
+    assert (roi.nx, roi.ny, roi.nz) == (10, 10, 10)
+
+
 def test_load_npz_unwraps_dict_metadata_and_convert_roundtrips_to_nxs(tmp_path):
     npz_path = tmp_path / "sample.npz"
     nxs_path = tmp_path / "sample.nxs"
@@ -85,3 +95,32 @@ def test_load_npz_unwraps_dict_metadata_and_convert_roundtrips_to_nxs(tmp_path):
     assert meta["detector"] == detector
     assert meta["geometry_meta"] == geometry_meta
     assert meta["misalign_spec"] == misalign_spec
+
+
+def test_load_nxtomo_preserves_legacy_xyz_without_attr_or_grid(tmp_path):
+    nxs_path = tmp_path / "legacy_no_attr_no_grid.nxs"
+
+    projections = np.zeros((2, 3, 4), dtype=np.float32)
+    volume_xyz = np.arange(4 * 3 * 2, dtype=np.float32).reshape(4, 3, 2)
+
+    from tomojax.data.io_hdf5 import save_nxtomo
+
+    save_nxtomo(
+        str(nxs_path),
+        projections,
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+        detector={"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]},
+        geometry_type="parallel",
+        volume=volume_xyz,
+        volume_axes_order="xyz",
+    )
+
+    with h5py.File(nxs_path, "r+") as f:
+        del f["/entry/processing/tomojax"].attrs["volume_axes_order"]
+
+    meta = load_nxtomo(str(nxs_path))
+
+    assert meta["volume_axes_order"] == "xyz"
+    assert meta["disk_volume_axes_order"] == "xyz_legacy"
+    assert meta["volume_axes_source"] == "heuristic"
+    np.testing.assert_allclose(meta["volume"], volume_xyz)

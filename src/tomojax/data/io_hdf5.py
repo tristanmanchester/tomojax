@@ -449,6 +449,10 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
                     )
             disk_axes = attr_norm or infer_disk_axes(volume_raw.shape, grid_hint)
             source = "attr" if attr_norm else "heuristic"
+            if disk_axes is None and source == "heuristic":
+                # Preserve legacy behavior for old files that omitted both the
+                # explicit volume axis attribute and grid metadata.
+                disk_axes = INTERNAL_VOLUME_AXES
             volume_np = np.asarray(volume_raw)
             disk_order: str
             if disk_axes == DISK_VOLUME_AXES:
