@@ -199,7 +199,7 @@ def random_cubes_spheres(
     for _ in range(max(0, int(n_cubes))):
         size = float(rng.uniform(min_size, max_size))
         if use_inscribed_fov:
-            max_xy_extent = size * np.sqrt(2) / 2.0
+            max_xy_extent = size * np.sqrt(3) / 2.0
             rmax = fov_r - max_xy_extent
             if rmax <= 1:
                 continue

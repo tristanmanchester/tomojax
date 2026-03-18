@@ -110,14 +110,7 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: Optional[object]) -> Optiona
         return INTERNAL_VOLUME_AXES
     if is_shape_zyx(vol_shape, grid):
         return DISK_VOLUME_AXES
-    # If grid unknown and shape is non-cubic, try to guess by assuming nz == grid.nz
-    if grid is None:
-        a, b, c = (int(s) for s in vol_shape)
-        if a != c:
-            # Heuristic: treat longest edge as x (common for laminography volumes)
-            if a > c:
-                return INTERNAL_VOLUME_AXES
-            return DISK_VOLUME_AXES
+    # Without grid metadata, inferring axis order from shape alone is unreliable.
     return None
 
 
