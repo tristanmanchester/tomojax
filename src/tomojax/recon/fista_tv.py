@@ -19,6 +19,7 @@ def _grad3(u: jnp.ndarray):
 
 
 def _div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
+    """Discrete divergence matching the TV updates: ``_div3 = -_grad3*``."""
     if px.shape[0] == 1:
         dx = jnp.zeros_like(px)
     else:
@@ -186,6 +187,107 @@ def grad_data_term(
     else:
         val, grad = jax.value_and_grad(batched_loss)(x)
         return grad, val
+
+
+def data_term_value(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    x: jnp.ndarray,
+    *,
+    views_per_batch: int | None = None,
+    projector_unroll: int = 1,
+    checkpoint_projector: bool = True,
+    gather_dtype: str = "fp32",
+    grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    T_all: jnp.ndarray | None = None,
+    vol_mask: Optional[jnp.ndarray] = None,
+) -> jnp.ndarray:
+    """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
+    n_views = int(projections.shape[0])
+    nv = int(projections.shape[1])
+    nu = int(projections.shape[2])
+    if T_all is None:
+        T_all = jnp.stack(
+            [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
+            axis=0,
+        )
+
+    det_grid = get_detector_grid_device(detector)
+
+    def batched_loss(vol):
+        vm_project = jax.vmap(
+            lambda T, v: forward_project_view_T(
+                T,
+                grid,
+                detector,
+                v,
+                use_checkpoint=checkpoint_projector,
+                unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            ),
+            in_axes=(0, None),
+        )
+        n = int(T_all.shape[0])
+        b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
+        b = min(b, n)
+        m = (n + b - 1) // b
+
+        def body(loss_acc, i):
+            i = jnp.int32(i)
+            start = i * jnp.int32(b)
+            remaining = jnp.maximum(0, jnp.int32(n) - start)
+            valid = jnp.minimum(jnp.int32(b), remaining)
+            shift = jnp.int32(b) - valid
+            start_shifted = jnp.maximum(0, start - shift)
+            T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
+            y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
+            v_in = vol * vol_mask if vol_mask is not None else vol
+            pred = vm_project(T_chunk, v_in)
+            idx = jnp.arange(b)
+            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
+            resid = (pred - y_chunk).astype(jnp.float32) * mask
+            loss_batch = 0.5 * jnp.vdot(resid, resid).real
+            return (loss_acc + loss_batch, None)
+
+        loss0 = jnp.float32(0.0)
+        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
+        return loss_tot
+
+    def stream_loss(vol):
+        def one_view(loss_acc, i):
+            T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
+            y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
+
+            v_in = vol * vol_mask if vol_mask is not None else vol
+            pred_i = forward_project_view_T(
+                T_i,
+                grid,
+                detector,
+                v_in,
+                use_checkpoint=checkpoint_projector,
+                unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
+            resid_i = (pred_i - y_i).astype(jnp.float32)
+            loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
+            return loss_acc + loss_i, None
+
+        loss0 = jnp.float32(0.0)
+        loss_tot, _ = jax.lax.scan(one_view, loss0, jnp.arange(T_all.shape[0]))
+        return loss_tot
+
+    eff_b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else T_all.shape[0]
+    mode = grad_mode
+    if grad_mode == "auto":
+        mode = "stream" if eff_b <= 1 else "batched"
+
+    if mode == "stream":
+        return stream_loss(x)
+    return batched_loss(x)
 
 
 def power_method_L(
@@ -365,6 +467,24 @@ def fista_tv(
         )
         return v, g
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
+
+    def data_value_fn(x):
+        return data_term_value(
+            geometry,
+            grid,
+            detector,
+            projections,
+            x,
+            views_per_batch=views_per_batch,
+            projector_unroll=projector_unroll,
+            checkpoint_projector=checkpoint_projector,
+            gather_dtype=gather_dtype,
+            grad_mode=grad_mode,
+            T_all=T_all,
+            vol_mask=vol_mask,
+        )
+
+    data_value = jax.jit(data_value_fn, donate_argnums=(0,))
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
     use_early_stop = (
@@ -392,11 +512,12 @@ def fista_tv(
                 last_a,
                 iters_a,
             ) = state
-            data_loss_val, g = val_and_grad(z_a)
+            _, g = val_and_grad(z_a)
             y = z_a - (1.0 / L) * g
             x_new = tv_prox_jit(y, lambda_tv / L, iters=int(tv_prox_iters))
             t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
             z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
+            data_loss_val = data_value(x_new)
             gx, gy, gz = _grad3(x_new)
             tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))
             obj = data_loss_val + lambda_tv * tv_norm

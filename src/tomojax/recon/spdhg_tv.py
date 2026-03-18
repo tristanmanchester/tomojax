@@ -19,6 +19,7 @@ def _grad3(u: jnp.ndarray):
     return dx, dy, dz
 
 def _div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
+    """Discrete divergence matching the TV updates: ``_div3 = -_grad3*``."""
     if px.shape[0] == 1:
         dx = jnp.zeros_like(px)
     else:
@@ -163,11 +164,11 @@ def _proj_pos_support(x: jnp.ndarray, positivity: bool, support: jnp.ndarray | N
 
 def _prox_fstar_l2(u: jnp.ndarray, sigma: float, y_meas: jnp.ndarray, w: jnp.ndarray):
     """prox_{σ f*}(u) for f(z) = 1/2 ||W^{1/2}(z - y)||^2. Elementwise:
-       if w>0: (u - σ w y) / (1 + σ w); if w==0: 0  (domain of f*).
+       if w>0: (u - σ y) * w / (σ + w); if w==0: 0  (domain of f*).
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
-    denom = 1.0 + sigma * w
-    v = (u - sigma * w * y_meas) / jnp.maximum(denom, 1e-12)
+    denom = sigma + w
+    v = (u - sigma * y_meas) * w / jnp.maximum(denom, 1e-12)
     return jnp.where(w > 0, v, 0.0).astype(u.dtype)
 
 
