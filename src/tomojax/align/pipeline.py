@@ -554,26 +554,33 @@ def align(
             # Compute post-update loss and accept/reject with simple backtracking on step scale
             loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
             if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
-                if not loss_is_within_relative_tolerance(loss_before, loss_after, cfg.gn_accept_tol):
+                if loss_after >= loss_before:
+                    accepted = False
                     # Try scaled steps: 0.5, 0.25
                     try:
                         dp_cat = jnp.concatenate(dp_all, axis=0)
                         params_try = params5_prev + 0.5 * dp_cat
                         loss_try = float(align_loss_jit(params_try, x))
-                        if loss_is_within_relative_tolerance(loss_before, loss_try, cfg.gn_accept_tol):
+                        if loss_try < loss_before or loss_is_within_relative_tolerance(
+                            loss_before, loss_try, cfg.gn_accept_tol
+                        ):
                             params5 = params_try
                             loss_after = loss_try
+                            accepted = True
                         else:
                             params_try2 = params5_prev + 0.25 * dp_cat
                             loss_try2 = float(align_loss_jit(params_try2, x))
-                            if loss_is_within_relative_tolerance(loss_before, loss_try2, cfg.gn_accept_tol):
+                            if loss_try2 < loss_before or loss_is_within_relative_tolerance(
+                                loss_before, loss_try2, cfg.gn_accept_tol
+                            ):
                                 params5 = params_try2
                                 loss_after = loss_try2
-                            else:
-                                # Reject step
-                                params5 = params5_prev
-                                loss_after = loss_before
+                                accepted = True
                     except Exception:
+                        pass
+                    if not accepted and not loss_is_within_relative_tolerance(
+                        loss_before, loss_after, cfg.gn_accept_tol
+                    ):
                         params5 = params5_prev
                         loss_after = loss_before
             # Log step stats

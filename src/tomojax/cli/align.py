@@ -181,6 +181,8 @@ def main() -> None:
             "charbonnier",
             "huber",
             "cauchy",
+            "welsch",
+            "leclerc",
             "barron",
             "student_t",
             "correntropy",

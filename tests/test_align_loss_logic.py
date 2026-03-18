@@ -45,10 +45,13 @@ def test_build_loss_distinguishes_cauchy_and_welsch():
 
     cauchy_fn, _ = build_loss("cauchy", {"c": 1.0}, targets)
     welsch_fn, _ = build_loss("welsch", {"c": 1.0}, targets)
+    leclerc_fn, _ = build_loss("leclerc", {"c": 1.0}, targets)
 
     cauchy_val = float(cauchy_fn(pred, tar, None)[0])
     welsch_val = float(welsch_fn(pred, tar, None)[0])
+    leclerc_val = float(leclerc_fn(pred, tar, None)[0])
 
     assert cauchy_val > welsch_val
     assert cauchy_val == pytest.approx(0.5 * float(jnp.log1p(100.0)), rel=1e-6)
     assert welsch_val == pytest.approx(0.5 * (1.0 - float(jnp.exp(-100.0))), rel=1e-6)
+    assert leclerc_val == pytest.approx(welsch_val, rel=1e-6)
