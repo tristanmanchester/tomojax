@@ -39,6 +39,14 @@ def _safe_epsilon(p: Dict[str, float], key: str, default: float) -> float:
     return max(v, 1e-12)
 
 
+def loss_is_within_relative_tolerance(loss_before: float, loss_after: float, rel_tol: float) -> bool:
+    """Return True when ``loss_after`` stays within a relative tolerance of ``loss_before``."""
+    before = float(loss_before)
+    after = float(loss_after)
+    tol = max(float(rel_tol), 0.0) * abs(before)
+    return after < before + tol
+
+
 def _loss_l2(pred: jnp.ndarray, tar: jnp.ndarray, _: LossState) -> jnp.ndarray:
     r = (pred - tar).astype(jnp.float32)
     return 0.5 * jnp.sum(r * r)
@@ -59,6 +67,13 @@ def _loss_huber(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarr
 
 
 def _loss_cauchy(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
+    r = (pred - tar).astype(jnp.float32)
+    c = _safe_epsilon(st.params, "c", 1.0)
+    z = (r / c) ** 2
+    return jnp.sum(0.5 * (c * c) * jnp.log1p(z))
+
+
+def _loss_welsch(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
     r = (pred - tar).astype(jnp.float32)
     c = _safe_epsilon(st.params, "c", 1.0)
     z = (r / c) ** 2
@@ -368,8 +383,10 @@ def build_loss(kind: str, params: Optional[Dict[str, float]], targets: jnp.ndarr
         f = _loss_charbonnier
     elif k == "huber":
         f = _loss_huber
-    elif k in ("cauchy", "welsch"):
+    elif k in ("cauchy", "lorentzian"):
         f = _loss_cauchy
+    elif k in ("welsch", "leclerc"):
+        f = _loss_welsch
     elif k in ("zncc", "ncc"):
         f = _loss_zncc
     elif k == "ssim":
