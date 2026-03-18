@@ -115,13 +115,15 @@ def grid_from_detector_fov_cube(grid: Grid, detector: Detector) -> Grid:
     footprint and the existing volume extent in y.
     """
     info = compute_roi(grid, detector)
-    side = min(int(info.nx_roi), int(info.nz_roi), int(grid.ny))
+    ny_fit = _fit_dim_to_half_extent(info.r_u, float(grid.vy), int(grid.ny))
+    side = min(int(info.nx_roi), ny_fit, int(info.nz_roi))
     if side < 1:
         side = 1
     # If the original grid already fits within the FOV and is cubic, return it
     if (
         grid.nx == grid.ny == grid.nz and
         _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6 and
+        _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6 and
         _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6
     ):
         return grid

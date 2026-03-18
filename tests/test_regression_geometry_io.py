@@ -1,0 +1,87 @@
+import numpy as np
+
+from tomojax.core.geometry.base import Detector, Grid
+from tomojax.data.io_hdf5 import convert, load_nxtomo, load_npz, save_npz
+from tomojax.data.phantoms import random_cubes_spheres
+from tomojax.utils.axes import infer_disk_axes
+from tomojax.utils.fov import grid_from_detector_fov_cube
+
+
+def test_infer_disk_axes_returns_none_without_grid_for_ambiguous_non_cubic_shapes():
+    assert infer_disk_axes((200, 100, 50), grid=None) is None
+    assert infer_disk_axes((50, 100, 200), grid=None) is None
+
+
+def test_random_cubes_spheres_keeps_inscribed_fov_for_rotated_cube_seed_63():
+    nx = ny = nz = 32
+    vol = random_cubes_spheres(
+        nx,
+        ny,
+        nz,
+        n_cubes=1,
+        n_spheres=0,
+        min_size=8,
+        max_size=8,
+        min_value=1.0,
+        max_value=1.0,
+        seed=63,
+        use_inscribed_fov=True,
+    )
+    coords = np.argwhere(vol > 0)
+    assert coords.size > 0
+    radii = np.sqrt((coords[:, 0] - nx / 2.0) ** 2 + (coords[:, 1] - ny / 2.0) ** 2)
+    assert radii.max() <= min(nx, ny) / 2.0 + 1e-6
+
+
+def test_grid_from_detector_fov_cube_respects_y_voxel_size_fit():
+    grid = Grid(nx=20, ny=20, nz=20, vx=1.0, vy=2.0, vz=1.0)
+    detector = Detector(nu=10, nv=10, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+
+    roi = grid_from_detector_fov_cube(grid, detector)
+
+    assert (roi.nx, roi.ny, roi.nz) == (4, 4, 4)
+
+
+def test_grid_from_detector_fov_cube_does_not_keep_cubic_grid_when_y_exceeds_fov():
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=4.0, vz=1.0)
+    detector = Detector(nu=10, nv=10, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+
+    roi = grid_from_detector_fov_cube(grid, detector)
+
+    assert (roi.nx, roi.ny, roi.nz) == (2, 2, 2)
+
+
+def test_load_npz_unwraps_dict_metadata_and_convert_roundtrips_to_nxs(tmp_path):
+    npz_path = tmp_path / "sample.npz"
+    nxs_path = tmp_path / "sample.nxs"
+
+    projections = np.zeros((2, 3, 4), dtype=np.float32)
+    grid = {"nx": 4, "ny": 4, "nz": 3, "vx": 1.0, "vy": 1.0, "vz": 1.0}
+    detector = {"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]}
+    geometry_meta = {"tilt_deg": 35.0, "tilt_about": "x"}
+    misalign_spec = {"rot_deg": 1.0, "trans_px": 2.0}
+
+    save_npz(
+        npz_path,
+        projections=projections,
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+        grid=grid,
+        detector=detector,
+        geometry_type="lamino",
+        geometry_meta=geometry_meta,
+        misalign_spec=misalign_spec,
+    )
+
+    loaded = load_npz(npz_path)
+    assert isinstance(loaded["grid"], dict)
+    assert isinstance(loaded["detector"], dict)
+    assert isinstance(loaded["geometry_meta"], dict)
+    assert isinstance(loaded["misalign_spec"], dict)
+
+    convert(str(npz_path), str(nxs_path))
+    meta = load_nxtomo(str(nxs_path))
+
+    assert meta["grid"] == grid
+    assert meta["detector"] == detector
+    assert meta["geometry_meta"] == geometry_meta
+    assert meta["misalign_spec"] == misalign_spec

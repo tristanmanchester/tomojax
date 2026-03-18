@@ -568,7 +568,14 @@ def save_npz(path: str, projections: np.ndarray, **meta: Any) -> None:
 
 def load_npz(path: str) -> Dict[str, Any]:
     with np.load(path, allow_pickle=True) as z:
-        return {k: z[k] for k in z.files}
+        out: Dict[str, Any] = {}
+        for k in z.files:
+            val = z[k]
+            if isinstance(val, np.ndarray) and val.shape == () and val.dtype == object:
+                out[k] = val.item()
+            else:
+                out[k] = val
+        return out
 
 
 def convert(in_path: str, out_path: str) -> None:
