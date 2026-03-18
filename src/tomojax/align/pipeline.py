@@ -15,7 +15,7 @@ from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..recon.fista_tv import fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
-from .losses import build_loss
+from .losses import build_loss, loss_is_within_relative_tolerance
 from ..utils.fov import cylindrical_mask_xy
 
 
@@ -55,6 +55,7 @@ class AlignConfig:
     early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
     early_stop_patience: int = 2
     # GN acceptance: only apply step if it reduces the alignment loss
+    # GN acceptance: only apply step if it improves, unless gn_accept_tol allows a tiny increase
     gn_accept_only_improving: bool = True
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
@@ -553,20 +554,19 @@ def align(
             # Compute post-update loss and accept/reject with simple backtracking on step scale
             loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
             if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
-                tol = float(cfg.gn_accept_tol) * abs(loss_before)
-                if not (loss_after < loss_before - tol):
+                if not loss_is_within_relative_tolerance(loss_before, loss_after, cfg.gn_accept_tol):
                     # Try scaled steps: 0.5, 0.25
                     try:
                         dp_cat = jnp.concatenate(dp_all, axis=0)
                         params_try = params5_prev + 0.5 * dp_cat
                         loss_try = float(align_loss_jit(params_try, x))
-                        if loss_try < loss_before - tol:
+                        if loss_is_within_relative_tolerance(loss_before, loss_try, cfg.gn_accept_tol):
                             params5 = params_try
                             loss_after = loss_try
                         else:
                             params_try2 = params5_prev + 0.25 * dp_cat
                             loss_try2 = float(align_loss_jit(params_try2, x))
-                            if loss_try2 < loss_before - tol:
+                            if loss_is_within_relative_tolerance(loss_before, loss_try2, cfg.gn_accept_tol):
                                 params5 = params_try2
                                 loss_after = loss_try2
                             else:
