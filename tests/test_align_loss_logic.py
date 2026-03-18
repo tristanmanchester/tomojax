@@ -8,6 +8,7 @@ from tomojax.align.losses import (
     build_loss,
     loss_is_within_relative_tolerance,
 )
+from tomojax.align.pipeline import _should_prefer_gn_candidate
 
 
 def test_loss_is_within_relative_tolerance_allows_small_increase():
@@ -55,3 +56,22 @@ def test_build_loss_distinguishes_cauchy_and_welsch():
     assert cauchy_val == pytest.approx(0.5 * float(jnp.log1p(100.0)), rel=1e-6)
     assert welsch_val == pytest.approx(0.5 * (1.0 - float(jnp.exp(-100.0))), rel=1e-6)
     assert leclerc_val == pytest.approx(welsch_val, rel=1e-6)
+
+
+def test_build_loss_accepts_lorentzian_alias_for_cauchy():
+    targets = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+    pred = jnp.array([[[3.0]]], dtype=jnp.float32)
+    tar = jnp.zeros_like(pred)
+
+    cauchy_fn, _ = build_loss("cauchy", {"c": 1.0}, targets)
+    lorentzian_fn, _ = build_loss("lorentzian", {"c": 1.0}, targets)
+
+    cauchy_val = float(cauchy_fn(pred, tar, None)[0])
+    lorentzian_val = float(lorentzian_fn(pred, tar, None)[0])
+
+    assert lorentzian_val == pytest.approx(cauchy_val, rel=1e-6)
+
+
+def test_gn_candidate_must_improve_current_best_loss():
+    assert not _should_prefer_gn_candidate(100.0, 100.5, 100.8, 0.01)
+    assert _should_prefer_gn_candidate(100.0, 100.5, 100.4, 0.01)
