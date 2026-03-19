@@ -234,27 +234,37 @@ def main() -> None:
     # Optional ROI selection
     recon_grid = grid
     roi_mode = str(args.roi).lower()
+    is_parallel = meta.get("geometry_type", "parallel") == "parallel"
     if roi_mode != "off":
         try:
-            info = compute_roi(grid, detector)
+            info = compute_roi(grid, detector, crop_y_to_u=is_parallel)
             # Only crop when detector FOV is smaller than current grid (auto)
             full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
             full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
             full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
             det_smaller = (
                 (info.r_u + 1e-6) < full_half_x
-                or (info.r_u + 1e-6) < full_half_y
+                or (is_parallel and (info.r_u + 1e-6) < full_half_y)
                 or (info.r_v + 1e-6) < full_half_z
             )
             if roi_mode == "auto" and det_smaller:
-                recon_grid = grid_from_detector_fov_slices(grid, detector)
+                if is_parallel:
+                    recon_grid = grid_from_detector_fov_slices(
+                        grid, detector, crop_y_to_u=True
+                    )
+                else:
+                    recon_grid = grid_from_detector_fov(
+                        grid, detector, crop_y_to_u=False
+                    )
             elif roi_mode == "cube":
                 # Same as align default policy for cubic volumes
                 from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
 
-                recon_grid = _grid_cube(grid, detector)
+                recon_grid = _grid_cube(grid, detector, crop_y_to_u=is_parallel)
             elif roi_mode == "bbox":
-                recon_grid = grid_from_detector_fov(grid, detector)
+                recon_grid = grid_from_detector_fov(
+                    grid, detector, crop_y_to_u=is_parallel
+                )
         except Exception:
             # Fall back silently if FOV computation fails
             recon_grid = grid

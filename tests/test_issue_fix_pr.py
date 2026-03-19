@@ -4,6 +4,7 @@ import numpy as np
 import jax.numpy as jnp
 
 from tomojax.core.geometry.base import Grid, Detector
+from tomojax.cli.align import _resolve_recon_grid_and_mask
 from tomojax.recon.fbp import _fft_filter_rows
 from tomojax.recon.filters import get_filter_np
 from tomojax.utils.fov import (
@@ -45,6 +46,18 @@ def test_compute_roi_and_bbox_crop_limit_y_axis() -> None:
     cropped = grid_from_detector_fov(grid, detector)
     assert (cropped.nx, cropped.ny, cropped.nz) == (10, 2, 10)
 
+def test_lamino_bbox_keeps_full_y_extent() -> None:
+    grid = Grid(nx=10, ny=10, nz=10, vx=1.0, vy=10.0, vz=1.0)
+    detector = Detector(nu=11, nv=101, du=1.0, dv=1.0)
+
+    info = compute_roi(grid, detector, crop_y_to_u=False)
+    assert info.nx_roi == 10
+    assert info.ny_roi == 10
+    assert info.nz_roi == 10
+
+    cropped = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
+    assert (cropped.nx, cropped.ny, cropped.nz) == (10, 10, 10)
+
 
 def test_grid_from_detector_fov_slices_preserves_preferred_parity() -> None:
     grid = Grid(nx=201, ny=200, nz=100, vx=1.0, vy=1.2, vz=1.0)
@@ -63,3 +76,18 @@ def test_grid_from_detector_fov_cube_avoids_min_parity_leakage() -> None:
     assert (result.nx, result.ny, result.nz) == (64, 64, 64)
     assert result.nx % 2 == grid.nx % 2
     assert result.nz % 2 == grid.nz % 2
+
+def test_align_auto_roi_uses_bbox_for_lamino() -> None:
+    grid = Grid(nx=10, ny=10, nz=20, vx=1.0, vy=10.0, vz=1.0)
+    detector = Detector(nu=11, nv=15, du=1.0, dv=1.0)
+
+    recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
+        grid,
+        detector,
+        is_parallel=False,
+        roi_mode="auto",
+        grid_override=None,
+    )
+
+    assert (recon_grid.nx, recon_grid.ny, recon_grid.nz) == (10, 10, 15)
+    assert not apply_cyl_mask

@@ -96,14 +96,22 @@ def _choose_shared_side(side_max: int, *orig_dims: int) -> int:
     return _match_parity_leq(int(side_max), target_parity)
 
 
-def compute_roi(grid: Grid, detector: Detector) -> RoiInfo:
+def compute_roi(
+    grid: Grid,
+    detector: Detector,
+    *,
+    crop_y_to_u: bool = True,
+) -> RoiInfo:
     """Compute conservative FOV half-extents and grid dims from detector.
 
     - r_u = max(0, (nu/2-0.5)*du - |cx|) enforces angle-invariant coverage.
     - r_v = max(0, (nv/2-0.5)*dv - |cz|) enforces vertical coverage.
-    - nx_roi and ny_roi are the largest dims (matching original parity) whose
-      half-extents fit within the in-plane radius r_u; nz_roi similarly fits r_v.
-      All dimensions are clipped by the current grid.
+    - nx_roi is the largest dim (matching original parity) whose half-extent fits
+      within the in-plane radius r_u; nz_roi similarly fits r_v.
+    - ny_roi is also fit to r_u when `crop_y_to_u=True`, which matches the
+      parallel-beam x-y disk interpretation. Laminography callers can set
+      `crop_y_to_u=False` to keep the full source y extent.
+    - All dimensions are clipped by the current grid.
     """
     # Detector pixel-center half extents (world units)
     u_half = ((float(detector.nu) / 2.0) - 0.5) * float(detector.du)
@@ -115,7 +123,10 @@ def compute_roi(grid: Grid, detector: Detector) -> RoiInfo:
 
     # Fit dims; clip to not exceed the current grid dims
     nx_fit = _fit_dim_to_half_extent(r_u, float(grid.vx), int(grid.nx))
-    ny_fit = _fit_dim_to_half_extent(r_u, float(grid.vy), int(grid.ny))
+    if crop_y_to_u:
+        ny_fit = _fit_dim_to_half_extent(r_u, float(grid.vy), int(grid.ny))
+    else:
+        ny_fit = int(grid.ny)
     nz_fit = _fit_dim_to_half_extent(r_v, float(grid.vz), int(grid.nz))
     nx_roi = min(int(grid.nx), nx_fit)
     ny_roi = min(int(grid.ny), ny_fit)
@@ -124,18 +135,26 @@ def compute_roi(grid: Grid, detector: Detector) -> RoiInfo:
     return RoiInfo(r_u=r_u, r_v=r_v, nx_roi=nx_roi, ny_roi=ny_roi, nz_roi=nz_roi)
 
 
-def grid_from_detector_fov(grid: Grid, detector: Detector) -> Grid:
+def grid_from_detector_fov(
+    grid: Grid,
+    detector: Detector,
+    *,
+    crop_y_to_u: bool = True,
+) -> Grid:
     """Return a new Grid cropped to the detector FOV bounding box.
 
     All three axes are cropped conservatively: x and y by the in-plane detector
     radius `r_u`, and z by the detector height `r_v`. The cropped grid remains
     centered at the origin using the same default centered-origin convention.
     """
-    info = compute_roi(grid, detector)
+    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
     # If detector already covers the full current grid, just return the original grid.
     if (
         _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6
-        and _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6
+        and (
+            not crop_y_to_u
+            or _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6
+        )
         and _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6
     ):
         return grid
@@ -151,7 +170,12 @@ def grid_from_detector_fov(grid: Grid, detector: Detector) -> Grid:
     )
 
 
-def grid_from_detector_fov_cube(grid: Grid, detector: Detector) -> Grid:
+def grid_from_detector_fov_cube(
+    grid: Grid,
+    detector: Detector,
+    *,
+    crop_y_to_u: bool = True,
+) -> Grid:
     """Return a new cubic Grid cropped to the detector FOV (nx=ny=nz).
 
     The shared side is limited by x/y in-plane coverage (`r_u`) and z coverage
@@ -159,14 +183,17 @@ def grid_from_detector_fov_cube(grid: Grid, detector: Detector) -> Grid:
     final side is adjusted downward by at most one voxel so the cubic output keeps
     a consistent, parity-preserving centered-origin convention where possible.
     """
-    info = compute_roi(grid, detector)
+    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
     side_max = min(int(info.nx_roi), int(info.ny_roi), int(info.nz_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny), int(grid.nz))
     # If the original grid already fits within the FOV and is cubic, return it
     if (
         grid.nx == grid.ny == grid.nz and
         _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6 and
-        _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6 and
+        (
+            not crop_y_to_u
+            or _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6
+        ) and
         _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6
     ):
         return grid
@@ -202,14 +229,19 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector):
     return mask
 
 
-def grid_from_detector_fov_slices(grid: Grid, detector: Detector) -> Grid:
+def grid_from_detector_fov_slices(
+    grid: Grid,
+    detector: Detector,
+    *,
+    crop_y_to_u: bool = True,
+) -> Grid:
     """Return an ROI Grid with square x–y slices and z from detector height.
 
     - (nx, ny) chosen as the largest equal dims that fit within r_u using (vx, vy).
     - nz chosen from r_v using vz, clipped by current nz.
     This matches a common 3D parallel-beam reconstruction: per-z 2D CT slices.
     """
-    info = compute_roi(grid, detector)
+    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
     side_max = min(int(info.nx_roi), int(info.ny_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
     return Grid(
