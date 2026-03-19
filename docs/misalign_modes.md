@@ -12,18 +12,18 @@ You describe each schedule with `--pert` or an external JSON `--spec` file. Mult
 ## Quick Examples
 
 - Linear drift in angles 0 → +5° across the scan:
-  - `pixi run misalign --data data/sim.nxs --out runs/mis_angle_lin.nxs --pert angle:linear:delta=5deg`
+  - `uv run tomojax-misalign --data data/sim.nxs --out runs/mis_angle_lin.nxs --pert angle:linear:delta=5deg`
 
 - Sinusoidal `dx` drift peaking mid‑scan at +5 px:
-  - `pixi run misalign --data data/sim.nxs --out runs/mis_dx_sin.nxs --pert dx:sin-window:amp=5px`
+  - `uv run tomojax-misalign --data data/sim.nxs --out runs/mis_dx_sin.nxs --pert dx:sin-window:amp=5px`
 
 - Sudden `dx` shift to +5 px at 90° (held to end):
-  - `pixi run misalign --data data/sim.nxs --out runs/mis_dx_step.nxs --pert dx:step:at=90deg,to=5px`
+  - `uv run tomojax-misalign --data data/sim.nxs --out runs/mis_dx_step.nxs --pert dx:step:at=90deg,to=5px`
 
 Combine schedules by repeating `--pert`:
 
 ```
-pixi run misalign --data data/sim.nxs --out runs/mis_combo.nxs \
+uv run tomojax-misalign --data data/sim.nxs --out runs/mis_combo.nxs \
   --pert angle:linear:delta=5deg \
   --pert dx:sin-window:amp=5px
 ```
@@ -126,4 +126,3 @@ The output file persists:
 - Units: rotations (`alpha`,`beta`,`phi`) accept degrees (default) and are stored in radians; translations (`dx`,`dz`) accept pixels and are converted using `du`/`dv`.
 - Composition: schedules are added in the order given; `step:to=...` sets an absolute level by internally computing the needed delta at that point.
 - Randomness: if any `--pert`/`--spec` is present, random jitter is disabled by default. Use `--with-random` to enable it and combine.
-

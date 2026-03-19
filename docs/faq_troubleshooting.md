@@ -3,8 +3,8 @@
 ## Environment & Installation
 
 - GPU not detected or wrong backend:
-  - Check: `pixi run test-gpu` (inside `pixi shell`).
-  - Force CPU: `JAX_PLATFORM_NAME=cpu pixi run test-cpu`.
+  - Check: `uv run tomojax-test-gpu`.
+  - Force CPU: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
   - Ensure NVIDIA driver and CUDA 12 runtime compatible with your hardware.
 
 - `CUDA_ERROR_INVALID_IMAGE` or “Failed to load in-memory CUBIN” when launching a projector kernel:
@@ -55,8 +55,8 @@
 
 - Convert between `.npz` and `.nxs`:
   ```bash
-  pixi run python -m tomojax.cli.convert --in data/sim.npz --out data/sim.nxs
-  pixi run python -m tomojax.cli.convert --in data/sim.nxs --out data/sim.npz
+  uv run tomojax-convert --in data/sim.npz --out data/sim.nxs
+  uv run tomojax-convert --in data/sim.nxs --out data/sim.npz
   ```
 
 
@@ -65,7 +65,7 @@
 - Record the exact CLI and seeds used for alignment experiments.
 - Example:
   ```bash
-  pixi run python -m tomojax.cli.align \
+  uv run tomojax-align \
     --data data/sim_misaligned.nxs \
     --levels 4 2 1 --outer-iters 15 --lambda-tv 0.005 \
     --opt-method gn --gn-damping 1e-3 --seed-translations

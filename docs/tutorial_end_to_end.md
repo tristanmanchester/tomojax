@@ -6,10 +6,10 @@ This short guide walks through a complete workflow using the `tomojax` v2 packag
 4) run naive FBP reconstructions, 5) run iterative alignment + reconstruction
 (coarse→fine), and 6) save results for side‑by‑side comparison.
 
-All commands assume you are inside the pixi environment.
+All commands assume you synced the uv-managed environment first.
 
-- Enter the environment: `pixi shell`
-- One-time install of the root package: `pixi run install-root`
+- GPU: `uv sync --extra cuda12 --group dev`
+- CPU-only: `uv sync --extra cpu --group dev`
 - Show progress bars: export `TOMOJAX_PROGRESS=1`
 
 
@@ -20,7 +20,7 @@ All commands assume you are inside the pixi environment.
   - `tomojax.cli.recon` — FBP or FISTA reconstructions
   - `tomojax.cli.align` — joint alignment + reconstruction
   - `tomojax.cli.misalign` — generate per-view perturbations and reproject
-  - Convenience pixi tasks mirror these modules: `simulate`, `recon`, `align`, `misalign`
+  - Console scripts mirror these modules: `tomojax-simulate`, `tomojax-recon`, `tomojax-align`, `tomojax-misalign`
 - Python APIs (for custom steps):
   - `tomojax.data.io_hdf5` — read/write .nxs
   - `tomojax.core.projector` + `align.parametrizations` — misalign + project
@@ -31,10 +31,10 @@ Before running the full 128³ workflow, do a quick small run to warm JAX/XLA and
 verify your environment:
 
 ```
-pixi run test-gpu
-pixi run simulate --out data/sim_aligned_small.nxs --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 32 \
+uv run tomojax-test-gpu
+uv run tomojax-simulate --out data/sim_aligned_small.nxs --nx 32 --ny 32 --nz 32 --nu 32 --nv 32 --n-views 32 \
   --phantom random_shapes --n-cubes 8 --n-spheres 8 --min-size 3 --max-size 8 --min-value 0.01 --max-value 0.1 --seed 1 --progress
-pixi run misalign --data data/sim_aligned_small.nxs --out data/sim_misaligned_small.nxs --rot-deg 1 --trans-px 4 --seed 0 --progress
+uv run tomojax-misalign --data data/sim_aligned_small.nxs --out data/sim_misaligned_small.nxs --rot-deg 1 --trans-px 4 --seed 0 --progress
 ```
 
 Note: the first projector/align call compiles with XLA and takes longer; subsequent
@@ -46,7 +46,7 @@ runs are faster. The preflight helps warm the cache.
 We use the “random_shapes” phantom with controlled counts and value range.
 
 ```
-pixi run simulate \
+uv run tomojax-simulate \
   --out data/sim_aligned.nxs \
   --nx 256 --ny 256 --nz 256 \
   --nu 256 --nv 256 --n-views 200 \
@@ -69,25 +69,25 @@ This step reprojects the ground‑truth volume using per‑view 5‑DOF perturba
 and saves a new dataset. Use the new misalign CLI for a single command:
 
 ```
-pixi run misalign \
+uv run tomojax-misalign \
   --data data/sim_aligned.nxs \
   --out data/sim_misaligned.nxs \
   --rot-deg 1.0 --trans-px 10 \
   --seed 0 \
   --progress
+```
 
 Deterministic misalignment schedules
 - For systematic drifts or steps, use `--pert` and/or `--spec` (see `docs/misalign_modes.md`). Examples:
 
 ```
 # Linear angle drift 0→+5° across the scan
-pixi run misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
   --pert angle:linear:delta=5deg
 
 # Sinusoidal dx drift peaking at +5 px mid‑scan
-pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
   --pert dx:sin-window:amp=5px
-```
 ```
 
 
@@ -96,7 +96,7 @@ pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
 To add Poisson noise (e.g., 5000 photons/pixel) directly:
 
 ```
-pixi run misalign \
+uv run tomojax-misalign \
   --data data/sim_aligned.nxs \
   --out data/sim_misaligned_poisson.nxs \
   --rot-deg 1.0 --trans-px 10 \
@@ -112,7 +112,7 @@ Run FBP on both the misaligned and the noisy+misaligned datasets.
 
 ```
 # Misaligned
-pixi run recon \
+uv run tomojax-recon \
   --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp \
   --gather-dtype bf16 --checkpoint-projector \
@@ -120,7 +120,7 @@ pixi run recon \
   --progress
 
 # Noisy + misaligned
-pixi run recon \
+uv run tomojax-recon \
   --data data/sim_misaligned_poisson.nxs \
   --algo fbp --filter ramp \
   --gather-dtype bf16 --checkpoint-projector \
@@ -135,7 +135,7 @@ Use multires alignment with Gauss–Newton updates and bf16 gather.
 
 ```
 # Misaligned (clean)
-pixi run align \
+uv run tomojax-align \
   --data data/sim_misaligned.nxs \
   --levels 4 2 1 \
   --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
@@ -146,7 +146,7 @@ pixi run align \
   --progress
 
 # Noisy + misaligned (stronger TV and a few more iters)
-pixi run align \
+uv run tomojax-align \
   --data data/sim_misaligned_poisson.nxs \
   --levels 4 2 1 \
   --outer-iters 5 --recon-iters 30 --lambda-tv 0.03 --tv-prox-iters 20 \
@@ -208,6 +208,6 @@ PY
 - Convert between `.npz` and `.nxs`:
 
 ```
-pixi run python -m tomojax.cli.convert --in data/sim_aligned.nxs --out data/sim_aligned.npz
-pixi run python -m tomojax.cli.convert --in data/sim_aligned.npz --out data/sim_aligned_back.nxs
+uv run tomojax-convert --in data/sim_aligned.nxs --out data/sim_aligned.npz
+uv run tomojax-convert --in data/sim_aligned.npz --out data/sim_aligned_back.nxs
 ```

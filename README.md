@@ -11,21 +11,24 @@ Left → Right: Ground truth phantom → Naive reconstructions (misaligned & noi
 ## Installation
 
 ```bash
-# 1) Install pixi (https://pixi.sh) if you don't have it
-# 2) Create the environment and enter it
-pixi install
-pixi shell
+# 1) Install uv (https://docs.astral.sh/uv/)
+# 2) Sync the project environment
+uv sync --extra cuda12 --group dev
 
 # 3) Verify JAX / GPU is visible
-pixi run test-gpu
+uv run tomojax-test-gpu
+```
 
-# 4) Install this package in editable mode (once per env)
-pixi run install-root
+CPU-only setup:
+
+```bash
+uv sync --extra cpu --group dev
+JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu
 ```
 
 Notes
-- CUDA 12 is required for GPU; the pixi env pins `jax[cuda12]`.
-- To force CPU runs: `JAX_PLATFORM_NAME=cpu pixi run test-cpu`.
+- CUDA 12 on Linux is required for GPU; the `cuda12` extra installs `jax[cuda12]`.
+- To force CPU runs: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
 - Optional JAX persistent cache (speeds up re‑runs): set `TOMOJAX_JAX_CACHE_DIR` or rely on the default at `~/.cache/tomojax/jax_cache`.
 
 
@@ -61,17 +64,17 @@ Notes
 ## Quick Start
 
 ```bash
-# Explore CLIs (inside pixi shell)
-python -m tomojax.cli.simulate --help
-python -m tomojax.cli.misalign --help
-python -m tomojax.cli.recon    --help
-python -m tomojax.cli.align    --help
+# Explore CLIs inside the uv-managed environment
+uv run python -m tomojax.cli.simulate --help
+uv run python -m tomojax.cli.misalign --help
+uv run python -m tomojax.cli.recon    --help
+uv run python -m tomojax.cli.align    --help
 
-# Or use pixi tasks that forward args
-pixi run simulate ...
-pixi run misalign ...
-pixi run recon    ...
-pixi run align    ...
+# Or use the installed console scripts
+uv run tomojax-simulate ...
+uv run tomojax-misalign ...
+uv run tomojax-recon    ...
+uv run tomojax-align    ...
 
 # Full step‑by‑step tutorial
 less docs/tutorial_end_to_end.md
@@ -87,7 +90,7 @@ Common examples
 
 ```bash
 # Simulate a 256³ phantom and projections (parallel CT)
-pixi run simulate \
+uv run tomojax-simulate \
   --out data/sim_aligned.nxs \
   --nx 256 --ny 256 --nz 256 \
   --nu 256 --nv 256 --n-views 200 \
@@ -95,7 +98,7 @@ pixi run simulate \
   --min-size 4 --max-size 64 --min-value 0.01 --max-value 0.1 --seed 42
 
 # Simulate laminography (tilt about x, 360°)
-pixi run simulate \
+uv run tomojax-simulate \
   --out runs/lamino_demo.nxs \
   --nx 128 --ny 128 --nz 128 \
   --nu 128 --nv 128 --n-views 360 \
@@ -104,18 +107,18 @@ pixi run simulate \
   --n-cubes 60 --n-spheres 60 --min-size 4 --max-size 14 --seed 3
 
 # Create misaligned (and optionally noisy) projections
-pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \
   --rot-deg 1.0 --trans-px 10 --seed 0
-pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson5k.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson5k.nxs \
   --rot-deg 1.0 --trans-px 10 --poisson 100 --seed 0
 
 # Naive reconstructions (FBP)
-pixi run recon --data data/sim_misaligned.nxs \
+uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp --gather-dtype bf16 \
   --checkpoint-projector --out out/fbp_misaligned.nxs
 
 # Iterative alignment + reconstruction (multires)
-pixi run align --data data/sim_misaligned.nxs \
+uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
   --gather-dtype bf16 --checkpoint-projector \
@@ -123,10 +126,10 @@ pixi run align --data data/sim_misaligned.nxs \
 
 # Deterministic misalignment schedules (see docs/misalign_modes.md)
 # Linear angle drift 0→+5° across the scan
-pixi run misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
   --pert angle:linear:delta=5deg
 # Sinusoidal dx drift peaking +5 px at mid‑scan
-pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
   --pert dx:sin-window:amp=5px
 ```
 
@@ -205,7 +208,7 @@ Troubleshooting tips live in `docs/faq_troubleshooting.md`.
 ## Notes
 
 - Use the new CLIs and Python APIs under `tomojax.*`. Legacy ad‑hoc scripts were removed.
-- Tests: `pixi run test` (small CPU‑friendly sizes).
+- Tests: `uv run pytest -q tests` (small CPU‑friendly sizes).
 
 
 ## Visual Examples

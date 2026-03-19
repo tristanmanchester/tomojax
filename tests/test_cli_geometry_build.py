@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-import jax.numpy as jnp
 
-from tomojax.align.parametrizations import se3_from_5d
 from tomojax.cli.align import build_geometry as build_align_geometry
 from tomojax.cli.recon import build_geometry as build_recon_geometry
 from tomojax.core.geometry import ParallelGeometry
@@ -73,7 +71,7 @@ def test_recon_build_geometry_preserves_grid_origin_and_center():
 
 
 
-def test_recon_build_geometry_applies_saved_alignment_and_angle_offsets():
+def test_recon_build_geometry_keeps_nominal_geometry_for_saved_alignment_metadata():
     align_params = np.asarray(
         [[0.0, 0.0, 0.0, 1.25, -0.5], [0.1, -0.2, 0.3, 0.0, 0.25]],
         dtype=np.float32,
@@ -82,20 +80,16 @@ def test_recon_build_geometry_applies_saved_alignment_and_angle_offsets():
     meta = _parallel_meta(align_params=align_params, angle_offset_deg=angle_offset)
 
     grid, detector, geom = build_recon_geometry(meta)
-    base = ParallelGeometry(
+    expected = ParallelGeometry(
         grid=grid,
         detector=detector,
-        thetas_deg=meta["thetas_deg"] + angle_offset,
+        thetas_deg=meta["thetas_deg"],
     )
 
     for i in range(2):
-        expected = np.asarray(base.pose_for_view(i), dtype=np.float32) @ np.asarray(
-            se3_from_5d(jnp.asarray(align_params[i], dtype=jnp.float32)),
-            dtype=np.float32,
-        )
         np.testing.assert_allclose(
             np.asarray(geom.pose_for_view(i), dtype=np.float32),
-            expected,
+            np.asarray(expected.pose_for_view(i), dtype=np.float32),
             rtol=1e-6,
             atol=1e-6,
         )
