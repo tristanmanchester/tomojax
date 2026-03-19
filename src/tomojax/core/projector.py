@@ -197,6 +197,12 @@ def forward_project_view_T(
     if step_size is None:
         step_size = vy
 
+    # Inverse pose and incremental stepping set-up
+    R = T[:3, :3]
+    t = T[:3, 3]
+    Rinv = R.T
+    tinv = -(Rinv @ t)
+    ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
     support_lower, support_upper = _interpolation_support_bounds(grid, vol_origin)
     if n_steps is None:
         support_lengths = np.array(
@@ -207,14 +213,10 @@ def forward_project_view_T(
             ],
             dtype=np.float64,
         )
-        n_steps = int(math.ceil(float(np.linalg.norm(support_lengths)) / float(step_size)))
-
-    # Inverse pose and incremental stepping set-up
-    R = T[:3, :3]
-    t = T[:3, 3]
-    Rinv = R.T
-    tinv = -(Rinv @ t)
-    ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
+        max_path_length = float(
+            np.dot(np.abs(np.asarray(ey_obj, dtype=np.float64)), support_lengths)
+        )
+        n_steps = int(math.ceil(max_path_length / float(step_size)))
 
     xr = Xr[jnp.newaxis, :]
     zr = Zr[jnp.newaxis, :]

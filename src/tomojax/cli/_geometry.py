@@ -4,9 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
-import jax.numpy as jnp
 
-from ..align.parametrizations import se3_from_5d
 from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
 
@@ -22,15 +20,45 @@ class AugmentedGeometry:
 
     def pose_for_view(self, i: int):
         T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
-        T_delta = np.asarray(
-            se3_from_5d(jnp.asarray(self.align_params[i], dtype=jnp.float32)),
-            dtype=np.float32,
-        )
+        T_delta = _se3_from_5d_np(self.align_params[i])
         T = T_nom @ T_delta
         return tuple(map(tuple, T))
 
     def rays_for_view(self, i: int):
         return self.base.rays_for_view(i)
+
+
+def _rot_x_np(a: float) -> np.ndarray:
+    c, s = np.cos(a), np.sin(a)
+    return np.array(
+        [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]],
+        dtype=np.float32,
+    )
+
+
+def _rot_y_np(b: float) -> np.ndarray:
+    c, s = np.cos(b), np.sin(b)
+    return np.array(
+        [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]],
+        dtype=np.float32,
+    )
+
+
+def _rot_z_np(p: float) -> np.ndarray:
+    c, s = np.cos(p), np.sin(p)
+    return np.array(
+        [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+
+
+def _se3_from_5d_np(params5: np.ndarray) -> np.ndarray:
+    alpha, beta, phi, dx, dz = np.asarray(params5, dtype=np.float32)
+    R = _rot_y_np(float(beta)) @ _rot_x_np(float(alpha)) @ _rot_z_np(float(phi))
+    T = np.eye(4, dtype=np.float32)
+    T[:3, :3] = R
+    T[:3, 3] = np.array([dx, 0.0, dz], dtype=np.float32)
+    return T
 
 
 def _detector_from_meta(meta: dict) -> Detector:
