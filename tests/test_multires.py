@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import fista_tv, grad_data_term
-from tomojax.recon.multires import fista_multires
+from tomojax.recon.multires import fista_multires, upsample_volume
 
 
 if sys.version_info < (3, 8):
@@ -52,3 +52,12 @@ def test_multires_rejects_mismatched_level_lengths():
             iters_per_level=(5, 6),
             lambda_tv=0.001,
         )
+
+
+
+def test_upsample_volume_resizes_when_target_shape_differs_even_if_factor_is_one():
+    vol = jnp.arange(8, dtype=jnp.float32).reshape(2, 2, 2)
+
+    up = upsample_volume(vol, factor=1, target_shape=(4, 4, 4))
+
+    assert up.shape == (4, 4, 4)

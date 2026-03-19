@@ -105,12 +105,19 @@ def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
 
 
 def upsample_volume(vol: jnp.ndarray, factor: int, target_shape: Tuple[int, int, int]) -> jnp.ndarray:
-    if factor == 1:
+    """Resize `vol` to `target_shape`, regardless of the nominal scale factor.
+
+    The caller still passes the coarse-to-fine factor transition for bookkeeping,
+    but the actual resize decision is driven by the input and target shapes. This
+    keeps non-power-of-two schedules like (3, 2, 1) working correctly.
+    """
+    del factor  # shape decides whether a resize is needed
+    out_shape = (int(target_shape[0]), int(target_shape[1]), int(target_shape[2]))
+    if tuple(int(s) for s in vol.shape) == out_shape:
         return vol
     # Trilinear resize to avoid nearest-neighbor blockiness when moving to finer levels
-    out_shape = (int(target_shape[0]), int(target_shape[1]), int(target_shape[2]))
     v = jimage.resize(vol, out_shape, method="linear", antialias=False)
-    return v
+    return v.astype(vol.dtype)
 
 
 def create_resolution_pyramid(

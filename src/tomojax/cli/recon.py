@@ -8,12 +8,14 @@ import os
 from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from ..core.geometry import Grid
 from ..recon.fbp import fbp
 from ..recon.fista_tv import fista_tv
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
+from ._geometry import build_geometry_from_meta as _build_geometry_from_meta
+
 from ..utils.fov import (
     compute_roi,
     grid_from_detector_fov_slices,
@@ -22,29 +24,15 @@ from ..utils.fov import (
 from ..utils.fov import cylindrical_mask_xy
 
 
-def build_geometry(meta: dict):
-    grid_d = meta["grid"]
-    det_d = meta["detector"]
-    thetas = meta["thetas_deg"]
-    gtype = meta.get("geometry_type", "parallel")
-    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
-    detector = Detector(
-        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
-        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+def build_geometry(
+    meta: dict,
+    grid_override: tuple[int, int, int] | list[int] | None = None,
+):
+    return _build_geometry_from_meta(
+        meta,
+        grid_override=grid_override,
+        apply_saved_alignment=True,
     )
-    if gtype == "parallel":
-        geom = ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
-    else:
-        tilt_deg = float(meta.get("tilt_deg", 30.0))
-        tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            tilt_deg=tilt_deg,
-            tilt_about=tilt_about,
-        )
-    return grid, detector, geom
 
 
 def _transfer_guard_ctx(mode: str | None = None):
@@ -219,11 +207,14 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     meta = load_nxtomo(args.data)
-    grid, detector, geom = build_geometry(meta)
+    initial_grid_override = (
+        args.grid if ("grid" not in meta and args.grid is not None) else None
+    )
+    grid, detector, geom = build_geometry(meta, grid_override=initial_grid_override)
     proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
 
-    # Hidden defaults: stream one view at a time; unroll=1
-    vpb_val: int | None = 1
+    # Hidden default for unroll; batch size now respects the CLI flag.
+    vpb_val = int(args.views_per_batch) if int(args.views_per_batch) > 0 else 1
 
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
@@ -275,20 +266,10 @@ def main() -> None:
         recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
 
     if recon_grid is not grid:
-        if meta.get("geometry_type", "parallel") == "parallel":
-            geom = ParallelGeometry(
-                grid=recon_grid, detector=detector, thetas_deg=meta["thetas_deg"]
-            )
-        else:
-            tilt_deg = float(meta.get("tilt_deg", 30.0))
-            tilt_about = str(meta.get("tilt_about", "x"))
-            geom = LaminographyGeometry(
-                grid=recon_grid,
-                detector=detector,
-                thetas_deg=meta["thetas_deg"],
-                tilt_deg=tilt_deg,
-                tilt_about=tilt_about,
-            )
+        _, _, geom = build_geometry(
+            meta,
+            grid_override=(recon_grid.nx, recon_grid.ny, recon_grid.nz),
+        )
 
     # Prepare optional volume mask
     vol_mask = None
@@ -400,6 +381,7 @@ def main() -> None:
         geometry_type=meta.get("geometry_type", "parallel"),
         geometry_meta=meta.get("geometry_meta"),
         volume=np.asarray(vol),
+        align_params=meta.get("align_params"),
         angle_offset_deg=meta.get("angle_offset_deg"),
         misalign_spec=meta.get("misalign_spec"),
         frame=str(args.frame),
