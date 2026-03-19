@@ -98,25 +98,42 @@ def _resolve_recon_grid_and_mask(
     grid: Grid,
     detector: Detector,
     *,
+    is_parallel: bool,
     roi_mode: str,
     grid_override: tuple[int, int, int] | list[int] | None,
 ) -> tuple[Grid, bool]:
     try:
-        roi = compute_roi(grid, detector)
+        roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
         full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
         full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-        det_smaller = (roi.r_u + 1e-6) < full_half_x or (roi.r_v + 1e-6) < full_half_z
+        det_smaller = (
+            (roi.r_u + 1e-6) < full_half_x
+            or (is_parallel and (roi.r_u + 1e-6) < full_half_y)
+            or (roi.r_v + 1e-6) < full_half_z
+        )
     except Exception:
         det_smaller = False
 
     recon_grid = grid
     apply_cyl_mask = False
     if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
-        recon_grid = grid_from_detector_fov_slices(grid, detector)
+        if roi_mode == "auto" and not is_parallel:
+            recon_grid = grid_from_detector_fov(
+                grid, detector, crop_y_to_u=False
+            )
+        else:
+            recon_grid = grid_from_detector_fov_slices(
+                grid, detector, crop_y_to_u=is_parallel
+            )
     elif roi_mode == "bbox":
-        recon_grid = grid_from_detector_fov(grid, detector)
+        recon_grid = grid_from_detector_fov(
+            grid, detector, crop_y_to_u=is_parallel
+        )
     elif roi_mode == "cyl":
-        recon_grid = grid_from_detector_fov_slices(grid, detector)
+        recon_grid = grid_from_detector_fov_slices(
+            grid, detector, crop_y_to_u=is_parallel
+        )
         apply_cyl_mask = True
 
     # Explicit grid overrides take full precedence over ROI-derived masking.
@@ -392,6 +409,7 @@ def main() -> None:
     recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
         grid,
         detector,
+        is_parallel=meta.get("geometry_type", "parallel") == "parallel",
         roi_mode=str(args.roi).lower(),
         grid_override=args.grid,
     )
