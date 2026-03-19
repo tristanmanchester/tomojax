@@ -239,10 +239,13 @@ def main() -> None:
             info = compute_roi(grid, detector)
             # Only crop when detector FOV is smaller than current grid (auto)
             full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+            full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
             full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-            det_smaller = (info.r_u + 1e-6) < full_half_x or (
-                info.r_v + 1e-6
-            ) < full_half_z
+            det_smaller = (
+                (info.r_u + 1e-6) < full_half_x
+                or (info.r_u + 1e-6) < full_half_y
+                or (info.r_v + 1e-6) < full_half_z
+            )
             if roi_mode == "auto" and det_smaller:
                 recon_grid = grid_from_detector_fov_slices(grid, detector)
             elif roi_mode == "cube":

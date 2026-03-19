@@ -6,7 +6,7 @@ These utilities compute ROI grids that fit inside the detector's FOV for
 parallel-beam setups (rotation about +z, rays along +y). The ROI is based on
 simple, conservative bounds:
 
-- X-Z plane coverage over all rotation angles (around +z) yields a disk of
+- X-Y plane coverage over all rotation angles (around +z) yields a disk of
   radius r_u = (nu/2-0.5)*du reduced by any detector x-center offset |cx|.
 - Z coverage is bounded by r_v = (nv/2-0.5)*dv minus |cz|.
 - For 3D, reconstruction is conceptually a stack of 2D slices at fixed z. Each
@@ -14,9 +14,9 @@ simple, conservative bounds:
   choices where (nx, ny) are chosen from r_u and nz from r_v.
   Optionally apply a cylindrical mask (circle in x–y, extruded along z).
 
-The resulting grid keeps voxel spacings and ny (depth) unchanged, and matches
-the original parity (odd/even) along x and z when possible to avoid off-by-half
-shifts relative to the default centered origin convention.
+The resulting grid keeps voxel spacings, crops both in-plane axes against r_u,
+respects detector height along z, and tries to preserve parity (odd/even)
+whenever a shared square/cubic side still allows it.
 """
 
 import math
@@ -28,9 +28,10 @@ from ..core.geometry.base import Grid, Detector
 @dataclass(frozen=True)
 class RoiInfo:
     """Derived physical FOV half-extents and recommended ROI grid dims."""
-    r_u: float  # half-extent along x after angle-invariant reduction (cx)
+    r_u: float  # half-extent in the rotation plane after angle-invariant reduction (cx)
     r_v: float  # half-extent along z after center offset (cz)
     nx_roi: int
+    ny_roi: int
     nz_roi: int
 
 
@@ -60,13 +61,49 @@ def _fit_dim_to_half_extent(H: float, v: float, orig_n: int) -> int:
     return max(1, n_max)
 
 
+def _match_parity_leq(n: int, parity: int) -> int:
+    """Largest integer <= n with the requested parity, clamped to at least 1."""
+    if n < 1:
+        return 1
+    if (n % 2) != (parity % 2) and n > 1:
+        n -= 1
+    return max(1, n)
+
+
+def _choose_shared_side(side_max: int, *orig_dims: int) -> int:
+    """Pick the largest shared side <= side_max while preserving parity when possible.
+
+    For square/cubic ROI outputs, a single `side` is reused across multiple axes.
+    Taking a raw `min()` across already parity-matched fitted dimensions can reintroduce
+    a parity flip if the limiting axis has different parity. We instead choose the
+    largest side not exceeding `side_max` whose parity preserves the majority of the
+    original dimensions, breaking ties in favour of the x-axis parity (the first dim).
+    """
+    if side_max < 1:
+        return 1
+    if not orig_dims:
+        return max(1, side_max)
+
+    parities = [int(n) % 2 for n in orig_dims]
+    even_count = sum(p == 0 for p in parities)
+    odd_count = len(parities) - even_count
+    if odd_count > even_count:
+        target_parity = 1
+    elif even_count > odd_count:
+        target_parity = 0
+    else:
+        target_parity = parities[0]
+    return _match_parity_leq(int(side_max), target_parity)
+
+
 def compute_roi(grid: Grid, detector: Detector) -> RoiInfo:
     """Compute conservative FOV half-extents and grid dims from detector.
 
     - r_u = max(0, (nu/2-0.5)*du - |cx|) enforces angle-invariant coverage.
     - r_v = max(0, (nv/2-0.5)*dv - |cz|) enforces vertical coverage.
-    - nx_roi, nz_roi are the largest dims (matching original parity) whose
-      half-extents fit within r_u and r_v respectively, clipped by current grid.
+    - nx_roi and ny_roi are the largest dims (matching original parity) whose
+      half-extents fit within the in-plane radius r_u; nz_roi similarly fits r_v.
+      All dimensions are clipped by the current grid.
     """
     # Detector pixel-center half extents (world units)
     u_half = ((float(detector.nu) / 2.0) - 0.5) * float(detector.du)
@@ -78,26 +115,33 @@ def compute_roi(grid: Grid, detector: Detector) -> RoiInfo:
 
     # Fit dims; clip to not exceed the current grid dims
     nx_fit = _fit_dim_to_half_extent(r_u, float(grid.vx), int(grid.nx))
+    ny_fit = _fit_dim_to_half_extent(r_u, float(grid.vy), int(grid.ny))
     nz_fit = _fit_dim_to_half_extent(r_v, float(grid.vz), int(grid.nz))
     nx_roi = min(int(grid.nx), nx_fit)
+    ny_roi = min(int(grid.ny), ny_fit)
     nz_roi = min(int(grid.nz), nz_fit)
 
-    return RoiInfo(r_u=r_u, r_v=r_v, nx_roi=nx_roi, nz_roi=nz_roi)
+    return RoiInfo(r_u=r_u, r_v=r_v, nx_roi=nx_roi, ny_roi=ny_roi, nz_roi=nz_roi)
 
 
 def grid_from_detector_fov(grid: Grid, detector: Detector) -> Grid:
     """Return a new Grid cropped to the detector FOV bounding box.
 
-    Keeps ny/vy unchanged and centers the cropped grid at the origin using the
-    same default centered origin convention.
+    All three axes are cropped conservatively: x and y by the in-plane detector
+    radius `r_u`, and z by the detector height `r_v`. The cropped grid remains
+    centered at the origin using the same default centered-origin convention.
     """
     info = compute_roi(grid, detector)
-    # If detector already covers full current grid, just return the original grid
-    if _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6 and _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6:
+    # If detector already covers the full current grid, just return the original grid.
+    if (
+        _half_extent_from_n(grid.nx, grid.vx) <= info.r_u + 1e-6
+        and _half_extent_from_n(grid.ny, grid.vy) <= info.r_u + 1e-6
+        and _half_extent_from_n(grid.nz, grid.vz) <= info.r_v + 1e-6
+    ):
         return grid
     return Grid(
         nx=int(info.nx_roi),
-        ny=int(grid.ny),
+        ny=int(info.ny_roi),
         nz=int(info.nz_roi),
         vx=float(grid.vx),
         vy=float(grid.vy),
@@ -110,18 +154,14 @@ def grid_from_detector_fov(grid: Grid, detector: Detector) -> Grid:
 def grid_from_detector_fov_cube(grid: Grid, detector: Detector) -> Grid:
     """Return a new cubic Grid cropped to the detector FOV (nx=ny=nz).
 
-    Side length is the largest integer not exceeding both x- and z-FOV fits and
-    the original ny. This yields a cube that fits inside the detector's FOV
-    footprint and the existing volume extent in y.
+    The shared side is limited by x/y in-plane coverage (`r_u`) and z coverage
+    (`r_v`). When multiple fitted dimensions with different parities compete, the
+    final side is adjusted downward by at most one voxel so the cubic output keeps
+    a consistent, parity-preserving centered-origin convention where possible.
     """
     info = compute_roi(grid, detector)
-    ny_fit = min(
-        int(grid.ny),
-        _fit_dim_to_half_extent(info.r_u, float(grid.vy), int(grid.ny)),
-    )
-    side = min(int(info.nx_roi), ny_fit, int(info.nz_roi))
-    if side < 1:
-        side = 1
+    side_max = min(int(info.nx_roi), int(info.ny_roi), int(info.nz_roi))
+    side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny), int(grid.nz))
     # If the original grid already fits within the FOV and is cubic, return it
     if (
         grid.nx == grid.ny == grid.nz and
@@ -165,22 +205,17 @@ def cylindrical_mask_xy(grid: Grid, detector: Detector):
 def grid_from_detector_fov_slices(grid: Grid, detector: Detector) -> Grid:
     """Return an ROI Grid with square x–y slices and z from detector height.
 
-    - (nx, ny) chosen as the largest equal dims that fit within r_u using (vx, vy),
-      clipped by current grid dims.
+    - (nx, ny) chosen as the largest equal dims that fit within r_u using (vx, vy).
     - nz chosen from r_v using vz, clipped by current nz.
     This matches a common 3D parallel-beam reconstruction: per-z 2D CT slices.
     """
     info = compute_roi(grid, detector)
-    nx_fit = _fit_dim_to_half_extent(info.r_u, float(grid.vx), int(grid.nx))
-    ny_fit = _fit_dim_to_half_extent(info.r_u, float(grid.vy), int(grid.ny))
-    nz_fit = _fit_dim_to_half_extent(info.r_v, float(grid.vz), int(grid.nz))
-    side = min(nx_fit, ny_fit)
-    if side < 1:
-        side = 1
+    side_max = min(int(info.nx_roi), int(info.ny_roi))
+    side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
     return Grid(
         nx=min(int(grid.nx), side),
         ny=min(int(grid.ny), side),
-        nz=min(int(grid.nz), int(nz_fit)),
+        nz=min(int(grid.nz), int(info.nz_roi)),
         vx=float(grid.vx),
         vy=float(grid.vy),
         vz=float(grid.vz),

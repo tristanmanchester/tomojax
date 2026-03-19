@@ -104,8 +104,13 @@ def _resolve_recon_grid_and_mask(
     try:
         roi = compute_roi(grid, detector)
         full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
         full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-        det_smaller = (roi.r_u + 1e-6) < full_half_x or (roi.r_v + 1e-6) < full_half_z
+        det_smaller = (
+            (roi.r_u + 1e-6) < full_half_x
+            or (roi.r_u + 1e-6) < full_half_y
+            or (roi.r_v + 1e-6) < full_half_z
+        )
     except Exception:
         det_smaller = False
 

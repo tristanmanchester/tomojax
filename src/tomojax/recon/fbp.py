@@ -9,7 +9,7 @@ import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, Geometry
 from ..core.projector import forward_project_view_T
-from .filters import get_filter, get_filter_np
+from .filters import get_filter_np
 from ..utils.logging import progress_iter
 
 _RFFT_FILTER_CACHE: "OrderedDict[Tuple[str, int, float, str], np.ndarray]" = OrderedDict()
@@ -17,7 +17,12 @@ _RFFT_FILTER_CACHE_CAP = 8
 
 
 def _get_rfft_filter_cached(filter_name: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
-    """Return one-sided RFFT filter H_r with interior doubled, cached by key.
+    """Return the one-sided RFFT filter H_r cached by key.
+
+    `jax.numpy.fft.rfft` already returns the non-redundant half-spectrum. Its
+    interior bins should be multiplied by the one-sided filter values directly;
+    doubling those coefficients would incorrectly double-count positive-frequency
+    energy during `irfft` reconstruction.
 
     - Key: (name, nu, du, dtype)
     - Returns a JAX array of shape (nu//2 + 1,) with dtype matching rows dtype.
@@ -30,9 +35,6 @@ def _get_rfft_filter_cached(filter_name: str, nu: int, du: float, dtype: jnp.dty
         H_np = get_filter_np(filter_name, int(nu), float(du))  # np.float32 length nu
         n_r = int(nu) // 2 + 1
         Hr_np = H_np[:n_r].astype(np.float32, copy=False)
-        if n_r > 2:
-            Hr_np = Hr_np.copy()
-            Hr_np[1:-1] *= np.float32(2.0)
         # Promote to float64 if rows dtype requests it
         if str(dtype) in ("float64", "complex128"):
             Hr_np = Hr_np.astype(np.float64, copy=False)
