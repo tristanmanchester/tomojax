@@ -230,8 +230,12 @@ def forward_project_view_T(
     denom = ey_obj[:, None]
     eps = jnp.float32(1e-8)
     parallel = jnp.abs(denom) < eps
-    t1 = (lower - base) / denom
-    t2 = (upper - base) / denom
+    # Avoid dividing by zero on slab-parallel axes. The parallel slabs are
+    # overwritten below, but reverse-mode differentiation can still see the
+    # raw divide when `denom == 0` unless we make the denominator safe first.
+    safe_denom = jnp.where(parallel, jnp.ones_like(denom), denom)
+    t1 = (lower - base) / safe_denom
+    t2 = (upper - base) / safe_denom
     lo = jnp.minimum(t1, t2)
     hi = jnp.maximum(t1, t2)
     inside = (base >= lower) & (base <= upper)

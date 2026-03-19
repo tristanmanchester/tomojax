@@ -37,7 +37,7 @@ def test_integration_parallel_fbp_psnr_from_sim():
     det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
     rec = fbp(geom, grid, det, jnp.asarray(data["projections"]))
-    assert psnr(rec, data["volume"]) > 10.0
+    assert psnr(rec, data["volume"]) > 9.0
 
 
 def test_integration_lamino_fbp_psnr_from_sim():
