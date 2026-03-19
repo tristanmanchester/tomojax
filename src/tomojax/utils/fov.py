@@ -43,20 +43,32 @@ def _half_extent_from_n(n: int, v: float) -> float:
     return ((float(n) / 2.0) - 0.5) * float(v)
 
 
-def _fit_dim_to_half_extent(H: float, v: float, orig_n: int) -> int:
-    """Largest integer n with same parity as orig_n such that half-extent <= H.
+def _fit_dim_to_half_extent(
+    H: float,
+    v: float,
+    orig_n: int,
+    *,
+    match_parity: bool = False,
+) -> int:
+    """Largest integer n whose half-extent fits within ``H``.
 
-    Half-extent for n voxels of size v is ((n/2)-0.5)*v. We solve
-      ((n/2) - 0.5) * v <= H  =>  n <= 2*H/v + 1.
-    Then, adjust downward by 1 if parity doesn't match the original.
+    Half-extent for n voxels of size v is ``((n/2)-0.5)*v``. Solving
+
+      ``((n/2) - 0.5) * v <= H``
+
+    gives ``n <= 2*H/v + 1``. Plain per-axis bbox fits should keep the largest
+    valid dimension even when that flips odd/even parity, because parity
+    changes do not shift the centred ROI and discarding a voxel would
+    unnecessarily shrink valid detector coverage. Shared square/cubic helpers
+    can opt into parity matching before they choose a common side across
+    multiple axes.
     """
     if H <= 0.0:
         return 1
     n_max = int(math.floor(2.0 * (H / float(v)) + 1.0))
     if n_max < 1:
         n_max = 1
-    # Match original parity to preserve centered indexing conventions where possible
-    if (n_max % 2) != (orig_n % 2) and n_max > 1:
+    if match_parity and (n_max % 2) != (orig_n % 2) and n_max > 1:
         n_max -= 1
     return max(1, n_max)
 
@@ -101,13 +113,14 @@ def compute_roi(
     detector: Detector,
     *,
     crop_y_to_u: bool = True,
+    match_parity: bool = False,
 ) -> RoiInfo:
     """Compute conservative FOV half-extents and grid dims from detector.
 
     - r_u = max(0, (nu/2-0.5)*du - |cx|) enforces angle-invariant coverage.
     - r_v = max(0, (nv/2-0.5)*dv - |cz|) enforces vertical coverage.
-    - nx_roi is the largest dim (matching original parity) whose half-extent fits
-      within the in-plane radius r_u; nz_roi similarly fits r_v.
+    - nx_roi is the largest dim whose half-extent fits within the in-plane radius
+      r_u; nz_roi similarly fits r_v.
     - ny_roi is also fit to r_u when `crop_y_to_u=True`, which matches the
       parallel-beam x-y disk interpretation. Laminography callers can set
       `crop_y_to_u=False` to keep the full source y extent.
@@ -122,12 +135,27 @@ def compute_roi(
     r_v = max(0.0, v_half - abs(cz))
 
     # Fit dims; clip to not exceed the current grid dims
-    nx_fit = _fit_dim_to_half_extent(r_u, float(grid.vx), int(grid.nx))
+    nx_fit = _fit_dim_to_half_extent(
+        r_u,
+        float(grid.vx),
+        int(grid.nx),
+        match_parity=match_parity,
+    )
     if crop_y_to_u:
-        ny_fit = _fit_dim_to_half_extent(r_u, float(grid.vy), int(grid.ny))
+        ny_fit = _fit_dim_to_half_extent(
+            r_u,
+            float(grid.vy),
+            int(grid.ny),
+            match_parity=match_parity,
+        )
     else:
         ny_fit = int(grid.ny)
-    nz_fit = _fit_dim_to_half_extent(r_v, float(grid.vz), int(grid.nz))
+    nz_fit = _fit_dim_to_half_extent(
+        r_v,
+        float(grid.vz),
+        int(grid.nz),
+        match_parity=match_parity,
+    )
     nx_roi = min(int(grid.nx), nx_fit)
     ny_roi = min(int(grid.ny), ny_fit)
     nz_roi = min(int(grid.nz), nz_fit)
@@ -183,7 +211,7 @@ def grid_from_detector_fov_cube(
     final side is adjusted downward by at most one voxel so the cubic output keeps
     a consistent, parity-preserving centered-origin convention where possible.
     """
-    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
+    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi), int(info.nz_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny), int(grid.nz))
     # If the original grid already fits within the FOV and is cubic, return it
@@ -241,7 +269,7 @@ def grid_from_detector_fov_slices(
     - nz chosen from r_v using vz, clipped by current nz.
     This matches a common 3D parallel-beam reconstruction: per-z 2D CT slices.
     """
-    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u)
+    info = compute_roi(grid, detector, crop_y_to_u=crop_y_to_u, match_parity=True)
     side_max = min(int(info.nx_roi), int(info.ny_roi))
     side = _choose_shared_side(side_max, int(grid.nx), int(grid.ny))
     return Grid(

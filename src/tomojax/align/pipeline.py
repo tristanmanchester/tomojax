@@ -8,7 +8,6 @@ from typing import Any, Dict, Tuple, Iterable, List, Optional
 
 import jax
 import jax.numpy as jnp
-import optax
 
 from ..core.geometry import Geometry, Grid, Detector
 from ..core.projector import forward_project_view_T, get_detector_grid_device
