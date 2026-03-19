@@ -15,5 +15,5 @@ def test_gpu_main() -> None:
 
 
 def test_cpu_main() -> None:
-    os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
+    os.environ["JAX_PLATFORM_NAME"] = "cpu"
     _print_runtime()

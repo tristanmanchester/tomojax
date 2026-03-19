@@ -65,10 +65,10 @@ Notes
 
 ```bash
 # Explore CLIs inside the uv-managed environment
-python -m tomojax.cli.simulate --help
-python -m tomojax.cli.misalign --help
-python -m tomojax.cli.recon    --help
-python -m tomojax.cli.align    --help
+uv run python -m tomojax.cli.simulate --help
+uv run python -m tomojax.cli.misalign --help
+uv run python -m tomojax.cli.recon    --help
+uv run python -m tomojax.cli.align    --help
 
 # Or use the installed console scripts
 uv run tomojax-simulate ...
