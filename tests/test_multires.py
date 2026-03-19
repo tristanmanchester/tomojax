@@ -38,3 +38,17 @@ def test_multires_beats_single_level():
     g_multi, loss_multi = grad_data_term(geom, grid, det, projs, x_multi)
 
     assert loss_multi <= loss_single + 1e-3
+
+
+def test_multires_rejects_mismatched_level_lengths():
+    grid, det, geom, vol, projs = make_case(16, 16, 16, 8)
+    with pytest.raises(ValueError, match="same length"):
+        fista_multires(
+            geom,
+            grid,
+            det,
+            projs,
+            factors=(4, 2, 1),
+            iters_per_level=(5, 6),
+            lambda_tv=0.001,
+        )

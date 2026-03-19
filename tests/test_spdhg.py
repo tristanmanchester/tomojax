@@ -50,3 +50,21 @@ def test_spdhg_from_sim_decreases():
     assert len(loss) == 4
     assert loss[-1] <= loss[0]
 
+
+def test_spdhg_scales_data_dual_step_by_inverse_selection_probability():
+    grid, det, geom, vol, projs = make_simple_case(8, 8, 8, 12)
+    cfg = SPDHGConfig(
+        iters=1,
+        lambda_tv=1e-3,
+        views_per_batch=3,
+        tau=0.1,
+        sigma_data=0.2,
+        sigma_tv=0.1,
+        log_every=1,
+        seed=0,
+    )
+    _, info = spdhg_tv(geom, grid, det, projs, config=cfg)
+    assert info["num_blocks"] == 4
+    assert info["selection_prob"] == pytest.approx(0.25)
+    assert info["sigma_data_base"] == pytest.approx(0.2)
+    assert info["sigma_data"] == pytest.approx(0.8)

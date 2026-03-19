@@ -143,8 +143,13 @@ def fista_multires(
 
     Returns (x, info) where x is at finest resolution.
     """
-    factors = tuple(factors)
-    iters_per_level = tuple(iters_per_level)
+    factors = tuple(int(f) for f in factors)
+    iters_per_level = tuple(int(it) for it in iters_per_level)
+    if len(factors) != len(iters_per_level):
+        raise ValueError(
+            "factors and iters_per_level must have the same length; "
+            f"got {len(factors)} and {len(iters_per_level)}"
+        )
     levels = create_resolution_pyramid(grid, detector, projections, factors)
     # Heuristic: if coarse levels get very few iterations, skip them and spend
     # the entire budget at the finest level (often better for tiny problems/tests).
@@ -155,8 +160,10 @@ def fista_multires(
             x_fine, info = fista_tv(geometry, grid, detector, projections, iters=total_iters, lambda_tv=lambda_tv)
             return x_fine, {"loss": info.get("loss", []), "factors": list(factors)}
     x_init = None
+    prev_factor: int | None = None
     loss_hist = []
-    for lvl, iters in progress_iter(list(zip(levels, iters_per_level)), total=len(levels), desc="Multires: levels"):
+    level_plan = list(zip(levels, iters_per_level))
+    for lvl, iters in progress_iter(level_plan, total=len(level_plan), desc="Multires: levels"):
         g = lvl["grid"]
         d = lvl["detector"]
         y = lvl["projections"]
@@ -172,11 +179,12 @@ def fista_multires(
         prev_factor = lvl["factor"]
         x_init = x_lvl
 
-    # Upsample to finest (factor=1) if last level not finest
-    if levels and levels[-1]["factor"] != 1:
-        # Find finest grid
-        finest_grid = levels[-1]["grid"]
-        x_final = upsample_volume(x_init, levels[-1]["factor"], (grid.nx, grid.ny, grid.nz))
+    if x_init is None or prev_factor is None:
+        raise ValueError("fista_multires requires at least one resolution level")
+
+    # Upsample to finest resolution if the last processed level is still coarse.
+    if prev_factor != 1:
+        x_final = upsample_volume(x_init, prev_factor, (grid.nx, grid.ny, grid.nz))
     else:
         x_final = x_init
 

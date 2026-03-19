@@ -141,29 +141,29 @@ def fbp(
         acc_chunk, _ = jax.lax.scan(body, init, (T_chunk, filt_chunk))
         return acc_chunk
 
-    # Dynamic backoff on OOM: start with batch size b and shrink on RESOURCE_EXHAUSTED
-    total_batches = (n_views + b - 1) // b
+    # Dynamic backoff on OOM: start with batch size b and shrink on
+    # memory pressure. Progress is tracked per-view so retries do not prematurely
+    # exhaust a fixed batch iterator.
     s = 0
-    pb_iter = progress_iter(range(total_batches), total=total_batches, desc="FBP: batches")
-    for _ in pb_iter:
+    view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
+    while s < n_views:
         cur = min(b, n_views - s)
         T_chunk = T_all[s : s + cur]
         y_chunk = proj[s : s + cur]
-        # Filter only the current chunk (reshape rows to 2D)
-        rows = y_chunk.reshape((-1, nu))
-        rows_f = _fft_filter_rows(rows, du=float(detector.du), filter_name=filter_name)
-        filt_chunk = rows_f.reshape((T_chunk.shape[0], nv, nu))
         try:
+            # Filter only the current chunk (reshape rows to 2D)
+            rows = y_chunk.reshape((-1, nu))
+            rows_f = _fft_filter_rows(rows, du=float(detector.du), filter_name=filter_name)
+            filt_chunk = rows_f.reshape((T_chunk.shape[0], nv, nu))
             acc = acc + bp_batch(T_chunk, filt_chunk)
             s += cur
+            for _ in range(cur):
+                next(view_progress, None)
         except Exception as e:
-            msg = str(e)
-            if ("RESOURCE_EXHAUSTED" in msg or "Out of memory" in msg) and b > 1:
-                # Halve the batch and retry this segment
+            msg = str(e).lower()
+            if ("resource_exhausted" in msg or "out of memory" in msg) and b > 1:
+                # Halve the batch and retry this segment without advancing s.
                 b = max(1, b // 2)
-                # Recompute total batches for progress bar remaining; leave s unchanged
-                remaining = (n_views - s + b - 1) // b
-                pb_iter.total = (s // b) + remaining
                 continue
             raise
 
