@@ -7,7 +7,20 @@ them lightweight and JAX-friendly (no heavy runtime logic here).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Protocol, Tuple
+from typing import Callable, Iterable, Protocol, Tuple
+
+
+def _coerce_fixed_tuple(name: str, value: Iterable[float], expected_len: int) -> tuple[float, ...]:
+    try:
+        items = tuple(value)
+    except TypeError as e:
+        raise TypeError(f"{name} must be an iterable of length {expected_len}") from e
+    if len(items) != expected_len:
+        raise ValueError(f"{name} must have length {expected_len}, got {len(items)}")
+    try:
+        return tuple(float(v) for v in items)
+    except (TypeError, ValueError) as e:
+        raise TypeError(f"{name} elements must be real numbers") from e
 
 
 @dataclass(frozen=True)
@@ -20,6 +33,20 @@ class Grid:
     vz: float
     vol_origin: Tuple[float, float, float] | None = None
     vol_center: Tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.vol_origin is not None:
+            object.__setattr__(
+                self,
+                "vol_origin",
+                _coerce_fixed_tuple("vol_origin", self.vol_origin, 3),
+            )
+        if self.vol_center is not None:
+            object.__setattr__(
+                self,
+                "vol_center",
+                _coerce_fixed_tuple("vol_center", self.vol_center, 3),
+            )
 
     def to_dict(self) -> dict:
         d = {
@@ -44,6 +71,13 @@ class Detector:
     du: float
     dv: float
     det_center: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "det_center",
+            _coerce_fixed_tuple("det_center", self.det_center, 2),
+        )
 
     def to_dict(self) -> dict:
         return {

@@ -94,6 +94,40 @@ def _transfer_guard_ctx(mode: str | None = None):
         return _nullcontext()
 
 
+def _resolve_recon_grid_and_mask(
+    grid: Grid,
+    detector: Detector,
+    *,
+    roi_mode: str,
+    grid_override: tuple[int, int, int] | list[int] | None,
+) -> tuple[Grid, bool]:
+    try:
+        roi = compute_roi(grid, detector)
+        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+        det_smaller = (roi.r_u + 1e-6) < full_half_x or (roi.r_v + 1e-6) < full_half_z
+    except Exception:
+        det_smaller = False
+
+    recon_grid = grid
+    apply_cyl_mask = False
+    if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
+        recon_grid = grid_from_detector_fov_slices(grid, detector)
+    elif roi_mode == "bbox":
+        recon_grid = grid_from_detector_fov(grid, detector)
+    elif roi_mode == "cyl":
+        recon_grid = grid_from_detector_fov_slices(grid, detector)
+        apply_cyl_mask = True
+
+    # Explicit grid overrides take full precedence over ROI-derived masking.
+    if grid_override is not None:
+        NX, NY, NZ = map(int, grid_override)
+        recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
+        apply_cyl_mask = False
+
+    return recon_grid, apply_cyl_mask
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Joint reconstruction + alignment on dataset (.nxs)"
@@ -355,28 +389,12 @@ def main() -> None:
         mask_vol=str(args.mask_vol),
     )
     # ROI handling (align on realistic FOV)
-    roi_mode = str(args.roi).lower()
-    try:
-        roi = compute_roi(grid, detector)
-        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
-        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-        det_smaller = (roi.r_u + 1e-6) < full_half_x or (roi.r_v + 1e-6) < full_half_z
-    except Exception:
-        det_smaller = False
-    recon_grid = grid
-    apply_cyl_mask = False
-    if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
-        recon_grid = grid_from_detector_fov_slices(grid, detector)
-    elif roi_mode == "bbox":
-        recon_grid = grid_from_detector_fov(grid, detector)
-    elif roi_mode == "cyl":
-        recon_grid = grid_from_detector_fov_slices(grid, detector)
-        apply_cyl_mask = True
-
-    # Optional explicit grid override (takes precedence over ROI)
-    if args.grid is not None:
-        NX, NY, NZ = map(int, args.grid)
-        recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
+    recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
+        grid,
+        detector,
+        roi_mode=str(args.roi).lower(),
+        grid_override=args.grid,
+    )
 
     # Rebuild geometry if grid changed
     if recon_grid is not grid:
