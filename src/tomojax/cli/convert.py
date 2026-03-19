@@ -2,8 +2,8 @@
 
 Usage examples:
 
-  pixi run python -m tomojax.cli.convert --in data/sim.npz --out data/sim.nxs
-  pixi run python -m tomojax.cli.convert --in data/sim.nxs --out data/sim.npz
+  uv run tomojax-convert --in data/sim.npz --out data/sim.nxs
+  uv run tomojax-convert --in data/sim.nxs --out data/sim.npz
 """
 
 from __future__ import annotations

@@ -3,12 +3,12 @@
 This guide focuses on laminography: simulate a thin slab, run FBP for a sanity check, generate misaligned variants (clean and noisy), then align and reconstruct.
 
 Prerequisites
-- pixi installed and environment set up
+- `uv sync --extra cuda12 --group dev` completed
 - Optional: set JAX_PLATFORM_NAME=cpu if CUDA libraries aren’t available
 
 ## Simulate laminography dataset
 ```bash
-pixi run simulate \
+uv run tomojax-simulate \
 --out runs/lamino_demo.nxs \
 --nx 128 --ny 128 --nz 128 \
 --nu 128 --nv 128 --n-views 360 \
@@ -27,7 +27,7 @@ Notes
 
 ## Recon clean dataset with FBP - sanity check
 ```bash
-pixi run python -m tomojax.cli.recon \
+uv run tomojax-recon \
 --data runs/lamino_demo.nxs \
 --algo fbp \
 --filter ramp \
@@ -36,7 +36,7 @@ pixi run python -m tomojax.cli.recon \
 
 ## Create misaligned dataset
 ```bash
-pixi run misalign \
+uv run tomojax-misalign \
   --data runs/lamino_demo.nxs \
   --out runs/lamino_demo_misaligned.nxs \
   --rot-deg 5.0 --trans-px 10 \
@@ -48,16 +48,16 @@ Deterministic misalignment schedules
 - For systematic drifts/steps, use `--pert`/`--spec` (see `docs/misalign_modes.md`). Examples:
 ```bash
 # Angle linear drift 0→+5° across 360° scan
-pixi run misalign --data runs/lamino_demo.nxs --out runs/lamino_mis_angle_lin.nxs \
+uv run tomojax-misalign --data runs/lamino_demo.nxs --out runs/lamino_mis_angle_lin.nxs \
   --pert angle:linear:delta=5deg
 # dz box pulse −4 px between ~60° and ~80°
-pixi run misalign --data runs/lamino_demo.nxs --out runs/lamino_mis_dz_box.nxs \
+uv run tomojax-misalign --data runs/lamino_demo.nxs --out runs/lamino_mis_dz_box.nxs \
   --pert dz:box:at=60deg,width_deg=20,delta=-4px
 ```
 
 ## Create misaligend noisy dataset
 ```bash
-pixi run misalign \
+uv run tomojax-misalign \
   --data runs/lamino_demo.nxs \
   --out runs/lamino_demo_misaligned_noisy.nxs \
   --rot-deg 5.0 --trans-px 10 \
@@ -68,7 +68,7 @@ pixi run misalign \
 
 ## Naive FBP reconstruction misaligned dataset
 ```bash
-pixi run python -m tomojax.cli.recon \
+uv run tomojax-recon \
   --data runs/lamino_demo_misaligned.nxs \
   --algo fbp \
   --filter ramp \
@@ -77,7 +77,7 @@ pixi run python -m tomojax.cli.recon \
 
 ## Naive FBP reconstruction misaligned noisy dataset
 ```bash
-pixi run python -m tomojax.cli.recon \
+uv run tomojax-recon \
   --data runs/lamino_demo_misaligned_noisy.nxs \
   --algo fbp \
   --filter ramp \
@@ -86,7 +86,7 @@ pixi run python -m tomojax.cli.recon \
 
 ## Align and reconstruct misaligned dataset
 ```bash
-pixi run align \
+uv run tomojax-align \
   --data runs/lamino_demo_misaligned.nxs \
   --outer-iters 4 --recon-iters 10 \
   --lambda-tv 5e-3 --tv-prox-iters 10 \
@@ -97,7 +97,7 @@ pixi run align \
 
 ## Align and reconstruct misaligned noisy dataset
 ```bash
-pixi run align \
+uv run tomojax-align \
   --data runs/lamino_demo_misaligned_noisy.nxs \
   --outer-iters 4 --recon-iters 20 \
   --lambda-tv 5e-2 --tv-prox-iters 15 \

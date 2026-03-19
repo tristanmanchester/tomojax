@@ -205,17 +205,14 @@ def forward_project_view_T(
     ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
     support_lower, support_upper = _interpolation_support_bounds(grid, vol_origin)
     if n_steps is None:
-        support_lengths = np.array(
-            [
-                (grid.nx + 1) * grid.vx,
-                (grid.ny + 1) * grid.vy,
-                (grid.nz + 1) * grid.vz,
-            ],
-            dtype=np.float64,
+        # Keep the scan length static under jit/vmap/grad by using a pose-agnostic
+        # upper bound on the support traversal instead of materializing traced rays.
+        support_lengths = (
+            float((grid.nx + 1) * grid.vx),
+            float((grid.ny + 1) * grid.vy),
+            float((grid.nz + 1) * grid.vz),
         )
-        max_path_length = float(
-            np.dot(np.abs(np.asarray(ey_obj, dtype=np.float64)), support_lengths)
-        )
+        max_path_length = math.sqrt(sum(length * length for length in support_lengths))
         n_steps = int(math.ceil(max_path_length / float(step_size)))
 
     xr = Xr[jnp.newaxis, :]

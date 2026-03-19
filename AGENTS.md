@@ -13,14 +13,13 @@
 - Figures for docs live in `images/`.
 
 ## Build, Test, and Development Commands
-- Enter the managed environment with `pixi shell`; run all commands below from there.
-- Verify JAX/accelerator: `pixi run test-gpu` (prints backend and devices). For CPU: `pixi run test-cpu`.
-- Install the package in editable mode: `pixi run install-root`.
-- Run tests: `pixi run test` or target a file, e.g., `pixi run python -m pytest -q tests/test_projector.py`.
+- Sync the managed environment with `uv sync --extra cuda12 --group dev` (or `uv sync --extra cpu --group dev` for CPU-only).
+- Verify JAX/accelerator: `uv run tomojax-test-gpu` (prints backend and devices). For CPU: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
+- Run tests: `uv run pytest -q tests` or target a file, e.g., `uv run pytest -q tests/test_projector.py`.
 - CLI workflows (examples; see `README.md` for more):
-  - Simulate: `pixi run simulate --help`
-  - Recon: `pixi run recon --data data/sim.nxs --algo fbp --out runs/fbp.nxs`
-  - Align: `pixi run align --data data/sim_misaligned.nxs --levels 2 1 --outer-iters 4 --out runs/align.nxs`
+  - Simulate: `uv run tomojax-simulate --help`
+  - Recon: `uv run tomojax-recon --data data/sim.nxs --algo fbp --out runs/fbp.nxs`
+  - Align: `uv run tomojax-align --data data/sim_misaligned.nxs --levels 2 1 --outer-iters 4 --out runs/align.nxs`
 
 ## Coding Style & Naming Conventions
 - Python 3.12, 4‑space indents, aim for ≤100 characters per line, prefer `jnp.float32` arrays.
@@ -38,6 +37,6 @@
 - Attach before/after visuals from `images/` or run outputs when changes affect reconstructions or docs.
 
 ## Security & Configuration Tips
-- CUDA 12 is required; JAX is installed via `pixi.toml` using the `cuda12` extra.
+- CUDA 12 on Linux is required for GPU runs; install the `cuda12` extra when syncing with uv.
 - Never commit large datasets or generated artifacts; verify `.gitignore` coverage before pushing.
 - JAX persistent compilation cache: the `align` CLI enables it if available; override location via `TOMOJAX_JAX_CACHE_DIR` (defaults to `~/.cache/tomojax/jax_cache`).

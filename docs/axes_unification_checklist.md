@@ -95,8 +95,8 @@ Normalize at I/O only; leave math and memory layout unchanged.
 - [ ] Verify GPU/CPU code paths unaffected (no compute‑path changes).
 
 ### A11. Manual validation
-- [ ] Simulate small dataset: `pixi run simulate --nx 64 --ny 64 --nz 32 --nu 64 --nv 32 --n-views 180 --out runs/sim.nxs`.
-- [ ] Reconstruct: `pixi run recon --data runs/sim.nxs --algo fbp --out runs/fbp.nxs`.
+- [ ] Simulate small dataset: `uv run tomojax-simulate --nx 64 --ny 64 --nz 32 --nu 64 --nv 32 --n-views 180 --out runs/sim.nxs`.
+- [ ] Reconstruct: `uv run tomojax-recon --data runs/sim.nxs --algo fbp --out runs/fbp.nxs`.
 - [ ] Inspect saved volume via HDF5: assert dataset shape `(nz,ny,nx)` and attr `"zyx"`.
 - [ ] Load with TomoJAX API and confirm returned shape `(nx,ny,nz)` and numerics match roundtrip.
 - [ ] Repeat with `align` CLI; verify expected slice count equals detector rows.
@@ -144,4 +144,3 @@ Adopt `zyx` inside the library as well (heavier refactor; not required for the f
 - [ ] Land Track A behind a minor version bump.
 - [ ] Announce in `CHANGELOG.md` and `README.md` with examples and FAQs.
 - [ ] Monitor for user reports; consider Track B only if needed by downstreams.
-

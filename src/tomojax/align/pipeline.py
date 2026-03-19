@@ -786,11 +786,12 @@ def align_multires(
 
     x_init = None
     params5 = None
+    prev_factor: int | None = None
     loss_hist: List[float] = []
 
     for li, lvl in enumerate(levels):
         g = lvl["grid"]; d = lvl["detector"]; y = lvl["projections"]
-        if x_init is not None:
+        if x_init is not None and prev_factor is not None:
             # Upsample previous x to current level as init
             f_up = prev_factor // lvl["factor"]
             x0 = upsample_volume(x_init, f_up, (g.nx, g.ny, g.nz))

@@ -1,14 +1,72 @@
 [build-system]
-requires = ["hatchling>=1.24"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
 
 [project]
 name = "tomojax"
 version = "0.2.0"
 description = "TomoJAX — CT projector, reconstruction, and alignment (v2)"
-requires-python = ">=3.8"
-authors = [{ name = "TomoJAX contributors" }]
-dependencies = []
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "GPL-3.0-only"
+authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac.uk" }]
+dependencies = [
+    "h5py>=3.14.0,<4",
+    "matplotlib>=3.10.5,<4",
+    "numpy>=2.3.2,<3",
+    "psutil>=7.0.0,<8",
+    "scikit-image>=0.25.2,<0.26",
+    "scipy>=1.16.1,<2",
+    "tifffile>=2025.8.28,<2026",
+    "tqdm>=4.67.1,<5",
+]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/tomojax"]
+[project.optional-dependencies]
+cpu = [
+    "jax>=0.5.3,<0.6",
+]
+cuda12 = [
+    "jax[cuda12]>=0.5.3,<0.6 ; platform_system == 'Linux'",
+]
+
+[project.scripts]
+tomojax-simulate = "tomojax.cli.simulate:main"
+tomojax-misalign = "tomojax.cli.misalign:main"
+tomojax-recon = "tomojax.cli.recon:main"
+tomojax-align = "tomojax.cli.align:main"
+tomojax-convert = "tomojax.cli.convert:main"
+tomojax-loss-bench = "tomojax.cli.loss_bench:main"
+tomojax-test-gpu = "tomojax.cli.runtime_checks:test_gpu_main"
+tomojax-test-cpu = "tomojax.cli.runtime_checks:test_cpu_main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.11,<0.12",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+exclude = [
+    ".git",
+    ".pixi",
+    ".venv",
+    "__pycache__",
+    "bench/data",
+    "bench/out",
+    "build",
+    "dist",
+    "scripts",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

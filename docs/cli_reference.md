@@ -1,6 +1,6 @@
 # CLI Reference
 
-All commands run inside the pixi environment. Either use `python -m tomojax.cli.<cmd>` or the pixi tasks (`pixi run <cmd>`) which forward extra arguments.
+All commands run inside the uv-managed environment. Either use `python -m tomojax.cli.<cmd>` or the console scripts via `uv run tomojax-<cmd>`.
 
 Common tips
 - Show progress bars: add `--progress` or set `TOMOJAX_PROGRESS=1`.
@@ -37,7 +37,7 @@ Key options
 
 Example
 ```
-pixi run simulate \
+uv run tomojax-simulate \
   --out data/sim_aligned.nxs \
   --nx 256 --ny 256 --nz 256 --nu 256 --nv 256 --n-views 200 \
   --phantom random_shapes --n-cubes 40 --n-spheres 40 \
@@ -69,19 +69,19 @@ Key options
 Examples
 ```
 # Clean misalignment
-pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nxs \
   --rot-deg 1.0 --trans-px 10 --seed 0 --progress
 
 # Misalignment + Poisson noise
-pixi run misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson.nxs \
   --rot-deg 1.0 --trans-px 10 --poisson 5000 --seed 0 --progress
 
 # Deterministic schedules (see docs/misalign_modes.md)
 # Linear angle drift 0→+5° across the scan
-pixi run misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs \
   --pert angle:linear:delta=5deg
 # Sudden dx shift of +5 px at 90° (held to end)
-pixi run misalign --data data/sim_aligned.nxs --out runs/mis_dx_step.nxs \
+uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_dx_step.nxs \
   --pert dx:step:at=90deg,to=5px
 ```
 
@@ -114,18 +114,18 @@ Key options
 Examples
 ```
 # FBP with bf16 gathers
-pixi run recon --data data/sim_misaligned.nxs \
+uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp --gather-dtype bf16 \
   --checkpoint-projector --out out/fbp_misaligned.nxs --progress
 
 # FISTA with TV (streamed)
-pixi run recon --data data/sim_misaligned.nxs \
+uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fista --iters 60 --lambda-tv 0.005 \
   --gather-dtype bf16 --checkpoint-projector \
   --out out/fista_misaligned.nxs --progress
 
 # SPDHG‑TV with moderate block size
-pixi run recon --data data/sim_aligned.nxs \
+uv run tomojax-recon --data data/sim_aligned.nxs \
   --algo spdhg --iters 300 --lambda-tv 0.005 \
   --views-per-batch 32 --theta 0.5 \
   --gather-dtype bf16 --checkpoint-projector \
@@ -171,14 +171,14 @@ Notes
 Examples
 ```
 # GN, multires
-pixi run align --data data/sim_misaligned.nxs \
+uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
   --gather-dtype bf16 --checkpoint-projector \
   --log-summary --out out/align_misaligned.nxs --progress
 
 # GD with learning rates (single level)
-pixi run align --data data/sim_misaligned.nxs \
+uv run tomojax-align --data data/sim_misaligned.nxs \
   --outer-iters 6 --recon-iters 30 --lambda-tv 0.005 \
   --opt-method gd --lr-rot 3e-3 --lr-trans 1e-1 \
   --out out/align_gd.nxs --progress
@@ -196,8 +196,8 @@ python -m tomojax.cli.convert --in <in.npz|in.nxs> --out <out.nxs|out.npz>
 
 Examples
 ```
-pixi run python -m tomojax.cli.convert --in data/sim_aligned.nxs --out data/sim_aligned.npz
-pixi run python -m tomojax.cli.convert --in data/sim_aligned.npz --out data/sim_aligned_back.nxs
+uv run tomojax-convert --in data/sim_aligned.nxs --out data/sim_aligned.npz
+uv run tomojax-convert --in data/sim_aligned.npz --out data/sim_aligned_back.nxs
 ```
 
 

@@ -6,25 +6,25 @@ cube or sphere — as the phantom. You will:
 1) simulate a centered single‑object phantom, 2) create a misaligned forward model,
 3) optionally add noise, 4) run naive FBP, 5) run iterative alignment + reconstruction.
 
-All commands assume you are inside the pixi environment:
+All commands assume you synced the uv-managed environment first:
 
-- Enter the environment: `pixi shell`
-- One‑time install of the package: `pixi run install-root`
+- GPU: `uv sync --extra cuda12 --group dev`
+- CPU-only: `uv sync --extra cpu --group dev`
 - Show progress bars: `export TOMOJAX_PROGRESS=1`
 
 
 ## 0) Quick Warmup (optional)
 
 ```
-pixi run test-gpu
-pixi run simulate \
+uv run tomojax-test-gpu
+uv run tomojax-simulate \
   --out data/sim_single_small.nxs \
   --nx 32 --ny 32 --nz 32 \
   --nu 32 --nv 32 --n-views 32 \
   --phantom sphere --single-size 0.6 --single-value 1.0 \
   --seed 1 \
   --progress
-pixi run misalign --data data/sim_single_small.nxs --out data/sim_single_misaligned_small.nxs --rot-deg 1 --trans-px 4 --seed 0 --progress
+uv run tomojax-misalign --data data/sim_single_small.nxs --out data/sim_single_misaligned_small.nxs --rot-deg 1 --trans-px 4 --seed 0 --progress
 ```
 
 Notes
@@ -40,7 +40,7 @@ random 3D rotation is applied by default for a more interesting sample (disable
 with `--no-single-rotate`).
 
 ```
-pixi run simulate \
+uv run tomojax-simulate \
   --out data/sim_single.nxs \
   --nx 256 --ny 256 --nz 256 \
   --nu 256 --nv 256 --n-views 200 \
@@ -53,7 +53,7 @@ pixi run simulate \
 Alternative (cube): (random 3D rotation by default)
 
 ```
-pixi run simulate \
+uv run tomojax-simulate \
   --out data/sim_single.nxs \
   --nx 256 --ny 256 --nz 256 \
   --nu 256 --nv 256 --n-views 200 \
@@ -74,32 +74,32 @@ Notes
 Apply per‑view perturbations to create a misaligned dataset:
 
 ```
-pixi run misalign \
+uv run tomojax-misalign \
   --data data/sim_single.nxs \
   --out data/sim_single_misaligned.nxs \
   --rot-deg 3.0 --trans-px 5 \
   --seed 0 \
   --progress
+```
 
 Deterministic misalignment schedules
 - For systematic drifts/steps, use `--pert` and/or `--spec` (see `docs/misalign_modes.md`). Examples:
 
 ```
 # Angle linear drift 0→+5° across the scan
-pixi run misalign --data data/sim_single.nxs --out runs/single_mis_angle_lin.nxs \
+uv run tomojax-misalign --data data/sim_single.nxs --out runs/single_mis_angle_lin.nxs \
   --pert angle:linear:delta=5deg
 
 # dx sinusoidal drift peaking +5 px at mid‑scan
-pixi run misalign --data data/sim_single.nxs --out runs/single_mis_dx_sin.nxs \
+uv run tomojax-misalign --data data/sim_single.nxs --out runs/single_mis_dx_sin.nxs \
   --pert dx:sin-window:amp=5px
-```
 ```
 
 
 ## 3) Add Poisson Noise (optional)
 
 ```
-pixi run misalign \
+uv run tomojax-misalign \
   --data data/sim_single.nxs \
   --out data/sim_single_misaligned_poisson.nxs \
   --rot-deg 3.0 --trans-px 5 \
@@ -113,7 +113,7 @@ pixi run misalign \
 
 ```
 # Misaligned
-pixi run recon \
+uv run tomojax-recon \
   --data data/sim_single_misaligned.nxs \
   --algo fbp --filter ramp \
   --gather-dtype bf16 --checkpoint-projector \
@@ -121,7 +121,7 @@ pixi run recon \
   --progress
 
 # Noisy + misaligned
-pixi run recon \
+uv run tomojax-recon \
   --data data/sim_single_misaligned_poisson.nxs \
   --algo fbp --filter ramp \
   --gather-dtype bf16 --checkpoint-projector \
@@ -134,7 +134,7 @@ pixi run recon \
 
 ```
 # Misaligned (clean)
-pixi run align \
+uv run tomojax-align \
   --data data/sim_single_misaligned.nxs \
   --levels 4 2 1 \
   --outer-iters 10 --recon-iters 15 --lambda-tv 0.003 \
@@ -145,7 +145,7 @@ pixi run align \
   --progress
 
 # Noisy + misaligned
-pixi run align \
+uv run tomojax-align \
   --data data/sim_single_misaligned_poisson.nxs \
   --levels 4 2 1 \
   --outer-iters 5 --recon-iters 10 --lambda-tv 0.1 --tv-prox-iters 10 \

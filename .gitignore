@@ -98,3 +98,7 @@ htmlcov/
 tmp/
 temp/
 .DS_Store
+
+# Benchmark data and output
+bench/data/
+bench/out/
