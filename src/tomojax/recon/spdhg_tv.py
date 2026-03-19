@@ -241,9 +241,7 @@ def spdhg_tv(
     # stochastic block schedule = random permutation of contiguous blocks per epoch
     m = (n_views + b - 1) // b
     p_prob = 1.0 / float(max(m, 1))
-    # Each block is selected with probability p=1/m, so the data-dual step
-    # must be scaled by 1/p to keep the stochastic update unbiased.
-    sigma_data_eff = sigma_data_base / p_prob
+    sigma_data_eff = sigma_data_base
     rng = np.random.default_rng(config.seed)
     epochs = (config.iters + m - 1) // m
     block_ids = []
@@ -287,7 +285,7 @@ def spdhg_tv(
         row_mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
         row_mask = row_mask.astype(jnp.float32)
 
-        # DATA DUAL UPDATE (constant step scaled by selection probability)
+        # DATA DUAL UPDATE
         sigma_eff = jnp.asarray(sigma_data_eff, dtype=x_bar.dtype)
 
         pred = project_chunk(T_chunk, x_bar)
