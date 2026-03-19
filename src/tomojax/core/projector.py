@@ -29,6 +29,22 @@ def _default_volume_origin(grid: Grid) -> jnp.ndarray:
     return jnp.array([ox, oy, oz], dtype=jnp.float32)
 
 
+def _interpolation_support_bounds(grid: Grid, vol_origin: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Return a conservative object-space support box for trilinear sampling.
+
+    The projector samples voxel *centres* and relies on trilinear interpolation,
+    so the non-zero support extends one voxel beyond `vol_origin` and one voxel
+    beyond the last voxel centre along each axis.
+    """
+    voxel = jnp.array([grid.vx, grid.vy, grid.vz], dtype=jnp.float32)
+    upper = vol_origin + jnp.array(
+        [grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz],
+        dtype=jnp.float32,
+    )
+    return vol_origin - voxel, upper
+
+
+
 def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
     key = (
         int(det.nu),
@@ -180,8 +196,6 @@ def forward_project_view_T(
     vy = float(grid.vy)
     if step_size is None:
         step_size = vy
-    if n_steps is None:
-        n_steps = int(math.ceil((ny * vy) / float(step_size)))
 
     # Inverse pose and incremental stepping set-up
     R = T[:3, :3]
@@ -189,6 +203,20 @@ def forward_project_view_T(
     Rinv = R.T
     tinv = -(Rinv @ t)
     ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
+    support_lower, support_upper = _interpolation_support_bounds(grid, vol_origin)
+    if n_steps is None:
+        support_lengths = np.array(
+            [
+                (grid.nx + 1) * grid.vx,
+                (grid.ny + 1) * grid.vy,
+                (grid.nz + 1) * grid.vz,
+            ],
+            dtype=np.float64,
+        )
+        max_path_length = float(
+            np.dot(np.abs(np.asarray(ey_obj, dtype=np.float64)), support_lengths)
+        )
+        n_steps = int(math.ceil(max_path_length / float(step_size)))
 
     xr = Xr[jnp.newaxis, :]
     zr = Zr[jnp.newaxis, :]
@@ -197,8 +225,34 @@ def forward_project_view_T(
         + Rinv[:, 2:3] * zr
         + tinv[:, None]
     )
-    y0 = vol_origin[1]
-    q0 = base + y0 * ey_obj[:, None]
+
+    # Conservative per-ray entry point via slab intersection in object space.
+    # The ray parameter is world-y because rays are [u, y, v] in the world frame.
+    lower = support_lower[:, None]
+    upper = support_upper[:, None]
+    denom = ey_obj[:, None]
+    eps = jnp.float32(1e-8)
+    parallel = jnp.abs(denom) < eps
+    t1 = (lower - base) / denom
+    t2 = (upper - base) / denom
+    lo = jnp.minimum(t1, t2)
+    hi = jnp.maximum(t1, t2)
+    inside = (base >= lower) & (base <= upper)
+    inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
+    lo = jnp.where(parallel, jnp.where(inside, -inf, inf), lo)
+    hi = jnp.where(parallel, jnp.where(inside, inf, -inf), hi)
+    y_entry = jnp.max(lo, axis=0)
+    y_exit = jnp.min(hi, axis=0)
+    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
+    valid_rays = path_length > 0.0
+    y_start = jnp.where(valid_rays, y_entry, jnp.float32(0.0))
+    n_steps_ray = jnp.where(
+        valid_rays,
+        jnp.ceil(path_length / jnp.float32(step_size)).astype(jnp.int32),
+        jnp.int32(0),
+    )
+
+    q0 = base + y_start[None, :] * ey_obj[:, None]
     dq = (step_size * ey_obj)[:, None]
 
     # Precompute reciprocal voxel sizes to avoid divides in inner loop
@@ -214,16 +268,23 @@ def forward_project_view_T(
     diy = dq[1] * inv_vy
     diz = dq[2] * inv_vz
 
-    def step(carry, _):
+    step_size32 = jnp.float32(step_size)
+
+    def step(carry, step_idx):
         acc, ix, iy, iz = carry
         samp = _trilinear_gather(recon_flat, ix, iy, iz, nx, ny, nz)
-        samp32 = samp.astype(jnp.float32)
-        return (acc + samp32 * jnp.float32(step_size), ix + dix, iy + diy, iz + diz), None
+        active = (step_idx < n_steps_ray).astype(jnp.float32)
+        samp32 = samp.astype(jnp.float32) * active
+        return (acc + samp32 * step_size32, ix + dix, iy + diy, iz + diz), None
 
     scan_step = step if not use_checkpoint else jax.checkpoint(step)
     acc0 = jnp.zeros((n_rays,), dtype=jnp.float32)
     carry_final, _ = jax.lax.scan(
-        scan_step, (acc0, ix0, iy0, iz0), None, length=n_steps, unroll=unroll or 1
+        scan_step,
+        (acc0, ix0, iy0, iz0),
+        jnp.arange(n_steps, dtype=jnp.int32),
+        length=n_steps,
+        unroll=unroll or 1,
     )
     acc, _, _, _ = carry_final
     return acc.reshape((detector.nv, detector.nu))

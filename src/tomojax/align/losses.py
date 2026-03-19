@@ -474,25 +474,47 @@ def build_loss(kind: str, params: Optional[Dict[str, float]], targets: jnp.ndarr
     else:
         raise ValueError(f"Unknown loss kind: {kind}")
 
-    def per_view_fn(pred_chunk: jnp.ndarray, tar_chunk: jnp.ndarray, mask_chunk: Optional[jnp.ndarray]) -> jnp.ndarray:
+    def per_view_fn(
+        pred_chunk: jnp.ndarray,
+        tar_chunk: jnp.ndarray,
+        mask_chunk: Optional[jnp.ndarray],
+        view_indices: Optional[jnp.ndarray] = None,
+    ) -> jnp.ndarray:
         # Vectorized application over batch of views (b, nv, nu)
-        if mask_chunk is None and state.mask is None and state.dt_edge is None and state.bins_x is None and state.thr is None:
+        if (
+            mask_chunk is None
+            and state.mask is None
+            and state.dt_edge is None
+            and state.bins_x is None
+            and state.thr is None
+        ):
             return jax.vmap(lambda a, b: f(a, b, state))(pred_chunk, tar_chunk)
 
-        def apply_one(a, b, idx):
+        bsz = pred_chunk.shape[0]
+        local_indices = jnp.arange(bsz, dtype=jnp.int32)
+        if view_indices is None:
+            global_indices = local_indices
+        else:
+            global_indices = jnp.asarray(view_indices, dtype=jnp.int32)
+
+        def apply_one(a, b, local_idx, global_idx):
             ls = LossState(kind=state.kind, params=state.params)
             if state.mask is not None:
-                ls.mask = state.mask[idx]
+                ls.mask = state.mask[global_idx]
             if mask_chunk is not None:
-                ls.mask = mask_chunk[idx]
+                ls.mask = mask_chunk[local_idx]
             if state.dt_edge is not None:
-                ls.dt_edge = state.dt_edge[idx]
+                ls.dt_edge = state.dt_edge[global_idx]
             ls.bins_x = state.bins_x; ls.bins_y = state.bins_y; ls.bw_x = state.bw_x; ls.bw_y = state.bw_y
             if state.thr is not None:
-                ls.thr = state.thr[idx]
+                ls.thr = state.thr[global_idx]
             return f(a, b, ls)
 
-        bsz = pred_chunk.shape[0]
-        return jax.vmap(apply_one, in_axes=(0, 0, 0))(pred_chunk, tar_chunk, jnp.arange(bsz))
+        return jax.vmap(apply_one, in_axes=(0, 0, 0, 0))(
+            pred_chunk,
+            tar_chunk,
+            local_indices,
+            global_indices,
+        )
 
     return per_view_fn, state

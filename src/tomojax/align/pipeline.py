@@ -182,7 +182,13 @@ def align(
             if getattr(loss_state, "mask", None) is not None:
                 mask_chunk = jax.lax.dynamic_slice(loss_state.mask, (start_shifted, 0, 0), (b, nv, nu))
             # Compute per-view losses, then zero-out invalid padded items
-            lvec = per_view_loss_fn(pred, y_chunk, mask_chunk)  # (b,)
+            view_idx_chunk = start_shifted + jnp.arange(b, dtype=jnp.int32)
+            lvec = per_view_loss_fn(
+                pred,
+                y_chunk,
+                mask_chunk,
+                view_indices=view_idx_chunk,
+            )  # (b,)
             idx = jnp.arange(b)
             vmask = (idx >= (jnp.int32(b) - valid)).astype(jnp.float32)
             loss_batch = jnp.sum(lvec * vmask)
@@ -203,7 +209,7 @@ def align(
 
     # Memory-safe gradient: compute per-view grads in a Python loop, add smoothness analytic grad.
     # This avoids reverse-mode backprop across the full scan of all views at once.
-    def _one_view_loss(p5_i, T_nom_i, y_i, vol, mask_i):
+    def _one_view_loss(p5_i, T_nom_i, y_i, vol, mask_i, view_idx):
         T_i = T_nom_i @ se3_from_5d(p5_i)
         v_in = vol * vol_mask if vol_mask is not None else vol
         pred_i = forward_project_view_T(
@@ -217,7 +223,13 @@ def align(
             det_grid=det_grid,
         )
         # Reuse the built per-view loss function; feed as a single-item batch
-        lvec = per_view_loss_fn(pred_i[None, ...], y_i[None, ...], mask_i[None, ...])
+        view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
+        lvec = per_view_loss_fn(
+            pred_i[None, ...],
+            y_i[None, ...],
+            mask_i[None, ...],
+            view_indices=view_indices,
+        )
         return lvec[0]
 
     one_view_val_and_grad = jax.jit(jax.value_and_grad(_one_view_loss))
@@ -235,7 +247,14 @@ def align(
                 mask_i = loss_state.mask[i]
             else:
                 mask_i = jnp.zeros_like(y_i)
-            li, gi = one_view_val_and_grad(params5[i], T_nom_i, y_i, vol, mask_i)
+            li, gi = one_view_val_and_grad(
+                params5[i],
+                T_nom_i,
+                y_i,
+                vol,
+                mask_i,
+                jnp.int32(i),
+            )
             total = total + li
             g = g.at[i].set(gi)
         # Smoothness prior gradient (second difference): tridiagonal conv with [-1, 2, -1]

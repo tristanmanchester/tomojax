@@ -75,3 +75,27 @@ def test_build_loss_accepts_lorentzian_alias_for_cauchy():
 def test_gn_candidate_must_improve_current_best_loss():
     assert not _should_prefer_gn_candidate(100.0, 100.5, 100.8, 0.01)
     assert _should_prefer_gn_candidate(100.0, 100.5, 100.4, 0.01)
+
+
+
+def test_per_view_loss_uses_global_view_indices_for_precomputes():
+    pytest.importorskip("scipy")
+
+    targets = jnp.zeros((4, 8, 8), dtype=jnp.float32)
+    targets = targets.at[0, :, 1].set(1.0)
+    targets = targets.at[1, :, 2].set(1.0)
+    targets = targets.at[2, :, 5].set(1.0)
+    targets = targets.at[3, :, 6].set(1.0)
+
+    loss_fn, _ = build_loss("chamfer_edge", {}, targets)
+    pred = targets[2:]
+
+    correct = loss_fn(
+        pred,
+        pred,
+        None,
+        view_indices=jnp.array([2, 3], dtype=jnp.int32),
+    )
+    wrong = loss_fn(pred, pred, None)
+
+    assert float(jnp.mean(correct)) < 0.5 * float(jnp.mean(wrong))

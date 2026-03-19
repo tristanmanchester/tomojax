@@ -49,3 +49,29 @@ def test_transmission_absorption_with_jax():
         rtol=1e-6,
         atol=1e-6,
     )
+
+
+
+def test_flat_dark_to_absorption_preserves_two_dimensional_flat_dark_fields():
+    projections = np.array(
+        [
+            [[1.1, 2.1, 4.1], [1.6, 2.6, 4.6]],
+            [[1.3, 2.3, 4.3], [1.8, 2.8, 4.8]],
+        ],
+        dtype=np.float32,
+    )
+    flats = np.array(
+        [[2.0, 4.0, 8.0], [3.0, 6.0, 12.0]],
+        dtype=np.float32,
+    )
+    darks = np.array(
+        [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+        dtype=np.float32,
+    )
+
+    got = flat_dark_to_absorption(projections, flats, darks, min_intensity=1e-6)
+
+    norm = (projections - darks) / np.maximum(flats - darks, 1e-6)
+    expected = -np.log(np.maximum(norm, 1e-6))
+
+    np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-6)
