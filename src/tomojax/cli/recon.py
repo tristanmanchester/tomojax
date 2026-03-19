@@ -31,7 +31,7 @@ def build_geometry(
     return _build_geometry_from_meta(
         meta,
         grid_override=grid_override,
-        apply_saved_alignment=True,
+        apply_saved_alignment=False,
     )
 
 
@@ -213,8 +213,8 @@ def main() -> None:
     grid, detector, geom = build_geometry(meta, grid_override=initial_grid_override)
     proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
 
-    # Hidden default for unroll; batch size now respects the CLI flag.
-    vpb_val = int(args.views_per_batch) if int(args.views_per_batch) > 0 else 1
+    # Keep FBP/FISTA on their streamed defaults; this flag is SPDHG-specific.
+    spdhg_vpb = int(args.views_per_batch) if int(args.views_per_batch) > 0 else 1
 
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
@@ -288,7 +288,7 @@ def main() -> None:
                 detector,
                 proj,
                 filter_name=args.filter,
-                views_per_batch=int(vpb_val),
+                views_per_batch=1,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
@@ -297,7 +297,6 @@ def main() -> None:
         if vol_mask is not None:
             vol = vol * vol_mask
     elif args.algo == "fista":
-        vpb = int(vpb_val) if int(vpb_val) > 0 else None
         with _transfer_guard_ctx(args.transfer_guard):
             vol, info = fista_tv(
                 geom,
@@ -307,7 +306,7 @@ def main() -> None:
                 iters=args.iters,
                 lambda_tv=args.lambda_tv,
                 L=(float(args.L) if args.L is not None else None),
-                views_per_batch=vpb,
+                views_per_batch=1,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
@@ -320,7 +319,7 @@ def main() -> None:
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
             theta=float(args.theta),
-            views_per_batch=int(max(1, args.views_per_batch)),
+            views_per_batch=int(spdhg_vpb),
             seed=int(args.spdhg_seed),
             tau=(float(args.spdhg_tau) if args.spdhg_tau is not None else None),
             sigma_data=(
@@ -348,7 +347,7 @@ def main() -> None:
                 detector,
                 proj,
                 filter_name=str(args.filter),
-                views_per_batch=int(vpb_val),
+                views_per_batch=1,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
