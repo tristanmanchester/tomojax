@@ -98,7 +98,7 @@ def _resolve_recon_grid_and_mask(
     grid: Grid,
     detector: Detector,
     *,
-    is_parallel: bool,
+    is_parallel: bool = True,
     roi_mode: str,
     grid_override: tuple[int, int, int] | list[int] | None,
 ) -> tuple[Grid, bool]:
