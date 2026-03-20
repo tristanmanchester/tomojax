@@ -2,7 +2,7 @@ name: canary_convergence_align_parallel_3d_128_noisy
 task: align
 objective_name: warm_seconds_to_quality_threshold
 objective_direction: minimise
-warm_runs: 1
+warm_runs: 3
 jax_cache_dir: null
 env:
   XLA_PYTHON_CLIENT_PREALLOCATE: "false"
@@ -18,6 +18,10 @@ convergence:
   metric: gt_mse
   threshold: 80.0
   stop_on_threshold: true
+  min_finest_level_checks: 2
+  plateau_patience: 2
+  rel_improvement_tol: 0.02
+  required_warm_successes: 2
 align:
   levels: [4, 2, 1]
   outer_iters: 4

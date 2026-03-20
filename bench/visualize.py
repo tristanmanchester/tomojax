@@ -63,6 +63,9 @@ def _text_lines(
             f"{metrics.get('quality_threshold_metric')}<={metrics.get('quality_threshold_value')}"
         )
         lines.append(f"threshold_met: {metrics.get('quality_threshold_met')}")
+        lines.append(f"stopped_on_threshold: {metrics.get('stopped_on_threshold')}")
+        lines.append(f"stopped_on_plateau: {metrics.get('stopped_on_plateau')}")
+        lines.append(f"stopped_on_budget: {metrics.get('stopped_on_budget')}")
         lines.append(
             f"warm_s_to_threshold: {metrics.get('warm_seconds_to_quality_threshold')}"
         )

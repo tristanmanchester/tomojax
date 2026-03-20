@@ -18,6 +18,10 @@ convergence:
   metric: gt_mse
   threshold: 55.0
   stop_on_threshold: true
+  min_finest_level_checks: 2
+  plateau_patience: 2
+  rel_improvement_tol: 0.02
+  required_warm_successes: 1
 align:
   levels: [4, 2, 1]
   outer_iters: 4

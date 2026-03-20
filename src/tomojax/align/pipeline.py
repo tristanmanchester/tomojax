@@ -756,11 +756,13 @@ def align(
             logging.info("  Best loss observed: %.3e", best_loss)
 
     # Provide last measured/reused L for potential reuse across levels
+    wall_total = time.perf_counter() - wall_start
     info = {
         "loss": loss_hist,
         "L": (float(L_prev) if L_prev is not None else None),
         "outer_stats": outer_stats,
         "stopped_by_observer": stopped_by_observer,
+        "wall_time_total": float(wall_total),
     }
     return x, params5, info
 
@@ -801,6 +803,7 @@ def align_multires(
     loss_hist: List[float] = []
     stopped_by_observer = False
     global_outer_idx = 0
+    global_elapsed_offset = 0.0
 
     for li, lvl in enumerate(levels):
         g = lvl["grid"]; d = lvl["detector"]; y = lvl["projections"]
@@ -867,6 +870,17 @@ def align_multires(
             enriched["level_factor"] = int(lvl["factor"])
             enriched["level_index"] = int(li)
             enriched["global_outer_idx"] = int(global_outer_idx)
+            level_elapsed = stat_obs.get("cumulative_time")
+            try:
+                level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
+            except Exception:
+                level_elapsed_f = None
+            enriched["level_elapsed_seconds"] = level_elapsed_f
+            enriched["global_elapsed_seconds"] = (
+                float(global_elapsed_offset + level_elapsed_f)
+                if level_elapsed_f is not None
+                else None
+            )
             if observer is None:
                 return False
             stop = bool(observer(x_obs, params_obs, enriched))
@@ -887,6 +901,10 @@ def align_multires(
         loss_hist.extend(info.get("loss", []))
         x_init = x_lvl
         prev_factor = lvl["factor"]
+        try:
+            global_elapsed_offset += float(info.get("wall_time_total") or 0.0)
+        except Exception:
+            pass
         if info.get("stopped_by_observer"):
             stopped_by_observer = True
             break
@@ -902,4 +920,5 @@ def align_multires(
         "factors": list(factors),
         "stopped_by_observer": stopped_by_observer,
         "total_outer_iters": int(global_outer_idx),
+        "wall_time_total": float(global_elapsed_offset),
     }

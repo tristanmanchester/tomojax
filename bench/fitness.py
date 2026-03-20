@@ -105,18 +105,118 @@ class ConvergenceConfig:
     metric: str = "gt_mse"
     threshold: float | None = None
     stop_on_threshold: bool = True
+    min_finest_level_checks: int = 2
+    plateau_patience: int = 2
+    rel_improvement_tol: float = 0.02
+    required_warm_successes: int = 1
 
 @dataclass
 class ConvergenceRunSummary:
     metric: str
     threshold: float | None
     threshold_met: bool
+    stopped_on_threshold: bool
+    stopped_on_plateau: bool
+    stopped_on_budget: bool
     seconds_to_threshold: float | None
     outer_iters_to_threshold: int | None
     best_quality_value: float | None
     best_quality_elapsed_seconds: float | None
     total_outer_iters_executed: int
     trace: list[dict[str, Any]]
+
+
+def _median_or_none(values: list[float | None]) -> float | None:
+    finite = [float(v) for v in values if v is not None and math.isfinite(float(v))]
+    if not finite:
+        return None
+    return float(statistics.median(finite))
+
+
+def _int_median_or_none(values: list[int | None]) -> int | None:
+    nums = [int(v) for v in values if v is not None]
+    if not nums:
+        return None
+    return int(round(statistics.median(nums)))
+
+
+def _is_meaningful_relative_improvement(
+    previous_best: float | None,
+    current_value: float | None,
+    rel_tol: float,
+) -> bool:
+    if previous_best is None or current_value is None:
+        return True
+    if not math.isfinite(previous_best) or not math.isfinite(current_value):
+        return False
+    if current_value < previous_best:
+        delta = previous_best - current_value
+        return delta >= (max(abs(previous_best), 1e-12) * float(rel_tol))
+    return False
+
+
+def _aggregate_warm_convergence_runs(
+    runs: list[ConvergenceRunSummary],
+    *,
+    required_successes: int,
+) -> dict[str, Any]:
+    if not runs:
+        return {
+            "quality_threshold_met": False,
+            "warm_threshold_hit_count": 0,
+            "warm_threshold_total_runs": 0,
+            "warm_threshold_success_rate": None,
+            "warm_seconds_to_quality_threshold": None,
+            "warm_outer_iters_to_quality_threshold": None,
+            "warm_best_quality_value": None,
+            "best_quality_value": None,
+            "best_quality_elapsed_seconds": None,
+            "warm_total_outer_iters_executed": None,
+            "total_outer_iters_executed": None,
+            "warm_stopped_on_threshold_count": 0,
+            "warm_stopped_on_plateau_count": 0,
+            "warm_stopped_on_budget_count": 0,
+            "stopped_on_threshold": False,
+            "stopped_on_plateau": False,
+            "stopped_on_budget": False,
+            "warm_convergence_trace": [],
+            "warm_convergence_traces": [],
+        }
+
+    hit_count = sum(1 for run in runs if run.threshold_met)
+    total_runs = len(runs)
+    required = max(1, min(int(required_successes), total_runs))
+    representative = runs[-1]
+    successful_runs = [run for run in runs if run.threshold_met]
+    best_quality_values = [run.best_quality_value for run in runs]
+    best_quality_times = [run.best_quality_elapsed_seconds for run in runs]
+    total_outers = [run.total_outer_iters_executed for run in runs]
+
+    return {
+        "quality_threshold_met": hit_count >= required,
+        "warm_threshold_hit_count": hit_count,
+        "warm_threshold_total_runs": total_runs,
+        "warm_threshold_success_rate": float(hit_count / total_runs),
+        "warm_seconds_to_quality_threshold": _median_or_none(
+            [run.seconds_to_threshold for run in successful_runs]
+        ),
+        "warm_outer_iters_to_quality_threshold": _int_median_or_none(
+            [run.outer_iters_to_threshold for run in successful_runs]
+        ),
+        "warm_best_quality_value": _median_or_none(best_quality_values),
+        "best_quality_value": _median_or_none(best_quality_values),
+        "best_quality_elapsed_seconds": _median_or_none(best_quality_times),
+        "warm_total_outer_iters_executed": _int_median_or_none(total_outers),
+        "total_outer_iters_executed": _int_median_or_none(total_outers),
+        "warm_stopped_on_threshold_count": sum(1 for run in runs if run.stopped_on_threshold),
+        "warm_stopped_on_plateau_count": sum(1 for run in runs if run.stopped_on_plateau),
+        "warm_stopped_on_budget_count": sum(1 for run in runs if run.stopped_on_budget),
+        "stopped_on_threshold": representative.stopped_on_threshold,
+        "stopped_on_plateau": representative.stopped_on_plateau,
+        "stopped_on_budget": representative.stopped_on_budget,
+        "warm_convergence_trace": representative.trace,
+        "warm_convergence_traces": [run.trace for run in runs],
+    }
 
 
 def _save_fixture(bundle: FixtureBundle, path: Path) -> None:
@@ -452,6 +552,10 @@ def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
         metric=metric,
         threshold=threshold,
         stop_on_threshold=stop_on_threshold,
+        min_finest_level_checks=max(1, int(raw.get("min_finest_level_checks", 2))),
+        plateau_patience=max(1, int(raw.get("plateau_patience", 2))),
+        rel_improvement_tol=max(0.0, float(raw.get("rel_improvement_tol", 0.02))),
+        required_warm_successes=max(1, int(raw.get("required_warm_successes", 1))),
     )
 
 def _quality_threshold_met(metric: str, threshold: float | None, value: float | None) -> bool:
@@ -466,6 +570,8 @@ def _convergence_summary_from_trace(
     metric: str,
     threshold: float | None,
     trace: list[dict[str, Any]],
+    stopped_on_threshold: bool = False,
+    stopped_on_plateau: bool = False,
 ) -> ConvergenceRunSummary:
     best_quality_value: float | None = None
     best_quality_elapsed_seconds: float | None = None
@@ -497,6 +603,9 @@ def _convergence_summary_from_trace(
         metric=metric,
         threshold=threshold,
         threshold_met=seconds_to_threshold is not None,
+        stopped_on_threshold=bool(stopped_on_threshold),
+        stopped_on_plateau=bool(stopped_on_plateau),
+        stopped_on_budget=bool(trace) and not stopped_on_threshold and not stopped_on_plateau,
         seconds_to_threshold=seconds_to_threshold,
         outer_iters_to_threshold=outer_iters_to_threshold,
         best_quality_value=best_quality_value,
@@ -717,6 +826,11 @@ def _make_align_task(
 ) -> Callable[[], dict[str, Any]]:
     gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
     trace: list[dict[str, Any]] = []
+    finest_factor = min(levels) if levels else 1
+    finest_checks = 0
+    plateau_streak = 0
+    best_finest_quality: float | None = None
+    stop_reason: str | None = None
 
     def _quality_value_for_params(params: Any) -> float:
         if convergence.metric != "gt_mse":
@@ -725,7 +839,40 @@ def _make_align_task(
         return float(mods.jnp.mean((y_hat - projections) ** 2).item())
 
     def _observer(_: Any, params: Any, stat: dict[str, Any]) -> bool:
+        nonlocal finest_checks, plateau_streak, best_finest_quality, stop_reason
         quality_value = _quality_value_for_params(params)
+        level_factor = (
+            int(stat["level_factor"]) if stat.get("level_factor") is not None else finest_factor
+        )
+        global_elapsed = _float_or_none(
+            stat.get("global_elapsed_seconds", stat.get("cumulative_time"))
+        )
+        level_elapsed = _float_or_none(stat.get("level_elapsed_seconds", stat.get("cumulative_time")))
+        threshold_hit = _quality_threshold_met(
+            convergence.metric, convergence.threshold, quality_value
+        )
+        stop_on_plateau = False
+        is_finest_level = level_factor == finest_factor
+        if is_finest_level:
+            finest_checks += 1
+            if _is_meaningful_relative_improvement(
+                best_finest_quality, quality_value, convergence.rel_improvement_tol
+            ):
+                best_finest_quality = quality_value
+                plateau_streak = 0
+            elif finest_checks >= convergence.min_finest_level_checks:
+                plateau_streak += 1
+            if (
+                finest_checks >= convergence.min_finest_level_checks
+                and plateau_streak >= convergence.plateau_patience
+            ):
+                stop_on_plateau = True
+
+        stop_on_threshold = convergence.stop_on_threshold and threshold_hit
+        if stop_on_threshold:
+            stop_reason = "threshold"
+        elif stop_on_plateau:
+            stop_reason = "plateau"
         trace.append(
             {
                 "outer_idx": int(
@@ -737,14 +884,17 @@ def _make_align_task(
                 "level_factor": (
                     int(stat["level_factor"]) if stat.get("level_factor") is not None else None
                 ),
-                "elapsed_seconds": _float_or_none(stat.get("cumulative_time")),
+                "elapsed_seconds": global_elapsed,
+                "level_elapsed_seconds": level_elapsed,
                 "quality_value": quality_value,
                 "loss_after": _float_or_none(stat.get("loss_after")),
+                "threshold_met": threshold_hit,
+                "is_finest_level": is_finest_level,
+                "plateau_streak": plateau_streak if is_finest_level else None,
+                "stop_reason": stop_reason if (stop_on_threshold or stop_on_plateau) else None,
             }
         )
-        return convergence.stop_on_threshold and _quality_threshold_met(
-            convergence.metric, convergence.threshold, quality_value
-        )
+        return stop_on_threshold or stop_on_plateau
 
     def task() -> dict[str, Any]:
         if levels:
@@ -775,6 +925,8 @@ def _make_align_task(
                     metric=convergence.metric,
                     threshold=convergence.threshold,
                     trace=list(trace),
+                    stopped_on_threshold=(stop_reason == "threshold"),
+                    stopped_on_plateau=(stop_reason == "plateau"),
                 )
                 if convergence.enabled
                 else None
@@ -1016,6 +1168,9 @@ def _run_align_profile(
     final_volume = np.asarray(mods.jax.device_get(warms[-1].output["volume"]), dtype=np.float32)
     final_info = warms[-1].output.get("info") or {}
     first_convergence = first.output.get("convergence")
+    warm_convergences = [
+        run.output.get("convergence") for run in warms if run.output.get("convergence") is not None
+    ]
     warm_convergence = warms[-1].output.get("convergence")
 
     gt_params = np.asarray(bundle.align_params, dtype=np.float32)
@@ -1111,39 +1266,45 @@ def _run_align_profile(
         "summary_image_error": None,
     }
     if convergence.enabled:
+        warm_aggregate = _aggregate_warm_convergence_runs(
+            warm_convergences,
+            required_successes=convergence.required_warm_successes,
+        )
         metrics.update(
             {
                 "quality_threshold_metric": convergence.metric,
                 "quality_threshold_value": convergence.threshold,
-                "quality_threshold_met": bool(
-                    warm_convergence.threshold_met if warm_convergence is not None else False
-                ),
+                "quality_threshold_met": bool(warm_aggregate["quality_threshold_met"]),
+                "required_warm_successes": int(convergence.required_warm_successes),
+                "warm_threshold_hit_count": warm_aggregate["warm_threshold_hit_count"],
+                "warm_threshold_total_runs": warm_aggregate["warm_threshold_total_runs"],
+                "warm_threshold_success_rate": warm_aggregate["warm_threshold_success_rate"],
+                "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
+                "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
+                "stopped_on_budget": warm_aggregate["stopped_on_budget"],
+                "warm_stopped_on_threshold_count": warm_aggregate["warm_stopped_on_threshold_count"],
+                "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
+                "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
                 "cold_seconds_to_quality_threshold": (
                     first_convergence.seconds_to_threshold if first_convergence is not None else None
                 ),
-                "warm_seconds_to_quality_threshold": (
-                    warm_convergence.seconds_to_threshold if warm_convergence is not None else None
-                ),
+                "warm_seconds_to_quality_threshold": warm_aggregate["warm_seconds_to_quality_threshold"],
                 "cold_outer_iters_to_quality_threshold": (
                     first_convergence.outer_iters_to_threshold if first_convergence is not None else None
                 ),
-                "warm_outer_iters_to_quality_threshold": (
-                    warm_convergence.outer_iters_to_threshold if warm_convergence is not None else None
-                ),
+                "warm_outer_iters_to_quality_threshold": warm_aggregate["warm_outer_iters_to_quality_threshold"],
                 "cold_best_quality_value": (
                     first_convergence.best_quality_value if first_convergence is not None else None
                 ),
-                "warm_best_quality_value": (
-                    warm_convergence.best_quality_value if warm_convergence is not None else None
-                ),
+                "warm_best_quality_value": warm_aggregate["warm_best_quality_value"],
                 "best_quality_value": (
-                    warm_convergence.best_quality_value
-                    if warm_convergence is not None
+                    warm_aggregate["best_quality_value"]
+                    if warm_aggregate["best_quality_value"] is not None
                     else (first_convergence.best_quality_value if first_convergence is not None else None)
                 ),
                 "best_quality_elapsed_seconds": (
-                    warm_convergence.best_quality_elapsed_seconds
-                    if warm_convergence is not None
+                    warm_aggregate["best_quality_elapsed_seconds"]
+                    if warm_aggregate["best_quality_elapsed_seconds"] is not None
                     else (
                         first_convergence.best_quality_elapsed_seconds
                         if first_convergence is not None
@@ -1153,20 +1314,17 @@ def _run_align_profile(
                 "cold_total_outer_iters_executed": (
                     first_convergence.total_outer_iters_executed if first_convergence is not None else None
                 ),
-                "warm_total_outer_iters_executed": (
-                    warm_convergence.total_outer_iters_executed if warm_convergence is not None else None
-                ),
+                "warm_total_outer_iters_executed": warm_aggregate["warm_total_outer_iters_executed"],
                 "total_outer_iters_executed": (
-                    warm_convergence.total_outer_iters_executed
-                    if warm_convergence is not None
+                    warm_aggregate["total_outer_iters_executed"]
+                    if warm_aggregate["total_outer_iters_executed"] is not None
                     else (first_convergence.total_outer_iters_executed if first_convergence is not None else None)
                 ),
                 "cold_convergence_trace": (
                     first_convergence.trace if first_convergence is not None else []
                 ),
-                "warm_convergence_trace": (
-                    warm_convergence.trace if warm_convergence is not None else []
-                ),
+                "warm_convergence_trace": warm_aggregate["warm_convergence_trace"],
+                "warm_convergence_traces": warm_aggregate["warm_convergence_traces"],
             }
         )
     if _should_render_alignment_summary(profile):
@@ -1261,6 +1419,16 @@ def main() -> int:
         "quality_threshold_metric": None,
         "quality_threshold_value": None,
         "quality_threshold_met": None,
+        "required_warm_successes": None,
+        "warm_threshold_hit_count": None,
+        "warm_threshold_total_runs": None,
+        "warm_threshold_success_rate": None,
+        "stopped_on_threshold": None,
+        "stopped_on_plateau": None,
+        "stopped_on_budget": None,
+        "warm_stopped_on_threshold_count": None,
+        "warm_stopped_on_plateau_count": None,
+        "warm_stopped_on_budget_count": None,
         "cold_seconds_to_quality_threshold": None,
         "warm_seconds_to_quality_threshold": None,
         "cold_outer_iters_to_quality_threshold": None,
@@ -1268,6 +1436,9 @@ def main() -> int:
         "best_quality_value": None,
         "best_quality_elapsed_seconds": None,
         "total_outer_iters_executed": None,
+        "cold_convergence_trace": [],
+        "warm_convergence_trace": [],
+        "warm_convergence_traces": [],
         "quality": {},
         "device": {},
         "oom": False,
