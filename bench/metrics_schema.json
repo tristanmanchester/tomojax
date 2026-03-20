@@ -37,6 +37,8 @@
     "gpu_sampler_error": {"type": ["string", "null"]},
     "jax_device_memory_profile_path": {"type": ["string", "null"]},
     "jax_device_memory_profile_error": {"type": ["string", "null"]},
+    "summary_image_path": {"type": ["string", "null"]},
+    "summary_image_error": {"type": ["string", "null"]},
     "quality": {"type": "object"},
     "device": {"type": "object"},
     "oom": {"type": "boolean"},

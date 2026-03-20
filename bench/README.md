@@ -75,6 +75,11 @@ uv run python bench/fitness.py --profile screen_accuracy_align_parallel_3d_96 --
 
 The JSON schema is documented in `bench/metrics_schema.json`.
 
+Alignment profiles also write a compact PNG summary next to the metrics JSON by default. The
+image shows central `xy`/`xz`/`yz` slices for the ground-truth volume, the final aligned volume,
+the absolute error volume, and a small loss-history panel. The metrics JSON records this via
+`summary_image_path` and `summary_image_error`.
+
 ## Remote Pod usage
 
 The controller repo is expected to run commands like:
@@ -103,4 +108,5 @@ On Runpod, keep persistent data under `/workspace`, especially:
 - `peak_gpu_memory_mb` uses process-scoped GPU memory when NVML process queries are available, with device-level fallback recorded separately.
 - `gpu_memory_process_source` and `gpu_memory_process_supported` make it explicit whether process-scoped memory came from NVML, `nvidia-smi --query-compute-apps`, or had to fall back to device-level memory.
 - Set `measurement.save_jax_device_memory_profile: true` to write a JAX device-memory profile next to the metrics JSON for debugging.
+- Alignment profiles support `visualization.enabled: false` if you need to suppress the summary PNG for a specific run.
 - Alignment benchmarks now support synthetic observation noise, so the accuracy screens are closer to real reconstruction/alignment use.

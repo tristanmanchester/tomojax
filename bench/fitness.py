@@ -18,6 +18,7 @@ import numpy as np
 import psutil
 import yaml
 from memory import GpuMemoryMonitor, GpuMemorySnapshot
+from visualize import save_alignment_summary
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(__file__).resolve().parent
@@ -587,6 +588,17 @@ def _maybe_save_jax_device_memory_profile(
         return None, str(exc)
 
 
+def _should_render_alignment_summary(profile: dict[str, Any]) -> bool:
+    if str(profile.get("task", "recon")) != "align":
+        return False
+    visualization_cfg = dict(profile.get("visualization") or {})
+    return bool(visualization_cfg.get("enabled", True))
+
+
+def _alignment_summary_path(out_path: Path) -> Path:
+    return out_path.with_suffix(out_path.suffix + ".summary.png")
+
+
 
 def _device_info(mods: ImportedModules) -> dict[str, Any]:
     devices = []
@@ -807,6 +819,8 @@ def _run_align_profile(
     warms: list[RunResult] = [_timed_call(task, mods, measurement_cfg) for _ in range(warm_runs)]
     warm_seconds = [run.seconds for run in warms]
     warm_params = np.asarray(mods.jax.device_get(warms[-1].output["params"]), dtype=np.float32)
+    final_volume = np.asarray(mods.jax.device_get(warms[-1].output["volume"]), dtype=np.float32)
+    final_info = warms[-1].output.get("info") or {}
 
     gt_params = np.asarray(bundle.align_params, dtype=np.float32)
     abs_metrics = mods.loss_metrics_abs(gt_params, warm_params, du=float(detector.du), dv=float(detector.dv))
@@ -896,7 +910,25 @@ def _run_align_profile(
             "gt_mse": gt_mse,
         },
         "gpu_sampler_error": first.gpu_sampler_error or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
+        "summary_image_path": None,
+        "summary_image_error": None,
     }
+    if _should_render_alignment_summary(profile):
+        summary_path = _alignment_summary_path(out_path)
+        try:
+            save_alignment_summary(
+                out_path=summary_path,
+                profile_name=str(profile["name"]),
+                gt_volume=np.asarray(bundle.volume, dtype=np.float32),
+                final_volume=final_volume,
+                loss_history=[float(v) for v in list(final_info.get("loss") or [])],
+                metrics=metrics,
+                quality=dict(metrics["quality"]),
+                fixture=bundle.shape_summary,
+            )
+            metrics["summary_image_path"] = str(summary_path)
+        except Exception as exc:
+            metrics["summary_image_error"] = str(exc)
     return metrics
 
 
@@ -963,6 +995,8 @@ def main() -> int:
         "gpu_sampler_error": None,
         "jax_device_memory_profile_path": None,
         "jax_device_memory_profile_error": None,
+        "summary_image_path": None,
+        "summary_image_error": None,
         "quality": {},
         "device": {},
         "oom": False,
