@@ -1,0 +1,33 @@
+name: smoke
+task: recon
+fixture: smoke_recon_v1.npz
+objective_name: warm_run_seconds_mean
+objective_direction: minimise
+warm_runs: 1
+jax_cache_dir: null
+env:
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+measurement:
+  gpu_memory: true
+  host_rss: true
+  gpu_poll_interval_seconds: 0.05
+  host_poll_interval_seconds: 0.05
+recon:
+  algorithm: fbp
+  filter_name: ramp
+  views_per_batch: 1
+  projector_unroll: 1
+  checkpoint_projector: true
+  gather_dtype: auto
+data:
+  nx: 32
+  ny: 32
+  nz: 16
+  nu: 32
+  nv: 16
+  n_views: 16
+  geometry: parallel
+  phantom: sphere
+  single_size: 0.45
+  single_value: 1.0
+  seed: 11

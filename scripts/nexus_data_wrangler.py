@@ -307,7 +307,7 @@ def main():
     import argparse
 
     p = argparse.ArgumentParser(description="Flat/dark correct a NeXus file and export TomoJAX-compatible NXtomo.")
-    p.epilog = "Volumes are saved on disk in (nz, ny, nx) order with @volume_axes_order="zyx"; TomoJAX APIs always return (nx, ny, nz)."
+    p.epilog = "Volumes are saved on disk in (nz, ny, nx) order with @volume_axes_order=\"zyx\"; TomoJAX APIs always return (nx, ny, nz)."
     p.add_argument("--in", dest="input_path", required=True, help="Input .nxs path")
     p.add_argument("--out", dest="output_path", required=True, help="Output .nxs path")
     p.add_argument("--proj-path", default="/entry/imaging/data", help="H5 path to raw frames [N, ny, nx]")

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/tomojax/bench/metrics.schema.json",
+  "title": "TomoJAX benchmark metrics",
+  "type": "object",
+  "required": [
+    "profile",
+    "success",
+    "objective_name",
+    "objective_direction",
+    "objective_value",
+    "quality",
+    "device",
+    "oom",
+    "error"
+  ],
+  "properties": {
+    "profile": {"type": "string"},
+    "success": {"type": "boolean"},
+    "objective_name": {"type": "string"},
+    "objective_direction": {"type": "string", "enum": ["minimise", "maximize", "maximise"]},
+    "objective_value": {"type": ["number", "null"]},
+    "first_run_seconds": {"type": ["number", "null"]},
+    "warm_run_seconds_mean": {"type": ["number", "null"]},
+    "warm_run_seconds_std": {"type": ["number", "null"]},
+    "peak_gpu_memory_mb": {"type": ["number", "null"]},
+    "peak_host_rss_mb": {"type": ["number", "null"]},
+    "quality": {"type": "object"},
+    "device": {"type": "object"},
+    "oom": {"type": "boolean"},
+    "error": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

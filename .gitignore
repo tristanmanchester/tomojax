@@ -89,8 +89,18 @@ venv.bak/
 .pytest_cache/
 .cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
+.nox/
+
+# Python tooling caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Local JAX cache
+.jax_cache/
 
 # Temporary files
 *.tmp
@@ -102,3 +112,5 @@ temp/
 # Benchmark data and output
 bench/data/
 bench/out/
+bench/results/
+results/
