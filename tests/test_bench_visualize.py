@@ -29,12 +29,22 @@ def test_save_alignment_summary_writes_png(tmp_path: Path) -> None:
         baseline_volume=baseline_volume,
         final_volume=final_volume,
         loss_history=[5.0, 2.5, 1.25],
+        convergence_trace=[
+            {"outer_idx": 1, "quality_value": 0.8},
+            {"outer_idx": 2, "quality_value": 0.4},
+        ],
+        convergence_metric_name="gt_mse",
+        quality_threshold_value=0.5,
         metrics={
             "objective_name": "gt_mse",
             "objective_value": 0.123,
             "warm_run_seconds_mean": 1.5,
             "peak_gpu_memory_mb": 256.0,
             "gpu_memory_scope": "process",
+            "quality_threshold_metric": "gt_mse",
+            "quality_threshold_value": 0.5,
+            "quality_threshold_met": True,
+            "warm_seconds_to_quality_threshold": 1.2,
         },
         quality={
             "gt_mse": 0.123,

@@ -57,6 +57,15 @@ def _text_lines(
         f"peak_gpu_mb: {metrics.get('peak_gpu_memory_mb')}",
         f"gpu_scope: {metrics.get('gpu_memory_scope')}",
     ]
+    if metrics.get("quality_threshold_value") is not None:
+        lines.append(
+            "threshold: "
+            f"{metrics.get('quality_threshold_metric')}<={metrics.get('quality_threshold_value')}"
+        )
+        lines.append(f"threshold_met: {metrics.get('quality_threshold_met')}")
+        lines.append(
+            f"warm_s_to_threshold: {metrics.get('warm_seconds_to_quality_threshold')}"
+        )
     if quality.get("rot_rms_deg") is not None:
         lines.append(f"rot_rms_deg: {quality.get('rot_rms_deg')}")
     if quality.get("trans_rms_px") is not None:
@@ -77,6 +86,9 @@ def save_alignment_summary(
     baseline_volume: np.ndarray,
     final_volume: np.ndarray,
     loss_history: list[float],
+    convergence_trace: list[dict[str, Any]] | None,
+    convergence_metric_name: str | None,
+    quality_threshold_value: float | None,
     metrics: dict[str, Any],
     quality: dict[str, Any],
     fixture: dict[str, Any],
@@ -127,14 +139,53 @@ def save_alignment_summary(
             ax.set_yticks([])
 
     loss_ax = fig.add_subplot(gs[0:2, 3])
-    loss_ax.set_title("Alignment Loss")
-    if loss_history:
+    trace = list(convergence_trace or [])
+    if trace and convergence_metric_name:
+        filtered = [
+            (int(point.get("outer_idx", idx + 1)), float(point["quality_value"]))
+            for idx, point in enumerate(trace)
+            if point.get("quality_value") is not None
+        ]
+        xs = np.asarray([x for x, _ in filtered], dtype=np.int32)
+        ys = np.asarray([y for _, y in filtered], dtype=np.float32)
+        if xs.size == ys.size and xs.size > 0:
+            loss_ax.set_title(f"{convergence_metric_name} vs Outer Iteration")
+            loss_ax.plot(xs, ys, marker="o", linewidth=1.5, label=convergence_metric_name)
+            if quality_threshold_value is not None:
+                loss_ax.axhline(
+                    float(quality_threshold_value),
+                    color="tab:red",
+                    linestyle="--",
+                    linewidth=1.2,
+                    label="threshold",
+                )
+                met_idx = np.where(ys <= float(quality_threshold_value))[0]
+                if met_idx.size > 0:
+                    idx = int(met_idx[0])
+                    loss_ax.scatter(
+                        [xs[idx]],
+                        [ys[idx]],
+                        color="tab:red",
+                        s=40,
+                        zorder=3,
+                    )
+            loss_ax.set_xlabel("Outer Iteration")
+            loss_ax.set_ylabel(convergence_metric_name)
+            loss_ax.grid(True, alpha=0.25)
+            loss_ax.legend(loc="best")
+        else:
+            loss_ax.text(0.5, 0.5, "No convergence trace", ha="center", va="center")
+            loss_ax.set_xticks([])
+            loss_ax.set_yticks([])
+    elif loss_history:
+        loss_ax.set_title("Alignment Loss")
         xs = np.arange(1, len(loss_history) + 1, dtype=np.int32)
         loss_ax.plot(xs, loss_history, marker="o", linewidth=1.5)
         loss_ax.set_xlabel("Outer Iteration")
         loss_ax.set_ylabel("Loss")
         loss_ax.grid(True, alpha=0.25)
     else:
+        loss_ax.set_title("Alignment Loss")
         loss_ax.text(0.5, 0.5, "No loss history", ha="center", va="center")
         loss_ax.set_xticks([])
         loss_ax.set_yticks([])

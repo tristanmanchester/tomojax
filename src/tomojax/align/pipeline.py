@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import Any, Dict, Tuple, Iterable, List, Optional
+from typing import Any, Callable, Dict, Tuple, Iterable, List, Optional
 
 import jax
 import jax.numpy as jnp
@@ -89,6 +89,7 @@ def align(
     cfg: AlignConfig | None = None,
     init_x: jnp.ndarray | None = None,
     init_params5: jnp.ndarray | None = None,
+    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], bool] | None = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
     """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
 
@@ -110,6 +111,7 @@ def align(
     )
 
     loss_hist = []
+    stopped_by_observer = False
 
     # Precompute nominal poses once
     n_views = int(projections.shape[0])
@@ -692,6 +694,13 @@ def align(
         if cfg.log_summary:
             _log_outer_summary(stat)
 
+        if observer is not None:
+            stop_requested = bool(observer(x, params5, dict(stat)))
+            stat["observer_stop"] = stop_requested
+            if stop_requested:
+                stopped_by_observer = True
+                break
+
         # Early stopping based on alignment improvement during GN/GD step
         if cfg.early_stop and (rel_impr is not None):
             rel_for_patience = rel_impr
@@ -751,6 +760,7 @@ def align(
         "loss": loss_hist,
         "L": (float(L_prev) if L_prev is not None else None),
         "outer_stats": outer_stats,
+        "stopped_by_observer": stopped_by_observer,
     }
     return x, params5, info
 
@@ -763,6 +773,7 @@ def align_multires(
     *,
     factors: Iterable[int] = (2, 1),
     cfg: AlignConfig | None = None,
+    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], bool] | None = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
     """Coarse-to-fine alignment using simple binning for speed and robustness.
 
@@ -788,6 +799,8 @@ def align_multires(
     params5 = None
     prev_factor: int | None = None
     loss_hist: List[float] = []
+    stopped_by_observer = False
+    global_outer_idx = 0
 
     for li, lvl in enumerate(levels):
         g = lvl["grid"]; d = lvl["detector"]; y = lvl["projections"]
@@ -847,12 +860,36 @@ def align_multires(
         # Run alignment at this level
         # Re-estimate L at each level using a fresh (streamed) power-method for stability
         cfg_level = replace(cfg, recon_L=None)
+        def _level_observer(x_obs, params_obs, stat_obs):
+            nonlocal global_outer_idx, stopped_by_observer
+            global_outer_idx += 1
+            enriched = dict(stat_obs)
+            enriched["level_factor"] = int(lvl["factor"])
+            enriched["level_index"] = int(li)
+            enriched["global_outer_idx"] = int(global_outer_idx)
+            if observer is None:
+                return False
+            stop = bool(observer(x_obs, params_obs, enriched))
+            if stop:
+                stopped_by_observer = True
+            return stop
+
         x_lvl, params5, info = align(
-            geometry, g, d, y, cfg=cfg_level, init_x=x0, init_params5=params0
+            geometry,
+            g,
+            d,
+            y,
+            cfg=cfg_level,
+            init_x=x0,
+            init_params5=params0,
+            observer=_level_observer if observer is not None else None,
         )
         loss_hist.extend(info.get("loss", []))
         x_init = x_lvl
         prev_factor = lvl["factor"]
+        if info.get("stopped_by_observer"):
+            stopped_by_observer = True
+            break
 
     # Upsample to finest grid if last level not 1
     if levels and levels[-1]["factor"] != 1:
@@ -860,4 +897,9 @@ def align_multires(
     else:
         x_final = x_init
 
-    return x_final, params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32), {"loss": loss_hist, "factors": list(factors)}
+    return x_final, params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32), {
+        "loss": loss_hist,
+        "factors": list(factors),
+        "stopped_by_observer": stopped_by_observer,
+        "total_outer_iters": int(global_outer_idx),
+    }

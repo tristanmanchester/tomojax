@@ -12,7 +12,7 @@ import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import psutil
@@ -98,6 +98,25 @@ class FixtureBundle:
             "projection_shape": [int(v) for v in self.projections.shape],
             "n_views": int(self.projections.shape[0]),
         }
+
+@dataclass(frozen=True)
+class ConvergenceConfig:
+    enabled: bool = False
+    metric: str = "gt_mse"
+    threshold: float | None = None
+    stop_on_threshold: bool = True
+
+@dataclass
+class ConvergenceRunSummary:
+    metric: str
+    threshold: float | None
+    threshold_met: bool
+    seconds_to_threshold: float | None
+    outer_iters_to_threshold: int | None
+    best_quality_value: float | None
+    best_quality_elapsed_seconds: float | None
+    total_outer_iters_executed: int
+    trace: list[dict[str, Any]]
 
 
 def _save_fixture(bundle: FixtureBundle, path: Path) -> None:
@@ -422,6 +441,70 @@ def _float_or_none(value: Any) -> float | None:
         return None
     return f
 
+def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
+    raw = dict(profile.get("convergence") or {})
+    enabled = bool(raw.get("enabled", False))
+    metric = str(raw.get("metric", "gt_mse"))
+    threshold = _float_or_none(raw.get("threshold"))
+    stop_on_threshold = bool(raw.get("stop_on_threshold", True))
+    return ConvergenceConfig(
+        enabled=enabled,
+        metric=metric,
+        threshold=threshold,
+        stop_on_threshold=stop_on_threshold,
+    )
+
+def _quality_threshold_met(metric: str, threshold: float | None, value: float | None) -> bool:
+    if threshold is None or value is None:
+        return False
+    if metric == "gt_mse":
+        return value <= threshold
+    raise ValueError(f"Unsupported convergence metric: {metric}")
+
+def _convergence_summary_from_trace(
+    *,
+    metric: str,
+    threshold: float | None,
+    trace: list[dict[str, Any]],
+) -> ConvergenceRunSummary:
+    best_quality_value: float | None = None
+    best_quality_elapsed_seconds: float | None = None
+    seconds_to_threshold: float | None = None
+    outer_iters_to_threshold: int | None = None
+
+    for point in trace:
+        quality_value = _float_or_none(point.get("quality_value"))
+        elapsed_seconds = _float_or_none(point.get("elapsed_seconds"))
+        outer_idx = point.get("outer_idx")
+
+        if quality_value is not None and (
+            best_quality_value is None or quality_value < best_quality_value
+        ):
+            best_quality_value = quality_value
+            best_quality_elapsed_seconds = elapsed_seconds
+
+        if (
+            seconds_to_threshold is None
+            and _quality_threshold_met(metric, threshold, quality_value)
+        ):
+            seconds_to_threshold = elapsed_seconds
+            try:
+                outer_iters_to_threshold = int(outer_idx) if outer_idx is not None else None
+            except Exception:
+                outer_iters_to_threshold = None
+
+    return ConvergenceRunSummary(
+        metric=metric,
+        threshold=threshold,
+        threshold_met=seconds_to_threshold is not None,
+        seconds_to_threshold=seconds_to_threshold,
+        outer_iters_to_threshold=outer_iters_to_threshold,
+        best_quality_value=best_quality_value,
+        best_quality_elapsed_seconds=best_quality_elapsed_seconds,
+        total_outer_iters_executed=len(trace),
+        trace=trace,
+    )
+
 
 def _apply_projection_noise(
     projections: np.ndarray,
@@ -620,6 +703,86 @@ def _alignment_baseline_volume(
     )
     return np.asarray(mods.jax.device_get(baseline), dtype=np.float32)
 
+def _make_align_task(
+    *,
+    bundle: FixtureBundle,
+    grid: Any,
+    detector: Any,
+    geometry: Any,
+    projections: Any,
+    cfg: Any,
+    levels: tuple[int, ...] | None,
+    convergence: ConvergenceConfig,
+    mods: ImportedModules,
+) -> Callable[[], dict[str, Any]]:
+    gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
+    trace: list[dict[str, Any]] = []
+
+    def _quality_value_for_params(params: Any) -> float:
+        if convergence.metric != "gt_mse":
+            raise ValueError(f"Unsupported convergence metric: {convergence.metric}")
+        y_hat = mods.gt_projection_helper(gt_volume, grid, detector, geometry, params)
+        return float(mods.jnp.mean((y_hat - projections) ** 2).item())
+
+    def _observer(_: Any, params: Any, stat: dict[str, Any]) -> bool:
+        quality_value = _quality_value_for_params(params)
+        trace.append(
+            {
+                "outer_idx": int(
+                    stat.get("global_outer_idx", stat.get("outer_idx", len(trace) + 1))
+                ),
+                "level_index": (
+                    int(stat["level_index"]) if stat.get("level_index") is not None else None
+                ),
+                "level_factor": (
+                    int(stat["level_factor"]) if stat.get("level_factor") is not None else None
+                ),
+                "elapsed_seconds": _float_or_none(stat.get("cumulative_time")),
+                "quality_value": quality_value,
+                "loss_after": _float_or_none(stat.get("loss_after")),
+            }
+        )
+        return convergence.stop_on_threshold and _quality_threshold_met(
+            convergence.metric, convergence.threshold, quality_value
+        )
+
+    def task() -> dict[str, Any]:
+        if levels:
+            volume, params, info = mods.align_multires(
+                geometry,
+                grid,
+                detector,
+                projections,
+                factors=levels,
+                cfg=cfg,
+                observer=_observer if convergence.enabled else None,
+            )
+        else:
+            volume, params, info = mods.align(
+                geometry,
+                grid,
+                detector,
+                projections,
+                cfg=cfg,
+                observer=_observer if convergence.enabled else None,
+            )
+        return {
+            "volume": volume,
+            "params": params,
+            "info": info,
+            "convergence": (
+                _convergence_summary_from_trace(
+                    metric=convergence.metric,
+                    threshold=convergence.threshold,
+                    trace=list(trace),
+                )
+                if convergence.enabled
+                else None
+            ),
+        }
+
+    return task
+
 
 
 def _device_info(mods: ImportedModules) -> dict[str, Any]:
@@ -780,6 +943,8 @@ def _run_align_profile(
     projections = jnp.asarray(bundle.projections, dtype=jnp.float32)
     align_cfg = dict(profile.get("align") or {})
     levels = align_cfg.get("levels")
+    level_tuple = tuple(int(v) for v in levels) if levels else None
+    convergence = _convergence_config(profile)
 
     cfg_kwargs = {
         "outer_iters": int(align_cfg.get("outer_iters", 4)),
@@ -810,39 +975,48 @@ def _run_align_profile(
     }
     cfg = mods.AlignConfig(**cfg_kwargs)
 
-    if levels:
-        level_tuple = tuple(int(v) for v in levels)
-
-        def task() -> dict[str, Any]:
-            volume, params, info = mods.align_multires(
-                geometry,
-                grid,
-                detector,
-                projections,
-                factors=level_tuple,
-                cfg=cfg,
-            )
-            return {"volume": volume, "params": params, "info": info}
-    else:
-        def task() -> dict[str, Any]:
-            volume, params, info = mods.align(
-                geometry,
-                grid,
-                detector,
-                projections,
-                cfg=cfg,
-            )
-            return {"volume": volume, "params": params, "info": info}
-
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 1)))
 
-    first = _timed_call(task, mods, measurement_cfg)
-    warms: list[RunResult] = [_timed_call(task, mods, measurement_cfg) for _ in range(warm_runs)]
+    first = _timed_call(
+        _make_align_task(
+            bundle=bundle,
+            grid=grid,
+            detector=detector,
+            geometry=geometry,
+            projections=projections,
+            cfg=cfg,
+            levels=level_tuple,
+            convergence=convergence,
+            mods=mods,
+        ),
+        mods,
+        measurement_cfg,
+    )
+    warms: list[RunResult] = [
+        _timed_call(
+            _make_align_task(
+                bundle=bundle,
+                grid=grid,
+                detector=detector,
+                geometry=geometry,
+                projections=projections,
+                cfg=cfg,
+                levels=level_tuple,
+                convergence=convergence,
+                mods=mods,
+            ),
+            mods,
+            measurement_cfg,
+        )
+        for _ in range(warm_runs)
+    ]
     warm_seconds = [run.seconds for run in warms]
     warm_params = np.asarray(mods.jax.device_get(warms[-1].output["params"]), dtype=np.float32)
     final_volume = np.asarray(mods.jax.device_get(warms[-1].output["volume"]), dtype=np.float32)
     final_info = warms[-1].output.get("info") or {}
+    first_convergence = first.output.get("convergence")
+    warm_convergence = warms[-1].output.get("convergence")
 
     gt_params = np.asarray(bundle.align_params, dtype=np.float32)
     abs_metrics = mods.loss_metrics_abs(gt_params, warm_params, du=float(detector.du), dv=float(detector.dv))
@@ -887,6 +1061,7 @@ def _run_align_profile(
         "profile": profile["name"],
         "task": "align",
         "loss_kind": cfg.loss_kind,
+        "success": True,
         "first_run_seconds": first.seconds,
         "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
         "warm_run_seconds_std": float(statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0),
@@ -935,6 +1110,65 @@ def _run_align_profile(
         "summary_image_path": None,
         "summary_image_error": None,
     }
+    if convergence.enabled:
+        metrics.update(
+            {
+                "quality_threshold_metric": convergence.metric,
+                "quality_threshold_value": convergence.threshold,
+                "quality_threshold_met": bool(
+                    warm_convergence.threshold_met if warm_convergence is not None else False
+                ),
+                "cold_seconds_to_quality_threshold": (
+                    first_convergence.seconds_to_threshold if first_convergence is not None else None
+                ),
+                "warm_seconds_to_quality_threshold": (
+                    warm_convergence.seconds_to_threshold if warm_convergence is not None else None
+                ),
+                "cold_outer_iters_to_quality_threshold": (
+                    first_convergence.outer_iters_to_threshold if first_convergence is not None else None
+                ),
+                "warm_outer_iters_to_quality_threshold": (
+                    warm_convergence.outer_iters_to_threshold if warm_convergence is not None else None
+                ),
+                "cold_best_quality_value": (
+                    first_convergence.best_quality_value if first_convergence is not None else None
+                ),
+                "warm_best_quality_value": (
+                    warm_convergence.best_quality_value if warm_convergence is not None else None
+                ),
+                "best_quality_value": (
+                    warm_convergence.best_quality_value
+                    if warm_convergence is not None
+                    else (first_convergence.best_quality_value if first_convergence is not None else None)
+                ),
+                "best_quality_elapsed_seconds": (
+                    warm_convergence.best_quality_elapsed_seconds
+                    if warm_convergence is not None
+                    else (
+                        first_convergence.best_quality_elapsed_seconds
+                        if first_convergence is not None
+                        else None
+                    )
+                ),
+                "cold_total_outer_iters_executed": (
+                    first_convergence.total_outer_iters_executed if first_convergence is not None else None
+                ),
+                "warm_total_outer_iters_executed": (
+                    warm_convergence.total_outer_iters_executed if warm_convergence is not None else None
+                ),
+                "total_outer_iters_executed": (
+                    warm_convergence.total_outer_iters_executed
+                    if warm_convergence is not None
+                    else (first_convergence.total_outer_iters_executed if first_convergence is not None else None)
+                ),
+                "cold_convergence_trace": (
+                    first_convergence.trace if first_convergence is not None else []
+                ),
+                "warm_convergence_trace": (
+                    warm_convergence.trace if warm_convergence is not None else []
+                ),
+            }
+        )
     if _should_render_alignment_summary(profile):
         summary_path = _alignment_summary_path(out_path)
         try:
@@ -946,6 +1180,9 @@ def _run_align_profile(
                 baseline_volume=baseline_volume,
                 final_volume=final_volume,
                 loss_history=[float(v) for v in list(final_info.get("loss") or [])],
+                convergence_trace=metrics.get("warm_convergence_trace"),
+                convergence_metric_name=metrics.get("quality_threshold_metric"),
+                quality_threshold_value=metrics.get("quality_threshold_value"),
                 metrics=metrics,
                 quality=dict(metrics["quality"]),
                 fixture=bundle.shape_summary,
@@ -1021,6 +1258,16 @@ def main() -> int:
         "jax_device_memory_profile_error": None,
         "summary_image_path": None,
         "summary_image_error": None,
+        "quality_threshold_metric": None,
+        "quality_threshold_value": None,
+        "quality_threshold_met": None,
+        "cold_seconds_to_quality_threshold": None,
+        "warm_seconds_to_quality_threshold": None,
+        "cold_outer_iters_to_quality_threshold": None,
+        "warm_outer_iters_to_quality_threshold": None,
+        "best_quality_value": None,
+        "best_quality_elapsed_seconds": None,
+        "total_outer_iters_executed": None,
         "quality": {},
         "device": {},
         "oom": False,
@@ -1048,7 +1295,12 @@ def main() -> int:
             "generated_in_process": fixture_generated,
             **fixture.shape_summary,
         }
-        metrics["success"] = metrics.get("objective_value") is not None or objective_name == "warm_run_seconds_mean"
+        metrics["success"] = bool(
+            run_metrics.get(
+                "success",
+                metrics.get("objective_value") is not None or objective_name == "warm_run_seconds_mean",
+            )
+        )
     except Exception as exc:  # pragma: no cover - exercised in error conditions
         message = "".join(traceback.format_exception_only(type(exc), exc)).strip()
         metrics["error"] = message

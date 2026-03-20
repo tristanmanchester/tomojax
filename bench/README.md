@@ -34,6 +34,7 @@ These are the profiles the controller should use in the inner optimisation loop.
 - `screen_speed_parallel_fbp_128`: `128^3`, 192-view parallel-beam FBP speed screen.
 - `screen_memory_parallel_fista_128`: `128^3`, 160-view parallel-beam FISTA-TV memory screen.
 - `screen_accuracy_align_parallel_3d_96`: `96^3`, 144-view noisy 3D alignment screen.
+- `screen_convergence_align_parallel_3d_96`: `96^3`, 144-view noisy 3D alignment time-to-threshold screen.
 
 ### Canary suite
 
@@ -43,6 +44,7 @@ These are slower confirmation profiles. Do not use them as the main search loop;
 - `canary_iterative_parallel_160`: `160^3`, 220-view iterative 3D reconstruction.
 - `canary_lamino_fbp_128`: `128^3`, 320-view laminography reconstruction.
 - `canary_align_parallel_3d_128_noisy`: `128×128×96`, 180-view noisy 3D alignment.
+- `canary_convergence_align_parallel_3d_128_noisy`: `128×128×96`, 180-view noisy 3D alignment time-to-threshold confirmation.
 
 All objectives are lower-is-better.
 
@@ -78,7 +80,8 @@ The JSON schema is documented in `bench/metrics_schema.json`.
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline
 from the misaligned projections, the final aligned volume, the absolute error volume, and a small
-loss-history panel. The metrics JSON records this via `summary_image_path` and
+loss-history or convergence panel. Convergence profiles draw the tracked quality metric against
+outer iteration and mark the configured threshold crossing when it happens. The metrics JSON records this via `summary_image_path` and
 `summary_image_error`.
 
 ## Remote Pod usage
@@ -113,3 +116,5 @@ On Runpod, keep persistent data under `/workspace`, especially:
 - Representative alignment profiles enable visualization by default, and they already use the richer `random_shapes` phantom family from generated benchmark data.
 - Alignment profiles support `visualization.enabled: false` if you need to suppress the summary PNG for a specific run.
 - Alignment benchmarks now support synthetic observation noise, so the accuracy screens are closer to real reconstruction/alignment use.
+- Convergence-mode alignment profiles add a `convergence:` block. Their objective is usually `warm_seconds_to_quality_threshold`, and threshold misses are valid benchmark outcomes with `quality_threshold_met: false`.
+- `align.outer_iters` and `align.recon_iters` remain the maximum work budget for convergence profiles. The run stops at the first outer iteration whose measured quality crosses the threshold when `convergence.stop_on_threshold: true`.
