@@ -1,9 +1,8 @@
-name: memory_recon_small
+name: screen_memory_parallel_fista_128
 task: recon
-fixture: recon_small_v1.npz
 objective_name: peak_gpu_memory_mb
 objective_direction: minimise
-warm_runs: 2
+warm_runs: 1
 jax_cache_dir: null
 env:
   XLA_PYTHON_CLIENT_PREALLOCATE: "false"
@@ -13,25 +12,30 @@ measurement:
   gpu_poll_interval_seconds: 0.02
   host_poll_interval_seconds: 0.05
 recon:
-  algorithm: fbp
-  filter_name: ramp
+  algorithm: fista_tv
+  iters: 8
+  lambda_tv: 0.003
+  tv_prox_iters: 8
+  recon_rel_tol: null
+  recon_patience: 0
   views_per_batch: 1
   projector_unroll: 1
   checkpoint_projector: true
   gather_dtype: bf16
+  grad_mode: auto
 data:
-  nx: 64
-  ny: 64
-  nz: 64
-  nu: 64
-  nv: 64
-  n_views: 128
+  nx: 128
+  ny: 128
+  nz: 128
+  nu: 128
+  nv: 128
+  n_views: 160
   geometry: parallel
   phantom: random_shapes
-  n_cubes: 12
-  n_spheres: 10
-  min_size: 3
-  max_size: 12
-  min_value: 0.05
-  max_value: 0.8
-  seed: 7
+  n_cubes: 24
+  n_spheres: 24
+  min_size: 4
+  max_size: 24
+  min_value: 0.03
+  max_value: 0.9
+  seed: 23

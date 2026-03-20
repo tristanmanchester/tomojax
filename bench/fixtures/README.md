@@ -1,10 +1,10 @@
 # Benchmark fixtures
 
-These small `.npz` bundles are tracked on purpose.
+Only the tiny smoke fixture is tracked in Git.
 
-They keep the benchmark harness deterministic and avoid having benchmark runs regenerate
-projection data in-process before the first timed call. That helps keep the first-run
-measurement closer to a true compile+execute path.
+The representative screening and canary profiles are intentionally too large to vendor as checked-in
+`.npz` files. They are generated on first use into `bench/data/` and should then be left in place on
+persistent worker storage.
 
 Each fixture stores:
 

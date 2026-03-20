@@ -1,9 +1,8 @@
-name: speed_recon_small
+name: canary_lamino_fbp_128
 task: recon
-fixture: recon_small_v1.npz
 objective_name: warm_run_seconds_mean
 objective_direction: minimise
-warm_runs: 3
+warm_runs: 1
 jax_cache_dir: null
 env:
   XLA_PYTHON_CLIENT_PREALLOCATE: "false"
@@ -20,18 +19,15 @@ recon:
   checkpoint_projector: true
   gather_dtype: bf16
 data:
-  nx: 64
-  ny: 64
-  nz: 64
-  nu: 64
-  nv: 64
-  n_views: 128
-  geometry: parallel
-  phantom: random_shapes
-  n_cubes: 12
-  n_spheres: 10
-  min_size: 3
-  max_size: 12
-  min_value: 0.05
-  max_value: 0.8
-  seed: 7
+  nx: 128
+  ny: 128
+  nz: 128
+  nu: 128
+  nv: 128
+  n_views: 320
+  geometry: lamino
+  tilt_deg: 35
+  tilt_about: x
+  phantom: lamino_disk
+  lamino_thickness_ratio: 0.15
+  seed: 51

@@ -1,0 +1,36 @@
+name: screen_speed_parallel_fbp_128
+task: recon
+objective_name: warm_run_seconds_mean
+objective_direction: minimise
+warm_runs: 2
+jax_cache_dir: null
+env:
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+measurement:
+  gpu_memory: true
+  host_rss: true
+  gpu_poll_interval_seconds: 0.05
+  host_poll_interval_seconds: 0.05
+recon:
+  algorithm: fbp
+  filter_name: ramp
+  views_per_batch: 2
+  projector_unroll: 1
+  checkpoint_projector: true
+  gather_dtype: bf16
+data:
+  nx: 128
+  ny: 128
+  nz: 128
+  nu: 128
+  nv: 128
+  n_views: 192
+  geometry: parallel
+  phantom: random_shapes
+  n_cubes: 24
+  n_spheres: 24
+  min_size: 4
+  max_size: 24
+  min_value: 0.03
+  max_value: 0.9
+  seed: 17

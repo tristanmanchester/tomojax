@@ -1,6 +1,5 @@
-name: accuracy_align_small
+name: screen_accuracy_align_parallel_3d_96
 task: align
-fixture: align_small_v1.npz
 objective_name: gt_mse
 objective_direction: minimise
 warm_runs: 1
@@ -15,36 +14,42 @@ measurement:
 align:
   levels: [4, 2, 1]
   outer_iters: 4
-  recon_iters: 10
-  lambda_tv: 0.005
-  tv_prox_iters: 10
+  recon_iters: 12
+  lambda_tv: 0.003
+  tv_prox_iters: 8
   recon_rel_tol: null
-  recon_patience: 2
+  recon_patience: 0
   views_per_batch: 1
   projector_unroll: 1
   checkpoint_projector: true
-  gather_dtype: auto
+  gather_dtype: bf16
   opt_method: gn
   gn_damping: 0.001
   w_rot: 0.001
   w_trans: 0.001
-  early_stop: true
-  early_stop_rel_impr: 0.001
-  early_stop_patience: 2
+  early_stop: false
   loss_kind: l2_otsu
   k_step: 1
 data:
-  nx: 128
-  ny: 128
-  nz: 1
-  nu: 128
-  nv: 128
-  n_views: 60
+  nx: 96
+  ny: 96
+  nz: 96
+  nu: 96
+  nv: 96
+  n_views: 144
   geometry: parallel
-  phantom: shepp
-  seed: 0
+  phantom: random_shapes
+  n_cubes: 18
+  n_spheres: 18
+  min_size: 4
+  max_size: 18
+  min_value: 0.05
+  max_value: 1.0
+  noise: poisson
+  noise_level: 5000
+  seed: 31
   misalignment:
     rot_deg: 1.0
-    trans_px: 5.0
+    trans_px: 6.0
     include_phi: true
-    seed: 1
+    seed: 32

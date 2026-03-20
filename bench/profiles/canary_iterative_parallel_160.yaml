@@ -1,0 +1,41 @@
+name: canary_iterative_parallel_160
+task: recon
+objective_name: warm_run_seconds_mean
+objective_direction: minimise
+warm_runs: 1
+jax_cache_dir: null
+env:
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+measurement:
+  gpu_memory: true
+  host_rss: true
+  gpu_poll_interval_seconds: 0.05
+  host_poll_interval_seconds: 0.05
+recon:
+  algorithm: fista_tv
+  iters: 10
+  lambda_tv: 0.003
+  tv_prox_iters: 8
+  recon_rel_tol: null
+  recon_patience: 0
+  views_per_batch: 1
+  projector_unroll: 1
+  checkpoint_projector: true
+  gather_dtype: bf16
+  grad_mode: auto
+data:
+  nx: 160
+  ny: 160
+  nz: 160
+  nu: 160
+  nv: 160
+  n_views: 220
+  geometry: parallel
+  phantom: random_shapes
+  n_cubes: 30
+  n_spheres: 30
+  min_size: 4
+  max_size: 28
+  min_value: 0.03
+  max_value: 0.9
+  seed: 41

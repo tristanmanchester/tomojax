@@ -6,7 +6,6 @@ import json
 import math
 import os
 import statistics
-import subprocess
 import sys
 import threading
 import time
@@ -18,6 +17,7 @@ from typing import Any
 import numpy as np
 import psutil
 import yaml
+from memory import GpuMemoryMonitor, GpuMemorySnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(__file__).resolve().parent
@@ -39,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         required=True,
-        help="Profile name (e.g. speed_recon_small) or path to a YAML profile.",
+        help="Profile name (e.g. screen_speed_parallel_fbp_128) or path to a YAML profile.",
     )
     parser.add_argument("--out", required=True, help="Path to the metrics JSON to write.")
     parser.add_argument(
@@ -362,6 +362,12 @@ def _build_align_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
     )
     projections = vm_project(T_aug)
     projections = np.asarray(jax.device_get(projections), dtype=np.float32)
+    projections = _apply_projection_noise(
+        projections,
+        noise=str(dataset_cfg.get("noise", "none")),
+        noise_level=float(dataset_cfg.get("noise_level", 0.0)),
+        seed=int(dataset_cfg.get("noise_seed", seed + 17)),
+    )
 
     return FixtureBundle(
         name=name,
@@ -416,6 +422,30 @@ def _float_or_none(value: Any) -> float | None:
     return f
 
 
+def _apply_projection_noise(
+    projections: np.ndarray,
+    *,
+    noise: str,
+    noise_level: float,
+    seed: int,
+) -> np.ndarray:
+    noise_kind = str(noise or "none").strip().lower()
+    sigma_or_scale = float(noise_level)
+    if noise_kind == "none" or sigma_or_scale <= 0:
+        return np.asarray(projections, dtype=np.float32)
+
+    rng = np.random.default_rng(seed)
+    proj = np.asarray(projections, dtype=np.float32)
+    if noise_kind == "gaussian":
+        noisy = proj + rng.normal(scale=sigma_or_scale, size=proj.shape).astype(np.float32)
+        return np.asarray(noisy, dtype=np.float32)
+    if noise_kind == "poisson":
+        lam = np.clip(proj, 0.0, None) * sigma_or_scale
+        noisy = rng.poisson(lam=lam).astype(np.float32) / max(sigma_or_scale, 1e-6)
+        return np.asarray(noisy, dtype=np.float32)
+    raise ValueError(f"Unsupported noise kind in benchmark profile: {noise}")
+
+
 class PeakMemoryMonitor:
     def __init__(
         self,
@@ -433,33 +463,11 @@ class PeakMemoryMonitor:
         self._thread: threading.Thread | None = None
         self._process = psutil.Process(os.getpid())
         self.peak_host_rss_mb: float | None = None
-        self.peak_gpu_memory_mb: float | None = None
-        self.gpu_sampler_error: str | None = None
-
-    def _sample_gpu_memory(self) -> None:
-        try:
-            result = subprocess.run(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=memory.used",
-                    "--format=csv,noheader,nounits",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            values = [float(line.strip()) for line in result.stdout.splitlines() if line.strip()]
-            if not values:
-                return
-            peak = max(values)
-            self.peak_gpu_memory_mb = max(self.peak_gpu_memory_mb or 0.0, peak)
-        except FileNotFoundError:
-            self.gpu_sampler_error = "nvidia-smi not found"
-            self.sample_gpu_memory = False
-        except Exception as exc:  # pragma: no cover - depends on runtime environment
-            self.gpu_sampler_error = str(exc)
-            self.sample_gpu_memory = False
+        self.gpu_memory = GpuMemoryMonitor(
+            enabled=self.sample_gpu_memory,
+            interval_seconds=self.gpu_interval,
+            root_pid=os.getpid(),
+        )
 
     def _sample_host_rss(self) -> None:
         try:
@@ -477,22 +485,21 @@ class PeakMemoryMonitor:
                 self._sample_host_rss()
                 last_host = now
             if self.sample_gpu_memory and (now - last_gpu >= self.gpu_interval):
-                self._sample_gpu_memory()
+                self.gpu_memory.sample_once()
                 last_gpu = now
             time.sleep(0.01)
         if self.sample_host_rss:
             self._sample_host_rss()
-        if self.sample_gpu_memory:
-            self._sample_gpu_memory()
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="peak-memory-monitor", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self) -> GpuMemorySnapshot:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+        return self.gpu_memory.stop()
 
 
 
@@ -517,6 +524,13 @@ class RunResult:
     seconds: float
     peak_host_rss_mb: float | None
     peak_gpu_memory_mb: float | None
+    peak_gpu_memory_process_mb: float | None
+    peak_gpu_memory_device_mb: float | None
+    gpu_memory_backend: str
+    gpu_memory_scope: str
+    gpu_memory_sample_interval_seconds: float
+    gpu_memory_sample_count: int
+    gpu_memory_observed_gpu_count: int
     gpu_sampler_error: str | None
 
 
@@ -535,14 +549,38 @@ def _timed_call(fn: Any, mods: ImportedModules, measurement_cfg: dict[str, Any])
         _block_tree_ready(mods.jax, output)
         seconds = time.perf_counter() - start
     finally:
-        monitor.stop()
+        gpu_snapshot = monitor.stop()
     return RunResult(
         output=output,
         seconds=seconds,
         peak_host_rss_mb=_float_or_none(monitor.peak_host_rss_mb),
-        peak_gpu_memory_mb=_float_or_none(monitor.peak_gpu_memory_mb),
-        gpu_sampler_error=monitor.gpu_sampler_error,
+        peak_gpu_memory_mb=_float_or_none(
+            gpu_snapshot.process_peak_mb
+            if gpu_snapshot.process_peak_mb is not None
+            else gpu_snapshot.device_peak_mb
+        ),
+        peak_gpu_memory_process_mb=_float_or_none(gpu_snapshot.process_peak_mb),
+        peak_gpu_memory_device_mb=_float_or_none(gpu_snapshot.device_peak_mb),
+        gpu_memory_backend=gpu_snapshot.backend,
+        gpu_memory_scope=gpu_snapshot.scope,
+        gpu_memory_sample_interval_seconds=gpu_snapshot.sample_interval_seconds,
+        gpu_memory_sample_count=gpu_snapshot.sample_count,
+        gpu_memory_observed_gpu_count=gpu_snapshot.observed_gpu_count,
+        gpu_sampler_error=gpu_snapshot.sampler_error,
     )
+
+
+def _maybe_save_jax_device_memory_profile(
+    mods: ImportedModules, measurement_cfg: dict[str, Any], out_path: Path
+) -> tuple[str | None, str | None]:
+    if not bool(measurement_cfg.get("save_jax_device_memory_profile", False)):
+        return None, None
+    try:
+        artifact_path = out_path.with_suffix(out_path.suffix + ".device-memory.prof")
+        mods.jax.profiler.save_device_memory_profile(str(artifact_path))
+        return str(artifact_path), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 
@@ -562,7 +600,9 @@ def _device_info(mods: ImportedModules) -> dict[str, Any]:
 
 
 
-def _run_recon_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: ImportedModules) -> dict[str, Any]:
+def _run_recon_profile(
+    bundle: FixtureBundle, profile: dict[str, Any], mods: ImportedModules, out_path: Path
+) -> dict[str, Any]:
     grid, detector, geometry = _bundle_geometry(bundle, mods)
     jnp = mods.jnp
     projections = jnp.asarray(bundle.projections, dtype=jnp.float32)
@@ -621,9 +661,22 @@ def _run_recon_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: Imp
     recon_mse = float(jnp.mean((warm_volume - volume_gt) ** 2).item())
 
     warm_peak_gpu = max((v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None)
+    warm_peak_gpu_process = max(
+        (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
+        default=None,
+    )
+    warm_peak_gpu_device = max(
+        (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
+        default=None,
+    )
     warm_peak_host = max((v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None)
     first_peak_gpu = first.peak_gpu_memory_mb
+    first_peak_gpu_process = first.peak_gpu_memory_process_mb
+    first_peak_gpu_device = first.peak_gpu_memory_device_mb
     first_peak_host = first.peak_host_rss_mb
+    jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
+        mods, measurement_cfg, out_path
+    )
 
     peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first_peak_gpu
     peak_host = warm_peak_host if warm_peak_host is not None else first_peak_host
@@ -638,9 +691,34 @@ def _run_recon_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: Imp
         "first_run_peak_gpu_memory_mb": first_peak_gpu,
         "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
         "peak_gpu_memory_mb": peak_gpu,
+        "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
+        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
+        "peak_gpu_memory_process_mb": (
+            warm_peak_gpu_process if warm_peak_gpu_process is not None else first_peak_gpu_process
+        ),
+        "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
+        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
+        "peak_gpu_memory_device_mb": (
+            warm_peak_gpu_device if warm_peak_gpu_device is not None else first_peak_gpu_device
+        ),
         "first_run_peak_host_rss_mb": first_peak_host,
         "warm_run_peak_host_rss_mb_max": warm_peak_host,
         "peak_host_rss_mb": peak_host,
+        "gpu_memory_backend": first.gpu_memory_backend,
+        "gpu_memory_scope": (
+            "process"
+            if (warm_peak_gpu_process is not None or first_peak_gpu_process is not None)
+            else first.gpu_memory_scope
+        ),
+        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
+        "gpu_memory_sample_count": int(
+            first.gpu_memory_sample_count + sum(w.gpu_memory_sample_count for w in warms)
+        ),
+        "gpu_memory_observed_gpu_count": max(
+            [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
+        ),
+        "jax_device_memory_profile_path": jax_profile_path,
+        "jax_device_memory_profile_error": jax_profile_error,
         "quality": {
             "recon_mse": recon_mse,
         },
@@ -650,7 +728,9 @@ def _run_recon_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: Imp
 
 
 
-def _run_align_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: ImportedModules) -> dict[str, Any]:
+def _run_align_profile(
+    bundle: FixtureBundle, profile: dict[str, Any], mods: ImportedModules, out_path: Path
+) -> dict[str, Any]:
     if bundle.align_params is None:
         raise ValueError("Alignment profile requires fixture align_params")
     grid, detector, geometry = _bundle_geometry(bundle, mods)
@@ -740,9 +820,22 @@ def _run_align_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: Imp
     gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
 
     warm_peak_gpu = max((v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None)
+    warm_peak_gpu_process = max(
+        (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
+        default=None,
+    )
+    warm_peak_gpu_device = max(
+        (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
+        default=None,
+    )
     warm_peak_host = max((v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None)
     first_peak_gpu = first.peak_gpu_memory_mb
+    first_peak_gpu_process = first.peak_gpu_memory_process_mb
+    first_peak_gpu_device = first.peak_gpu_memory_device_mb
     first_peak_host = first.peak_host_rss_mb
+    jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
+        mods, measurement_cfg, out_path
+    )
     peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first_peak_gpu
     peak_host = warm_peak_host if warm_peak_host is not None else first_peak_host
 
@@ -756,9 +849,34 @@ def _run_align_profile(bundle: FixtureBundle, profile: dict[str, Any], mods: Imp
         "first_run_peak_gpu_memory_mb": first_peak_gpu,
         "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
         "peak_gpu_memory_mb": peak_gpu,
+        "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
+        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
+        "peak_gpu_memory_process_mb": (
+            warm_peak_gpu_process if warm_peak_gpu_process is not None else first_peak_gpu_process
+        ),
+        "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
+        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
+        "peak_gpu_memory_device_mb": (
+            warm_peak_gpu_device if warm_peak_gpu_device is not None else first_peak_gpu_device
+        ),
         "first_run_peak_host_rss_mb": first_peak_host,
         "warm_run_peak_host_rss_mb_max": warm_peak_host,
         "peak_host_rss_mb": peak_host,
+        "gpu_memory_backend": first.gpu_memory_backend,
+        "gpu_memory_scope": (
+            "process"
+            if (warm_peak_gpu_process is not None or first_peak_gpu_process is not None)
+            else first.gpu_memory_scope
+        ),
+        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
+        "gpu_memory_sample_count": int(
+            first.gpu_memory_sample_count + sum(w.gpu_memory_sample_count for w in warms)
+        ),
+        "gpu_memory_observed_gpu_count": max(
+            [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
+        ),
+        "jax_device_memory_profile_path": jax_profile_path,
+        "jax_device_memory_profile_error": jax_profile_error,
         "quality": {
             **abs_metrics,
             **rel_metrics,
@@ -820,7 +938,17 @@ def main() -> int:
         "warm_run_seconds_mean": None,
         "warm_run_seconds_std": None,
         "peak_gpu_memory_mb": None,
+        "peak_gpu_memory_process_mb": None,
+        "peak_gpu_memory_device_mb": None,
         "peak_host_rss_mb": None,
+        "gpu_memory_backend": None,
+        "gpu_memory_scope": None,
+        "gpu_memory_sample_interval_seconds": None,
+        "gpu_memory_sample_count": None,
+        "gpu_memory_observed_gpu_count": None,
+        "gpu_sampler_error": None,
+        "jax_device_memory_profile_path": None,
+        "jax_device_memory_profile_error": None,
         "quality": {},
         "device": {},
         "oom": False,
@@ -833,9 +961,9 @@ def main() -> int:
         mods = _import_modules(profile)
         fixture, fixture_generated, fixture_path = _ensure_fixture(profile, mods)
         if str(profile.get("task", "recon")) == "align":
-            run_metrics = _run_align_profile(fixture, profile, mods)
+            run_metrics = _run_align_profile(fixture, profile, mods, out_path)
         else:
-            run_metrics = _run_recon_profile(fixture, profile, mods)
+            run_metrics = _run_recon_profile(fixture, profile, mods, out_path)
 
         metrics.update(run_metrics)
         objective_name, objective_direction, objective_value = _resolve_objective(metrics, profile)
