@@ -599,6 +599,28 @@ def _alignment_summary_path(out_path: Path) -> Path:
     return out_path.with_suffix(out_path.suffix + ".summary.png")
 
 
+def _alignment_baseline_volume(
+    bundle: FixtureBundle,
+    align_cfg: dict[str, Any],
+    mods: ImportedModules,
+) -> np.ndarray:
+    grid, detector, geometry = _bundle_geometry(bundle, mods)
+    projections = mods.jnp.asarray(bundle.projections, dtype=mods.jnp.float32)
+    baseline = mods.fbp(
+        geometry,
+        grid,
+        detector,
+        projections,
+        filter_name="ramp",
+        scale=None,
+        views_per_batch=int(align_cfg.get("views_per_batch", 1)),
+        projector_unroll=int(align_cfg.get("projector_unroll", 1)),
+        checkpoint_projector=bool(align_cfg.get("checkpoint_projector", True)),
+        gather_dtype=str(align_cfg.get("gather_dtype", "fp32")),
+    )
+    return np.asarray(mods.jax.device_get(baseline), dtype=np.float32)
+
+
 
 def _device_info(mods: ImportedModules) -> dict[str, Any]:
     devices = []
@@ -916,10 +938,12 @@ def _run_align_profile(
     if _should_render_alignment_summary(profile):
         summary_path = _alignment_summary_path(out_path)
         try:
+            baseline_volume = _alignment_baseline_volume(bundle, align_cfg, mods)
             save_alignment_summary(
                 out_path=summary_path,
                 profile_name=str(profile["name"]),
                 gt_volume=np.asarray(bundle.volume, dtype=np.float32),
+                baseline_volume=baseline_volume,
                 final_volume=final_volume,
                 loss_history=[float(v) for v in list(final_info.get("loss") or [])],
                 metrics=metrics,

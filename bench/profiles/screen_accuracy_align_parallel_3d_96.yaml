@@ -11,6 +11,8 @@ measurement:
   host_rss: true
   gpu_poll_interval_seconds: 0.05
   host_poll_interval_seconds: 0.05
+visualization:
+  enabled: true
 align:
   levels: [4, 2, 1]
   outer_iters: 4

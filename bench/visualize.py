@@ -74,6 +74,7 @@ def save_alignment_summary(
     out_path: Path,
     profile_name: str,
     gt_volume: np.ndarray,
+    baseline_volume: np.ndarray,
     final_volume: np.ndarray,
     loss_history: list[float],
     metrics: dict[str, Any],
@@ -81,22 +82,27 @@ def save_alignment_summary(
     fixture: dict[str, Any],
 ) -> Path:
     gt_volume = np.asarray(gt_volume, dtype=np.float32)
+    baseline_volume = np.asarray(baseline_volume, dtype=np.float32)
     final_volume = np.asarray(final_volume, dtype=np.float32)
     error_volume = np.abs(final_volume - gt_volume)
 
     gt_slices = _central_slices(gt_volume)
+    baseline_slices = _central_slices(baseline_volume)
     final_slices = _central_slices(final_volume)
     error_slices = _central_slices(error_volume)
 
-    vmin, vmax = _display_limits(gt_volume)
+    gt_limits = _display_limits(gt_volume)
+    baseline_limits = _display_limits(baseline_volume)
+    final_limits = _display_limits(final_volume)
     err_vmax = _error_limit(error_volume)
 
-    fig = plt.figure(figsize=(13.5, 10.5), constrained_layout=True)
+    fig = plt.figure(figsize=(13.5, 13.0), constrained_layout=True)
     gs = fig.add_gridspec(4, 4, width_ratios=[1, 1, 1, 1.15])
 
     row_titles = [
-        ("Ground Truth", gt_slices, "gray", (vmin, vmax)),
-        ("Aligned Result", final_slices, "gray", (vmin, vmax)),
+        ("Ground Truth", gt_slices, "gray", gt_limits),
+        ("Nominal FBP Baseline", baseline_slices, "gray", baseline_limits),
+        ("Aligned Result", final_slices, "gray", final_limits),
         ("Abs Error", error_slices, "magma", (0.0, err_vmax)),
     ]
     planes = ["xy", "xz", "yz"]

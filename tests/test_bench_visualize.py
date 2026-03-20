@@ -13,10 +13,12 @@ if str(BENCH) not in sys.path:
     sys.path.insert(0, str(BENCH))
 
 visualize = importlib.import_module("visualize")
+fitness = importlib.import_module("fitness")
 
 
 def test_save_alignment_summary_writes_png(tmp_path: Path) -> None:
     gt_volume = np.linspace(0.0, 1.0, 27, dtype=np.float32).reshape(3, 3, 3)
+    baseline_volume = gt_volume * 0.4
     final_volume = gt_volume * 0.9
     out_path = tmp_path / "align.summary.png"
 
@@ -24,6 +26,7 @@ def test_save_alignment_summary_writes_png(tmp_path: Path) -> None:
         out_path=out_path,
         profile_name="smoke_align",
         gt_volume=gt_volume,
+        baseline_volume=baseline_volume,
         final_volume=final_volume,
         loss_history=[5.0, 2.5, 1.25],
         metrics={
@@ -47,3 +50,11 @@ def test_save_alignment_summary_writes_png(tmp_path: Path) -> None:
     assert written == out_path
     assert out_path.exists()
     assert out_path.stat().st_size > 0
+
+
+def test_should_render_alignment_summary_respects_profile_toggle() -> None:
+    assert fitness._should_render_alignment_summary({"task": "align"}) is True
+    assert fitness._should_render_alignment_summary(
+        {"task": "align", "visualization": {"enabled": False}}
+    ) is False
+    assert fitness._should_render_alignment_summary({"task": "recon"}) is False
