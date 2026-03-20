@@ -29,6 +29,8 @@
     "peak_host_rss_mb": {"type": ["number", "null"]},
     "gpu_memory_backend": {"type": ["string", "null"]},
     "gpu_memory_scope": {"type": ["string", "null"]},
+    "gpu_memory_process_source": {"type": ["string", "null"]},
+    "gpu_memory_process_supported": {"type": ["boolean", "null"]},
     "gpu_memory_sample_interval_seconds": {"type": ["number", "null"]},
     "gpu_memory_sample_count": {"type": ["integer", "null"]},
     "gpu_memory_observed_gpu_count": {"type": ["integer", "null"]},

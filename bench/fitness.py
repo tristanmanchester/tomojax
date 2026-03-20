@@ -528,6 +528,8 @@ class RunResult:
     peak_gpu_memory_device_mb: float | None
     gpu_memory_backend: str
     gpu_memory_scope: str
+    gpu_memory_process_source: str | None
+    gpu_memory_process_supported: bool
     gpu_memory_sample_interval_seconds: float
     gpu_memory_sample_count: int
     gpu_memory_observed_gpu_count: int
@@ -563,6 +565,8 @@ def _timed_call(fn: Any, mods: ImportedModules, measurement_cfg: dict[str, Any])
         peak_gpu_memory_device_mb=_float_or_none(gpu_snapshot.device_peak_mb),
         gpu_memory_backend=gpu_snapshot.backend,
         gpu_memory_scope=gpu_snapshot.scope,
+        gpu_memory_process_source=gpu_snapshot.process_source,
+        gpu_memory_process_supported=bool(gpu_snapshot.process_supported),
         gpu_memory_sample_interval_seconds=gpu_snapshot.sample_interval_seconds,
         gpu_memory_sample_count=gpu_snapshot.sample_count,
         gpu_memory_observed_gpu_count=gpu_snapshot.observed_gpu_count,
@@ -716,6 +720,10 @@ def _run_recon_profile(
         ),
         "gpu_memory_observed_gpu_count": max(
             [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
+        ),
+        "gpu_memory_process_source": first.gpu_memory_process_source,
+        "gpu_memory_process_supported": bool(
+            first.gpu_memory_process_supported or any(w.gpu_memory_process_supported for w in warms)
         ),
         "jax_device_memory_profile_path": jax_profile_path,
         "jax_device_memory_profile_error": jax_profile_error,
@@ -875,6 +883,10 @@ def _run_align_profile(
         "gpu_memory_observed_gpu_count": max(
             [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
         ),
+        "gpu_memory_process_source": first.gpu_memory_process_source,
+        "gpu_memory_process_supported": bool(
+            first.gpu_memory_process_supported or any(w.gpu_memory_process_supported for w in warms)
+        ),
         "jax_device_memory_profile_path": jax_profile_path,
         "jax_device_memory_profile_error": jax_profile_error,
         "quality": {
@@ -943,6 +955,8 @@ def main() -> int:
         "peak_host_rss_mb": None,
         "gpu_memory_backend": None,
         "gpu_memory_scope": None,
+        "gpu_memory_process_source": None,
+        "gpu_memory_process_supported": None,
         "gpu_memory_sample_interval_seconds": None,
         "gpu_memory_sample_count": None,
         "gpu_memory_observed_gpu_count": None,

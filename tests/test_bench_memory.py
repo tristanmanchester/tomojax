@@ -88,6 +88,8 @@ def test_gpu_memory_monitor_prefers_process_scope_and_sums_child_processes() -> 
     assert snapshot.scope == "process"
     assert snapshot.process_peak_mb == 192.0
     assert snapshot.device_peak_mb == 512.0
+    assert snapshot.process_source == "nvml-process-query"
+    assert snapshot.process_supported is True
     assert snapshot.sample_count == 1
     assert snapshot.observed_gpu_count == 1
     assert snapshot.sampler_error is None
@@ -114,6 +116,8 @@ def test_gpu_memory_monitor_falls_back_to_device_scope() -> None:
     assert snapshot.scope == "device_fallback"
     assert snapshot.process_peak_mb is None
     assert snapshot.device_peak_mb == 768.0
+    assert snapshot.process_source is None
+    assert snapshot.process_supported is False
 
 
 class _UnavailableNVML:
@@ -137,6 +141,8 @@ def test_gpu_memory_monitor_reports_unavailable_nvml() -> None:
     assert snapshot.scope == "unavailable"
     assert snapshot.process_peak_mb is None
     assert snapshot.device_peak_mb is None
+    assert snapshot.process_source is None
+    assert snapshot.process_supported is False
     assert "NVML unavailable" in str(snapshot.sampler_error)
 
 
@@ -160,6 +166,8 @@ def test_timed_call_uses_process_peak_before_device_peak() -> None:
                 scope="process",
                 process_peak_mb=111.0,
                 device_peak_mb=222.0,
+                process_source="nvml-process-query",
+                process_supported=True,
                 sample_interval_seconds=0.01,
                 sample_count=7,
                 observed_gpu_count=1,
@@ -178,4 +186,6 @@ def test_timed_call_uses_process_peak_before_device_peak() -> None:
     assert result.peak_gpu_memory_device_mb == 222.0
     assert result.gpu_memory_backend == "nvml"
     assert result.gpu_memory_scope == "process"
+    assert result.gpu_memory_process_source == "nvml-process-query"
+    assert result.gpu_memory_process_supported is True
     assert result.gpu_memory_sample_count == 7

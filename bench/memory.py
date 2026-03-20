@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import os
+import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +24,8 @@ class GpuMemorySnapshot:
     scope: str
     process_peak_mb: float | None
     device_peak_mb: float | None
+    process_source: str | None
+    process_supported: bool
     sample_interval_seconds: float
     sample_count: int
     observed_gpu_count: int
@@ -50,6 +54,8 @@ class GpuMemoryMonitor:
         self._device_handles: list[Any] = []
         self._peak_process_mb: float | None = None
         self._peak_device_mb: float | None = None
+        self._process_source: str | None = None
+        self._process_supported = False
         self._sample_count = 0
         self._observed_gpu_count = 0
         self._sampler_error: str | None = None
@@ -127,6 +133,41 @@ class GpuMemoryMonitor:
             return None
         return used
 
+    def _sample_process_memory_via_nvidia_smi(self, target_pids: set[int]) -> int | None:
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-compute-apps=pid,used_memory",
+                    "--format=csv,noheader,nounits",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            return None
+
+        total_mb = 0
+        saw = False
+        for row in csv.reader(result.stdout.splitlines()):
+            if len(row) < 2:
+                continue
+            try:
+                pid = int(row[0].strip())
+                used_mb = float(row[1].strip())
+            except (TypeError, ValueError):
+                continue
+            if pid in target_pids:
+                total_mb += used_mb
+                saw = True
+        if not saw:
+            return None
+        self._process_supported = True
+        self._process_source = "nvidia-smi-compute-apps"
+        return int(total_mb * MB)
+
     def sample_once(self) -> None:
         if not self._ensure_nvml():
             return
@@ -154,8 +195,16 @@ class GpuMemoryMonitor:
                 used = self._extract_process_bytes(row)
                 if used is None:
                     continue
+                self._process_supported = True
+                self._process_source = "nvml-process-query"
                 saw_process_data = True
                 process_total_bytes += used
+
+        if not saw_process_data:
+            fallback_bytes = self._sample_process_memory_via_nvidia_smi(target_pids)
+            if fallback_bytes is not None:
+                saw_process_data = True
+                process_total_bytes = fallback_bytes
 
         if device_peaks:
             self._peak_device_mb = max(self._peak_device_mb or 0.0, max(device_peaks))
@@ -201,6 +250,8 @@ class GpuMemoryMonitor:
             scope=scope,
             process_peak_mb=self._peak_process_mb,
             device_peak_mb=self._peak_device_mb,
+            process_source=self._process_source,
+            process_supported=self._process_supported,
             sample_interval_seconds=self.interval_seconds,
             sample_count=self._sample_count,
             observed_gpu_count=self._observed_gpu_count,

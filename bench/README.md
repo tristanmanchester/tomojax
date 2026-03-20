@@ -23,6 +23,7 @@ This harness provides that contract.
 ### Smoke
 
 - `smoke`: tiny reconstruction sanity check. Use this only for remote-environment validation.
+- `smoke_align`: tiny alignment sanity check using the tracked `align_small_v1.npz` fixture.
 
 ### Screening suite
 
@@ -100,5 +101,6 @@ On Runpod, keep persistent data under `/workspace`, especially:
 - First-run and warm-run timings are separated.
 - GPU memory uses NVML sampling inside the benchmark process.
 - `peak_gpu_memory_mb` uses process-scoped GPU memory when NVML process queries are available, with device-level fallback recorded separately.
+- `gpu_memory_process_source` and `gpu_memory_process_supported` make it explicit whether process-scoped memory came from NVML, `nvidia-smi --query-compute-apps`, or had to fall back to device-level memory.
 - Set `measurement.save_jax_device_memory_profile: true` to write a JAX device-memory profile next to the metrics JSON for debugging.
 - Alignment benchmarks now support synthetic observation noise, so the accuracy screens are closer to real reconstruction/alignment use.
