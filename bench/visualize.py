@@ -66,6 +66,12 @@ def _text_lines(
         lines.append(f"stopped_on_threshold: {metrics.get('stopped_on_threshold')}")
         lines.append(f"stopped_on_plateau: {metrics.get('stopped_on_plateau')}")
         lines.append(f"stopped_on_budget: {metrics.get('stopped_on_budget')}")
+        lines.append(f"final_stop_reason: {metrics.get('final_stop_reason')}")
+        lines.append(f"final_stop_level: {metrics.get('final_stop_level_factor')}")
+        lines.append(
+            "first_threshold_level: "
+            f"{metrics.get('first_threshold_crossing_level_factor')}"
+        )
         lines.append(
             f"warm_s_to_threshold: {metrics.get('warm_seconds_to_quality_threshold')}"
         )
@@ -145,15 +151,57 @@ def save_alignment_summary(
     trace = list(convergence_trace or [])
     if trace and convergence_metric_name:
         filtered = [
-            (int(point.get("outer_idx", idx + 1)), float(point["quality_value"]))
+            (
+                int(point.get("outer_idx", idx + 1)),
+                float(point["quality_value"]),
+                point.get("level_factor"),
+            )
             for idx, point in enumerate(trace)
             if point.get("quality_value") is not None
         ]
-        xs = np.asarray([x for x, _ in filtered], dtype=np.int32)
-        ys = np.asarray([y for _, y in filtered], dtype=np.float32)
+        xs = np.asarray([x for x, _, _ in filtered], dtype=np.int32)
+        ys = np.asarray([y for _, y, _ in filtered], dtype=np.float32)
         if xs.size == ys.size and xs.size > 0:
             loss_ax.set_title(f"{convergence_metric_name} vs Outer Iteration")
-            loss_ax.plot(xs, ys, marker="o", linewidth=1.5, label=convergence_metric_name)
+            # Draw a faint full trace to show continuity across resolution changes.
+            loss_ax.plot(
+                xs,
+                ys,
+                color="0.75",
+                linewidth=1.0,
+                alpha=0.8,
+                zorder=1,
+            )
+            level_values: list[int | None] = []
+            for _, _, level_factor in filtered:
+                try:
+                    level_values.append(int(level_factor) if level_factor is not None else None)
+                except Exception:
+                    level_values.append(None)
+            unique_levels = []
+            for level in level_values:
+                if level not in unique_levels:
+                    unique_levels.append(level)
+            colors = plt.cm.tab10(np.linspace(0.0, 1.0, max(len(unique_levels), 1)))
+            for color, level in zip(colors, unique_levels):
+                level_x = [x for x, _, lf in filtered if lf == level]
+                level_y = [y for _, y, lf in filtered if lf == level]
+                if not level_x:
+                    continue
+                label = (
+                    f"{convergence_metric_name} (x{level})"
+                    if level is not None
+                    else convergence_metric_name
+                )
+                loss_ax.plot(
+                    np.asarray(level_x, dtype=np.int32),
+                    np.asarray(level_y, dtype=np.float32),
+                    marker="o",
+                    linewidth=2.0,
+                    color=color,
+                    label=label,
+                    zorder=2,
+                )
             if quality_threshold_value is not None:
                 loss_ax.axhline(
                     float(quality_threshold_value),

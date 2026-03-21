@@ -1,4 +1,4 @@
-name: screen_convergence_align_parallel_3d_96
+name: check_convergence_align_parallel_3d_64_high_budget
 task: align
 objective_name: warm_seconds_to_quality_threshold
 objective_direction: minimise
@@ -16,16 +16,16 @@ visualization:
 convergence:
   enabled: true
   metric: gt_mse
-  threshold: 1.0
+  threshold: 0.8
   stop_on_threshold: true
   min_finest_level_checks: 2
   plateau_patience: 2
-  rel_improvement_tol: 0.02
+  rel_improvement_tol: 0.05
   required_warm_successes: 1
 align:
-  levels: [4, 2, 1]
-  outer_iters: 4
-  recon_iters: 12
+  levels: [2, 1]
+  outer_iters: 6
+  recon_iters: 4
   lambda_tv: 0.003
   tv_prox_iters: 8
   recon_rel_tol: null
@@ -42,25 +42,25 @@ align:
   loss_kind: l2_otsu
   k_step: 1
 data:
-  nx: 96
-  ny: 96
-  nz: 96
-  nu: 96
-  nv: 96
-  n_views: 144
+  nx: 64
+  ny: 64
+  nz: 64
+  nu: 64
+  nv: 64
+  n_views: 96
   geometry: parallel
   phantom: random_shapes
-  n_cubes: 18
-  n_spheres: 18
+  n_cubes: 12
+  n_spheres: 12
   min_size: 4
-  max_size: 18
+  max_size: 14
   min_value: 0.05
   max_value: 1.0
   noise: poisson
   noise_level: 5000
-  seed: 31
+  seed: 101
   misalignment:
     rot_deg: 1.0
     trans_px: 6.0
     include_phi: true
-    seed: 32
+    seed: 102

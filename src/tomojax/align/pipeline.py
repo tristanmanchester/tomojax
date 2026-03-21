@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import Any, Callable, Dict, Tuple, Iterable, List, Optional
+from typing import Any, Callable, Dict, Tuple, Iterable, List, Optional, Literal
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +16,21 @@ from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
 from .losses import build_loss, loss_is_within_relative_tolerance
 from ..utils.fov import cylindrical_mask_xy
+
+
+ObserverAction = Literal["continue", "advance_level", "stop_run"]
+
+
+def _normalize_observer_action(action: Any) -> ObserverAction:
+    if action is False or action is None:
+        return "continue"
+    if action is True:
+        return "stop_run"
+    if isinstance(action, str):
+        lowered = action.strip().lower()
+        if lowered in {"continue", "advance_level", "stop_run"}:
+            return lowered  # type: ignore[return-value]
+    raise ValueError(f"Unsupported observer action: {action!r}")
 
 
 def _should_prefer_gn_candidate(
@@ -89,7 +104,7 @@ def align(
     cfg: AlignConfig | None = None,
     init_x: jnp.ndarray | None = None,
     init_params5: jnp.ndarray | None = None,
-    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], bool] | None = None,
+    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], ObserverAction | bool] | None = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
     """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
 
@@ -112,6 +127,7 @@ def align(
 
     loss_hist = []
     stopped_by_observer = False
+    observer_action: ObserverAction = "continue"
 
     # Precompute nominal poses once
     n_views = int(projections.shape[0])
@@ -695,10 +711,11 @@ def align(
             _log_outer_summary(stat)
 
         if observer is not None:
-            stop_requested = bool(observer(x, params5, dict(stat)))
-            stat["observer_stop"] = stop_requested
-            if stop_requested:
-                stopped_by_observer = True
+            observer_action = _normalize_observer_action(observer(x, params5, dict(stat)))
+            stat["observer_action"] = observer_action
+            stat["observer_stop"] = observer_action != "continue"
+            if observer_action != "continue":
+                stopped_by_observer = observer_action == "stop_run"
                 break
 
         # Early stopping based on alignment improvement during GN/GD step
@@ -762,6 +779,7 @@ def align(
         "L": (float(L_prev) if L_prev is not None else None),
         "outer_stats": outer_stats,
         "stopped_by_observer": stopped_by_observer,
+        "observer_action": observer_action,
         "wall_time_total": float(wall_total),
     }
     return x, params5, info
@@ -775,7 +793,7 @@ def align_multires(
     *,
     factors: Iterable[int] = (2, 1),
     cfg: AlignConfig | None = None,
-    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], bool] | None = None,
+    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], ObserverAction | bool] | None = None,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
     """Coarse-to-fine alignment using simple binning for speed and robustness.
 
@@ -802,6 +820,7 @@ def align_multires(
     prev_factor: int | None = None
     loss_hist: List[float] = []
     stopped_by_observer = False
+    final_observer_action: ObserverAction = "continue"
     global_outer_idx = 0
     global_elapsed_offset = 0.0
 
@@ -882,11 +901,8 @@ def align_multires(
                 else None
             )
             if observer is None:
-                return False
-            stop = bool(observer(x_obs, params_obs, enriched))
-            if stop:
-                stopped_by_observer = True
-            return stop
+                return "continue"
+            return _normalize_observer_action(observer(x_obs, params_obs, enriched))
 
         x_lvl, params5, info = align(
             geometry,
@@ -905,13 +921,19 @@ def align_multires(
             global_elapsed_offset += float(info.get("wall_time_total") or 0.0)
         except Exception:
             pass
-        if info.get("stopped_by_observer"):
+        level_action = _normalize_observer_action(info.get("observer_action"))
+        final_observer_action = level_action
+        if level_action == "stop_run":
             stopped_by_observer = True
             break
+        if level_action == "advance_level":
+            continue
 
-    # Upsample to finest grid if last level not 1
-    if levels and levels[-1]["factor"] != 1:
-        x_final = upsample_volume(x_init, levels[-1]["factor"], (grid.nx, grid.ny, grid.nz))
+    # Always return a full-resolution-compatible final volume.
+    if x_init is None:
+        x_final = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    elif prev_factor is not None and prev_factor != 1:
+        x_final = upsample_volume(x_init, prev_factor, (grid.nx, grid.ny, grid.nz))
     else:
         x_final = x_init
 
@@ -919,6 +941,7 @@ def align_multires(
         "loss": loss_hist,
         "factors": list(factors),
         "stopped_by_observer": stopped_by_observer,
+        "observer_action": final_observer_action,
         "total_outer_iters": int(global_outer_idx),
         "wall_time_total": float(global_elapsed_offset),
     }

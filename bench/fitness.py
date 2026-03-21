@@ -123,6 +123,9 @@ class ConvergenceRunSummary:
     best_quality_value: float | None
     best_quality_elapsed_seconds: float | None
     total_outer_iters_executed: int
+    final_stop_reason: str | None
+    final_stop_level_factor: int | None
+    first_threshold_crossing_level_factor: int | None
     trace: list[dict[str, Any]]
 
 
@@ -181,6 +184,9 @@ def _aggregate_warm_convergence_runs(
             "stopped_on_budget": False,
             "warm_convergence_trace": [],
             "warm_convergence_traces": [],
+            "final_stop_reason": None,
+            "final_stop_level_factor": None,
+            "first_threshold_crossing_level_factor": None,
         }
 
     hit_count = sum(1 for run in runs if run.threshold_met)
@@ -214,6 +220,9 @@ def _aggregate_warm_convergence_runs(
         "stopped_on_threshold": representative.stopped_on_threshold,
         "stopped_on_plateau": representative.stopped_on_plateau,
         "stopped_on_budget": representative.stopped_on_budget,
+        "final_stop_reason": representative.final_stop_reason,
+        "final_stop_level_factor": representative.final_stop_level_factor,
+        "first_threshold_crossing_level_factor": representative.first_threshold_crossing_level_factor,
         "warm_convergence_trace": representative.trace,
         "warm_convergence_traces": [run.trace for run in runs],
     }
@@ -565,6 +574,20 @@ def _quality_threshold_met(metric: str, threshold: float | None, value: float | 
         return value <= threshold
     raise ValueError(f"Unsupported convergence metric: {metric}")
 
+
+def _convergence_action_for_level(
+    *,
+    level_factor: int,
+    finest_factor: int,
+    threshold_hit: bool,
+    plateau_hit: bool,
+) -> str:
+    if threshold_hit:
+        return "stop_run" if level_factor == finest_factor else "advance_level"
+    if plateau_hit:
+        return "stop_run" if level_factor == finest_factor else "advance_level"
+    return "continue"
+
 def _convergence_summary_from_trace(
     *,
     metric: str,
@@ -577,6 +600,7 @@ def _convergence_summary_from_trace(
     best_quality_elapsed_seconds: float | None = None
     seconds_to_threshold: float | None = None
     outer_iters_to_threshold: int | None = None
+    first_threshold_crossing_level_factor: int | None = None
 
     for point in trace:
         quality_value = _float_or_none(point.get("quality_value"))
@@ -595,9 +619,29 @@ def _convergence_summary_from_trace(
         ):
             seconds_to_threshold = elapsed_seconds
             try:
+                level_factor = point.get("level_factor")
+                first_threshold_crossing_level_factor = (
+                    int(level_factor) if level_factor is not None else None
+                )
+            except Exception:
+                first_threshold_crossing_level_factor = None
+            try:
                 outer_iters_to_threshold = int(outer_idx) if outer_idx is not None else None
             except Exception:
                 outer_iters_to_threshold = None
+
+    final_stop_level_factor: int | None = None
+    if trace:
+        try:
+            last_level_factor = trace[-1].get("level_factor")
+            final_stop_level_factor = int(last_level_factor) if last_level_factor is not None else None
+        except Exception:
+            final_stop_level_factor = None
+    final_stop_reason = (
+        "threshold"
+        if stopped_on_threshold
+        else ("plateau" if stopped_on_plateau else ("budget" if trace else None))
+    )
 
     return ConvergenceRunSummary(
         metric=metric,
@@ -611,6 +655,9 @@ def _convergence_summary_from_trace(
         best_quality_value=best_quality_value,
         best_quality_elapsed_seconds=best_quality_elapsed_seconds,
         total_outer_iters_executed=len(trace),
+        final_stop_reason=final_stop_reason,
+        final_stop_level_factor=final_stop_level_factor,
+        first_threshold_crossing_level_factor=first_threshold_crossing_level_factor,
         trace=trace,
     )
 
@@ -827,10 +874,11 @@ def _make_align_task(
     gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
     trace: list[dict[str, Any]] = []
     finest_factor = min(levels) if levels else 1
-    finest_checks = 0
+    level_checks = 0
     plateau_streak = 0
-    best_finest_quality: float | None = None
+    best_level_quality: float | None = None
     stop_reason: str | None = None
+    current_level_factor: int | None = None
 
     def _quality_value_for_params(params: Any) -> float:
         if convergence.metric != "gt_mse":
@@ -838,12 +886,17 @@ def _make_align_task(
         y_hat = mods.gt_projection_helper(gt_volume, grid, detector, geometry, params)
         return float(mods.jnp.mean((y_hat - projections) ** 2).item())
 
-    def _observer(_: Any, params: Any, stat: dict[str, Any]) -> bool:
-        nonlocal finest_checks, plateau_streak, best_finest_quality, stop_reason
+    def _observer(_: Any, params: Any, stat: dict[str, Any]) -> str:
+        nonlocal level_checks, plateau_streak, best_level_quality, stop_reason, current_level_factor
         quality_value = _quality_value_for_params(params)
         level_factor = (
             int(stat["level_factor"]) if stat.get("level_factor") is not None else finest_factor
         )
+        if current_level_factor != level_factor:
+            current_level_factor = level_factor
+            level_checks = 0
+            plateau_streak = 0
+            best_level_quality = None
         global_elapsed = _float_or_none(
             stat.get("global_elapsed_seconds", stat.get("cumulative_time"))
         )
@@ -851,28 +904,28 @@ def _make_align_task(
         threshold_hit = _quality_threshold_met(
             convergence.metric, convergence.threshold, quality_value
         )
-        stop_on_plateau = False
         is_finest_level = level_factor == finest_factor
-        if is_finest_level:
-            finest_checks += 1
-            if _is_meaningful_relative_improvement(
-                best_finest_quality, quality_value, convergence.rel_improvement_tol
-            ):
-                best_finest_quality = quality_value
-                plateau_streak = 0
-            elif finest_checks >= convergence.min_finest_level_checks:
-                plateau_streak += 1
-            if (
-                finest_checks >= convergence.min_finest_level_checks
-                and plateau_streak >= convergence.plateau_patience
-            ):
-                stop_on_plateau = True
-
-        stop_on_threshold = convergence.stop_on_threshold and threshold_hit
-        if stop_on_threshold:
-            stop_reason = "threshold"
-        elif stop_on_plateau:
-            stop_reason = "plateau"
+        level_checks += 1
+        if _is_meaningful_relative_improvement(
+            best_level_quality, quality_value, convergence.rel_improvement_tol
+        ):
+            best_level_quality = quality_value
+            plateau_streak = 0
+        elif level_checks >= convergence.min_finest_level_checks:
+            plateau_streak += 1
+        plateau_hit = (
+            level_checks >= convergence.min_finest_level_checks
+            and plateau_streak >= convergence.plateau_patience
+        )
+        action = _convergence_action_for_level(
+            level_factor=level_factor,
+            finest_factor=finest_factor,
+            threshold_hit=(convergence.stop_on_threshold and threshold_hit),
+            plateau_hit=plateau_hit,
+        )
+        stop_reason = None
+        if action == "stop_run":
+            stop_reason = "threshold" if threshold_hit else "plateau"
         trace.append(
             {
                 "outer_idx": int(
@@ -890,11 +943,12 @@ def _make_align_task(
                 "loss_after": _float_or_none(stat.get("loss_after")),
                 "threshold_met": threshold_hit,
                 "is_finest_level": is_finest_level,
-                "plateau_streak": plateau_streak if is_finest_level else None,
-                "stop_reason": stop_reason if (stop_on_threshold or stop_on_plateau) else None,
+                "plateau_streak": plateau_streak,
+                "action": action,
+                "stop_reason": stop_reason,
             }
         )
-        return stop_on_threshold or stop_on_plateau
+        return action
 
     def task() -> dict[str, Any]:
         if levels:
@@ -1285,6 +1339,9 @@ def _run_align_profile(
                 "warm_stopped_on_threshold_count": warm_aggregate["warm_stopped_on_threshold_count"],
                 "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
                 "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
+                "final_stop_reason": warm_aggregate["final_stop_reason"],
+                "final_stop_level_factor": warm_aggregate["final_stop_level_factor"],
+                "first_threshold_crossing_level_factor": warm_aggregate["first_threshold_crossing_level_factor"],
                 "cold_seconds_to_quality_threshold": (
                     first_convergence.seconds_to_threshold if first_convergence is not None else None
                 ),
@@ -1429,6 +1486,9 @@ def main() -> int:
         "warm_stopped_on_threshold_count": None,
         "warm_stopped_on_plateau_count": None,
         "warm_stopped_on_budget_count": None,
+        "final_stop_reason": None,
+        "final_stop_level_factor": None,
+        "first_threshold_crossing_level_factor": None,
         "cold_seconds_to_quality_threshold": None,
         "warm_seconds_to_quality_threshold": None,
         "cold_outer_iters_to_quality_threshold": None,
