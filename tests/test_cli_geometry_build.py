@@ -50,6 +50,15 @@ def test_align_build_geometry_uses_grid_override_when_grid_metadata_missing():
     )
 
 
+def test_align_build_geometry_accepts_positional_grid_override_for_compatibility():
+    meta = _parallel_meta()
+    meta.pop("grid")
+
+    grid, _, _ = build_align_geometry(meta, (11, 13, 15))
+
+    assert (grid.nx, grid.ny, grid.nz) == (11, 13, 15)
+
+
 def test_recon_build_geometry_infers_grid_from_detector_when_grid_metadata_missing():
     meta = _parallel_meta()
     meta.pop("grid")
@@ -58,6 +67,15 @@ def test_recon_build_geometry_infers_grid_from_detector_when_grid_metadata_missi
 
     assert (grid.nx, grid.ny, grid.nz) == (detector.nu, detector.nu, detector.nv)
     assert (grid.vx, grid.vy, grid.vz) == (detector.du, detector.du, detector.dv)
+
+
+def test_recon_build_geometry_accepts_positional_grid_override_for_compatibility():
+    meta = _parallel_meta()
+    meta.pop("grid")
+
+    grid, _, _ = build_recon_geometry(meta, (11, 13, 15))
+
+    assert (grid.nx, grid.ny, grid.nz) == (11, 13, 15)
 
 
 

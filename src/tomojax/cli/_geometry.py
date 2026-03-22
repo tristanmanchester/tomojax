@@ -197,7 +197,6 @@ def build_geometry_from_meta(
 
 def build_nominal_geometry_from_meta(
     meta: dict,
-    *,
     grid_override: GridOverride = None,
 ) -> tuple[Grid, Detector, Any]:
     """Build geometry without composing any saved alignment metadata."""
