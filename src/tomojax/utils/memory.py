@@ -127,8 +127,10 @@ def estimate_views_per_batch(
 def default_gather_dtype() -> str:
     """Choose a default gather dtype based on the active JAX backend.
 
-    Returns "bf16" on GPU/TPU (mixed-precision gather with fp32 accumulation)
-    and "fp32" on CPU or if backend detection fails.
+    Returns "bf16" when the active accelerator supports bfloat16 gathers,
+    falls back to "fp16" on older GPUs that support float16 but not efficient
+    bfloat16, and otherwise returns "fp32". CPU or backend-detection failures
+    also fall back to "fp32".
     """
     backend = _current_backend()
     if isinstance(backend, str) and backend.lower() in ("gpu", "tpu"):

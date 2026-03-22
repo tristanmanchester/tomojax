@@ -5,14 +5,14 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
-from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector
 from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
-from ._geometry import build_geometry_from_meta as _build_geometry_from_meta
+from ._geometry import build_geometry_from_meta, build_nominal_geometry_from_meta as build_geometry
+from ._runtime import transfer_guard_context
 
 from ..utils.fov import (
     compute_roi,
@@ -47,39 +47,6 @@ def _init_jax_compilation_cache() -> None:
     except Exception:
         # Best-effort; skip on any failure silently
         pass
-
-
-def build_geometry(
-    meta: dict,
-    grid_override: tuple[int, int, int] | list[int] | None = None,
-):
-    return _build_geometry_from_meta(
-        meta,
-        grid_override=grid_override,
-        apply_saved_alignment=False,
-    )
-
-
-def _transfer_guard_ctx(mode: str | None = None):
-    # Allow overriding via env var to control verbosity: off|log|disallow
-    if mode is None:
-        mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
-    if mode in ("off", "none", "disable", "disabled"):
-        return _nullcontext()
-    try:
-        import jax as _jax  # local import to avoid hard dep at import time
-
-        tg = getattr(_jax, "transfer_guard", None)
-        if tg is not None:
-            return tg(mode)
-        try:
-            from jax.experimental import transfer_guard as _tg  # type: ignore
-
-            return _tg(mode)
-        except Exception:
-            return _nullcontext()
-    except Exception:
-        return _nullcontext()
 
 
 def _resolve_recon_grid_and_mask(
@@ -353,7 +320,11 @@ def main() -> None:
     initial_grid_override = (
         args.grid if ("grid" not in meta and args.grid is not None) else None
     )
-    grid, detector, geom = build_geometry(meta, grid_override=initial_grid_override)
+    grid, detector, geom = build_geometry_from_meta(
+        meta,
+        grid_override=initial_grid_override,
+        apply_saved_alignment=False,
+    )
     proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
 
     # Hidden defaults: stream one view at a time; unroll=1
@@ -407,20 +378,21 @@ def main() -> None:
 
     # Rebuild geometry if grid changed
     if recon_grid is not grid:
-        _, _, geom = build_geometry(
+        _, _, geom = build_geometry_from_meta(
             meta,
             grid_override=(recon_grid.nx, recon_grid.ny, recon_grid.nz),
+            apply_saved_alignment=False,
         )
 
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
 
-        with _transfer_guard_ctx(args.transfer_guard):
+        with transfer_guard_context(args.transfer_guard):
             x, params5, info = align_multires(
                 geom, recon_grid, detector, proj, factors=args.levels, cfg=cfg
             )
     else:
-        with _transfer_guard_ctx(args.transfer_guard):
+        with transfer_guard_context(args.transfer_guard):
             x, params5, info = align(geom, recon_grid, detector, proj, cfg=cfg)
 
     # Optional cylindrical mask in x–y

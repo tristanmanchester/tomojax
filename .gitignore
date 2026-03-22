@@ -40,6 +40,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.jython_cache/
 build/
 develop-eggs/
 dist/

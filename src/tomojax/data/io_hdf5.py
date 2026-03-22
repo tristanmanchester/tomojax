@@ -102,13 +102,15 @@ def save_nxtomo(
 ) -> None:
     """Write a dataset to an HDF5 file using NXtomo + TomoJAX extras.
 
-    Volume inputs are expected in internal `xyz` order. Set `volume_axes_order="xyz"`
-    to bypass the transpose when interoperating with legacy datasets.
+    Volume inputs are always expected in TomoJAX's internal `xyz` order.
+    `volume_axes_order` controls how that internal volume is serialized on disk:
+    keep the default `zyx` for viewer-friendly output or set `"xyz"` to preserve
+    the in-memory layout without transposition.
 
     - projections: (n_views, nv, nu) float32
     - thetas_deg: (n_views,) rotation angles in degrees (around +z by default)
     - grid/detector: voxel and detector definitions
-    - volume: optional ground-truth volume (nx, ny, nz) in the declared frame
+    - volume: optional ground-truth volume (nx, ny, nz) in internal `xyz` order
     - align_params: optional (n_views, 5) [alpha,beta,phi,dx,dz] in radians/world units
     - geometry_type: "parallel" | "lamino" | "custom"
     - geometry_meta: Optional dict with extra geometry metadata (e.g., lamino tilt)

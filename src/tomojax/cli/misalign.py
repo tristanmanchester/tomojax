@@ -6,33 +6,13 @@ import os
 import numpy as np
 import jax
 import jax.numpy as jnp
-from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from ..align.parametrizations import se3_from_5d
 from ..core.projector import forward_project_view_T
 from ..utils.logging import setup_logging, log_jax_env
-
-
-def _transfer_guard_ctx(mode: str | None = None):
-    # Allow overriding via env var: off|log|disallow
-    if mode is None:
-        mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
-    if mode in ("off", "none", "disable", "disabled"):
-        return _nullcontext()
-    try:
-        tg = getattr(jax, "transfer_guard", None)
-        if tg is not None:
-            return tg(mode)
-        try:
-            from jax.experimental import transfer_guard as _tg  # type: ignore
-
-            return _tg(mode)
-        except Exception:
-            return _nullcontext()
-    except Exception:
-        return _nullcontext()
+from ._runtime import transfer_guard_context
 
 
 def _parse_bool(s: str) -> bool:
@@ -525,7 +505,7 @@ def main() -> None:
     )
     params5 = jnp.asarray(params5_np, jnp.float32)
 
-    with _transfer_guard_ctx(args.transfer_guard):
+    with transfer_guard_context(args.transfer_guard):
         T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
         from ..core.projector import get_detector_grid_device
 

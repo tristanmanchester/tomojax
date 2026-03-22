@@ -164,8 +164,10 @@ def build_geometry_from_meta(
     When `grid` metadata is missing, the grid is inferred from detector dimensions
     (or from `grid_override` if supplied) using detector pixel spacings as voxel
     spacings. When `apply_saved_alignment` is True, any saved `align_params` are
-    composed onto the nominal poses, and `angle_offset_deg` is applied unless it
-    is known to have already been baked into `thetas_deg`.
+    composed onto the nominal poses. Saved alignments must provide one row per
+    view and at least five columns ordered as `[alpha, beta, phi, dx, dz]`;
+    extra columns are ignored. Saved `angle_offset_deg` is applied unless it is
+    known to have already been baked into `thetas_deg`.
     """
 
     detector = _detector_from_meta(meta)
@@ -178,7 +180,28 @@ def build_geometry_from_meta(
 
     if apply_saved_alignment and meta.get("align_params") is not None:
         align_params = np.asarray(meta["align_params"], dtype=np.float32)
-        if align_params.ndim == 2 and align_params.shape[0] == len(thetas_deg):
-            geom = AugmentedGeometry(base=geom, align_params=align_params[:, :5])
+        if align_params.ndim != 2:
+            raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")
+        if align_params.shape[0] != len(thetas_deg):
+            raise ValueError(
+                f"align_params row count ({align_params.shape[0]}) must match number of views ({len(thetas_deg)})"
+            )
+        if align_params.shape[1] < 5:
+            raise ValueError(
+                f"align_params must provide at least 5 columns [alpha, beta, phi, dx, dz], got {align_params.shape[1]}"
+            )
+        geom = AugmentedGeometry(base=geom, align_params=align_params[:, :5])
 
     return grid, detector, geom
+
+
+def build_nominal_geometry_from_meta(
+    meta: dict,
+    grid_override: GridOverride = None,
+) -> tuple[Grid, Detector, Any]:
+    """Build geometry without composing any saved alignment metadata."""
+    return build_geometry_from_meta(
+        meta,
+        grid_override=grid_override,
+        apply_saved_alignment=False,
+    )
