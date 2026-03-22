@@ -5,7 +5,6 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
-from contextlib import nullcontext as _nullcontext
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid
@@ -14,7 +13,8 @@ from ..recon.fista_tv import fista_tv
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
-from ._geometry import build_geometry_from_meta as _build_geometry_from_meta
+from ._geometry import build_geometry_from_meta, build_nominal_geometry_from_meta as build_geometry
+from ._runtime import transfer_guard_context
 
 from ..utils.fov import (
     compute_roi,
@@ -22,39 +22,6 @@ from ..utils.fov import (
     grid_from_detector_fov,
 )
 from ..utils.fov import cylindrical_mask_xy
-
-
-def build_geometry(
-    meta: dict,
-    grid_override: tuple[int, int, int] | list[int] | None = None,
-):
-    return _build_geometry_from_meta(
-        meta,
-        grid_override=grid_override,
-        apply_saved_alignment=False,
-    )
-
-
-def _transfer_guard_ctx(mode: str | None = None):
-    # Allow overriding via env var: off|log|disallow
-    if mode is None:
-        mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log").lower()
-    if mode in ("off", "none", "disable", "disabled"):
-        return _nullcontext()
-    try:
-        import jax as _jax  # local import for flexibility
-
-        tg = getattr(_jax, "transfer_guard", None)
-        if tg is not None:
-            return tg(mode)
-        try:
-            from jax.experimental import transfer_guard as _tg  # type: ignore
-
-            return _tg(mode)
-        except Exception:
-            return _nullcontext()
-    except Exception:
-        return _nullcontext()
 
 
 def main() -> None:
@@ -210,7 +177,11 @@ def main() -> None:
     initial_grid_override = (
         args.grid if ("grid" not in meta and args.grid is not None) else None
     )
-    grid, detector, geom = build_geometry(meta, grid_override=initial_grid_override)
+    grid, detector, geom = build_geometry_from_meta(
+        meta,
+        grid_override=initial_grid_override,
+        apply_saved_alignment=False,
+    )
     proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
 
     # Keep FBP/FISTA on their streamed defaults; this flag is SPDHG-specific.
@@ -266,9 +237,10 @@ def main() -> None:
         recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
 
     if recon_grid is not grid:
-        _, _, geom = build_geometry(
+        _, _, geom = build_geometry_from_meta(
             meta,
             grid_override=(recon_grid.nx, recon_grid.ny, recon_grid.nz),
+            apply_saved_alignment=False,
         )
 
     # Prepare optional volume mask
@@ -281,7 +253,7 @@ def main() -> None:
         vol_mask = None
 
     if args.algo == "fbp":
-        with _transfer_guard_ctx(args.transfer_guard):
+        with transfer_guard_context(args.transfer_guard):
             vol = fbp(
                 geom,
                 recon_grid,
@@ -297,7 +269,7 @@ def main() -> None:
         if vol_mask is not None:
             vol = vol * vol_mask
     elif args.algo == "fista":
-        with _transfer_guard_ctx(args.transfer_guard):
+        with transfer_guard_context(args.transfer_guard):
             vol, info = fista_tv(
                 geom,
                 recon_grid,
@@ -356,7 +328,7 @@ def main() -> None:
                 init_x = init_x * vol_mask
             # Enforce positivity for a clean start (harmless if TV/signal expects nonnegative)
             init_x = jnp.maximum(init_x, 0.0)
-        with _transfer_guard_ctx(args.transfer_guard):
+        with transfer_guard_context(args.transfer_guard):
             vol, info = spdhg_tv(
                 geom,
                 recon_grid,

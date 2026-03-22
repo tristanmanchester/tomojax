@@ -617,6 +617,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "h5py" },
+    { name = "jax" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
@@ -624,7 +625,6 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scikit-image" },
     { name = "scipy" },
-    { name = "tifffile" },
     { name = "tqdm" },
 ]
 
@@ -645,6 +645,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "h5py", specifier = ">=3.14.0,<4" },
+    { name = "jax", specifier = ">=0.5.3,<0.6" },
     { name = "jax", marker = "extra == 'cpu'", specifier = ">=0.5.3,<0.6" },
     { name = "jax", extras = ["cuda12"], marker = "sys_platform == 'linux' and extra == 'cuda12'", specifier = ">=0.5.3,<0.6" },
     { name = "matplotlib", specifier = ">=3.10.5,<4" },
@@ -654,7 +655,6 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2,<7" },
     { name = "scikit-image", specifier = ">=0.25.2,<0.26" },
     { name = "scipy", specifier = ">=1.16.1,<2" },
-    { name = "tifffile", specifier = ">=2025.8.28,<2026" },
     { name = "tqdm", specifier = ">=4.67.1,<5" },
 ]
 provides-extras = ["cpu", "cuda12"]
