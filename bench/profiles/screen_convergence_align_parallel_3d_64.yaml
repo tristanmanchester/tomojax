@@ -12,7 +12,7 @@ measurement:
   gpu_poll_interval_seconds: 0.05
   host_poll_interval_seconds: 0.05
 visualization:
-  enabled: false
+  enabled: true
 convergence:
   enabled: true
   metric: gt_mse
