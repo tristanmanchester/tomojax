@@ -16,7 +16,7 @@ visualization:
 convergence:
   enabled: true
   metric: gt_mse
-  threshold: 0.8
+  threshold: 0.4
   stop_on_threshold: true
   min_finest_level_checks: 2
   plateau_patience: 2
@@ -58,9 +58,9 @@ data:
   max_value: 1.0
   noise: poisson
   noise_level: 4000
-  seed: 61
+  seed: 69
   misalignment:
     rot_deg: 1.25
     trans_px: 8.0
     include_phi: true
-    seed: 62
+    seed: 69
