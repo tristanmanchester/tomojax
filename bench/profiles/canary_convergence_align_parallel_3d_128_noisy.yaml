@@ -50,8 +50,8 @@ data:
   n_views: 180
   geometry: parallel
   phantom: random_shapes
-  n_cubes: 24
-  n_spheres: 24
+  n_cubes: 36
+  n_spheres: 36
   min_size: 4
   max_size: 20
   min_value: 0.05

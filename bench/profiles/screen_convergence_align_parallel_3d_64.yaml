@@ -60,7 +60,7 @@ data:
   noise_level: 5000
   seed: 69
   misalignment:
-    rot_deg: 1.0
-    trans_px: 6.0
+    rot_deg: 0.75
+    trans_px: 4.0
     include_phi: true
     seed: 69
