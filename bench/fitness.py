@@ -134,6 +134,10 @@ class ConvergenceRunSummary:
     final_stop_reason: str | None
     final_stop_level_factor: int | None
     first_threshold_crossing_level_factor: int | None
+    reached_finest_level: bool
+    finest_level_first_elapsed_seconds: float | None
+    finest_level_first_outer_idx: int | None
+    level_summaries: list[dict[str, Any]]
     trace: list[dict[str, Any]]
 
 
@@ -197,6 +201,13 @@ def _aggregate_warm_convergence_runs(
             "stopped_on_threshold": False,
             "stopped_on_plateau": False,
             "stopped_on_budget": False,
+            "reached_finest_level": False,
+            "finest_level_first_elapsed_seconds": None,
+            "finest_level_first_outer_idx": None,
+            "warm_reached_finest_level_count": 0,
+            "benchmark_valid": False,
+            "invalid_reason": "no_warm_runs",
+            "warm_level_summaries": [],
             "warm_convergence_trace": [],
             "warm_convergence_traces": [],
             "final_stop_reason": None,
@@ -212,6 +223,9 @@ def _aggregate_warm_convergence_runs(
     best_quality_values = [run.best_quality_value for run in runs]
     best_quality_times = [run.best_quality_elapsed_seconds for run in runs]
     total_outers = [run.total_outer_iters_executed for run in runs]
+    finest_hits = sum(1 for run in runs if run.reached_finest_level)
+    benchmark_valid = finest_hits == total_runs
+    invalid_reason = None if benchmark_valid else "did_not_reach_finest_level"
 
     return {
         "quality_threshold_met": hit_count >= required,
@@ -235,6 +249,13 @@ def _aggregate_warm_convergence_runs(
         "stopped_on_threshold": representative.stopped_on_threshold,
         "stopped_on_plateau": representative.stopped_on_plateau,
         "stopped_on_budget": representative.stopped_on_budget,
+        "reached_finest_level": representative.reached_finest_level,
+        "finest_level_first_elapsed_seconds": representative.finest_level_first_elapsed_seconds,
+        "finest_level_first_outer_idx": representative.finest_level_first_outer_idx,
+        "warm_reached_finest_level_count": finest_hits,
+        "benchmark_valid": benchmark_valid,
+        "invalid_reason": invalid_reason,
+        "warm_level_summaries": representative.level_summaries,
         "final_stop_reason": representative.final_stop_reason,
         "final_stop_level_factor": representative.final_stop_level_factor,
         "first_threshold_crossing_level_factor": representative.first_threshold_crossing_level_factor,
@@ -620,7 +641,10 @@ def _convergence_action_for_level(
     budget_hit: bool,
     threshold_hit: bool,
     plateau_hit: bool,
+    warmup_target_hit: bool = False,
 ) -> str:
+    if warmup_target_hit:
+        return "stop_run"
     if budget_hit:
         return "stop_run"
     if threshold_hit:
@@ -628,6 +652,54 @@ def _convergence_action_for_level(
     if plateau_hit:
         return "stop_run" if level_factor == finest_factor else "advance_level"
     return "continue"
+
+
+def _trace_level_summaries(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_level: dict[int, dict[str, Any]] = {}
+    for point in trace:
+        level_factor = point.get("level_factor")
+        if level_factor is None:
+            continue
+        try:
+            level = int(level_factor)
+        except Exception:
+            continue
+        summary = by_level.setdefault(
+            level,
+            {
+                "level_factor": level,
+                "elapsed_seconds_total": 0.0,
+                "outer_iters_executed": 0,
+                "best_gt_mse": None,
+                "final_gt_mse": None,
+                "best_trans_rmse_px": None,
+                "_last_level_elapsed_seconds": None,
+            },
+        )
+        level_elapsed = _float_or_none(point.get("level_elapsed_seconds"))
+        previous_elapsed = _float_or_none(summary.get("_last_level_elapsed_seconds"))
+        if level_elapsed is not None:
+            delta = level_elapsed if previous_elapsed is None else max(level_elapsed - previous_elapsed, 0.0)
+            summary["elapsed_seconds_total"] = float(summary["elapsed_seconds_total"]) + float(delta)
+            summary["_last_level_elapsed_seconds"] = level_elapsed
+        summary["outer_iters_executed"] = int(summary["outer_iters_executed"]) + 1
+        quality_value = _float_or_none(point.get("quality_value"))
+        if quality_value is not None:
+            best_quality = _float_or_none(summary.get("best_gt_mse"))
+            if best_quality is None or quality_value < best_quality:
+                summary["best_gt_mse"] = quality_value
+            summary["final_gt_mse"] = quality_value
+        trans_rmse_px = _float_or_none(point.get("trans_rmse_px"))
+        if trans_rmse_px is not None:
+            best_trans_rmse = _float_or_none(summary.get("best_trans_rmse_px"))
+            if best_trans_rmse is None or trans_rmse_px < best_trans_rmse:
+                summary["best_trans_rmse_px"] = trans_rmse_px
+    summaries: list[dict[str, Any]] = []
+    for level in sorted(by_level, reverse=True):
+        summary = dict(by_level[level])
+        summary.pop("_last_level_elapsed_seconds", None)
+        summaries.append(summary)
+    return summaries
 
 def _convergence_summary_from_trace(
     *,
@@ -637,12 +709,16 @@ def _convergence_summary_from_trace(
     stopped_on_threshold: bool = False,
     stopped_on_plateau: bool = False,
     stopped_on_budget: bool = False,
+    final_stop_reason_override: str | None = None,
 ) -> ConvergenceRunSummary:
     best_quality_value: float | None = None
     best_quality_elapsed_seconds: float | None = None
     seconds_to_threshold: float | None = None
     outer_iters_to_threshold: int | None = None
     first_threshold_crossing_level_factor: int | None = None
+    reached_finest_level = False
+    finest_level_first_elapsed_seconds: float | None = None
+    finest_level_first_outer_idx: int | None = None
 
     for point in trace:
         quality_value = _float_or_none(point.get("quality_value"))
@@ -671,6 +747,13 @@ def _convergence_summary_from_trace(
                 outer_iters_to_threshold = int(outer_idx) if outer_idx is not None else None
             except Exception:
                 outer_iters_to_threshold = None
+        if not reached_finest_level and bool(point.get("is_finest_level")):
+            reached_finest_level = True
+            finest_level_first_elapsed_seconds = elapsed_seconds
+            try:
+                finest_level_first_outer_idx = int(outer_idx) if outer_idx is not None else None
+            except Exception:
+                finest_level_first_outer_idx = None
 
     final_stop_level_factor: int | None = None
     if trace:
@@ -679,11 +762,13 @@ def _convergence_summary_from_trace(
             final_stop_level_factor = int(last_level_factor) if last_level_factor is not None else None
         except Exception:
             final_stop_level_factor = None
-    final_stop_reason = (
-        "threshold"
-        if stopped_on_threshold
-        else ("plateau" if stopped_on_plateau else ("budget" if stopped_on_budget else None))
-    )
+    final_stop_reason = final_stop_reason_override
+    if final_stop_reason is None:
+        final_stop_reason = (
+            "threshold"
+            if stopped_on_threshold
+            else ("plateau" if stopped_on_plateau else ("budget" if stopped_on_budget else None))
+        )
 
     return ConvergenceRunSummary(
         metric=metric,
@@ -700,6 +785,10 @@ def _convergence_summary_from_trace(
         final_stop_reason=final_stop_reason,
         final_stop_level_factor=final_stop_level_factor,
         first_threshold_crossing_level_factor=first_threshold_crossing_level_factor,
+        reached_finest_level=reached_finest_level,
+        finest_level_first_elapsed_seconds=finest_level_first_elapsed_seconds,
+        finest_level_first_outer_idx=finest_level_first_outer_idx,
+        level_summaries=_trace_level_summaries(trace),
         trace=trace,
     )
 
@@ -927,6 +1016,7 @@ def _make_align_task(
     total_outer_iters: int | None = None,
     time_budget_seconds: float | None = None,
     observe_trace: bool = False,
+    stop_on_first_finest_level: bool = False,
 ) -> Callable[[], dict[str, Any]]:
     gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
     gt_params = np.asarray(bundle.align_params, dtype=np.float32) if bundle.align_params is not None else None
@@ -982,6 +1072,7 @@ def _make_align_task(
         )
         is_finest_level = level_factor == finest_factor
         level_checks += 1
+        warmup_target_hit = bool(stop_on_first_finest_level and is_finest_level)
         if _is_meaningful_relative_improvement(
             best_level_quality, quality_value, convergence.rel_improvement_tol
         ):
@@ -999,10 +1090,13 @@ def _make_align_task(
             budget_hit=budget_hit,
             threshold_hit=(convergence.stop_on_threshold and threshold_hit),
             plateau_hit=(convergence.stop_on_plateau and plateau_hit),
+            warmup_target_hit=warmup_target_hit,
         )
         stop_reason = None
         if action == "stop_run":
-            if budget_hit:
+            if warmup_target_hit:
+                stop_reason = "warmup_target"
+            elif budget_hit:
                 stop_reason = "budget"
             else:
                 stop_reason = "threshold" if threshold_hit else "plateau"
@@ -1065,6 +1159,7 @@ def _make_align_task(
                     if time_budget_seconds is not None
                     else ""
                 )
+                + (" warmup" if stop_on_first_finest_level else "")
             ),
         )
         return action
@@ -1101,6 +1196,7 @@ def _make_align_task(
                     stopped_on_threshold=(stop_reason == "threshold"),
                     stopped_on_plateau=(stop_reason == "plateau"),
                     stopped_on_budget=(stop_reason == "budget"),
+                    final_stop_reason_override=stop_reason,
                 )
                 if trace
                 else None
@@ -1345,6 +1441,11 @@ def _run_align_profile(
 
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 1)))
+    warmup_enabled = bool(align_cfg.get("warmup_enabled", False))
+    warmup_time_budget_seconds = _float_or_none(align_cfg.get("warmup_time_budget_seconds"))
+    warmup_stop_on_first_finest_level = bool(
+        align_cfg.get("warmup_stop_on_first_finest_level", warmup_enabled)
+    )
     observe_trace = bool(
         convergence.enabled
         or time_budget_seconds is not None
@@ -1354,42 +1455,56 @@ def _run_align_profile(
 
     total_outer_iters = int(align_cfg.get("outer_iters", 4)) * (len(level_tuple) if level_tuple else 1)
 
-    first = _timed_call(
-        _make_align_task(
-            bundle=bundle,
-            grid=grid,
-            detector=detector,
-            geometry=geometry,
-            projections=projections,
-            cfg=cfg,
-            levels=level_tuple,
-            convergence=convergence,
-            mods=mods,
-            progress_callback=progress_callback,
-            run_kind="cold",
-            run_index=1,
-            total_runs=1,
-            total_outer_iters=total_outer_iters,
-            time_budget_seconds=time_budget_seconds,
-            observe_trace=observe_trace,
-        ),
-        mods,
-        measurement_cfg,
-        progress_callback=progress_callback,
-        progress_payload={
-            "stage_kind": "profile_running",
-            "task": "align",
-            "run_kind": "cold",
-            "run_index": 1,
-            "total_runs": 1,
-            "total_outer_iters": total_outer_iters,
-            "message": "Cold alignment run starting.",
-            "detail": (
-                f"levels={list(level_tuple) if level_tuple else [1]}"
-                + (f" budget={time_budget_seconds:.0f}s" if time_budget_seconds is not None else "")
+    warmup: RunResult | None = None
+    warmup_convergence: ConvergenceRunSummary | None = None
+    if warmup_enabled:
+        warmup = _timed_call(
+            _make_align_task(
+                bundle=bundle,
+                grid=grid,
+                detector=detector,
+                geometry=geometry,
+                projections=projections,
+                cfg=cfg,
+                levels=level_tuple,
+                convergence=convergence,
+                mods=mods,
+                progress_callback=progress_callback,
+                run_kind="warmup",
+                run_index=1,
+                total_runs=1,
+                total_outer_iters=total_outer_iters,
+                time_budget_seconds=warmup_time_budget_seconds,
+                observe_trace=observe_trace,
+                stop_on_first_finest_level=warmup_stop_on_first_finest_level,
             ),
-        },
-    )
+            mods,
+            measurement_cfg,
+            progress_callback=progress_callback,
+            progress_payload={
+                "stage_kind": "profile_running",
+                "task": "align",
+                "run_kind": "warmup",
+                "run_index": 1,
+                "total_runs": 1,
+                "total_outer_iters": total_outer_iters,
+                "message": "Alignment warmup starting.",
+                "detail": (
+                    f"levels={list(level_tuple) if level_tuple else [1]}"
+                    + (
+                        f" budget={warmup_time_budget_seconds:.0f}s"
+                        if warmup_time_budget_seconds is not None
+                        else ""
+                    )
+                ),
+            },
+        )
+        warmup_convergence = warmup.output.get("convergence")
+        if warmup_convergence is None or not warmup_convergence.reached_finest_level:
+            raise ValueError(
+                "Warmup did not reach finest level before its time budget; "
+                "increase warmup_time_budget_seconds or adjust the benchmark schedule."
+            )
     warms: list[RunResult] = [
         _timed_call(
             _make_align_task(
@@ -1429,6 +1544,7 @@ def _run_align_profile(
         )
         for index in range(warm_runs)
     ]
+    first = warms[0]
     warm_seconds = [run.seconds for run in warms]
     warm_params = np.asarray(mods.jax.device_get(warms[-1].output["params"]), dtype=np.float32)
     final_volume = np.asarray(mods.jax.device_get(warms[-1].output["volume"]), dtype=np.float32)
@@ -1488,6 +1604,10 @@ def _run_align_profile(
         default=None,
     )
     warm_peak_host = max((v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None)
+    warmup_peak_gpu = warmup.peak_gpu_memory_mb if warmup is not None else None
+    warmup_peak_gpu_process = warmup.peak_gpu_memory_process_mb if warmup is not None else None
+    warmup_peak_gpu_device = warmup.peak_gpu_memory_device_mb if warmup is not None else None
+    warmup_peak_host = warmup.peak_host_rss_mb if warmup is not None else None
     first_peak_gpu = first.peak_gpu_memory_mb
     first_peak_gpu_process = first.peak_gpu_memory_process_mb
     first_peak_gpu_device = first.peak_gpu_memory_device_mb
@@ -1495,29 +1615,38 @@ def _run_align_profile(
     jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
         mods, measurement_cfg, out_path
     )
-    peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first_peak_gpu
-    peak_host = warm_peak_host if warm_peak_host is not None else first_peak_host
+    peak_gpu_candidates = [v for v in (warmup_peak_gpu, first_peak_gpu, warm_peak_gpu) if v is not None]
+    peak_host_candidates = [v for v in (warmup_peak_host, first_peak_host, warm_peak_host) if v is not None]
+    peak_gpu = max(peak_gpu_candidates) if peak_gpu_candidates else None
+    peak_host = max(peak_host_candidates) if peak_host_candidates else None
 
     metrics = {
         "profile": profile["name"],
         "task": "align",
         "loss_kind": cfg.loss_kind,
         "success": True,
+        "warmup_seconds": (warmup.seconds if warmup is not None else None),
+        "warmup_peak_gpu_memory_mb": warmup_peak_gpu,
         "first_run_seconds": first.seconds,
         "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
         "warm_run_seconds_std": float(statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0),
+        "warmup_peak_gpu_memory_process_mb": warmup_peak_gpu_process,
         "first_run_peak_gpu_memory_mb": first_peak_gpu,
         "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
         "peak_gpu_memory_mb": peak_gpu,
+        "warmup_peak_gpu_memory_device_mb": warmup_peak_gpu_device,
         "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
         "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
-        "peak_gpu_memory_process_mb": (
-            warm_peak_gpu_process if warm_peak_gpu_process is not None else first_peak_gpu_process
+        "peak_gpu_memory_process_mb": max(
+            [v for v in (warmup_peak_gpu_process, first_peak_gpu_process, warm_peak_gpu_process) if v is not None],
+            default=None,
         ),
+        "warmup_peak_host_rss_mb": warmup_peak_host,
         "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
         "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
-        "peak_gpu_memory_device_mb": (
-            warm_peak_gpu_device if warm_peak_gpu_device is not None else first_peak_gpu_device
+        "peak_gpu_memory_device_mb": max(
+            [v for v in (warmup_peak_gpu_device, first_peak_gpu_device, warm_peak_gpu_device) if v is not None],
+            default=None,
         ),
         "first_run_peak_host_rss_mb": first_peak_host,
         "warm_run_peak_host_rss_mb_max": warm_peak_host,
@@ -1525,19 +1654,32 @@ def _run_align_profile(
         "gpu_memory_backend": first.gpu_memory_backend,
         "gpu_memory_scope": (
             "process"
-            if (warm_peak_gpu_process is not None or first_peak_gpu_process is not None)
+            if (
+                warmup_peak_gpu_process is not None
+                or warm_peak_gpu_process is not None
+                or first_peak_gpu_process is not None
+            )
             else first.gpu_memory_scope
         ),
         "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
         "gpu_memory_sample_count": int(
-            first.gpu_memory_sample_count + sum(w.gpu_memory_sample_count for w in warms)
+            (warmup.gpu_memory_sample_count if warmup is not None else 0)
+            + sum(w.gpu_memory_sample_count for w in warms)
         ),
         "gpu_memory_observed_gpu_count": max(
-            [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
+            [
+                *(
+                    [warmup.gpu_memory_observed_gpu_count]
+                    if warmup is not None
+                    else []
+                ),
+                *[w.gpu_memory_observed_gpu_count for w in warms],
+            ]
         ),
         "gpu_memory_process_source": first.gpu_memory_process_source,
         "gpu_memory_process_supported": bool(
-            first.gpu_memory_process_supported or any(w.gpu_memory_process_supported for w in warms)
+            (warmup.gpu_memory_process_supported if warmup is not None else False)
+            or any(w.gpu_memory_process_supported for w in warms)
         ),
         "jax_device_memory_profile_path": jax_profile_path,
         "jax_device_memory_profile_error": jax_profile_error,
@@ -1555,9 +1697,16 @@ def _run_align_profile(
         ),
         "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
         "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
-        "gpu_sampler_error": first.gpu_sampler_error or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
+        "gpu_sampler_error": (
+            (warmup.gpu_sampler_error if warmup is not None else None)
+            or first.gpu_sampler_error
+            or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None)
+        ),
         "summary_image_path": None,
         "summary_image_error": None,
+        "warmup_reached_finest_level": (
+            warmup_convergence.reached_finest_level if warmup_convergence is not None else None
+        ),
     }
     if first_convergence is not None or warm_convergences:
         warm_aggregate = _aggregate_warm_convergence_runs(
@@ -1592,6 +1741,13 @@ def _run_align_profile(
                 "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
                 "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
                 "stopped_on_budget": warm_aggregate["stopped_on_budget"],
+                "reached_finest_level": warm_aggregate["reached_finest_level"],
+                "finest_level_first_elapsed_seconds": warm_aggregate["finest_level_first_elapsed_seconds"],
+                "finest_level_first_outer_idx": warm_aggregate["finest_level_first_outer_idx"],
+                "warm_reached_finest_level_count": warm_aggregate["warm_reached_finest_level_count"],
+                "benchmark_valid": warm_aggregate["benchmark_valid"],
+                "invalid_reason": warm_aggregate["invalid_reason"],
+                "warm_level_summaries": warm_aggregate["warm_level_summaries"],
                 "warm_stopped_on_threshold_count": warm_aggregate["warm_stopped_on_threshold_count"],
                 "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
                 "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
@@ -1656,6 +1812,7 @@ def _run_align_profile(
                 "warm_convergence_traces": warm_aggregate["warm_convergence_traces"],
             }
         )
+        metrics["success"] = bool(warm_aggregate["benchmark_valid"])
     if _should_render_alignment_summary(profile):
         summary_path = _alignment_summary_path(out_path)
         try:
@@ -1739,12 +1896,17 @@ def execute_profile(
         "objective_name": str(profile.get("objective_name", "warm_run_seconds_mean")),
         "objective_direction": str(profile.get("objective_direction", "minimise")),
         "objective_value": None,
+        "warmup_seconds": None,
         "first_run_seconds": None,
         "warm_run_seconds_mean": None,
         "warm_run_seconds_std": None,
+        "warmup_peak_gpu_memory_mb": None,
         "peak_gpu_memory_mb": None,
+        "warmup_peak_gpu_memory_process_mb": None,
         "peak_gpu_memory_process_mb": None,
+        "warmup_peak_gpu_memory_device_mb": None,
         "peak_gpu_memory_device_mb": None,
+        "warmup_peak_host_rss_mb": None,
         "peak_host_rss_mb": None,
         "gpu_memory_backend": None,
         "gpu_memory_scope": None,
@@ -1761,6 +1923,7 @@ def execute_profile(
         "quality_threshold_metric": None,
         "quality_threshold_value": None,
         "quality_threshold_met": None,
+        "warmup_reached_finest_level": None,
         "time_budget_seconds": None,
         "required_warm_successes": None,
         "warm_threshold_hit_count": None,
@@ -1771,6 +1934,13 @@ def execute_profile(
         "warm_gt_mse_std": None,
         "warm_trans_rmse_px_mean": None,
         "warm_trans_rmse_px_median": None,
+        "reached_finest_level": None,
+        "finest_level_first_elapsed_seconds": None,
+        "finest_level_first_outer_idx": None,
+        "warm_reached_finest_level_count": None,
+        "benchmark_valid": None,
+        "invalid_reason": None,
+        "warm_level_summaries": [],
         "stopped_on_threshold": None,
         "stopped_on_plateau": None,
         "stopped_on_budget": None,

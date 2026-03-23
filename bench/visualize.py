@@ -144,16 +144,32 @@ def _text_lines(
     quality: dict[str, Any],
     fixture: dict[str, Any],
 ) -> list[str]:
+    level_summaries = list(metrics.get("warm_level_summaries") or [])
     lines = [
         f"profile: {profile_name}",
         f"objective: {metrics.get('objective_name')}={metrics.get('objective_value')}",
         f"gt_mse: {quality.get('gt_mse')}",
         f"warm_gt_mse_median: {metrics.get('warm_gt_mse_median')}",
+        f"benchmark_valid: {metrics.get('benchmark_valid')}",
+        f"reached_finest_level: {metrics.get('reached_finest_level')}",
         f"warm_mean_s: {metrics.get('warm_run_seconds_mean')}",
+        f"warmup_s: {metrics.get('warmup_seconds')}",
         f"time_budget_s: {metrics.get('time_budget_seconds')}",
         f"peak_gpu_mb: {metrics.get('peak_gpu_memory_mb')}",
         f"gpu_scope: {metrics.get('gpu_memory_scope')}",
     ]
+    if metrics.get("invalid_reason"):
+        lines.append(f"invalid_reason: {metrics.get('invalid_reason')}")
+    if metrics.get("finest_level_first_elapsed_seconds") is not None:
+        lines.append(
+            "finest_level_first_s: "
+            f"{metrics.get('finest_level_first_elapsed_seconds')}"
+        )
+    if metrics.get("finest_level_first_outer_idx") is not None:
+        lines.append(
+            "finest_level_first_outer: "
+            f"{metrics.get('finest_level_first_outer_idx')}"
+        )
     if metrics.get("quality_threshold_value") is not None:
         lines.append(
             "threshold: "
@@ -180,6 +196,16 @@ def _text_lines(
         lines.append(f"volume_shape: {fixture.get('volume_shape')}")
     if fixture.get("n_views") is not None:
         lines.append(f"n_views: {fixture.get('n_views')}")
+    if level_summaries:
+        lines.append("level_split:")
+        for item in level_summaries:
+            lines.append(
+                "  "
+                f"x{item.get('level_factor')}: "
+                f"{item.get('elapsed_seconds_total')}s, "
+                f"{item.get('outer_iters_executed')} iters, "
+                f"final_gt_mse={item.get('final_gt_mse')}"
+            )
     lines.append(f"artifact: {out_path.name}")
     return lines
 
