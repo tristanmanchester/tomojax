@@ -1,0 +1,57 @@
+name: screen_accuracy_align_parallel_3d_96
+task: align
+objective_name: gt_mse
+objective_direction: minimise
+warm_runs: 1
+jax_cache_dir: null
+env:
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+measurement:
+  gpu_memory: true
+  host_rss: true
+  gpu_poll_interval_seconds: 0.05
+  host_poll_interval_seconds: 0.05
+visualization:
+  enabled: true
+align:
+  levels: [4, 2, 1]
+  outer_iters: 4
+  recon_iters: 12
+  lambda_tv: 0.003
+  tv_prox_iters: 8
+  recon_rel_tol: null
+  recon_patience: 0
+  views_per_batch: 1
+  projector_unroll: 1
+  checkpoint_projector: true
+  gather_dtype: bf16
+  opt_method: gn
+  gn_damping: 0.001
+  w_rot: 0.001
+  w_trans: 0.001
+  early_stop: false
+  loss_kind: l2_otsu
+  k_step: 1
+data:
+  nx: 96
+  ny: 96
+  nz: 96
+  nu: 96
+  nv: 96
+  n_views: 144
+  geometry: parallel
+  phantom: random_shapes
+  n_cubes: 18
+  n_spheres: 18
+  min_size: 4
+  max_size: 18
+  min_value: 0.05
+  max_value: 1.0
+  noise: poisson
+  noise_level: 5000
+  seed: 31
+  misalignment:
+    rot_deg: 1.0
+    trans_px: 6.0
+    include_phi: true
+    seed: 32
