@@ -1034,22 +1034,22 @@ def _make_align_task(
         y_hat = mods.gt_projection_helper(gt_volume, grid, detector, geometry, params)
         return float(mods.jnp.mean((y_hat - projections) ** 2).item())
 
-    def _trans_rmse_for_params(params: Any) -> float | None:
+    def _trans_gf_rmse_for_params(params: Any) -> float | None:
         if gt_params is None:
             return None
         params_np = np.asarray(mods.jax.device_get(params), dtype=np.float32)
-        abs_metrics = mods.loss_metrics_abs(
+        gf_metrics = mods.loss_metrics_gf(
             gt_params,
             params_np,
             du=float(detector.du),
             dv=float(detector.dv),
         )
-        return _float_or_none(abs_metrics.get("trans_rmse_px"))
+        return _float_or_none(gf_metrics.get("trans_gf_rmse_px"))
 
     def _observer(_: Any, params: Any, stat: dict[str, Any]) -> str:
         nonlocal level_checks, plateau_streak, best_level_quality, stop_reason, current_level_factor
         quality_value = _quality_value_for_params(params)
-        trans_rmse_px = _trans_rmse_for_params(params)
+        trans_gf_rmse_px = _trans_gf_rmse_for_params(params)
         level_factor = (
             int(stat["level_factor"]) if stat.get("level_factor") is not None else finest_factor
         )
@@ -1114,7 +1114,7 @@ def _make_align_task(
                 "elapsed_seconds": global_elapsed,
                 "level_elapsed_seconds": level_elapsed,
                 "quality_value": quality_value,
-                "trans_rmse_px": trans_rmse_px,
+                "trans_gf_rmse_px": trans_gf_rmse_px,
                 "loss_after": _float_or_none(stat.get("loss_after")),
                 "threshold_met": threshold_hit,
                 "is_finest_level": is_finest_level,
@@ -1136,7 +1136,7 @@ def _make_align_task(
             total_outer_iters=total_outer_iters,
             quality_metric=convergence.metric,
             quality_value=quality_value,
-            trans_rmse_px=trans_rmse_px,
+            trans_gf_rmse_px=trans_gf_rmse_px,
             quality_threshold=convergence.threshold,
             threshold_met=threshold_hit,
             stop_reason=stop_reason,
@@ -1148,7 +1148,11 @@ def _make_align_task(
             ),
             detail=(
                 f"{convergence.metric}={quality_value:.4f}"
-                + (f" trans_rmse_px={trans_rmse_px:.4f}" if trans_rmse_px is not None else "")
+                + (
+                    f" trans_gf_rmse_px={trans_gf_rmse_px:.4f}"
+                    if trans_gf_rmse_px is not None
+                    else ""
+                )
                 + (
                     f" threshold={convergence.threshold:.4f}"
                     if convergence.threshold is not None

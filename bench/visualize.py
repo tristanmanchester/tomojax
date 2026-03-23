@@ -190,7 +190,9 @@ def _text_lines(
         )
     if quality.get("rot_rmse_deg") is not None:
         lines.append(f"rot_rmse_deg: {quality.get('rot_rmse_deg')}")
-    if quality.get("trans_rmse_px") is not None:
+    if quality.get("trans_gf_rmse_px") is not None:
+        lines.append(f"trans_gf_rmse_px: {quality.get('trans_gf_rmse_px')}")
+    elif quality.get("trans_rmse_px") is not None:
         lines.append(f"trans_rmse_px: {quality.get('trans_rmse_px')}")
     if fixture.get("volume_shape") is not None:
         lines.append(f"volume_shape: {fixture.get('volume_shape')}")
@@ -287,9 +289,9 @@ def save_alignment_summary(
         _plot_trace_metric(
             rmse_ax,
             trace=trace,
-            value_key="trans_rmse_px",
-            title="trans_rmse_px vs Outer Iteration",
-            y_label="trans_rmse_px",
+            value_key="trans_gf_rmse_px",
+            title="trans_gf_rmse_px vs Outer Iteration",
+            y_label="trans_gf_rmse_px",
         )
     elif loss_history:
         mse_ax.set_title("Alignment Loss")
@@ -298,7 +300,7 @@ def save_alignment_summary(
         mse_ax.set_xlabel("Outer Iteration")
         mse_ax.set_ylabel("Loss")
         mse_ax.grid(True, alpha=0.25)
-        rmse_ax.set_title("trans_rmse_px")
+        rmse_ax.set_title("trans_gf_rmse_px")
         rmse_ax.text(0.5, 0.5, "No position RMSE trace", ha="center", va="center")
         rmse_ax.set_xticks([])
         rmse_ax.set_yticks([])
@@ -307,8 +309,8 @@ def save_alignment_summary(
         mse_ax.text(0.5, 0.5, "No loss history", ha="center", va="center")
         mse_ax.set_xticks([])
         mse_ax.set_yticks([])
-        rmse_ax.set_title("trans_rmse_px")
-        rmse_ax.text(0.5, 0.5, "No position RMSE trace", ha="center", va="center")
+        rmse_ax.set_title("trans_gf_rmse_px")
+        rmse_ax.text(0.5, 0.5, "No gauge-fixed position RMSE trace", ha="center", va="center")
         rmse_ax.set_xticks([])
         rmse_ax.set_yticks([])
 
