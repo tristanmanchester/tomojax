@@ -1438,6 +1438,14 @@ def _run_align_profile(
         "loss_params": align_cfg.get("loss_params"),
     }
     cfg = mods.AlignConfig(**cfg_kwargs)
+    warmup_cfg = mods.AlignConfig(
+        **{
+            **cfg_kwargs,
+            "outer_iters": int(align_cfg.get("warmup_outer_iters", 1)),
+            "recon_iters": int(align_cfg.get("warmup_recon_iters", 1)),
+            "early_stop": False,
+        }
+    )
 
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 1)))
@@ -1465,7 +1473,7 @@ def _run_align_profile(
                 detector=detector,
                 geometry=geometry,
                 projections=projections,
-                cfg=cfg,
+                cfg=warmup_cfg,
                 levels=level_tuple,
                 convergence=convergence,
                 mods=mods,

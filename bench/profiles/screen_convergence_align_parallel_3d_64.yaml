@@ -27,6 +27,8 @@ align:
   warmup_enabled: true
   warmup_time_budget_seconds: 30
   warmup_stop_on_first_finest_level: true
+  warmup_outer_iters: 1
+  warmup_recon_iters: 1
   time_budget_seconds: 60
   levels: [2, 1]
   outer_iters: 12
