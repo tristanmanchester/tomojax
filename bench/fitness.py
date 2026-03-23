@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import io
 import statistics
 import sys
 import threading
@@ -27,6 +28,7 @@ FIXTURES_DIR = BENCH_ROOT / "fixtures"
 DATA_DIR = BENCH_ROOT / "data"
 OUT_DIR = BENCH_ROOT / "out"
 MB = 1024.0 * 1024.0
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def _repo_pythonpath() -> None:
@@ -77,6 +79,12 @@ def _load_profile(profile_path: Path) -> dict[str, Any]:
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, **payload: Any) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(payload)
 
 
 @dataclass
@@ -512,7 +520,12 @@ def _build_align_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
 
 
 
-def _ensure_fixture(profile: dict[str, Any], mods: ImportedModules) -> tuple[FixtureBundle, bool, Path]:
+def _ensure_fixture(
+    profile: dict[str, Any],
+    mods: ImportedModules,
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> tuple[FixtureBundle, bool, Path]:
     fixture_name = profile.get("fixture")
     if fixture_name:
         fixture_path = FIXTURES_DIR / str(fixture_name)
@@ -520,6 +533,14 @@ def _ensure_fixture(profile: dict[str, Any], mods: ImportedModules) -> tuple[Fix
         fixture_path = DATA_DIR / f"{profile['name']}.npz"
     generated = False
     if fixture_path.exists():
+        _emit_progress(
+            progress_callback,
+            stage_kind="fixture_prepare",
+            message="Loading cached benchmark fixture.",
+            detail=f"fixture {fixture_path.name}",
+            fixture_path=str(fixture_path),
+            fixture_generated=False,
+        )
         return _load_fixture(fixture_path), generated, fixture_path
 
     dataset_cfg = dict(profile.get("data") or {})
@@ -528,6 +549,14 @@ def _ensure_fixture(profile: dict[str, Any], mods: ImportedModules) -> tuple[Fix
             f"Fixture not found and profile has no 'data' section to generate it: {fixture_path}"
         )
     _ensure_dir(fixture_path.parent)
+    _emit_progress(
+        progress_callback,
+        stage_kind="fixture_prepare",
+        message="Generating benchmark fixture.",
+        detail=f"fixture {fixture_path.name}",
+        fixture_path=str(fixture_path),
+        fixture_generated=True,
+    )
     task = str(profile.get("task", "recon"))
     if task == "align":
         bundle = _build_align_fixture(dataset_cfg, mods, profile["name"])
@@ -777,7 +806,14 @@ class RunResult:
 
 
 
-def _timed_call(fn: Any, mods: ImportedModules, measurement_cfg: dict[str, Any]) -> RunResult:
+def _timed_call(
+    fn: Any,
+    mods: ImportedModules,
+    measurement_cfg: dict[str, Any],
+    *,
+    progress_callback: ProgressCallback | None = None,
+    progress_payload: dict[str, Any] | None = None,
+) -> RunResult:
     monitor = PeakMemoryMonitor(
         sample_host_rss=bool(measurement_cfg.get("host_rss", True)),
         sample_gpu_memory=bool(measurement_cfg.get("gpu_memory", True)),
@@ -786,6 +822,7 @@ def _timed_call(fn: Any, mods: ImportedModules, measurement_cfg: dict[str, Any])
     )
     monitor.start()
     start = time.perf_counter()
+    _emit_progress(progress_callback, **(progress_payload or {}))
     try:
         output = fn()
         _block_tree_ready(mods.jax, output)
@@ -870,6 +907,11 @@ def _make_align_task(
     levels: tuple[int, ...] | None,
     convergence: ConvergenceConfig,
     mods: ImportedModules,
+    progress_callback: ProgressCallback | None = None,
+    run_kind: str = "warm",
+    run_index: int = 1,
+    total_runs: int = 1,
+    total_outer_iters: int | None = None,
 ) -> Callable[[], dict[str, Any]]:
     gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
     trace: list[dict[str, Any]] = []
@@ -948,6 +990,37 @@ def _make_align_task(
                 "stop_reason": stop_reason,
             }
         )
+        _emit_progress(
+            progress_callback,
+            stage_kind="profile_running",
+            task="align",
+            run_kind=run_kind,
+            run_index=run_index,
+            total_runs=total_runs,
+            level_factor=level_factor,
+            level_index=(int(stat["level_index"]) if stat.get("level_index") is not None else None),
+            outer_idx=int(stat.get("global_outer_idx", stat.get("outer_idx", len(trace)))),
+            total_outer_iters=total_outer_iters,
+            quality_metric=convergence.metric,
+            quality_value=quality_value,
+            quality_threshold=convergence.threshold,
+            threshold_met=threshold_hit,
+            stop_reason=stop_reason,
+            is_finest_level=is_finest_level,
+            run_seconds=global_elapsed,
+            message=(
+                f"{run_kind} run {run_index}/{total_runs}: level {level_factor}, "
+                f"outer {int(stat.get('global_outer_idx', stat.get('outer_idx', len(trace))))}/{total_outer_iters or '?'}"
+            ),
+            detail=(
+                f"{convergence.metric}={quality_value:.4f}"
+                + (
+                    f" threshold={convergence.threshold:.4f}"
+                    if convergence.threshold is not None
+                    else ""
+                )
+            ),
+        )
         return action
 
     def task() -> dict[str, Any]:
@@ -1008,7 +1081,12 @@ def _device_info(mods: ImportedModules) -> dict[str, Any]:
 
 
 def _run_recon_profile(
-    bundle: FixtureBundle, profile: dict[str, Any], mods: ImportedModules, out_path: Path
+    bundle: FixtureBundle,
+    profile: dict[str, Any],
+    mods: ImportedModules,
+    out_path: Path,
+    *,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     grid, detector, geometry = _bundle_geometry(bundle, mods)
     jnp = mods.jnp
@@ -1061,8 +1139,39 @@ def _run_recon_profile(
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 3)))
 
-    first = _timed_call(task, mods, measurement_cfg)
-    warms: list[RunResult] = [_timed_call(task, mods, measurement_cfg) for _ in range(warm_runs)]
+    first = _timed_call(
+        task,
+        mods,
+        measurement_cfg,
+        progress_callback=progress_callback,
+        progress_payload={
+            "stage_kind": "profile_running",
+            "task": "recon",
+            "run_kind": "cold",
+            "run_index": 1,
+            "total_runs": 1,
+            "message": f"Cold run for {algorithm}.",
+            "detail": f"algorithm={algorithm}",
+        },
+    )
+    warms: list[RunResult] = [
+        _timed_call(
+            task,
+            mods,
+            measurement_cfg,
+            progress_callback=progress_callback,
+            progress_payload={
+                "stage_kind": "profile_running",
+                "task": "recon",
+                "run_kind": "warm",
+                "run_index": index + 1,
+                "total_runs": warm_runs,
+                "message": f"Warm run {index + 1}/{warm_runs} for {algorithm}.",
+                "detail": f"algorithm={algorithm}",
+            },
+        )
+        for index in range(warm_runs)
+    ]
     warm_seconds = [run.seconds for run in warms]
     warm_volume = warms[-1].output["volume"]
     recon_mse = float(jnp.mean((warm_volume - volume_gt) ** 2).item())
@@ -1140,7 +1249,12 @@ def _run_recon_profile(
 
 
 def _run_align_profile(
-    bundle: FixtureBundle, profile: dict[str, Any], mods: ImportedModules, out_path: Path
+    bundle: FixtureBundle,
+    profile: dict[str, Any],
+    mods: ImportedModules,
+    out_path: Path,
+    *,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     if bundle.align_params is None:
         raise ValueError("Alignment profile requires fixture align_params")
@@ -1184,6 +1298,8 @@ def _run_align_profile(
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 1)))
 
+    total_outer_iters = int(align_cfg.get("outer_iters", 4)) * (len(level_tuple) if level_tuple else 1)
+
     first = _timed_call(
         _make_align_task(
             bundle=bundle,
@@ -1195,9 +1311,25 @@ def _run_align_profile(
             levels=level_tuple,
             convergence=convergence,
             mods=mods,
+            progress_callback=progress_callback,
+            run_kind="cold",
+            run_index=1,
+            total_runs=1,
+            total_outer_iters=total_outer_iters,
         ),
         mods,
         measurement_cfg,
+        progress_callback=progress_callback,
+        progress_payload={
+            "stage_kind": "profile_running",
+            "task": "align",
+            "run_kind": "cold",
+            "run_index": 1,
+            "total_runs": 1,
+            "total_outer_iters": total_outer_iters,
+            "message": "Cold alignment run starting.",
+            "detail": f"levels={list(level_tuple) if level_tuple else [1]}",
+        },
     )
     warms: list[RunResult] = [
         _timed_call(
@@ -1211,11 +1343,27 @@ def _run_align_profile(
                 levels=level_tuple,
                 convergence=convergence,
                 mods=mods,
+                progress_callback=progress_callback,
+                run_kind="warm",
+                run_index=index + 1,
+                total_runs=warm_runs,
+                total_outer_iters=total_outer_iters,
             ),
             mods,
             measurement_cfg,
+            progress_callback=progress_callback,
+            progress_payload={
+                "stage_kind": "profile_running",
+                "task": "align",
+                "run_kind": "warm",
+                "run_index": index + 1,
+                "total_runs": warm_runs,
+                "total_outer_iters": total_outer_iters,
+                "message": f"Warm alignment run {index + 1}/{warm_runs} starting.",
+                "detail": f"levels={list(level_tuple) if level_tuple else [1]}",
+            },
         )
-        for _ in range(warm_runs)
+        for index in range(warm_runs)
     ]
     warm_seconds = [run.seconds for run in warms]
     warm_params = np.asarray(mods.jax.device_get(warms[-1].output["params"]), dtype=np.float32)
@@ -1437,16 +1585,29 @@ def _json_safe(value: Any) -> Any:
 
 
 
-def main() -> int:
-    args = _parse_args()
-    out_path = Path(args.out).resolve()
+def execute_profile(
+    *,
+    profile_arg: str,
+    out_path: Path,
+    profile_root: str = str(PROFILES_DIR),
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    out_path = out_path.resolve()
     _ensure_dir(out_path.parent)
     _ensure_dir(DATA_DIR)
     _ensure_dir(OUT_DIR)
 
-    profile_path = _resolve_profile_path(args.profile, args.profile_root)
+    profile_path = _resolve_profile_path(profile_arg, profile_root)
     profile = _load_profile(profile_path)
     env_updates = _configure_environment(profile)
+    _emit_progress(
+        progress_callback,
+        stage_kind="profile_loading",
+        phase="profile_loading",
+        task=str(profile.get("task", "recon")),
+        message=f"Loaded benchmark profile {profile['name']}.",
+        detail=f"profile_path={profile_path.name}",
+    )
 
     metrics: dict[str, Any] = {
         "profile": profile.get("name", profile_path.stem),
@@ -1509,11 +1670,27 @@ def main() -> int:
 
     try:
         mods = _import_modules(profile)
-        fixture, fixture_generated, fixture_path = _ensure_fixture(profile, mods)
+        fixture, fixture_generated, fixture_path = _ensure_fixture(
+            profile,
+            mods,
+            progress_callback=progress_callback,
+        )
         if str(profile.get("task", "recon")) == "align":
-            run_metrics = _run_align_profile(fixture, profile, mods, out_path)
+            run_metrics = _run_align_profile(
+                fixture,
+                profile,
+                mods,
+                out_path,
+                progress_callback=progress_callback,
+            )
         else:
-            run_metrics = _run_recon_profile(fixture, profile, mods, out_path)
+            run_metrics = _run_recon_profile(
+                fixture,
+                profile,
+                mods,
+                out_path,
+                progress_callback=progress_callback,
+            )
 
         metrics.update(run_metrics)
         objective_name, objective_direction, objective_value = _resolve_objective(metrics, profile)
@@ -1552,6 +1729,16 @@ def main() -> int:
     with out_path.open("w", encoding="utf-8") as handle:
         json.dump(_json_safe(metrics), handle, indent=2, sort_keys=True)
         handle.write("\n")
+    return metrics
+
+
+def main() -> int:
+    args = _parse_args()
+    metrics = execute_profile(
+        profile_arg=args.profile,
+        out_path=Path(args.out),
+        profile_root=args.profile_root,
+    )
     return 0 if metrics.get("success") else 1
 
 

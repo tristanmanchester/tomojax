@@ -26,8 +26,8 @@ def _display_limits(image: np.ndarray) -> tuple[float, float]:
     finite = image[np.isfinite(image)]
     if finite.size == 0:
         return 0.0, 1.0
-    lo = float(np.percentile(finite, 1.0))
-    hi = float(np.percentile(finite, 99.0))
+    lo = float(np.min(finite))
+    hi = float(np.max(finite))
     if hi <= lo:
         hi = lo + 1e-6
     return lo, hi
