@@ -41,6 +41,101 @@ def _error_limit(error_volume: np.ndarray) -> float:
     return max(vmax, 1e-6)
 
 
+def _trace_points(
+    trace: list[dict[str, Any]],
+    *,
+    value_key: str,
+) -> tuple[np.ndarray, np.ndarray, list[int | None]]:
+    filtered: list[tuple[int, float, int | None]] = []
+    for idx, point in enumerate(trace):
+        value = point.get(value_key)
+        if value is None:
+            continue
+        try:
+            outer_idx = int(point.get("outer_idx", idx + 1))
+            metric_value = float(value)
+            level_factor = point.get("level_factor")
+            filtered.append(
+                (
+                    outer_idx,
+                    metric_value,
+                    int(level_factor) if level_factor is not None else None,
+                )
+            )
+        except Exception:
+            continue
+    if not filtered:
+        return np.asarray([], dtype=np.int32), np.asarray([], dtype=np.float32), []
+    xs = np.asarray([x for x, _, _ in filtered], dtype=np.int32)
+    ys = np.asarray([y for _, y, _ in filtered], dtype=np.float32)
+    levels = [level for _, _, level in filtered]
+    return xs, ys, levels
+
+
+def _plot_trace_metric(
+    ax,
+    *,
+    trace: list[dict[str, Any]],
+    value_key: str,
+    title: str,
+    y_label: str,
+    threshold: float | None = None,
+) -> None:
+    xs, ys, level_values = _trace_points(trace, value_key=value_key)
+    if xs.size == 0:
+        ax.set_title(title)
+        ax.text(0.5, 0.5, f"No {y_label} trace", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        return
+
+    ax.set_title(title)
+    ax.plot(
+        xs,
+        ys,
+        color="0.75",
+        linewidth=1.0,
+        alpha=0.8,
+        zorder=1,
+    )
+    unique_levels: list[int | None] = []
+    for level in level_values:
+        if level not in unique_levels:
+            unique_levels.append(level)
+    colors = plt.cm.tab10(np.linspace(0.0, 1.0, max(len(unique_levels), 1)))
+    for color, level in zip(colors, unique_levels):
+        level_x = [x for x, lf in zip(xs, level_values) if lf == level]
+        level_y = [y for y, lf in zip(ys, level_values) if lf == level]
+        if not level_x:
+            continue
+        label = f"{y_label} (x{level})" if level is not None else y_label
+        ax.plot(
+            np.asarray(level_x, dtype=np.int32),
+            np.asarray(level_y, dtype=np.float32),
+            marker="o",
+            linewidth=2.0,
+            color=color,
+            label=label,
+            zorder=2,
+        )
+    if threshold is not None:
+        ax.axhline(
+            float(threshold),
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.2,
+            label="threshold",
+        )
+        met_idx = np.where(ys <= float(threshold))[0]
+        if met_idx.size > 0:
+            idx = int(met_idx[0])
+            ax.scatter([xs[idx]], [ys[idx]], color="tab:red", s=40, zorder=3)
+    ax.set_xlabel("Outer Iteration")
+    ax.set_ylabel(y_label)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best")
+
+
 def _text_lines(
     *,
     profile_name: str,
@@ -53,7 +148,9 @@ def _text_lines(
         f"profile: {profile_name}",
         f"objective: {metrics.get('objective_name')}={metrics.get('objective_value')}",
         f"gt_mse: {quality.get('gt_mse')}",
+        f"warm_gt_mse_median: {metrics.get('warm_gt_mse_median')}",
         f"warm_mean_s: {metrics.get('warm_run_seconds_mean')}",
+        f"time_budget_s: {metrics.get('time_budget_seconds')}",
         f"peak_gpu_mb: {metrics.get('peak_gpu_memory_mb')}",
         f"gpu_scope: {metrics.get('gpu_memory_scope')}",
     ]
@@ -75,10 +172,10 @@ def _text_lines(
         lines.append(
             f"warm_s_to_threshold: {metrics.get('warm_seconds_to_quality_threshold')}"
         )
-    if quality.get("rot_rms_deg") is not None:
-        lines.append(f"rot_rms_deg: {quality.get('rot_rms_deg')}")
-    if quality.get("trans_rms_px") is not None:
-        lines.append(f"trans_rms_px: {quality.get('trans_rms_px')}")
+    if quality.get("rot_rmse_deg") is not None:
+        lines.append(f"rot_rmse_deg: {quality.get('rot_rmse_deg')}")
+    if quality.get("trans_rmse_px") is not None:
+        lines.append(f"trans_rmse_px: {quality.get('trans_rmse_px')}")
     if fixture.get("volume_shape") is not None:
         lines.append(f"volume_shape: {fixture.get('volume_shape')}")
     if fixture.get("n_views") is not None:
@@ -147,101 +244,48 @@ def save_alignment_summary(
             ax.set_xticks([])
             ax.set_yticks([])
 
-    loss_ax = fig.add_subplot(gs[0:2, 3])
+    right_gs = gs[:, 3].subgridspec(3, 1, height_ratios=[1.0, 1.0, 1.5])
+    mse_ax = fig.add_subplot(right_gs[0, 0])
+    rmse_ax = fig.add_subplot(right_gs[1, 0])
+    text_ax = fig.add_subplot(right_gs[2, 0])
     trace = list(convergence_trace or [])
     if trace and convergence_metric_name:
-        filtered = [
-            (
-                int(point.get("outer_idx", idx + 1)),
-                float(point["quality_value"]),
-                point.get("level_factor"),
-            )
-            for idx, point in enumerate(trace)
-            if point.get("quality_value") is not None
-        ]
-        xs = np.asarray([x for x, _, _ in filtered], dtype=np.int32)
-        ys = np.asarray([y for _, y, _ in filtered], dtype=np.float32)
-        if xs.size == ys.size and xs.size > 0:
-            loss_ax.set_title(f"{convergence_metric_name} vs Outer Iteration")
-            # Draw a faint full trace to show continuity across resolution changes.
-            loss_ax.plot(
-                xs,
-                ys,
-                color="0.75",
-                linewidth=1.0,
-                alpha=0.8,
-                zorder=1,
-            )
-            level_values: list[int | None] = []
-            for _, _, level_factor in filtered:
-                try:
-                    level_values.append(int(level_factor) if level_factor is not None else None)
-                except Exception:
-                    level_values.append(None)
-            unique_levels = []
-            for level in level_values:
-                if level not in unique_levels:
-                    unique_levels.append(level)
-            colors = plt.cm.tab10(np.linspace(0.0, 1.0, max(len(unique_levels), 1)))
-            for color, level in zip(colors, unique_levels):
-                level_x = [x for x, _, lf in filtered if lf == level]
-                level_y = [y for _, y, lf in filtered if lf == level]
-                if not level_x:
-                    continue
-                label = (
-                    f"{convergence_metric_name} (x{level})"
-                    if level is not None
-                    else convergence_metric_name
-                )
-                loss_ax.plot(
-                    np.asarray(level_x, dtype=np.int32),
-                    np.asarray(level_y, dtype=np.float32),
-                    marker="o",
-                    linewidth=2.0,
-                    color=color,
-                    label=label,
-                    zorder=2,
-                )
-            if quality_threshold_value is not None:
-                loss_ax.axhline(
-                    float(quality_threshold_value),
-                    color="tab:red",
-                    linestyle="--",
-                    linewidth=1.2,
-                    label="threshold",
-                )
-                met_idx = np.where(ys <= float(quality_threshold_value))[0]
-                if met_idx.size > 0:
-                    idx = int(met_idx[0])
-                    loss_ax.scatter(
-                        [xs[idx]],
-                        [ys[idx]],
-                        color="tab:red",
-                        s=40,
-                        zorder=3,
-                    )
-            loss_ax.set_xlabel("Outer Iteration")
-            loss_ax.set_ylabel(convergence_metric_name)
-            loss_ax.grid(True, alpha=0.25)
-            loss_ax.legend(loc="best")
-        else:
-            loss_ax.text(0.5, 0.5, "No convergence trace", ha="center", va="center")
-            loss_ax.set_xticks([])
-            loss_ax.set_yticks([])
+        _plot_trace_metric(
+            mse_ax,
+            trace=trace,
+            value_key="quality_value",
+            title=f"{convergence_metric_name} vs Outer Iteration",
+            y_label=convergence_metric_name,
+            threshold=quality_threshold_value,
+        )
+        _plot_trace_metric(
+            rmse_ax,
+            trace=trace,
+            value_key="trans_rmse_px",
+            title="trans_rmse_px vs Outer Iteration",
+            y_label="trans_rmse_px",
+        )
     elif loss_history:
-        loss_ax.set_title("Alignment Loss")
+        mse_ax.set_title("Alignment Loss")
         xs = np.arange(1, len(loss_history) + 1, dtype=np.int32)
-        loss_ax.plot(xs, loss_history, marker="o", linewidth=1.5)
-        loss_ax.set_xlabel("Outer Iteration")
-        loss_ax.set_ylabel("Loss")
-        loss_ax.grid(True, alpha=0.25)
+        mse_ax.plot(xs, loss_history, marker="o", linewidth=1.5)
+        mse_ax.set_xlabel("Outer Iteration")
+        mse_ax.set_ylabel("Loss")
+        mse_ax.grid(True, alpha=0.25)
+        rmse_ax.set_title("trans_rmse_px")
+        rmse_ax.text(0.5, 0.5, "No position RMSE trace", ha="center", va="center")
+        rmse_ax.set_xticks([])
+        rmse_ax.set_yticks([])
     else:
-        loss_ax.set_title("Alignment Loss")
-        loss_ax.text(0.5, 0.5, "No loss history", ha="center", va="center")
-        loss_ax.set_xticks([])
-        loss_ax.set_yticks([])
+        mse_ax.set_title("Alignment Loss")
+        mse_ax.text(0.5, 0.5, "No loss history", ha="center", va="center")
+        mse_ax.set_xticks([])
+        mse_ax.set_yticks([])
+        rmse_ax.set_title("trans_rmse_px")
+        rmse_ax.text(0.5, 0.5, "No position RMSE trace", ha="center", va="center")
+        rmse_ax.set_xticks([])
+        rmse_ax.set_yticks([])
 
-    text_ax = fig.add_subplot(gs[2:, 3])
     text_ax.axis("off")
     text_ax.set_title("Run Summary", loc="left")
     text_ax.text(

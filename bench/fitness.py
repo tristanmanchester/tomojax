@@ -5,7 +5,6 @@ import argparse
 import json
 import math
 import os
-import io
 import statistics
 import sys
 import threading
@@ -113,6 +112,7 @@ class ConvergenceConfig:
     metric: str = "gt_mse"
     threshold: float | None = None
     stop_on_threshold: bool = True
+    stop_on_plateau: bool = True
     min_finest_level_checks: int = 2
     plateau_patience: int = 2
     rel_improvement_tol: float = 0.02
@@ -142,6 +142,13 @@ def _median_or_none(values: list[float | None]) -> float | None:
     if not finite:
         return None
     return float(statistics.median(finite))
+
+
+def _mean_or_none(values: list[float | None]) -> float | None:
+    finite = [float(v) for v in values if v is not None and math.isfinite(float(v))]
+    if not finite:
+        return None
+    return float(statistics.mean(finite))
 
 
 def _int_median_or_none(values: list[int | None]) -> int | None:
@@ -585,11 +592,13 @@ def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
     metric = str(raw.get("metric", "gt_mse"))
     threshold = _float_or_none(raw.get("threshold"))
     stop_on_threshold = bool(raw.get("stop_on_threshold", True))
+    stop_on_plateau = bool(raw.get("stop_on_plateau", True))
     return ConvergenceConfig(
         enabled=enabled,
         metric=metric,
         threshold=threshold,
         stop_on_threshold=stop_on_threshold,
+        stop_on_plateau=stop_on_plateau,
         min_finest_level_checks=max(1, int(raw.get("min_finest_level_checks", 2))),
         plateau_patience=max(1, int(raw.get("plateau_patience", 2))),
         rel_improvement_tol=max(0.0, float(raw.get("rel_improvement_tol", 0.02))),
@@ -608,9 +617,12 @@ def _convergence_action_for_level(
     *,
     level_factor: int,
     finest_factor: int,
+    budget_hit: bool,
     threshold_hit: bool,
     plateau_hit: bool,
 ) -> str:
+    if budget_hit:
+        return "stop_run"
     if threshold_hit:
         return "stop_run" if level_factor == finest_factor else "advance_level"
     if plateau_hit:
@@ -624,6 +636,7 @@ def _convergence_summary_from_trace(
     trace: list[dict[str, Any]],
     stopped_on_threshold: bool = False,
     stopped_on_plateau: bool = False,
+    stopped_on_budget: bool = False,
 ) -> ConvergenceRunSummary:
     best_quality_value: float | None = None
     best_quality_elapsed_seconds: float | None = None
@@ -669,7 +682,7 @@ def _convergence_summary_from_trace(
     final_stop_reason = (
         "threshold"
         if stopped_on_threshold
-        else ("plateau" if stopped_on_plateau else ("budget" if trace else None))
+        else ("plateau" if stopped_on_plateau else ("budget" if stopped_on_budget else None))
     )
 
     return ConvergenceRunSummary(
@@ -678,7 +691,7 @@ def _convergence_summary_from_trace(
         threshold_met=seconds_to_threshold is not None,
         stopped_on_threshold=bool(stopped_on_threshold),
         stopped_on_plateau=bool(stopped_on_plateau),
-        stopped_on_budget=bool(trace) and not stopped_on_threshold and not stopped_on_plateau,
+        stopped_on_budget=bool(stopped_on_budget),
         seconds_to_threshold=seconds_to_threshold,
         outer_iters_to_threshold=outer_iters_to_threshold,
         best_quality_value=best_quality_value,
@@ -912,8 +925,11 @@ def _make_align_task(
     run_index: int = 1,
     total_runs: int = 1,
     total_outer_iters: int | None = None,
+    time_budget_seconds: float | None = None,
+    observe_trace: bool = False,
 ) -> Callable[[], dict[str, Any]]:
     gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
+    gt_params = np.asarray(bundle.align_params, dtype=np.float32) if bundle.align_params is not None else None
     trace: list[dict[str, Any]] = []
     finest_factor = min(levels) if levels else 1
     level_checks = 0
@@ -928,9 +944,22 @@ def _make_align_task(
         y_hat = mods.gt_projection_helper(gt_volume, grid, detector, geometry, params)
         return float(mods.jnp.mean((y_hat - projections) ** 2).item())
 
+    def _trans_rmse_for_params(params: Any) -> float | None:
+        if gt_params is None:
+            return None
+        params_np = np.asarray(mods.jax.device_get(params), dtype=np.float32)
+        abs_metrics = mods.loss_metrics_abs(
+            gt_params,
+            params_np,
+            du=float(detector.du),
+            dv=float(detector.dv),
+        )
+        return _float_or_none(abs_metrics.get("trans_rmse_px"))
+
     def _observer(_: Any, params: Any, stat: dict[str, Any]) -> str:
         nonlocal level_checks, plateau_streak, best_level_quality, stop_reason, current_level_factor
         quality_value = _quality_value_for_params(params)
+        trans_rmse_px = _trans_rmse_for_params(params)
         level_factor = (
             int(stat["level_factor"]) if stat.get("level_factor") is not None else finest_factor
         )
@@ -943,6 +972,11 @@ def _make_align_task(
             stat.get("global_elapsed_seconds", stat.get("cumulative_time"))
         )
         level_elapsed = _float_or_none(stat.get("level_elapsed_seconds", stat.get("cumulative_time")))
+        budget_hit = (
+            time_budget_seconds is not None
+            and global_elapsed is not None
+            and global_elapsed >= float(time_budget_seconds)
+        )
         threshold_hit = _quality_threshold_met(
             convergence.metric, convergence.threshold, quality_value
         )
@@ -962,12 +996,16 @@ def _make_align_task(
         action = _convergence_action_for_level(
             level_factor=level_factor,
             finest_factor=finest_factor,
+            budget_hit=budget_hit,
             threshold_hit=(convergence.stop_on_threshold and threshold_hit),
-            plateau_hit=plateau_hit,
+            plateau_hit=(convergence.stop_on_plateau and plateau_hit),
         )
         stop_reason = None
         if action == "stop_run":
-            stop_reason = "threshold" if threshold_hit else "plateau"
+            if budget_hit:
+                stop_reason = "budget"
+            else:
+                stop_reason = "threshold" if threshold_hit else "plateau"
         trace.append(
             {
                 "outer_idx": int(
@@ -982,6 +1020,7 @@ def _make_align_task(
                 "elapsed_seconds": global_elapsed,
                 "level_elapsed_seconds": level_elapsed,
                 "quality_value": quality_value,
+                "trans_rmse_px": trans_rmse_px,
                 "loss_after": _float_or_none(stat.get("loss_after")),
                 "threshold_met": threshold_hit,
                 "is_finest_level": is_finest_level,
@@ -1003,6 +1042,7 @@ def _make_align_task(
             total_outer_iters=total_outer_iters,
             quality_metric=convergence.metric,
             quality_value=quality_value,
+            trans_rmse_px=trans_rmse_px,
             quality_threshold=convergence.threshold,
             threshold_met=threshold_hit,
             stop_reason=stop_reason,
@@ -1014,9 +1054,15 @@ def _make_align_task(
             ),
             detail=(
                 f"{convergence.metric}={quality_value:.4f}"
+                + (f" trans_rmse_px={trans_rmse_px:.4f}" if trans_rmse_px is not None else "")
                 + (
                     f" threshold={convergence.threshold:.4f}"
                     if convergence.threshold is not None
+                    else ""
+                )
+                + (
+                    f" budget={time_budget_seconds:.0f}s"
+                    if time_budget_seconds is not None
                     else ""
                 )
             ),
@@ -1032,7 +1078,7 @@ def _make_align_task(
                 projections,
                 factors=levels,
                 cfg=cfg,
-                observer=_observer if convergence.enabled else None,
+                observer=_observer if observe_trace else None,
             )
         else:
             volume, params, info = mods.align(
@@ -1041,7 +1087,7 @@ def _make_align_task(
                 detector,
                 projections,
                 cfg=cfg,
-                observer=_observer if convergence.enabled else None,
+                observer=_observer if observe_trace else None,
             )
         return {
             "volume": volume,
@@ -1054,8 +1100,9 @@ def _make_align_task(
                     trace=list(trace),
                     stopped_on_threshold=(stop_reason == "threshold"),
                     stopped_on_plateau=(stop_reason == "plateau"),
+                    stopped_on_budget=(stop_reason == "budget"),
                 )
-                if convergence.enabled
+                if trace
                 else None
             ),
         }
@@ -1265,6 +1312,7 @@ def _run_align_profile(
     levels = align_cfg.get("levels")
     level_tuple = tuple(int(v) for v in levels) if levels else None
     convergence = _convergence_config(profile)
+    time_budget_seconds = _float_or_none(align_cfg.get("time_budget_seconds"))
 
     cfg_kwargs = {
         "outer_iters": int(align_cfg.get("outer_iters", 4)),
@@ -1297,6 +1345,12 @@ def _run_align_profile(
 
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 1)))
+    observe_trace = bool(
+        convergence.enabled
+        or time_budget_seconds is not None
+        or progress_callback is not None
+        or _should_render_alignment_summary(profile)
+    )
 
     total_outer_iters = int(align_cfg.get("outer_iters", 4)) * (len(level_tuple) if level_tuple else 1)
 
@@ -1316,6 +1370,8 @@ def _run_align_profile(
             run_index=1,
             total_runs=1,
             total_outer_iters=total_outer_iters,
+            time_budget_seconds=time_budget_seconds,
+            observe_trace=observe_trace,
         ),
         mods,
         measurement_cfg,
@@ -1328,7 +1384,10 @@ def _run_align_profile(
             "total_runs": 1,
             "total_outer_iters": total_outer_iters,
             "message": "Cold alignment run starting.",
-            "detail": f"levels={list(level_tuple) if level_tuple else [1]}",
+            "detail": (
+                f"levels={list(level_tuple) if level_tuple else [1]}"
+                + (f" budget={time_budget_seconds:.0f}s" if time_budget_seconds is not None else "")
+            ),
         },
     )
     warms: list[RunResult] = [
@@ -1348,6 +1407,8 @@ def _run_align_profile(
                 run_index=index + 1,
                 total_runs=warm_runs,
                 total_outer_iters=total_outer_iters,
+                time_budget_seconds=time_budget_seconds,
+                observe_trace=observe_trace,
             ),
             mods,
             measurement_cfg,
@@ -1360,7 +1421,10 @@ def _run_align_profile(
                 "total_runs": warm_runs,
                 "total_outer_iters": total_outer_iters,
                 "message": f"Warm alignment run {index + 1}/{warm_runs} starting.",
-                "detail": f"levels={list(level_tuple) if level_tuple else [1]}",
+                "detail": (
+                    f"levels={list(level_tuple) if level_tuple else [1]}"
+                    + (f" budget={time_budget_seconds:.0f}s" if time_budget_seconds is not None else "")
+                ),
             },
         )
         for index in range(warm_runs)
@@ -1376,6 +1440,26 @@ def _run_align_profile(
     warm_convergence = warms[-1].output.get("convergence")
 
     gt_params = np.asarray(bundle.align_params, dtype=np.float32)
+    warm_gt_mse_values: list[float] = []
+    warm_trans_rmse_values: list[float | None] = []
+    gt_volume = jnp.asarray(bundle.volume, dtype=jnp.float32)
+    for run in warms:
+        run_params = np.asarray(mods.jax.device_get(run.output["params"]), dtype=np.float32)
+        run_abs_metrics = mods.loss_metrics_abs(
+            gt_params,
+            run_params,
+            du=float(detector.du),
+            dv=float(detector.dv),
+        )
+        run_y_hat = mods.gt_projection_helper(
+            gt_volume,
+            grid,
+            detector,
+            geometry,
+            run_params,
+        )
+        warm_gt_mse_values.append(float(jnp.mean((run_y_hat - projections) ** 2).item()))
+        warm_trans_rmse_values.append(_float_or_none(run_abs_metrics.get("trans_rmse_px")))
     abs_metrics = mods.loss_metrics_abs(gt_params, warm_params, du=float(detector.du), dv=float(detector.dv))
     rel_metrics = mods.loss_metrics_relative(
         gt_params,
@@ -1386,7 +1470,7 @@ def _run_align_profile(
     )
     gf_metrics = mods.loss_metrics_gf(gt_params, warm_params, du=float(detector.du), dv=float(detector.dv))
     y_hat = mods.gt_projection_helper(
-        jnp.asarray(bundle.volume, dtype=jnp.float32),
+        gt_volume,
         grid,
         detector,
         geometry,
@@ -1463,11 +1547,19 @@ def _run_align_profile(
             **gf_metrics,
             "gt_mse": gt_mse,
         },
+        "time_budget_seconds": time_budget_seconds,
+        "warm_gt_mse_mean": _mean_or_none(warm_gt_mse_values),
+        "warm_gt_mse_median": _median_or_none(warm_gt_mse_values),
+        "warm_gt_mse_std": (
+            float(statistics.pstdev(warm_gt_mse_values)) if len(warm_gt_mse_values) > 1 else 0.0
+        ),
+        "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
+        "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
         "gpu_sampler_error": first.gpu_sampler_error or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
         "summary_image_path": None,
         "summary_image_error": None,
     }
-    if convergence.enabled:
+    if first_convergence is not None or warm_convergences:
         warm_aggregate = _aggregate_warm_convergence_runs(
             warm_convergences,
             required_successes=convergence.required_warm_successes,
@@ -1476,11 +1568,27 @@ def _run_align_profile(
             {
                 "quality_threshold_metric": convergence.metric,
                 "quality_threshold_value": convergence.threshold,
-                "quality_threshold_met": bool(warm_aggregate["quality_threshold_met"]),
+                "quality_threshold_met": (
+                    bool(warm_aggregate["quality_threshold_met"])
+                    if convergence.threshold is not None
+                    else None
+                ),
                 "required_warm_successes": int(convergence.required_warm_successes),
-                "warm_threshold_hit_count": warm_aggregate["warm_threshold_hit_count"],
-                "warm_threshold_total_runs": warm_aggregate["warm_threshold_total_runs"],
-                "warm_threshold_success_rate": warm_aggregate["warm_threshold_success_rate"],
+                "warm_threshold_hit_count": (
+                    warm_aggregate["warm_threshold_hit_count"]
+                    if convergence.threshold is not None
+                    else None
+                ),
+                "warm_threshold_total_runs": (
+                    warm_aggregate["warm_threshold_total_runs"]
+                    if convergence.threshold is not None
+                    else None
+                ),
+                "warm_threshold_success_rate": (
+                    warm_aggregate["warm_threshold_success_rate"]
+                    if convergence.threshold is not None
+                    else None
+                ),
                 "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
                 "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
                 "stopped_on_budget": warm_aggregate["stopped_on_budget"],
@@ -1489,15 +1597,31 @@ def _run_align_profile(
                 "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
                 "final_stop_reason": warm_aggregate["final_stop_reason"],
                 "final_stop_level_factor": warm_aggregate["final_stop_level_factor"],
-                "first_threshold_crossing_level_factor": warm_aggregate["first_threshold_crossing_level_factor"],
+                "first_threshold_crossing_level_factor": (
+                    warm_aggregate["first_threshold_crossing_level_factor"]
+                    if convergence.threshold is not None
+                    else None
+                ),
                 "cold_seconds_to_quality_threshold": (
-                    first_convergence.seconds_to_threshold if first_convergence is not None else None
+                    first_convergence.seconds_to_threshold
+                    if first_convergence is not None and convergence.threshold is not None
+                    else None
                 ),
-                "warm_seconds_to_quality_threshold": warm_aggregate["warm_seconds_to_quality_threshold"],
+                "warm_seconds_to_quality_threshold": (
+                    warm_aggregate["warm_seconds_to_quality_threshold"]
+                    if convergence.threshold is not None
+                    else None
+                ),
                 "cold_outer_iters_to_quality_threshold": (
-                    first_convergence.outer_iters_to_threshold if first_convergence is not None else None
+                    first_convergence.outer_iters_to_threshold
+                    if first_convergence is not None and convergence.threshold is not None
+                    else None
                 ),
-                "warm_outer_iters_to_quality_threshold": warm_aggregate["warm_outer_iters_to_quality_threshold"],
+                "warm_outer_iters_to_quality_threshold": (
+                    warm_aggregate["warm_outer_iters_to_quality_threshold"]
+                    if convergence.threshold is not None
+                    else None
+                ),
                 "cold_best_quality_value": (
                     first_convergence.best_quality_value if first_convergence is not None else None
                 ),
@@ -1637,10 +1761,16 @@ def execute_profile(
         "quality_threshold_metric": None,
         "quality_threshold_value": None,
         "quality_threshold_met": None,
+        "time_budget_seconds": None,
         "required_warm_successes": None,
         "warm_threshold_hit_count": None,
         "warm_threshold_total_runs": None,
         "warm_threshold_success_rate": None,
+        "warm_gt_mse_mean": None,
+        "warm_gt_mse_median": None,
+        "warm_gt_mse_std": None,
+        "warm_trans_rmse_px_mean": None,
+        "warm_trans_rmse_px_median": None,
         "stopped_on_threshold": None,
         "stopped_on_plateau": None,
         "stopped_on_budget": None,
