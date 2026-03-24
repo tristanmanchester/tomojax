@@ -154,10 +154,20 @@ def _text_lines(
         f"reached_finest_level: {metrics.get('reached_finest_level')}",
         f"warm_mean_s: {metrics.get('warm_run_seconds_mean')}",
         f"warmup_s: {metrics.get('warmup_seconds')}",
+        f"warmup_incomplete: {metrics.get('warmup_incomplete')}",
+        f"primer_ran: {metrics.get('primer_ran')}",
+        f"primer_s: {metrics.get('primer_seconds')}",
         f"time_budget_s: {metrics.get('time_budget_seconds')}",
         f"peak_gpu_mb: {metrics.get('peak_gpu_memory_mb')}",
         f"gpu_scope: {metrics.get('gpu_memory_scope')}",
     ]
+    if metrics.get("warmup_stop_reason") is not None:
+        lines.append(f"warmup_stop_reason: {metrics.get('warmup_stop_reason')}")
+    if metrics.get("primer_reached_finest_level") is not None:
+        lines.append(
+            "primer_reached_finest_level: "
+            f"{metrics.get('primer_reached_finest_level')}"
+        )
     if metrics.get("invalid_reason"):
         lines.append(f"invalid_reason: {metrics.get('invalid_reason')}")
     if metrics.get("finest_level_first_elapsed_seconds") is not None:
