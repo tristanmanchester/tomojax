@@ -115,3 +115,6 @@ bench/data/
 bench/out/
 bench/results/
 results/
+
+# Local agent skill packs
+.agents/skills/jax-development/
