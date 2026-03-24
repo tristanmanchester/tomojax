@@ -47,6 +47,39 @@ def _should_prefer_gn_candidate(
     return candidate_ok and candidate_loss < current_loss
 
 
+def _second_difference_gram(n: int) -> jnp.ndarray:
+    if n < 3:
+        return jnp.zeros((n, n), dtype=jnp.float32)
+    d2 = jnp.zeros((n - 2, n), dtype=jnp.float32)
+    rows = jnp.arange(n - 2, dtype=jnp.int32)
+    d2 = d2.at[rows, rows].set(1.0)
+    d2 = d2.at[rows, rows + 1].set(-2.0)
+    d2 = d2.at[rows, rows + 2].set(1.0)
+    return d2.T @ d2
+
+
+def _smooth_gn_candidate(
+    params5: jnp.ndarray,
+    smoothness_gram: jnp.ndarray,
+    weights: jnp.ndarray,
+) -> jnp.ndarray:
+    """Project a per-view GN candidate through the quadratic curvature prior."""
+    n_views = int(params5.shape[0])
+    if n_views < 3:
+        return params5
+
+    eye = jnp.eye(n_views, dtype=jnp.float32)
+
+    def solve_one_dim(rhs: jnp.ndarray, weight: jnp.ndarray) -> jnp.ndarray:
+        return jax.lax.cond(
+            weight > 0.0,
+            lambda _: jnp.linalg.solve(eye + 2.0 * weight * smoothness_gram, rhs),
+            lambda _: rhs,
+            operand=None,
+        )
+
+    return jax.vmap(solve_one_dim, in_axes=(1, 0), out_axes=1)(params5, weights)
+
 @dataclass
 class AlignConfig:
     outer_iters: int = 5
@@ -157,6 +190,11 @@ def align(
     W_weights = jnp.array(
         [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32
     )
+    smoothness_gram = _second_difference_gram(n_views)
+    smoothness_weights_sq = W_weights * W_weights
+    medium_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.4)
+    trans_only_smoothness_weights_sq = smoothness_weights_sq.at[:3].set(0.0)
+    light_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.25)
 
     # Optional static volume mask before projection
     vol_mask = None
@@ -601,42 +639,70 @@ def align(
                 dp_chunk = dp_chunk_full[:chunk_len]
                 params5 = params5.at[idx].add(dp_chunk)
                 dp_all.append(dp_chunk)
-            # Compute post-update loss and accept/reject with simple backtracking on step scale
+            # Evaluate a small candidate set and keep the best acceptable step.
             loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
             if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
-                if loss_after >= loss_before:
-                    best_params = params5
-                    best_loss = loss_after
-                    accepted = loss_is_within_relative_tolerance(
-                        loss_before, loss_after, cfg.gn_accept_tol
-                    )
-                    # Try scaled steps: 0.5, 0.25
-                    try:
-                        dp_cat = jnp.concatenate(dp_all, axis=0)
-                        params_try = params5_prev + 0.5 * dp_cat
+                best_params = params5_prev
+                best_loss = float("inf")
+                accepted = False
+
+                def _consider_candidate(candidate: jnp.ndarray, candidate_loss: float) -> None:
+                    nonlocal best_params, best_loss, accepted
+                    if _should_prefer_gn_candidate(
+                        loss_before, best_loss, candidate_loss, cfg.gn_accept_tol
+                    ):
+                        best_params = candidate
+                        best_loss = candidate_loss
+                        accepted = True
+
+                try:
+                    _consider_candidate(params5, loss_after)
+                    dp_cat = jnp.concatenate(dp_all, axis=0)
+                    for scale in (0.5, 0.25):
+                        params_try = params5_prev + jnp.float32(scale) * dp_cat
                         loss_try = float(align_loss_jit(params_try, x))
-                        if _should_prefer_gn_candidate(
-                            loss_before, best_loss, loss_try, cfg.gn_accept_tol
-                        ):
-                            best_params = params_try
-                            best_loss = loss_try
-                            accepted = True
-                        params_try2 = params5_prev + 0.25 * dp_cat
-                        loss_try2 = float(align_loss_jit(params_try2, x))
-                        if _should_prefer_gn_candidate(
-                            loss_before, best_loss, loss_try2, cfg.gn_accept_tol
-                        ):
-                            best_params = params_try2
-                            best_loss = loss_try2
-                            accepted = True
-                    except Exception:
-                        pass
-                    if accepted:
-                        params5 = best_params
-                        loss_after = best_loss
-                    else:
-                        params5 = params5_prev
-                        loss_after = loss_before
+                        _consider_candidate(params_try, loss_try)
+                    if int(params5.shape[0]) >= 3 and bool(jnp.any(smoothness_weights_sq > 0.0)):
+                        for scale in (1.0, 0.5):
+                            params_try = params5_prev + jnp.float32(scale) * dp_cat
+                            params_medium_smooth = _smooth_gn_candidate(
+                                params_try,
+                                smoothness_gram,
+                                medium_smoothness_weights_sq,
+                            )
+                            loss_medium_smooth = float(align_loss_jit(params_medium_smooth, x))
+                            _consider_candidate(params_medium_smooth, loss_medium_smooth)
+                            params_light_smooth = _smooth_gn_candidate(
+                                params_try,
+                                smoothness_gram,
+                                light_smoothness_weights_sq,
+                            )
+                            loss_light_smooth = float(align_loss_jit(params_light_smooth, x))
+                            _consider_candidate(params_light_smooth, loss_light_smooth)
+                            params_smooth = _smooth_gn_candidate(
+                                params_try,
+                                smoothness_gram,
+                                smoothness_weights_sq,
+                            )
+                            loss_smooth = float(align_loss_jit(params_smooth, x))
+                            _consider_candidate(params_smooth, loss_smooth)
+                            if bool(jnp.any(trans_only_smoothness_weights_sq > 0.0)):
+                                params_trans_smooth = _smooth_gn_candidate(
+                                    params_try,
+                                    smoothness_gram,
+                                    trans_only_smoothness_weights_sq,
+                                )
+                                loss_trans_smooth = float(align_loss_jit(params_trans_smooth, x))
+                                _consider_candidate(params_trans_smooth, loss_trans_smooth)
+                except Exception:
+                    pass
+
+                if accepted:
+                    params5 = best_params
+                    loss_after = best_loss
+                else:
+                    params5 = params5_prev
+                    loss_after = loss_before
             # Log step stats
             if dp_all:
                 try:
