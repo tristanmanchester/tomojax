@@ -161,6 +161,10 @@ def _text_lines(
         f"peak_gpu_mb: {metrics.get('peak_gpu_memory_mb')}",
         f"gpu_scope: {metrics.get('gpu_memory_scope')}",
     ]
+    if metrics.get("representative_run_index") is not None:
+        lines.append(
+            f"representative_run_index: {metrics.get('representative_run_index')}"
+        )
     if metrics.get("warmup_stop_reason") is not None:
         lines.append(f"warmup_stop_reason: {metrics.get('warmup_stop_reason')}")
     if metrics.get("primer_reached_finest_level") is not None:
@@ -185,6 +189,8 @@ def _text_lines(
             "threshold: "
             f"{metrics.get('quality_threshold_metric')}<={metrics.get('quality_threshold_value')}"
         )
+        if metrics.get("quality_threshold_scope") is not None:
+            lines.append(f"threshold_scope: {metrics.get('quality_threshold_scope')}")
         lines.append(f"threshold_met: {metrics.get('quality_threshold_met')}")
         lines.append(f"stopped_on_threshold: {metrics.get('stopped_on_threshold')}")
         lines.append(f"stopped_on_plateau: {metrics.get('stopped_on_plateau')}")
@@ -198,6 +204,18 @@ def _text_lines(
         lines.append(
             f"warm_s_to_threshold: {metrics.get('warm_seconds_to_quality_threshold')}"
         )
+    if metrics.get("quality_contract_met") is not None:
+        lines.append(f"quality_contract_met: {metrics.get('quality_contract_met')}")
+    if metrics.get("warm_seconds_to_quality_contract") is not None:
+        lines.append(
+            f"warm_s_to_contract: {metrics.get('warm_seconds_to_quality_contract')}"
+        )
+    if metrics.get("memory_guard_value_mb") is not None:
+        lines.append(f"memory_guard_mb: {metrics.get('memory_guard_value_mb')}")
+    if metrics.get("memory_guard_penalty") is not None:
+        lines.append(f"memory_guard_penalty: {metrics.get('memory_guard_penalty')}")
+    if metrics.get("objective_time_memguard") is not None:
+        lines.append(f"objective_time_memguard: {metrics.get('objective_time_memguard')}")
     if quality.get("rot_rmse_deg") is not None:
         lines.append(f"rot_rmse_deg: {quality.get('rot_rmse_deg')}")
     if quality.get("trans_gf_rmse_px") is not None:
@@ -236,6 +254,7 @@ def save_alignment_summary(
     metrics: dict[str, Any],
     quality: dict[str, Any],
     fixture: dict[str, Any],
+    representative_run_index: int | None = None,
 ) -> Path:
     gt_volume = np.asarray(gt_volume, dtype=np.float32)
     baseline_volume = np.asarray(baseline_volume, dtype=np.float32)

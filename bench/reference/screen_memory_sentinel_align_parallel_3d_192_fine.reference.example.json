@@ -1,0 +1,18 @@
+{
+  "profile": "screen_memory_sentinel_align_parallel_3d_192_fine",
+  "description": "Illustrative reference values only. Recompute from baseline repeats before adoption.",
+  "calibration_commit": "<fill-me>",
+  "calibration_date_utc": "<fill-me>",
+  "memory_caps": {
+    "metric_preference": [
+      "peak_gpu_memory_process_mb",
+      "peak_gpu_memory_mb"
+    ],
+    "soft_cap_mb": 4200.0,
+    "hard_cap_mb": 5200.0
+  },
+  "notes": [
+    "The sentinel is intended to land in a materially larger memory regime than the main screen.",
+    "If the calibrated baseline is still too low to be informative, increase the sentinel size until it is useful."
+  ]
+}

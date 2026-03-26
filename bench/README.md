@@ -35,6 +35,9 @@ These are the profiles the controller should use in the inner optimisation loop.
 - `screen_memory_parallel_fista_128`: `128^3`, 160-view parallel-beam FISTA-TV memory screen.
 - `screen_accuracy_align_parallel_3d_96`: `96^3`, 144-view noisy 3D alignment screen.
 - `screen_convergence_align_parallel_3d_96`: `96^3`, 144-view noisy 3D alignment time-to-threshold screen.
+- `screen_ttq_memguard_align_parallel_3d_96`: `96^3`, 144-view noisy 3D alignment screen scored by time to a finest-level quality contract with a soft memory guard.
+- `screen_ttq_memguard_align_parallel_3d_96_holdout`: same workload as the TTQ screen, different seeds for hidden holdout confirmation.
+- `screen_memory_sentinel_align_parallel_3d_192_fine`: larger-shape fine-level memory sentinel used to catch bad scaling.
 
 ### Canary suite
 
@@ -45,6 +48,8 @@ These are slower confirmation profiles. Do not use them as the main search loop;
 - `canary_lamino_fbp_128`: `128^3`, 320-view laminography reconstruction.
 - `canary_align_parallel_3d_128_noisy`: `128×128×96`, 180-view noisy 3D alignment.
 - `canary_convergence_align_parallel_3d_128_noisy`: `128×128×96`, 180-view noisy 3D alignment time-to-threshold confirmation.
+- `canary_ref_align_parallel_3d_128_noisy`: operational TTQ canary with one scored warm run and coherent summary output.
+- `canary_measure_align_parallel_3d_128_noisy`: repeated measurement canary for close calls and significance checks.
 
 All objectives are lower-is-better.
 
@@ -52,7 +57,8 @@ All objectives are lower-is-better.
 
 The repo still ships a tiny tracked smoke fixture under `bench/fixtures/`, but the larger,
 more representative profiles intentionally generate persistent benchmark datasets under
-`bench/data/` on first use.
+`bench/data/` on first use. Set `TOMOJAX_BENCH_DATA_ROOT` to move these generated fixtures
+outside the checkout, which is the preferred setup for remote workers using ephemeral clones.
 
 That keeps the repository light while still giving each remote worker a stable dataset after its
 first preparation run. The benchmark timing starts only after fixture generation, so the metrics
@@ -116,5 +122,8 @@ On Runpod, keep persistent data under `/workspace`, especially:
 - Representative alignment profiles enable visualization by default, and they already use the richer `random_shapes` phantom family from generated benchmark data.
 - Alignment profiles support `visualization.enabled: false` if you need to suppress the summary PNG for a specific run.
 - Alignment benchmarks now support synthetic observation noise, so the accuracy screens are closer to real reconstruction/alignment use.
-- Convergence-mode alignment profiles add a `convergence:` block. Their objective is usually `warm_seconds_to_quality_threshold`, and threshold misses are valid benchmark outcomes with `quality_threshold_met: false`.
+- Convergence-mode alignment profiles add a `convergence:` block. `threshold_scope: finest_only` means the reported crossing only counts once the finest level satisfies the threshold, even if coarser levels cross it earlier.
+- TTQ profiles add `quality_contract:` and `objective_policy:` blocks. These produce `quality_contract_met`, `warm_seconds_to_quality_contract`, `memory_guard_*`, and `objective_time_memguard`.
+- Versioned JSON files under `bench/reference/` freeze the calibration thresholds and memory caps used by the TTQ screen, sentinel, and operational canary.
 - `align.outer_iters` and `align.recon_iters` remain the maximum work budget for convergence profiles. The run stops at the first outer iteration whose measured quality crosses the threshold when `convergence.stop_on_threshold: true`.
+- Use the operational canary (`canary_ref_*`) for normal promotion decisions and keep the repeated measurement canary (`canary_measure_*`) for significance checks. Their summaries should not be compared as if they were the same benchmark mode.

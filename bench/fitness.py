@@ -25,6 +25,7 @@ BENCH_ROOT = Path(__file__).resolve().parent
 PROFILES_DIR = BENCH_ROOT / "profiles"
 FIXTURES_DIR = BENCH_ROOT / "fixtures"
 DATA_DIR = BENCH_ROOT / "data"
+REFERENCE_DIR = BENCH_ROOT / "reference"
 OUT_DIR = BENCH_ROOT / "out"
 MB = 1024.0 * 1024.0
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -111,6 +112,7 @@ class ConvergenceConfig:
     enabled: bool = False
     metric: str = "gt_mse"
     threshold: float | None = None
+    threshold_scope: str = "any"
     stop_on_threshold: bool = True
     stop_on_plateau: bool = True
     min_finest_level_checks: int = 2
@@ -175,6 +177,224 @@ def _is_meaningful_relative_improvement(
         delta = previous_best - current_value
         return delta >= (max(abs(previous_best), 1e-12) * float(rel_tol))
     return False
+
+
+def _bench_data_root() -> Path:
+    root = os.environ.get("TOMOJAX_BENCH_DATA_ROOT")
+    return Path(root).expanduser() if root else DATA_DIR
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"Expected a JSON object: {path}")
+    return payload
+
+
+def _resolve_reference_path(reference_file: str | None) -> Path | None:
+    if not reference_file:
+        return None
+    candidate = Path(str(reference_file)).expanduser()
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    for base in (REPO_ROOT, BENCH_ROOT, REFERENCE_DIR):
+        resolved = (base / candidate).resolve()
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _profile_reference(profile: dict[str, Any]) -> dict[str, Any]:
+    objective_policy = dict(profile.get("objective_policy") or {})
+    quality_contract = dict(profile.get("quality_contract") or {})
+    reference_file = (
+        objective_policy.get("reference_file")
+        or quality_contract.get("reference_file")
+        or profile.get("reference_file")
+    )
+    reference_path = _resolve_reference_path(
+        str(reference_file) if reference_file is not None else None
+    )
+    if reference_path is None:
+        return {}
+    try:
+        return _load_json_object(reference_path)
+    except Exception:
+        return {}
+
+
+def _profile_block(profile: dict[str, Any], block_name: str) -> dict[str, Any]:
+    reference = _profile_reference(profile)
+    merged = dict(reference.get(block_name) or {})
+    merged.update(dict(profile.get(block_name) or {}))
+    return merged
+
+
+def _first_available_metric(
+    metrics: dict[str, Any], names: list[str]
+) -> tuple[str | None, float | None]:
+    for name in names:
+        value = _float_or_none(metrics.get(name))
+        if value is not None:
+            return name, value
+    return None, None
+
+
+def _quality_contract_crossing(
+    trace: list[dict[str, Any]],
+    *,
+    finest_only: bool,
+    gt_mse_max: float | None,
+    trans_gf_rmse_px_max: float | None,
+) -> dict[str, Any]:
+    finest_level: int | None = None
+    if finest_only:
+        levels = [
+            int(level)
+            for point in trace
+            for level in [point.get("level_factor")]
+            if level is not None
+        ]
+        finest_level = min(levels) if levels else None
+
+    for point in trace:
+        level_factor = point.get("level_factor")
+        level_factor_int = int(level_factor) if level_factor is not None else None
+        if finest_only and finest_level is not None and level_factor_int != finest_level:
+            continue
+        quality_value = _float_or_none(point.get("quality_value"))
+        trans_gf_rmse_px = _float_or_none(point.get("trans_gf_rmse_px"))
+        if gt_mse_max is not None and (
+            quality_value is None or quality_value > float(gt_mse_max)
+        ):
+            continue
+        if trans_gf_rmse_px_max is not None and (
+            trans_gf_rmse_px is None or trans_gf_rmse_px > float(trans_gf_rmse_px_max)
+        ):
+            continue
+        outer_idx = point.get("outer_idx")
+        return {
+            "quality_contract_met": True,
+            "elapsed_seconds": _float_or_none(point.get("elapsed_seconds")),
+            "outer_idx": int(outer_idx) if outer_idx is not None else None,
+            "level_factor": level_factor_int,
+            "quality_value": quality_value,
+            "trans_gf_rmse_px": trans_gf_rmse_px,
+        }
+
+    return {
+        "quality_contract_met": False,
+        "elapsed_seconds": None,
+        "outer_idx": None,
+        "level_factor": None,
+        "quality_value": None,
+        "trans_gf_rmse_px": None,
+    }
+
+
+def _apply_time_memguard_objective(
+    metrics: dict[str, Any], profile: dict[str, Any]
+) -> dict[str, Any]:
+    quality_contract = _profile_block(profile, "quality_contract")
+    objective_policy = _profile_block(profile, "objective_policy")
+    if not quality_contract and not objective_policy:
+        return {}
+    if objective_policy.get("kind") != "time_to_quality_contract_with_soft_memory_cap":
+        return {}
+
+    trace = list(metrics.get("warm_convergence_trace") or [])
+    contract = _quality_contract_crossing(
+        trace,
+        finest_only=bool(quality_contract.get("finest_only", True)),
+        gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
+        trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
+    )
+
+    time_budget_seconds = _float_or_none(metrics.get("time_budget_seconds")) or 0.0
+    miss_penalty_seconds = _float_or_none(
+        objective_policy.get("miss_penalty_seconds")
+    ) or 0.0
+    quality_contract_met = bool(contract["quality_contract_met"])
+    time_metric_value = _float_or_none(contract.get("elapsed_seconds"))
+    if quality_contract_met and time_metric_value is None:
+        quality_contract_met = False
+    time_term = (
+        float(time_metric_value)
+        if quality_contract_met and time_metric_value is not None
+        else float(time_budget_seconds + miss_penalty_seconds)
+    )
+
+    memory_metric_names = list(
+        objective_policy.get("memory_metric_preference")
+        or ((_profile_reference(profile).get("memory_caps") or {}).get("metric_preference") or [])
+        or ["peak_gpu_memory_process_mb", "peak_gpu_memory_mb"]
+    )
+    memory_metric_name, memory_value = _first_available_metric(
+        metrics, [str(name) for name in memory_metric_names]
+    )
+    soft_cap_mb = _float_or_none(objective_policy.get("memory_soft_cap_mb"))
+    hard_cap_mb = _float_or_none(objective_policy.get("memory_hard_cap_mb"))
+    if soft_cap_mb is None:
+        soft_cap_mb = _float_or_none(
+            (_profile_reference(profile).get("memory_caps") or {}).get("soft_cap_mb")
+        )
+    if hard_cap_mb is None:
+        hard_cap_mb = _float_or_none(
+            (_profile_reference(profile).get("memory_caps") or {}).get("hard_cap_mb")
+        )
+    penalty_weight = _float_or_none(
+        objective_policy.get("memory_penalty_weight")
+    ) or 0.35
+    penalty_power = _float_or_none(objective_policy.get("memory_penalty_power")) or 2.0
+    invalidate_on_hard_cap = bool(
+        objective_policy.get("invalidate_on_hard_cap", True)
+    )
+
+    memory_guard_penalty = 0.0
+    invalid = False
+    invalid_reason = None
+    if memory_value is not None and soft_cap_mb is not None:
+        if hard_cap_mb is not None and memory_value >= hard_cap_mb:
+            if invalidate_on_hard_cap:
+                invalid = True
+                invalid_reason = "memory_hard_cap"
+            else:
+                denom = max(hard_cap_mb - soft_cap_mb, 1e-9)
+                excess = max((memory_value - soft_cap_mb) / denom, 0.0)
+                memory_guard_penalty = time_term * penalty_weight * (excess ** penalty_power)
+        elif memory_value > soft_cap_mb and hard_cap_mb is not None:
+            denom = max(hard_cap_mb - soft_cap_mb, 1e-9)
+            excess = max((memory_value - soft_cap_mb) / denom, 0.0)
+            memory_guard_penalty = time_term * penalty_weight * (excess ** penalty_power)
+        elif memory_value > soft_cap_mb:
+            denom = max(soft_cap_mb, 1e-9)
+            excess = max((memory_value - soft_cap_mb) / denom, 0.0)
+            memory_guard_penalty = time_term * penalty_weight * (excess ** penalty_power)
+
+    objective_value = None if invalid else float(time_term + memory_guard_penalty)
+    quality_contract_miss_reason = None
+    if not quality_contract_met:
+        quality_contract_miss_reason = "contract_not_met"
+    elif invalid:
+        quality_contract_miss_reason = invalid_reason
+
+    return {
+        "quality_threshold_scope": (
+            "finest_only" if bool(quality_contract.get("finest_only", True)) else "any"
+        ),
+        "quality_contract_met": quality_contract_met,
+        "quality_contract_miss_reason": quality_contract_miss_reason,
+        "warm_seconds_to_quality_contract": contract.get("elapsed_seconds"),
+        "warm_outer_iters_to_quality_contract": contract.get("outer_idx"),
+        "first_quality_contract_crossing_level_factor": contract.get("level_factor"),
+        "memory_guard_metric_name": memory_metric_name,
+        "memory_guard_value_mb": memory_value,
+        "memory_soft_cap_mb": soft_cap_mb,
+        "memory_hard_cap_mb": hard_cap_mb,
+        "memory_guard_penalty": float(memory_guard_penalty),
+        "objective_time_memguard": objective_value,
+    }
 
 
 def _aggregate_warm_convergence_runs(
@@ -558,7 +778,7 @@ def _ensure_fixture(
     if fixture_name:
         fixture_path = FIXTURES_DIR / str(fixture_name)
     else:
-        fixture_path = DATA_DIR / f"{profile['name']}.npz"
+        fixture_path = _bench_data_root() / f"{profile['name']}.npz"
     generated = False
     if fixture_path.exists():
         _emit_progress(
@@ -612,12 +832,14 @@ def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
     enabled = bool(raw.get("enabled", False))
     metric = str(raw.get("metric", "gt_mse"))
     threshold = _float_or_none(raw.get("threshold"))
+    threshold_scope = str(raw.get("threshold_scope", "any")).strip().lower() or "any"
     stop_on_threshold = bool(raw.get("stop_on_threshold", True))
     stop_on_plateau = bool(raw.get("stop_on_plateau", True))
     return ConvergenceConfig(
         enabled=enabled,
         metric=metric,
         threshold=threshold,
+        threshold_scope=threshold_scope,
         stop_on_threshold=stop_on_threshold,
         stop_on_plateau=stop_on_plateau,
         min_finest_level_checks=max(1, int(raw.get("min_finest_level_checks", 2))),
@@ -705,6 +927,7 @@ def _convergence_summary_from_trace(
     *,
     metric: str,
     threshold: float | None,
+    threshold_scope: str = "any",
     trace: list[dict[str, Any]],
     stopped_on_threshold: bool = False,
     stopped_on_plateau: bool = False,
@@ -731,10 +954,13 @@ def _convergence_summary_from_trace(
             best_quality_value = quality_value
             best_quality_elapsed_seconds = elapsed_seconds
 
-        if (
-            seconds_to_threshold is None
-            and _quality_threshold_met(metric, threshold, quality_value)
-        ):
+        trace_threshold_met = point.get("threshold_met")
+        threshold_hit = (
+            bool(trace_threshold_met)
+            if trace_threshold_met is not None
+            else _quality_threshold_met(metric, threshold, quality_value)
+        )
+        if seconds_to_threshold is None and threshold_hit:
             seconds_to_threshold = elapsed_seconds
             try:
                 level_factor = point.get("level_factor")
@@ -1136,10 +1362,13 @@ def _make_align_task(
             and global_elapsed is not None
             and global_elapsed >= float(time_budget_seconds)
         )
-        threshold_hit = _quality_threshold_met(
+        raw_threshold_hit = _quality_threshold_met(
             convergence.metric, convergence.threshold, quality_value
         )
         is_finest_level = level_factor == finest_factor
+        threshold_hit = raw_threshold_hit and (
+            convergence.threshold_scope != "finest_only" or is_finest_level
+        )
         level_checks += 1
         warmup_target_hit = bool(stop_on_first_finest_level and is_finest_level)
         if _is_meaningful_relative_improvement(
@@ -1186,6 +1415,7 @@ def _make_align_task(
                 "trans_gf_rmse_px": trans_gf_rmse_px,
                 "loss_after": _float_or_none(stat.get("loss_after")),
                 "threshold_met": threshold_hit,
+                "raw_threshold_met": raw_threshold_hit,
                 "is_finest_level": is_finest_level,
                 "plateau_streak": plateau_streak,
                 "action": action,
@@ -1265,6 +1495,7 @@ def _make_align_task(
                 _convergence_summary_from_trace(
                     metric=convergence.metric,
                     threshold=convergence.threshold,
+                    threshold_scope=convergence.threshold_scope,
                     trace=list(trace),
                     stopped_on_threshold=(stop_reason == "threshold"),
                     stopped_on_plateau=(stop_reason == "plateau"),
@@ -1629,15 +1860,21 @@ def _run_align_profile(
     if primer is not None:
         primer_convergence = primer.output.get("convergence")
     first = warms[0]
+    representative_run_index = len(warms) - 1
+    representative_run = warms[representative_run_index]
     warm_seconds = [run.seconds for run in warms]
-    warm_params = np.asarray(mods.jax.device_get(warms[-1].output["params"]), dtype=np.float32)
-    final_volume = np.asarray(mods.jax.device_get(warms[-1].output["volume"]), dtype=np.float32)
-    final_info = warms[-1].output.get("info") or {}
+    warm_params = np.asarray(
+        mods.jax.device_get(representative_run.output["params"]), dtype=np.float32
+    )
+    final_volume = np.asarray(
+        mods.jax.device_get(representative_run.output["volume"]), dtype=np.float32
+    )
+    final_info = representative_run.output.get("info") or {}
     first_convergence = first.output.get("convergence")
     warm_convergences = [
         run.output.get("convergence") for run in warms if run.output.get("convergence") is not None
     ]
-    warm_convergence = warms[-1].output.get("convergence")
+    warm_convergence = representative_run.output.get("convergence")
 
     gt_params = np.asarray(bundle.align_params, dtype=np.float32)
     warm_gt_mse_values: list[float] = []
@@ -1798,6 +2035,7 @@ def _run_align_profile(
             "gt_mse": gt_mse,
         },
         "time_budget_seconds": time_budget_seconds,
+        "quality_threshold_scope": convergence.threshold_scope,
         "warm_gt_mse_mean": _mean_or_none(warm_gt_mse_values),
         "warm_gt_mse_median": _median_or_none(warm_gt_mse_values),
         "warm_gt_mse_std": (
@@ -1813,6 +2051,7 @@ def _run_align_profile(
         ),
         "summary_image_path": None,
         "summary_image_error": None,
+        "representative_run_index": representative_run_index,
         "warmup_reached_finest_level": (
             warmup_convergence.reached_finest_level if warmup_convergence is not None else None
         ),
@@ -1829,6 +2068,7 @@ def _run_align_profile(
             {
                 "quality_threshold_metric": convergence.metric,
                 "quality_threshold_value": convergence.threshold,
+                "quality_threshold_scope": convergence.threshold_scope,
                 "quality_threshold_met": (
                     bool(warm_aggregate["quality_threshold_met"])
                     if convergence.threshold is not None
@@ -1925,6 +2165,25 @@ def _run_align_profile(
             }
         )
         metrics["success"] = bool(warm_aggregate["benchmark_valid"])
+    objective_policy_metrics = _apply_time_memguard_objective(metrics, profile)
+    if objective_policy_metrics:
+        if first_convergence is not None:
+            quality_contract = _profile_block(profile, "quality_contract")
+            cold_contract = _quality_contract_crossing(
+                list(first_convergence.trace or []),
+                finest_only=bool(quality_contract.get("finest_only", True)),
+                gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
+                trans_gf_rmse_px_max=_float_or_none(
+                    quality_contract.get("trans_gf_rmse_px_max")
+                ),
+            )
+            objective_policy_metrics["cold_seconds_to_quality_contract"] = cold_contract.get(
+                "elapsed_seconds"
+            )
+            objective_policy_metrics["cold_outer_iters_to_quality_contract"] = cold_contract.get(
+                "outer_idx"
+            )
+        metrics.update(objective_policy_metrics)
     if _should_render_alignment_summary(profile):
         summary_path = _alignment_summary_path(out_path)
         try:
@@ -1942,6 +2201,7 @@ def _run_align_profile(
                 metrics=metrics,
                 quality=dict(metrics["quality"]),
                 fixture=bundle.shape_summary,
+                representative_run_index=metrics.get("representative_run_index"),
             )
             metrics["summary_image_path"] = str(summary_path)
         except Exception as exc:
@@ -1987,7 +2247,7 @@ def execute_profile(
 ) -> dict[str, Any]:
     out_path = out_path.resolve()
     _ensure_dir(out_path.parent)
-    _ensure_dir(DATA_DIR)
+    _ensure_dir(_bench_data_root())
     _ensure_dir(OUT_DIR)
 
     profile_path = _resolve_profile_path(profile_arg, profile_root)
@@ -2043,6 +2303,9 @@ def execute_profile(
         "quality_threshold_metric": None,
         "quality_threshold_value": None,
         "quality_threshold_met": None,
+        "quality_threshold_scope": None,
+        "quality_contract_met": None,
+        "quality_contract_miss_reason": None,
         "warmup_reached_finest_level": None,
         "warmup_stop_reason": None,
         "time_budget_seconds": None,
@@ -2075,8 +2338,20 @@ def execute_profile(
         "warm_seconds_to_quality_threshold": None,
         "cold_outer_iters_to_quality_threshold": None,
         "warm_outer_iters_to_quality_threshold": None,
+        "cold_seconds_to_quality_contract": None,
+        "warm_seconds_to_quality_contract": None,
+        "cold_outer_iters_to_quality_contract": None,
+        "warm_outer_iters_to_quality_contract": None,
         "best_quality_value": None,
         "best_quality_elapsed_seconds": None,
+        "first_quality_contract_crossing_level_factor": None,
+        "memory_guard_metric_name": None,
+        "memory_guard_value_mb": None,
+        "memory_soft_cap_mb": None,
+        "memory_hard_cap_mb": None,
+        "memory_guard_penalty": None,
+        "objective_time_memguard": None,
+        "representative_run_index": None,
         "total_outer_iters_executed": None,
         "cold_convergence_trace": [],
         "warm_convergence_trace": [],

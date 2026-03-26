@@ -1,0 +1,92 @@
+name: canary_ref_align_parallel_3d_128_noisy
+task: align
+objective_name: objective_time_memguard
+objective_direction: minimise
+warm_runs: 1
+jax_cache_dir: null
+env:
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+measurement:
+  gpu_memory: true
+  host_rss: true
+  gpu_poll_interval_seconds: 0.05
+  host_poll_interval_seconds: 0.05
+visualization:
+  enabled: true
+convergence:
+  enabled: true
+  metric: gt_mse
+  threshold: 0.30
+  threshold_scope: finest_only
+  stop_on_threshold: true
+  stop_on_plateau: true
+  min_finest_level_checks: 1
+  plateau_patience: 2
+  rel_improvement_tol: 0.01
+  required_warm_successes: 1
+quality_contract:
+  finest_only: true
+  gt_mse_max: 0.30
+  trans_gf_rmse_px_max: 0.75
+objective_policy:
+  kind: time_to_quality_contract_with_soft_memory_cap
+  output_metric: objective_time_memguard
+  time_metric: warm_seconds_to_quality_contract
+  miss_penalty_seconds: 180.0
+  memory_metric_preference:
+    - peak_gpu_memory_process_mb
+    - peak_gpu_memory_mb
+  reference_file: bench/reference/canary_ref_align_parallel_3d_128_noisy.reference.example.json
+  memory_soft_cap_mb: 2200.0
+  memory_hard_cap_mb: 3200.0
+  memory_penalty_weight: 0.35
+  memory_penalty_power: 2.0
+  invalidate_on_hard_cap: true
+align:
+  warmup_enabled: true
+  warmup_time_budget_seconds: 180
+  warmup_stop_on_first_finest_level: true
+  warmup_outer_iters: 1
+  warmup_recon_iters: 1
+  time_budget_seconds: 900
+  levels: [4, 2, 1]
+  outer_iters: 6
+  recon_iters: 15
+  lambda_tv: 0.003
+  tv_prox_iters: 8
+  recon_rel_tol: null
+  recon_patience: 0
+  views_per_batch: 1
+  projector_unroll: 1
+  checkpoint_projector: true
+  gather_dtype: bf16
+  opt_method: gn
+  gn_damping: 0.001
+  w_rot: 0.001
+  w_trans: 0.001
+  early_stop: false
+  loss_kind: l2_otsu
+  k_step: 1
+data:
+  nx: 128
+  ny: 128
+  nz: 96
+  nu: 128
+  nv: 96
+  n_views: 180
+  geometry: parallel
+  phantom: random_shapes
+  n_cubes: 36
+  n_spheres: 36
+  min_size: 4
+  max_size: 20
+  min_value: 0.05
+  max_value: 1.0
+  noise: poisson
+  noise_level: 4000
+  seed: 69
+  misalignment:
+    rot_deg: 1.25
+    trans_px: 8.0
+    include_phi: true
+    seed: 69

@@ -1,0 +1,30 @@
+{
+  "profile": "canary_ref_align_parallel_3d_128_noisy",
+  "description": "Illustrative reference values only. Recompute from baseline repeats before adoption.",
+  "calibration_commit": "<fill-me>",
+  "calibration_date_utc": "<fill-me>",
+  "quality_contract": {
+    "gt_mse_max": 0.30,
+    "trans_gf_rmse_px_max": 0.75,
+    "finest_only": true
+  },
+  "memory_caps": {
+    "metric_preference": [
+      "peak_gpu_memory_process_mb",
+      "peak_gpu_memory_mb"
+    ],
+    "soft_cap_mb": 2200.0,
+    "hard_cap_mb": 3200.0
+  },
+  "objective_policy": {
+    "kind": "time_to_quality_contract_with_soft_memory_cap",
+    "memory_penalty_weight": 0.35,
+    "memory_penalty_power": 2.0,
+    "miss_penalty_seconds": 180.0,
+    "invalidate_on_hard_cap": true
+  },
+  "notes": [
+    "This file should be versioned and human-owned.",
+    "Use it for the operational canary only."
+  ]
+}
