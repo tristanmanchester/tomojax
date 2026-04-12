@@ -201,41 +201,14 @@ def _apply_step(
 def _apply_box(
     schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
 ) -> None:
-    """Apply a box pulse: step up by delta at 'at', then down after a width."""
-    # Step up
+    """Apply a finite box pulse over the requested width/until window.
+
+    `_apply_step` already supports finite windows via width/until parameters, so
+    a box is just a bounded step. Trying to add a synthetic "step down" after the
+    window creates an inverse pulse or a persistent tail instead of returning to
+    baseline.
+    """
     _apply_step(schedule, thetas_deg, params)
-    # Step down
-    # Build params for the end step
-    end_params = dict(params)
-    if "width_index" in params or "until_index" in params:
-        if "width_index" in params:
-            end_params["at_index"] = str(
-                int(params.get("at_index", params.get("at", 0)))
-                + int(params["width_index"])
-            )
-        # if until_index is present, we step down at that index
-        if "until_index" in params:
-            end_params["at_index"] = params["until_index"]
-    else:
-        # angle domain width
-        if "width_deg" in params:
-            # at + width
-            at_deg = float(
-                _parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0]
-            )
-            end_params["at"] = str(
-                at_deg + float(_parse_number_with_unit(params["width_deg"])[0])
-            )
-        elif "until_deg" in params:
-            end_params["at"] = params["until_deg"]
-    # invert the step
-    if "to" in end_params:
-        # Returning to zero level (absolute)
-        end_params["to"] = "0"
-    elif "delta" in end_params:
-        v, _ = _parse_number_with_unit(end_params["delta"])
-        end_params["delta"] = str(-float(v))
-    _apply_step(schedule, thetas_deg, end_params)
 
 
 def _build_schedules(

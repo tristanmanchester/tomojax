@@ -7,6 +7,7 @@ import pytest
 
 from tomojax.core.geometry import Grid, Detector
 from tomojax.data.io_hdf5 import save_nxtomo, load_nxtomo
+from tomojax.cli.misalign import _apply_box
 
 
 if sys.version_info < (3, 8):
@@ -94,3 +95,47 @@ def test_dx_step_absolute_hold(tmp_path):
     assert np.allclose(dx[:at], 0.0, atol=0.25)
     assert np.allclose(dx[at:], 5.0 * float(det.du), atol=0.25)
 
+
+def test_apply_box_width_deg_returns_to_baseline_without_inverse_pulse():
+    n_views = 100
+    thetas_deg = jnp.linspace(0, 180, n_views, endpoint=False)
+    schedule = np.zeros(n_views, dtype=np.float32)
+
+    _apply_box(schedule, thetas_deg, {"at": "60deg", "width_deg": "20", "delta": "-4px"})
+
+    nonzero = np.where(schedule != 0)[0]
+    assert nonzero.tolist() == list(range(33, 45))
+    assert np.allclose(schedule[nonzero], -4.0)
+    assert np.allclose(schedule[45:], 0.0)
+
+
+def test_apply_box_width_index_has_no_inverse_tail():
+    thetas_deg = jnp.linspace(0, 180, 10, endpoint=False)
+    schedule = np.zeros(10, dtype=np.float32)
+
+    _apply_box(
+        schedule,
+        thetas_deg,
+        {"at_index": "2", "width_index": "2", "delta": "5", "domain": "index"},
+    )
+
+    np.testing.assert_allclose(
+        schedule,
+        np.array([0.0, 0.0, 5.0, 5.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+    )
+
+
+def test_apply_box_absolute_to_stays_within_window():
+    thetas_deg = jnp.linspace(0, 180, 10, endpoint=False)
+    schedule = np.zeros(10, dtype=np.float32)
+
+    _apply_box(
+        schedule,
+        thetas_deg,
+        {"at_index": "2", "width_index": "2", "to": "5", "domain": "index"},
+    )
+
+    np.testing.assert_allclose(
+        schedule,
+        np.array([0.0, 0.0, 5.0, 5.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+    )
