@@ -355,7 +355,10 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
         if grid_meta is not None:
             s = _attr_to_str(grid_meta)
             if s:
-                out["grid"] = json.loads(s)
+                try:
+                    out["grid"] = json.loads(s)
+                except Exception:
+                    pass
 
         # Detector metadata (fallback to defaults if missing)
         try:

@@ -116,6 +116,26 @@ def test_no_change_for_projections_shape(tmp_path):
     assert meta["projections"].shape == projections.shape
 
 
+def test_load_ignores_malformed_grid_metadata_without_volume_fallback(tmp_path):
+    path = tmp_path / "malformed_grid_meta.nxs"
+    projections = _basic_projections()
+    save_nxtomo(
+        path,
+        projections=projections,
+        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
+        grid=GRID_META,
+        detector=DET_META,
+        geometry_type="parallel",
+    )
+    with h5py.File(path, "r+") as f:
+        f["/entry"].attrs["grid_meta_json"] = "not valid json {{{"
+
+    meta = load_nxtomo(path)
+    assert meta["projections"].shape == projections.shape
+    assert "grid" not in meta
+    assert meta["detector"] == DET_META
+
+
 def test_validate_detects_missing_image_key(tmp_path):
     path = tmp_path / "missing_image_key.nxs"
     save_nxtomo(
