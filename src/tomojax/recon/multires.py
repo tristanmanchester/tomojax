@@ -39,18 +39,30 @@ def scale_detector(det: Detector, factor: int) -> Detector:
 
     Supports non-divisible sizes by using ceil(n/f) and increasing pixel size.
     The projector operates in world units; increasing du/dv by `factor` keeps
-    per-ray spacing consistent with decimated projections.
+    per-ray spacing consistent with decimated projections. `bin_projections`
+    selects the center sample from each padded f×f block, so the coarse detector
+    center must shift to keep those coarse rays aligned with the sampled pixels.
     """
     assert factor >= 1 and int(factor) == factor
     f = int(factor)
     nu = int(math.ceil(det.nu / f))
     nv = int(math.ceil(det.nv / f))
+
+    def _scaled_center(n: int, d: float, center: float) -> float:
+        pad = (f - (n % f)) % f
+        left = pad // 2
+        first_sample = ((f // 2) - left - (n / 2.0 - 0.5)) * d + center
+        return first_sample + (math.ceil(n / f) / 2.0 - 0.5) * (d * f)
+
     return Detector(
         nu=nu,
         nv=nv,
         du=det.du * f,
         dv=det.dv * f,
-        det_center=det.det_center,
+        det_center=(
+            _scaled_center(det.nu, det.du, det.det_center[0]),
+            _scaled_center(det.nv, det.dv, det.det_center[1]),
+        ),
     )
 
 

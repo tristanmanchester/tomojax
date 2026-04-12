@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import fista_tv, grad_data_term
-from tomojax.recon.multires import fista_multires, upsample_volume
+from tomojax.recon.multires import fista_multires, scale_detector, upsample_volume
 
 
 if sys.version_info < (3, 8):
@@ -61,3 +61,36 @@ def test_upsample_volume_resizes_when_target_shape_differs_even_if_factor_is_one
     up = upsample_volume(vol, factor=1, target_shape=(4, 4, 4))
 
     assert up.shape == (4, 4, 4)
+
+
+@pytest.mark.parametrize(
+    ("nu", "factor"),
+    [(50, 2), (99, 2), (100, 2), (50, 3), (99, 3), (99, 4), (100, 4)],
+)
+def test_scale_detector_matches_centered_projection_samples(nu, factor):
+    det = Detector(nu=nu, nv=nu, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    scaled = scale_detector(det, factor)
+
+    def sampled_positions(n: int, spacing: float, center: float):
+        coords = (np.arange(n, dtype=np.float32) - (n / 2.0 - 0.5)) * spacing + center
+        pad = (factor - (n % factor)) % factor
+        left = pad // 2
+        coords = np.pad(coords, (left, pad - left), mode="edge")
+        sampled = coords[factor // 2 :: factor][: int(np.ceil(n / factor))]
+        raw_indices = np.arange(int(np.ceil(n / factor))) * factor + (factor // 2) - left
+        unclipped = raw_indices < n
+        return sampled, unclipped
+
+    sampled_u, unclipped_u = sampled_positions(det.nu, det.du, det.det_center[0])
+    coarse_u = (
+        (np.arange(scaled.nu, dtype=np.float32) - (scaled.nu / 2.0 - 0.5)) * scaled.du
+        + scaled.det_center[0]
+    )
+    np.testing.assert_allclose(coarse_u[unclipped_u], sampled_u[unclipped_u], atol=1e-6)
+
+    sampled_v, unclipped_v = sampled_positions(det.nv, det.dv, det.det_center[1])
+    coarse_v = (
+        (np.arange(scaled.nv, dtype=np.float32) - (scaled.nv / 2.0 - 0.5)) * scaled.dv
+        + scaled.det_center[1]
+    )
+    np.testing.assert_allclose(coarse_v[unclipped_v], sampled_v[unclipped_v], atol=1e-6)
