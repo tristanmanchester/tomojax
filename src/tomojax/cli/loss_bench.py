@@ -567,7 +567,7 @@ def main() -> None:
                     )
 
             # Metrics (only if we have estimates)
-            if status != "missing":
+            if status == "ok" and p_est_np is not None:
                 abs_m = _metrics_abs(true_params, p_est_np, du=du, dv=dv)
                 rel_m = _metrics_relative(
                     true_params, p_est_np, du=du, dv=dv, k_step=args.k_step
@@ -619,7 +619,7 @@ def main() -> None:
             "seconds": elapsed,
             **metrics,
             "log": os.path.relpath(log_path, args.expdir),
-            "output": os.path.relpath(out_path, args.expdir),
+            "output": os.path.relpath(out_path, args.expdir) if status == "ok" else None,
             "error": err_msg,
         }
         results.append(rec)
