@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import numpy as np
+import jax.numpy as jnp
 
 from tomojax.cli.align import build_geometry as build_align_geometry
+from tomojax.cli import recon as recon_cli
 from tomojax.cli.recon import build_geometry as build_recon_geometry
 from tomojax.core.geometry import ParallelGeometry
 
@@ -86,6 +89,68 @@ def test_recon_build_geometry_preserves_grid_origin_and_center():
 
     assert grid.vol_origin == (1.0, 2.0, 3.0)
     assert grid.vol_center == (4.0, 5.0, 6.0)
+
+
+def test_recon_build_geometry_preserves_grid_origin_and_center_with_override():
+    meta = _parallel_meta()
+
+    grid, _, _ = build_recon_geometry(meta, (11, 13, 15))
+
+    assert (grid.nx, grid.ny, grid.nz) == (11, 13, 15)
+    assert grid.vol_origin == (1.0, 2.0, 3.0)
+    assert grid.vol_center == (4.0, 5.0, 6.0)
+
+
+def test_recon_cli_grid_override_preserves_grid_origin_and_center(monkeypatch, tmp_path):
+    meta = _parallel_meta(
+        projections=np.zeros((2, 7, 9), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+        geometry_meta=None,
+    )
+    captured = {}
+
+    monkeypatch.setattr(recon_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(
+        recon_cli,
+        "fbp",
+        lambda geom, recon_grid, detector, proj, **kwargs: jnp.zeros(
+            (recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32
+        ),
+    )
+    monkeypatch.setattr(
+        recon_cli,
+        "save_nxtomo",
+        lambda out, **kwargs: captured.update({"out": out, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--grid",
+            "11",
+            "13",
+            "15",
+            "--out",
+            str(tmp_path / "out.nxs"),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["grid"]["nx"] == 11
+    assert captured["grid"]["ny"] == 13
+    assert captured["grid"]["nz"] == 15
+    assert captured["grid"]["vol_origin"] == [1.0, 2.0, 3.0]
+    assert captured["grid"]["vol_center"] == [4.0, 5.0, 6.0]
 
 
 

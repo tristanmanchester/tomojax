@@ -89,14 +89,19 @@ def _grid_from_meta(meta: dict, detector: Detector, grid_override: GridOverride)
 
     if grid_override is not None:
         nx, ny, nz = map(int, grid_override)
-        return Grid(
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            vx=float(grid_d["vx"]),
-            vy=float(grid_d["vy"]),
-            vz=float(grid_d["vz"]),
-        )
+        kwargs: dict[str, Any] = {
+            "nx": nx,
+            "ny": ny,
+            "nz": nz,
+            "vx": float(grid_d["vx"]),
+            "vy": float(grid_d["vy"]),
+            "vz": float(grid_d["vz"]),
+        }
+        if grid_d.get("vol_origin") is not None:
+            kwargs["vol_origin"] = tuple(grid_d["vol_origin"])
+        if grid_d.get("vol_center") is not None:
+            kwargs["vol_center"] = tuple(grid_d["vol_center"])
+        return Grid(**kwargs)
 
     kwargs: dict[str, Any] = {
         k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")

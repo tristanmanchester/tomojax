@@ -234,7 +234,16 @@ def main() -> None:
     # Rebuild geometry if grid changed
     if args.grid is not None:
         NX, NY, NZ = map(int, args.grid)
-        recon_grid = Grid(nx=NX, ny=NY, nz=NZ, vx=grid.vx, vy=grid.vy, vz=grid.vz)
+        recon_grid = Grid(
+            nx=NX,
+            ny=NY,
+            nz=NZ,
+            vx=grid.vx,
+            vy=grid.vy,
+            vz=grid.vz,
+            vol_origin=grid.vol_origin,
+            vol_center=grid.vol_center,
+        )
 
     if recon_grid is not grid:
         _, _, geom = build_geometry_from_meta(
