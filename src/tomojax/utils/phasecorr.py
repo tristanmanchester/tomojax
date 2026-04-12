@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 def _wrap_shift(idx: int, n: int) -> int:
     # Convert argmax index to signed shift in [-n/2, n/2)
-    return idx if idx <= n // 2 else idx - n
+    return idx if idx < n // 2 else idx - n
 
 
 def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -31,4 +31,3 @@ def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, j
     du = jnp.float32(_wrap_shift(int(u_idx), int(nu)))
     dv = jnp.float32(_wrap_shift(int(v_idx), int(nv)))
     return du, dv
-
