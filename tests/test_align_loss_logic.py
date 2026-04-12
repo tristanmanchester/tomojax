@@ -72,6 +72,14 @@ def test_build_loss_accepts_lorentzian_alias_for_cauchy():
     assert lorentzian_val == pytest.approx(cauchy_val, rel=1e-6)
 
 
+@pytest.mark.parametrize("kind", ["renyi_mi", "tsallis_mi"])
+def test_build_loss_rejects_alpha_equal_one_for_renyi_family(kind):
+    targets = jnp.zeros((1, 8, 8), dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="alpha=1"):
+        build_loss(kind, {"alpha": 1.0}, targets)
+
+
 def test_gn_candidate_must_improve_current_best_loss():
     assert not _should_prefer_gn_candidate(100.0, 100.5, 100.8, 0.01)
     assert _should_prefer_gn_candidate(100.0, 100.5, 100.4, 0.01)

@@ -39,6 +39,17 @@ def _safe_epsilon(p: Dict[str, float], key: str, default: float) -> float:
     return max(v, 1e-12)
 
 
+def _validated_renyi_alpha(params: Dict[str, float]) -> float:
+    a = float(params.get("alpha", 1.5))
+    a = min(max(a, 0.1), 3.0)
+    if abs(a - 1.0) < 1e-6:
+        raise ValueError(
+            "alpha=1 is undefined for renyi_mi/tsallis_mi in this implementation; "
+            "use mi_kde/nmi_kde for Shannon MI or choose alpha away from 1.0"
+        )
+    return a
+
+
 def loss_is_within_relative_tolerance(loss_before: float, loss_after: float, rel_tol: float) -> bool:
     """Return True when ``loss_after`` stays within a relative tolerance of ``loss_before``."""
     before = float(loss_before)
@@ -266,7 +277,7 @@ def _loss_mi_kde(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndar
 
 
 def _loss_renyi_mi(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    a = float(st.params.get("alpha", 1.5)); a = min(max(a, 0.1), 3.0)
+    a = _validated_renyi_alpha(st.params)
     bins = int(st.params.get("bins", 32))
     bx = st.bins_x; by = st.bins_y
     bwx = st.bw_x or 0.1; bwy = st.bw_y or 0.1
@@ -443,6 +454,7 @@ def build_loss(kind: str, params: Optional[Dict[str, float]], targets: jnp.ndarr
         state.params["nmi"] = 1.0
         f = _loss_mi_kde
     elif k in ("renyi_mi", "tsallis_mi"):
+        _validated_renyi_alpha(state.params)
         bins = int(p.get("bins", 32))
         lo = float(np.min(targets)); hi = float(np.max(targets)); hi = hi if hi > lo else (lo + 1.0)
         state.bins_x = jnp.linspace(lo, hi, bins); state.bins_y = jnp.linspace(lo, hi, bins)
