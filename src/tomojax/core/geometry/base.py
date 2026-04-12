@@ -25,6 +25,13 @@ def _coerce_fixed_tuple(name: str, value: Iterable[float], expected_len: int) ->
 
 @dataclass(frozen=True)
 class Grid:
+    """Regular voxel grid metadata.
+
+    TomoJAX treats ``vol_origin`` as the physical location of voxel ``(0, 0, 0)``'s
+    centre. When ``vol_origin`` is omitted, the default centred convention places
+    voxel centres on coordinates ``(i - (n/2 - 0.5)) * v`` along each axis.
+    """
+
     nx: int
     ny: int
     nz: int

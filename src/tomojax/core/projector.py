@@ -23,6 +23,7 @@ _DET_GRID_CACHE_CAP = 8
 
 
 def _default_volume_origin(grid: Grid) -> jnp.ndarray:
+    """Return the centred default location of voxel (0, 0, 0)'s centre."""
     ox = -((grid.nx / 2.0) - 0.5) * grid.vx
     oy = -((grid.ny / 2.0) - 0.5) * grid.vy
     oz = -((grid.nz / 2.0) - 0.5) * grid.vz
@@ -32,9 +33,10 @@ def _default_volume_origin(grid: Grid) -> jnp.ndarray:
 def _interpolation_support_bounds(grid: Grid, vol_origin: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Return a conservative object-space support box for trilinear sampling.
 
-    The projector samples voxel *centres* and relies on trilinear interpolation,
-    so the non-zero support extends one voxel beyond `vol_origin` and one voxel
-    beyond the last voxel centre along each axis.
+    ``vol_origin`` denotes the centre of voxel ``(0, 0, 0)``. The projector
+    samples voxel centres and relies on trilinear interpolation, so the non-zero
+    support extends one voxel before that first centre and one voxel beyond the
+    last voxel centre along each axis.
     """
     voxel = jnp.array([grid.vx, grid.vy, grid.vz], dtype=jnp.float32)
     upper = vol_origin + jnp.array(
@@ -261,7 +263,9 @@ def forward_project_view_T(
     inv_vy = jnp.float32(1.0 / grid.vy)
     inv_vz = jnp.float32(1.0 / grid.vz)
 
-    # Optional incremental index updates to avoid repeated subtracts
+    # Map object-space sample points into centre-indexed voxel coordinates.
+    # With TomoJAX's convention, vol_origin is the centre of voxel (0, 0, 0),
+    # so integer floating-point indices land on voxel centres.
     ix0 = (q0[0] - vol_origin[0]) * inv_vx
     iy0 = (q0[1] - vol_origin[1]) * inv_vy
     iz0 = (q0[2] - vol_origin[2]) * inv_vz

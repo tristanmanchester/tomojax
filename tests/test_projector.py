@@ -51,3 +51,17 @@ def test_forward_project_non_cubic_rotated_volume_uses_full_ray_extent():
     assert proj_90.shape == (1, 1)
     assert proj_0[0, 0] == pytest.approx(16.0, abs=1e-4)
     assert proj_90[0, 0] == pytest.approx(64.0, abs=1e-3)
+
+
+def test_forward_project_localized_voxel_uses_center_indexed_origin() -> None:
+    grid = Grid(nx=5, ny=5, nz=5, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=9, nv=1, du=0.25, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
+    vol = jnp.zeros((5, 5, 5), dtype=jnp.float32).at[2, 2, 2].set(1.0)
+
+    proj = np.asarray(forward_project_view(geom, grid, det, vol, view_index=0))[0]
+    u = (np.arange(det.nu, dtype=np.float32) - (det.nu / 2.0 - 0.5)) * det.du
+
+    # The default centred grid places voxel (2, 2, 2) at x = z = 0.0.
+    assert u[np.argmax(proj)] == pytest.approx(0.0, abs=1e-6)
+    assert proj[np.argmax(proj)] == pytest.approx(1.0, abs=1e-6)
