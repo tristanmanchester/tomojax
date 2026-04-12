@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
+import warnings
 
 from tomojax.core.geometry.base import Grid, Detector
 from tomojax.cli.align import _resolve_recon_grid_and_mask
 from tomojax.recon.fbp import _fft_filter_rows
-from tomojax.recon.filters import get_filter_np
+from tomojax.recon.filters import get_filter_np, _FILTER_CACHE
 from tomojax.utils.fov import (
     compute_roi,
     grid_from_detector_fov,
@@ -31,6 +32,14 @@ def test_fbp_rfft_filter_matches_full_fft_reference() -> None:
         got = np.asarray(_fft_filter_rows(jnp.asarray(rows), du=1.0, filter_name=filter_name))
         want = _full_fft_filter_rows(rows, du=1.0, filter_name=filter_name)
         np.testing.assert_allclose(got, want, rtol=1e-5, atol=1e-5)
+
+
+def test_shepp_logan_filter_cache_miss_emits_no_runtime_warning() -> None:
+    _FILTER_CACHE.clear()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", category=RuntimeWarning)
+        H = get_filter_np("shepp-logan", 64, 1.0)
+    assert H.shape == (64,)
 
 
 def test_compute_roi_and_bbox_crop_limit_y_axis() -> None:

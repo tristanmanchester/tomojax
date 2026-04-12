@@ -22,8 +22,8 @@ def _shepp_logan_filter_np(n: int, du: float) -> np.ndarray:
     freqs = np.fft.fftfreq(n, d=du).astype(np.float32, copy=False)
     fmax = float(np.max(np.abs(freqs))) + 1e-12
     x = freqs / (2.0 * fmax)
-    # normalized sinc: sin(pi x)/(pi x), set sinc(0)=1
-    sinc = np.where(x == 0.0, 1.0, np.sin(np.pi * x) / (np.pi * x)).astype(np.float32, copy=False)
+    # np.sinc implements sin(pi x)/(pi x) without emitting divide-by-zero warnings at x=0.
+    sinc = np.sinc(x).astype(np.float32, copy=False)
     return (f * sinc).astype(np.float32, copy=False)
 
 
