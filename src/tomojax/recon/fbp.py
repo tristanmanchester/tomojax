@@ -16,6 +16,19 @@ _RFFT_FILTER_CACHE: "OrderedDict[Tuple[str, int, float, str], np.ndarray]" = Ord
 _RFFT_FILTER_CACHE_CAP = 8
 
 
+def _default_fbp_scale(n_views: int) -> float:
+    """Return the default angular weighting for the current parallel-ray FBP.
+
+    TomoJAX's built-in CT and laminography geometries both use parallel rays,
+    so the discrete filtered backprojection sum should be weighted by the
+    180-degree angular spacing ``pi / n_views``. Callers with custom angular
+    coverage can override this via ``scale=...``.
+    """
+    if int(n_views) <= 0:
+        raise ValueError("n_views must be positive")
+    return float(np.pi / float(n_views))
+
+
 def _get_rfft_filter_cached(filter_name: str, nu: int, du: float, dtype: jnp.dtype) -> jnp.ndarray:
     """Return the one-sided RFFT filter H_r cached by key.
 
@@ -170,8 +183,7 @@ def fbp(
             raise
 
     if scale is None:
-        # Heuristic scaling: divide by number of views
-        acc = acc / float(n_views)
+        acc = acc * _default_fbp_scale(n_views)
     else:
         acc = acc * float(scale)
     return acc

@@ -47,6 +47,32 @@ def test_fbp_basic_psnr():
     assert psnr(rec, vol) > 10.0
 
 
+def test_fbp_default_scaling_recovers_reasonable_absolute_intensity():
+    n = 32
+    n_views = 32
+    grid = Grid(nx=n, ny=n, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=n, nv=1, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    thetas = np.linspace(0, 180, n_views, endpoint=False)
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
+
+    x = np.arange(n, dtype=np.float32) - (n / 2.0 - 0.5)
+    y = np.arange(n, dtype=np.float32) - (n / 2.0 - 0.5)
+    xx, yy = np.meshgrid(x, y, indexing="ij")
+    phantom = np.zeros((n, n, 1), dtype=np.float32)
+    phantom[xx**2 + yy**2 < 6.0**2] = 1.0
+    vol = jnp.asarray(phantom)
+
+    projs = jnp.stack(
+        [forward_project_view(geom, grid, det, vol, view_index=i) for i in range(n_views)],
+        axis=0,
+    )
+    rec = np.asarray(fbp(geom, grid, det, projs, filter_name="ramp"))
+
+    roi = (xx**2 + yy**2) < 3.6**2
+    roi_mean = float(rec[roi, 0].mean())
+    assert roi_mean == pytest.approx(1.0, rel=0.1, abs=0.1)
+
+
 def test_fista_loss_decreases():
     grid, det, geom, vol, projs = make_simple_case(12, 12, 12, 16)
     x, info = fista_tv(geom, grid, det, projs, iters=5, lambda_tv=0.001)
