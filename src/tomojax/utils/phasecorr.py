@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 
 
-def _wrap_shift(idx: int, n: int) -> int:
-    # Convert argmax index to signed shift in [-n/2, n/2)
-    return idx if idx < n // 2 else idx - n
+def _wrap_shift(idx: jnp.ndarray | int, n: int) -> jnp.ndarray:
+    """Convert argmax indices to signed shifts on the half-open wrapped interval.
+
+    For even ``n`` this is ``[-n/2, n/2)``; for odd ``n`` the central positive
+    index is preserved and the interval becomes ``[-floor(n/2), ceil(n/2))``.
+    """
+    threshold = (int(n) + 1) // 2
+    idx_arr = jnp.asarray(idx)
+    return jnp.where(idx_arr < threshold, idx_arr, idx_arr - int(n))
 
 
 def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -28,6 +33,6 @@ def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, j
     nv, nu = ref.shape
     v_idx = (flat_idx // nu).astype(jnp.int32)
     u_idx = (flat_idx % nu).astype(jnp.int32)
-    du = jnp.float32(_wrap_shift(int(u_idx), int(nu)))
-    dv = jnp.float32(_wrap_shift(int(v_idx), int(nv)))
+    du = _wrap_shift(u_idx, nu).astype(jnp.float32)
+    dv = _wrap_shift(v_idx, nv).astype(jnp.float32)
     return du, dv
