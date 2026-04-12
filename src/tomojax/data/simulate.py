@@ -197,7 +197,9 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
         for i in progress_iter(
             range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"
         ):
-            p = forward_project_view(geom, grid, det, vol, view_index=i)
+            p = forward_project_view(
+                geom, grid, det, vol, view_index=i, gather_dtype=gather
+            )
             projs.append(p)
         proj = jnp.stack(projs, axis=0)
 

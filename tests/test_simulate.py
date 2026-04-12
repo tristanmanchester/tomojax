@@ -1,7 +1,9 @@
 import sys
 import numpy as np
 import pytest
+import jax.numpy as jnp
 
+from tomojax.data import simulate as simulate_mod
 from tomojax.data.simulate import SimConfig, simulate, simulate_to_file
 from tomojax.data.datasets import validate_dataset
 
@@ -23,3 +25,30 @@ def test_simulate_nxs_roundtrip(tmp_path):
     simulate_to_file(cfg, str(out))
     rep = validate_dataset(str(out))
     assert rep["issues"] == []
+
+
+def test_simulate_slow_path_forwards_default_gather_dtype(monkeypatch):
+    seen = []
+
+    def spy_forward_project_view(geom, grid, det, vol, *, view_index, gather_dtype="fp32", **kwargs):
+        seen.append((view_index, gather_dtype))
+        return jnp.zeros((det.nv, det.nu), dtype=jnp.float32)
+
+    monkeypatch.setattr(simulate_mod, "default_gather_dtype", lambda: "bf16")
+    monkeypatch.setattr(simulate_mod, "forward_project_view", spy_forward_project_view)
+
+    cfg = SimConfig(
+        nx=8,
+        ny=8,
+        nz=8,
+        nu=6,
+        nv=4,
+        n_views=3,
+        phantom="cube",
+        noise="none",
+        seed=0,
+    )
+    out = simulate(cfg)
+
+    assert out["projections"].shape == (cfg.n_views, cfg.nv, cfg.nu)
+    assert seen == [(0, "bf16"), (1, "bf16"), (2, "bf16")]
