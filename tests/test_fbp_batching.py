@@ -84,6 +84,7 @@ def test_fbp_oom_retries_until_all_views_are_processed(monkeypatch):
         projs,
         filter_name="ramp",
         views_per_batch=4,
+        scale=1.0 / float(projs.shape[0]),
     )
 
     assert np.allclose(np.asarray(rec), np.ones((2, 2, 1), dtype=np.float32))
