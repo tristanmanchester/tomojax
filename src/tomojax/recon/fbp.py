@@ -134,7 +134,8 @@ def fbp(
     )
 
     acc = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    b = int(views_per_batch) if int(views_per_batch) > 0 else n_views
+    requested_b = int(views_per_batch) if int(views_per_batch) > 0 else n_views
+    b = max(1, min(requested_b, n_views))
 
     def bp_batch(T_chunk, filt_chunk):
         # Stream over views in the chunk to bound memory instead of materializing
@@ -156,6 +157,11 @@ def fbp(
         acc_chunk, _ = jax.lax.scan(body, init, (T_chunk, filt_chunk))
         return acc_chunk
 
+    fft_filter_rows_jit = jax.jit(
+        lambda rows: _fft_filter_rows(rows, du=float(detector.du), filter_name=filter_name)
+    )
+    bp_batch_jit = jax.jit(bp_batch)
+
     # Dynamic backoff on OOM: start with batch size b and shrink on
     # memory pressure. Progress is tracked per-view so retries do not prematurely
     # exhaust a fixed batch iterator.
@@ -166,11 +172,22 @@ def fbp(
         T_chunk = T_all[s : s + cur]
         y_chunk = proj[s : s + cur]
         try:
+            pad_views = b - cur
+            if pad_views:
+                T_pad = jnp.repeat(T_chunk[-1:], pad_views, axis=0)
+                y_pad = jnp.zeros((pad_views, nv, nu), dtype=y_chunk.dtype)
+                T_chunk = jnp.concatenate((T_chunk, T_pad), axis=0)
+                y_chunk = jnp.concatenate((y_chunk, y_pad), axis=0)
+
+            # Pad the tail chunk and mask its extra views so JAX only needs to
+            # compile once per active batch size.
+            valid_mask = (jnp.arange(b) < cur)[:, None, None]
             # Filter only the current chunk (reshape rows to 2D)
-            rows = y_chunk.reshape((-1, nu))
-            rows_f = _fft_filter_rows(rows, du=float(detector.du), filter_name=filter_name)
-            filt_chunk = rows_f.reshape((T_chunk.shape[0], nv, nu))
-            acc = acc + bp_batch(T_chunk, filt_chunk)
+            rows = y_chunk.reshape((b * nv, nu))
+            rows_f = fft_filter_rows_jit(rows)
+            filt_chunk = rows_f.reshape((b, nv, nu))
+            filt_chunk = jnp.where(valid_mask, filt_chunk, 0.0)
+            acc = acc + bp_batch_jit(T_chunk, filt_chunk)
             s += cur
             for _ in range(cur):
                 next(view_progress, None)
