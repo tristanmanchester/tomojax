@@ -103,3 +103,24 @@ def test_align_reports_true_relative_improvement_scaling():
             saw_small_loss = True
 
     assert saw_small_loss, "Test case should exercise small-loss relative scaling"
+
+
+def test_align_runs_with_cylindrical_volume_mask():
+    grid, det, geom, vol, projs, _ = make_misaligned_case(8, 8, 8, 6, 3)
+    cfg = AlignConfig(
+        outer_iters=1,
+        recon_iters=2,
+        lambda_tv=0.0,
+        lr_rot=5e-3,
+        lr_trans=1e-1,
+        views_per_batch=4,
+        mask_vol="cyl",
+        early_stop=False,
+    )
+    x, est_params, info = align(geom, grid, det, projs, cfg=cfg)
+
+    assert x.shape == vol.shape
+    assert est_params.shape == (projs.shape[0], 5)
+    assert np.isfinite(np.asarray(x)).all()
+    assert np.isfinite(np.asarray(est_params)).all()
+    assert np.isfinite(np.asarray(info["loss"])).all()

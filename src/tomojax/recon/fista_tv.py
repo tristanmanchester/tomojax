@@ -101,6 +101,7 @@ def grad_data_term(
         We pad the last chunk to size ``b`` and mask it out in the reduction so the
         compiled graph is a single-sized loop body regardless of the number of chunks.
         """
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
                 T,
@@ -133,8 +134,7 @@ def grad_data_term(
             # Slice fixed-size (b, ...) window
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-            v_in = vol * vol_mask if vol_mask is not None else vol
-            pred = vm_project(T_chunk, v_in)
+            pred = vm_project(T_chunk, masked_vol)
             # Keep only the last `valid` rows in the chunk
             idx = jnp.arange(b)
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
@@ -147,30 +147,36 @@ def grad_data_term(
         return loss_tot
 
     def stream_loss_and_grad(vol):
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
+
         def one_view(carry, i):
             loss_acc, g_acc = carry
             # Use dynamic slices in jitted context instead of array indexing
             T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
             y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
-            def fwd(v):
-                v_in = v * vol_mask if vol_mask is not None else v
+
+            def fwd(masked_v):
                 return forward_project_view_T(
                     T_i,
                     grid,
                     detector,
-                    v_in,
+                    masked_v,
                     use_checkpoint=checkpoint_projector,
                     unroll=int(projector_unroll),
                     gather_dtype=gather_dtype,
                     det_grid=det_grid,
                 )
-            pred_i = fwd(vol)
+
+            pred_i = fwd(masked_vol)
             resid_i = (pred_i - y_i).astype(jnp.float32)
             loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
             # Vectorize VJP via ravel to a single 1D cotangent
-            _, vjp = jax.vjp(lambda vv: fwd(vv).ravel(), vol)
+            _, vjp = jax.vjp(lambda vv: fwd(vv).ravel(), masked_vol)
             g_i = vjp(resid_i.ravel())[0]
+            if vol_mask is not None:
+                g_i = g_i * vol_mask
             return (loss_acc + loss_i, g_acc + g_i), None
+
         init = (jnp.float32(0.0), jnp.zeros_like(vol))
         (loss_tot, g_tot), _ = jax.lax.scan(one_view, init, jnp.arange(T_all.shape[0]))
         return loss_tot, g_tot
@@ -217,6 +223,7 @@ def data_term_value(
     det_grid = get_detector_grid_device(detector)
 
     def batched_loss(vol):
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
                 T,
@@ -244,8 +251,7 @@ def data_term_value(
             start_shifted = jnp.maximum(0, start - shift)
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-            v_in = vol * vol_mask if vol_mask is not None else vol
-            pred = vm_project(T_chunk, v_in)
+            pred = vm_project(T_chunk, masked_vol)
             idx = jnp.arange(b)
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
@@ -257,16 +263,17 @@ def data_term_value(
         return loss_tot
 
     def stream_loss(vol):
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
+
         def one_view(loss_acc, i):
             T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
             y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
 
-            v_in = vol * vol_mask if vol_mask is not None else vol
             pred_i = forward_project_view_T(
                 T_i,
                 grid,
                 detector,
-                v_in,
+                masked_vol,
                 use_checkpoint=checkpoint_projector,
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
