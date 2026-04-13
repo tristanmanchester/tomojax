@@ -214,6 +214,7 @@ def align(
         # frame and are post-multiplied: T_world_from_obj_aug = T_nom @ T_delta.
         # This is consistent across parallel CT and laminography sample-frame.
         T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)  # (n_views, 4, 4)
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
         # Use Python ints for sizes to keep them static
         n = int(params5.shape[0])
         nv = int(projections.shape[1])
@@ -231,8 +232,7 @@ def align(
             start_shifted = jnp.maximum(0, start - shift)
             T_chunk = jax.lax.dynamic_slice(T_aug, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
-            v_in = vol * vol_mask if vol_mask is not None else vol
-            pred = _project_batch(T_chunk, v_in)
+            pred = _project_batch(T_chunk, masked_vol)
             # Optional per-view mask slice (for Otsu-masked L2)
             mask_chunk = None
             if getattr(loss_state, "mask", None) is not None:
@@ -267,12 +267,12 @@ def align(
     # This avoids reverse-mode backprop across the full scan of all views at once.
     def _one_view_loss(p5_i, T_nom_i, y_i, vol, mask_i, view_idx):
         T_i = T_nom_i @ se3_from_5d(p5_i)
-        v_in = vol * vol_mask if vol_mask is not None else vol
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
         pred_i = forward_project_view_T(
             T_i,
             grid,
             detector,
-            v_in,
+            masked_vol,
             use_checkpoint=cfg.checkpoint_projector,
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,
@@ -331,12 +331,12 @@ def align(
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
     def _pred_flat(T_i, vol):
-        v_in = vol * vol_mask if vol_mask is not None else vol
+        masked_vol = vol * vol_mask if vol_mask is not None else vol
         return forward_project_view_T(
             T_i,
             grid,
             detector,
-            v_in,
+            masked_vol,
             use_checkpoint=cfg.checkpoint_projector,
             unroll=int(cfg.projector_unroll),
             gather_dtype=cfg.gather_dtype,

@@ -64,3 +64,38 @@ def test_stream_vs_batched_grad_close():
     # Loss should be effectively identical
     assert float(jnp.abs(loss_b - loss_s)) < 1e-4
 
+
+def test_stream_vs_batched_grad_close_with_volume_mask():
+    grid, det, geom, vol, projs = make_case(n_views=4, nx=10, ny=10, nz=10)
+    vol_mask = (jnp.arange(vol.shape[0], dtype=jnp.float32)[:, None, None] >= 4).astype(jnp.float32)
+    g_b, loss_b = grad_data_term(
+        geom,
+        grid,
+        det,
+        projs,
+        vol,
+        views_per_batch=4,
+        checkpoint_projector=True,
+        projector_unroll=1,
+        gather_dtype="fp32",
+        grad_mode="batched",
+        vol_mask=vol_mask,
+    )
+    g_s, loss_s = grad_data_term(
+        geom,
+        grid,
+        det,
+        projs,
+        vol,
+        views_per_batch=1,
+        checkpoint_projector=True,
+        projector_unroll=1,
+        gather_dtype="fp32",
+        grad_mode="stream",
+        vol_mask=vol_mask,
+    )
+    num = jnp.linalg.norm((g_b - g_s).ravel())
+    den = jnp.linalg.norm(g_b.ravel()) + 1e-6
+    rel = float(num / den)
+    assert rel < 5e-3
+    assert float(jnp.abs(loss_b - loss_s)) < 1e-4
