@@ -83,7 +83,126 @@ def get_detector_grid_device(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
     return jnp.asarray(X_np, dtype=jnp.float32), jnp.asarray(Z_np, dtype=jnp.float32)
 
 
-    
+def _resolve_gather_target(gather_dtype: str) -> jnp.dtype:
+    """Resolve the gather/interpolation dtype for the forward projector."""
+    gd = gather_dtype.lower()
+    if gd == "auto":
+        try:
+            platform = jax.devices()[0].platform if jax.devices() else "cpu"
+        except Exception:
+            platform = "cpu"
+        if platform in ("gpu", "tpu"):
+            return jnp.bfloat16 if platform == "tpu" else jnp.float16
+        return jnp.float32
+    if gd in ("bf16", "bfloat16"):
+        return jnp.bfloat16
+    if gd in ("fp16", "float16", "half"):
+        return jnp.float16
+    return jnp.float32
+
+
+def _prepare_volume_for_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
+    target = _resolve_gather_target(gather_dtype)
+    vol_cast = volume if volume.dtype == target else volume.astype(target)
+    return jnp.ravel(vol_cast, order="C")
+
+
+def _resolve_detector_grid(
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> tuple[jnp.ndarray, jnp.ndarray, int]:
+    if det_grid is None:
+        Xr_np, Zr_np = _build_detector_grid(detector)
+        Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
+        Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
+        n_rays = int(Xr_np.shape[0])
+    else:
+        Xr, Zr = det_grid
+        n_rays = int(Xr.shape[0])
+    return Xr, Zr, n_rays
+
+
+def _resolve_n_steps(grid: Grid, step_size: float, n_steps: int | None) -> int:
+    if n_steps is not None:
+        return int(n_steps)
+    support_lengths = (
+        float((grid.nx + 1) * grid.vx),
+        float((grid.ny + 1) * grid.vy),
+        float((grid.nz + 1) * grid.vz),
+    )
+    max_path_length = math.sqrt(sum(length * length for length in support_lengths))
+    return int(math.ceil(max_path_length / float(step_size)))
+
+
+def _projector_traversal_state(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.float32, int, int]:
+    """Return the fixed per-ray traversal state shared by forward and adjoint passes."""
+    vol_origin = (
+        jnp.asarray(grid.vol_origin, dtype=jnp.float32)
+        if grid.vol_origin is not None
+        else _default_volume_origin(grid)
+    )
+    Xr, Zr, n_rays = _resolve_detector_grid(detector, det_grid)
+    if step_size is None:
+        step_size = float(grid.vy)
+    n_steps_val = _resolve_n_steps(grid, float(step_size), n_steps)
+
+    R = T[:3, :3]
+    t = T[:3, 3]
+    Rinv = R.T
+    tinv = -(Rinv @ t)
+    ey_obj = Rinv[:, 1]
+    support_lower, support_upper = _interpolation_support_bounds(grid, vol_origin)
+
+    xr = Xr[jnp.newaxis, :]
+    zr = Zr[jnp.newaxis, :]
+    base = Rinv[:, 0:1] * xr + Rinv[:, 2:3] * zr + tinv[:, None]
+
+    lower = support_lower[:, None]
+    upper = support_upper[:, None]
+    denom = ey_obj[:, None]
+    eps = jnp.float32(1e-8)
+    parallel = jnp.abs(denom) < eps
+    safe_denom = jnp.where(parallel, jnp.ones_like(denom), denom)
+    t1 = (lower - base) / safe_denom
+    t2 = (upper - base) / safe_denom
+    lo = jnp.minimum(t1, t2)
+    hi = jnp.maximum(t1, t2)
+    inside = (base >= lower) & (base <= upper)
+    inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
+    lo = jnp.where(parallel, jnp.where(inside, -inf, inf), lo)
+    hi = jnp.where(parallel, jnp.where(inside, inf, -inf), hi)
+    y_entry = jnp.max(lo, axis=0)
+    y_exit = jnp.min(hi, axis=0)
+    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
+    valid_rays = path_length > 0.0
+    y_start = jnp.where(valid_rays, y_entry, jnp.float32(0.0))
+    step_size32 = jnp.float32(step_size)
+    n_steps_ray = jnp.where(
+        valid_rays,
+        jnp.ceil(path_length / step_size32).astype(jnp.int32),
+        jnp.int32(0),
+    )
+
+    q0 = base + y_start[None, :] * ey_obj[:, None]
+    dq = (step_size32 * ey_obj)[:, None]
+    inv_vx = jnp.float32(1.0 / grid.vx)
+    inv_vy = jnp.float32(1.0 / grid.vy)
+    inv_vz = jnp.float32(1.0 / grid.vz)
+    ix0 = (q0[0] - vol_origin[0]) * inv_vx
+    iy0 = (q0[1] - vol_origin[1]) * inv_vy
+    iz0 = (q0[2] - vol_origin[2]) * inv_vz
+    dix = dq[0] * inv_vx
+    diy = dq[1] * inv_vy
+    diz = dq[2] * inv_vz
+    return ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps_val, n_rays
 
 
 @jax.jit
@@ -130,6 +249,46 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
     return c000 + c001 + c010 + c011 + c100 + c101 + c110 + c111
 
 
+@jax.jit
+def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
+    fx = jnp.floor(ix_f).astype(jnp.int32)
+    fy = jnp.floor(iy_f).astype(jnp.int32)
+    fz = jnp.floor(iz_f).astype(jnp.int32)
+    cx, cy, cz = fx + 1, fy + 1, fz + 1
+
+    wx1 = ix_f - fx.astype(jnp.float32)
+    wy1 = iy_f - fy.astype(jnp.float32)
+    wz1 = iz_f - fz.astype(jnp.float32)
+    wx0 = 1.0 - wx1
+    wy0 = 1.0 - wy1
+    wz0 = 1.0 - wz1
+    size = nx * ny * nz
+
+    def scatter(acc, ix, iy, iz, w):
+        inb = (
+            (ix >= 0)
+            & (ix < nx)
+            & (iy >= 0)
+            & (iy < ny)
+            & (iz >= 0)
+            & (iz < nz)
+        ).astype(jnp.float32)
+        idx = _flat_index(ix, iy, iz, nx, ny, nz)
+        idx = jnp.clip(idx, 0, size - 1)
+        contrib = (ray_vals * inb * w).astype(acc.dtype)
+        return acc.at[idx].add(contrib)
+
+    acc = scatter(acc_flat, fx, fy, fz, wx0 * wy0 * wz0)
+    acc = scatter(acc, fx, fy, cz, wx0 * wy0 * wz1)
+    acc = scatter(acc, fx, cy, fz, wx0 * wy1 * wz0)
+    acc = scatter(acc, fx, cy, cz, wx0 * wy1 * wz1)
+    acc = scatter(acc, cx, fy, fz, wx1 * wy0 * wz0)
+    acc = scatter(acc, cx, fy, cz, wx1 * wy0 * wz1)
+    acc = scatter(acc, cx, cy, fz, wx1 * wy1 * wz0)
+    acc = scatter(acc, cx, cy, cz, wx1 * wy1 * wz1)
+    return acc
+
+
 
 def forward_project_view_T(
     T: jnp.ndarray,
@@ -157,123 +316,15 @@ def forward_project_view_T(
     nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
     if vol.shape != (nx, ny, nz):
         raise ValueError(f"Volume must be (nx,ny,nz)={nx,ny,nz}, got {vol.shape}")
-    # Mixed-precision gather option (accumulate in fp32)
-    gd = gather_dtype.lower()
-    if gd == "auto":
-        # Choose mixed precision on accelerators; fp32 on CPU for numerical stability
-        try:
-            platform = jax.devices()[0].platform if jax.devices() else "cpu"
-        except Exception:
-            platform = "cpu"
-        if platform in ("gpu", "tpu"):
-            # Prefer bf16 on TPU, fp16 on GPU
-            target = jnp.bfloat16 if platform == "tpu" else jnp.float16
-        else:
-            target = jnp.float32
-    elif gd in ("bf16", "bfloat16"):
-        target = jnp.bfloat16
-    elif gd in ("fp16", "float16", "half"):
-        target = jnp.float16
-    else:
-        target = jnp.float32
-    vol_cast = vol if vol.dtype == target else vol.astype(target)
-    recon_flat = jnp.ravel(vol_cast, order="C")
-
-    vol_origin = (
-        jnp.asarray(grid.vol_origin, dtype=jnp.float32)
-        if grid.vol_origin is not None
-        else _default_volume_origin(grid)
+    recon_flat = _prepare_volume_for_gather(vol, gather_dtype)
+    ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, n_rays = _projector_traversal_state(
+        T,
+        grid,
+        detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        det_grid=det_grid,
     )
-
-    if det_grid is None:
-        Xr_np, Zr_np = _build_detector_grid(detector)
-        # Convert to device arrays inside the jitted function scope
-        Xr = jnp.asarray(Xr_np, dtype=jnp.float32)
-        Zr = jnp.asarray(Zr_np, dtype=jnp.float32)
-        n_rays = int(Xr_np.shape[0])
-    else:
-        Xr, Zr = det_grid
-        n_rays = int(Xr.shape[0])
-
-    vy = float(grid.vy)
-    if step_size is None:
-        step_size = vy
-
-    # Inverse pose and incremental stepping set-up
-    R = T[:3, :3]
-    t = T[:3, 3]
-    Rinv = R.T
-    tinv = -(Rinv @ t)
-    ey_obj = Rinv[:, 1]  # world +y axis mapped into object frame (beam dir in object coords)
-    support_lower, support_upper = _interpolation_support_bounds(grid, vol_origin)
-    if n_steps is None:
-        # Keep the scan length static under jit/vmap/grad by using a pose-agnostic
-        # upper bound on the support traversal instead of materializing traced rays.
-        support_lengths = (
-            float((grid.nx + 1) * grid.vx),
-            float((grid.ny + 1) * grid.vy),
-            float((grid.nz + 1) * grid.vz),
-        )
-        max_path_length = math.sqrt(sum(length * length for length in support_lengths))
-        n_steps = int(math.ceil(max_path_length / float(step_size)))
-
-    xr = Xr[jnp.newaxis, :]
-    zr = Zr[jnp.newaxis, :]
-    base = (
-        Rinv[:, 0:1] * xr
-        + Rinv[:, 2:3] * zr
-        + tinv[:, None]
-    )
-
-    # Conservative per-ray entry point via slab intersection in object space.
-    # The ray parameter is world-y because rays are [u, y, v] in the world frame.
-    lower = support_lower[:, None]
-    upper = support_upper[:, None]
-    denom = ey_obj[:, None]
-    eps = jnp.float32(1e-8)
-    parallel = jnp.abs(denom) < eps
-    # Avoid dividing by zero on slab-parallel axes. The parallel slabs are
-    # overwritten below, but reverse-mode differentiation can still see the
-    # raw divide when `denom == 0` unless we make the denominator safe first.
-    safe_denom = jnp.where(parallel, jnp.ones_like(denom), denom)
-    t1 = (lower - base) / safe_denom
-    t2 = (upper - base) / safe_denom
-    lo = jnp.minimum(t1, t2)
-    hi = jnp.maximum(t1, t2)
-    inside = (base >= lower) & (base <= upper)
-    inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
-    lo = jnp.where(parallel, jnp.where(inside, -inf, inf), lo)
-    hi = jnp.where(parallel, jnp.where(inside, inf, -inf), hi)
-    y_entry = jnp.max(lo, axis=0)
-    y_exit = jnp.min(hi, axis=0)
-    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
-    valid_rays = path_length > 0.0
-    y_start = jnp.where(valid_rays, y_entry, jnp.float32(0.0))
-    n_steps_ray = jnp.where(
-        valid_rays,
-        jnp.ceil(path_length / jnp.float32(step_size)).astype(jnp.int32),
-        jnp.int32(0),
-    )
-
-    q0 = base + y_start[None, :] * ey_obj[:, None]
-    dq = (step_size * ey_obj)[:, None]
-
-    # Precompute reciprocal voxel sizes to avoid divides in inner loop
-    inv_vx = jnp.float32(1.0 / grid.vx)
-    inv_vy = jnp.float32(1.0 / grid.vy)
-    inv_vz = jnp.float32(1.0 / grid.vz)
-
-    # Map object-space sample points into centre-indexed voxel coordinates.
-    # With TomoJAX's convention, vol_origin is the centre of voxel (0, 0, 0),
-    # so integer floating-point indices land on voxel centres.
-    ix0 = (q0[0] - vol_origin[0]) * inv_vx
-    iy0 = (q0[1] - vol_origin[1]) * inv_vy
-    iz0 = (q0[2] - vol_origin[2]) * inv_vz
-    dix = dq[0] * inv_vx
-    diy = dq[1] * inv_vy
-    diz = dq[2] * inv_vz
-
-    step_size32 = jnp.float32(step_size)
 
     def step(carry, step_idx):
         acc, ix, iy, iz = carry
@@ -293,6 +344,87 @@ def forward_project_view_T(
     )
     acc, _, _, _ = carry_final
     return acc.reshape((detector.nv, detector.nu))
+
+
+def backproject_view_T(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    image: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+) -> jnp.ndarray:
+    """Backproject one detector image as the explicit discrete adjoint of the fp32 projector."""
+    img = jnp.asarray(image, dtype=jnp.float32)
+    if img.ndim != 2:
+        raise ValueError("image must be 2D array")
+    if img.shape != (int(detector.nv), int(detector.nu)):
+        raise ValueError(
+            f"Image must be (nv,nu)={(int(detector.nv), int(detector.nu))}, got {img.shape}"
+        )
+    nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
+    ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, _ = _projector_traversal_state(
+        T,
+        grid,
+        detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        det_grid=det_grid,
+    )
+    ray_vals = img.reshape((-1,))
+
+    def step(carry, step_idx):
+        acc_flat, ix, iy, iz = carry
+        active = (step_idx < n_steps_ray).astype(jnp.float32)
+        step_vals = ray_vals * active * step_size32
+        acc_flat = _trilinear_scatter_add(acc_flat, step_vals, ix, iy, iz, nx, ny, nz)
+        return (acc_flat, ix + dix, iy + diy, iz + diz), None
+
+    init = (jnp.zeros((nx * ny * nz,), dtype=jnp.float32), ix0, iy0, iz0)
+    carry_final, _ = jax.lax.scan(
+        step,
+        init,
+        jnp.arange(n_steps, dtype=jnp.int32),
+        length=n_steps,
+        unroll=unroll or 1,
+    )
+    return carry_final[0].reshape((nx, ny, nz))
+
+
+def _sum_backproject_views_T(
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    images: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+) -> jnp.ndarray:
+    """Sum explicit backprojections over a fixed chunk of views without stacking volumes."""
+    img = jnp.asarray(images, dtype=jnp.float32)
+
+    def body(accum, inputs):
+        T_i, img_i = inputs
+        bp = backproject_view_T(
+            T_i,
+            grid,
+            detector,
+            img_i,
+            step_size=step_size,
+            n_steps=n_steps,
+            unroll=unroll,
+            det_grid=det_grid,
+        )
+        return accum + bp, None
+
+    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    acc, _ = jax.lax.scan(body, init, (T_all, img))
+    return acc
 
 
 def forward_project_view(
@@ -320,4 +452,28 @@ def forward_project_view(
         use_checkpoint=use_checkpoint,
         unroll=unroll,
         gather_dtype=gather_dtype,
+    )
+
+
+def backproject_view(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    image: jnp.ndarray,
+    view_index: int,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+) -> jnp.ndarray:
+    """Wrapper that fetches pose from geometry and calls the explicit adjoint variant."""
+    T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
+    return backproject_view_T(
+        T,
+        grid,
+        detector,
+        image,
+        step_size=step_size,
+        n_steps=n_steps,
+        unroll=unroll,
     )

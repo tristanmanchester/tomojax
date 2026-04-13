@@ -7,7 +7,12 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
-from ..core.projector import forward_project_view_T, get_detector_grid_device
+from ..core.projector import (
+    _sum_backproject_views_T,
+    backproject_view_T,
+    forward_project_view_T,
+    get_detector_grid_device,
+)
 
 
 
@@ -80,7 +85,7 @@ def grad_data_term(
 
     Two execution modes:
     - batched: vmap over a chunk of views. Fast but higher peak memory.
-    - stream: process one view at a time via lax.scan and per-view VJP. Low peak memory.
+    - stream: process one view at a time via lax.scan and explicit adjoint. Low peak memory.
 
     When grad_mode="auto", selects stream if the effective batch is 1, else batched.
     """
@@ -94,9 +99,24 @@ def grad_data_term(
         )
 
     det_grid = get_detector_grid_device(detector)
+    mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
 
-    def batched_loss(vol):
-        """Loss over views batched in chunks, using a scan to keep jaxpr compact.
+    def apply_mask(vol):
+        return vol * mask_arr if mask_arr is not None else vol
+
+    def adjoint(resid, T_i):
+        grad_i = backproject_view_T(
+            T_i,
+            grid,
+            detector,
+            resid,
+            unroll=int(projector_unroll),
+            det_grid=det_grid,
+        )
+        return grad_i if mask_arr is None else grad_i * mask_arr
+
+    def batched_loss_and_grad(vol):
+        """Loss/grad over views batched in chunks, using a scan to keep jaxpr compact.
 
         We pad the last chunk to size ``b`` and mask it out in the reduction so the
         compiled graph is a single-sized loop body regardless of the number of chunks.
@@ -115,7 +135,6 @@ def grad_data_term(
             ),
             in_axes=(0, None),
         )
-        # Use Python ints for sizes to keep them static at trace time
         n = int(T_all.shape[0])
         nv = int(projections.shape[1])
         nu = int(projections.shape[2])
@@ -123,58 +142,57 @@ def grad_data_term(
         b = min(b, n)
         m = (n + b - 1) // b
 
-        def body(loss_acc, i):
+        def body(carry, i):
+            loss_acc, grad_acc = carry
             i = jnp.int32(i)
             start = i * jnp.int32(b)
             remaining = jnp.maximum(0, jnp.int32(n) - start)
             valid = jnp.minimum(jnp.int32(b), remaining)
-            # Shift start so that we always take a full-size window of length b ending at start+valid
             shift = jnp.int32(b) - valid
             start_shifted = jnp.maximum(0, start - shift)
-            # Slice fixed-size (b, ...) window
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = vm_project(T_chunk, masked_vol)
-            # Keep only the last `valid` rows in the chunk
             idx = jnp.arange(b)
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
-            return (loss_acc + loss_batch, None)
+            grad_batch = _sum_backproject_views_T(
+                T_chunk,
+                grid,
+                detector,
+                resid,
+                unroll=int(projector_unroll),
+                det_grid=det_grid,
+            )
+            if mask_arr is not None:
+                grad_batch = grad_batch * mask_arr
+            return ((loss_acc + loss_batch, grad_acc + grad_batch), None)
 
-        loss0 = jnp.float32(0.0)
-        loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
-        return loss_tot
+        init = (jnp.float32(0.0), jnp.zeros_like(vol))
+        (loss_tot, grad_tot), _ = jax.lax.scan(body, init, jnp.arange(m))
+        return loss_tot, grad_tot
 
     def stream_loss_and_grad(vol):
         masked_vol = vol * vol_mask if vol_mask is not None else vol
 
         def one_view(carry, i):
             loss_acc, g_acc = carry
-            # Use dynamic slices in jitted context instead of array indexing
             T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
             y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
-
-            def fwd(masked_v):
-                return forward_project_view_T(
-                    T_i,
-                    grid,
-                    detector,
-                    masked_v,
-                    use_checkpoint=checkpoint_projector,
-                    unroll=int(projector_unroll),
-                    gather_dtype=gather_dtype,
-                    det_grid=det_grid,
-                )
-
-            pred_i = fwd(masked_vol)
+            pred_i = forward_project_view_T(
+                T_i,
+                grid,
+                detector,
+                masked_vol,
+                use_checkpoint=checkpoint_projector,
+                unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
             resid_i = (pred_i - y_i).astype(jnp.float32)
             loss_i = 0.5 * jnp.vdot(resid_i, resid_i).real
-            # Vectorize VJP via ravel to a single 1D cotangent
-            _, vjp = jax.vjp(lambda vv: fwd(vv).ravel(), masked_vol)
-            g_i = vjp(resid_i.ravel())[0]
-            if vol_mask is not None:
-                g_i = g_i * vol_mask
+            g_i = adjoint(resid_i, T_i)
             return (loss_acc + loss_i, g_acc + g_i), None
 
         init = (jnp.float32(0.0), jnp.zeros_like(vol))
@@ -191,8 +209,8 @@ def grad_data_term(
         loss_val, grad = stream_loss_and_grad(x)
         return grad, loss_val
     else:
-        val, grad = jax.value_and_grad(batched_loss)(x)
-        return grad, val
+        loss_val, grad = batched_loss_and_grad(x)
+        return grad, loss_val
 
 
 def data_term_value(

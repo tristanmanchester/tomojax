@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 
 from .geometry.base import Grid, Detector, Geometry
-from .projector import forward_project_view
+from .projector import backproject_view, forward_project_view
 
 
 def view_loss(
@@ -49,27 +49,30 @@ def adjoint_test_once(
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> float:
-    """Check <A x, y> vs <x, A^T y> for one view using autodiff VJP.
+    """Check <A x, y> vs <x, A^T y> for one view using the explicit adjoint.
 
     Use tiny sizes for sanity checks; memory grows with volume size.
     """
-
-    def fwd_wrt_vol(vol):
-        return forward_project_view(
-            geometry=geometry,
-            grid=grid,
-            detector=detector,
-            volume=vol,
-            view_index=view_index,
-            step_size=step_size,
-            n_steps=n_steps,
-            use_checkpoint=True,
-        ).ravel()
-
-    Ax = fwd_wrt_vol(volume)
+    Ax = forward_project_view(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        view_index=view_index,
+        step_size=step_size,
+        n_steps=n_steps,
+        use_checkpoint=True,
+    ).ravel()
     lhs = jnp.vdot(Ax, y_like.ravel())
-    _, vjp = jax.vjp(fwd_wrt_vol, volume)
-    ATy = vjp(y_like.ravel().astype(jnp.float32))[0]
+    ATy = backproject_view(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        image=y_like.astype(jnp.float32),
+        view_index=view_index,
+        step_size=step_size,
+        n_steps=n_steps,
+    )
     rhs = jnp.vdot(volume, ATy)
     rel = float(jnp.abs(lhs - rhs) / (jnp.abs(lhs) + 1e-12))
     return rel
