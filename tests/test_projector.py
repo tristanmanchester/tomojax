@@ -1,10 +1,11 @@
 import sys
 import numpy as np
 import pytest
+import jax
 import jax.numpy as jnp
 
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
-from tomojax.core.projector import forward_project_view
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.core.projector import backproject_view, forward_project_view
 from tomojax.core.operators import adjoint_test_once
 
 
@@ -65,3 +66,50 @@ def test_forward_project_localized_voxel_uses_center_indexed_origin() -> None:
     # The default centred grid places voxel (2, 2, 2) at x = z = 0.0.
     assert u[np.argmax(proj)] == pytest.approx(0.0, abs=1e-6)
     assert proj[np.argmax(proj)] == pytest.approx(1.0, abs=1e-6)
+
+
+def _vjp_backproject(
+    geom,
+    grid: Grid,
+    det: Detector,
+    image: jnp.ndarray,
+    *,
+    view_index: int = 0,
+) -> jnp.ndarray:
+    zero_vol = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    def fwd(vol):
+        return forward_project_view(geom, grid, det, vol, view_index=view_index).ravel()
+
+    _, vjp = jax.vjp(fwd, zero_vol)
+    return vjp(image.ravel().astype(jnp.float32))[0]
+
+
+def test_backproject_matches_vjp_parallel():
+    grid = Grid(nx=6, ny=7, nz=5, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
+    image = jax.random.normal(jax.random.PRNGKey(0), (det.nv, det.nu), dtype=jnp.float32)
+
+    explicit = backproject_view(geom, grid, det, image, view_index=0)
+    oracle = _vjp_backproject(geom, grid, det, image, view_index=0)
+
+    assert np.allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-5, rtol=1e-5)
+
+
+def test_backproject_matches_vjp_lamino():
+    grid = Grid(nx=6, ny=6, nz=5, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = LaminographyGeometry(
+        grid=grid,
+        detector=det,
+        thetas_deg=[17.5],
+        tilt_deg=30.0,
+        tilt_about="x",
+    )
+    image = jax.random.normal(jax.random.PRNGKey(1), (det.nv, det.nu), dtype=jnp.float32)
+
+    explicit = backproject_view(geom, grid, det, image, view_index=0)
+    oracle = _vjp_backproject(geom, grid, det, image, view_index=0)
+
+    assert np.allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-5, rtol=1e-5)

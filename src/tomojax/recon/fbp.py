@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Grid, Detector, Geometry
-from ..core.projector import forward_project_view_T
+from ..core.projector import backproject_view_T
 from .filters import get_filter_np
 from ..utils.logging import progress_iter
 
@@ -76,23 +76,15 @@ def _bp_one(
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
-    """Backproject one view using VJP of the pose-aware forward projector."""
-    nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
-    zero_vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-
-    def fwd(vol):
-        return forward_project_view_T(
-            T,
-            grid,
-            detector,
-            vol,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-        )
-
-    _, vjp = jax.vjp(fwd, zero_vol)
-    return vjp(filtered.astype(jnp.float32))[0]
+    """Backproject one view with the explicit discrete adjoint."""
+    del checkpoint_projector, gather_dtype
+    return backproject_view_T(
+        T,
+        grid,
+        detector,
+        filtered.astype(jnp.float32),
+        unroll=int(projector_unroll),
+    )
 
 
 _bp_one_jit = jax.jit(
@@ -120,7 +112,7 @@ def fbp(
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
-    """Filtered backprojection for parallel-ray geometry using VJP backproject.
+    """Filtered backprojection for parallel-ray geometry using the explicit adjoint.
 
     projections: (n_views, nv, nu) -> volume (nx, ny, nz).
     Memory-safe: filters and backprojects per view-batch.

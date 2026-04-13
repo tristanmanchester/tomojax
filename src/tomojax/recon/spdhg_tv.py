@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry import Geometry, Grid, Detector
-from ..core.projector import forward_project_view_T, get_detector_grid_device
+from ..core.projector import _sum_backproject_views_T, forward_project_view_T, get_detector_grid_device
 
 
 # --------- finite differences (match your FISTA helpers) ----------
@@ -96,7 +96,6 @@ def _estimate_norm_A2(
     safety: float = 1.05,
 ) -> float:
     """Reuse your power method to estimate ||A||^2 (i.e., Lipschitz of ∇(1/2||Ax||^2))."""
-    # Minimal reimplementation: apply A^T A via VJP in streamed fashion over all views
     n_views, nv, nu = projections_shape
     det_grid = get_detector_grid_device(detector)
 
@@ -133,9 +132,14 @@ def _estimate_norm_A2(
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
             proj = proj * mask  # zero padded rows
 
-            # backproject via VJP
-            _, vjp = jax.vjp(lambda vv: pred_fun(vv).ravel(), v)
-            g_chunk = vjp(proj.ravel())[0]
+            g_chunk = _sum_backproject_views_T(
+                T_chunk,
+                grid,
+                detector,
+                proj,
+                unroll=int(projector_unroll),
+                det_grid=det_grid,
+            )
             return g_acc + g_chunk, None
 
         g0 = jnp.zeros_like(v)
@@ -297,11 +301,14 @@ def spdhg_tv(
         # delta dual and its contribution to s via A^T (only changed rows)
         delta_y = (y_dual_new - y_dual_old) * row_mask
 
-        # backproject this block's delta via a single batched VJP (faster, higher peak memory)
-        def pred_fun(vol):
-            return project_chunk(T_chunk, vol)
-        _, vjp = jax.vjp(lambda vv: pred_fun(vv).ravel(), x_bar)
-        g_block = vjp(delta_y.ravel())[0]
+        g_block = _sum_backproject_views_T(
+            T_chunk,
+            grid,
+            detector,
+            delta_y,
+            unroll=int(config.projector_unroll),
+            det_grid=det_grid,
+        )
 
         # TV DUAL UPDATE (global)
         gx, gy, gz = _grad3(x_bar)
