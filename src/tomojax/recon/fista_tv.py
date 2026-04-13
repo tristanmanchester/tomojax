@@ -314,15 +314,20 @@ def power_method_L(
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     n_views, nv, nu = projections_shape
-    x = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    v = jnp.ones_like(x)
-    v = v / jnp.linalg.norm(v.ravel())
-    for _ in range(iters):
+    if T_all is None:
+        T_all = jnp.stack(
+            [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
+            axis=0,
+        )
+    zero_proj = jnp.zeros((n_views, nv, nu), dtype=jnp.float32)
+    num_iters = max(1, int(iters))
+
+    def ata_apply(v):
         g, _ = grad_data_term(
             geometry,
             grid,
             detector,
-            jnp.zeros((n_views, nv, nu), dtype=jnp.float32),
+            zero_proj,
             v,
             views_per_batch=views_per_batch,
             projector_unroll=projector_unroll,
@@ -332,23 +337,22 @@ def power_method_L(
             T_all=T_all,
             vol_mask=vol_mask,
         )
-        v = g / (jnp.linalg.norm(g.ravel()) + 1e-12)
-    # Rayleigh quotient
-    g, _ = grad_data_term(
-        geometry,
-        grid,
-        detector,
-        jnp.zeros((n_views, nv, nu), dtype=jnp.float32),
-        v,
-        views_per_batch=views_per_batch,
-        projector_unroll=projector_unroll,
-        checkpoint_projector=checkpoint_projector,
-        gather_dtype=gather_dtype,
-        grad_mode=grad_mode,
-        T_all=T_all,
-        vol_mask=vol_mask,
-    )
-    L = float(jnp.vdot(v, g).real)
+        return g
+
+    def normalize(v):
+        return v / (jnp.linalg.norm(v.ravel()) + 1e-12)
+
+    def run_power(v0):
+        def body(_, v):
+            return normalize(ata_apply(v))
+
+        v = jax.lax.fori_loop(0, num_iters, body, normalize(v0))
+        g = ata_apply(v)
+        return jnp.vdot(v, g).real
+
+    run_power_jit = jax.jit(run_power)
+    v0 = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    L = float(run_power_jit(v0))
     return max(L, 1e-6)
 
 

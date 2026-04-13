@@ -115,6 +115,7 @@ def _estimate_norm_A2(
 
     b = int(max(1, min(views_per_batch, n_views)))
     m = (n_views + b - 1) // b
+    num_iters = max(1, int(power_iters))
 
     def AtranA(v):
         # iterate over contiguous blocks with masking of the last chunk
@@ -142,15 +143,23 @@ def _estimate_norm_A2(
         g_final, _ = jax.lax.scan(body, g0, jnp.arange(m))
         return g_final
 
+    def normalize(v):
+        return v / (jnp.linalg.norm(v) + 1e-12)
+
+    def run_power(v0):
+        def body(_, v):
+            return normalize(AtranA(v))
+
+        v = jax.lax.fori_loop(0, num_iters, body, normalize(v0))
+        Aw = AtranA(v)
+        return jnp.vdot(v, Aw).real
+
+    run_power_jit = jax.jit(run_power)
+
     if key is None:
         key = jax.random.PRNGKey(0)
-    v = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    v = v / (jnp.linalg.norm(v) + 1e-12)
-    for _ in range(max(1, power_iters)):
-        w = AtranA(v)
-        v = w / (jnp.linalg.norm(w) + 1e-12)
-    Aw = AtranA(v)
-    L = float(jnp.vdot(v, Aw).real) * float(safety ** 2)  # ~||A||^2 with margin
+    v0 = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    L = float(run_power_jit(v0)) * float(safety ** 2)  # ~||A||^2 with margin
     return max(L, 1e-6)
 
 
