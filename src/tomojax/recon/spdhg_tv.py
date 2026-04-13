@@ -150,20 +150,16 @@ def _estimate_norm_A2(
     def normalize(v):
         return v / (jnp.linalg.norm(v) + 1e-12)
 
-    def run_power(v0):
-        def body(_, v):
-            return normalize(AtranA(v))
-
-        v = jax.lax.fori_loop(0, num_iters, body, normalize(v0))
-        Aw = AtranA(v)
-        return jnp.vdot(v, Aw).real
-
-    run_power_jit = jax.jit(run_power)
+    AtranA_jit = jax.jit(AtranA)
 
     if key is None:
         key = jax.random.PRNGKey(0)
     v0 = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    L = float(run_power_jit(v0)) * float(safety ** 2)  # ~||A||^2 with margin
+    v = normalize(v0)
+    for _ in range(num_iters):
+        v = normalize(AtranA_jit(v))
+    Aw = AtranA_jit(v)
+    L = float(jnp.vdot(v, Aw).real) * float(safety ** 2)  # ~||A||^2 with margin
     return max(L, 1e-6)
 
 

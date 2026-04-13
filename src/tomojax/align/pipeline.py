@@ -80,6 +80,76 @@ def _smooth_gn_candidate(
 
     return jax.vmap(solve_one_dim, in_axes=(1, 0), out_axes=1)(params5, weights)
 
+
+def _select_gn_candidate(
+    params5_prev: jnp.ndarray,
+    dp_all: jnp.ndarray,
+    *,
+    loss_before: float,
+    eval_loss: Callable[[jnp.ndarray], float],
+    gn_accept_tol: float,
+    smooth_candidate: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray] | None = None,
+    light_smoothness_weights_sq: jnp.ndarray | None = None,
+    medium_smoothness_weights_sq: jnp.ndarray | None = None,
+    smoothness_weights_sq: jnp.ndarray | None = None,
+    trans_only_smoothness_weights_sq: jnp.ndarray | None = None,
+) -> tuple[jnp.ndarray, float]:
+    """Pick a GN candidate using a small hierarchical full-loss search."""
+
+    def _accepts(candidate_loss: float, current_best_loss: float = float("inf")) -> bool:
+        return _should_prefer_gn_candidate(
+            loss_before,
+            current_best_loss,
+            candidate_loss,
+            gn_accept_tol,
+        )
+
+    raw_params = params5_prev + dp_all
+    raw_loss = eval_loss(raw_params)
+    if _accepts(raw_loss):
+        return raw_params, raw_loss
+
+    half_params = params5_prev + jnp.float32(0.5) * dp_all
+    half_loss = eval_loss(half_params)
+    if _accepts(half_loss):
+        return half_params, half_loss
+
+    base_params = raw_params if raw_loss <= half_loss else half_params
+
+    def _has_active_weights(weights: jnp.ndarray | None) -> bool:
+        return weights is not None and bool(jnp.any(weights > 0.0))
+
+    if smooth_candidate is None:
+        return params5_prev, loss_before
+
+    smooth_weights = []
+    for weights in (
+        light_smoothness_weights_sq,
+        medium_smoothness_weights_sq,
+        smoothness_weights_sq,
+        trans_only_smoothness_weights_sq,
+    ):
+        if _has_active_weights(weights):
+            smooth_weights.append(weights)
+
+    if not smooth_weights:
+        return params5_prev, loss_before
+
+    best_params = params5_prev
+    best_loss = float("inf")
+    accepted = False
+    for weights in smooth_weights:
+        candidate_params = smooth_candidate(base_params, weights)
+        candidate_loss = eval_loss(candidate_params)
+        if _accepts(candidate_loss, best_loss):
+            best_params = candidate_params
+            best_loss = candidate_loss
+            accepted = True
+
+    if accepted:
+        return best_params, best_loss
+    return params5_prev, loss_before
+
 @dataclass
 class AlignConfig:
     outer_iters: int = 5
@@ -213,7 +283,8 @@ def align(
     chunk_size = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
     chunk_size = min(chunk_size, n_views)
     num_chunks = (n_views + chunk_size - 1) // chunk_size
-    has_loss_mask = getattr(loss_state, "mask", None) is not None
+    loss_mask = getattr(loss_state, "mask", None)
+    has_loss_mask = loss_mask is not None
     loss_kind_norm = str(cfg.loss_kind).lower()
     ls_like = loss_kind_norm in (
         "l2",
@@ -236,13 +307,47 @@ def align(
         vmask = (idx >= (jnp.int32(chunk_size) - valid)).astype(jnp.float32)
         return start_shifted, vmask, start_shifted + idx
 
+    def _apply_vol_mask(vol: jnp.ndarray) -> jnp.ndarray:
+        return vol * vol_mask if vol_mask is not None else vol
+
+    if has_loss_mask:
+        def _loss_chunk_values(
+            pred: jnp.ndarray,
+            y_chunk: jnp.ndarray,
+            start_shifted: jnp.ndarray,
+            view_idx_chunk: jnp.ndarray,
+        ) -> jnp.ndarray:
+            mask_chunk = jax.lax.dynamic_slice(
+                loss_mask, (start_shifted, 0, 0), (chunk_size, nv, nu)
+            )
+            return per_view_loss_fn(
+                pred,
+                y_chunk,
+                mask_chunk,
+                view_indices=view_idx_chunk,
+            )
+    else:
+        def _loss_chunk_values(
+            pred: jnp.ndarray,
+            y_chunk: jnp.ndarray,
+            start_shifted: jnp.ndarray,
+            view_idx_chunk: jnp.ndarray,
+        ) -> jnp.ndarray:
+            del start_shifted
+            return per_view_loss_fn(
+                pred,
+                y_chunk,
+                None,
+                view_indices=view_idx_chunk,
+            )
+
     def align_loss(params5, vol):
         # Compose augmented poses
         # Current convention: per-view misalignment parameters act in the object
         # frame and are post-multiplied: T_world_from_obj_aug = T_nom @ T_delta.
         # This is consistent across parallel CT and laminography sample-frame.
         T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)  # (n_views, 4, 4)
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
+        masked_vol = _apply_vol_mask(vol)
 
         def body(loss_acc, i):
             start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
@@ -253,20 +358,7 @@ def align(
                 projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
             )
             pred = _project_batch(T_chunk, masked_vol)
-            # Optional per-view mask slice (for Otsu-masked L2)
-            if has_loss_mask:
-                mask_chunk = jax.lax.dynamic_slice(
-                    loss_state.mask, (start_shifted, 0, 0), (chunk_size, nv, nu)
-                )
-            else:
-                mask_chunk = None
-            # Compute per-view losses, then zero-out invalid padded items
-            lvec = per_view_loss_fn(
-                pred,
-                y_chunk,
-                mask_chunk,
-                view_indices=view_idx_chunk,
-            )  # (b,)
+            lvec = _loss_chunk_values(pred, y_chunk, start_shifted, view_idx_chunk)
             loss_batch = jnp.sum(lvec * vmask)
             return (loss_acc + loss_batch, None)
 
@@ -284,86 +376,153 @@ def align(
     align_loss_jit = jax.jit(align_loss)
 
     # Memory-safe gradient over fixed-size chunks.
-    def _one_view_loss(p5_i, T_nom_i, y_i, vol, mask_i, view_idx):
-        T_i = T_nom_i @ se3_from_5d(p5_i)
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
-        pred_i = forward_project_view_T(
-            T_i,
-            grid,
-            detector,
-            masked_vol,
-            use_checkpoint=cfg.checkpoint_projector,
-            unroll=int(cfg.projector_unroll),
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
-        )
-        # Reuse the built per-view loss function; feed as a single-item batch
-        view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
-        lvec = per_view_loss_fn(
-            pred_i[None, ...],
-            y_i[None, ...],
-            mask_i[None, ...],
-            view_indices=view_indices,
-        )
-        return lvec[0]
+    if has_loss_mask:
+        def _one_view_loss_masked(p5_i, T_nom_i, y_i, masked_vol, mask_i, view_idx):
+            T_i = T_nom_i @ se3_from_5d(p5_i)
+            pred_i = forward_project_view_T(
+                T_i,
+                grid,
+                detector,
+                masked_vol,
+                use_checkpoint=cfg.checkpoint_projector,
+                unroll=int(cfg.projector_unroll),
+                gather_dtype=cfg.gather_dtype,
+                det_grid=det_grid,
+            )
+            view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
+            lvec = per_view_loss_fn(
+                pred_i[None, ...],
+                y_i[None, ...],
+                mask_i[None, ...],
+                view_indices=view_indices,
+            )
+            return lvec[0]
 
-    one_view_val_and_grad_batch = jax.jit(
-        jax.vmap(jax.value_and_grad(_one_view_loss), in_axes=(0, 0, 0, None, 0, 0))
-    )
+        one_view_val_and_grad_batch = jax.jit(
+            jax.vmap(
+                jax.value_and_grad(_one_view_loss_masked),
+                in_axes=(0, 0, 0, None, 0, 0),
+            )
+        )
 
-    def loss_and_grad_manual(params5, vol):
-        def body(carry, i):
-            total, g = carry
-            start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
-            params_chunk = jax.lax.dynamic_slice(
-                params5, (start_shifted, 0), (chunk_size, params5.shape[1])
-            )
-            T_nom_chunk = jax.lax.dynamic_slice(
-                T_nom_all, (start_shifted, 0, 0), (chunk_size, 4, 4)
-            )
-            y_chunk = jax.lax.dynamic_slice(
-                projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
-            )
-            if has_loss_mask:
-                mask_chunk = jax.lax.dynamic_slice(
-                    loss_state.mask, (start_shifted, 0, 0), (chunk_size, nv, nu)
+        def loss_and_grad_manual(params5, vol):
+            masked_vol = _apply_vol_mask(vol)
+
+            def body(carry, i):
+                total, g = carry
+                start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
+                params_chunk = jax.lax.dynamic_slice(
+                    params5, (start_shifted, 0), (chunk_size, params5.shape[1])
                 )
-            else:
-                mask_chunk = jnp.zeros_like(y_chunk)
-            lvec, g_chunk = one_view_val_and_grad_batch(
-                params_chunk,
-                T_nom_chunk,
-                y_chunk,
-                vol,
-                mask_chunk,
-                view_idx_chunk,
-            )
-            total = total + jnp.sum(lvec * vmask)
-            g = g.at[view_idx_chunk].add(g_chunk * vmask[:, None])
-            return (total, g), None
+                T_nom_chunk = jax.lax.dynamic_slice(
+                    T_nom_all, (start_shifted, 0, 0), (chunk_size, 4, 4)
+                )
+                y_chunk = jax.lax.dynamic_slice(
+                    projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
+                )
+                mask_chunk = jax.lax.dynamic_slice(
+                    loss_mask, (start_shifted, 0, 0), (chunk_size, nv, nu)
+                )
+                lvec, g_chunk = one_view_val_and_grad_batch(
+                    params_chunk,
+                    T_nom_chunk,
+                    y_chunk,
+                    masked_vol,
+                    mask_chunk,
+                    view_idx_chunk,
+                )
+                total = total + jnp.sum(lvec * vmask)
+                g = g.at[view_idx_chunk].add(g_chunk * vmask[:, None])
+                return (total, g), None
 
-        init = (jnp.float32(0.0), jnp.zeros_like(params5))
-        (total, g), _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
-        # Smoothness prior gradient (second difference): tridiagonal conv with [-1, 2, -1]
-        if int(params5.shape[0]) >= 3:
-            d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
-            w = jnp.array([cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], jnp.float32)
-            total = total + jnp.sum((d2 * w) ** 2)
-            # Gradient contribution
-            # For middle points i in [1..n-2]: grad += 2*w^2 * ( -1*(p[i-1]-2p[i]+p[i+1]) *(-2) + ... )
-            # Easier via explicit accumulation
-            ww = (w ** 2) * 2.0
-            # i term contributes: +(-2)*d2[i] to grad[i+1], +(1)*d2[i] to grad[i], +(1)*d2[i] to grad[i+2]
-            g = g.at[1:-1].add(-2.0 * d2 * ww)
-            g = g.at[0:-2].add(1.0 * d2 * ww)
-            g = g.at[2:].add(1.0 * d2 * ww)
-        return total, g
+            init = (jnp.float32(0.0), jnp.zeros_like(params5))
+            (total, g), _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
+            if int(params5.shape[0]) >= 3:
+                d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+                w = jnp.array(
+                    [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
+                    jnp.float32,
+                )
+                total = total + jnp.sum((d2 * w) ** 2)
+                ww = (w ** 2) * 2.0
+                g = g.at[1:-1].add(-2.0 * d2 * ww)
+                g = g.at[0:-2].add(1.0 * d2 * ww)
+                g = g.at[2:].add(1.0 * d2 * ww)
+            return total, g
+    else:
+        def _one_view_loss_unmasked(p5_i, T_nom_i, y_i, masked_vol, view_idx):
+            T_i = T_nom_i @ se3_from_5d(p5_i)
+            pred_i = forward_project_view_T(
+                T_i,
+                grid,
+                detector,
+                masked_vol,
+                use_checkpoint=cfg.checkpoint_projector,
+                unroll=int(cfg.projector_unroll),
+                gather_dtype=cfg.gather_dtype,
+                det_grid=det_grid,
+            )
+            view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
+            lvec = per_view_loss_fn(
+                pred_i[None, ...],
+                y_i[None, ...],
+                None,
+                view_indices=view_indices,
+            )
+            return lvec[0]
+
+        one_view_val_and_grad_batch = jax.jit(
+            jax.vmap(
+                jax.value_and_grad(_one_view_loss_unmasked),
+                in_axes=(0, 0, 0, None, 0),
+            )
+        )
+
+        def loss_and_grad_manual(params5, vol):
+            masked_vol = _apply_vol_mask(vol)
+
+            def body(carry, i):
+                total, g = carry
+                start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
+                params_chunk = jax.lax.dynamic_slice(
+                    params5, (start_shifted, 0), (chunk_size, params5.shape[1])
+                )
+                T_nom_chunk = jax.lax.dynamic_slice(
+                    T_nom_all, (start_shifted, 0, 0), (chunk_size, 4, 4)
+                )
+                y_chunk = jax.lax.dynamic_slice(
+                    projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
+                )
+                lvec, g_chunk = one_view_val_and_grad_batch(
+                    params_chunk,
+                    T_nom_chunk,
+                    y_chunk,
+                    masked_vol,
+                    view_idx_chunk,
+                )
+                total = total + jnp.sum(lvec * vmask)
+                g = g.at[view_idx_chunk].add(g_chunk * vmask[:, None])
+                return (total, g), None
+
+            init = (jnp.float32(0.0), jnp.zeros_like(params5))
+            (total, g), _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
+            if int(params5.shape[0]) >= 3:
+                d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+                w = jnp.array(
+                    [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
+                    jnp.float32,
+                )
+                total = total + jnp.sum((d2 * w) ** 2)
+                ww = (w ** 2) * 2.0
+                g = g.at[1:-1].add(-2.0 * d2 * ww)
+                g = g.at[0:-2].add(1.0 * d2 * ww)
+                g = g.at[2:].add(1.0 * d2 * ww)
+            return total, g
 
     loss_and_grad_manual = jax.jit(loss_and_grad_manual)
 
     # Gauss–Newton (Levenberg–Marquardt) single-view update
-    def _pred_flat(T_i, vol):
-        masked_vol = vol * vol_mask if vol_mask is not None else vol
+    def _pred_flat(T_i, masked_vol):
         return forward_project_view_T(
             T_i,
             grid,
@@ -402,64 +561,122 @@ def align(
     edge_kx = jnp.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]], jnp.float32) / 8.0
     edge_ky = jnp.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], jnp.float32) / 8.0
 
-    def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
-        if loss_kind_norm in ("l2",):
-            return jnp.ones_like(y_chunk)
-        if (
-            loss_kind_norm in ("l2_otsu", "l2-otsu", "otsu-l2")
-            and has_loss_mask
-        ):
-            base = mask_chunk.astype(jnp.float32)
-            return jax.nn.sigmoid((base - 0.5) / jnp.maximum(otsu_temp, 1e-6))
-        if loss_kind_norm == "pwls":
-            w = 1.0 / (pwls_a * jnp.clip(y_chunk, 0.0) + pwls_b + 1e-6)
-            return jnp.sqrt(w)
-        if loss_kind_norm in ("edge_l2", "edge_aware_l2"):
-            y4 = y_chunk[..., None]
-            gx = jax.lax.conv_general_dilated(
-                y4,
-                edge_kx[:, :, None, None],
-                (1, 1),
-                padding="SAME",
-                dimension_numbers=("NHWC", "HWIO", "NHWC"),
-            )
-            gy = jax.lax.conv_general_dilated(
-                y4,
-                edge_ky[:, :, None, None],
-                (1, 1),
-                padding="SAME",
-                dimension_numbers=("NHWC", "HWIO", "NHWC"),
-            )
-            mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
-            return jnp.sqrt(1.0 + mag)
-        return jnp.ones_like(y_chunk)
-
-    def _gn_update_all(params5, vol):
-        def body(dp_acc, i):
-            start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
-            params_chunk = jax.lax.dynamic_slice(
-                params5, (start_shifted, 0), (chunk_size, params5.shape[1])
-            )
-            T_chunk = jax.lax.dynamic_slice(
-                T_nom_all, (start_shifted, 0, 0), (chunk_size, 4, 4)
-            )
-            y_chunk = jax.lax.dynamic_slice(
-                projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
-            )
-            if has_loss_mask:
-                mask_chunk = jax.lax.dynamic_slice(
-                    loss_state.mask, (start_shifted, 0, 0), (chunk_size, nv, nu)
+    if has_loss_mask:
+        def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
+            if loss_kind_norm in ("l2",):
+                return jnp.ones_like(y_chunk)
+            if loss_kind_norm in ("l2_otsu", "l2-otsu", "otsu-l2"):
+                base = mask_chunk.astype(jnp.float32)
+                return jax.nn.sigmoid((base - 0.5) / jnp.maximum(otsu_temp, 1e-6))
+            if loss_kind_norm == "pwls":
+                w = 1.0 / (pwls_a * jnp.clip(y_chunk, 0.0) + pwls_b + 1e-6)
+                return jnp.sqrt(w)
+            if loss_kind_norm in ("edge_l2", "edge_aware_l2"):
+                y4 = y_chunk[..., None]
+                gx = jax.lax.conv_general_dilated(
+                    y4,
+                    edge_kx[:, :, None, None],
+                    (1, 1),
+                    padding="SAME",
+                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
                 )
-            else:
-                mask_chunk = jnp.zeros_like(y_chunk)
-            w_chunk = _ls_weight_chunk(y_chunk, mask_chunk)
-            dp_chunk = _gn_update_batch(params_chunk, T_chunk, y_chunk, vol, w_chunk)
-            dp_acc = dp_acc.at[view_idx_chunk].add(dp_chunk * vmask[:, None])
-            return dp_acc, None
+                gy = jax.lax.conv_general_dilated(
+                    y4,
+                    edge_ky[:, :, None, None],
+                    (1, 1),
+                    padding="SAME",
+                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
+                )
+                mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
+                return jnp.sqrt(1.0 + mag)
+            return jnp.ones_like(y_chunk)
 
-        dp0 = jnp.zeros_like(params5)
-        dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
-        return dp_all
+        def _gn_update_all(params5, vol):
+            masked_vol = _apply_vol_mask(vol)
+
+            def body(dp_acc, i):
+                start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
+                params_chunk = jax.lax.dynamic_slice(
+                    params5, (start_shifted, 0), (chunk_size, params5.shape[1])
+                )
+                T_chunk = jax.lax.dynamic_slice(
+                    T_nom_all, (start_shifted, 0, 0), (chunk_size, 4, 4)
+                )
+                y_chunk = jax.lax.dynamic_slice(
+                    projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
+                )
+                mask_chunk = jax.lax.dynamic_slice(
+                    loss_mask, (start_shifted, 0, 0), (chunk_size, nv, nu)
+                )
+                w_chunk = _ls_weight_chunk(y_chunk, mask_chunk)
+                dp_chunk = _gn_update_batch(
+                    params_chunk,
+                    T_chunk,
+                    y_chunk,
+                    masked_vol,
+                    w_chunk,
+                )
+                dp_acc = dp_acc.at[view_idx_chunk].add(dp_chunk * vmask[:, None])
+                return dp_acc, None
+
+            dp0 = jnp.zeros_like(params5)
+            dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
+            return dp_all
+    else:
+        def _ls_weight_chunk(y_chunk: jnp.ndarray) -> jnp.ndarray:
+            if loss_kind_norm in ("l2", "l2_otsu", "l2-otsu", "otsu-l2"):
+                return jnp.ones_like(y_chunk)
+            if loss_kind_norm == "pwls":
+                w = 1.0 / (pwls_a * jnp.clip(y_chunk, 0.0) + pwls_b + 1e-6)
+                return jnp.sqrt(w)
+            if loss_kind_norm in ("edge_l2", "edge_aware_l2"):
+                y4 = y_chunk[..., None]
+                gx = jax.lax.conv_general_dilated(
+                    y4,
+                    edge_kx[:, :, None, None],
+                    (1, 1),
+                    padding="SAME",
+                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
+                )
+                gy = jax.lax.conv_general_dilated(
+                    y4,
+                    edge_ky[:, :, None, None],
+                    (1, 1),
+                    padding="SAME",
+                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
+                )
+                mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
+                return jnp.sqrt(1.0 + mag)
+            return jnp.ones_like(y_chunk)
+
+        def _gn_update_all(params5, vol):
+            masked_vol = _apply_vol_mask(vol)
+
+            def body(dp_acc, i):
+                start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
+                params_chunk = jax.lax.dynamic_slice(
+                    params5, (start_shifted, 0), (chunk_size, params5.shape[1])
+                )
+                T_chunk = jax.lax.dynamic_slice(
+                    T_nom_all, (start_shifted, 0, 0), (chunk_size, 4, 4)
+                )
+                y_chunk = jax.lax.dynamic_slice(
+                    projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
+                )
+                w_chunk = _ls_weight_chunk(y_chunk)
+                dp_chunk = _gn_update_batch(
+                    params_chunk,
+                    T_chunk,
+                    y_chunk,
+                    masked_vol,
+                    w_chunk,
+                )
+                dp_acc = dp_acc.at[view_idx_chunk].add(dp_chunk * vmask[:, None])
+                return dp_acc, None
+
+            dp0 = jnp.zeros_like(params5)
+            dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
+            return dp_all
 
     _gn_update_all = jax.jit(_gn_update_all)
 
@@ -679,70 +896,35 @@ def align(
         if step_kind == "gn":
             params5_prev = params5
             dp_all = _gn_update_all(params5_prev, x)
-            params5 = params5_prev + dp_all
-            # Evaluate a small candidate set and keep the best acceptable step.
-            loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
-            if cfg.gn_accept_only_improving and (loss_before is not None) and (loss_after is not None):
-                best_params = params5_prev
-                best_loss = float("inf")
-                accepted = False
-
-                def _consider_candidate(candidate: jnp.ndarray, candidate_loss: float) -> None:
-                    nonlocal best_params, best_loss, accepted
-                    if _should_prefer_gn_candidate(
-                        loss_before, best_loss, candidate_loss, cfg.gn_accept_tol
-                    ):
-                        best_params = candidate
-                        best_loss = candidate_loss
-                        accepted = True
-
+            if cfg.gn_accept_only_improving and (loss_before is not None):
                 try:
-                    _consider_candidate(params5, loss_after)
-                    for scale in (0.5, 0.25):
-                        params_try = params5_prev + jnp.float32(scale) * dp_all
-                        loss_try = float(align_loss_jit(params_try, x))
-                        _consider_candidate(params_try, loss_try)
-                    if int(params5.shape[0]) >= 3 and bool(jnp.any(smoothness_weights_sq > 0.0)):
-                        for scale in (1.0, 0.5):
-                            params_try = params5_prev + jnp.float32(scale) * dp_all
-                            params_medium_smooth = _smooth_gn_candidate(
-                                params_try,
+                    smooth_candidate = None
+                    if int(params5.shape[0]) >= 3:
+                        smooth_candidate = (
+                            lambda candidate, weights: _smooth_gn_candidate(
+                                candidate,
                                 smoothness_gram,
-                                medium_smoothness_weights_sq,
+                                weights,
                             )
-                            loss_medium_smooth = float(align_loss_jit(params_medium_smooth, x))
-                            _consider_candidate(params_medium_smooth, loss_medium_smooth)
-                            params_light_smooth = _smooth_gn_candidate(
-                                params_try,
-                                smoothness_gram,
-                                light_smoothness_weights_sq,
-                            )
-                            loss_light_smooth = float(align_loss_jit(params_light_smooth, x))
-                            _consider_candidate(params_light_smooth, loss_light_smooth)
-                            params_smooth = _smooth_gn_candidate(
-                                params_try,
-                                smoothness_gram,
-                                smoothness_weights_sq,
-                            )
-                            loss_smooth = float(align_loss_jit(params_smooth, x))
-                            _consider_candidate(params_smooth, loss_smooth)
-                            if bool(jnp.any(trans_only_smoothness_weights_sq > 0.0)):
-                                params_trans_smooth = _smooth_gn_candidate(
-                                    params_try,
-                                    smoothness_gram,
-                                    trans_only_smoothness_weights_sq,
-                                )
-                                loss_trans_smooth = float(align_loss_jit(params_trans_smooth, x))
-                                _consider_candidate(params_trans_smooth, loss_trans_smooth)
+                        )
+                    params5, loss_after = _select_gn_candidate(
+                        params5_prev,
+                        dp_all,
+                        loss_before=loss_before,
+                        eval_loss=lambda candidate: float(align_loss_jit(candidate, x)),
+                        gn_accept_tol=cfg.gn_accept_tol,
+                        smooth_candidate=smooth_candidate,
+                        light_smoothness_weights_sq=light_smoothness_weights_sq,
+                        medium_smoothness_weights_sq=medium_smoothness_weights_sq,
+                        smoothness_weights_sq=smoothness_weights_sq,
+                        trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
+                    )
                 except Exception:
-                    pass
-
-                if accepted:
-                    params5 = best_params
-                    loss_after = best_loss
-                else:
                     params5 = params5_prev
                     loss_after = loss_before
+            else:
+                params5 = params5_prev + dp_all
+                loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
             # Log step stats
             try:
                 stat["rot_mean"] = float(jnp.mean(jnp.abs(dp_all[:, :3])))

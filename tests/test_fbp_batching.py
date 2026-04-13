@@ -63,36 +63,28 @@ def test_fbp_oom_retries_until_all_views_are_processed(monkeypatch):
 
     projs = jnp.ones((5, 1, 2), dtype=jnp.float32)
 
+    fast_path_calls = []
     row_trace_shapes = []
+    batch_trace_shapes = []
+
+    def fake_fast_path(*args, **kwargs):
+        fast_path_calls.append("called")
+        raise RuntimeError("RESOURCE_EXHAUSTED: simulated")
 
     def fake_filter_rows(rows, du, filter_name):
         row_trace_shapes.append(int(rows.shape[0]))
         return rows
 
-    monkeypatch.setattr(fbp_mod, "_fft_filter_rows", fake_filter_rows)
-    monkeypatch.setattr(
-        fbp_mod,
-        "_bp_one_jit",
-        lambda T, grid, detector, F, **kwargs: jnp.ones(
-            (grid.nx, grid.ny, grid.nz), dtype=jnp.float32
+    def fake_bp_batch_sum(T_chunk, filt_chunk, *, grid, detector, **kwargs):
+        batch_trace_shapes.append(int(T_chunk.shape[0]))
+        return jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * jnp.sum(
+            jnp.mean(filt_chunk, axis=(1, 2)),
+            dtype=jnp.float32,
         )
-        * jnp.mean(F, dtype=jnp.float32),
-    )
 
-    scan_trace_shapes = []
-
-    def fake_scan(body, init, xs, length=None, unroll=1):
-        T_chunk, filt_chunk = xs
-        cur = int(T_chunk.shape[0])
-        scan_trace_shapes.append(cur)
-        if cur == 4 and scan_trace_shapes.count(4) == 1:
-            raise RuntimeError("RESOURCE_EXHAUSTED: simulated")
-        acc = init
-        for i in range(cur):
-            acc, _ = body(acc, (T_chunk[i], filt_chunk[i]))
-        return acc, None
-
-    monkeypatch.setattr(fbp_mod.jax.lax, "scan", fake_scan)
+    monkeypatch.setattr(fbp_mod, "_run_fbp_fast_path", fake_fast_path)
+    monkeypatch.setattr(fbp_mod, "_fft_filter_rows_jit", fake_filter_rows)
+    monkeypatch.setattr(fbp_mod, "_bp_batch_sum_jit", fake_bp_batch_sum)
 
     rec = fbp_mod.fbp(
         DummyGeom(),
@@ -105,5 +97,6 @@ def test_fbp_oom_retries_until_all_views_are_processed(monkeypatch):
     )
 
     assert np.allclose(np.asarray(rec), np.ones((2, 2, 1), dtype=np.float32))
-    assert row_trace_shapes == [4, 2]
-    assert scan_trace_shapes == [4, 2]
+    assert fast_path_calls == ["called"]
+    assert row_trace_shapes == [4, 4]
+    assert batch_trace_shapes == [4, 4]

@@ -360,17 +360,13 @@ def power_method_L(
     def normalize(v):
         return v / (jnp.linalg.norm(v.ravel()) + 1e-12)
 
-    def run_power(v0):
-        def body(_, v):
-            return normalize(ata_apply(v))
-
-        v = jax.lax.fori_loop(0, num_iters, body, normalize(v0))
-        g = ata_apply(v)
-        return jnp.vdot(v, g).real
-
-    run_power_jit = jax.jit(run_power)
+    ata_apply_jit = jax.jit(ata_apply)
     v0 = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    L = float(run_power_jit(v0))
+    v = normalize(v0)
+    for _ in range(num_iters):
+        v = normalize(ata_apply_jit(v))
+    g = ata_apply_jit(v)
+    L = float(jnp.vdot(v, g).real)
     return max(L, 1e-6)
 
 
