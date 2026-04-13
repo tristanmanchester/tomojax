@@ -247,12 +247,25 @@ def _loss_correntropy(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp
     return (1.0 - jnp.mean(c)) * jnp.float32(pred.size)
 
 
-def _soft_hist(x: jnp.ndarray, centers: jnp.ndarray, bw: float) -> jnp.ndarray:
-    xr = x.ravel()[:, None]
-    d = (xr - centers[None, :]) / bw
-    w = jnp.exp(-0.5 * d * d)
-    w = w / (jnp.sum(w, axis=1, keepdims=True) + 1e-12)
-    return jnp.mean(w, axis=0)
+def _kde_probabilities(
+    pred: jnp.ndarray,
+    tar: jnp.ndarray,
+    bx: jnp.ndarray,
+    by: jnp.ndarray,
+    bwx: float,
+    bwy: float,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    pr = pred.ravel()[:, None]
+    tr = tar.ravel()[:, None]
+    Wx = jnp.exp(-0.5 * ((pr - bx[None, :]) / bwx) ** 2)
+    Wy = jnp.exp(-0.5 * ((tr - by[None, :]) / bwy) ** 2)
+    Wx = Wx / (jnp.sum(Wx, axis=1, keepdims=True) + 1e-12)
+    Wy = Wy / (jnp.sum(Wy, axis=1, keepdims=True) + 1e-12)
+    sample_count = jnp.asarray(Wx.shape[0], dtype=Wx.dtype)
+    Px = jnp.clip(Wx.mean(axis=0), 1e-12, 1.0)
+    Py = jnp.clip(Wy.mean(axis=0), 1e-12, 1.0)
+    Pxy = jnp.clip((Wx.T @ Wy) / sample_count, 1e-12, 1.0)
+    return Px, Py, Pxy
 
 
 def _loss_mi_kde(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
@@ -262,12 +275,7 @@ def _loss_mi_kde(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndar
     if bx is None or by is None:
         lo = jnp.minimum(pred.min(), tar.min()); hi = jnp.maximum(pred.max(), tar.max())
         bx = jnp.linspace(lo, hi, bins); by = jnp.linspace(lo, hi, bins)
-    hx = _soft_hist(pred, bx, bwx); hy = _soft_hist(tar, by, bwy)
-    pr = pred.ravel()[:, None]; tr = tar.ravel()[:, None]
-    Wx = jnp.exp(-0.5 * ((pr - bx[None, :]) / bwx) ** 2); Wx = Wx / (jnp.sum(Wx, axis=1, keepdims=True) + 1e-12)
-    Wy = jnp.exp(-0.5 * ((tr - by[None, :]) / bwy) ** 2); Wy = Wy / (jnp.sum(Wy, axis=1, keepdims=True) + 1e-12)
-    Pxy = (Wx[:, :, None] * Wy[:, None, :]).mean(axis=0)
-    Px = jnp.clip(hx, 1e-12, 1.0); Py = jnp.clip(hy, 1e-12, 1.0); Pxy = jnp.clip(Pxy, 1e-12, 1.0)
+    Px, Py, Pxy = _kde_probabilities(pred, tar, bx, by, bwx, bwy)
     Hx = -jnp.sum(Px * jnp.log(Px)); Hy = -jnp.sum(Py * jnp.log(Py)); Hxy = -jnp.sum(Pxy * jnp.log(Pxy))
     mi = Hx + Hy - Hxy
     if int(st.params.get("nmi", 0)) == 1:
@@ -284,11 +292,7 @@ def _loss_renyi_mi(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.nd
     if bx is None or by is None:
         lo = jnp.minimum(pred.min(), tar.min()); hi = jnp.maximum(pred.max(), tar.max())
         bx = jnp.linspace(lo, hi, bins); by = jnp.linspace(lo, hi, bins)
-    pr = pred.ravel()[:, None]; tr = tar.ravel()[:, None]
-    Wx = jnp.exp(-0.5 * ((pr - bx[None, :]) / bwx) ** 2); Wx = Wx / (jnp.sum(Wx, axis=1, keepdims=True) + 1e-12)
-    Wy = jnp.exp(-0.5 * ((tr - by[None, :]) / bwy) ** 2); Wy = Wy / (jnp.sum(Wy, axis=1, keepdims=True) + 1e-12)
-    Px = jnp.clip(Wx.mean(axis=0), 1e-12, 1.0); Py = jnp.clip(Wy.mean(axis=0), 1e-12, 1.0)
-    Pxy = jnp.clip((Wx[:, :, None] * Wy[:, None, :]).mean(axis=0), 1e-12, 1.0)
+    Px, Py, Pxy = _kde_probabilities(pred, tar, bx, by, bwx, bwy)
     Hx = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Px ** a))
     Hy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Py ** a))
     Hxy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Pxy ** a))

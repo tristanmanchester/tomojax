@@ -4,6 +4,8 @@ import pytest
 from tomojax.align.losses import (
     LossState,
     _loss_cauchy,
+    _loss_mi_kde,
+    _loss_renyi_mi,
     _loss_welsch,
     build_loss,
     loss_is_within_relative_tolerance,
@@ -70,6 +72,109 @@ def test_build_loss_accepts_lorentzian_alias_for_cauchy():
     lorentzian_val = float(lorentzian_fn(pred, tar, None)[0])
 
     assert lorentzian_val == pytest.approx(cauchy_val, rel=1e-6)
+
+
+def _reference_kde_probabilities(
+    pred: jnp.ndarray,
+    tar: jnp.ndarray,
+    bx: jnp.ndarray,
+    by: jnp.ndarray,
+    bwx: float,
+    bwy: float,
+):
+    pr = pred.ravel()[:, None]
+    tr = tar.ravel()[:, None]
+    Wx = jnp.exp(-0.5 * ((pr - bx[None, :]) / bwx) ** 2)
+    Wy = jnp.exp(-0.5 * ((tr - by[None, :]) / bwy) ** 2)
+    Wx = Wx / (jnp.sum(Wx, axis=1, keepdims=True) + 1e-12)
+    Wy = Wy / (jnp.sum(Wy, axis=1, keepdims=True) + 1e-12)
+    Px = jnp.clip(Wx.mean(axis=0), 1e-12, 1.0)
+    Py = jnp.clip(Wy.mean(axis=0), 1e-12, 1.0)
+    Pxy = jnp.clip((Wx[:, :, None] * Wy[:, None, :]).mean(axis=0), 1e-12, 1.0)
+    return Px, Py, Pxy
+
+
+def _reference_mi_kde_loss(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> float:
+    assert st.bins_x is not None
+    assert st.bins_y is not None
+    assert st.bw_x is not None
+    assert st.bw_y is not None
+    Px, Py, Pxy = _reference_kde_probabilities(pred, tar, st.bins_x, st.bins_y, st.bw_x, st.bw_y)
+    Hx = -jnp.sum(Px * jnp.log(Px))
+    Hy = -jnp.sum(Py * jnp.log(Py))
+    Hxy = -jnp.sum(Pxy * jnp.log(Pxy))
+    mi = Hx + Hy - Hxy
+    if int(st.params.get("nmi", 0)) == 1:
+        mi = mi / (jnp.sqrt(Hx * Hy) + 1e-12)
+        return float((1.0 - mi) * jnp.float32(pred.size))
+    return float((-mi) * jnp.float32(pred.size))
+
+
+def _reference_renyi_mi_loss(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> float:
+    assert st.bins_x is not None
+    assert st.bins_y is not None
+    assert st.bw_x is not None
+    assert st.bw_y is not None
+    a = float(st.params["alpha"])
+    Px, Py, Pxy = _reference_kde_probabilities(pred, tar, st.bins_x, st.bins_y, st.bw_x, st.bw_y)
+    Hx = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Px ** a))
+    Hy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Py ** a))
+    Hxy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Pxy ** a))
+    return float((-(Hx + Hy - Hxy)) * jnp.float32(pred.size))
+
+
+def test_mi_kde_matches_broadcast_reference():
+    pred = jnp.array([[0.1, 0.7], [-0.3, 1.2]], dtype=jnp.float32)
+    tar = jnp.array([[0.2, 0.6], [-0.1, 1.0]], dtype=jnp.float32)
+    st = LossState(
+        kind="mi_kde",
+        params={"bins": 4},
+        bins_x=jnp.array([-0.5, 0.0, 0.5, 1.0], dtype=jnp.float32),
+        bins_y=jnp.array([-0.4, 0.1, 0.6, 1.1], dtype=jnp.float32),
+        bw_x=0.25,
+        bw_y=0.3,
+    )
+
+    actual = float(_loss_mi_kde(pred, tar, st))
+    expected = _reference_mi_kde_loss(pred, tar, st)
+
+    assert actual == pytest.approx(expected, rel=1e-6, abs=1e-6)
+
+
+def test_nmi_kde_matches_broadcast_reference():
+    pred = jnp.array([[0.0, 0.8], [-0.2, 1.1]], dtype=jnp.float32)
+    tar = jnp.array([[0.1, 0.9], [-0.3, 0.95]], dtype=jnp.float32)
+    st = LossState(
+        kind="nmi_kde",
+        params={"bins": 4, "nmi": 1},
+        bins_x=jnp.array([-0.5, 0.0, 0.5, 1.0], dtype=jnp.float32),
+        bins_y=jnp.array([-0.4, 0.1, 0.6, 1.1], dtype=jnp.float32),
+        bw_x=0.2,
+        bw_y=0.25,
+    )
+
+    actual = float(_loss_mi_kde(pred, tar, st))
+    expected = _reference_mi_kde_loss(pred, tar, st)
+
+    assert actual == pytest.approx(expected, rel=1e-6, abs=1e-6)
+
+
+def test_renyi_mi_matches_broadcast_reference():
+    pred = jnp.array([[0.05, 0.75], [-0.25, 1.15]], dtype=jnp.float32)
+    tar = jnp.array([[0.15, 0.85], [-0.05, 1.05]], dtype=jnp.float32)
+    st = LossState(
+        kind="renyi_mi",
+        params={"bins": 4, "alpha": 1.5},
+        bins_x=jnp.array([-0.5, 0.0, 0.5, 1.0], dtype=jnp.float32),
+        bins_y=jnp.array([-0.4, 0.1, 0.6, 1.1], dtype=jnp.float32),
+        bw_x=0.22,
+        bw_y=0.28,
+    )
+
+    actual = float(_loss_renyi_mi(pred, tar, st))
+    expected = _reference_renyi_mi_loss(pred, tar, st)
+
+    assert actual == pytest.approx(expected, rel=1e-6, abs=1e-6)
 
 
 @pytest.mark.parametrize("kind", ["renyi_mi", "tsallis_mi"])
