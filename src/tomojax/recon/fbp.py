@@ -80,13 +80,14 @@ def _bp_one(
     gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
     """Backproject one view with the explicit discrete adjoint."""
-    del checkpoint_projector, gather_dtype
+    del checkpoint_projector
     return backproject_view_T(
         T,
         grid,
         detector,
         filtered.astype(jnp.float32),
         unroll=int(projector_unroll),
+        gather_dtype=gather_dtype,
     )
 
 

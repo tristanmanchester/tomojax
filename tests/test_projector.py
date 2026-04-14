@@ -31,10 +31,19 @@ def test_forward_project_uniform_volume_returns_path_length():
     assert np.allclose(np.asarray(proj), expected, atol=1e-4)
 
 
-def test_adjoint_small_case():
+@pytest.mark.parametrize("gather_dtype", ["fp32", "bf16", "fp16"])
+def test_adjoint_small_case(gather_dtype: str):
     grid, det, geom, vol = make_aligned_case(8, 8, 8)
     y_like = jnp.ones((det.nv, det.nu), dtype=jnp.float32)
-    rel = adjoint_test_once(geom, grid, det, vol, y_like, view_index=0)
+    rel = adjoint_test_once(
+        geom,
+        grid,
+        det,
+        vol,
+        y_like,
+        view_index=0,
+        gather_dtype=gather_dtype,
+    )
     assert rel < 5e-3
 
 
@@ -75,29 +84,53 @@ def _vjp_backproject(
     image: jnp.ndarray,
     *,
     view_index: int = 0,
+    gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
     zero_vol = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
 
     def fwd(vol):
-        return forward_project_view(geom, grid, det, vol, view_index=view_index).ravel()
+        return forward_project_view(
+            geom,
+            grid,
+            det,
+            vol,
+            view_index=view_index,
+            gather_dtype=gather_dtype,
+        ).ravel()
 
     _, vjp = jax.vjp(fwd, zero_vol)
     return vjp(image.ravel().astype(jnp.float32))[0]
 
 
-def test_backproject_matches_vjp_parallel():
+@pytest.mark.parametrize("gather_dtype", ["fp32", "bf16", "fp16"])
+def test_backproject_matches_vjp_parallel(gather_dtype: str):
     grid = Grid(nx=6, ny=7, nz=5, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
     image = jax.random.normal(jax.random.PRNGKey(0), (det.nv, det.nu), dtype=jnp.float32)
 
-    explicit = backproject_view(geom, grid, det, image, view_index=0)
-    oracle = _vjp_backproject(geom, grid, det, image, view_index=0)
+    explicit = backproject_view(
+        geom,
+        grid,
+        det,
+        image,
+        view_index=0,
+        gather_dtype=gather_dtype,
+    )
+    oracle = _vjp_backproject(
+        geom,
+        grid,
+        det,
+        image,
+        view_index=0,
+        gather_dtype=gather_dtype,
+    )
 
     assert np.allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-5, rtol=1e-5)
 
 
-def test_backproject_matches_vjp_lamino():
+@pytest.mark.parametrize("gather_dtype", ["fp32", "bf16", "fp16"])
+def test_backproject_matches_vjp_lamino(gather_dtype: str):
     grid = Grid(nx=6, ny=6, nz=5, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
     geom = LaminographyGeometry(
@@ -109,7 +142,21 @@ def test_backproject_matches_vjp_lamino():
     )
     image = jax.random.normal(jax.random.PRNGKey(1), (det.nv, det.nu), dtype=jnp.float32)
 
-    explicit = backproject_view(geom, grid, det, image, view_index=0)
-    oracle = _vjp_backproject(geom, grid, det, image, view_index=0)
+    explicit = backproject_view(
+        geom,
+        grid,
+        det,
+        image,
+        view_index=0,
+        gather_dtype=gather_dtype,
+    )
+    oracle = _vjp_backproject(
+        geom,
+        grid,
+        det,
+        image,
+        view_index=0,
+        gather_dtype=gather_dtype,
+    )
 
     assert np.allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-5, rtol=1e-5)

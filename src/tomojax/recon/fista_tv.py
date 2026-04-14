@@ -111,6 +111,7 @@ def grad_data_term(
             detector,
             resid,
             unroll=int(projector_unroll),
+            gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
         return grad_i if mask_arr is None else grad_i * mask_arr
@@ -163,6 +164,7 @@ def grad_data_term(
                 detector,
                 resid,
                 unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
                 det_grid=det_grid,
             )
             if mask_arr is not None:

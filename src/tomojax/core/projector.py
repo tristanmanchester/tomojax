@@ -251,42 +251,11 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
 
 @jax.jit
 def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
-    fx = jnp.floor(ix_f).astype(jnp.int32)
-    fy = jnp.floor(iy_f).astype(jnp.int32)
-    fz = jnp.floor(iz_f).astype(jnp.int32)
-    cx, cy, cz = fx + 1, fy + 1, fz + 1
-
-    wx1 = ix_f - fx.astype(jnp.float32)
-    wy1 = iy_f - fy.astype(jnp.float32)
-    wz1 = iz_f - fz.astype(jnp.float32)
-    wx0 = 1.0 - wx1
-    wy0 = 1.0 - wy1
-    wz0 = 1.0 - wz1
-    size = nx * ny * nz
-
-    def scatter(acc, ix, iy, iz, w):
-        inb = (
-            (ix >= 0)
-            & (ix < nx)
-            & (iy >= 0)
-            & (iy < ny)
-            & (iz >= 0)
-            & (iz < nz)
-        ).astype(jnp.float32)
-        idx = _flat_index(ix, iy, iz, nx, ny, nz)
-        idx = jnp.clip(idx, 0, size - 1)
-        contrib = (ray_vals * inb * w).astype(acc.dtype)
-        return acc.at[idx].add(contrib)
-
-    acc = scatter(acc_flat, fx, fy, fz, wx0 * wy0 * wz0)
-    acc = scatter(acc, fx, fy, cz, wx0 * wy0 * wz1)
-    acc = scatter(acc, fx, cy, fz, wx0 * wy1 * wz0)
-    acc = scatter(acc, fx, cy, cz, wx0 * wy1 * wz1)
-    acc = scatter(acc, cx, fy, fz, wx1 * wy0 * wz0)
-    acc = scatter(acc, cx, fy, cz, wx1 * wy0 * wz1)
-    acc = scatter(acc, cx, cy, fz, wx1 * wy1 * wz0)
-    acc = scatter(acc, cx, cy, cz, wx1 * wy1 * wz1)
-    return acc
+    scatter = jax.linear_transpose(
+        lambda recon: _trilinear_gather(recon, ix_f, iy_f, iz_f, nx, ny, nz),
+        acc_flat,
+    )
+    return acc_flat + scatter(ray_vals)[0]
 
 
 
@@ -346,7 +315,7 @@ def forward_project_view_T(
     return acc.reshape((detector.nv, detector.nu))
 
 
-def backproject_view_T(
+def _backproject_view_accum_T(
     T: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -355,9 +324,9 @@ def backproject_view_T(
     step_size: float | None = None,
     n_steps: int | None = None,
     unroll: int | None = None,
+    gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Backproject one detector image as the explicit discrete adjoint of the fp32 projector."""
     img = jnp.asarray(image, dtype=jnp.float32)
     if img.ndim != 2:
         raise ValueError("image must be 2D array")
@@ -381,17 +350,51 @@ def backproject_view_T(
         active = (step_idx < n_steps_ray).astype(jnp.float32)
         step_vals = ray_vals * active * step_size32
         acc_flat = _trilinear_scatter_add(acc_flat, step_vals, ix, iy, iz, nx, ny, nz)
-        return (acc_flat, ix + dix, iy + diy, iz + diz), None
+        return (acc_flat, ix - dix, iy - diy, iz - diz), None
 
-    init = (jnp.zeros((nx * ny * nz,), dtype=jnp.float32), ix0, iy0, iz0)
+    acc_dtype = _resolve_gather_target(gather_dtype)
+    last_step = jnp.int32(max(n_steps - 1, 0))
+    init = (
+        jnp.zeros((nx * ny * nz,), dtype=acc_dtype),
+        ix0 + dix * last_step.astype(jnp.float32),
+        iy0 + diy * last_step.astype(jnp.float32),
+        iz0 + diz * last_step.astype(jnp.float32),
+    )
     carry_final, _ = jax.lax.scan(
         step,
         init,
-        jnp.arange(n_steps, dtype=jnp.int32),
+        jnp.arange(n_steps - 1, -1, -1, dtype=jnp.int32),
         length=n_steps,
         unroll=unroll or 1,
     )
-    return carry_final[0].reshape((nx, ny, nz))
+    return carry_final[0].astype(jnp.float32).reshape((nx, ny, nz))
+
+
+def backproject_view_T(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    image: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+) -> jnp.ndarray:
+    """Backproject one detector image as the explicit adjoint of the configured projector."""
+    acc = _backproject_view_accum_T(
+        T,
+        grid,
+        detector,
+        image,
+        step_size=step_size,
+        n_steps=n_steps,
+        unroll=unroll,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+    )
+    return acc
 
 
 def _sum_backproject_views_T(
@@ -403,9 +406,10 @@ def _sum_backproject_views_T(
     step_size: float | None = None,
     n_steps: int | None = None,
     unroll: int | None = None,
+    gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Sum explicit backprojections over a fixed chunk of views without stacking volumes."""
+    """Sum explicit mixed-precision adjoints over a fixed chunk without stacking volumes."""
     img = jnp.asarray(images, dtype=jnp.float32)
 
     def body(accum, inputs):
@@ -418,6 +422,7 @@ def _sum_backproject_views_T(
             step_size=step_size,
             n_steps=n_steps,
             unroll=unroll,
+            gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
         return accum + bp, None
@@ -465,8 +470,9 @@ def backproject_view(
     step_size: float | None = None,
     n_steps: int | None = None,
     unroll: int | None = None,
+    gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
-    """Wrapper that fetches pose from geometry and calls the explicit adjoint variant."""
+    """Wrapper that fetches pose and calls the explicit gather-dtype adjoint."""
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
     return backproject_view_T(
         T,
@@ -476,4 +482,5 @@ def backproject_view(
         step_size=step_size,
         n_steps=n_steps,
         unroll=unroll,
+        gather_dtype=gather_dtype,
     )

@@ -139,6 +139,7 @@ def _estimate_norm_A2(
                 detector,
                 proj,
                 unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
                 det_grid=det_grid,
             )
             return g_acc + g_chunk, None
@@ -312,6 +313,7 @@ def spdhg_tv(
             detector,
             delta_y,
             unroll=int(config.projector_unroll),
+            gather_dtype=config.gather_dtype,
             det_grid=det_grid,
         )
 

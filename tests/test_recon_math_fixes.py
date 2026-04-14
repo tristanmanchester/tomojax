@@ -167,20 +167,20 @@ def _reference_estimate_norm_A2(
     det_grid = get_detector_grid_device(detector)
 
     def A_apply(vol, T_chunk):
-        vm_project = jax.vmap(
-            lambda T, v: forward_project_view_T(
-                T,
+        ys = [
+            forward_project_view_T(
+                T_chunk[i],
                 grid,
                 detector,
-                v,
+                vol,
                 use_checkpoint=checkpoint_projector,
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
                 det_grid=det_grid,
-            ),
-            in_axes=(0, None),
-        )
-        return vm_project(T_chunk, vol)
+            )
+            for i in range(int(T_chunk.shape[0]))
+        ]
+        return jnp.stack(ys, axis=0)
 
     b = int(max(1, min(views_per_batch, n_views)))
     m = (n_views + b - 1) // b
@@ -218,6 +218,93 @@ def _reference_estimate_norm_A2(
     return max(float(jnp.vdot(v, Aw).real) * float(safety ** 2), 1e-6)
 
 
+def test_grad_data_term_matches_vjp_under_bf16():
+    geometry, grid, detector, T_all = _make_small_parallel_case(nx=8, ny=8, nz=8, n_views=4)
+    det_grid = get_detector_grid_device(detector)
+    truth = jax.random.normal(jax.random.PRNGKey(11), (grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * 0.1
+    x = jax.random.normal(jax.random.PRNGKey(12), (grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * 0.1
+
+    project = jax.vmap(
+        lambda T, v: forward_project_view_T(
+            T,
+            grid,
+            detector,
+            v,
+            use_checkpoint=True,
+            unroll=1,
+            gather_dtype="bf16",
+            det_grid=det_grid,
+        ),
+        in_axes=(0, None),
+    )
+    projections = project(T_all, truth)
+
+    def sequential_project(vol):
+        ys = [
+            forward_project_view_T(
+                T_all[i],
+                grid,
+                detector,
+                vol,
+                use_checkpoint=True,
+                unroll=1,
+                gather_dtype="bf16",
+                det_grid=det_grid,
+            )
+            for i in range(int(T_all.shape[0]))
+        ]
+        return jnp.stack(ys, axis=0)
+
+    g_batched, loss_batched = fista_mod.grad_data_term(
+        geometry,
+        grid,
+        detector,
+        projections,
+        x,
+        views_per_batch=4,
+        checkpoint_projector=True,
+        projector_unroll=1,
+        gather_dtype="bf16",
+        grad_mode="batched",
+        T_all=T_all,
+    )
+    g_stream, loss_stream = fista_mod.grad_data_term(
+        geometry,
+        grid,
+        detector,
+        projections,
+        x,
+        views_per_batch=1,
+        checkpoint_projector=True,
+        projector_unroll=1,
+        gather_dtype="bf16",
+        grad_mode="stream",
+        T_all=T_all,
+    )
+
+    resid = (sequential_project(x) - projections).astype(jnp.float32)
+    _, vjp = jax.vjp(lambda vol: sequential_project(vol).ravel(), x)
+    g_ref = vjp(resid.ravel())[0]
+    loss_ref = 0.5 * jnp.vdot(resid, resid).real
+
+    rel_batched = float(
+        jnp.linalg.norm((g_batched - g_ref).ravel()) / (jnp.linalg.norm(g_ref.ravel()) + 1e-6)
+    )
+    rel_stream = float(
+        jnp.linalg.norm((g_stream - g_ref).ravel()) / (jnp.linalg.norm(g_ref.ravel()) + 1e-6)
+    )
+    rel_modes = float(
+        jnp.linalg.norm((g_batched - g_stream).ravel()) / (jnp.linalg.norm(g_ref.ravel()) + 1e-6)
+    )
+    assert rel_batched < 1e-4
+    assert rel_stream < 1e-4
+    assert rel_modes < 1e-6
+    assert float(jnp.max(jnp.abs(g_batched - g_ref))) <= 2e-3
+    assert float(jnp.max(jnp.abs(g_stream - g_ref))) <= 2e-3
+    assert float(loss_batched) == pytest.approx(float(loss_ref), rel=1e-6, abs=1e-6)
+    assert float(loss_stream) == pytest.approx(float(loss_ref), rel=1e-6, abs=1e-6)
+
+
 def test_power_method_L_matches_python_loop_reference():
     geometry, grid, detector, T_all = _make_small_parallel_case()
     projections_shape = (T_all.shape[0], detector.nv, detector.nu)
@@ -252,7 +339,8 @@ def test_power_method_L_matches_python_loop_reference():
     assert got == pytest.approx(expected, rel=5e-5, abs=1e-5)
 
 
-def test_estimate_norm_A2_matches_python_loop_reference():
+@pytest.mark.parametrize("gather_dtype", ["fp32", "bf16"])
+def test_estimate_norm_A2_matches_python_loop_reference(gather_dtype: str):
     geometry, grid, detector, T_all = _make_small_parallel_case()
     projections_shape = (T_all.shape[0], detector.nv, detector.nu)
     key = jax.random.PRNGKey(7)
@@ -266,7 +354,7 @@ def test_estimate_norm_A2_matches_python_loop_reference():
         views_per_batch=2,
         projector_unroll=1,
         checkpoint_projector=True,
-        gather_dtype="fp32",
+        gather_dtype=gather_dtype,
         key=key,
         power_iters=4,
         safety=1.05,
@@ -280,7 +368,7 @@ def test_estimate_norm_A2_matches_python_loop_reference():
         views_per_batch=2,
         projector_unroll=1,
         checkpoint_projector=True,
-        gather_dtype="fp32",
+        gather_dtype=gather_dtype,
         key=key,
         power_iters=4,
         safety=1.05,

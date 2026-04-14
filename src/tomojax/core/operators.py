@@ -48,6 +48,7 @@ def adjoint_test_once(
     *,
     step_size: float | None = None,
     n_steps: int | None = None,
+    gather_dtype: str = "fp32",
 ) -> float:
     """Check <A x, y> vs <x, A^T y> for one view using the explicit adjoint.
 
@@ -62,6 +63,7 @@ def adjoint_test_once(
         step_size=step_size,
         n_steps=n_steps,
         use_checkpoint=True,
+        gather_dtype=gather_dtype,
     ).ravel()
     lhs = jnp.vdot(Ax, y_like.ravel())
     ATy = backproject_view(
@@ -72,6 +74,7 @@ def adjoint_test_once(
         view_index=view_index,
         step_size=step_size,
         n_steps=n_steps,
+        gather_dtype=gather_dtype,
     )
     rhs = jnp.vdot(volume, ATy)
     rel = float(jnp.abs(lhs - rhs) / (jnp.abs(lhs) + 1e-12))
