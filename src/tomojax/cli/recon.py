@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import logging
 import numpy as np
 import jax.numpy as jnp
 import os
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..core.geometry import Grid
 from ..recon.fbp import fbp
 from ..recon.fista_tv import fista_tv
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
@@ -234,21 +234,14 @@ def main() -> None:
     # Rebuild geometry if grid changed
     if args.grid is not None:
         NX, NY, NZ = map(int, args.grid)
-        recon_grid = Grid(
-            nx=NX,
-            ny=NY,
-            nz=NZ,
-            vx=grid.vx,
-            vy=grid.vy,
-            vz=grid.vz,
-            vol_origin=grid.vol_origin,
-            vol_center=grid.vol_center,
-        )
+        recon_grid = replace(recon_grid, nx=NX, ny=NY, nz=NZ)
 
     if recon_grid is not grid:
+        # Once ROI and explicit sizing resolve an effective grid, keep that grid's
+        # origin/centre metadata authoritative when rebuilding geometry.
         _, _, geom = build_geometry_from_meta(
             meta,
-            grid_override=(recon_grid.nx, recon_grid.ny, recon_grid.nz),
+            grid_override=recon_grid,
             apply_saved_alignment=False,
         )
 

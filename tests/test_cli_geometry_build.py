@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from tomojax.cli.align import build_geometry as build_align_geometry
 from tomojax.cli import recon as recon_cli
 from tomojax.cli.recon import build_geometry as build_recon_geometry
-from tomojax.core.geometry import ParallelGeometry
+from tomojax.core.geometry import Grid, ParallelGeometry
 
 
 def _parallel_meta(**updates):
@@ -101,6 +101,18 @@ def test_recon_build_geometry_preserves_grid_origin_and_center_with_override():
     assert grid.vol_center == (4.0, 5.0, 6.0)
 
 
+def test_recon_build_geometry_preserves_full_grid_override_metadata():
+    meta = _parallel_meta()
+    override_grid = Grid(nx=11, ny=13, nz=15, vx=0.8, vy=1.1, vz=1.4)
+
+    grid, _, geom = build_recon_geometry(meta, override_grid)
+
+    assert grid == override_grid
+    assert grid.vol_origin is None
+    assert grid.vol_center is None
+    assert geom.grid == override_grid
+
+
 def test_recon_cli_grid_override_preserves_grid_origin_and_center(monkeypatch, tmp_path):
     meta = _parallel_meta(
         projections=np.zeros((2, 7, 9), dtype=np.float32),
@@ -151,6 +163,86 @@ def test_recon_cli_grid_override_preserves_grid_origin_and_center(monkeypatch, t
     assert captured["grid"]["nz"] == 15
     assert captured["grid"]["vol_origin"] == [1.0, 2.0, 3.0]
     assert captured["grid"]["vol_center"] == [4.0, 5.0, 6.0]
+
+
+def test_recon_cli_grid_override_preserves_roi_centering(monkeypatch, tmp_path):
+    meta = _parallel_meta(
+        projections=np.zeros((2, 16, 16), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+        geometry_meta=None,
+        detector={
+            "nu": 16,
+            "nv": 16,
+            "du": 1.0,
+            "dv": 1.0,
+            "det_center": [0.0, 0.0],
+        },
+        grid={
+            "nx": 32,
+            "ny": 32,
+            "nz": 16,
+            "vx": 1.0,
+            "vy": 1.0,
+            "vz": 1.0,
+            "vol_origin": [11.0, 12.0, 13.0],
+            "vol_center": [1.0, 2.0, 3.0],
+        },
+    )
+    captured = {}
+
+    monkeypatch.setattr(recon_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(
+        recon_cli,
+        "transfer_guard_context",
+        lambda mode: nullcontext(),
+    )
+
+    def _fbp_capture(geom, recon_grid, detector, proj, **kwargs):
+        captured["runtime_grid"] = recon_grid
+        captured["geom_grid"] = geom.grid
+        return jnp.zeros(
+            (recon_grid.nx, recon_grid.ny, recon_grid.nz),
+            dtype=jnp.float32,
+        )
+
+    monkeypatch.setattr(recon_cli, "fbp", _fbp_capture)
+    monkeypatch.setattr(
+        recon_cli,
+        "save_nxtomo",
+        lambda out, **kwargs: captured.update({"out": out, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--algo",
+            "fbp",
+            "--roi",
+            "auto",
+            "--grid",
+            "20",
+            "20",
+            "12",
+            "--out",
+            str(tmp_path / "out.nxs"),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["grid"]["nx"] == 20
+    assert captured["grid"]["ny"] == 20
+    assert captured["grid"]["nz"] == 12
+    assert "vol_origin" not in captured["grid"]
+    assert "vol_center" not in captured["grid"]
+    assert captured["runtime_grid"].vol_origin is None
+    assert captured["runtime_grid"].vol_center is None
+    assert captured["geom_grid"].vol_origin is None
+    assert captured["geom_grid"].vol_center is None
 
 
 

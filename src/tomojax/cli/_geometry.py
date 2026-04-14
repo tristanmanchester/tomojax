@@ -8,7 +8,7 @@ import numpy as np
 from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
 
-GridOverride = tuple[int, int, int] | list[int] | None
+GridOverride = Grid | tuple[int, int, int] | list[int] | None
 
 
 @dataclass
@@ -70,6 +70,9 @@ def _detector_from_meta(meta: dict) -> Detector:
 
 
 def _grid_from_meta(meta: dict, detector: Detector, grid_override: GridOverride) -> Grid:
+    if isinstance(grid_override, Grid):
+        return grid_override
+
     grid_d = meta.get("grid")
     if grid_d is None:
         if grid_override is not None:
