@@ -224,7 +224,6 @@ def main() -> None:
         default=[],
         help="Loss parameter as k=v (repeatable), e.g., delta=1.0, eps=1e-3, window=7, temp=0.5",
     )
-    # (LBFGS options removed)
     # Early stopping controls (alignment phase)
     es = p.add_mutually_exclusive_group()
     es.add_argument(

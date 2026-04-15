@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import TypedDict
 
-import numpy as np
 import h5py
+import numpy as np
 
-from ..core.geometry.base import Grid, Detector
+from ..core.geometry.base import Detector, DetectorDict, Grid, GridDict
 from ..utils.axes import (
     DISK_VOLUME_AXES,
     INTERNAL_VOLUME_AXES,
@@ -36,13 +36,30 @@ _AXES_SILENCE = os.environ.get("TOMOJAX_AXES_SILENCE", "").lower() in {
     "on",
 }
 
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
+class SourceInfo(TypedDict, total=False):
+    name: str | None
+    type: str | None
+    probe: str | None
 
-def _axes_log_warning(message: str, *args: Any) -> None:
+
+type DatasetValue = (
+    np.ndarray | JsonValue | GridDict | DetectorDict | SourceInfo
+)
+type LoadedDataset = dict[str, DatasetValue]
+
+
+class ValidationReport(TypedDict):
+    issues: list[str]
+
+
+def _axes_log_warning(message: str, *args: object) -> None:
     if not _AXES_SILENCE:
         LOG.warning(message, *args)
 
 
-def _attr_to_str(v: Any, default: str | None = None) -> str | None:
+def _attr_to_str(v: object, default: str | None = None) -> str | None:
     """Robustly convert an HDF5 attribute to a Python string.
 
     Handles h5py special string dtypes, numpy scalars/arrays, bytes, and plain str.
@@ -65,7 +82,7 @@ def _attr_to_str(v: Any, default: str | None = None) -> str | None:
 
 
 def _ensure_group(
-    root: h5py.Group, name: str, nx_class: Optional[str] = None
+    root: h5py.Group, name: str, nx_class: str | None = None
 ) -> h5py.Group:
     g = root.require_group(name)
     if nx_class:
@@ -81,21 +98,21 @@ def save_nxtomo(
     path: str,
     projections: np.ndarray,
     *,
-    thetas_deg: Optional[np.ndarray] = None,
-    image_key: Optional[np.ndarray] = None,
-    grid: Optional[Grid | Dict[str, Any]] = None,
-    detector: Optional[Detector | Dict[str, Any]] = None,
+    thetas_deg: np.ndarray | None = None,
+    image_key: np.ndarray | None = None,
+    grid: Grid | GridDict | None = None,
+    detector: Detector | DetectorDict | None = None,
     geometry_type: str = "parallel",
-    geometry_meta: Optional[Dict[str, Any]] = None,
-    volume: Optional[np.ndarray] = None,
-    align_params: Optional[np.ndarray] = None,
-    angle_offset_deg: Optional[np.ndarray] = None,
-    misalign_spec: Optional[Dict[str, Any]] = None,
-    frame: Optional[str] = None,
-    sample_name: Optional[str] = "sample",
-    source_name: Optional[str] = "TomoJAX source",
-    source_type: Optional[str] = None,
-    source_probe: Optional[str] = "x-ray",
+    geometry_meta: JsonObject | None = None,
+    volume: np.ndarray | None = None,
+    align_params: np.ndarray | None = None,
+    angle_offset_deg: np.ndarray | None = None,
+    misalign_spec: JsonObject | None = None,
+    frame: str | None = None,
+    sample_name: str | None = "sample",
+    source_name: str | None = "TomoJAX source",
+    source_type: str | None = None,
+    source_probe: str | None = "x-ray",
     compression: str = "lzf",
     overwrite: bool = True,
     volume_axes_order: str = DISK_VOLUME_AXES,
@@ -166,10 +183,8 @@ def save_nxtomo(
         det.create_dataset("image_key", data=im_key, dtype=np.int32)
 
         # Pixel geometry if provided
-        det_meta: Dict[str, Any] = {}
         if detector is not None:
             det_dict = detector if isinstance(detector, dict) else detector.to_dict()
-            det_meta = det_dict
             det.attrs["detector_meta_json"] = json.dumps(det_dict)
             # Store basic pixel sizes (units arbitrary for sims)
             det.create_dataset("x_pixel_size", data=np.asarray(det_dict.get("du", 1.0)))
@@ -230,10 +245,8 @@ def save_nxtomo(
             )
 
         # Grid metadata
-        grid_meta: Dict[str, Any] = {}
         if grid is not None:
             gdict = grid if isinstance(grid, dict) else grid.to_dict()
-            grid_meta = gdict
             entry.attrs["grid_meta_json"] = json.dumps(gdict)
 
         # Optional GT / reconstructed volume and TomoJAX metadata
@@ -289,15 +302,15 @@ def save_nxtomo(
                 align_grp.attrs["misalign_spec_json"] = json.dumps(misalign_spec)
 
 
-def load_nxtomo(path: str) -> Dict[str, Any]:
+def load_nxtomo(path: str) -> LoadedDataset:
     """Load an NXtomo dataset and TomoJAX extras.
 
     Returns a dict with keys: projections, thetas_deg, geometry_type, grid, detector,
     and optional volume, align_params. Volumes are returned in internal `xyz` order.
     """
-    out: Dict[str, Any] = {}
-    volume_raw: Optional[np.ndarray] = None
-    volume_axes_attr: Optional[str] = None
+    out: LoadedDataset = {}
+    volume_raw: np.ndarray | None = None
+    volume_axes_attr: str | None = None
 
     with h5py.File(path, "r") as f:
         entry = f["/entry"]
@@ -386,7 +399,7 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
             if inst_grp is not None:
                 source_grp = inst_grp.get("SOURCE") or inst_grp.get("source")
             if source_grp is not None:
-                source_info: Dict[str, Any] = {}
+                source_info: SourceInfo = {}
                 for key in ("name", "type", "probe"):
                     if key in source_grp:
                         source_info[key] = _attr_to_str(source_grp[key][()])
@@ -509,9 +522,9 @@ def load_nxtomo(path: str) -> Dict[str, Any]:
     return out
 
 
-def validate_nxtomo(path: str) -> Dict[str, Any]:
+def validate_nxtomo(path: str) -> ValidationReport:
     """Lightweight schema checks. Returns a report dict; empty `issues` means OK."""
-    report: Dict[str, Any] = {"issues": []}
+    report: ValidationReport = {"issues": []}
     try:
         with h5py.File(path, "r") as f:
             if "/entry" not in f:
@@ -570,14 +583,14 @@ def validate_nxtomo(path: str) -> Dict[str, Any]:
     return report
 
 
-def save_npz(path: str, projections: np.ndarray, **meta: Any) -> None:
+def save_npz(path: str, projections: np.ndarray, **meta: DatasetValue) -> None:
     """Simple NPZ saver for tiny tests or interop."""
     np.savez_compressed(path, projections=projections, **meta)
 
 
-def load_npz(path: str) -> Dict[str, Any]:
+def load_npz(path: str) -> LoadedDataset:
     with np.load(path, allow_pickle=True) as z:
-        out: Dict[str, Any] = {}
+        out: LoadedDataset = {}
         for k in z.files:
             val = z[k]
             if isinstance(val, np.ndarray) and val.shape == () and val.dtype == object:

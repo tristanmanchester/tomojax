@@ -1,31 +1,55 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Dict
+from typing import Literal, TypedDict
 
-import numpy as np
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
+import numpy as np
 
-from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from ..core.geometry.base import DetectorDict, GridDict
+from ..core.geometry.views import stack_view_poses
 from ..core.projector import (
     forward_project_view,
     forward_project_view_T,
     get_detector_grid_device,
 )
-from ..utils.logging import progress_iter
+from ..utils.memory import default_gather_dtype
 from .phantoms import (
-    cube,
-    rotated_centered_cube,
-    sphere,
     blobs,
-    shepp_logan_3d,
-    random_cubes_spheres,
+    cube,
     lamino_disk,
+    random_cubes_spheres,
+    rotated_centered_cube,
+    shepp_logan_3d,
+    sphere,
 )
 from .io_hdf5 import save_nxtomo
-from ..utils.memory import default_gather_dtype
-import os
+from ..utils.logging import progress_iter
+
+
+class LaminoGeometryMeta(TypedDict):
+    tilt_deg: float
+    tilt_about: str
+
+
+class SimMetadata(TypedDict):
+    seed: int
+    noise: str
+    noise_level: float
+
+
+class SimulatedData(TypedDict):
+    projections: jnp.ndarray
+    thetas_deg: np.ndarray
+    grid: GridDict
+    detector: DetectorDict
+    geometry_type: Literal["parallel", "lamino"]
+    volume: jnp.ndarray
+    geometry_meta: LaminoGeometryMeta | None
+    meta: SimMetadata
 
 
 @dataclass
@@ -134,7 +158,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
     return jnp.asarray(vol, dtype=jnp.float32)
 
 
-def simulate(cfg: SimConfig) -> Dict[str, object]:
+def simulate(cfg: SimConfig) -> SimulatedData:
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
     det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, det_center=(0.0, 0.0))
     # Determine total rotation based on geometry unless overridden
@@ -144,10 +168,12 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
         total_deg = 180.0 if cfg.geometry == "parallel" else 360.0
     thetas = np.linspace(0.0, total_deg, cfg.n_views, endpoint=False).astype(np.float32)
 
-    geometry_meta: Dict[str, object] | None = None
+    geometry_meta: LaminoGeometryMeta | None = None
     if cfg.geometry == "parallel":
+        geometry_type: Literal["parallel", "lamino"] = "parallel"
         geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     elif cfg.geometry == "lamino":
+        geometry_type = "lamino"
         geom = LaminographyGeometry(
             grid=grid,
             detector=det,
@@ -168,10 +194,7 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
     gather = default_gather_dtype()
 
     # Fast path: build all poses and optionally vmapped/jitted projector
-    T_all = jnp.stack(
-        [jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(cfg.n_views)],
-        axis=0,
-    )
+    T_all = stack_view_poses(geom, cfg.n_views)
     det_grid = get_detector_grid_device(det)
 
     use_fast = (cfg.n_views >= 8) and (os.environ.get("TOMOJAX_PROGRESS", "0") != "1")
@@ -219,7 +242,7 @@ def simulate(cfg: SimConfig) -> Dict[str, object]:
         "thetas_deg": thetas,
         "grid": grid.to_dict(),
         "detector": det.to_dict(),
-        "geometry_type": cfg.geometry,
+        "geometry_type": geometry_type,
         "volume": vol,
         "geometry_meta": geometry_meta,
         "meta": {"seed": cfg.seed, "noise": cfg.noise, "noise_level": cfg.noise_level},

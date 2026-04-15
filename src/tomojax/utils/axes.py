@@ -2,28 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import Sequence
 
 import numpy as np
+
+from ..core.geometry.base import Grid, GridDict
 
 try:  # pragma: no cover - JAX might be absent in build docs
     import jax  # type: ignore
     import jax.numpy as jnp  # type: ignore
 
-    if hasattr(jax, "Array"):
-        _JAX_ARRAY_TYPES = (jax.Array,)  # type: ignore[attr-defined]
-    else:  # Fallback for older JAX
-        from jax.interpreters.xla import DeviceArray  # type: ignore
-
-        _JAX_ARRAY_TYPES = (DeviceArray,)  # type: ignore[assignment]
+    _JAX_ARRAY_TYPES = (jax.Array,)  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - non-JAX contexts
     jnp = None  # type: ignore[assignment]
-    _JAX_ARRAY_TYPES: Tuple[type, ...] = ()
+    _JAX_ARRAY_TYPES: tuple[type, ...] = ()
 
 
 INTERNAL_VOLUME_AXES = "xyz"
 DISK_VOLUME_AXES = "zyx"
 VOLUME_AXES_ATTR = "volume_axes_order"
+GridLike = Grid | GridDict
 
 
 def _norm_axes(axes: str) -> str:
@@ -35,7 +33,7 @@ def _norm_axes(axes: str) -> str:
     return axes
 
 
-def axes_to_perm(src: str, dst: str) -> Tuple[int, int, int]:
+def axes_to_perm(src: str, dst: str) -> tuple[int, int, int]:
     """Return permutation bringing `src` axis order into `dst` order."""
 
     s = _norm_axes(src)
@@ -64,7 +62,7 @@ def transpose_volume(volume: np.ndarray, src: str, dst: str):
     return np.transpose(arr, axes=perm)
 
 
-def _grid_dims(grid: Optional[object]) -> Optional[Tuple[int, int, int]]:
+def _grid_dims(grid: GridLike | None) -> tuple[int, int, int] | None:
     if grid is None:
         return None
     if hasattr(grid, "nx") and hasattr(grid, "ny") and hasattr(grid, "nz"):
@@ -80,7 +78,7 @@ def _grid_dims(grid: Optional[object]) -> Optional[Tuple[int, int, int]]:
     return None
 
 
-def is_shape_xyz(vol_shape: Sequence[int], grid: Optional[object]) -> bool:
+def is_shape_xyz(vol_shape: Sequence[int], grid: GridLike | None) -> bool:
     dims = _grid_dims(grid)
     if dims is None:
         return False
@@ -89,7 +87,7 @@ def is_shape_xyz(vol_shape: Sequence[int], grid: Optional[object]) -> bool:
     return tuple(int(s) for s in vol_shape) == dims
 
 
-def is_shape_zyx(vol_shape: Sequence[int], grid: Optional[object]) -> bool:
+def is_shape_zyx(vol_shape: Sequence[int], grid: GridLike | None) -> bool:
     dims = _grid_dims(grid)
     if dims is None:
         return False
@@ -98,7 +96,7 @@ def is_shape_zyx(vol_shape: Sequence[int], grid: Optional[object]) -> bool:
     return tuple(int(s) for s in vol_shape) == (dims[2], dims[1], dims[0])
 
 
-def infer_disk_axes(vol_shape: Sequence[int], grid: Optional[object]) -> Optional[str]:
+def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | None:
     """Infer on-disk axis order using grid heuristics.
 
     Returns "xyz", "zyx", or None if ambiguous.

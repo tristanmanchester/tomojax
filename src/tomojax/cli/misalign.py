@@ -9,19 +9,11 @@ import jax.numpy as jnp
 
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from ..core.geometry.views import stack_view_poses
 from ..align.parametrizations import se3_from_5d
 from ..core.projector import forward_project_view_T
 from ..utils.logging import setup_logging, log_jax_env
 from ._runtime import transfer_guard_context
-
-
-def _parse_bool(s: str) -> bool:
-    s = s.strip().lower()
-    if s in ("1", "true", "yes", "y", "on"):
-        return True
-    if s in ("0", "false", "no", "n", "off"):
-        return False
-    raise ValueError(f"Invalid boolean value: {s}")
 
 
 def _parse_number_with_unit(val: str) -> tuple[float, str | None]:
@@ -472,10 +464,7 @@ def main() -> None:
         )
 
     # Recompute nominal poses with final geometry (possibly modified angles)
-    T_nom = jnp.stack(
-        [jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
+    T_nom = stack_view_poses(geom, n_views)
     params5 = jnp.asarray(params5_np, jnp.float32)
 
     with transfer_guard_context(args.transfer_guard):

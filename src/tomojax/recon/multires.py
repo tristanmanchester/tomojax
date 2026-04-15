@@ -6,7 +6,7 @@ import math
 import jax.numpy as jnp
 import jax.image as jimage
 
-from ..core.geometry import Grid, Detector, Geometry
+from ..core.geometry.base import Grid, Detector, Geometry
 from .fista_tv import fista_tv, grad_data_term
 from ..utils.logging import progress_iter
 

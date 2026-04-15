@@ -103,8 +103,6 @@ def estimate_views_per_batch(
     if budget <= static_bytes:
         return 1
 
-    per_batch = lambda b: static_bytes + int(algo_factor * fudge * per_view * b)
-
     # Largest b such that per_batch(b) <= budget
     b_est = (budget - static_bytes) / float(algo_factor * fudge * per_view)
     b = int(max(1, math.floor(b_est)))

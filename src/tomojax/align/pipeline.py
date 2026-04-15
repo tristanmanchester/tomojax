@@ -4,12 +4,13 @@ from dataclasses import dataclass, replace
 import logging
 import math
 import time
-from typing import Any, Callable, Dict, Tuple, Iterable, List, Optional, Literal
+from typing import Callable, Iterable, Literal, TypedDict
 
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry import Geometry, Grid, Detector
+from ..core.geometry.base import Geometry, Grid, Detector
+from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..recon.fista_tv import fista_tv
 from ..utils.logging import progress_iter, format_duration
@@ -19,9 +20,39 @@ from ..utils.fov import cylindrical_mask_xy
 
 
 ObserverAction = Literal["continue", "advance_level", "stop_run"]
+type OuterStatValue = float | int | bool | str | None
+type OuterStat = dict[str, OuterStatValue]
+ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverAction | bool]
 
 
-def _normalize_observer_action(action: Any) -> ObserverAction:
+class AlignInfo(TypedDict):
+    loss: list[float]
+    L: float | None
+    outer_stats: list[OuterStat]
+    stopped_by_observer: bool
+    observer_action: ObserverAction
+    wall_time_total: float
+
+
+class AlignMultiresInfo(TypedDict):
+    loss: list[float]
+    factors: list[int]
+    stopped_by_observer: bool
+    observer_action: ObserverAction
+    total_outer_iters: int
+    wall_time_total: float
+
+
+class MultiresLevel(TypedDict):
+    factor: int
+    grid: Grid
+    detector: Detector
+    projections: jnp.ndarray
+
+
+def _normalize_observer_action(
+    action: ObserverAction | str | bool | None,
+) -> ObserverAction:
     if action is False or action is None:
         return "continue"
     if action is True:
@@ -167,7 +198,7 @@ class AlignConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
-    # Solver & regularization (GN and GD only; LBFGS removed)
+    # Solver and regularization
     opt_method: str = "gn"
     gn_damping: float = 1e-6
     w_rot: float = 0.0
@@ -185,17 +216,12 @@ class AlignConfig:
     early_stop: bool = True
     early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
     early_stop_patience: int = 2
-    # GN acceptance: only apply step if it reduces the alignment loss
-    # GN acceptance: only apply step if it improves, unless gn_accept_tol allows a tiny increase
+    # Accept GN steps only when they improve the loss, up to gn_accept_tol.
     gn_accept_only_improving: bool = True
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
     loss_kind: str = "l2_otsu"
-    loss_params: Optional[Dict[str, float]] = None
-    # (LBFGS settings removed)
-
-
- # (Removed: AugmentedGeometry legacy wrapper; new alignment path uses pose-aware projector directly)
+    loss_params: dict[str, float] | None = None
 
 
 def align(
@@ -207,8 +233,8 @@ def align(
     cfg: AlignConfig | None = None,
     init_x: jnp.ndarray | None = None,
     init_params5: jnp.ndarray | None = None,
-    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], ObserverAction | bool] | None = None,
-) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
+    observer: ObserverCallback | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
     """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
 
     Returns (x, params5, info) with loss history and optional metrics.
@@ -234,10 +260,7 @@ def align(
 
     # Precompute nominal poses once
     n_views = int(projections.shape[0])
-    T_nom_all = jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
+    T_nom_all = stack_view_poses(geometry, n_views)
 
     # Precompute detector grid once (device arrays) to avoid repeated transfers/logging
     det_grid = get_detector_grid_device(detector)
@@ -296,7 +319,7 @@ def align(
         "edge_aware_l2",
     )
 
-    def _chunk_schedule(i: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def _chunk_schedule(i: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         i = jnp.asarray(i, dtype=jnp.int32)
         start = i * jnp.int32(chunk_size)
         remaining = jnp.maximum(0, jnp.int32(n_views) - start)
@@ -684,19 +707,19 @@ def align(
     L_prev = cfg.recon_L
     small_impr_streak = 0
     opt_mode = str(cfg.opt_method).lower()
-    outer_stats: List[Dict[str, Any]] = []
+    outer_stats: list[OuterStat] = []
     wall_start = time.perf_counter()
 
-    def _log_outer_summary(stat: Dict[str, Any]) -> None:
+    def _log_outer_summary(stat: OuterStat) -> None:
         outer_idx = int(stat.get("outer_idx", 0))
         total_iters = int(cfg.outer_iters)
         total_time = format_duration(stat.get("outer_time"))
         elapsed = format_duration(stat.get("cumulative_time"))
         if cfg.log_compact:
             # Build compact one-liner with key fields
-            parts: List[str] = [f"Outer {outer_idx}/{total_iters}"]
+            parts: list[str] = [f"Outer {outer_idx}/{total_iters}"]
             # Recon summary
-            rbits: List[str] = []
+            rbits: list[str] = []
             rt = stat.get("recon_time")
             if rt is not None:
                 rbits.append(f"{format_duration(rt)}")
@@ -714,7 +737,7 @@ def align(
             if rbits:
                 parts.append("recon " + " ".join(rbits))
             # Align summary
-            abits: List[str] = []
+            abits: list[str] = []
             at = stat.get("align_time")
             if at is not None:
                 abits.append(f"{format_duration(at)}")
@@ -744,7 +767,7 @@ def align(
             elapsed,
         )
 
-        recon_parts: List[str] = []
+        recon_parts: list[str] = []
         recon_time = stat.get("recon_time")
         if recon_time is not None:
             recon_parts.append(f"time {format_duration(recon_time)}")
@@ -764,7 +787,7 @@ def align(
                 recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e}")
         logging.info("  Recon | %s", " | ".join(recon_parts) if recon_parts else "-")
 
-        align_parts: List[str] = []
+        align_parts: list[str] = []
         align_time = stat.get("align_time")
         if align_time is not None:
             align_parts.append(f"time {format_duration(align_time)}")
@@ -796,7 +819,7 @@ def align(
 
     for it in progress_iter(range(cfg.outer_iters), total=cfg.outer_iters, desc="Align: outer iters"):
         outer_idx = it + 1
-        stat: Dict[str, Any] = {"outer_idx": outer_idx}
+        stat: OuterStat = {"outer_idx": outer_idx}
         outer_start = time.perf_counter()
 
         # Reconstruction step
@@ -853,12 +876,8 @@ def align(
                     raise
             else:
                 raise
-        # Ensure device work is finished before timing recon
-        try:
-            x.block_until_ready()
-        except Exception:
-            # Fallback if x is not a DeviceArray-like object
-            jax.block_until_ready(x)
+        # Ensure device work is finished before timing recon.
+        jax.block_until_ready(x)
         recon_time = time.perf_counter() - recon_start
         stat["recon_time"] = recon_time
         stat["recon_retry"] = recon_retry
@@ -955,15 +974,8 @@ def align(
                 pass
         stat["step_kind"] = step_kind
         stat["loss_after_step"] = loss_after
-        # Ensure device work from alignment step is finished before timing
-        try:
-            # Prefer object method if available (propagates device errors correctly)
-            params5.block_until_ready()  # type: ignore[attr-defined]
-        except Exception:
-            try:
-                jax.block_until_ready(params5)
-            except Exception:
-                pass
+        # Ensure device work from alignment step is finished before timing.
+        jax.block_until_ready(params5)
         stat["align_time"] = time.perf_counter() - align_start
 
         # Track overall data loss
@@ -1079,18 +1091,18 @@ def align_multires(
     *,
     factors: Iterable[int] = (2, 1),
     cfg: AlignConfig | None = None,
-    observer: Callable[[jnp.ndarray, jnp.ndarray, Dict[str, Any]], ObserverAction | bool] | None = None,
-) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
+    observer: ObserverCallback | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray, AlignMultiresInfo]:
     """Coarse-to-fine alignment using simple binning for speed and robustness.
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
-    from ..recon.multires import scale_grid, scale_detector, bin_projections, bin_volume, upsample_volume
+    from ..recon.multires import scale_grid, scale_detector, bin_projections, upsample_volume
 
     if cfg is None:
         cfg = AlignConfig()
 
-    levels: List[dict] = []
+    levels: list[MultiresLevel] = []
     for f in factors:
         levels.append(
             {
@@ -1104,7 +1116,7 @@ def align_multires(
     x_init = None
     params5 = None
     prev_factor: int | None = None
-    loss_hist: List[float] = []
+    loss_hist: list[float] = []
     stopped_by_observer = False
     final_observer_action: ObserverAction = "continue"
     global_outer_idx = 0
@@ -1139,10 +1151,7 @@ def align_multires(
                     int(cfg.recon_patience) if cfg.recon_patience is not None else 0
                 ),
             )
-            T_nom = jnp.stack(
-                [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(y.shape[0])],
-                axis=0,
-            )
+            T_nom = stack_view_poses(geometry, y.shape[0])
             from ..utils.phasecorr import phase_corr_shift
             vm_pred = jax.vmap(
                 lambda T: forward_project_view_T(

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple, Sequence
+from typing import Sequence
 
 import numpy as np
 
-from .base import Grid, Detector, Geometry
+from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
 from .transforms import rot_axis_angle
 
 
@@ -79,7 +79,7 @@ class LaminographyGeometry:
     def _axis_unit(self) -> np.ndarray:
         return laminography_axis_unit(self.tilt_deg, self.tilt_about)
 
-    def pose_for_view(self, i: int):
+    def pose_for_view(self, i: int) -> PoseMatrix:
         """World-from-object pose in sample frame; rotation about object +y.
 
         We align the object's +y axis to the laminography axis once via S, then
@@ -96,24 +96,6 @@ class LaminographyGeometry:
         T[:3, :3] = R
         return tuple(map(tuple, T))  # 4x4
 
-    def rays_for_view(self, i: int):
-        # Same detector plane and beam direction as parallel CT for now
-        nu, nv = int(self.detector.nu), int(self.detector.nv)
-        du, dv = float(self.detector.du), float(self.detector.dv)
-        cx, cz = float(self.detector.det_center[0]), float(self.detector.det_center[1])
-
-        y0 = (
-            float(self.grid.vol_origin[1])
-            if self.grid.vol_origin is not None
-            else -((self.grid.ny / 2.0) - 0.5) * float(self.grid.vy)
-        )
-
-        def origin_fn(u: int, v: int) -> Tuple[float, float, float]:
-            x = (u - (nu / 2.0 - 0.5)) * du + cx
-            z = (v - (nv / 2.0 - 0.5)) * dv + cz
-            return float(x), float(y0), float(z)
-
-        def dir_fn(u: int, v: int) -> Tuple[float, float, float]:
-            return (0.0, 1.0, 0.0)
-
-        return origin_fn, dir_fn
+    def rays_for_view(self, i: int) -> RayPair:
+        # Use the same detector plane and beam direction as parallel CT.
+        return _parallel_detector_rays(self.grid, self.detector)

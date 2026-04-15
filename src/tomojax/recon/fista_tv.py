@@ -6,55 +6,18 @@ from typing import Callable, Literal, Tuple, Optional
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry import Geometry, Grid, Detector
+from ..core.geometry.base import Geometry, Grid, Detector
+from ..core.geometry.views import stack_view_poses
 from ..core.projector import (
     _sum_backproject_views_T,
     backproject_view_T,
     forward_project_view_T,
     get_detector_grid_device,
 )
+from ._tv_ops import div3, grad3
 
 
-
-def _grad3(u: jnp.ndarray):
-    dx = jnp.concatenate([jnp.diff(u, axis=0), jnp.zeros((1, u.shape[1], u.shape[2]), u.dtype)], axis=0)
-    dy = jnp.concatenate([jnp.diff(u, axis=1), jnp.zeros((u.shape[0], 1, u.shape[2]), u.dtype)], axis=1)
-    dz = jnp.concatenate([jnp.diff(u, axis=2), jnp.zeros((u.shape[0], u.shape[1], 1), u.dtype)], axis=2)
-    return dx, dy, dz
-
-
-def _div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
-    """Discrete divergence matching the TV updates: ``_div3 = -_grad3*``."""
-    if px.shape[0] == 1:
-        dx = jnp.zeros_like(px)
-    else:
-        first_x = px[0:1, :, :]
-        if px.shape[0] > 2:
-            mid_x = px[1:-1, :, :] - px[0:-2, :, :]
-            dx = jnp.concatenate([first_x, mid_x, -px[-2:-1, :, :]], axis=0)
-        else:
-            dx = jnp.concatenate([first_x, -px[-2:-1, :, :]], axis=0)
-
-    if py.shape[1] == 1:
-        dy = jnp.zeros_like(py)
-    else:
-        first_y = py[:, 0:1, :]
-        if py.shape[1] > 2:
-            mid_y = py[:, 1:-1, :] - py[:, 0:-2, :]
-            dy = jnp.concatenate([first_y, mid_y, -py[:, -2:-1, :]], axis=1)
-        else:
-            dy = jnp.concatenate([first_y, -py[:, -2:-1, :]], axis=1)
-
-    if pz.shape[2] == 1:
-        dz = jnp.zeros_like(pz)
-    else:
-        first_z = pz[:, :, 0:1]
-        if pz.shape[2] > 2:
-            mid_z = pz[:, :, 1:-1] - pz[:, :, 0:-2]
-            dz = jnp.concatenate([first_z, mid_z, -pz[:, :, -2:-1]], axis=2)
-        else:
-            dz = jnp.concatenate([first_z, -pz[:, :, -2:-1]], axis=2)
-    return dx + dy + dz
+GradMode = Literal["auto", "batched", "stream"]
 
 
 @dataclass
@@ -77,7 +40,7 @@ def grad_data_term(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
-    grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
 ) -> Tuple[jnp.ndarray, float]:
@@ -93,10 +56,7 @@ def grad_data_term(
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
     if T_all is None:
-        T_all = jnp.stack(
-            [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-            axis=0,
-        )
+        T_all = stack_view_poses(geometry, n_views)
 
     det_grid = get_detector_grid_device(detector)
     mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
@@ -226,7 +186,7 @@ def data_term_value(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
-    grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
@@ -235,10 +195,7 @@ def data_term_value(
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
     if T_all is None:
-        T_all = jnp.stack(
-            [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-            axis=0,
-        )
+        T_all = stack_view_poses(geometry, n_views)
 
     det_grid = get_detector_grid_device(detector)
 
@@ -328,17 +285,14 @@ def power_method_L(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
-    grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     n_views, nv, nu = projections_shape
     if T_all is None:
-        T_all = jnp.stack(
-            [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-            axis=0,
-        )
+        T_all = stack_view_poses(geometry, n_views)
     zero_proj = jnp.zeros((n_views, nv, nu), dtype=jnp.float32)
     num_iters = max(1, int(iters))
 
@@ -385,7 +339,7 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarr
 
         def body(carry, _):
             u, u_bar, p1, p2, p3 = carry
-            gx, gy, gz = _grad3(u_bar)
+            gx, gy, gz = grad3(u_bar)
             p1_n = p1 + sigma * gx
             p2_n = p2 + sigma * gy
             p3_n = p3 + sigma * gz
@@ -393,7 +347,7 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarr
             p1_n = p1_n / norm
             p2_n = p2_n / norm
             p3_n = p3_n / norm
-            div_p = _div3(p1_n, p2_n, p3_n)
+            div_p = div3(p1_n, p2_n, p3_n)
             u_prev = u
             u_minus = u + tau * div_p
             u_n = (u_minus + tau * x) / (1.0 + tau)
@@ -428,7 +382,7 @@ def fista_tv(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
-    grad_mode: Literal["auto", "batched", "stream"] = "auto",
+    grad_mode: GradMode = "auto",
     tv_prox_iters: int = 10,
     recon_rel_tol: float | None = None,
     recon_patience: int = 0,
@@ -455,10 +409,7 @@ def fista_tv(
     # Precompute poses once and thread them through the projector calls to avoid
     # repeatedly stacking in inner loops.
     n_views = int(projections.shape[0])
-    T_all = jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
+    T_all = stack_view_poses(geometry, n_views)
 
     if L is None:
         # Use streamed gradient in power-method to avoid batched VJP memory spikes
@@ -545,7 +496,7 @@ def fista_tv(
             t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
             z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
             data_loss_val = data_value(x_new)
-            gx, gy, gz = _grad3(x_new)
+            gx, gy, gz = grad3(x_new)
             tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))
             obj = data_loss_val + lambda_tv * tv_norm
             obj32 = obj.astype(jnp.float32)

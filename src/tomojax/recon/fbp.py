@@ -7,7 +7,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry import Grid, Detector, Geometry
+from ..core.geometry.base import Grid, Detector, Geometry
+from ..core.geometry.views import stack_view_poses
 from ..core.projector import backproject_view_T
 from .filters import get_filter_np
 from ..utils.logging import progress_iter
@@ -291,10 +292,7 @@ def fbp(
     proj = jnp.asarray(projections, dtype=jnp.float32)
     n_views, nv, nu = proj.shape
     # Precompute poses once
-    T_all = jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
+    T_all = stack_view_poses(geometry, n_views)
     requested_b = int(views_per_batch) if int(views_per_batch) > 0 else n_views
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))

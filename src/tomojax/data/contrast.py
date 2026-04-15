@@ -14,12 +14,7 @@ try:  # pragma: no cover - optional JAX dependency
     import jax  # type: ignore
     import jax.numpy as _jnp  # type: ignore
 
-    if hasattr(jax, "Array"):
-        _JAX_ARRAY_TYPES = (jax.Array,)  # type: ignore[attr-defined]
-    else:  # Fallback for older JAX versions
-        from jax.interpreters.xla import DeviceArray as _DeviceArray  # type: ignore
-
-        _JAX_ARRAY_TYPES = (_DeviceArray,)  # type: ignore[assignment]
+    _JAX_ARRAY_TYPES = (jax.Array,)  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - no JAX installed
     _jnp = None  # type: ignore
     _JAX_ARRAY_TYPES: tuple[type, ...] = ()
