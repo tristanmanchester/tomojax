@@ -16,9 +16,13 @@ from ..data.simulate import SimConfig, simulate_to_file
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..align.pipeline import align, AlignConfig
 from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..align.parametrizations import se3_from_5d
 from ..utils.logging import setup_logging, log_jax_env
+
+
+type BenchmarkResultValue = str | float | None
 
 
 def _ensure_dir(p: str) -> None:
@@ -100,9 +104,7 @@ def _make_misaligned_dataset(
         np.float32
     ) * float(det.dv)
     params5_j = jnp.asarray(params5, jnp.float32)
-    T_nom = jnp.stack(
-        [jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(n)], axis=0
-    )
+    T_nom = stack_view_poses(geom, n)
     T_aug = T_nom @ jax.vmap(se3_from_5d)(params5_j)
     det_grid = get_detector_grid_device(det)
     vm_project = jax.vmap(
@@ -284,10 +286,7 @@ def _gt_projection_mse(
     Uses current process device; modest sizes recommended.
     """
     thetas = np.asarray(geom.thetas_deg, dtype=np.float32)
-    T_nom = jnp.stack(
-        [jnp.asarray(geom.pose_for_view(i), jnp.float32) for i in range(len(thetas))],
-        axis=0,
-    )
+    T_nom = stack_view_poses(geom, len(thetas))
     S_est = jax.vmap(se3_from_5d)(jnp.asarray(params_est, jnp.float32))
     T_est_full = T_nom @ S_est
     det_grid = get_detector_grid_device(det)
@@ -441,10 +440,9 @@ def main() -> None:
         "edge_l2": 5e-2,
         "pwls": 5e-2,
     }
-    # LBFGS removed
 
     # 4) Run alignment for each loss or load existing outputs
-    results: List[Dict[str, object]] = []
+    results: list[dict[str, BenchmarkResultValue]] = []
     for loss in args.losses:
         run_name = str(loss).lower()
         out_path = os.path.join(args.expdir, f"align_{run_name}.nxs")
@@ -464,7 +462,7 @@ def main() -> None:
         start = time.perf_counter()
         status = "ok"
         err_msg = None
-        metrics: Dict[str, float] = {}
+        metrics: dict[str, float] = {}
         try:
             p_est_np: np.ndarray
             x_est_np: np.ndarray | None = None
@@ -475,7 +473,6 @@ def main() -> None:
                 )
                 meta_out = load_nxtomo(out_path)
                 p_est_np = np.asarray(meta_out.get("align_params"), dtype=np.float32)
-                # prefer saved recon if present for possible future metrics
                 x_est_np = (
                     np.asarray(meta_out.get("volume"))
                     if meta_out.get("volume") is not None

@@ -68,3 +68,14 @@ def test_spdhg_keeps_configured_data_dual_step_under_block_sampling():
     assert info["selection_prob"] == pytest.approx(0.25)
     assert info["sigma_data_base"] == pytest.approx(0.2)
     assert info["sigma_data"] == pytest.approx(0.2)
+
+
+def test_spdhg_callback_exceptions_propagate():
+    grid, det, geom, vol, projs = make_simple_case(8, 8, 8, 4)
+    cfg = SPDHGConfig(iters=1, lambda_tv=1e-3, views_per_batch=2, log_every=1, seed=0)
+
+    def fail_callback(step: int, loss: float) -> None:
+        raise RuntimeError("callback failure")
+
+    with pytest.raises(RuntimeError, match="callback failure"):
+        spdhg_tv(geom, grid, det, projs, config=cfg, callback=fail_callback)

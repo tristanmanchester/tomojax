@@ -1,4 +1,3 @@
-import numpy as np
 import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view

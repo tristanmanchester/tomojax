@@ -17,8 +17,7 @@ def _wrap_shift(idx: jnp.ndarray | int, n: int) -> jnp.ndarray:
 def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Estimate (du, dv) translation from ref -> tgt via phase correlation.
 
-    Inputs are 2D arrays (nv, nu). Returns shifts in pixel units (u, v).
-    Uses integer-precision peak (robust and cheap); refine later if needed.
+    Inputs are 2D arrays (nv, nu). Returns integer-pixel shifts in (u, v).
     """
     ref = ref.astype(jnp.float32)
     tgt = tgt.astype(jnp.float32)

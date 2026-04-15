@@ -1,11 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Sequence, TypedDict
 
 import numpy as np
 
-from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from ..core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
+from ..core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
+
+
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+
+
+class LoadedGeometryMetaRequired(TypedDict):
+    detector: DetectorDict
+    thetas_deg: Sequence[float] | np.ndarray
+
+
+class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
+    grid: GridDict
+    geometry_type: str
+    tilt_deg: float
+    tilt_about: str
+    angle_offset_deg: np.ndarray
+    misalign_spec: dict[str, JsonValue]
+    align_params: np.ndarray
 
 
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
@@ -15,16 +34,16 @@ GridOverride = Grid | tuple[int, int, int] | list[int] | None
 class AugmentedGeometry:
     """Geometry wrapper that applies saved per-view 5-DOF alignment params."""
 
-    base: Any
+    base: Geometry
     align_params: np.ndarray
 
-    def pose_for_view(self, i: int):
+    def pose_for_view(self, i: int) -> PoseMatrix:
         T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
         T_delta = _se3_from_5d_np(self.align_params[i])
         T = T_nom @ T_delta
         return tuple(map(tuple, T))
 
-    def rays_for_view(self, i: int):
+    def rays_for_view(self, i: int) -> RayPair:
         return self.base.rays_for_view(i)
 
 
@@ -61,15 +80,23 @@ def _se3_from_5d_np(params5: np.ndarray) -> np.ndarray:
     return T
 
 
-def _detector_from_meta(meta: dict) -> Detector:
+def _detector_from_meta(meta: LoadedGeometryMeta) -> Detector:
     det_d = meta["detector"]
+    det_center = det_d.get("det_center", [0.0, 0.0])
     return Detector(
-        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
-        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+        nu=int(det_d["nu"]),
+        nv=int(det_d["nv"]),
+        du=float(det_d["du"]),
+        dv=float(det_d["dv"]),
+        det_center=(float(det_center[0]), float(det_center[1])),
     )
 
 
-def _grid_from_meta(meta: dict, detector: Detector, grid_override: GridOverride) -> Grid:
+def _grid_from_meta(
+    meta: LoadedGeometryMeta,
+    detector: Detector,
+    grid_override: GridOverride,
+) -> Grid:
     if isinstance(grid_override, Grid):
         return grid_override
 
@@ -90,33 +117,47 @@ def _grid_from_meta(meta: dict, detector: Detector, grid_override: GridOverride)
             vz=float(detector.dv),
         )
 
+    vol_origin = (
+        tuple(float(v) for v in grid_d["vol_origin"])
+        if grid_d.get("vol_origin") is not None
+        else None
+    )
+    vol_center = (
+        tuple(float(v) for v in grid_d["vol_center"])
+        if grid_d.get("vol_center") is not None
+        else None
+    )
+
     if grid_override is not None:
         nx, ny, nz = map(int, grid_override)
-        kwargs: dict[str, Any] = {
-            "nx": nx,
-            "ny": ny,
-            "nz": nz,
-            "vx": float(grid_d["vx"]),
-            "vy": float(grid_d["vy"]),
-            "vz": float(grid_d["vz"]),
-        }
-        if grid_d.get("vol_origin") is not None:
-            kwargs["vol_origin"] = tuple(grid_d["vol_origin"])
-        if grid_d.get("vol_center") is not None:
-            kwargs["vol_center"] = tuple(grid_d["vol_center"])
-        return Grid(**kwargs)
+        return Grid(
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            vx=float(grid_d["vx"]),
+            vy=float(grid_d["vy"]),
+            vz=float(grid_d["vz"]),
+            vol_origin=vol_origin,
+            vol_center=vol_center,
+        )
 
-    kwargs: dict[str, Any] = {
-        k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")
-    }
-    if grid_d.get("vol_origin") is not None:
-        kwargs["vol_origin"] = tuple(grid_d["vol_origin"])
-    if grid_d.get("vol_center") is not None:
-        kwargs["vol_center"] = tuple(grid_d["vol_center"])
-    return Grid(**kwargs)
+    return Grid(
+        nx=int(grid_d["nx"]),
+        ny=int(grid_d["ny"]),
+        nz=int(grid_d["nz"]),
+        vx=float(grid_d["vx"]),
+        vy=float(grid_d["vy"]),
+        vz=float(grid_d["vz"]),
+        vol_origin=vol_origin,
+        vol_center=vol_center,
+    )
 
 
-def _resolve_thetas_deg(meta: dict, *, apply_saved_angle_offset: bool) -> np.ndarray:
+def _resolve_thetas_deg(
+    meta: LoadedGeometryMeta,
+    *,
+    apply_saved_angle_offset: bool,
+) -> np.ndarray:
     thetas = np.asarray(meta["thetas_deg"], dtype=np.float32)
     if not apply_saved_angle_offset:
         return thetas
@@ -141,11 +182,11 @@ def _resolve_thetas_deg(meta: dict, *, apply_saved_angle_offset: bool) -> np.nda
 
 def _base_geometry(
     *,
-    meta: dict,
+    meta: LoadedGeometryMeta,
     grid: Grid,
     detector: Detector,
     thetas_deg: Sequence[float],
-):
+) -> Geometry:
     gtype = meta.get("geometry_type", "parallel")
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas_deg)
@@ -162,11 +203,11 @@ def _base_geometry(
 
 
 def build_geometry_from_meta(
-    meta: dict,
+    meta: LoadedGeometryMeta,
     *,
     grid_override: GridOverride = None,
     apply_saved_alignment: bool = False,
-) -> tuple[Grid, Detector, Any]:
+) -> tuple[Grid, Detector, Geometry]:
     """Build geometry from NXtomo metadata with sensible fallbacks.
 
     When `grid` metadata is missing, the grid is inferred from detector dimensions
@@ -204,9 +245,9 @@ def build_geometry_from_meta(
 
 
 def build_nominal_geometry_from_meta(
-    meta: dict,
+    meta: LoadedGeometryMeta,
     grid_override: GridOverride = None,
-) -> tuple[Grid, Detector, Any]:
+) -> tuple[Grid, Detector, Geometry]:
     """Build geometry without composing any saved alignment metadata."""
     return build_geometry_from_meta(
         meta,

@@ -7,49 +7,10 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry import Geometry, Grid, Detector
+from ..core.geometry.base import Geometry, Grid, Detector
+from ..core.geometry.views import stack_view_poses
 from ..core.projector import _sum_backproject_views_T, forward_project_view_T, get_detector_grid_device
-
-
-# --------- finite differences (match your FISTA helpers) ----------
-def _grad3(u: jnp.ndarray):
-    dx = jnp.concatenate([jnp.diff(u, axis=0), jnp.zeros((1, u.shape[1], u.shape[2]), u.dtype)], axis=0)
-    dy = jnp.concatenate([jnp.diff(u, axis=1), jnp.zeros((u.shape[0], 1, u.shape[2]), u.dtype)], axis=1)
-    dz = jnp.concatenate([jnp.diff(u, axis=2), jnp.zeros((u.shape[0], u.shape[1], 1), u.dtype)], axis=2)
-    return dx, dy, dz
-
-def _div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
-    """Discrete divergence matching the TV updates: ``_div3 = -_grad3*``."""
-    if px.shape[0] == 1:
-        dx = jnp.zeros_like(px)
-    else:
-        first_x = px[0:1, :, :]
-        if px.shape[0] > 2:
-            mid_x = px[1:-1, :, :] - px[0:-2, :, :]
-            dx = jnp.concatenate([first_x, mid_x, -px[-2:-1, :, :]], axis=0)
-        else:
-            dx = jnp.concatenate([first_x, -px[-2:-1, :, :]], axis=0)
-
-    if py.shape[1] == 1:
-        dy = jnp.zeros_like(py)
-    else:
-        first_y = py[:, 0:1, :]
-        if py.shape[1] > 2:
-            mid_y = py[:, 1:-1, :] - py[:, 0:-2, :]
-            dy = jnp.concatenate([first_y, mid_y, -py[:, -2:-1, :]], axis=1)
-        else:
-            dy = jnp.concatenate([first_y, -py[:, -2:-1, :]], axis=1)
-
-    if pz.shape[2] == 1:
-        dz = jnp.zeros_like(pz)
-    else:
-        first_z = pz[:, :, 0:1]
-        if pz.shape[2] > 2:
-            mid_z = pz[:, :, 1:-1] - pz[:, :, 0:-2]
-            dz = jnp.concatenate([first_z, mid_z, -pz[:, :, -2:-1]], axis=2)
-        else:
-            dz = jnp.concatenate([first_z, -pz[:, :, -2:-1]], axis=2)
-    return dx + dy + dz
+from ._tv_ops import div3, grad3
 
 
 # --------- config ----------
@@ -203,10 +164,7 @@ def spdhg_tv(
     W = jnp.ones_like(y_meas) if weights is None else jnp.asarray(weights, dtype=jnp.float32)
 
     # precompute per-view poses once (like your FISTA)
-    T_all = jnp.stack(
-        [jnp.asarray(geometry.pose_for_view(i), dtype=jnp.float32) for i in range(n_views)],
-        axis=0,
-    )
+    T_all = stack_view_poses(geometry, n_views)
     det_grid = get_detector_grid_device(detector)
 
     # batched projector over a chunk of views
@@ -318,14 +276,14 @@ def spdhg_tv(
         )
 
         # TV DUAL UPDATE (global)
-        gx, gy, gz = _grad3(x_bar)
+        gx, gy, gz = grad3(x_bar)
         p1_u = p1 + sigma_tv * gx
         p2_u = p2 + sigma_tv * gy
         p3_u = p3 + sigma_tv * gz
         norm = jnp.maximum(1.0, jnp.sqrt(p1_u*p1_u + p2_u*p2_u + p3_u*p3_u) / jnp.maximum(lam, 1e-12))
         p1_new = p1_u / norm; p2_new = p2_u / norm; p3_new = p3_u / norm
         # TV contributes with -div(p) in the primal gradient; track the increment
-        delta_div = _div3(p1_new - p1, p2_new - p2, p3_new - p3)
+        delta_div = div3(p1_new - p1, p2_new - p2, p3_new - p3)
 
         # update accumulator s
         # Update accumulator: A^T y + (-div p)
@@ -347,7 +305,7 @@ def spdhg_tv(
         def _log_step():
             resid = (pred - y_chunk) * jnp.sqrt(w_chunk) * row_mask
             data_est = 0.5 * jnp.vdot(resid, resid).real * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
-            gx2, gy2, gz2 = _grad3(x_new)
+            gx2, gy2, gz2 = grad3(x_new)
             tv = jnp.sum(jnp.sqrt(gx2*gx2 + gy2*gy2 + gz2*gz2 + 1e-8))
             obj = (data_est + lam * tv).astype(jnp.float32)
             return losses.at[t].set(obj)
@@ -365,11 +323,12 @@ def spdhg_tv(
 
     # optional callback with the last logged loss
     if callback is not None:
-        last_logged = int(np.where(np.array((np.arange(config.iters)+1) % config.log_every == 0))[0][-1]) if config.log_every>0 and config.iters>=config.log_every else config.iters-1
-        try:
-            callback(last_logged, float(losses_f[last_logged]))
-        except Exception:
-            pass
+        last_logged = (
+            int(np.where(np.array((np.arange(config.iters) + 1) % config.log_every == 0))[0][-1])
+            if config.log_every > 0 and config.iters >= config.log_every
+            else config.iters - 1
+        )
+        callback(last_logged, float(losses_f[last_logged]))
 
     info = {
         "loss": [float(v) for v in list(losses_f)],

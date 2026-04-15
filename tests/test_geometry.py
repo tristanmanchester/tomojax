@@ -8,9 +8,7 @@ from tomojax.core.geometry import (
     ParallelGeometry,
     LaminographyGeometry,
 )
-from tomojax.core.geometry.lamino import laminography_tilt_matrix
 from tomojax.core.geometry.transforms import rotz, rot_axis_angle, exp_se3, invert, compose
-import numpy as np
 
 
 if sys.version_info < (3, 8):

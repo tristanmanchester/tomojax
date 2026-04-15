@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -15,10 +15,7 @@ def setup_logging(level: str = "INFO") -> None:
             "jax._src.xla_bridge",
             "jax._src.xla_client",
         ):
-            try:
-                logging.getLogger(name).setLevel(logging.WARNING)
-            except Exception:
-                pass
+            logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def log_jax_env() -> None:
@@ -35,7 +32,12 @@ def _progress_enabled() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
-def progress_iter(iterable: Iterable, *, total: Optional[int] = None, desc: str = "") -> Iterator:
+def progress_iter[T](
+    iterable: Iterable[T],
+    *,
+    total: int | None = None,
+    desc: str = "",
+) -> Iterator[T]:
     """Yield elements from iterable, showing a progress bar if enabled.
 
     Enable by setting environment variable `TOMOJAX_PROGRESS=1` or calling CLIs with `--progress`.
