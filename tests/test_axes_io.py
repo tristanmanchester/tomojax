@@ -1,5 +1,6 @@
 import numpy as np
 import h5py
+import pytest
 
 from tomojax.data.io_hdf5 import save_nxtomo, load_nxtomo, validate_nxtomo
 from tomojax.utils.axes import DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES
@@ -151,3 +152,17 @@ def test_validate_detects_missing_image_key(tmp_path):
 
     report = validate_nxtomo(path)
     assert any("image_key" in issue for issue in report["issues"])
+
+
+def test_save_nxtomo_rejects_unsupported_geometry_types(tmp_path):
+    path = tmp_path / "unsupported_geometry.nxs"
+
+    with pytest.raises(ValueError, match="Unsupported geometry_type"):
+        save_nxtomo(
+            path,
+            projections=_basic_projections(),
+            thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
+            grid=GRID_META,
+            detector=DET_META,
+            geometry_type="custom",
+        )

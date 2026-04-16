@@ -30,6 +30,17 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
 
 
+def _normalize_geometry_type(geometry_type: str | None) -> str:
+    gtype = "parallel" if geometry_type is None else str(geometry_type).strip().lower()
+    if gtype == "parallel":
+        return gtype
+    if gtype in {"lamino", "laminography"}:
+        return "lamino"
+    raise ValueError(
+        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel' or 'lamino'"
+    )
+
+
 @dataclass
 class AugmentedGeometry:
     """Geometry wrapper that applies saved per-view 5-DOF alignment params."""
@@ -187,7 +198,7 @@ def _base_geometry(
     detector: Detector,
     thetas_deg: Sequence[float],
 ) -> Geometry:
-    gtype = meta.get("geometry_type", "parallel")
+    gtype = _normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas_deg)
 

@@ -38,15 +38,15 @@ _AXES_SILENCE = os.environ.get("TOMOJAX_AXES_SILENCE", "").lower() in {
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
+
+
 class SourceInfo(TypedDict, total=False):
     name: str | None
     type: str | None
     probe: str | None
 
 
-type DatasetValue = (
-    np.ndarray | JsonValue | GridDict | DetectorDict | SourceInfo
-)
+type DatasetValue = np.ndarray | JsonValue | GridDict | DetectorDict | SourceInfo
 type LoadedDataset = dict[str, DatasetValue]
 
 
@@ -81,9 +81,7 @@ def _attr_to_str(v: object, default: str | None = None) -> str | None:
         return default
 
 
-def _ensure_group(
-    root: h5py.Group, name: str, nx_class: str | None = None
-) -> h5py.Group:
+def _ensure_group(root: h5py.Group, name: str, nx_class: str | None = None) -> h5py.Group:
     g = root.require_group(name)
     if nx_class:
         g.attrs["NX_class"] = nx_class
@@ -92,6 +90,17 @@ def _ensure_group(
 
 def _write_string_attr(obj: h5py.Group | h5py.Dataset, key: str, value: str) -> None:
     obj.attrs[key] = np.array(value, dtype=h5py.string_dtype(encoding="utf-8"))
+
+
+def _normalize_geometry_type(geometry_type: str | None) -> str:
+    gtype = "parallel" if geometry_type is None else str(geometry_type).strip().lower()
+    if gtype == "parallel":
+        return gtype
+    if gtype in {"lamino", "laminography"}:
+        return "lamino"
+    raise ValueError(
+        f"Unsupported geometry_type {geometry_type!r}; expected 'parallel' or 'lamino'"
+    )
 
 
 def save_nxtomo(
@@ -129,7 +138,7 @@ def save_nxtomo(
     - grid/detector: voxel and detector definitions
     - volume: optional ground-truth volume (nx, ny, nz) in internal `xyz` order
     - align_params: optional (n_views, 5) [alpha,beta,phi,dx,dz] in radians/world units
-    - geometry_type: "parallel" | "lamino" | "custom"
+    - geometry_type: "parallel" | "lamino"
     - geometry_meta: Optional dict with extra geometry metadata (e.g., lamino tilt)
     """
     # Ensure parent directory exists
@@ -145,6 +154,7 @@ def save_nxtomo(
     proj = np.asarray(projections)
     assert proj.ndim == 3, "projections must be (n_views, nv, nu)"
     n_views, nv, nu = proj.shape
+    geometry_type_norm = _normalize_geometry_type(geometry_type)
 
     disk_axes = volume_axes_order.lower()
     try:
@@ -160,7 +170,7 @@ def save_nxtomo(
 
         # Geometry metadata (mark as NXcollection so common viewers display it)
         geom = _ensure_group(entry, "geometry", "NXcollection")
-        _write_string_attr(geom, "type", geometry_type)
+        _write_string_attr(geom, "type", geometry_type_norm)
         if geometry_meta:
             geom.attrs["geometry_meta_json"] = json.dumps(geometry_meta)
 
@@ -204,9 +214,7 @@ def save_nxtomo(
         d_angle.attrs["units"] = "degree"
         _write_string_attr(d_angle, "transformation_type", "rotation")
         # Rotation around +z by default (matching phi in current code)
-        trans.create_dataset(
-            "rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
-        )
+        trans.create_dataset("rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32))
         _write_string_attr(trans, "depends_on", "rotation_angle")
         sample_name_str = "sample" if sample_name is None else str(sample_name)
         sample.create_dataset(
@@ -225,23 +233,17 @@ def save_nxtomo(
         if source_name is not None:
             src_grp.create_dataset(
                 "name",
-                data=np.array(
-                    str(source_name), dtype=h5py.string_dtype(encoding="utf-8")
-                ),
+                data=np.array(str(source_name), dtype=h5py.string_dtype(encoding="utf-8")),
             )
         if source_type is not None:
             src_grp.create_dataset(
                 "type",
-                data=np.array(
-                    str(source_type), dtype=h5py.string_dtype(encoding="utf-8")
-                ),
+                data=np.array(str(source_type), dtype=h5py.string_dtype(encoding="utf-8")),
             )
         if source_probe is not None:
             src_grp.create_dataset(
                 "probe",
-                data=np.array(
-                    str(source_probe), dtype=h5py.string_dtype(encoding="utf-8")
-                ),
+                data=np.array(str(source_probe), dtype=h5py.string_dtype(encoding="utf-8")),
             )
 
         # Grid metadata
@@ -257,9 +259,7 @@ def save_nxtomo(
             if vol_data.ndim != 3:
                 raise ValueError("volume must be 3D (nx, ny, nz)")
             if disk_axes != INTERNAL_VOLUME_AXES:
-                vol_data = np.asarray(
-                    transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes)
-                )
+                vol_data = np.asarray(transpose_volume(vol_data, INTERNAL_VOLUME_AXES, disk_axes))
             vol = tj.create_dataset(
                 "volume",
                 data=vol_data,
@@ -273,11 +273,7 @@ def save_nxtomo(
                 _write_string_attr(tj, "frame", str(frame))
 
         # Optional alignment params and misalignment metadata
-        if (
-            align_params is not None
-            or angle_offset_deg is not None
-            or misalign_spec is not None
-        ):
+        if align_params is not None or angle_offset_deg is not None or misalign_spec is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
             align_grp = _ensure_group(tj, "align", "NXcollection")
@@ -498,9 +494,7 @@ def load_nxtomo(path: str) -> LoadedDataset:
                     volume_raw.shape,
                 )
             else:
-                volume_np = np.asarray(
-                    transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES)
-                )
+                volume_np = np.asarray(transpose_volume(volume_np, disk_axes, INTERNAL_VOLUME_AXES))
                 disk_order = disk_axes
             out["volume"] = volume_np
             out["volume_axes_order"] = INTERNAL_VOLUME_AXES
@@ -548,21 +542,15 @@ def validate_nxtomo(path: str) -> ValidationReport:
             if "instrument/detector/data" in e:
                 d = e["instrument/detector/data"]
                 if d.ndim != 3:
-                    report["issues"].append(
-                        "instrument/detector/data must be 3D (n_views, nv, nu)"
-                    )
+                    report["issues"].append("instrument/detector/data must be 3D (n_views, nv, nu)")
                 else:
                     n_views = d.shape[0]
             if "instrument/detector/image_key" in e:
                 ik = e["instrument/detector/image_key"]
                 if ik.ndim != 1:
-                    report["issues"].append(
-                        "instrument/detector/image_key must be 1D (n_views,)"
-                    )
+                    report["issues"].append("instrument/detector/image_key must be 1D (n_views,)")
                 if n_views is not None and ik.shape[0] != n_views:
-                    report["issues"].append(
-                        "image_key length must match #views in detector/data"
-                    )
+                    report["issues"].append("image_key length must match #views in detector/data")
                 if ik.dtype.kind not in {"i", "u"}:
                     report["issues"].append("image_key must use integer dtype")
             if "sample/transformations/rotation_angle" in e:
@@ -575,9 +563,7 @@ def validate_nxtomo(path: str) -> ValidationReport:
                     )
                 units = _attr_to_str(ang.attrs.get("units"))
                 if units != "degree":
-                    report["issues"].append(
-                        "rotation_angle units attr should be 'degree'"
-                    )
+                    report["issues"].append("rotation_angle units attr should be 'degree'")
     except Exception as exc:  # pragma: no cover (defensive)
         report["issues"].append(f"Exception during validation: {exc}")
     return report

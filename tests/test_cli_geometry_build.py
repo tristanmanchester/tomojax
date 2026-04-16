@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 import numpy as np
 import jax.numpy as jnp
+import pytest
 
 from tomojax.cli._geometry import build_geometry_from_meta
 from tomojax.cli.align import build_geometry as build_align_geometry
@@ -76,6 +77,13 @@ def test_build_geometry_from_meta_skips_double_applying_saved_angle_offsets():
         rtol=1e-6,
         atol=1e-6,
     )
+
+
+def test_build_geometry_from_meta_rejects_unsupported_geometry_types():
+    meta = _parallel_meta(geometry_type="custom")
+
+    with pytest.raises(ValueError, match="Unsupported geometry_type"):
+        build_geometry_from_meta(meta)
 
 
 def test_align_build_geometry_uses_grid_override_when_grid_metadata_missing():

@@ -1,6 +1,7 @@
 import os
 import sys
 import numpy as np
+import h5py
 import jax.numpy as jnp
 import pytest
 
@@ -19,10 +20,12 @@ def _make_gt(path, nx=16, ny=16, nz=16, n_views=8):
     thetas = np.linspace(0.0, 180.0, n_views, endpoint=False)
     # Simple phantom: centered cube
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-    vol = vol.at[nx//4:3*nx//4, ny//4:3*ny//4, nz//4:3*nz//4].set(1.0)
+    vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
     save_nxtomo(
         path,
-        projections=np.zeros((n_views, nz, nx), dtype=np.float32),  # placeholder; misalign will forward project
+        projections=np.zeros(
+            (n_views, nz, nx), dtype=np.float32
+        ),  # placeholder; misalign will forward project
         thetas_deg=thetas,
         grid=grid,
         detector=det,
@@ -35,6 +38,7 @@ def _make_gt(path, nx=16, ny=16, nz=16, n_views=8):
 def _run_cli(tmp_path, in_path, out_path, args):
     # Invoke CLI main via module import to avoid subprocess overhead
     from tomojax.cli import misalign as cli
+
     argv = ["misalign", "--data", in_path, "--out", out_path] + args
     sys_argv_backup = sys.argv[:]
     try:
@@ -49,7 +53,7 @@ def test_angle_linear_updates_thetas(tmp_path):
     out_path = os.path.join(tmp_path, "out_angle_lin.nxs")
     _grid, _det, thetas = _make_gt(in_path, n_views=8)
 
-    _run_cli(tmp_path, in_path, out_path, ["--pert", "angle:linear:delta=5deg"]) 
+    _run_cli(tmp_path, in_path, out_path, ["--pert", "angle:linear:delta=5deg"])
     data = load_nxtomo(out_path)
     th_out = np.asarray(data["thetas_deg"]).astype(np.float32)
     off = th_out - thetas
@@ -67,7 +71,7 @@ def test_dx_sin_window_peak(tmp_path):
     out_path = os.path.join(tmp_path, "out_dx_sin.nxs")
     _grid, det, thetas = _make_gt(in_path, n_views=8)
 
-    _run_cli(tmp_path, in_path, out_path, ["--pert", "dx:sin-window:amp=5px"]) 
+    _run_cli(tmp_path, in_path, out_path, ["--pert", "dx:sin-window:amp=5px"])
     data = load_nxtomo(out_path)
     ap = np.asarray(data["align_params"]).astype(np.float32)
     # dx is column 3, in world units (du=1)
@@ -84,7 +88,7 @@ def test_dx_step_absolute_hold(tmp_path):
     out_path = os.path.join(tmp_path, "out_dx_step.nxs")
     _grid, det, thetas = _make_gt(in_path, n_views=8)
 
-    _run_cli(tmp_path, in_path, out_path, ["--pert", "dx:step:at=90deg,to=5px"]) 
+    _run_cli(tmp_path, in_path, out_path, ["--pert", "dx:step:at=90deg,to=5px"])
     data = load_nxtomo(out_path)
     ap = np.asarray(data["align_params"]).astype(np.float32)
     dx = ap[:, 3]
@@ -138,3 +142,15 @@ def test_apply_box_absolute_to_stays_within_window():
         schedule,
         np.array([0.0, 0.0, 5.0, 5.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
     )
+
+
+def test_misalign_cli_rejects_unsupported_geometry_types(tmp_path):
+    in_path = os.path.join(tmp_path, "gt_custom.nxs")
+    out_path = os.path.join(tmp_path, "out_custom.nxs")
+    _make_gt(in_path, n_views=8)
+
+    with h5py.File(in_path, "r+") as f:
+        f["/entry/geometry"].attrs["type"] = "custom"
+
+    with pytest.raises(ValueError, match="Unsupported geometry_type"):
+        _run_cli(tmp_path, in_path, out_path, [])

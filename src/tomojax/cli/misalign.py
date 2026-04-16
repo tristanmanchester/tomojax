@@ -13,6 +13,7 @@ from ..core.geometry.views import stack_view_poses
 from ..align.parametrizations import se3_from_5d
 from ..core.projector import forward_project_view_T
 from ..utils.logging import setup_logging, log_jax_env
+from ._geometry import _normalize_geometry_type
 from ._runtime import transfer_guard_context
 
 
@@ -92,9 +93,7 @@ def _window_indices_for_domain(
     return 0, n_views - 1
 
 
-def _apply_linear(
-    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
-) -> None:
+def _apply_linear(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
     """Apply a linear ramp inside a window to the given schedule array (in-place)."""
     n = schedule.shape[0]
     si, ei = _window_indices_for_domain(thetas_deg, n, params)
@@ -134,9 +133,7 @@ def _apply_sin_window(
     schedule[si : ei + 1] += vals
 
 
-def _apply_step(
-    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
-) -> None:
+def _apply_step(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
     """Apply a step at angle or index.
 
     Params:
@@ -152,9 +149,7 @@ def _apply_step(
         at = max(0, min(n - 1, at))
     else:
         th = np.asarray(thetas_deg)
-        at_deg = float(
-            _parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0]
-        )
+        at_deg = float(_parse_number_with_unit(params.get("at", params.get("at_deg", "0")))[0])
         at = int(np.argmin(np.abs(th - at_deg)))
     if at >= n:
         return
@@ -190,9 +185,7 @@ def _apply_step(
     schedule[at : end + 1] += delta
 
 
-def _apply_box(
-    schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]
-) -> None:
+def _apply_box(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str, str]) -> None:
     """Apply a finite box pulse over the requested width/until window.
 
     `_apply_step` already supports finite windows via width/until parameters, so
@@ -210,8 +203,7 @@ def _build_schedules(
 ) -> tuple[dict[str, np.ndarray], dict[str, list[dict[str, str]]]]:
     """Construct per-DOF schedules and return also a normalized spec for metadata."""
     schedules: dict[str, np.ndarray] = {
-        k: np.zeros((n_views,), np.float32)
-        for k in ("angle", "alpha", "beta", "phi", "dx", "dz")
+        k: np.zeros((n_views,), np.float32) for k in ("angle", "alpha", "beta", "phi", "dx", "dz")
     }
     norm_spec: dict[str, list[dict[str, str]]] = {}
     for dof, shape, params in perts:
@@ -256,11 +248,7 @@ def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
                 kind = str(item["kind"]).lower()
                 params = {k: str(v) for k, v in item.items() if k != "kind"}
                 out.append((dof, kind, params))
-    elif (
-        isinstance(data, dict)
-        and "schedules" in data
-        and isinstance(data["schedules"], list)
-    ):
+    elif isinstance(data, dict) and "schedules" in data and isinstance(data["schedules"], list):
         for it in data["schedules"]:
             if not isinstance(it, dict) or "dof" not in it or "kind" not in it:
                 raise ValueError("Each schedule must have 'dof' and 'kind'")
@@ -355,9 +343,7 @@ def main() -> None:
             nx, ny, nz = map(int, meta["volume"].shape)
             grid_d = {"nx": nx, "ny": ny, "nz": nz, "vx": 1.0, "vy": 1.0, "vz": 1.0}
         else:
-            raise ValueError(
-                "Missing grid metadata and no ground-truth volume to infer from."
-            )
+            raise ValueError("Missing grid metadata and no ground-truth volume to infer from.")
     if det_d is None:
         # Fallback: infer from projections shape
         n_views, nv, nu = meta["projections"].shape
@@ -379,7 +365,7 @@ def main() -> None:
         det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
     )
     thetas = meta.get("thetas_deg")
-    geom_type = meta.get("geometry_type", "parallel")
+    geom_type = _normalize_geometry_type(meta.get("geometry_type"))
     if geom_type == "parallel":
         geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     else:
@@ -433,15 +419,9 @@ def main() -> None:
     if (not pert_specs) or args.with_random:
         rng = np.random.default_rng(args.seed)
         rot_scale = np.float32(np.deg2rad(float(args.rot_deg)))
-        params5_np[:, 0] += rng.uniform(-rot_scale, rot_scale, n_views).astype(
-            np.float32
-        )  # alpha
-        params5_np[:, 1] += rng.uniform(-rot_scale, rot_scale, n_views).astype(
-            np.float32
-        )  # beta
-        params5_np[:, 2] += rng.uniform(-rot_scale, rot_scale, n_views).astype(
-            np.float32
-        )  # phi
+        params5_np[:, 0] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # alpha
+        params5_np[:, 1] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # beta
+        params5_np[:, 2] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # phi
         params5_np[:, 3] += rng.uniform(
             -float(args.trans_px), float(args.trans_px), n_views
         ).astype(np.float32) * float(det.du)
@@ -484,9 +464,9 @@ def main() -> None:
     if args.poisson and float(args.poisson) > 0:
         s = float(args.poisson)
         lam = np.clip(np.asarray(proj), 0.0, None) * s
-        noisy = np.random.default_rng(args.seed + 1).poisson(lam=lam).astype(
-            np.float32
-        ) / max(1e-6, s)
+        noisy = np.random.default_rng(args.seed + 1).poisson(lam=lam).astype(np.float32) / max(
+            1e-6, s
+        )
         proj = jnp.asarray(noisy, jnp.float32)
 
     save_nxtomo(
