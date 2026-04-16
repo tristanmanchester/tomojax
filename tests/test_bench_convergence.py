@@ -7,6 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
+
+pytest.importorskip("psutil")
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCH = ROOT / "bench"
