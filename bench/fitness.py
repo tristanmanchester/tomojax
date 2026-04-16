@@ -94,6 +94,66 @@ def _profile_section(profile: Mapping[str, Any], section_name: str) -> dict[str,
     return dict(raw)
 
 
+@dataclass(frozen=True)
+class _SectionReader:
+    _data: Mapping[str, Any]
+
+    def value(self, key: str, default: Any = None) -> Any:
+        if key in self._data:
+            return self._data[key]
+        return default
+
+    def require(self, key: str) -> Any:
+        if key not in self._data:
+            raise KeyError(key)
+        return self._data[key]
+
+    def string(self, key: str, default: str) -> str:
+        return str(self.value(key, default))
+
+    def optional_string(self, key: str) -> str | None:
+        value = self.value(key)
+        if value is None:
+            return None
+        return str(value)
+
+    def integer(self, key: str, default: int) -> int:
+        return int(self.value(key, default))
+
+    def required_integer(self, key: str) -> int:
+        return int(self.require(key))
+
+    def float(self, key: str, default: float) -> float:
+        return float(self.value(key, default))
+
+    def float_or_none(self, key: str) -> float | None:
+        return _float_or_none(self.value(key))
+
+    def boolean(self, key: str, default: bool) -> bool:
+        return bool(self.value(key, default))
+
+    def section(self, key: str) -> _SectionReader:
+        return _section_reader(self.value(key))
+
+
+def _section_reader(raw: Mapping[str, Any] | None) -> _SectionReader:
+    if raw is None:
+        return _SectionReader({})
+    if not isinstance(raw, Mapping):
+        raise TypeError("Section reader requires a mapping")
+    return _SectionReader(raw)
+
+
+def _profile_section_reader(profile: Mapping[str, Any], section_name: str) -> _SectionReader:
+    return _section_reader(_profile_section(profile, section_name))
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -306,12 +366,12 @@ def _resolve_reference_path(reference_file: str | None) -> Path | None:
 
 
 def _profile_reference(profile: dict[str, Any]) -> dict[str, Any]:
-    objective_policy = dict(profile.get("objective_policy") or {})
-    quality_contract = dict(profile.get("quality_contract") or {})
+    objective_policy = _profile_section_reader(profile, "objective_policy")
+    quality_contract = _profile_section_reader(profile, "quality_contract")
     reference_file = (
-        objective_policy.get("reference_file")
-        or quality_contract.get("reference_file")
-        or profile.get("reference_file")
+        objective_policy.optional_string("reference_file")
+        or quality_contract.optional_string("reference_file")
+        or _optional_string(profile.get("reference_file"))
     )
     reference_path = _resolve_reference_path(
         str(reference_file) if reference_file is not None else None
@@ -394,23 +454,23 @@ def _quality_contract_crossing(
 def _apply_time_memguard_objective(
     metrics: dict[str, Any], profile: dict[str, Any]
 ) -> dict[str, Any]:
-    quality_contract = _profile_block(profile, "quality_contract")
-    objective_policy = _profile_block(profile, "objective_policy")
-    if not quality_contract and not objective_policy:
+    quality_contract = _section_reader(_profile_block(profile, "quality_contract"))
+    objective_policy = _section_reader(_profile_block(profile, "objective_policy"))
+    if not quality_contract._data and not objective_policy._data:
         return {}
-    if objective_policy.get("kind") != "time_to_quality_contract_with_soft_memory_cap":
+    if objective_policy.optional_string("kind") != "time_to_quality_contract_with_soft_memory_cap":
         return {}
 
     trace = list(metrics.get("warm_convergence_trace") or [])
     contract = _quality_contract_crossing(
         trace,
-        finest_only=bool(quality_contract.get("finest_only", True)),
-        gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
-        trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
+        finest_only=quality_contract.boolean("finest_only", True),
+        gt_mse_max=quality_contract.float_or_none("gt_mse_max"),
+        trans_gf_rmse_px_max=quality_contract.float_or_none("trans_gf_rmse_px_max"),
     )
 
     time_budget_seconds = _float_or_none(metrics.get("time_budget_seconds")) or 0.0
-    miss_penalty_seconds = _float_or_none(objective_policy.get("miss_penalty_seconds")) or 0.0
+    miss_penalty_seconds = objective_policy.float_or_none("miss_penalty_seconds") or 0.0
     quality_contract_met = bool(contract["quality_contract_met"])
     time_metric_value = _float_or_none(contract.get("elapsed_seconds"))
     if quality_contract_met and time_metric_value is None:
@@ -421,27 +481,24 @@ def _apply_time_memguard_objective(
         else float(time_budget_seconds + miss_penalty_seconds)
     )
 
+    memory_caps = _section_reader(_profile_reference(profile).get("memory_caps") or {})
     memory_metric_names = list(
-        objective_policy.get("memory_metric_preference")
-        or ((_profile_reference(profile).get("memory_caps") or {}).get("metric_preference") or [])
+        objective_policy.value("memory_metric_preference")
+        or memory_caps.value("metric_preference")
         or ["peak_gpu_memory_process_mb", "peak_gpu_memory_mb"]
     )
     memory_metric_name, memory_value = _first_available_metric(
         metrics, [str(name) for name in memory_metric_names]
     )
-    soft_cap_mb = _float_or_none(objective_policy.get("memory_soft_cap_mb"))
-    hard_cap_mb = _float_or_none(objective_policy.get("memory_hard_cap_mb"))
+    soft_cap_mb = objective_policy.float_or_none("memory_soft_cap_mb")
+    hard_cap_mb = objective_policy.float_or_none("memory_hard_cap_mb")
     if soft_cap_mb is None:
-        soft_cap_mb = _float_or_none(
-            (_profile_reference(profile).get("memory_caps") or {}).get("soft_cap_mb")
-        )
+        soft_cap_mb = memory_caps.float_or_none("soft_cap_mb")
     if hard_cap_mb is None:
-        hard_cap_mb = _float_or_none(
-            (_profile_reference(profile).get("memory_caps") or {}).get("hard_cap_mb")
-        )
-    penalty_weight = _float_or_none(objective_policy.get("memory_penalty_weight")) or 0.35
-    penalty_power = _float_or_none(objective_policy.get("memory_penalty_power")) or 2.0
-    invalidate_on_hard_cap = bool(objective_policy.get("invalidate_on_hard_cap", True))
+        hard_cap_mb = memory_caps.float_or_none("hard_cap_mb")
+    penalty_weight = objective_policy.float_or_none("memory_penalty_weight") or 0.35
+    penalty_power = objective_policy.float_or_none("memory_penalty_power") or 2.0
+    invalidate_on_hard_cap = objective_policy.boolean("invalidate_on_hard_cap", True)
 
     memory_guard_penalty = 0.0
     invalid = False
@@ -730,13 +787,13 @@ def _bundle_geometry(bundle: FixtureBundle, mods: ImportedModules) -> tuple[Any,
     if bundle.geometry_type == "parallel":
         geometry = mods.ParallelGeometry(grid=grid, detector=detector, thetas_deg=bundle.thetas_deg)
     elif bundle.geometry_type == "lamino":
-        meta = dict(bundle.geometry_meta or {})
+        meta = _section_reader(bundle.geometry_meta)
         geometry = mods.LaminographyGeometry(
             grid=grid,
             detector=detector,
             thetas_deg=bundle.thetas_deg,
-            tilt_deg=float(meta.get("tilt_deg", 30.0)),
-            tilt_about=str(meta.get("tilt_about", "x")),
+            tilt_deg=meta.float("tilt_deg", 30.0),
+            tilt_about=meta.string("tilt_about", "x"),
         )
     else:
         raise ValueError(f"Unsupported geometry_type in fixture: {bundle.geometry_type}")
@@ -746,39 +803,39 @@ def _bundle_geometry(bundle: FixtureBundle, mods: ImportedModules) -> tuple[Any,
 def _build_recon_fixture(
     dataset_cfg: dict[str, Any], mods: ImportedModules, name: str
 ) -> FixtureBundle:
+    cfg = _section_reader(dataset_cfg)
+    rotation_deg = cfg.value("rotation_deg")
     sim_cfg = mods.SimConfig(
-        nx=int(dataset_cfg["nx"]),
-        ny=int(dataset_cfg.get("ny", dataset_cfg["nx"])),
-        nz=int(dataset_cfg["nz"]),
-        nu=int(dataset_cfg["nu"]),
-        nv=int(dataset_cfg["nv"]),
-        n_views=int(dataset_cfg["n_views"]),
-        du=float(dataset_cfg.get("du", 1.0)),
-        dv=float(dataset_cfg.get("dv", 1.0)),
-        vx=float(dataset_cfg.get("vx", 1.0)),
-        vy=float(dataset_cfg.get("vy", 1.0)),
-        vz=float(dataset_cfg.get("vz", 1.0)),
-        rotation_deg=(
-            None if dataset_cfg.get("rotation_deg") is None else float(dataset_cfg["rotation_deg"])
-        ),
-        geometry=str(dataset_cfg.get("geometry", "parallel")),
-        tilt_deg=float(dataset_cfg.get("tilt_deg", 30.0)),
-        tilt_about=str(dataset_cfg.get("tilt_about", "x")),
-        phantom=str(dataset_cfg.get("phantom", "shepp")),
-        single_size=float(dataset_cfg.get("single_size", 0.5)),
-        single_value=float(dataset_cfg.get("single_value", 1.0)),
-        single_rotate=bool(dataset_cfg.get("single_rotate", True)),
-        n_cubes=int(dataset_cfg.get("n_cubes", 8)),
-        n_spheres=int(dataset_cfg.get("n_spheres", 7)),
-        min_size=int(dataset_cfg.get("min_size", 4)),
-        max_size=int(dataset_cfg.get("max_size", 32)),
-        min_value=float(dataset_cfg.get("min_value", 0.1)),
-        max_value=float(dataset_cfg.get("max_value", 1.0)),
-        max_rot_deg=float(dataset_cfg.get("max_rot_deg", 180.0)),
-        noise=str(dataset_cfg.get("noise", "none")),
-        noise_level=float(dataset_cfg.get("noise_level", 0.0)),
-        seed=int(dataset_cfg.get("seed", 0)),
-        lamino_thickness_ratio=float(dataset_cfg.get("lamino_thickness_ratio", 0.2)),
+        nx=cfg.required_integer("nx"),
+        ny=cfg.integer("ny", cfg.required_integer("nx")),
+        nz=cfg.required_integer("nz"),
+        nu=cfg.required_integer("nu"),
+        nv=cfg.required_integer("nv"),
+        n_views=cfg.required_integer("n_views"),
+        du=cfg.float("du", 1.0),
+        dv=cfg.float("dv", 1.0),
+        vx=cfg.float("vx", 1.0),
+        vy=cfg.float("vy", 1.0),
+        vz=cfg.float("vz", 1.0),
+        rotation_deg=None if rotation_deg is None else float(rotation_deg),
+        geometry=cfg.string("geometry", "parallel"),
+        tilt_deg=cfg.float("tilt_deg", 30.0),
+        tilt_about=cfg.string("tilt_about", "x"),
+        phantom=cfg.string("phantom", "shepp"),
+        single_size=cfg.float("single_size", 0.5),
+        single_value=cfg.float("single_value", 1.0),
+        single_rotate=cfg.boolean("single_rotate", True),
+        n_cubes=cfg.integer("n_cubes", 8),
+        n_spheres=cfg.integer("n_spheres", 7),
+        min_size=cfg.integer("min_size", 4),
+        max_size=cfg.integer("max_size", 32),
+        min_value=cfg.float("min_value", 0.1),
+        max_value=cfg.float("max_value", 1.0),
+        max_rot_deg=cfg.float("max_rot_deg", 180.0),
+        noise=cfg.string("noise", "none"),
+        noise_level=cfg.float("noise_level", 0.0),
+        seed=cfg.integer("seed", 0),
+        lamino_thickness_ratio=cfg.float("lamino_thickness_ratio", 0.2),
     )
     payload = mods.simulate(sim_cfg)
     return FixtureBundle(
@@ -799,6 +856,7 @@ def _build_recon_fixture(
 def _build_align_fixture(
     dataset_cfg: dict[str, Any], mods: ImportedModules, name: str
 ) -> FixtureBundle:
+    cfg = _section_reader(dataset_cfg)
     gt_cfg = dict(dataset_cfg)
     gt_cfg.setdefault("kind", "recon")
     gt_cfg["noise"] = "none"
@@ -808,11 +866,11 @@ def _build_align_fixture(
     jax = mods.jax
     jnp = mods.jnp
 
-    mis_cfg = dict(dataset_cfg.get("misalignment") or {})
-    seed = int(mis_cfg.get("seed", int(dataset_cfg.get("seed", 0)) + 1))
-    rot_deg = float(mis_cfg.get("rot_deg", 1.0))
-    trans_px = float(mis_cfg.get("trans_px", 5.0))
-    include_phi = bool(mis_cfg.get("include_phi", True))
+    mis_cfg = cfg.section("misalignment")
+    seed = mis_cfg.integer("seed", cfg.integer("seed", 0) + 1)
+    rot_deg = mis_cfg.float("rot_deg", 1.0)
+    trans_px = mis_cfg.float("trans_px", 5.0)
+    include_phi = mis_cfg.boolean("include_phi", True)
 
     rng = np.random.default_rng(seed)
     n_views = int(gt_bundle.thetas_deg.shape[0])
@@ -851,9 +909,9 @@ def _build_align_fixture(
     projections = np.asarray(jax.device_get(projections), dtype=np.float32)
     projections = _apply_projection_noise(
         projections,
-        noise=str(dataset_cfg.get("noise", "none")),
-        noise_level=float(dataset_cfg.get("noise_level", 0.0)),
-        seed=int(dataset_cfg.get("noise_seed", seed + 17)),
+        noise=cfg.string("noise", "none"),
+        noise_level=cfg.float("noise_level", 0.0),
+        seed=cfg.integer("noise_seed", seed + 17),
     )
 
     return FixtureBundle(
@@ -937,75 +995,75 @@ def _loss_params_mapping(value: Any) -> dict[str, float]:
 
 
 def _normalize_recon_profile_config(profile: Mapping[str, Any]) -> ReconProfileConfig:
-    recon_cfg = _profile_section(profile, "recon")
+    recon_cfg = _profile_section_reader(profile, "recon")
     return ReconProfileConfig(
-        algorithm=str(recon_cfg.get("algorithm", "fbp")).strip().lower(),
-        filter_name=str(recon_cfg.get("filter_name", "ramp")),
-        scale=_float_or_none(recon_cfg.get("scale")),
-        views_per_batch=int(recon_cfg.get("views_per_batch", 1)),
-        projector_unroll=int(recon_cfg.get("projector_unroll", 1)),
-        checkpoint_projector=bool(recon_cfg.get("checkpoint_projector", True)),
-        gather_dtype=str(recon_cfg.get("gather_dtype", "fp32")),
-        iters=int(recon_cfg.get("iters", 6)),
-        lambda_tv=float(recon_cfg.get("lambda_tv", 0.003)),
-        L=_float_or_none(recon_cfg.get("L")),
-        grad_mode=str(recon_cfg.get("grad_mode", "auto")),
-        tv_prox_iters=int(recon_cfg.get("tv_prox_iters", 10)),
-        recon_rel_tol=_float_or_none(recon_cfg.get("recon_rel_tol")),
-        recon_patience=int(recon_cfg.get("recon_patience", 0)),
+        algorithm=recon_cfg.string("algorithm", "fbp").strip().lower(),
+        filter_name=recon_cfg.string("filter_name", "ramp"),
+        scale=recon_cfg.float_or_none("scale"),
+        views_per_batch=recon_cfg.integer("views_per_batch", 1),
+        projector_unroll=recon_cfg.integer("projector_unroll", 1),
+        checkpoint_projector=recon_cfg.boolean("checkpoint_projector", True),
+        gather_dtype=recon_cfg.string("gather_dtype", "fp32"),
+        iters=recon_cfg.integer("iters", 6),
+        lambda_tv=recon_cfg.float("lambda_tv", 0.003),
+        L=recon_cfg.float_or_none("L"),
+        grad_mode=recon_cfg.string("grad_mode", "auto"),
+        tv_prox_iters=recon_cfg.integer("tv_prox_iters", 10),
+        recon_rel_tol=recon_cfg.float_or_none("recon_rel_tol"),
+        recon_patience=recon_cfg.integer("recon_patience", 0),
     )
 
 
 def _normalize_align_profile_config(profile: Mapping[str, Any]) -> AlignProfileConfig:
-    align_cfg = _profile_section(profile, "align")
-    levels = align_cfg.get("levels")
+    align_cfg = _profile_section_reader(profile, "align")
+    levels = align_cfg.value("levels")
     level_tuple = tuple(int(v) for v in levels) if levels else None
-    warmup_enabled = bool(align_cfg.get("warmup_enabled", False))
+    warmup_enabled = align_cfg.boolean("warmup_enabled", False)
     return AlignProfileConfig(
         levels=level_tuple,
-        time_budget_seconds=_float_or_none(align_cfg.get("time_budget_seconds")),
-        outer_iters=int(align_cfg.get("outer_iters", 4)),
-        recon_iters=int(align_cfg.get("recon_iters", 10)),
-        lambda_tv=float(align_cfg.get("lambda_tv", 0.005)),
-        tv_prox_iters=int(align_cfg.get("tv_prox_iters", 10)),
-        recon_rel_tol=_float_or_none(align_cfg.get("recon_rel_tol")),
-        recon_patience=int(align_cfg.get("recon_patience", 2)),
-        lr_rot=float(align_cfg.get("lr_rot", 5e-4)),
-        lr_trans=float(align_cfg.get("lr_trans", 5e-2)),
-        views_per_batch=int(align_cfg.get("views_per_batch", 1)),
-        projector_unroll=int(align_cfg.get("projector_unroll", 1)),
-        checkpoint_projector=bool(align_cfg.get("checkpoint_projector", True)),
-        gather_dtype=str(align_cfg.get("gather_dtype", "auto")),
-        opt_method=str(align_cfg.get("opt_method", "gn")),
-        gn_damping=float(align_cfg.get("gn_damping", 1e-3)),
-        w_rot=float(align_cfg.get("w_rot", 1e-3)),
-        w_trans=float(align_cfg.get("w_trans", 1e-3)),
-        seed_translations=bool(align_cfg.get("seed_translations", False)),
-        recon_L=_float_or_none(align_cfg.get("recon_L")),
-        early_stop=bool(align_cfg.get("early_stop", True)),
-        early_stop_rel_impr=float(align_cfg.get("early_stop_rel_impr", 1e-3)),
-        early_stop_patience=int(align_cfg.get("early_stop_patience", 2)),
-        loss_kind=str(align_cfg.get("loss_kind", "l2_otsu")),
-        loss_params=_loss_params_mapping(align_cfg.get("loss_params")),
+        time_budget_seconds=align_cfg.float_or_none("time_budget_seconds"),
+        outer_iters=align_cfg.integer("outer_iters", 4),
+        recon_iters=align_cfg.integer("recon_iters", 10),
+        lambda_tv=align_cfg.float("lambda_tv", 0.005),
+        tv_prox_iters=align_cfg.integer("tv_prox_iters", 10),
+        recon_rel_tol=align_cfg.float_or_none("recon_rel_tol"),
+        recon_patience=align_cfg.integer("recon_patience", 2),
+        lr_rot=align_cfg.float("lr_rot", 5e-4),
+        lr_trans=align_cfg.float("lr_trans", 5e-2),
+        views_per_batch=align_cfg.integer("views_per_batch", 1),
+        projector_unroll=align_cfg.integer("projector_unroll", 1),
+        checkpoint_projector=align_cfg.boolean("checkpoint_projector", True),
+        gather_dtype=align_cfg.string("gather_dtype", "auto"),
+        opt_method=align_cfg.string("opt_method", "gn"),
+        gn_damping=align_cfg.float("gn_damping", 1e-3),
+        w_rot=align_cfg.float("w_rot", 1e-3),
+        w_trans=align_cfg.float("w_trans", 1e-3),
+        seed_translations=align_cfg.boolean("seed_translations", False),
+        recon_L=align_cfg.float_or_none("recon_L"),
+        early_stop=align_cfg.boolean("early_stop", True),
+        early_stop_rel_impr=align_cfg.float("early_stop_rel_impr", 1e-3),
+        early_stop_patience=align_cfg.integer("early_stop_patience", 2),
+        loss_kind=align_cfg.string("loss_kind", "l2_otsu"),
+        loss_params=_loss_params_mapping(align_cfg.value("loss_params")),
         warmup_enabled=warmup_enabled,
-        warmup_time_budget_seconds=_float_or_none(align_cfg.get("warmup_time_budget_seconds")),
-        warmup_stop_on_first_finest_level=bool(
-            align_cfg.get("warmup_stop_on_first_finest_level", warmup_enabled)
+        warmup_time_budget_seconds=align_cfg.float_or_none("warmup_time_budget_seconds"),
+        warmup_stop_on_first_finest_level=align_cfg.boolean(
+            "warmup_stop_on_first_finest_level", warmup_enabled
         ),
-        warmup_outer_iters=int(align_cfg.get("warmup_outer_iters", 1)),
-        warmup_recon_iters=int(align_cfg.get("warmup_recon_iters", 1)),
-        k_step=int(align_cfg.get("k_step", 1)),
+        warmup_outer_iters=align_cfg.integer("warmup_outer_iters", 1),
+        warmup_recon_iters=align_cfg.integer("warmup_recon_iters", 1),
+        k_step=align_cfg.integer("k_step", 1),
     )
 
 
 def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
-    raw = dict(profile.get("convergence") or {})
-    enabled = bool(raw.get("enabled", False))
-    metric = str(raw.get("metric", "gt_mse"))
-    threshold = _float_or_none(raw.get("threshold"))
-    threshold_scope = str(raw.get("threshold_scope", "any")).strip().lower() or "any"
-    stop_on_threshold = bool(raw.get("stop_on_threshold", True))
-    stop_on_plateau = bool(raw.get("stop_on_plateau", True))
+    raw = _profile_section_reader(profile, "convergence")
+    enabled = raw.boolean("enabled", False)
+    metric = raw.string("metric", "gt_mse")
+    threshold = raw.float_or_none("threshold")
+    threshold_scope = raw.string("threshold_scope", "any").strip().lower() or "any"
+    stop_on_threshold = raw.boolean("stop_on_threshold", True)
+    stop_on_plateau = raw.boolean("stop_on_plateau", True)
     return ConvergenceConfig(
         enabled=enabled,
         metric=metric,
@@ -1013,10 +1071,10 @@ def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
         threshold_scope=threshold_scope,
         stop_on_threshold=stop_on_threshold,
         stop_on_plateau=stop_on_plateau,
-        min_finest_level_checks=max(1, int(raw.get("min_finest_level_checks", 2))),
-        plateau_patience=max(1, int(raw.get("plateau_patience", 2))),
-        rel_improvement_tol=max(0.0, float(raw.get("rel_improvement_tol", 0.02))),
-        required_warm_successes=max(1, int(raw.get("required_warm_successes", 1))),
+        min_finest_level_checks=max(1, raw.integer("min_finest_level_checks", 2)),
+        plateau_patience=max(1, raw.integer("plateau_patience", 2)),
+        rel_improvement_tol=max(0.0, raw.float("rel_improvement_tol", 0.02)),
+        required_warm_successes=max(1, raw.integer("required_warm_successes", 1)),
     )
 
 
@@ -1443,8 +1501,8 @@ def _maybe_save_jax_device_memory_profile(
 def _should_render_alignment_summary(profile: dict[str, Any]) -> bool:
     if str(profile.get("task", "recon")) != "align":
         return False
-    visualization_cfg = dict(profile.get("visualization") or {})
-    return bool(visualization_cfg.get("enabled", True))
+    visualization_cfg = _profile_section_reader(profile, "visualization")
+    return visualization_cfg.boolean("enabled", True)
 
 
 def _alignment_summary_path(out_path: Path) -> Path:

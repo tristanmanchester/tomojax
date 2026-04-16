@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -293,6 +294,53 @@ def test_normalize_align_profile_config_builds_typed_align_config() -> None:
     assert warmup.recon_iters == 2
     assert warmup.early_stop is False
     assert warmup.loss == ("parsed", "pwls", {"a": 2.0, "b": 0.5})
+
+
+def test_convergence_config_coerces_supported_fields() -> None:
+    profile = {
+        "convergence": {
+            "enabled": True,
+            "metric": "gt_mse",
+            "threshold": "0.125",
+            "threshold_scope": " finest_only ",
+            "stop_on_threshold": True,
+            "stop_on_plateau": False,
+            "min_finest_level_checks": "3",
+            "plateau_patience": "4",
+            "rel_improvement_tol": "0.05",
+            "required_warm_successes": "2",
+        }
+    }
+
+    cfg = fitness._convergence_config(profile)
+
+    assert cfg.enabled is True
+    assert cfg.metric == "gt_mse"
+    assert cfg.threshold == 0.125
+    assert cfg.threshold_scope == "finest_only"
+    assert cfg.stop_on_threshold is True
+    assert cfg.stop_on_plateau is False
+    assert cfg.min_finest_level_checks == 3
+    assert cfg.plateau_patience == 4
+    assert cfg.rel_improvement_tol == 0.05
+    assert cfg.required_warm_successes == 2
+
+
+def test_profile_reference_uses_nested_section_reference_file(tmp_path: Path) -> None:
+    reference_path = tmp_path / "ref.json"
+    reference_path.write_text(
+        json.dumps({"memory_caps": {"soft_cap_mb": 111.0, "metric_preference": ["peak_gpu_memory_mb"]}}),
+        encoding="utf-8",
+    )
+    profile = {
+        "objective_policy": {"reference_file": str(reference_path)},
+        "reference_file": str(tmp_path / "missing.json"),
+    }
+
+    reference = fitness._profile_reference(profile)
+
+    assert reference["memory_caps"]["soft_cap_mb"] == 111.0
+    assert reference["memory_caps"]["metric_preference"] == ["peak_gpu_memory_mb"]
 
 
 def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: Path) -> None:
