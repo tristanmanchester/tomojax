@@ -8,7 +8,16 @@ import numpy as np
 import pytest
 
 from tomojax.cli import loss_bench
-from tomojax.data.io_hdf5 import LoadedNXTomo
+from tomojax.data.io_hdf5 import LoadedNXTomo, load_nxtomo, save_nxtomo
+
+
+def _write_nxtomo(path: Path, payload: LoadedNXTomo) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_nxtomo(
+        str(path),
+        projections=np.asarray(payload.projections),
+        metadata=payload.copy_metadata(),
+    )
 
 
 def test_loss_bench_skipped_loss_does_not_compute_metrics_or_emit_output(
@@ -82,7 +91,6 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
     gt_path = expdir / "gt.nxs"
     mis_path = expdir / "misaligned.nxs"
     out_path = expdir / "align_l2.nxs"
-    saved_outputs: dict[Path, LoadedNXTomo] = {}
 
     meta_mis = LoadedNXTomo.from_dataset(
         {
@@ -96,6 +104,8 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
             "frame": "sample",
         }
     )
+    _write_nxtomo(mis_path, meta_mis)
+    _write_nxtomo(gt_path, meta_mis)
 
     monkeypatch.setattr(loss_bench, "_make_gt_dataset", lambda *args, **kwargs: str(gt_path))
     monkeypatch.setattr(
@@ -104,27 +114,6 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
 
     monkeypatch.setattr(loss_bench, "setup_logging", lambda: None)
     monkeypatch.setattr(loss_bench, "log_jax_env", lambda: None)
-
-    def fake_load_nxtomo(path: str | Path) -> LoadedNXTomo:
-        resolved = Path(path)
-        if resolved == mis_path:
-            return meta_mis
-        if resolved in saved_outputs:
-            return saved_outputs[resolved]
-        raise AssertionError(f"unexpected load_nxtomo path: {resolved}")
-
-    def fake_save_nxtomo(path: str | Path, *, projections, metadata) -> None:
-        resolved = Path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.touch()
-        saved_outputs[resolved] = LoadedNXTomo.from_dataset(
-            {
-                **LoadedNXTomo(projections=np.asarray(projections), metadata=metadata).to_dataset_dict()
-            }
-        )
-
-    monkeypatch.setattr(loss_bench, "load_nxtomo", fake_load_nxtomo)
-    monkeypatch.setattr(loss_bench, "save_nxtomo", fake_save_nxtomo)
 
     def fake_align_multires(geom, grid, det, projections, *, factors, cfg):
         x = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
@@ -224,8 +213,106 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
     assert csv_lines[1].split(",")[13:17] == ["", "logs/l2.log", "align_l2.nxs", "None"]
 
     assert out_path.exists()
-    saved = saved_outputs[out_path]
+    saved = load_nxtomo(str(out_path))
     assert saved.align_params is not None
     assert saved.volume is not None
+    assert saved.frame == "sample"
+    assert saved.detector is not None
+    assert saved.grid is not None
+    assert saved.detector["nu"] == 6
+    assert saved.grid["nx"] == 6
     np.testing.assert_allclose(np.asarray(saved.align_params), 0.0)
     np.testing.assert_allclose(np.asarray(saved.volume), 0.0)
+
+
+def test_loss_bench_reuses_existing_output_without_rerunning_alignment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expdir = tmp_path / "exp"
+    gt_path = expdir / "gt.nxs"
+    mis_path = expdir / "misaligned.nxs"
+    out_path = expdir / "align_l2.nxs"
+
+    meta_mis = LoadedNXTomo.from_dataset(
+        {
+            "align_params": np.zeros((4, 5), dtype=np.float32),
+            "detector": {"nu": 6, "nv": 1, "du": 1.0, "dv": 1.0, "det_center": (0.0, 0.0)},
+            "grid": {"nx": 6, "ny": 6, "nz": 1, "vx": 1.0, "vy": 1.0, "vz": 1.0},
+            "thetas_deg": np.asarray([0.0, 45.0, 90.0, 135.0], dtype=np.float32),
+            "geometry_type": "parallel",
+            "projections": np.zeros((4, 1, 6), dtype=np.float32),
+            "volume": np.zeros((6, 6, 1), dtype=np.float32),
+            "frame": "sample",
+        }
+    )
+    saved_output = LoadedNXTomo.from_dataset(
+        {
+            **meta_mis.to_dataset_dict(),
+            "align_params": np.full((4, 5), 0.05, dtype=np.float32),
+            "volume": np.ones((6, 6, 1), dtype=np.float32),
+        }
+    )
+    _write_nxtomo(mis_path, meta_mis)
+    _write_nxtomo(gt_path, meta_mis)
+    _write_nxtomo(out_path, saved_output)
+
+    monkeypatch.setattr(loss_bench, "_make_gt_dataset", lambda *args, **kwargs: str(gt_path))
+    monkeypatch.setattr(
+        loss_bench, "_make_misaligned_dataset", lambda *args, **kwargs: str(mis_path)
+    )
+    monkeypatch.setattr(loss_bench, "setup_logging", lambda: None)
+    monkeypatch.setattr(loss_bench, "log_jax_env", lambda: None)
+
+    def fail_align(*args, **kwargs):
+        raise AssertionError("alignment should not run when output already exists")
+
+    import tomojax.align.pipeline as align_pipeline
+
+    monkeypatch.setattr(loss_bench, "align", fail_align)
+    monkeypatch.setattr(align_pipeline, "align_multires", fail_align)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "loss_bench",
+            "--expdir",
+            str(expdir),
+            "--nx",
+            "6",
+            "--ny",
+            "6",
+            "--nz",
+            "1",
+            "--nu",
+            "6",
+            "--nv",
+            "1",
+            "--n-views",
+            "4",
+            "--outer-iters",
+            "1",
+            "--recon-iters",
+            "1",
+            "--losses",
+            "l2",
+            "--gt-metric",
+            "none",
+        ],
+    )
+
+    loss_bench.main()
+
+    results = json.loads((expdir / "results.json").read_text(encoding="utf-8"))
+    record = results["results"][0]
+    assert record["loss"] == "l2"
+    assert record["status"] == "ok"
+    assert record["output"] == "align_l2.nxs"
+    assert record["error"] is None
+    assert record["rot_rmse_deg"] > 0.0
+    assert record["trans_rmse_px"] > 0.0
+
+    reused = load_nxtomo(str(out_path))
+    assert reused.align_params is not None
+    assert reused.volume is not None
+    np.testing.assert_allclose(np.asarray(reused.align_params), 0.05)
+    np.testing.assert_allclose(np.asarray(reused.volume), 1.0)
