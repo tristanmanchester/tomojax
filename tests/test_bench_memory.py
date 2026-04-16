@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,6 +65,23 @@ class _FakeNVML:
 
     def nvmlDeviceGetComputeRunningProcesses_v3(self, handle: int) -> list[_FakeProcessRow]:
         return list(self._process_rows.get(handle, []))
+
+
+class _TrackingNVML(_FakeNVML):
+    def __init__(self, *, device_used: list[int], process_rows: dict[int, list[_FakeProcessRow]]) -> None:
+        super().__init__(device_used=device_used, process_rows=process_rows)
+        self.shutdown_calls = 0
+
+    def nvmlShutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
+class _FakeThread:
+    def __init__(self) -> None:
+        self.join_timeout: float | None = None
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_timeout = timeout
 
 
 def test_gpu_memory_monitor_prefers_process_scope_and_sums_child_processes() -> None:
@@ -169,6 +187,65 @@ def test_gpu_memory_monitor_handles_missing_nvml_handle_after_probe() -> None:
     assert snapshot.scope == "unavailable"
     assert snapshot.sample_count == 0
     assert snapshot.sampler_error == "NVML monitor initialized without a module handle"
+
+
+def test_gpu_memory_monitor_resolve_pids_falls_back_to_root_pid() -> None:
+    monitor = memory.GpuMemoryMonitor(
+        enabled=True,
+        interval_seconds=0.01,
+        root_pid=1234,
+        process_factory=lambda pid: (_ for _ in ()).throw(RuntimeError("missing")),
+    )
+
+    assert monitor._resolve_pids() == {1234}
+
+
+def test_gpu_memory_monitor_parses_nvidia_smi_fallback_output(monkeypatch) -> None:
+    monitor = memory.GpuMemoryMonitor(
+        enabled=True,
+        interval_seconds=0.01,
+        root_pid=1234,
+        process_factory=lambda pid: _FakeProc(pid),
+    )
+
+    monkeypatch.setattr(
+        memory,
+        "run_command",
+        lambda *args, **kwargs: SimpleNamespace(stdout="1234, 10\n9999, 20\n4321, 1.5\n"),
+    )
+
+    total_bytes = monitor._sample_process_memory_via_nvidia_smi({1234, 4321})
+
+    assert total_bytes == int((10.0 + 1.5) * memory.MB)
+    assert monitor._process_supported is True
+    assert monitor._process_source == "nvidia-smi-compute-apps"
+
+
+def test_gpu_memory_monitor_stop_joins_thread_and_shuts_down_nvml() -> None:
+    nvml = _TrackingNVML(device_used=[256 * 1024 * 1024], process_rows={})
+    monitor = memory.GpuMemoryMonitor(
+        enabled=True,
+        interval_seconds=0.01,
+        root_pid=1234,
+        nvml_module=nvml,
+        process_factory=lambda pid: _FakeProc(pid),
+    )
+    fake_thread = _FakeThread()
+    monitor._thread = fake_thread
+    monitor._nvml = nvml
+    monitor._nvml_initialized = True
+    monitor._peak_device_mb = 256.0
+    monitor._sample_count = 1
+    monitor._observed_gpu_count = 1
+
+    snapshot = monitor.stop()
+
+    assert fake_thread.join_timeout == 2.0
+    assert nvml.shutdown_calls == 1
+    assert monitor._nvml_initialized is False
+    assert snapshot.backend == "nvml"
+    assert snapshot.scope == "device_fallback"
+    assert snapshot.device_peak_mb == 256.0
 
 
 def test_timed_call_uses_process_peak_before_device_peak() -> None:

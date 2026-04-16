@@ -343,6 +343,119 @@ def test_profile_reference_uses_nested_section_reference_file(tmp_path: Path) ->
     assert reference["memory_caps"]["metric_preference"] == ["peak_gpu_memory_mb"]
 
 
+def test_profile_block_merges_reference_defaults_with_profile_override(tmp_path: Path) -> None:
+    reference_path = tmp_path / "ref.json"
+    reference_path.write_text(
+        json.dumps({"quality_contract": {"gt_mse_max": 0.5, "finest_only": False}}),
+        encoding="utf-8",
+    )
+    profile = {
+        "reference_file": str(reference_path),
+        "quality_contract": {"finest_only": True},
+    }
+
+    merged = fitness._profile_block(profile, "quality_contract")
+
+    assert merged["gt_mse_max"] == 0.5
+    assert merged["finest_only"] is True
+
+
+def test_quality_contract_crossing_respects_finest_only_and_secondary_thresholds() -> None:
+    trace = [
+        {
+            "level_factor": 4,
+            "elapsed_seconds": 3.0,
+            "outer_idx": 1,
+            "quality_value": 0.1,
+            "trans_gf_rmse_px": 0.1,
+        },
+        {
+            "level_factor": 1,
+            "elapsed_seconds": 9.0,
+            "outer_idx": 2,
+            "quality_value": 0.15,
+            "trans_gf_rmse_px": 0.4,
+        },
+        {
+            "level_factor": 1,
+            "elapsed_seconds": 12.0,
+            "outer_idx": 3,
+            "quality_value": 0.2,
+            "trans_gf_rmse_px": 0.2,
+        },
+    ]
+
+    crossing = fitness._quality_contract_crossing(
+        trace,
+        finest_only=True,
+        gt_mse_max=0.2,
+        trans_gf_rmse_px_max=0.25,
+    )
+
+    assert crossing["quality_contract_met"] is True
+    assert crossing["elapsed_seconds"] == 12.0
+    assert crossing["outer_idx"] == 3
+    assert crossing["level_factor"] == 1
+
+
+def test_apply_time_memguard_objective_uses_reference_caps_and_soft_penalty(tmp_path: Path) -> None:
+    reference_path = tmp_path / "ref.json"
+    reference_path.write_text(
+        json.dumps(
+            {
+                "memory_caps": {
+                    "soft_cap_mb": 100.0,
+                    "hard_cap_mb": 200.0,
+                    "metric_preference": ["peak_gpu_memory_process_mb"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    profile = {
+        "reference_file": str(reference_path),
+        "quality_contract": {"gt_mse_max": 0.2, "finest_only": True},
+        "objective_policy": {
+            "kind": "time_to_quality_contract_with_soft_memory_cap",
+            "miss_penalty_seconds": 30.0,
+            "memory_penalty_weight": 0.5,
+            "memory_penalty_power": 1.0,
+        },
+    }
+    metrics = {
+        "warm_convergence_trace": [
+            {
+                "level_factor": 1,
+                "elapsed_seconds": 12.0,
+                "outer_idx": 4,
+                "quality_value": 0.15,
+                "trans_gf_rmse_px": 0.1,
+            }
+        ],
+        "time_budget_seconds": 20.0,
+        "peak_gpu_memory_process_mb": 150.0,
+    }
+
+    objective = fitness._apply_time_memguard_objective(metrics, profile)
+
+    assert objective["quality_threshold_scope"] == "finest_only"
+    assert objective["quality_contract_met"] is True
+    assert objective["warm_seconds_to_quality_contract"] == 12.0
+    assert objective["memory_guard_metric_name"] == "peak_gpu_memory_process_mb"
+    assert objective["memory_soft_cap_mb"] == 100.0
+    assert objective["memory_hard_cap_mb"] == 200.0
+    assert objective["memory_guard_penalty"] == 3.0
+    assert objective["objective_time_memguard"] == 15.0
+
+
+def test_should_render_alignment_summary_only_for_align_profiles() -> None:
+    assert fitness._should_render_alignment_summary({"task": "recon"}) is False
+    assert fitness._should_render_alignment_summary({"task": "align"}) is True
+    assert fitness._should_render_alignment_summary(
+        {"task": "align", "visualization": {"enabled": False}}
+    ) is False
+
+
 def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: Path) -> None:
     bundle = fitness.FixtureBundle(
         name="fixture",

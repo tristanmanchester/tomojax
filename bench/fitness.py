@@ -530,7 +530,7 @@ def _apply_time_memguard_objective(
 
     return {
         "quality_threshold_scope": (
-            "finest_only" if bool(quality_contract.get("finest_only", True)) else "any"
+            "finest_only" if quality_contract.boolean("finest_only", True) else "any"
         ),
         "quality_contract_met": quality_contract_met,
         "quality_contract_miss_reason": quality_contract_miss_reason,
