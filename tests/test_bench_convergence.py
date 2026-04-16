@@ -216,6 +216,85 @@ def test_aggregate_warm_convergence_runs_requires_multiple_hits() -> None:
     assert aggregate["invalid_reason"] == "did_not_reach_finest_level"
 
 
+def test_normalize_recon_profile_config_coerces_supported_fields() -> None:
+    profile = {
+        "recon": {
+            "algorithm": "FISTA_TV",
+            "lambda_tv": "0.25",
+            "L": "4.5",
+            "views_per_batch": "3",
+            "projector_unroll": "2",
+            "checkpoint_projector": True,
+            "gather_dtype": "bf16",
+            "grad_mode": "manual",
+            "tv_prox_iters": "7",
+            "recon_rel_tol": "0.01",
+            "recon_patience": "4",
+        }
+    }
+
+    cfg = fitness._normalize_recon_profile_config(profile)
+
+    assert cfg.algorithm == "fista_tv"
+    assert cfg.lambda_tv == 0.25
+    assert cfg.L == 4.5
+    assert cfg.views_per_batch == 3
+    assert cfg.projector_unroll == 2
+    assert cfg.gather_dtype == "bf16"
+    assert cfg.grad_mode == "manual"
+    assert cfg.tv_prox_iters == 7
+    assert cfg.recon_rel_tol == 0.01
+    assert cfg.recon_patience == 4
+
+
+def test_normalize_align_profile_config_builds_typed_align_config() -> None:
+    profile = {
+        "align": {
+            "levels": [4, 2, 1],
+            "outer_iters": "5",
+            "recon_iters": "12",
+            "lambda_tv": "0.01",
+            "views_per_batch": "2",
+            "projector_unroll": "3",
+            "gather_dtype": "bf16",
+            "loss_kind": "pwls",
+            "loss_params": {"a": 2, "b": 0.5},
+            "warmup_enabled": True,
+            "warmup_outer_iters": "1",
+            "warmup_recon_iters": "2",
+            "warmup_time_budget_seconds": "90",
+            "warmup_stop_on_first_finest_level": True,
+            "k_step": "3",
+        }
+    }
+
+    cfg = fitness._normalize_align_profile_config(profile)
+    fake_mods = SimpleNamespace(
+        parse_loss_spec=lambda kind, params: ("parsed", kind, params),
+        AlignConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    steady = cfg.build_align_config(fake_mods)
+    warmup = cfg.build_align_config(fake_mods, warmup=True)
+
+    assert cfg.levels == (4, 2, 1)
+    assert cfg.time_budget_seconds is None
+    assert cfg.warmup_enabled is True
+    assert cfg.warmup_time_budget_seconds == 90.0
+    assert cfg.k_step == 3
+    assert steady.outer_iters == 5
+    assert steady.recon_iters == 12
+    assert steady.views_per_batch == 2
+    assert steady.projector_unroll == 3
+    assert steady.gather_dtype == "bf16"
+    assert steady.loss == ("parsed", "pwls", {"a": 2.0, "b": 0.5})
+    assert steady.early_stop is True
+    assert warmup.outer_iters == 1
+    assert warmup.recon_iters == 2
+    assert warmup.early_stop is False
+    assert warmup.loss == ("parsed", "pwls", {"a": 2.0, "b": 0.5})
+
+
 def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: Path) -> None:
     bundle = fitness.FixtureBundle(
         name="fixture",
@@ -264,6 +343,7 @@ def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: 
     fake_mods = SimpleNamespace(
         jnp=np,
         AlignConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+        parse_loss_spec=lambda kind, params: ("parsed", kind, params),
         jax=SimpleNamespace(device_get=lambda value: value),
         loss_metrics_abs=lambda *args, **kwargs: {"trans_rmse_px": 1.0},
         loss_metrics_relative=lambda *args, **kwargs: {},

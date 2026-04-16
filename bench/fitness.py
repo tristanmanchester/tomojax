@@ -10,9 +10,9 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import numpy as np
 import psutil
@@ -77,6 +77,15 @@ def _load_profile(profile_path: Path) -> dict[str, Any]:
     return profile
 
 
+def _profile_section(profile: Mapping[str, Any], section_name: str) -> dict[str, Any]:
+    raw = profile.get(section_name)
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"Profile section '{section_name}' must be a mapping")
+    return dict(raw)
+
+
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +129,87 @@ class ConvergenceConfig:
     plateau_patience: int = 2
     rel_improvement_tol: float = 0.02
     required_warm_successes: int = 1
+
+
+@dataclass(frozen=True)
+class ReconProfileConfig:
+    algorithm: str = "fbp"
+    filter_name: str = "ramp"
+    scale: float | None = None
+    views_per_batch: int = 1
+    projector_unroll: int = 1
+    checkpoint_projector: bool = True
+    gather_dtype: str = "fp32"
+    iters: int = 6
+    lambda_tv: float = 0.003
+    L: float | None = None
+    grad_mode: str = "auto"
+    tv_prox_iters: int = 10
+    recon_rel_tol: float | None = None
+    recon_patience: int = 0
+
+
+@dataclass(frozen=True)
+class AlignProfileConfig:
+    levels: tuple[int, ...] | None = None
+    time_budget_seconds: float | None = None
+    outer_iters: int = 4
+    recon_iters: int = 10
+    lambda_tv: float = 0.005
+    tv_prox_iters: int = 10
+    recon_rel_tol: float | None = None
+    recon_patience: int = 2
+    lr_rot: float = 5e-4
+    lr_trans: float = 5e-2
+    views_per_batch: int = 1
+    projector_unroll: int = 1
+    checkpoint_projector: bool = True
+    gather_dtype: str = "auto"
+    opt_method: str = "gn"
+    gn_damping: float = 1e-3
+    w_rot: float = 1e-3
+    w_trans: float = 1e-3
+    seed_translations: bool = False
+    recon_L: float | None = None
+    early_stop: bool = True
+    early_stop_rel_impr: float = 1e-3
+    early_stop_patience: int = 2
+    loss_kind: str = "l2_otsu"
+    loss_params: dict[str, float] = field(default_factory=dict)
+    warmup_enabled: bool = False
+    warmup_time_budget_seconds: float | None = None
+    warmup_stop_on_first_finest_level: bool = False
+    warmup_outer_iters: int = 1
+    warmup_recon_iters: int = 1
+    k_step: int = 1
+
+    def build_align_config(self, mods: Any, *, warmup: bool = False) -> Any:
+        return mods.AlignConfig(
+            outer_iters=self.warmup_outer_iters if warmup else self.outer_iters,
+            recon_iters=self.warmup_recon_iters if warmup else self.recon_iters,
+            lambda_tv=self.lambda_tv,
+            tv_prox_iters=self.tv_prox_iters,
+            recon_rel_tol=self.recon_rel_tol,
+            recon_patience=self.recon_patience,
+            lr_rot=self.lr_rot,
+            lr_trans=self.lr_trans,
+            views_per_batch=self.views_per_batch,
+            projector_unroll=self.projector_unroll,
+            checkpoint_projector=self.checkpoint_projector,
+            gather_dtype=self.gather_dtype,
+            opt_method=self.opt_method,
+            gn_damping=self.gn_damping,
+            w_rot=self.w_rot,
+            w_trans=self.w_trans,
+            seed_translations=self.seed_translations,
+            log_summary=False,
+            log_compact=True,
+            recon_L=self.recon_L,
+            early_stop=False if warmup else self.early_stop,
+            early_stop_rel_impr=self.early_stop_rel_impr,
+            early_stop_patience=self.early_stop_patience,
+            loss=mods.parse_loss_spec(self.loss_kind, self.loss_params),
+        )
 
 
 @dataclass
@@ -564,6 +654,7 @@ class ImportedModules:
     se3_from_5d: Any
     forward_project_view_T: Any
     get_detector_grid_device: Any
+    parse_loss_spec: Any
     loss_metrics_abs: Any
     loss_metrics_relative: Any
     loss_metrics_gf: Any
@@ -584,6 +675,7 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         LaminographyGeometry,
     )
     from tomojax.data.simulate import SimConfig, simulate
+    from tomojax.align.losses import parse_loss_spec
     from tomojax.recon.fbp import fbp
     from tomojax.recon.fista_tv import fista_tv
     from tomojax.align.pipeline import AlignConfig, align, align_multires
@@ -613,6 +705,7 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         se3_from_5d=se3_from_5d,
         forward_project_view_T=forward_project_view_T,
         get_detector_grid_device=get_detector_grid_device,
+        parse_loss_spec=parse_loss_spec,
         loss_metrics_abs=metrics_abs,
         loss_metrics_relative=metrics_relative,
         loss_metrics_gf=metrics_gauge_fixed,
@@ -825,6 +918,76 @@ def _float_or_none(value: Any) -> float | None:
     if math.isnan(f) or math.isinf(f):
         return None
     return f
+
+
+def _loss_params_mapping(value: Any) -> dict[str, float]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError("align.loss_params must be a mapping")
+    return {str(key): float(raw) for key, raw in value.items()}
+
+
+def _normalize_recon_profile_config(profile: Mapping[str, Any]) -> ReconProfileConfig:
+    recon_cfg = _profile_section(profile, "recon")
+    return ReconProfileConfig(
+        algorithm=str(recon_cfg.get("algorithm", "fbp")).strip().lower(),
+        filter_name=str(recon_cfg.get("filter_name", "ramp")),
+        scale=_float_or_none(recon_cfg.get("scale")),
+        views_per_batch=int(recon_cfg.get("views_per_batch", 1)),
+        projector_unroll=int(recon_cfg.get("projector_unroll", 1)),
+        checkpoint_projector=bool(recon_cfg.get("checkpoint_projector", True)),
+        gather_dtype=str(recon_cfg.get("gather_dtype", "fp32")),
+        iters=int(recon_cfg.get("iters", 6)),
+        lambda_tv=float(recon_cfg.get("lambda_tv", 0.003)),
+        L=_float_or_none(recon_cfg.get("L")),
+        grad_mode=str(recon_cfg.get("grad_mode", "auto")),
+        tv_prox_iters=int(recon_cfg.get("tv_prox_iters", 10)),
+        recon_rel_tol=_float_or_none(recon_cfg.get("recon_rel_tol")),
+        recon_patience=int(recon_cfg.get("recon_patience", 0)),
+    )
+
+
+def _normalize_align_profile_config(profile: Mapping[str, Any]) -> AlignProfileConfig:
+    align_cfg = _profile_section(profile, "align")
+    levels = align_cfg.get("levels")
+    level_tuple = tuple(int(v) for v in levels) if levels else None
+    warmup_enabled = bool(align_cfg.get("warmup_enabled", False))
+    return AlignProfileConfig(
+        levels=level_tuple,
+        time_budget_seconds=_float_or_none(align_cfg.get("time_budget_seconds")),
+        outer_iters=int(align_cfg.get("outer_iters", 4)),
+        recon_iters=int(align_cfg.get("recon_iters", 10)),
+        lambda_tv=float(align_cfg.get("lambda_tv", 0.005)),
+        tv_prox_iters=int(align_cfg.get("tv_prox_iters", 10)),
+        recon_rel_tol=_float_or_none(align_cfg.get("recon_rel_tol")),
+        recon_patience=int(align_cfg.get("recon_patience", 2)),
+        lr_rot=float(align_cfg.get("lr_rot", 5e-4)),
+        lr_trans=float(align_cfg.get("lr_trans", 5e-2)),
+        views_per_batch=int(align_cfg.get("views_per_batch", 1)),
+        projector_unroll=int(align_cfg.get("projector_unroll", 1)),
+        checkpoint_projector=bool(align_cfg.get("checkpoint_projector", True)),
+        gather_dtype=str(align_cfg.get("gather_dtype", "auto")),
+        opt_method=str(align_cfg.get("opt_method", "gn")),
+        gn_damping=float(align_cfg.get("gn_damping", 1e-3)),
+        w_rot=float(align_cfg.get("w_rot", 1e-3)),
+        w_trans=float(align_cfg.get("w_trans", 1e-3)),
+        seed_translations=bool(align_cfg.get("seed_translations", False)),
+        recon_L=_float_or_none(align_cfg.get("recon_L")),
+        early_stop=bool(align_cfg.get("early_stop", True)),
+        early_stop_rel_impr=float(align_cfg.get("early_stop_rel_impr", 1e-3)),
+        early_stop_patience=int(align_cfg.get("early_stop_patience", 2)),
+        loss_kind=str(align_cfg.get("loss_kind", "l2_otsu")),
+        loss_params=_loss_params_mapping(align_cfg.get("loss_params")),
+        warmup_enabled=warmup_enabled,
+        warmup_time_budget_seconds=_float_or_none(align_cfg.get("warmup_time_budget_seconds")),
+        warmup_stop_on_first_finest_level=bool(
+            align_cfg.get("warmup_stop_on_first_finest_level", warmup_enabled)
+        ),
+        warmup_outer_iters=int(align_cfg.get("warmup_outer_iters", 1)),
+        warmup_recon_iters=int(align_cfg.get("warmup_recon_iters", 1)),
+        k_step=int(align_cfg.get("k_step", 1)),
+    )
 
 
 def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
@@ -1282,7 +1445,7 @@ def _alignment_summary_path(out_path: Path) -> Path:
 
 def _alignment_baseline_volume(
     bundle: FixtureBundle,
-    align_cfg: dict[str, Any],
+    align_cfg: AlignProfileConfig,
     mods: ImportedModules,
 ) -> np.ndarray:
     grid, detector, geometry = _bundle_geometry(bundle, mods)
@@ -1294,10 +1457,10 @@ def _alignment_baseline_volume(
         projections,
         filter_name="ramp",
         scale=None,
-        views_per_batch=int(align_cfg.get("views_per_batch", 1)),
-        projector_unroll=int(align_cfg.get("projector_unroll", 1)),
-        checkpoint_projector=bool(align_cfg.get("checkpoint_projector", True)),
-        gather_dtype=str(align_cfg.get("gather_dtype", "fp32")),
+        views_per_batch=align_cfg.views_per_batch,
+        projector_unroll=align_cfg.projector_unroll,
+        checkpoint_projector=align_cfg.checkpoint_projector,
+        gather_dtype=align_cfg.gather_dtype,
     )
     return np.asarray(mods.jax.device_get(baseline), dtype=np.float32)
 
@@ -1549,8 +1712,8 @@ def _run_recon_profile(
     projections = jnp.asarray(bundle.projections, dtype=jnp.float32)
     volume_gt = jnp.asarray(bundle.volume, dtype=jnp.float32)
 
-    recon_cfg = dict(profile.get("recon") or {})
-    algorithm = str(recon_cfg.get("algorithm", "fbp"))
+    recon_cfg = _normalize_recon_profile_config(profile)
+    algorithm = recon_cfg.algorithm
 
     if algorithm == "fbp":
 
@@ -1560,16 +1723,12 @@ def _run_recon_profile(
                 grid,
                 detector,
                 projections,
-                filter_name=str(recon_cfg.get("filter_name", "ramp")),
-                scale=(
-                    _float_or_none(recon_cfg.get("scale"))
-                    if recon_cfg.get("scale") is not None
-                    else None
-                ),
-                views_per_batch=int(recon_cfg.get("views_per_batch", 1)),
-                projector_unroll=int(recon_cfg.get("projector_unroll", 1)),
-                checkpoint_projector=bool(recon_cfg.get("checkpoint_projector", True)),
-                gather_dtype=str(recon_cfg.get("gather_dtype", "fp32")),
+                filter_name=recon_cfg.filter_name,
+                scale=recon_cfg.scale,
+                views_per_batch=recon_cfg.views_per_batch,
+                projector_unroll=recon_cfg.projector_unroll,
+                checkpoint_projector=recon_cfg.checkpoint_projector,
+                gather_dtype=recon_cfg.gather_dtype,
             )
             return {"volume": recon}
 
@@ -1581,17 +1740,17 @@ def _run_recon_profile(
                 grid,
                 detector,
                 projections,
-                iters=int(recon_cfg.get("iters", 6)),
-                lambda_tv=float(recon_cfg.get("lambda_tv", 0.003)),
-                L=(_float_or_none(recon_cfg.get("L")) if recon_cfg.get("L") is not None else None),
-                views_per_batch=int(recon_cfg.get("views_per_batch", 1)),
-                projector_unroll=int(recon_cfg.get("projector_unroll", 1)),
-                checkpoint_projector=bool(recon_cfg.get("checkpoint_projector", True)),
-                gather_dtype=str(recon_cfg.get("gather_dtype", "fp32")),
-                grad_mode=str(recon_cfg.get("grad_mode", "auto")),
-                tv_prox_iters=int(recon_cfg.get("tv_prox_iters", 10)),
-                recon_rel_tol=(_float_or_none(recon_cfg.get("recon_rel_tol"))),
-                recon_patience=int(recon_cfg.get("recon_patience", 0)),
+                iters=recon_cfg.iters,
+                lambda_tv=recon_cfg.lambda_tv,
+                L=recon_cfg.L,
+                views_per_batch=recon_cfg.views_per_batch,
+                projector_unroll=recon_cfg.projector_unroll,
+                checkpoint_projector=recon_cfg.checkpoint_projector,
+                gather_dtype=recon_cfg.gather_dtype,
+                grad_mode=recon_cfg.grad_mode,
+                tv_prox_iters=recon_cfg.tv_prox_iters,
+                recon_rel_tol=recon_cfg.recon_rel_tol,
+                recon_patience=recon_cfg.recon_patience,
             )
             return {"volume": recon, "info": info}
 
@@ -1729,60 +1888,19 @@ def _run_align_profile(
     grid, detector, geometry = _bundle_geometry(bundle, mods)
     jnp = mods.jnp
     projections = jnp.asarray(bundle.projections, dtype=jnp.float32)
-    align_cfg = dict(profile.get("align") or {})
-    levels = align_cfg.get("levels")
-    level_tuple = tuple(int(v) for v in levels) if levels else None
+    align_cfg = _normalize_align_profile_config(profile)
+    level_tuple = align_cfg.levels
     convergence = _convergence_config(profile)
-    time_budget_seconds = _float_or_none(align_cfg.get("time_budget_seconds"))
+    time_budget_seconds = align_cfg.time_budget_seconds
 
-    cfg_kwargs = {
-        "outer_iters": int(align_cfg.get("outer_iters", 4)),
-        "recon_iters": int(align_cfg.get("recon_iters", 10)),
-        "lambda_tv": float(align_cfg.get("lambda_tv", 0.005)),
-        "tv_prox_iters": int(align_cfg.get("tv_prox_iters", 10)),
-        "recon_rel_tol": _float_or_none(align_cfg.get("recon_rel_tol")),
-        "recon_patience": int(align_cfg.get("recon_patience", 2)),
-        "lr_rot": float(align_cfg.get("lr_rot", 5e-4)),
-        "lr_trans": float(align_cfg.get("lr_trans", 5e-2)),
-        "views_per_batch": int(align_cfg.get("views_per_batch", 1)),
-        "projector_unroll": int(align_cfg.get("projector_unroll", 1)),
-        "checkpoint_projector": bool(align_cfg.get("checkpoint_projector", True)),
-        "gather_dtype": str(align_cfg.get("gather_dtype", "auto")),
-        "opt_method": str(align_cfg.get("opt_method", "gn")),
-        "gn_damping": float(align_cfg.get("gn_damping", 1e-3)),
-        "w_rot": float(align_cfg.get("w_rot", 1e-3)),
-        "w_trans": float(align_cfg.get("w_trans", 1e-3)),
-        "seed_translations": bool(align_cfg.get("seed_translations", False)),
-        "log_summary": False,
-        "log_compact": True,
-        "recon_L": (
-            _float_or_none(align_cfg.get("recon_L"))
-            if align_cfg.get("recon_L") is not None
-            else None
-        ),
-        "early_stop": bool(align_cfg.get("early_stop", True)),
-        "early_stop_rel_impr": float(align_cfg.get("early_stop_rel_impr", 1e-3)),
-        "early_stop_patience": int(align_cfg.get("early_stop_patience", 2)),
-        "loss_kind": str(align_cfg.get("loss_kind", "l2_otsu")),
-        "loss_params": align_cfg.get("loss_params"),
-    }
-    cfg = mods.AlignConfig(**cfg_kwargs)
-    warmup_cfg = mods.AlignConfig(
-        **{
-            **cfg_kwargs,
-            "outer_iters": int(align_cfg.get("warmup_outer_iters", 1)),
-            "recon_iters": int(align_cfg.get("warmup_recon_iters", 1)),
-            "early_stop": False,
-        }
-    )
+    cfg = align_cfg.build_align_config(mods)
+    warmup_cfg = align_cfg.build_align_config(mods, warmup=True)
 
     measurement_cfg = dict(profile.get("measurement") or {})
     warm_runs = max(1, int(profile.get("warm_runs", 1)))
-    warmup_enabled = bool(align_cfg.get("warmup_enabled", False))
-    warmup_time_budget_seconds = _float_or_none(align_cfg.get("warmup_time_budget_seconds"))
-    warmup_stop_on_first_finest_level = bool(
-        align_cfg.get("warmup_stop_on_first_finest_level", warmup_enabled)
-    )
+    warmup_enabled = align_cfg.warmup_enabled
+    warmup_time_budget_seconds = align_cfg.warmup_time_budget_seconds
+    warmup_stop_on_first_finest_level = align_cfg.warmup_stop_on_first_finest_level
     observe_trace = bool(
         convergence.enabled
         or time_budget_seconds is not None
@@ -1790,9 +1908,7 @@ def _run_align_profile(
         or _should_render_alignment_summary(profile)
     )
 
-    total_outer_iters = int(align_cfg.get("outer_iters", 4)) * (
-        len(level_tuple) if level_tuple else 1
-    )
+    total_outer_iters = align_cfg.outer_iters * (len(level_tuple) if level_tuple else 1)
 
     warmup: RunResult | None = None
     warmup_convergence: ConvergenceRunSummary | None = None
@@ -1934,7 +2050,7 @@ def _run_align_profile(
         warm_params,
         du=float(detector.du),
         dv=float(detector.dv),
-        k_step=int(align_cfg.get("k_step", 1)),
+        k_step=align_cfg.k_step,
     )
     gf_metrics = mods.loss_metrics_gf(
         gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
@@ -1993,7 +2109,7 @@ def _run_align_profile(
     metrics = {
         "profile": profile["name"],
         "task": "align",
-        "loss_kind": cfg.loss_kind,
+        "loss_kind": align_cfg.loss_kind,
         "success": True,
         "warmup_seconds": (warmup.seconds if warmup is not None else None),
         "warmup_incomplete": warmup_incomplete,
