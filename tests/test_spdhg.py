@@ -79,3 +79,20 @@ def test_spdhg_callback_exceptions_propagate():
 
     with pytest.raises(RuntimeError, match="callback failure"):
         spdhg_tv(geom, grid, det, projs, config=cfg, callback=fail_callback)
+
+
+def test_spdhg_callback_reports_first_and_last_logged_losses():
+    grid, det, geom, vol, projs = make_simple_case(8, 8, 8, 8)
+    cfg = SPDHGConfig(iters=5, lambda_tv=1e-3, views_per_batch=2, log_every=2, seed=0)
+    callbacks: list[tuple[int, float]] = []
+
+    def record_callback(step: int, loss: float) -> None:
+        callbacks.append((step, loss))
+
+    _, info = spdhg_tv(geom, grid, det, projs, config=cfg, callback=record_callback)
+
+    expected_steps = [1, 3]
+    assert [step for step, _ in callbacks] == expected_steps
+    assert [value for _, value in callbacks] == pytest.approx(
+        [info["loss"][step] for step in expected_steps]
+    )

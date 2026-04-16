@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from pathlib import Path
 import numpy as np
 import jax.numpy as jnp
 import pytest
@@ -9,7 +10,7 @@ from tomojax.data.geometry_meta import (
     build_geometry_from_meta,
     build_nominal_geometry_from_meta,
 )
-from tomojax.data.io_hdf5 import LoadedNXTomo
+from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.cli import recon as recon_cli
 from tomojax.core.geometry import Grid, ParallelGeometry
 
@@ -38,6 +39,22 @@ def _parallel_meta(**updates):
     }
     meta.update(updates)
     return meta
+
+
+def _write_recon_input(path: Path, meta: dict[str, object]) -> None:
+    projections = np.asarray(meta["projections"], dtype=np.float32)
+    image_key = np.asarray(
+        meta.get("image_key", np.zeros((projections.shape[0],), dtype=np.int32)),
+        dtype=np.int32,
+    )
+    metadata = NXTomoMetadata(
+        thetas_deg=np.asarray(meta["thetas_deg"], dtype=np.float32),
+        image_key=image_key,
+        grid=meta["grid"],
+        detector=meta["detector"],
+        geometry_type=str(meta["geometry_type"]),
+    )
+    save_nxtomo(path, projections=projections, metadata=metadata)
 
 
 def test_build_geometry_from_meta_applies_saved_angle_offsets():
@@ -174,15 +191,18 @@ def test_recon_build_geometry_preserves_full_grid_override_metadata():
     assert geom.grid == override_grid
 
 
-def test_recon_cli_grid_override_preserves_grid_origin_and_center(monkeypatch, tmp_path):
+def test_recon_cli_real_io_grid_override_preserves_grid_origin_and_center(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     meta = _parallel_meta(
         projections=np.zeros((2, 7, 9), dtype=np.float32),
         image_key=np.zeros((2,), dtype=np.int32),
         geometry_meta=None,
     )
-    captured = {}
+    in_path = tmp_path / "grid_origin_in.nxs"
+    out_path = tmp_path / "grid_origin_out.nxs"
+    _write_recon_input(in_path, meta)
 
-    monkeypatch.setattr(recon_cli, "load_nxtomo", lambda path: LoadedNXTomo.from_dataset(meta))
     monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
     monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
     monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
@@ -194,18 +214,11 @@ def test_recon_cli_grid_override_preserves_grid_origin_and_center(monkeypatch, t
         ),
     )
     monkeypatch.setattr(
-        recon_cli,
-        "save_nxtomo",
-        lambda out, projections, **kwargs: captured.update(
-            {"out": out, "projections": projections, **kwargs}
-        ),
-    )
-    monkeypatch.setattr(
         "sys.argv",
         [
             "recon",
             "--data",
-            str(tmp_path / "input.nxs"),
+            str(in_path),
             "--algo",
             "fbp",
             "--roi",
@@ -214,22 +227,35 @@ def test_recon_cli_grid_override_preserves_grid_origin_and_center(monkeypatch, t
             "11",
             "13",
             "15",
+            "--frame",
+            "lab",
+            "--volume-axes",
+            "xyz",
             "--out",
-            str(tmp_path / "out.nxs"),
+            str(out_path),
         ],
     )
 
     recon_cli.main()
 
-    grid = captured["metadata"].grid
-    assert grid["nx"] == 11
-    assert grid["ny"] == 13
-    assert grid["nz"] == 15
-    assert grid["vol_origin"] == [1.0, 2.0, 3.0]
-    assert grid["vol_center"] == [4.0, 5.0, 6.0]
+    out = load_nxtomo(out_path)
+    assert out.grid is not None
+    assert out.volume is not None
+    assert out.frame == "lab"
+    assert out.volume_axes_order == "xyz"
+    assert out.disk_volume_axes_order == "xyz"
+    assert out.volume_axes_source == "attr"
+    assert out.volume.shape == (11, 13, 15)
+    assert out.grid["nx"] == 11
+    assert out.grid["ny"] == 13
+    assert out.grid["nz"] == 15
+    assert out.grid["vol_origin"] == [1.0, 2.0, 3.0]
+    assert out.grid["vol_center"] == [4.0, 5.0, 6.0]
 
 
-def test_recon_cli_grid_override_preserves_roi_centering(monkeypatch, tmp_path):
+def test_recon_cli_real_io_grid_override_preserves_roi_centering(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     meta = _parallel_meta(
         projections=np.zeros((2, 16, 16), dtype=np.float32),
         image_key=np.zeros((2,), dtype=np.int32),
@@ -252,31 +278,18 @@ def test_recon_cli_grid_override_preserves_roi_centering(monkeypatch, tmp_path):
             "vol_center": [1.0, 2.0, 3.0],
         },
     )
-    captured = {}
+    in_path = tmp_path / "roi_center_in.nxs"
+    out_path = tmp_path / "roi_center_out.nxs"
+    _write_recon_input(in_path, meta)
 
-    monkeypatch.setattr(recon_cli, "load_nxtomo", lambda path: LoadedNXTomo.from_dataset(meta))
     monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
     monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
     monkeypatch.setattr(
         recon_cli,
-        "transfer_guard_context",
-        lambda mode: nullcontext(),
-    )
-
-    def _fbp_capture(geom, recon_grid, detector, proj, **kwargs):
-        captured["runtime_grid"] = recon_grid
-        captured["geom_grid"] = geom.grid
-        return jnp.zeros(
-            (recon_grid.nx, recon_grid.ny, recon_grid.nz),
-            dtype=jnp.float32,
-        )
-
-    monkeypatch.setattr(recon_cli, "fbp", _fbp_capture)
-    monkeypatch.setattr(
-        recon_cli,
-        "save_nxtomo",
-        lambda out, projections, **kwargs: captured.update(
-            {"out": out, "projections": projections, **kwargs}
+        "fbp",
+        lambda geom, recon_grid, detector, proj, **kwargs: jnp.zeros(
+            (recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32
         ),
     )
     monkeypatch.setattr(
@@ -284,7 +297,7 @@ def test_recon_cli_grid_override_preserves_roi_centering(monkeypatch, tmp_path):
         [
             "recon",
             "--data",
-            str(tmp_path / "input.nxs"),
+            str(in_path),
             "--algo",
             "fbp",
             "--roi",
@@ -293,23 +306,30 @@ def test_recon_cli_grid_override_preserves_roi_centering(monkeypatch, tmp_path):
             "20",
             "20",
             "12",
+            "--frame",
+            "lab",
+            "--volume-axes",
+            "xyz",
             "--out",
-            str(tmp_path / "out.nxs"),
+            str(out_path),
         ],
     )
 
     recon_cli.main()
 
-    grid = captured["metadata"].grid
-    assert grid["nx"] == 20
-    assert grid["ny"] == 20
-    assert grid["nz"] == 12
-    assert "vol_origin" not in grid
-    assert "vol_center" not in grid
-    assert captured["runtime_grid"].vol_origin is None
-    assert captured["runtime_grid"].vol_center is None
-    assert captured["geom_grid"].vol_origin is None
-    assert captured["geom_grid"].vol_center is None
+    out = load_nxtomo(out_path)
+    assert out.grid is not None
+    assert out.volume is not None
+    assert out.frame == "lab"
+    assert out.volume_axes_order == "xyz"
+    assert out.disk_volume_axes_order == "xyz"
+    assert out.volume_axes_source == "attr"
+    assert out.volume.shape == (20, 20, 12)
+    assert out.grid["nx"] == 20
+    assert out.grid["ny"] == 20
+    assert out.grid["nz"] == 12
+    assert "vol_origin" not in out.grid
+    assert "vol_center" not in out.grid
 
 
 def test_recon_build_geometry_keeps_nominal_geometry_for_saved_alignment_metadata():

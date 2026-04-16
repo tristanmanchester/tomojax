@@ -14,6 +14,7 @@ from ..core.projector import (
     get_detector_grid_device,
     sum_backproject_views_T,
 )
+from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import div3, grad3
 
 
@@ -399,9 +400,16 @@ def fista_tv(
     *,
     init_x: jnp.ndarray | None = None,
     config: FistaConfig = FistaConfig(),
-    callback: Callable[[int, float], None] | None = None,
+    callback: LossCallback | None = None,
 ) -> tuple[jnp.ndarray, dict]:
-    """Run FISTA with TV regularization using an explicit solver configuration."""
+    """Run FISTA with TV regularization using an explicit solver configuration.
+
+    If ``callback`` is provided, it fires on the first recorded loss sample and on
+    the final recorded loss sample. The callback arguments are ``(step, loss)``,
+    where ``step`` is the zero-based iteration index that produced ``loss``. When
+    early stopping truncates active iterations, the final callback reports the
+    last active iteration rather than the repeated padded tail entry.
+    """
     cfg = config
     vol_mask = cfg.support
     x = (
@@ -592,10 +600,15 @@ def fista_tv(
         iters_done,
     ) = carry_final
 
-    # Fire optional callbacks on endpoints only (avoid per-iter host sync)
-    if callback is not None:
-        callback(0, float(loss_arr[0]))
-        callback(int(cfg.iters) - 1, float(loss_arr[-1]))
+    if int(cfg.iters) > 0:
+        final_step = max(int(iters_done) - 1, 0)
+        emit_loss_callback_endpoints(
+            callback,
+            (
+                (0, float(loss_arr[0])),
+                (final_step, float(loss_arr[final_step])),
+            ),
+        )
 
     info = {
         "loss": [float(v) for v in list(loss_arr)],

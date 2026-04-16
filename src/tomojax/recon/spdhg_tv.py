@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Tuple
+from typing import Tuple
 
 import numpy as np
 import jax
@@ -14,6 +14,7 @@ from ..core.projector import (
     get_detector_grid_device,
     sum_backproject_views_T,
 )
+from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import div3, grad3
 
 
@@ -160,11 +161,17 @@ def spdhg_tv(
     weights: jnp.ndarray | None = None,  # same shape as projections; 0 for unmeasured
     init_x: jnp.ndarray | None = None,
     config: SPDHGConfig = SPDHGConfig(),
-    callback: Callable[[int, float], None] | None = None,
+    callback: LossCallback | None = None,
 ) -> tuple[jnp.ndarray, dict]:
     """
     SPDHG (stochastic Chambolle–Pock) with weighted L2 data term and isotropic TV.
-    Returns (reconstruction, info).
+
+    If ``callback`` is provided, it fires on the first logged objective sample and
+    on the final logged objective sample. The callback arguments are ``(step,
+    loss)``, where ``step`` is the zero-based iteration index that produced
+    ``loss``. Only iterations whose objective was recorded under ``config.log_every``
+    are eligible for callbacks; if a single logged sample exists, the callback
+    fires once.
     """
     y_meas = jnp.asarray(projections, dtype=jnp.float32)
     n_views, nv, nu = int(y_meas.shape[0]), int(y_meas.shape[1]), int(y_meas.shape[2])
@@ -351,14 +358,21 @@ def spdhg_tv(
         lambda carry: jax.lax.scan(one_step, carry, jnp.arange(config.iters)), donate_argnums=(0,)
     )(scan_init)
 
-    # optional callback with the last logged loss
-    if callback is not None:
-        last_logged = (
-            int(np.where(np.array((np.arange(config.iters) + 1) % config.log_every == 0))[0][-1])
-            if config.log_every > 0 and config.iters >= config.log_every
-            else config.iters - 1
+    logged_steps: list[int] = []
+    if config.log_every > 0:
+        logged_steps = [
+            int(step)
+            for step in np.flatnonzero((np.arange(config.iters) + 1) % config.log_every == 0)
+        ]
+    if logged_steps:
+        losses_host = np.asarray(losses_f)
+        emit_loss_callback_endpoints(
+            callback,
+            (
+                (logged_steps[0], float(losses_host[logged_steps[0]])),
+                (logged_steps[-1], float(losses_host[logged_steps[-1]])),
+            ),
         )
-        callback(last_logged, float(losses_f[last_logged]))
 
     info = {
         "loss": [float(v) for v in list(losses_f)],

@@ -203,6 +203,21 @@ def _is_expected_align_eval_failure(exc: Exception) -> bool:
     return any(snippet in msg for snippet in _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS)
 
 
+def _evaluate_align_loss(
+    eval_loss: Callable[[], float | jnp.ndarray],
+    *,
+    fallback: float | None,
+    context: str,
+) -> float | None:
+    try:
+        return float(eval_loss())
+    except Exception as exc:
+        if _is_expected_align_eval_failure(exc):
+            logging.warning("%s after expected numeric failure: %s", context, exc)
+            return fallback
+        raise
+
+
 @dataclass
 class AlignConfig:
     outer_iters: int = 5
@@ -890,17 +905,11 @@ def align(
         # Alignment step: Gauss–Newton, LBFGS, or gradient descent
         # Evaluate alignment loss before update (needed for GN acceptance / early stop)
         align_start = time.perf_counter()
-        try:
-            loss_before = float(align_loss_jit(params5, x))
-        except Exception as exc:
-            if _is_expected_align_eval_failure(exc):
-                logging.warning(
-                    "Skipping pre-step alignment loss evaluation after expected numeric failure: %s",
-                    exc,
-                )
-                loss_before = None
-            else:
-                raise
+        loss_before = _evaluate_align_loss(
+            lambda: align_loss_jit(params5, x),
+            fallback=None,
+            context="Skipping pre-step alignment loss evaluation",
+        )
         stat["loss_before"] = loss_before
         if opt_mode == "gn" and ls_like:
             step_kind = "gn"
@@ -911,39 +920,43 @@ def align(
             params5_prev = params5
             dp_all = _gn_update_all(params5_prev, x)
             if cfg.gn_accept_only_improving and (loss_before is not None):
-                try:
-                    smooth_candidate = None
-                    if int(params5.shape[0]) >= 3:
-                        smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
-                            candidate,
-                            smoothness_gram,
-                            weights,
-                        )
-                    params5, loss_after = _select_gn_candidate(
-                        params5_prev,
-                        dp_all,
-                        loss_before=loss_before,
-                        eval_loss=lambda candidate: float(align_loss_jit(candidate, x)),
-                        gn_accept_tol=cfg.gn_accept_tol,
-                        smooth_candidate=smooth_candidate,
-                        light_smoothness_weights_sq=light_smoothness_weights_sq,
-                        medium_smoothness_weights_sq=medium_smoothness_weights_sq,
-                        smoothness_weights_sq=smoothness_weights_sq,
-                        trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
+                smooth_candidate = None
+                if int(params5.shape[0]) >= 3:
+                    smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
+                        candidate,
+                        smoothness_gram,
+                        weights,
                     )
-                except Exception as exc:
-                    if _is_expected_align_eval_failure(exc):
-                        logging.warning(
-                            "GN candidate evaluation failed; reverting to previous parameters: %s",
-                            exc,
+                params5, loss_after = _select_gn_candidate(
+                    params5_prev,
+                    dp_all,
+                    loss_before=loss_before,
+                    eval_loss=lambda candidate: float(
+                        _evaluate_align_loss(
+                            lambda: align_loss_jit(candidate, x),
+                            fallback=math.inf,
+                            context="Treating GN candidate as rejected during alignment loss evaluation",
                         )
-                        params5 = params5_prev
-                        loss_after = loss_before
-                    else:
-                        raise
+                    ),
+                    gn_accept_tol=cfg.gn_accept_tol,
+                    smooth_candidate=smooth_candidate,
+                    light_smoothness_weights_sq=light_smoothness_weights_sq,
+                    medium_smoothness_weights_sq=medium_smoothness_weights_sq,
+                    smoothness_weights_sq=smoothness_weights_sq,
+                    trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
+                )
             else:
                 params5 = params5_prev + dp_all
-                loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
+                candidate_loss = _evaluate_align_loss(
+                    lambda: align_loss_jit(params5, x),
+                    fallback=math.inf,
+                    context="Treating GN step as rejected during alignment loss evaluation",
+                )
+                if candidate_loss is not None and math.isfinite(candidate_loss):
+                    loss_after = candidate_loss
+                else:
+                    params5 = params5_prev
+                    loss_after = loss_before
             # Log step stats
             try:
                 stat["rot_mean"] = float(jnp.mean(jnp.abs(dp_all[:, :3])))
@@ -962,15 +975,26 @@ def align(
             eff_scales = scales / rms
             # Simple 2-point line search on step factor to improve single-iter progress
             best_params = p5_in - g_params * eff_scales
-            best_loss = align_loss_jit(best_params, x)
+            best_loss = _evaluate_align_loss(
+                lambda: align_loss_jit(best_params, x),
+                fallback=math.inf,
+                context="Treating GD base candidate as rejected during alignment loss evaluation",
+            )
             cand_params = p5_in - 2.0 * g_params * eff_scales
-            cand_loss = align_loss_jit(cand_params, x)
-            params5 = jax.lax.cond(
-                cand_loss < best_loss, lambda _: cand_params, lambda _: best_params, operand=None
+            cand_loss = _evaluate_align_loss(
+                lambda: align_loss_jit(cand_params, x),
+                fallback=math.inf,
+                context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
             )
-            loss_after = (
-                float(jnp.minimum(best_loss, cand_loss)) if loss_before is not None else None
-            )
+            best_loss_f = float(best_loss) if best_loss is not None else math.inf
+            cand_loss_f = float(cand_loss) if cand_loss is not None else math.inf
+            if not math.isfinite(best_loss_f) and not math.isfinite(cand_loss_f):
+                params5 = p5_in
+                loss_after = loss_before
+            else:
+                params5 = cand_params if cand_loss_f < best_loss_f else best_params
+                chosen_loss = min(best_loss_f, cand_loss_f)
+                loss_after = float(chosen_loss) if math.isfinite(chosen_loss) else loss_before
             try:
                 stat["rot_rms"] = float(jnp.mean(rms[:3]))
                 stat["trans_rms"] = float(jnp.mean(rms[3:]))
@@ -983,7 +1007,17 @@ def align(
         stat["align_time"] = time.perf_counter() - align_start
 
         # Track overall data loss
-        total_loss = float(align_loss_jit(params5, x))
+        final_loss_fallback = loss_after
+        if final_loss_fallback is None:
+            final_loss_fallback = loss_before
+        if final_loss_fallback is None and loss_hist:
+            final_loss_fallback = loss_hist[-1]
+        total_loss_eval = _evaluate_align_loss(
+            lambda: align_loss_jit(params5, x),
+            fallback=final_loss_fallback,
+            context="Using fallback for final alignment loss bookkeeping",
+        )
+        total_loss = float(total_loss_eval) if total_loss_eval is not None else math.nan
         loss_hist.append(total_loss)
         stat["loss_after"] = total_loss
         if loss_before is not None:
@@ -1129,6 +1163,7 @@ def align_multires(
     final_observer_action: ObserverAction = "continue"
     global_outer_idx = 0
     global_elapsed_offset = 0.0
+    executed_outer_iters = 0
 
     for li, lvl in enumerate(levels):
         g = lvl["grid"]
@@ -1225,6 +1260,7 @@ def align_multires(
             observer=_level_observer if observer is not None else None,
         )
         loss_hist.extend(info.get("loss", []))
+        executed_outer_iters += len(info.get("outer_stats", []))
         x_init = x_lvl
         prev_factor = lvl["factor"]
         try:
@@ -1255,7 +1291,7 @@ def align_multires(
             "factors": list(factors),
             "stopped_by_observer": stopped_by_observer,
             "observer_action": final_observer_action,
-            "total_outer_iters": int(global_outer_idx),
+            "total_outer_iters": int(executed_outer_iters),
             "wall_time_total": float(global_elapsed_offset),
         },
     )

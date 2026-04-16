@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 import jax.numpy as jnp
 
+import tomojax.align.pipeline as align_pipeline
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.align.pipeline import align, AlignConfig
+from tomojax.align.pipeline import align, align_multires, AlignConfig
 from tomojax.align.parametrizations import se3_from_5d
 
 
@@ -123,4 +124,54 @@ def test_align_runs_with_cylindrical_volume_mask():
     assert est_params.shape == (projs.shape[0], 5)
     assert np.isfinite(np.asarray(x)).all()
     assert np.isfinite(np.asarray(est_params)).all()
+    assert np.isfinite(np.asarray(info["loss"])).all()
+
+
+def test_align_multires_counts_executed_outer_iters_without_observer():
+    grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 6, 4)
+    cfg = AlignConfig(
+        outer_iters=1,
+        recon_iters=1,
+        lambda_tv=0.0,
+        lr_rot=5e-3,
+        lr_trans=1e-1,
+        early_stop=False,
+    )
+
+    _, _, info = align_multires(geom, grid, det, projs, factors=[2, 1], cfg=cfg)
+
+    assert info["factors"] == [2, 1]
+    assert info["total_outer_iters"] == 2
+
+
+def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):
+    grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 6, 5)
+    cfg = AlignConfig(
+        outer_iters=1,
+        recon_iters=1,
+        lambda_tv=0.0,
+        lr_rot=5e-3,
+        lr_trans=1e-1,
+        early_stop=False,
+    )
+    original = align_pipeline._evaluate_align_loss
+    injected = {"done": False}
+
+    def flaky_align_loss_eval(eval_loss, *, fallback, context):
+        if (not injected["done"]) and context == "Using fallback for final alignment loss bookkeeping":
+            injected["done"] = True
+
+            def raise_expected_failure():
+                raise FloatingPointError("nan in align loss eval")
+
+            return original(raise_expected_failure, fallback=fallback, context=context)
+        return original(eval_loss, fallback=fallback, context=context)
+
+    monkeypatch.setattr(align_pipeline, "_evaluate_align_loss", flaky_align_loss_eval)
+
+    _, _, info = align_multires(geom, grid, det, projs, factors=[2, 1], cfg=cfg)
+
+    assert injected["done"] is True
+    assert info["total_outer_iters"] == 2
+    assert len(info["loss"]) == 2
     assert np.isfinite(np.asarray(info["loss"])).all()

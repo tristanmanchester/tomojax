@@ -91,6 +91,11 @@ def test_fista_loss_decreases():
 def test_fista_early_stop_triggers():
     grid, det, geom, _, projs = make_simple_case(8, 8, 8, 8)
     zero_projs = jnp.zeros_like(projs)
+    callbacks: list[tuple[int, float]] = []
+
+    def record_callback(step: int, loss: float) -> None:
+        callbacks.append((step, loss))
+
     _, info = fista_tv(
         geom,
         grid,
@@ -102,6 +107,7 @@ def test_fista_early_stop_triggers():
             recon_rel_tol=1e-6,
             recon_patience=1,
         ),
+        callback=record_callback,
     )
     assert info["early_stop"] is True
     assert info["effective_iters"] <= 2
@@ -110,3 +116,8 @@ def test_fista_early_stop_triggers():
     assert len(loss) == 8
     last_active = loss[info["effective_iters"] - 1]
     assert loss[-1] == pytest.approx(last_active)
+    expected_steps = [0]
+    if info["effective_iters"] > 1:
+        expected_steps.append(info["effective_iters"] - 1)
+    assert [step for step, _ in callbacks] == expected_steps
+    assert [value for _, value in callbacks] == pytest.approx([loss[step] for step in expected_steps])
