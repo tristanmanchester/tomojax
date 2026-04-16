@@ -4,6 +4,9 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("psutil")
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCH = ROOT / "bench"
@@ -38,7 +41,9 @@ class _FakeProcessRow:
 
 
 class _FakeNVML:
-    def __init__(self, *, device_used: list[int], process_rows: dict[int, list[_FakeProcessRow]]) -> None:
+    def __init__(
+        self, *, device_used: list[int], process_rows: dict[int, list[_FakeProcessRow]]
+    ) -> None:
         self._device_used = list(device_used)
         self._process_rows = dict(process_rows)
 

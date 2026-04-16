@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+pytest.importorskip("matplotlib")
+pytest.importorskip("psutil")
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCH = ROOT / "bench"
@@ -70,7 +73,10 @@ def test_save_alignment_summary_writes_png(tmp_path: Path) -> None:
 
 def test_should_render_alignment_summary_respects_profile_toggle() -> None:
     assert fitness._should_render_alignment_summary({"task": "align"}) is True
-    assert fitness._should_render_alignment_summary(
-        {"task": "align", "visualization": {"enabled": False}}
-    ) is False
+    assert (
+        fitness._should_render_alignment_summary(
+            {"task": "align", "visualization": {"enabled": False}}
+        )
+        is False
+    )
     assert fitness._should_render_alignment_summary({"task": "recon"}) is False

@@ -20,7 +20,7 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
     - `signal = "projections"`
 
 ## TomoJAX Extras
-- `/entry/geometry (NXcollection)/type = "parallel" | "lamino" | "custom"`
+- `/entry/geometry (NXcollection)/type = "parallel" | "lamino"`
 - `/entry/geometry/@geometry_meta_json` (optional): JSON with geometry‑specific metadata, e.g., for laminography `{ "tilt_deg": <float>, "tilt_about": "x"|"z" }`
 - `/entry/@grid_meta_json`: JSON-serialized Grid
   - `{ nx, ny, nz, vx, vy, vz, vol_origin?, vol_center? }`
