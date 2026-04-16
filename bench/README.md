@@ -10,6 +10,32 @@ During optimisation work, prefer changing TomoJAX source code and shared benchma
 under `src/tomojax/bench/` before editing the controller harness. Reach for changes in
 `bench/` only when the benchmark contract itself needs to move.
 
+## Surface ownership
+
+The benchmark surface is intentionally split into four roles. Keep changes inside the owning
+surface instead of moving code between them opportunistically.
+
+- `src/tomojax/bench/`: reusable benchmark building blocks. Shared dataset generation,
+  misalignment synthesis, and metric helpers that can be called by product CLIs or the
+  controller harness belong here.
+- `src/tomojax/cli/loss_bench.py`: user-facing experiment orchestration for the loss benchmark.
+  It may compose shared helpers from `src/tomojax/bench/`, but it should not absorb fixed
+  controller-profile logic or one-off reporting helpers from `scripts/`.
+- `bench/`: controller-facing fixed profile harness. It owns profile YAML, fixture caching,
+  measurement policy, and controller reports. If a change only affects named profile execution,
+  it belongs here.
+- `scripts/`: ad hoc or manual experiment entry points and report generators. These are allowed
+  to stay ergonomic and task-specific, but they are not the source of truth for shared benchmark
+  contracts.
+
+Promotion rules:
+
+- Promote code from `scripts/` to `src/tomojax/bench/` only when a second stable caller needs it.
+- Promote code from `src/tomojax/bench/` into `bench/` only when it becomes specific to fixed
+  controller-profile policy.
+- Do not copy helpers between `bench/`, `src/tomojax/cli/`, and `scripts/`; either keep them local
+  to the owner or move them once to the shared `src/tomojax/bench/` surface.
+
 ## Why this exists
 
 TomoJAX already has useful CLIs and experiments, but an optimisation loop needs a smaller,

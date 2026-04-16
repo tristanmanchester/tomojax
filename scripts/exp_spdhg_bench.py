@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Ad hoc SPDHG experiment driver.
+
+This script owns manual benchmark exploration for one experiment family. Keep this
+surface task-specific; promote helpers to ``src/tomojax/bench/`` only after they have
+multiple stable callers, and keep fixed profile policy in ``bench/`` instead of here.
+"""
+
 import argparse
 import json
 import os

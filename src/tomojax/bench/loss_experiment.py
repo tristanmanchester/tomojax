@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Shared loss-benchmark helpers.
+
+This module is the reusable boundary between user-facing loss-benchmark orchestration
+and controller-specific benchmark harness code. Keep stable dataset, misalignment,
+and metric helpers here instead of duplicating them across ``bench/`` and ``scripts/``.
+"""
+
 import os
 from typing import Dict, List
 

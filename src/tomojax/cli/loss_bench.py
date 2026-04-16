@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""User-facing loss-benchmark CLI.
+
+This entry point owns experiment-directory orchestration and user-visible outputs for
+the loss benchmark. Shared benchmark building blocks belong under ``tomojax.bench``,
+while fixed controller-profile policy stays in ``bench/`` and ad hoc exploration stays
+under ``scripts/``.
+"""
+
 import argparse
 import json
 import logging

@@ -1,4 +1,12 @@
 #!/usr/bin/env python
+"""Fixed benchmark-profile harness.
+
+This module owns controller-facing benchmark policy: named profiles, fixture reuse,
+measurement, and summary reporting. Reusable benchmark helpers should live under
+``src/tomojax/bench/`` so product CLIs and the controller harness can share them
+without pulling one-off script behavior into the fixed profile surface.
+"""
+
 from __future__ import annotations
 
 import argparse

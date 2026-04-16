@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Report helper for manual SPDHG experiment runs.
+
+This lives under ``scripts/`` because it summarizes a specific run-directory layout
+rather than a shared benchmark contract. Keep reusable metrics or persistence helpers
+out of this file and in ``src/tomojax/bench/`` instead.
+"""
+
 import argparse
 import json
 import os
@@ -42,4 +49,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
