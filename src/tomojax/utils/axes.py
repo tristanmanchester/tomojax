@@ -52,7 +52,8 @@ def transpose_volume(volume: np.ndarray, src: str, dst: str):
         return volume
 
     if _JAX_ARRAY_TYPES and isinstance(volume, _JAX_ARRAY_TYPES):  # pragma: no cover - exercised in GPU envs
-        assert jnp is not None
+        if jnp is None:
+            raise RuntimeError("JAX array transpose requested but jax.numpy is unavailable")
         return jnp.transpose(volume, axes=perm)
 
     if isinstance(volume, np.ndarray):

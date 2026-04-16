@@ -213,6 +213,21 @@ Troubleshooting tips live in `docs/faq_troubleshooting.md`.
 - Reusable benchmark datasets and scoring helpers live under `tomojax.bench.*`; the
   controller-facing benchmark harness stays in `bench/`.
 - Tests: `uv run pytest -q tests` (small CPU‑friendly sizes).
+- Test surface ownership and placement rules live in `tests/README.md`; use that guide when
+  deciding whether a change needs a unit, workflow, CLI, or benchmark-harness regression.
+
+## Testing Strategy
+
+The suite is organized around owned contracts instead of raw coverage percentages:
+
+- math or validation changes should land in focused unit tests near the owning module;
+- pipeline or config behavior should get targeted regression tests around the public workflow;
+- CLI changes should prefer real file-backed smoke tests over heavy monkeypatch layers;
+- benchmark and controller behavior should stay covered in the harness-specific tests under
+  `tests/` and `bench/`.
+
+This keeps new regression coverage aligned with the surface that actually owns the behavior,
+instead of accumulating generic integration tests that are hard to reason about.
 
 
 ## Visual Examples

@@ -171,7 +171,10 @@ class GpuMemoryMonitor:
     def sample_once(self) -> None:
         if not self._ensure_nvml():
             return
-        assert self._nvml is not None
+        nvml = self._nvml
+        if nvml is None:
+            self._set_error("NVML monitor initialized without a module handle")
+            return
 
         target_pids = self._resolve_pids()
         device_peaks: list[float] = []
@@ -180,7 +183,7 @@ class GpuMemoryMonitor:
 
         for handle in self._device_handles:
             try:
-                info = self._nvml.nvmlDeviceGetMemoryInfo(handle)
+                info = nvml.nvmlDeviceGetMemoryInfo(handle)
                 device_peaks.append(float(info.used) / MB)
             except Exception as exc:
                 self._set_error(f"NVML device memory query failed: {exc}")

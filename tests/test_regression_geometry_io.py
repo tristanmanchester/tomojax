@@ -1,9 +1,11 @@
 import h5py
 import numpy as np
+import pytest
 
 from tomojax.core.geometry.base import Detector, Grid
 from tomojax.data.io_hdf5 import NXTomoMetadata, convert, load_nxtomo, load_npz, save_npz
 from tomojax.data.phantoms import random_cubes_spheres
+from tomojax.utils import axes as axes_mod
 from tomojax.utils.axes import infer_disk_axes
 from tomojax.utils.fov import grid_from_detector_fov_cube
 
@@ -11,6 +13,14 @@ from tomojax.utils.fov import grid_from_detector_fov_cube
 def test_infer_disk_axes_returns_none_without_grid_for_ambiguous_non_cubic_shapes():
     assert infer_disk_axes((200, 100, 50), grid=None) is None
     assert infer_disk_axes((50, 100, 200), grid=None) is None
+
+
+def test_transpose_volume_raises_when_jax_array_support_is_incomplete(monkeypatch):
+    monkeypatch.setattr(axes_mod, "_JAX_ARRAY_TYPES", (np.ndarray,))
+    monkeypatch.setattr(axes_mod, "jnp", None)
+
+    with pytest.raises(RuntimeError, match="jax.numpy is unavailable"):
+        axes_mod.transpose_volume(np.zeros((2, 3, 4), dtype=np.float32), "xyz", "zyx")
 
 
 def test_random_cubes_spheres_keeps_inscribed_fov_for_rotated_cube_seed_63():

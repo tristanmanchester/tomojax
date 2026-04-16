@@ -151,6 +151,26 @@ def test_gpu_memory_monitor_reports_unavailable_nvml() -> None:
     assert "NVML unavailable" in str(snapshot.sampler_error)
 
 
+def test_gpu_memory_monitor_handles_missing_nvml_handle_after_probe() -> None:
+    monitor = memory.GpuMemoryMonitor(
+        enabled=True,
+        interval_seconds=0.01,
+        root_pid=1234,
+        nvml_module=_FakeNVML(device_used=[256 * 1024 * 1024], process_rows={}),
+        process_factory=lambda pid: _FakeProc(pid),
+    )
+    monitor._ensure_nvml = lambda: True  # type: ignore[method-assign]
+    monitor._nvml = None
+
+    monitor.sample_once()
+    snapshot = monitor.snapshot()
+
+    assert snapshot.backend == "none"
+    assert snapshot.scope == "unavailable"
+    assert snapshot.sample_count == 0
+    assert snapshot.sampler_error == "NVML monitor initialized without a module handle"
+
+
 def test_timed_call_uses_process_peak_before_device_peak() -> None:
     class _Mods:
         class jax:
