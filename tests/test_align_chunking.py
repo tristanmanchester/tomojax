@@ -3,6 +3,7 @@ import pytest
 import jax.numpy as jnp
 
 import tomojax.align.pipeline as align_pipeline
+from tomojax.align.losses import parse_loss_spec
 from tomojax.align.parametrizations import se3_from_5d
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
@@ -52,7 +53,7 @@ def _run_fixed_volume_alignment(
     *,
     opt_method: str,
     views_per_batch: int,
-    loss_kind: str,
+    loss_name: str,
 ):
     _freeze_reconstruction(monkeypatch)
     grid, det, geom, vol, projs = make_misaligned_case(seed=7)
@@ -64,7 +65,7 @@ def _run_fixed_volume_alignment(
         lr_trans=5e-2,
         views_per_batch=views_per_batch,
         opt_method=opt_method,
-        loss_kind=loss_kind,
+        loss=parse_loss_spec(loss_name),
         early_stop=False,
     )
     _, params5, info = align(geom, grid, det, projs, cfg=cfg, init_x=vol)
@@ -76,13 +77,13 @@ def test_align_gd_chunking_matches_streamed_reference(monkeypatch):
         monkeypatch,
         opt_method="gd",
         views_per_batch=1,
-        loss_kind="l2_otsu",
+        loss_name="l2_otsu",
     )
     params_chunked, info_chunked = _run_fixed_volume_alignment(
         monkeypatch,
         opt_method="gd",
         views_per_batch=4,
-        loss_kind="l2_otsu",
+        loss_name="l2_otsu",
     )
 
     np.testing.assert_allclose(params_chunked, params_stream, rtol=2e-4, atol=1e-5)
@@ -96,13 +97,13 @@ def test_align_gn_chunking_matches_streamed_reference(monkeypatch):
         monkeypatch,
         opt_method="gn",
         views_per_batch=1,
-        loss_kind="l2",
+        loss_name="l2",
     )
     params_chunked, info_chunked = _run_fixed_volume_alignment(
         monkeypatch,
         opt_method="gn",
         views_per_batch=4,
-        loss_kind="l2",
+        loss_name="l2",
     )
 
     np.testing.assert_allclose(params_chunked, params_stream, rtol=2e-4, atol=1e-5)

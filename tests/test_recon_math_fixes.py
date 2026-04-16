@@ -74,9 +74,7 @@ def test_fista_reports_objective_at_primal_iterate_not_momentum(monkeypatch: pyt
         grid,
         detector,
         projections,
-        iters=2,
-        lambda_tv=0.0,
-        tv_prox_iters=1,
+        config=fista_mod.FistaConfig(iters=2, lambda_tv=0.0, tv_prox_iters=1),
     )
 
     # With L=2 and x0=0, the iterates are:

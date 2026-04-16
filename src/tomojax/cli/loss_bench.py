@@ -5,20 +5,22 @@ import json
 import logging
 import os
 import time
-from dataclasses import asdict
-from typing import Dict, List, Tuple
 
 import numpy as np
-import jax
 import jax.numpy as jnp
 
-from ..data.simulate import SimConfig, simulate_to_file
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
+from ..bench.loss_experiment import (
+    make_gt_dataset as _make_gt_dataset,
+    make_misaligned_dataset as _make_misaligned_dataset,
+    metrics_abs as _metrics_abs,
+    metrics_gauge_fixed as _metrics_gauge_fixed,
+    metrics_relative as _metrics_relative,
+    project_gt_with_estimated_poses as _gt_projection_mse,
+)
+from ..data.geometry_meta import build_geometry_from_meta
+from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..align.losses import parse_loss_spec
 from ..align.pipeline import align, AlignConfig
-from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import forward_project_view_T, get_detector_grid_device
-from ..align.parametrizations import se3_from_5d
 from ..utils.logging import setup_logging, log_jax_env
 
 
@@ -27,278 +29,6 @@ type BenchmarkResultValue = str | float | None
 
 def _ensure_dir(p: str) -> None:
     os.makedirs(p, exist_ok=True)
-
-
-def _make_gt_dataset(
-    expdir: str,
-    *,
-    nx: int,
-    ny: int,
-    nz: int,
-    nu: int,
-    nv: int,
-    n_views: int,
-    geometry: str,
-    seed: int,
-) -> str:
-    gt_path = os.path.join(expdir, "gt.nxs")
-    if os.path.exists(gt_path):
-        return gt_path
-    cfg = SimConfig(
-        nx=nx,
-        ny=ny,
-        nz=nz,
-        nu=nu,
-        nv=nv,
-        n_views=n_views,
-        geometry=geometry,
-        phantom="shepp",
-        rotation_deg=None,
-        seed=seed,
-    )
-    simulate_to_file(cfg, gt_path)
-    return gt_path
-
-
-def _make_misaligned_dataset(
-    expdir: str, gt_path: str, *, rot_deg: float, trans_px: float, seed: int
-) -> str:
-    mis_path = os.path.join(expdir, "misaligned.nxs")
-    if os.path.exists(mis_path):
-        return mis_path
-    meta = load_nxtomo(gt_path)
-    grid_d = meta["grid"]
-    det_d = meta["detector"]
-    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
-    det = Detector(
-        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
-        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
-    )
-    thetas = np.asarray(meta["thetas_deg"], dtype=np.float32)
-    geom_type = meta.get("geometry_type", "parallel")
-    if geom_type == "parallel":
-        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
-    else:
-        tilt_deg = float(meta.get("tilt_deg", 30.0))
-        tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(
-            grid=grid,
-            detector=det,
-            thetas_deg=thetas,
-            tilt_deg=tilt_deg,
-            tilt_about=tilt_about,
-        )
-    vol = jnp.asarray(meta["volume"], jnp.float32)
-    n = len(thetas)
-    # Random offsets within ranges
-    rng = np.random.default_rng(seed)
-    rot_scale = np.deg2rad(float(rot_deg))
-    params5 = np.zeros((n, 5), np.float32)
-    params5[:, 0] = rng.uniform(-rot_scale, rot_scale, n).astype(np.float32)  # alpha
-    params5[:, 1] = rng.uniform(-rot_scale, rot_scale, n).astype(np.float32)  # beta
-    params5[:, 2] = rng.uniform(-rot_scale, rot_scale, n).astype(np.float32)  # phi
-    params5[:, 3] = rng.uniform(-float(trans_px), float(trans_px), n).astype(
-        np.float32
-    ) * float(det.du)
-    params5[:, 4] = rng.uniform(-float(trans_px), float(trans_px), n).astype(
-        np.float32
-    ) * float(det.dv)
-    params5_j = jnp.asarray(params5, jnp.float32)
-    T_nom = stack_view_poses(geom, n)
-    T_aug = T_nom @ jax.vmap(se3_from_5d)(params5_j)
-    det_grid = get_detector_grid_device(det)
-    vm_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T, grid, det, vol, use_checkpoint=True, det_grid=det_grid
-        ),
-        in_axes=0,
-    )
-    projections = vm_project(T_aug).astype(jnp.float32)
-    save_nxtomo(
-        mis_path,
-        projections=np.asarray(projections),
-        thetas_deg=np.asarray(thetas),
-        image_key=meta.get("image_key"),
-        grid=grid.to_dict(),
-        detector=det.to_dict(),
-        geometry_type=geom_type,
-        geometry_meta=meta.get("geometry_meta"),
-        volume=np.asarray(vol),
-        align_params=np.asarray(params5),
-        frame=str(meta.get("frame", "sample")),
-        sample_name=meta.get("sample_name"),
-        source_name=meta.get("source_name"),
-        source_type=meta.get("source_type"),
-        source_probe=meta.get("source_probe"),
-    )
-    return mis_path
-
-
-def _metrics_abs(
-    params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float
-) -> Dict[str, float]:
-    """Absolute parameter RMSE/MAE in degrees/pixels (gauge-sensitive)."""
-    assert params_true.shape == params_est.shape
-    d = params_est - params_true
-    d_deg = np.rad2deg(d[:, :3])
-    dx_px = d[:, 3] / max(1e-12, float(du))
-    dz_px = d[:, 4] / max(1e-12, float(dv))
-    rot_rmse = float(np.sqrt(np.mean(d_deg**2)))
-    trans_rmse = float(np.sqrt(np.mean(np.stack([dx_px, dz_px], axis=1) ** 2)))
-    rot_mse = float(np.mean(d_deg**2))
-    trans_mse = float(np.mean(np.stack([dx_px, dz_px], axis=1) ** 2))
-    rot_mae = float(np.mean(np.abs(d_deg)))
-    trans_mae = float(np.mean(np.abs(np.stack([dx_px, dz_px], axis=1))))
-    return {
-        "rot_rmse_deg": rot_rmse,
-        "trans_rmse_px": trans_rmse,
-        "rot_mse_deg": rot_mse,
-        "trans_mse_px": trans_mse,
-        "rot_mae_deg": rot_mae,
-        "trans_mae_px": trans_mae,
-    }
-
-
-def _so3_geodesic_deg(R: np.ndarray) -> float:
-    """Angle in degrees of rotation matrix R (assumes proper rotation)."""
-    tr = np.clip((np.trace(R[:3, :3]) - 1.0) * 0.5, -1.0, 1.0)
-    return float(np.degrees(np.arccos(tr)))
-
-
-def _inv_T(T: np.ndarray) -> np.ndarray:
-    R = T[:3, :3]
-    t = T[:3, 3]
-    Rt = R.T
-    Ti = np.eye(4, dtype=np.float32)
-    Ti[:3, :3] = Rt
-    Ti[:3, 3] = -Rt @ t
-    return Ti
-
-
-def _params_to_T(params: np.ndarray) -> np.ndarray:
-    """Convert (N,5) params to (N,4,4) transforms using se3_from_5d."""
-    p_j = jnp.asarray(params, jnp.float32)
-    T = jax.vmap(se3_from_5d)(p_j)
-    return np.asarray(T)
-
-
-def _metrics_relative(
-    params_true: np.ndarray,
-    params_est: np.ndarray,
-    du: float,
-    dv: float,
-    *,
-    k_step: int = 1,
-) -> Dict[str, float]:
-    """Gauge-invariant relative-motion error over k-step differences.
-
-    Computes D_true = T_{i+k} T_i^{-1} and D_est analogously, then errors from
-    E_i = D_true^{-1} D_est.
-    """
-    assert params_true.shape == params_est.shape
-    n = params_true.shape[0]
-    if n <= k_step:
-        return {"rot_rel_rmse_deg": float("nan"), "trans_rel_rmse_px": float("nan")}
-    Tt = _params_to_T(params_true)
-    Te = _params_to_T(params_est)
-    rot_errs: List[float] = []
-    trans_errs_sq: List[float] = []
-    for i in range(n - k_step):
-        Dt = Tt[i + k_step] @ _inv_T(Tt[i])
-        De = Te[i + k_step] @ _inv_T(Te[i])
-        E = _inv_T(Dt) @ De
-        rot_errs.append(_so3_geodesic_deg(E))
-        tx, tz = float(E[0, 3]), float(E[2, 3])
-        ex = tx / max(1e-12, float(du))
-        ez = tz / max(1e-12, float(dv))
-        trans_errs_sq.append(ex * ex + ez * ez)
-    rot_rel_rmse = (
-        float(np.sqrt(np.mean(np.square(rot_errs)))) if rot_errs else float("nan")
-    )
-    trans_rel_rmse = (
-        float(np.sqrt(np.mean(trans_errs_sq))) if trans_errs_sq else float("nan")
-    )
-    return {
-        "rot_rel_rmse_deg": rot_rel_rmse,
-        "trans_rel_rmse_px": trans_rel_rmse,
-    }
-
-
-def _metrics_gauge_fixed(
-    params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float
-) -> Dict[str, float]:
-    """Gauge-fixed error by solving a single global G that aligns est to true.
-
-    Rotation via orthogonal Procrustes on SO(3); translation by mean residual.
-    """
-    Tt = _params_to_T(params_true)
-    Te = _params_to_T(params_est)
-    Rsum = np.zeros((3, 3), dtype=np.float64)
-    for i in range(Tt.shape[0]):
-        Rsum += Tt[i, :3, :3] @ Te[i, :3, :3].T
-    U, _, Vt = np.linalg.svd(Rsum)
-    Rg = U @ Vt
-    if np.linalg.det(Rg) < 0:
-        U[:, -1] *= -1
-        Rg = U @ Vt
-    # Translation offset
-    t_res = []
-    for i in range(Tt.shape[0]):
-        t_true = Tt[i, :3, 3]
-        t_est = Te[i, :3, 3]
-        t_res.append(t_true - Rg @ t_est)
-    t_res = np.asarray(t_res)
-    tg = np.mean(t_res, axis=0)
-    G = np.eye(4, dtype=np.float32)
-    G[:3, :3] = Rg.astype(np.float32)
-    G[:3, 3] = tg.astype(np.float32)
-    # Residuals after gauge-fix
-    rot_errs: List[float] = []
-    trans_errs_sq: List[float] = []
-    for i in range(Tt.shape[0]):
-        E = _inv_T(Tt[i]) @ (G @ Te[i])
-        rot_errs.append(_so3_geodesic_deg(E))
-        tx, tz = float(E[0, 3]), float(E[2, 3])
-        ex = tx / max(1e-12, float(du))
-        ez = tz / max(1e-12, float(dv))
-        trans_errs_sq.append(ex * ex + ez * ez)
-    rot_rmse = (
-        float(np.sqrt(np.mean(np.square(rot_errs)))) if rot_errs else float("nan")
-    )
-    trans_rmse = (
-        float(np.sqrt(np.mean(trans_errs_sq))) if trans_errs_sq else float("nan")
-    )
-    return {
-        "rot_gf_rmse_deg": rot_rmse,
-        "trans_gf_rmse_px": trans_rmse,
-    }
-
-
-def _gt_projection_mse(
-    x_gt: jnp.ndarray,
-    grid: Grid,
-    det: Detector,
-    geom: ParallelGeometry | LaminographyGeometry,
-    params_est: np.ndarray,
-) -> float:
-    """Forward-project the GT volume with estimated poses; return MSE vs measured proj.
-
-    Uses current process device; modest sizes recommended.
-    """
-    thetas = np.asarray(geom.thetas_deg, dtype=np.float32)
-    T_nom = stack_view_poses(geom, len(thetas))
-    S_est = jax.vmap(se3_from_5d)(jnp.asarray(params_est, jnp.float32))
-    T_est_full = T_nom @ S_est
-    det_grid = get_detector_grid_device(det)
-    vm_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T, grid, det, x_gt, use_checkpoint=True, det_grid=det_grid
-        ),
-        in_axes=0,
-    )
-    y_hat = vm_project(T_est_full).astype(jnp.float32)
-    # Measured projections must be fetched from geom context; caller will provide via closure
-    return y_hat
 
 
 def main() -> None:
@@ -392,32 +122,20 @@ def main() -> None:
         seed=args.seed + 1,
     )
     meta_mis = load_nxtomo(mis)
-    true_params = np.asarray(meta_mis.get("align_params"), dtype=np.float32)
-    det_d = meta_mis.get("detector")
-    du, dv = float(det_d.get("du", 1.0)), float(det_d.get("dv", 1.0))
+    if meta_mis.align_params is None:
+        raise ValueError("Misaligned benchmark dataset is missing align_params")
+    true_params = np.asarray(meta_mis.align_params, dtype=np.float32)
+    volume = meta_mis.volume
 
     # 2) Prepare geometry and arrays
-    grid_d = meta_mis["grid"]
-    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
-    det = Detector(
-        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
-        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    grid, det, geom = build_geometry_from_meta(
+        meta_mis.geometry_inputs(),
+        apply_saved_alignment=False,
+        volume_shape=(np.asarray(volume).shape if volume is not None else None),
     )
-    thetas = np.asarray(meta_mis["thetas_deg"], dtype=np.float32)
-    geom_type = meta_mis.get("geometry_type", "parallel")
-    if geom_type == "parallel":
-        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
-    else:
-        tilt_deg = float(meta_mis.get("tilt_deg", 30.0))
-        tilt_about = str(meta_mis.get("tilt_about", "x"))
-        geom = LaminographyGeometry(
-            grid=grid,
-            detector=det,
-            thetas_deg=thetas,
-            tilt_deg=tilt_deg,
-            tilt_about=tilt_about,
-        )
-    projections = jnp.asarray(meta_mis["projections"], jnp.float32)
+    du, dv = float(det.du), float(det.dv)
+    thetas = np.asarray(meta_mis.thetas_deg, dtype=np.float32)
+    projections = jnp.asarray(meta_mis.projections, jnp.float32)
 
     # 3) Loss-specific configuration (tiered settings)
     gn_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
@@ -472,12 +190,10 @@ def main() -> None:
                     run_name,
                 )
                 meta_out = load_nxtomo(out_path)
-                p_est_np = np.asarray(meta_out.get("align_params"), dtype=np.float32)
-                x_est_np = (
-                    np.asarray(meta_out.get("volume"))
-                    if meta_out.get("volume") is not None
-                    else None
-                )
+                if meta_out.align_params is None:
+                    raise ValueError(f"{out_path} is missing align_params")
+                p_est_np = np.asarray(meta_out.align_params, dtype=np.float32)
+                x_est_np = np.asarray(meta_out.volume) if meta_out.volume is not None else None
             elif args.metrics_only:
                 logging.warning(
                     "[%s] metrics-only set and output missing; skipping (status=missing)",
@@ -488,9 +204,7 @@ def main() -> None:
             else:
                 # Run alignment (GN-only for LS-like losses)
                 if not is_gn:
-                    logging.warning(
-                        "[%s] skipped: not an LS-like loss (GN-only mode)", run_name
-                    )
+                    logging.warning("[%s] skipped: not an LS-like loss (GN-only mode)", run_name)
                     status = "skipped"
                     p_est_np = None  # type: ignore
                 else:
@@ -527,8 +241,7 @@ def main() -> None:
                         early_stop=True,
                         early_stop_rel_impr=1e-3,
                         early_stop_patience=2,
-                        loss_kind=run_name,
-                        loss_params=None,
+                        loss=parse_loss_spec(run_name),
                     )
                     if levels is not None:
                         from ..align.pipeline import align_multires
@@ -537,38 +250,25 @@ def main() -> None:
                             geom, grid, det, projections, factors=levels, cfg=cfg
                         )
                     else:
-                        x_est, p_est, info = align(
-                            geom, grid, det, projections, cfg=cfg
-                        )
+                        x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
                     p_est_np = np.asarray(p_est)
                     x_est_np = np.asarray(x_est)
                     # Save output
+                    save_meta = meta_mis.copy_metadata()
+                    save_meta.thetas_deg = np.asarray(thetas)
+                    save_meta.volume = x_est_np
+                    save_meta.align_params = p_est_np
+                    save_meta.frame = str(meta_mis.frame or "sample")
                     save_nxtomo(
                         out_path,
-                        projections=np.asarray(meta_mis["projections"]),
-                        thetas_deg=np.asarray(thetas),
-                        image_key=meta_mis.get("image_key"),
-                        grid=meta_mis.get("grid"),
-                        detector=meta_mis.get("detector"),
-                        geometry_type=meta_mis.get("geometry_type", "parallel"),
-                        geometry_meta=meta_mis.get("geometry_meta"),
-                        volume=x_est_np,
-                        align_params=p_est_np,
-                        angle_offset_deg=meta_mis.get("angle_offset_deg"),
-                        misalign_spec=meta_mis.get("misalign_spec"),
-                        frame=str(meta_mis.get("frame", "sample")),
-                        sample_name=meta_mis.get("sample_name"),
-                        source_name=meta_mis.get("source_name"),
-                        source_type=meta_mis.get("source_type"),
-                        source_probe=meta_mis.get("source_probe"),
+                        projections=np.asarray(meta_mis.projections),
+                        metadata=save_meta,
                     )
 
             # Metrics (only if we have estimates)
             if status == "ok" and p_est_np is not None:
                 abs_m = _metrics_abs(true_params, p_est_np, du=du, dv=dv)
-                rel_m = _metrics_relative(
-                    true_params, p_est_np, du=du, dv=dv, k_step=args.k_step
-                )
+                rel_m = _metrics_relative(true_params, p_est_np, du=du, dv=dv, k_step=args.k_step)
                 gf_m = _metrics_gauge_fixed(true_params, p_est_np, du=du, dv=dv)
                 metrics.update(abs_m)
                 metrics.update(rel_m)
@@ -576,13 +276,13 @@ def main() -> None:
                 if args.gt_metric != "none":
                     # Compute physics-aware GT projection MSE
                     y_hat = _gt_projection_mse(
-                        jnp.asarray(meta_mis["volume"], jnp.float32),
+                        jnp.asarray(meta_mis.volume, jnp.float32),
                         grid,
                         det,
                         geom,
                         p_est_np,
                     )
-                    y = jnp.asarray(meta_mis["projections"], jnp.float32)
+                    y = jnp.asarray(meta_mis.projections, jnp.float32)
                     gt_mse = float(jnp.mean((y_hat - y) ** 2).item())
                     metrics["gt_mse"] = gt_mse
         except Exception as e:
@@ -667,9 +367,7 @@ def main() -> None:
         best = (
             min(
                 ok,
-                key=lambda r: (
-                    r.get("rot_rmse_deg", 1e9) + r.get("trans_rmse_px", 1e9)
-                ),
+                key=lambda r: (r.get("rot_rmse_deg", 1e9) + r.get("trans_rmse_px", 1e9)),
             )
             if ok
             else None

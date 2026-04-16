@@ -619,7 +619,6 @@ dependencies = [
     { name = "h5py" },
     { name = "jax" },
     { name = "numpy" },
-    { name = "psutil" },
     { name = "scipy" },
     { name = "tqdm" },
 ]
@@ -628,6 +627,7 @@ dependencies = [
 bench = [
     { name = "matplotlib" },
     { name = "nvidia-ml-py" },
+    { name = "psutil" },
     { name = "pyyaml" },
     { name = "scikit-image" },
 ]
@@ -653,7 +653,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'bench'", specifier = ">=3.10.5,<4" },
     { name = "numpy", specifier = ">=2.3.2,<3" },
     { name = "nvidia-ml-py", marker = "extra == 'bench'", specifier = ">=13.580.82,<14" },
-    { name = "psutil", specifier = ">=7.0.0,<8" },
+    { name = "psutil", marker = "extra == 'bench'", specifier = ">=7.0.0,<8" },
     { name = "pyyaml", marker = "extra == 'bench'", specifier = ">=6.0.2,<7" },
     { name = "scikit-image", marker = "extra == 'bench'", specifier = ">=0.25.2,<0.26" },
     { name = "scipy", specifier = ">=1.16.1,<2" },

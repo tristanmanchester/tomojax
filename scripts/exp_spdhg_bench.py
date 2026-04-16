@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 from tomojax.data.simulate import SimConfig, simulate, simulate_to_file, make_phantom
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
-from tomojax.data.io_hdf5 import save_nxtomo
+from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
 from tomojax.utils.fov import cylindrical_mask_xy
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
@@ -59,16 +59,13 @@ def total_variation(x: np.ndarray) -> float:
 
 
 def save_volume(out_path: str, data: Dict[str, Any], vol: np.ndarray, frame: str = "sample") -> None:
+    save_meta = NXTomoMetadata.from_dataset(data)
+    save_meta.volume = np.asarray(vol)
+    save_meta.frame = frame
     save_nxtomo(
         out_path,
         projections=np.asarray(data["projections"]),
-        thetas_deg=np.asarray(data["thetas_deg"]),
-        grid=data["grid"],
-        detector=data["detector"],
-        geometry_type=data["geometry_type"],
-        geometry_meta=data.get("geometry_meta"),
-        volume=np.asarray(vol),
-        frame=frame,
+        metadata=save_meta,
     )
 
 
@@ -226,9 +223,7 @@ def main() -> None:
                 noisy = rng.poisson(lam=lam).astype(np.float32) / max(s, 1e-6)
                 proj = noisy
 
-            save_nxtomo(
-                sim_path,
-                projections=proj,
+            save_meta = NXTomoMetadata(
                 thetas_deg=thetas,
                 grid=grid.to_dict(),
                 detector=det.to_dict(),
@@ -236,6 +231,11 @@ def main() -> None:
                 geometry_meta=geometry_meta,
                 volume=np.asarray(vol),
                 frame="sample",
+            )
+            save_nxtomo(
+                sim_path,
+                projections=proj,
+                metadata=save_meta,
             )
         except Exception as e:
             # Fallback: run simulate in a clean subprocess (separate JAX context) to avoid OOM

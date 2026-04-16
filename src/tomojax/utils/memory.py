@@ -16,11 +16,37 @@ def _bytes_per(dtype: str) -> int:
     return 4  # default fp32
 
 
+def _normalized_safety_fraction(safety_frac: float) -> float:
+    """Clamp memory budgeting to an honest (0, 1] fraction."""
+    try:
+        frac = float(safety_frac)
+    except (TypeError, ValueError):
+        frac = 0.75
+    if not math.isfinite(frac):
+        frac = 0.75
+    return min(max(frac, 1e-6), 1.0)
+
+
+def _host_available_memory_bytes() -> Optional[int]:
+    """Best-effort host available-memory query using stdlib facilities only."""
+    try:
+        names = getattr(os, "sysconf_names", {})
+        if "SC_AVPHYS_PAGES" not in names or "SC_PAGE_SIZE" not in names:
+            return None
+        avail_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        if avail_pages <= 0 or page_size <= 0:
+            return None
+        return avail_pages * page_size
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
 def device_free_memory_bytes() -> Optional[int]:
     """Best-effort query of free device memory (bytes).
 
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
-    - Fall back to host available memory via psutil.
+    - Fall back to host available memory via `os.sysconf` when supported.
     - Returns None if nothing is available.
     """
     try:  # JAX GPU/TPU or CPU
@@ -34,12 +60,7 @@ def device_free_memory_bytes() -> Optional[int]:
                 return int(free)
     except Exception:
         pass
-    try:
-        import psutil  # type: ignore
-
-        return int(psutil.virtual_memory().available)
-    except Exception:
-        return None
+    return _host_available_memory_bytes()
 
 
 def estimate_views_per_batch(
@@ -99,7 +120,7 @@ def estimate_views_per_batch(
         # Fallback heuristics: pick a small-but-reasonable batch
         return max(1, min(n_views, 8))
 
-    budget = int(max(1, safety_frac) * free_bytes)
+    budget = int(_normalized_safety_fraction(safety_frac) * free_bytes)
     if budget <= static_bytes:
         return 1
 
@@ -114,9 +135,9 @@ def estimate_views_per_batch(
     except Exception:
         cap_env = cap_default
     # Additional dynamic caps for very large volumes
-    if vox >= 512 ** 3:
+    if vox >= 512**3:
         cap_env = 1
-    elif vox >= 256 ** 3:
+    elif vox >= 256**3:
         cap_env = min(cap_env, 2)
     cap = max(1, cap_env)
     return max(1, min(int(n_views), cap, b))

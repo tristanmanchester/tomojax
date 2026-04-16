@@ -107,6 +107,7 @@ class FixtureBundle:
             "n_views": int(self.projections.shape[0]),
         }
 
+
 @dataclass(frozen=True)
 class ConvergenceConfig:
     enabled: bool = False
@@ -119,6 +120,7 @@ class ConvergenceConfig:
     plateau_patience: int = 2
     rel_improvement_tol: float = 0.02
     required_warm_successes: int = 1
+
 
 @dataclass
 class ConvergenceRunSummary:
@@ -265,9 +267,7 @@ def _quality_contract_crossing(
             continue
         quality_value = _float_or_none(point.get("quality_value"))
         trans_gf_rmse_px = _float_or_none(point.get("trans_gf_rmse_px"))
-        if gt_mse_max is not None and (
-            quality_value is None or quality_value > float(gt_mse_max)
-        ):
+        if gt_mse_max is not None and (quality_value is None or quality_value > float(gt_mse_max)):
             continue
         if trans_gf_rmse_px_max is not None and (
             trans_gf_rmse_px is None or trans_gf_rmse_px > float(trans_gf_rmse_px_max)
@@ -312,9 +312,7 @@ def _apply_time_memguard_objective(
     )
 
     time_budget_seconds = _float_or_none(metrics.get("time_budget_seconds")) or 0.0
-    miss_penalty_seconds = _float_or_none(
-        objective_policy.get("miss_penalty_seconds")
-    ) or 0.0
+    miss_penalty_seconds = _float_or_none(objective_policy.get("miss_penalty_seconds")) or 0.0
     quality_contract_met = bool(contract["quality_contract_met"])
     time_metric_value = _float_or_none(contract.get("elapsed_seconds"))
     if quality_contract_met and time_metric_value is None:
@@ -343,13 +341,9 @@ def _apply_time_memguard_objective(
         hard_cap_mb = _float_or_none(
             (_profile_reference(profile).get("memory_caps") or {}).get("hard_cap_mb")
         )
-    penalty_weight = _float_or_none(
-        objective_policy.get("memory_penalty_weight")
-    ) or 0.35
+    penalty_weight = _float_or_none(objective_policy.get("memory_penalty_weight")) or 0.35
     penalty_power = _float_or_none(objective_policy.get("memory_penalty_power")) or 2.0
-    invalidate_on_hard_cap = bool(
-        objective_policy.get("invalidate_on_hard_cap", True)
-    )
+    invalidate_on_hard_cap = bool(objective_policy.get("invalidate_on_hard_cap", True))
 
     memory_guard_penalty = 0.0
     invalid = False
@@ -362,15 +356,15 @@ def _apply_time_memguard_objective(
             else:
                 denom = max(hard_cap_mb - soft_cap_mb, 1e-9)
                 excess = max((memory_value - soft_cap_mb) / denom, 0.0)
-                memory_guard_penalty = time_term * penalty_weight * (excess ** penalty_power)
+                memory_guard_penalty = time_term * penalty_weight * (excess**penalty_power)
         elif memory_value > soft_cap_mb and hard_cap_mb is not None:
             denom = max(hard_cap_mb - soft_cap_mb, 1e-9)
             excess = max((memory_value - soft_cap_mb) / denom, 0.0)
-            memory_guard_penalty = time_term * penalty_weight * (excess ** penalty_power)
+            memory_guard_penalty = time_term * penalty_weight * (excess**penalty_power)
         elif memory_value > soft_cap_mb:
             denom = max(soft_cap_mb, 1e-9)
             excess = max((memory_value - soft_cap_mb) / denom, 0.0)
-            memory_guard_penalty = time_term * penalty_weight * (excess ** penalty_power)
+            memory_guard_penalty = time_term * penalty_weight * (excess**penalty_power)
 
     objective_value = None if invalid else float(time_term + memory_guard_penalty)
     quality_contract_miss_reason = None
@@ -505,7 +499,6 @@ def _save_fixture(bundle: FixtureBundle, path: Path) -> None:
     np.savez_compressed(path, **payload)
 
 
-
 def _load_fixture(path: Path) -> FixtureBundle:
     data = np.load(path, allow_pickle=False)
     meta = json.loads(str(data["meta_json"].item()))
@@ -577,7 +570,6 @@ class ImportedModules:
     gt_projection_helper: Any
 
 
-
 def _import_modules(profile: dict[str, Any]) -> ImportedModules:
     _repo_pythonpath()
     import jax
@@ -597,11 +589,11 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
     from tomojax.align.pipeline import AlignConfig, align, align_multires
     from tomojax.align.parametrizations import se3_from_5d
     from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
-    from tomojax.cli.loss_bench import (
-        _metrics_abs,
-        _metrics_relative,
-        _metrics_gauge_fixed,
-        _gt_projection_mse,
+    from tomojax.bench.loss_experiment import (
+        metrics_abs,
+        metrics_relative,
+        metrics_gauge_fixed,
+        project_gt_with_estimated_poses,
     )
 
     return ImportedModules(
@@ -621,12 +613,11 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         se3_from_5d=se3_from_5d,
         forward_project_view_T=forward_project_view_T,
         get_detector_grid_device=get_detector_grid_device,
-        loss_metrics_abs=_metrics_abs,
-        loss_metrics_relative=_metrics_relative,
-        loss_metrics_gf=_metrics_gauge_fixed,
-        gt_projection_helper=_gt_projection_mse,
+        loss_metrics_abs=metrics_abs,
+        loss_metrics_relative=metrics_relative,
+        loss_metrics_gf=metrics_gauge_fixed,
+        gt_projection_helper=project_gt_with_estimated_poses,
     )
-
 
 
 def _bundle_geometry(bundle: FixtureBundle, mods: ImportedModules) -> tuple[Any, Any, Any]:
@@ -651,8 +642,9 @@ def _bundle_geometry(bundle: FixtureBundle, mods: ImportedModules) -> tuple[Any,
     return grid, detector, geometry
 
 
-
-def _build_recon_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, name: str) -> FixtureBundle:
+def _build_recon_fixture(
+    dataset_cfg: dict[str, Any], mods: ImportedModules, name: str
+) -> FixtureBundle:
     sim_cfg = mods.SimConfig(
         nx=int(dataset_cfg["nx"]),
         ny=int(dataset_cfg.get("ny", dataset_cfg["nx"])),
@@ -665,7 +657,9 @@ def _build_recon_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
         vx=float(dataset_cfg.get("vx", 1.0)),
         vy=float(dataset_cfg.get("vy", 1.0)),
         vz=float(dataset_cfg.get("vz", 1.0)),
-        rotation_deg=(None if dataset_cfg.get("rotation_deg") is None else float(dataset_cfg["rotation_deg"])),
+        rotation_deg=(
+            None if dataset_cfg.get("rotation_deg") is None else float(dataset_cfg["rotation_deg"])
+        ),
         geometry=str(dataset_cfg.get("geometry", "parallel")),
         tilt_deg=float(dataset_cfg.get("tilt_deg", 30.0)),
         tilt_about=str(dataset_cfg.get("tilt_about", "x")),
@@ -691,7 +685,9 @@ def _build_recon_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
         grid=dict(payload["grid"]),
         detector=dict(payload["detector"]),
         geometry_type=str(payload["geometry_type"]),
-        geometry_meta=(dict(payload.get("geometry_meta")) if payload.get("geometry_meta") else None),
+        geometry_meta=(
+            dict(payload.get("geometry_meta")) if payload.get("geometry_meta") else None
+        ),
         thetas_deg=np.asarray(payload["thetas_deg"], dtype=np.float32),
         volume=np.asarray(payload["volume"], dtype=np.float32),
         projections=np.asarray(payload["projections"], dtype=np.float32),
@@ -699,8 +695,9 @@ def _build_recon_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
     )
 
 
-
-def _build_align_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, name: str) -> FixtureBundle:
+def _build_align_fixture(
+    dataset_cfg: dict[str, Any], mods: ImportedModules, name: str
+) -> FixtureBundle:
     gt_cfg = dict(dataset_cfg)
     gt_cfg.setdefault("kind", "recon")
     gt_cfg["noise"] = "none"
@@ -724,8 +721,12 @@ def _build_align_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
     params5[:, 1] = rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)
     if include_phi:
         params5[:, 2] = rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)
-    params5[:, 3] = rng.uniform(-trans_px, trans_px, n_views).astype(np.float32) * float(detector.du)
-    params5[:, 4] = rng.uniform(-trans_px, trans_px, n_views).astype(np.float32) * float(detector.dv)
+    params5[:, 3] = rng.uniform(-trans_px, trans_px, n_views).astype(np.float32) * float(
+        detector.du
+    )
+    params5[:, 4] = rng.uniform(-trans_px, trans_px, n_views).astype(np.float32) * float(
+        detector.dv
+    )
 
     vol = jnp.asarray(gt_bundle.volume, dtype=jnp.float32)
     T_nom = jnp.stack(
@@ -765,7 +766,6 @@ def _build_align_fixture(dataset_cfg: dict[str, Any], mods: ImportedModules, nam
         projections=projections,
         align_params=params5,
     )
-
 
 
 def _ensure_fixture(
@@ -815,7 +815,6 @@ def _ensure_fixture(
     return bundle, generated, fixture_path
 
 
-
 def _float_or_none(value: Any) -> float | None:
     if value is None:
         return None
@@ -826,6 +825,7 @@ def _float_or_none(value: Any) -> float | None:
     if math.isnan(f) or math.isinf(f):
         return None
     return f
+
 
 def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
     raw = dict(profile.get("convergence") or {})
@@ -847,6 +847,7 @@ def _convergence_config(profile: dict[str, Any]) -> ConvergenceConfig:
         rel_improvement_tol=max(0.0, float(raw.get("rel_improvement_tol", 0.02))),
         required_warm_successes=max(1, int(raw.get("required_warm_successes", 1))),
     )
+
 
 def _quality_threshold_met(metric: str, threshold: float | None, value: float | None) -> bool:
     if threshold is None or value is None:
@@ -901,8 +902,14 @@ def _trace_level_summaries(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
         level_elapsed = _float_or_none(point.get("level_elapsed_seconds"))
         previous_elapsed = _float_or_none(summary.get("_last_level_elapsed_seconds"))
         if level_elapsed is not None:
-            delta = level_elapsed if previous_elapsed is None else max(level_elapsed - previous_elapsed, 0.0)
-            summary["elapsed_seconds_total"] = float(summary["elapsed_seconds_total"]) + float(delta)
+            delta = (
+                level_elapsed
+                if previous_elapsed is None
+                else max(level_elapsed - previous_elapsed, 0.0)
+            )
+            summary["elapsed_seconds_total"] = float(summary["elapsed_seconds_total"]) + float(
+                delta
+            )
             summary["_last_level_elapsed_seconds"] = level_elapsed
         summary["outer_iters_executed"] = int(summary["outer_iters_executed"]) + 1
         quality_value = _float_or_none(point.get("quality_value"))
@@ -922,6 +929,7 @@ def _trace_level_summaries(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
         summary.pop("_last_level_elapsed_seconds", None)
         summaries.append(summary)
     return summaries
+
 
 def _convergence_summary_from_trace(
     *,
@@ -985,7 +993,9 @@ def _convergence_summary_from_trace(
     if trace:
         try:
             last_level_factor = trace[-1].get("level_factor")
-            final_stop_level_factor = int(last_level_factor) if last_level_factor is not None else None
+            final_stop_level_factor = (
+                int(last_level_factor) if last_level_factor is not None else None
+            )
         except Exception:
             final_stop_level_factor = None
     final_stop_reason = final_stop_reason_override
@@ -1099,7 +1109,6 @@ class PeakMemoryMonitor:
         return self.gpu_memory.stop()
 
 
-
 def _block_tree_ready(jax_module: Any, value: Any) -> Any:
     try:
         return jax_module.block_until_ready(value)
@@ -1138,7 +1147,6 @@ def _max_or_none(values: list[float | None]) -> float | None:
     if not finite:
         return None
     return max(finite)
-
 
 
 def _timed_call(
@@ -1293,6 +1301,7 @@ def _alignment_baseline_volume(
     )
     return np.asarray(mods.jax.device_get(baseline), dtype=np.float32)
 
+
 def _make_align_task(
     *,
     bundle: FixtureBundle,
@@ -1314,7 +1323,11 @@ def _make_align_task(
     stop_on_first_finest_level: bool = False,
 ) -> Callable[[], dict[str, Any]]:
     gt_volume = mods.jnp.asarray(bundle.volume, dtype=mods.jnp.float32)
-    gt_params = np.asarray(bundle.align_params, dtype=np.float32) if bundle.align_params is not None else None
+    gt_params = (
+        np.asarray(bundle.align_params, dtype=np.float32)
+        if bundle.align_params is not None
+        else None
+    )
     trace: list[dict[str, Any]] = []
     finest_factor = min(levels) if levels else 1
     level_checks = 0
@@ -1356,7 +1369,9 @@ def _make_align_task(
         global_elapsed = _float_or_none(
             stat.get("global_elapsed_seconds", stat.get("cumulative_time"))
         )
-        level_elapsed = _float_or_none(stat.get("level_elapsed_seconds", stat.get("cumulative_time")))
+        level_elapsed = _float_or_none(
+            stat.get("level_elapsed_seconds", stat.get("cumulative_time"))
+        )
         budget_hit = (
             time_budget_seconds is not None
             and global_elapsed is not None
@@ -1457,11 +1472,7 @@ def _make_align_task(
                     if convergence.threshold is not None
                     else ""
                 )
-                + (
-                    f" budget={time_budget_seconds:.0f}s"
-                    if time_budget_seconds is not None
-                    else ""
-                )
+                + (f" budget={time_budget_seconds:.0f}s" if time_budget_seconds is not None else "")
                 + (" warmup" if stop_on_first_finest_level else "")
             ),
         )
@@ -1510,7 +1521,6 @@ def _make_align_task(
     return task
 
 
-
 def _device_info(mods: ImportedModules) -> dict[str, Any]:
     devices = []
     gpu_name = None
@@ -1524,7 +1534,6 @@ def _device_info(mods: ImportedModules) -> dict[str, Any]:
         "jax_devices": devices,
         "gpu_name": gpu_name,
     }
-
 
 
 def _run_recon_profile(
@@ -1544,6 +1553,7 @@ def _run_recon_profile(
     algorithm = str(recon_cfg.get("algorithm", "fbp"))
 
     if algorithm == "fbp":
+
         def task() -> dict[str, Any]:
             recon = mods.fbp(
                 geometry,
@@ -1551,7 +1561,11 @@ def _run_recon_profile(
                 detector,
                 projections,
                 filter_name=str(recon_cfg.get("filter_name", "ramp")),
-                scale=(_float_or_none(recon_cfg.get("scale")) if recon_cfg.get("scale") is not None else None),
+                scale=(
+                    _float_or_none(recon_cfg.get("scale"))
+                    if recon_cfg.get("scale") is not None
+                    else None
+                ),
                 views_per_batch=int(recon_cfg.get("views_per_batch", 1)),
                 projector_unroll=int(recon_cfg.get("projector_unroll", 1)),
                 checkpoint_projector=bool(recon_cfg.get("checkpoint_projector", True)),
@@ -1560,6 +1574,7 @@ def _run_recon_profile(
             return {"volume": recon}
 
     elif algorithm == "fista_tv":
+
         def task() -> dict[str, Any]:
             recon, info = mods.fista_tv(
                 geometry,
@@ -1623,7 +1638,9 @@ def _run_recon_profile(
     warm_volume = warms[-1].output["volume"]
     recon_mse = float(jnp.mean((warm_volume - volume_gt) ** 2).item())
 
-    warm_peak_gpu = max((v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None)
+    warm_peak_gpu = max(
+        (v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None
+    )
     warm_peak_gpu_process = max(
         (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
         default=None,
@@ -1632,7 +1649,9 @@ def _run_recon_profile(
         (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
         default=None,
     )
-    warm_peak_host = max((v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None)
+    warm_peak_host = max(
+        (v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None
+    )
     first_peak_gpu = first.peak_gpu_memory_mb
     first_peak_gpu_process = first.peak_gpu_memory_process_mb
     first_peak_gpu_device = first.peak_gpu_memory_device_mb
@@ -1650,7 +1669,9 @@ def _run_recon_profile(
         "algorithm": algorithm,
         "first_run_seconds": first.seconds,
         "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
-        "warm_run_seconds_std": float(statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0),
+        "warm_run_seconds_std": float(
+            statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
+        ),
         "first_run_peak_gpu_memory_mb": first_peak_gpu,
         "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
         "peak_gpu_memory_mb": peak_gpu,
@@ -1689,10 +1710,10 @@ def _run_recon_profile(
         "quality": {
             "recon_mse": recon_mse,
         },
-        "gpu_sampler_error": first.gpu_sampler_error or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
+        "gpu_sampler_error": first.gpu_sampler_error
+        or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
     }
     return metrics
-
 
 
 def _run_align_profile(
@@ -1734,7 +1755,11 @@ def _run_align_profile(
         "seed_translations": bool(align_cfg.get("seed_translations", False)),
         "log_summary": False,
         "log_compact": True,
-        "recon_L": (_float_or_none(align_cfg.get("recon_L")) if align_cfg.get("recon_L") is not None else None),
+        "recon_L": (
+            _float_or_none(align_cfg.get("recon_L"))
+            if align_cfg.get("recon_L") is not None
+            else None
+        ),
         "early_stop": bool(align_cfg.get("early_stop", True)),
         "early_stop_rel_impr": float(align_cfg.get("early_stop_rel_impr", 1e-3)),
         "early_stop_patience": int(align_cfg.get("early_stop_patience", 2)),
@@ -1765,7 +1790,9 @@ def _run_align_profile(
         or _should_render_alignment_summary(profile)
     )
 
-    total_outer_iters = int(align_cfg.get("outer_iters", 4)) * (len(level_tuple) if level_tuple else 1)
+    total_outer_iters = int(align_cfg.get("outer_iters", 4)) * (
+        len(level_tuple) if level_tuple else 1
+    )
 
     warmup: RunResult | None = None
     warmup_convergence: ConvergenceRunSummary | None = None
@@ -1812,7 +1839,11 @@ def _run_align_profile(
                 ),
                 detail=(
                     f"levels={list(level_tuple) if level_tuple else [1]}"
-                    + (f" budget={time_budget_seconds:.0f}s" if time_budget_seconds is not None else "")
+                    + (
+                        f" budget={time_budget_seconds:.0f}s"
+                        if time_budget_seconds is not None
+                        else ""
+                    )
                 ),
             )
             primer = _run_align_stage(
@@ -1897,7 +1928,9 @@ def _run_align_profile(
         )
         warm_gt_mse_values.append(float(jnp.mean((run_y_hat - projections) ** 2).item()))
         warm_trans_rmse_values.append(_float_or_none(run_abs_metrics.get("trans_rmse_px")))
-    abs_metrics = mods.loss_metrics_abs(gt_params, warm_params, du=float(detector.du), dv=float(detector.dv))
+    abs_metrics = mods.loss_metrics_abs(
+        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
+    )
     rel_metrics = mods.loss_metrics_relative(
         gt_params,
         warm_params,
@@ -1905,7 +1938,9 @@ def _run_align_profile(
         dv=float(detector.dv),
         k_step=int(align_cfg.get("k_step", 1)),
     )
-    gf_metrics = mods.loss_metrics_gf(gt_params, warm_params, du=float(detector.du), dv=float(detector.dv))
+    gf_metrics = mods.loss_metrics_gf(
+        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
+    )
     y_hat = mods.gt_projection_helper(
         gt_volume,
         grid,
@@ -1915,7 +1950,9 @@ def _run_align_profile(
     )
     gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
 
-    warm_peak_gpu = max((v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None)
+    warm_peak_gpu = max(
+        (v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None
+    )
     warm_peak_gpu_process = max(
         (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
         default=None,
@@ -1924,7 +1961,9 @@ def _run_align_profile(
         (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
         default=None,
     )
-    warm_peak_host = max((v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None)
+    warm_peak_host = max(
+        (v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None
+    )
     warmup_peak_gpu = warmup.peak_gpu_memory_mb if warmup is not None else None
     warmup_peak_gpu_process = warmup.peak_gpu_memory_process_mb if warmup is not None else None
     warmup_peak_gpu_device = warmup.peak_gpu_memory_device_mb if warmup is not None else None
@@ -1941,10 +1980,14 @@ def _run_align_profile(
         mods, measurement_cfg, out_path
     )
     peak_gpu_candidates = [
-        v for v in (warmup_peak_gpu, primer_peak_gpu, first_peak_gpu, warm_peak_gpu) if v is not None
+        v
+        for v in (warmup_peak_gpu, primer_peak_gpu, first_peak_gpu, warm_peak_gpu)
+        if v is not None
     ]
     peak_host_candidates = [
-        v for v in (warmup_peak_host, primer_peak_host, first_peak_host, warm_peak_host) if v is not None
+        v
+        for v in (warmup_peak_host, primer_peak_host, first_peak_host, warm_peak_host)
+        if v is not None
     ]
     peak_gpu = max(peak_gpu_candidates) if peak_gpu_candidates else None
     peak_host = max(peak_host_candidates) if peak_host_candidates else None
@@ -1965,7 +2008,9 @@ def _run_align_profile(
         "primer_peak_gpu_memory_mb": primer_peak_gpu,
         "first_run_seconds": first.seconds,
         "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
-        "warm_run_seconds_std": float(statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0),
+        "warm_run_seconds_std": float(
+            statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
+        ),
         "warmup_peak_gpu_memory_process_mb": warmup_peak_gpu_process,
         "primer_peak_gpu_memory_process_mb": primer_peak_gpu_process,
         "first_run_peak_gpu_memory_mb": first_peak_gpu,
@@ -1976,14 +2021,24 @@ def _run_align_profile(
         "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
         "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
         "peak_gpu_memory_process_mb": _max_or_none(
-            [warmup_peak_gpu_process, primer_peak_gpu_process, first_peak_gpu_process, warm_peak_gpu_process]
+            [
+                warmup_peak_gpu_process,
+                primer_peak_gpu_process,
+                first_peak_gpu_process,
+                warm_peak_gpu_process,
+            ]
         ),
         "warmup_peak_host_rss_mb": warmup_peak_host,
         "primer_peak_host_rss_mb": primer_peak_host,
         "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
         "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
         "peak_gpu_memory_device_mb": _max_or_none(
-            [warmup_peak_gpu_device, primer_peak_gpu_device, first_peak_gpu_device, warm_peak_gpu_device]
+            [
+                warmup_peak_gpu_device,
+                primer_peak_gpu_device,
+                first_peak_gpu_device,
+                warm_peak_gpu_device,
+            ]
         ),
         "first_run_peak_host_rss_mb": first_peak_host,
         "warm_run_peak_host_rss_mb_max": warm_peak_host,
@@ -2007,16 +2062,8 @@ def _run_align_profile(
         ),
         "gpu_memory_observed_gpu_count": max(
             [
-                *(
-                    [warmup.gpu_memory_observed_gpu_count]
-                    if warmup is not None
-                    else []
-                ),
-                *(
-                    [primer.gpu_memory_observed_gpu_count]
-                    if primer is not None
-                    else []
-                ),
+                *([warmup.gpu_memory_observed_gpu_count] if warmup is not None else []),
+                *([primer.gpu_memory_observed_gpu_count] if primer is not None else []),
                 *[w.gpu_memory_observed_gpu_count for w in warms],
             ]
         ),
@@ -2094,13 +2141,19 @@ def _run_align_profile(
                 "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
                 "stopped_on_budget": warm_aggregate["stopped_on_budget"],
                 "reached_finest_level": warm_aggregate["reached_finest_level"],
-                "finest_level_first_elapsed_seconds": warm_aggregate["finest_level_first_elapsed_seconds"],
+                "finest_level_first_elapsed_seconds": warm_aggregate[
+                    "finest_level_first_elapsed_seconds"
+                ],
                 "finest_level_first_outer_idx": warm_aggregate["finest_level_first_outer_idx"],
-                "warm_reached_finest_level_count": warm_aggregate["warm_reached_finest_level_count"],
+                "warm_reached_finest_level_count": warm_aggregate[
+                    "warm_reached_finest_level_count"
+                ],
                 "benchmark_valid": warm_aggregate["benchmark_valid"],
                 "invalid_reason": warm_aggregate["invalid_reason"],
                 "warm_level_summaries": warm_aggregate["warm_level_summaries"],
-                "warm_stopped_on_threshold_count": warm_aggregate["warm_stopped_on_threshold_count"],
+                "warm_stopped_on_threshold_count": warm_aggregate[
+                    "warm_stopped_on_threshold_count"
+                ],
                 "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
                 "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
                 "final_stop_reason": warm_aggregate["final_stop_reason"],
@@ -2137,7 +2190,11 @@ def _run_align_profile(
                 "best_quality_value": (
                     warm_aggregate["best_quality_value"]
                     if warm_aggregate["best_quality_value"] is not None
-                    else (first_convergence.best_quality_value if first_convergence is not None else None)
+                    else (
+                        first_convergence.best_quality_value
+                        if first_convergence is not None
+                        else None
+                    )
                 ),
                 "best_quality_elapsed_seconds": (
                     warm_aggregate["best_quality_elapsed_seconds"]
@@ -2149,13 +2206,21 @@ def _run_align_profile(
                     )
                 ),
                 "cold_total_outer_iters_executed": (
-                    first_convergence.total_outer_iters_executed if first_convergence is not None else None
+                    first_convergence.total_outer_iters_executed
+                    if first_convergence is not None
+                    else None
                 ),
-                "warm_total_outer_iters_executed": warm_aggregate["warm_total_outer_iters_executed"],
+                "warm_total_outer_iters_executed": warm_aggregate[
+                    "warm_total_outer_iters_executed"
+                ],
                 "total_outer_iters_executed": (
                     warm_aggregate["total_outer_iters_executed"]
                     if warm_aggregate["total_outer_iters_executed"] is not None
-                    else (first_convergence.total_outer_iters_executed if first_convergence is not None else None)
+                    else (
+                        first_convergence.total_outer_iters_executed
+                        if first_convergence is not None
+                        else None
+                    )
                 ),
                 "cold_convergence_trace": (
                     first_convergence.trace if first_convergence is not None else []
@@ -2173,9 +2238,7 @@ def _run_align_profile(
                 list(first_convergence.trace or []),
                 finest_only=bool(quality_contract.get("finest_only", True)),
                 gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
-                trans_gf_rmse_px_max=_float_or_none(
-                    quality_contract.get("trans_gf_rmse_px_max")
-                ),
+                trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
             )
             objective_policy_metrics["cold_seconds_to_quality_contract"] = cold_contract.get(
                 "elapsed_seconds"
@@ -2209,7 +2272,6 @@ def _run_align_profile(
     return metrics
 
 
-
 def _resolve_objective(metrics: dict[str, Any], profile: dict[str, Any]) -> tuple[str, str, Any]:
     objective_name = str(profile.get("objective_name", "warm_run_seconds_mean"))
     objective_direction = str(profile.get("objective_direction", "minimise"))
@@ -2220,7 +2282,6 @@ def _resolve_objective(metrics: dict[str, Any], profile: dict[str, Any]) -> tupl
         quality = metrics.get("quality") or {}
         objective_value = quality.get(objective_name)
     return objective_name, objective_direction, objective_value
-
 
 
 def _json_safe(value: Any) -> Any:
@@ -2235,7 +2296,6 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
-
 
 
 def execute_profile(
@@ -2392,7 +2452,11 @@ def execute_profile(
         objective_name, objective_direction, objective_value = _resolve_objective(metrics, profile)
         metrics["objective_name"] = objective_name
         metrics["objective_direction"] = objective_direction
-        metrics["objective_value"] = _float_or_none(objective_value) if isinstance(objective_value, (float, int, np.floating, np.integer)) else objective_value
+        metrics["objective_value"] = (
+            _float_or_none(objective_value)
+            if isinstance(objective_value, (float, int, np.floating, np.integer))
+            else objective_value
+        )
         metrics["device"] = _device_info(mods)
         metrics["fixture"] = {
             "path": str(fixture_path),
@@ -2402,7 +2466,8 @@ def execute_profile(
         metrics["success"] = bool(
             run_metrics.get(
                 "success",
-                metrics.get("objective_value") is not None or objective_name == "warm_run_seconds_mean",
+                metrics.get("objective_value") is not None
+                or objective_name == "warm_run_seconds_mean",
             )
         )
     except Exception as exc:  # pragma: no cover - exercised in error conditions
@@ -2414,6 +2479,7 @@ def execute_profile(
         if not metrics.get("device"):
             try:
                 import jax
+
                 metrics["device"] = {
                     "jax_backend": str(jax.default_backend()),
                     "jax_devices": [str(getattr(d, "device_kind", d)) for d in jax.devices()],

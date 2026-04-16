@@ -7,12 +7,13 @@ import numpy as np
 import jax.numpy as jnp
 import os
 
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
+from ..data.geometry_meta import build_geometry_from_meta
+from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..align.losses import parse_loss_spec
 from ..core.geometry import Grid, Detector
 from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
-from ._geometry import build_geometry_from_meta, build_nominal_geometry_from_meta as build_geometry
 from ._runtime import transfer_guard_context
 
 from ..utils.fov import (
@@ -38,9 +39,7 @@ def _init_jax_compilation_cache() -> None:
     try:
         cache_dir = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
         if not cache_dir:
-            base = os.environ.get(
-                "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
-            )
+            base = os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
             cache_dir = os.path.join(base, "tomojax", "jax_cache")
         os.makedirs(cache_dir, exist_ok=True)
         cc.initialize_cache(cache_dir)
@@ -75,21 +74,13 @@ def _resolve_recon_grid_and_mask(
     apply_cyl_mask = False
     if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
         if roi_mode == "auto" and not is_parallel:
-            recon_grid = grid_from_detector_fov(
-                grid, detector, crop_y_to_u=False
-            )
+            recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
         else:
-            recon_grid = grid_from_detector_fov_slices(
-                grid, detector, crop_y_to_u=is_parallel
-            )
+            recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
     elif roi_mode == "bbox":
-        recon_grid = grid_from_detector_fov(
-            grid, detector, crop_y_to_u=is_parallel
-        )
+        recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
     elif roi_mode == "cyl":
-        recon_grid = grid_from_detector_fov_slices(
-            grid, detector, crop_y_to_u=is_parallel
-        )
+        recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
         apply_cyl_mask = True
 
     # Explicit grid overrides take full precedence over ROI-derived masking.
@@ -102,9 +93,7 @@ def _resolve_recon_grid_and_mask(
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(
-        description="Joint reconstruction + alignment on dataset (.nxs)"
-    )
+    p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--data", required=True, help="Input .nxs")
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
@@ -131,12 +120,8 @@ def main() -> None:
         help="Projector gather dtype (auto: bf16 on GPU/TPU, else fp32)",
     )
     ck = p.add_mutually_exclusive_group()
-    ck.add_argument(
-        "--checkpoint-projector", dest="checkpoint_projector", action="store_true"
-    )
-    ck.add_argument(
-        "--no-checkpoint-projector", dest="checkpoint_projector", action="store_false"
-    )
+    ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
+    ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false")
     p.set_defaults(checkpoint_projector=True)
     p.add_argument(
         "--opt-method",
@@ -150,12 +135,8 @@ def main() -> None:
         default=1e-3,
         help="Levenberg-Marquardt damping for GN",
     )
-    p.add_argument(
-        "--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations"
-    )
-    p.add_argument(
-        "--w-trans", type=float, default=1e-3, help="Smoothness weight for translations"
-    )
+    p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
+    p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
     p.add_argument(
         "--seed-translations",
         action="store_true",
@@ -257,9 +238,7 @@ def main() -> None:
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
         help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
     )
-    p.add_argument(
-        "--out", required=True, help="Output .nxs with recon and alignment params"
-    )
+    p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
     p.add_argument(
         "--progress",
         action="store_true",
@@ -315,17 +294,17 @@ def main() -> None:
             loss_params[k.strip()] = float(v)
         except ValueError:
             raise SystemExit(f"--loss-param value must be numeric: {kv}")
+    loss_spec = parse_loss_spec(str(args.loss), loss_params if loss_params else None)
 
     meta = load_nxtomo(args.data)
-    initial_grid_override = (
-        args.grid if ("grid" not in meta and args.grid is not None) else None
-    )
+    geometry_meta = meta.geometry_inputs()
+    initial_grid_override = args.grid if (meta.grid is None and args.grid is not None) else None
     grid, detector, geom = build_geometry_from_meta(
-        meta,
+        geometry_meta,
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
     )
-    proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
+    proj = jnp.asarray(meta.projections, dtype=jnp.float32)
 
     # Hidden defaults: stream one view at a time; unroll=1
     vpb_est = 1
@@ -352,8 +331,7 @@ def main() -> None:
         gn_damping=float(args.gn_damping),
         w_rot=float(args.w_rot),
         w_trans=float(args.w_trans),
-        loss_kind=str(args.loss),
-        loss_params=loss_params if loss_params else None,
+        loss=loss_spec,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
         log_compact=bool(args.log_compact),
@@ -371,7 +349,7 @@ def main() -> None:
     recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
         grid,
         detector,
-        is_parallel=meta.get("geometry_type", "parallel") == "parallel",
+        is_parallel=meta.geometry_type == "parallel",
         roi_mode=str(args.roi).lower(),
         grid_override=args.grid,
     )
@@ -381,7 +359,7 @@ def main() -> None:
         # Once ROI and explicit sizing resolve an effective grid, keep that grid's
         # origin/centre metadata authoritative when rebuilding geometry.
         _, _, geom = build_geometry_from_meta(
-            meta,
+            geometry_meta,
             grid_override=recon_grid,
             apply_saved_alignment=False,
         )
@@ -411,25 +389,16 @@ def main() -> None:
             x = jnp.asarray(_np.asarray(x) * m)
 
     # Avoid copying projections back from device: reuse host array from metadata
+    save_meta = meta.copy_metadata()
+    save_meta.grid = recon_grid.to_dict()
+    save_meta.volume = np.asarray(x)
+    save_meta.align_params = np.asarray(params5)
+    save_meta.frame = str(meta.frame or "sample")
+    save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(
         args.out,
-        projections=meta["projections"],
-        thetas_deg=np.asarray(meta["thetas_deg"]),
-        image_key=meta.get("image_key"),
-        grid=recon_grid.to_dict(),
-        detector=meta.get("detector"),
-        geometry_type=meta.get("geometry_type", "parallel"),
-        geometry_meta=meta.get("geometry_meta"),
-        volume=np.asarray(x),
-        align_params=np.asarray(params5),
-        angle_offset_deg=meta.get("angle_offset_deg"),
-        misalign_spec=meta.get("misalign_spec"),
-        frame=str(meta.get("frame", "sample")),
-        sample_name=meta.get("sample_name"),
-        source_name=meta.get("source_name"),
-        source_type=meta.get("source_type"),
-        source_probe=meta.get("source_probe"),
-        volume_axes_order=str(args.volume_axes),
+        projections=meta.projections,
+        metadata=save_meta,
     )
     logging.info("Saved alignment results to %s", args.out)
 

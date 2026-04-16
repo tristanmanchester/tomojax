@@ -9,10 +9,11 @@ pipelines, while keeping simulation-friendly metadata.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
 import os
-from typing import TypedDict
+from typing import Mapping, TypedDict
 
 import h5py
 import numpy as np
@@ -29,12 +30,6 @@ from ..utils.axes import (
 
 
 LOG = logging.getLogger(__name__)
-_AXES_SILENCE = os.environ.get("TOMOJAX_AXES_SILENCE", "").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
@@ -50,12 +45,210 @@ type DatasetValue = np.ndarray | JsonValue | GridDict | DetectorDict | SourceInf
 type LoadedDataset = dict[str, DatasetValue]
 
 
+@dataclass(slots=True)
+class NXTomoMetadata:
+    """Portable metadata bundle for NXtomo persistence."""
+
+    thetas_deg: np.ndarray | None = None
+    image_key: np.ndarray | None = None
+    grid: Grid | GridDict | None = None
+    detector: Detector | DetectorDict | None = None
+    geometry_type: str = "parallel"
+    geometry_meta: JsonObject | None = None
+    volume: np.ndarray | None = None
+    align_params: np.ndarray | None = None
+    angle_offset_deg: np.ndarray | None = None
+    misalign_spec: JsonObject | None = None
+    frame: str | None = None
+    sample_name: str | None = "sample"
+    source_name: str | None = "TomoJAX source"
+    source_type: str | None = None
+    source_probe: str | None = "x-ray"
+    volume_axes_order: str = DISK_VOLUME_AXES
+
+    @classmethod
+    def from_dataset(cls, data: Mapping[str, DatasetValue]) -> NXTomoMetadata:
+        source_info = data.get("source")
+        source_name = data.get("source_name")
+        source_type = data.get("source_type")
+        source_probe = data.get("source_probe")
+        if isinstance(source_info, dict):
+            if source_name is None:
+                source_name = source_info.get("name")
+            if source_type is None:
+                source_type = source_info.get("type")
+            if source_probe is None:
+                source_probe = source_info.get("probe")
+
+        geometry_type = data.get("geometry_type")
+        return cls(
+            thetas_deg=data.get("thetas_deg"),
+            image_key=data.get("image_key"),
+            grid=data.get("grid"),
+            detector=data.get("detector"),
+            geometry_type="parallel" if geometry_type is None else str(geometry_type),
+            geometry_meta=data.get("geometry_meta"),
+            volume=data.get("volume"),
+            align_params=data.get("align_params"),
+            angle_offset_deg=data.get("angle_offset_deg"),
+            misalign_spec=data.get("misalign_spec"),
+            frame=None if data.get("frame") is None else str(data.get("frame")),
+            sample_name=(
+                None if data.get("sample_name") is None else str(data.get("sample_name"))
+            ),
+            source_name=None if source_name is None else str(source_name),
+            source_type=None if source_type is None else str(source_type),
+            source_probe=None if source_probe is None else str(source_probe),
+            volume_axes_order=(
+                DISK_VOLUME_AXES
+                if data.get("volume_axes_order") is None
+                else str(data.get("volume_axes_order"))
+            ),
+        )
+
+
+_NXTOMO_METADATA_FIELDS = frozenset(NXTomoMetadata.__dataclass_fields__)
+
+
+@dataclass(slots=True)
+class LoadedNXTomo:
+    """Typed NXtomo payload returned by ``load_nxtomo()``."""
+
+    projections: np.ndarray
+    metadata: NXTomoMetadata
+    source: SourceInfo | None = None
+    disk_volume_axes_order: str | None = None
+    volume_axes_source: str | None = None
+
+    @classmethod
+    def from_dataset(cls, data: Mapping[str, DatasetValue]) -> LoadedNXTomo:
+        source_info = data.get("source")
+        return cls(
+            projections=np.asarray(data["projections"]),
+            metadata=NXTomoMetadata.from_dataset(data),
+            source=source_info if isinstance(source_info, dict) else None,
+            disk_volume_axes_order=(
+                None
+                if data.get("disk_volume_axes_order") is None
+                else str(data.get("disk_volume_axes_order"))
+            ),
+            volume_axes_source=(
+                None
+                if data.get("volume_axes_source") is None
+                else str(data.get("volume_axes_source"))
+            ),
+        )
+
+    def __getattr__(self, name: str):
+        if name in _NXTOMO_METADATA_FIELDS:
+            return getattr(self.metadata, name)
+        raise AttributeError(name)
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        if key == "projections":
+            return True
+        if key == "source":
+            return self.source is not None
+        if key == "disk_volume_axes_order":
+            return self.disk_volume_axes_order is not None
+        if key == "volume_axes_source":
+            return self.volume_axes_source is not None
+        if key in _NXTOMO_METADATA_FIELDS:
+            return getattr(self.metadata, key) is not None
+        geom_meta = self.metadata.geometry_meta or {}
+        return key in geom_meta
+
+    def __getitem__(self, key: str) -> DatasetValue:
+        value = self.get(key)
+        if value is None and key not in self:
+            raise KeyError(key)
+        return value
+
+    def get(self, key: str, default: DatasetValue | None = None) -> DatasetValue | None:
+        if key == "projections":
+            return self.projections
+        if key == "source":
+            return self.source
+        if key == "disk_volume_axes_order":
+            return self.disk_volume_axes_order
+        if key == "volume_axes_source":
+            return self.volume_axes_source
+        if key in _NXTOMO_METADATA_FIELDS:
+            return getattr(self.metadata, key)
+        geom_meta = self.metadata.geometry_meta or {}
+        return geom_meta.get(key, default)
+
+    def to_dataset_dict(self) -> LoadedDataset:
+        data: LoadedDataset = {"projections": np.asarray(self.projections)}
+        for field_name in _NXTOMO_METADATA_FIELDS:
+            value = getattr(self.metadata, field_name)
+            if value is None:
+                continue
+            if isinstance(value, Grid | Detector):
+                data[field_name] = value.to_dict()
+            else:
+                data[field_name] = value
+        if self.source is not None:
+            data["source"] = dict(self.source)
+        if self.disk_volume_axes_order is not None:
+            data["disk_volume_axes_order"] = self.disk_volume_axes_order
+        if self.volume_axes_source is not None:
+            data["volume_axes_source"] = self.volume_axes_source
+        return data
+
+    def copy_metadata(self) -> NXTomoMetadata:
+        """Return a writable metadata copy suitable for save/update workflows."""
+        return NXTomoMetadata.from_dataset(self.to_dataset_dict())
+
+    def geometry_inputs(self) -> dict[str, DatasetValue]:
+        detector = self.metadata.detector
+        if detector is None:
+            raise ValueError("NXtomo payload is missing detector metadata")
+        thetas_deg = self.metadata.thetas_deg
+        if thetas_deg is None:
+            raise ValueError("NXtomo payload is missing rotation angles")
+
+        payload: dict[str, DatasetValue] = {
+            "detector": detector.to_dict() if isinstance(detector, Detector) else detector,
+            "thetas_deg": np.asarray(thetas_deg, dtype=np.float32),
+            "geometry_type": self.metadata.geometry_type,
+        }
+        grid = self.metadata.grid
+        if grid is not None:
+            payload["grid"] = grid.to_dict() if isinstance(grid, Grid) else grid
+        if self.metadata.angle_offset_deg is not None:
+            payload["angle_offset_deg"] = np.asarray(self.metadata.angle_offset_deg)
+        if self.metadata.misalign_spec is not None:
+            payload["misalign_spec"] = self.metadata.misalign_spec
+        if self.metadata.align_params is not None:
+            payload["align_params"] = np.asarray(self.metadata.align_params)
+        geom_meta = self.metadata.geometry_meta or {}
+        tilt_deg = geom_meta.get("tilt_deg")
+        if tilt_deg is not None:
+            payload["tilt_deg"] = float(tilt_deg)
+        tilt_about = geom_meta.get("tilt_about")
+        if tilt_about is not None:
+            payload["tilt_about"] = str(tilt_about)
+        return payload
+
+
 class ValidationReport(TypedDict):
     issues: list[str]
 
 
+def _axes_warnings_silenced() -> bool:
+    return os.environ.get("TOMOJAX_AXES_SILENCE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _axes_log_warning(message: str, *args: object) -> None:
-    if not _AXES_SILENCE:
+    if not _axes_warnings_silenced():
         LOG.warning(message, *args)
 
 
@@ -103,65 +296,243 @@ def _normalize_geometry_type(geometry_type: str | None) -> str:
     )
 
 
+def _load_json_mapping_attr(
+    raw_attr: object,
+    *,
+    path: str,
+    context: str,
+) -> JsonObject | None:
+    if raw_attr is None:
+        return None
+    payload = _attr_to_str(raw_attr)
+    if not payload:
+        return None
+    try:
+        loaded = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        _axes_log_warning(
+            "load_nxtomo: ignoring malformed %s JSON for %s: %s",
+            context,
+            path,
+            exc,
+        )
+        return None
+    if not isinstance(loaded, dict):
+        _axes_log_warning(
+            "load_nxtomo: ignoring non-object %s JSON for %s",
+            context,
+            path,
+        )
+        return None
+    return loaded
+
+
+def _default_detector_meta(projections: np.ndarray) -> DetectorDict:
+    nv, nu = int(projections.shape[1]), int(projections.shape[2])
+    return {
+        "nu": nu,
+        "nv": nv,
+        "du": 1.0,
+        "dv": 1.0,
+        "det_center": [0.0, 0.0],
+    }
+
+
+def _detector_group(entry: h5py.Group) -> h5py.Group | None:
+    inst_grp = entry.get("instrument")
+    if inst_grp is None:
+        return None
+    return inst_grp.get("detector")
+
+
+def _load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray:
+    det_grp = _detector_group(entry)
+    if det_grp is None or "image_key" not in det_grp:
+        _axes_log_warning(
+            "load_nxtomo: missing image_key for %s; defaulting to zeros",
+            path,
+        )
+        return np.zeros((n_views,), dtype=np.int32)
+    return np.asarray(det_grp["image_key"][...], dtype=np.int32)
+
+
+def _load_rotation_angles(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray:
+    sample_grp = entry.get("sample")
+    trans_grp = None if sample_grp is None else sample_grp.get("transformations")
+    if trans_grp is None or "rotation_angle" not in trans_grp:
+        _axes_log_warning(
+            "load_nxtomo: missing rotation_angle for %s; defaulting to zeros",
+            path,
+        )
+        return np.zeros((n_views,), dtype=np.float32)
+    return np.asarray(trans_grp["rotation_angle"][...], dtype=np.float32)
+
+
+def _load_geometry_metadata(
+    out: LoadedDataset,
+    entry: h5py.Group,
+    *,
+    path: str,
+) -> None:
+    geom = entry.get("geometry")
+    geom_type = "parallel"
+    if geom is not None and "type" in geom.attrs:
+        raw_type = _attr_to_str(geom.attrs.get("type"), default="parallel")
+        geom_type = _normalize_geometry_type(raw_type)
+    out["geometry_type"] = geom_type
+    if geom is None:
+        return
+    meta_dict = _load_json_mapping_attr(
+        geom.attrs.get("geometry_meta_json"),
+        path=path,
+        context="geometry metadata",
+    )
+    if meta_dict is None:
+        return
+    out["geometry_meta"] = meta_dict
+    for key, val in meta_dict.items():
+        out.setdefault(key, val)
+
+
+def _load_grid_metadata(out: LoadedDataset, entry: h5py.Group, *, path: str) -> None:
+    grid_dict = _load_json_mapping_attr(
+        entry.attrs.get("grid_meta_json"),
+        path=path,
+        context="grid metadata",
+    )
+    if grid_dict is not None:
+        out["grid"] = grid_dict
+
+
+def _load_detector_metadata(
+    out: LoadedDataset,
+    entry: h5py.Group,
+    projections: np.ndarray,
+    *,
+    path: str,
+) -> None:
+    det_grp = _detector_group(entry)
+    detector_dict = None
+    if det_grp is not None:
+        detector_dict = _load_json_mapping_attr(
+            det_grp.attrs.get("detector_meta_json"),
+            path=path,
+            context="detector metadata",
+        )
+    if detector_dict is None:
+        _axes_log_warning(
+            "load_nxtomo: missing detector metadata for %s; synthesizing unit detector from projection shape",
+            path,
+        )
+        detector_dict = _default_detector_meta(projections)
+    out["detector"] = detector_dict
+
+
+def _load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
+    inst_grp = entry.get("instrument")
+    if inst_grp is None:
+        return
+    source_grp = inst_grp.get("SOURCE") or inst_grp.get("source")
+    if source_grp is None:
+        return
+    source_info: SourceInfo = {}
+    for key in ("name", "type", "probe"):
+        if key in source_grp:
+            source_info[key] = _attr_to_str(source_grp[key][()])
+    if not source_info:
+        return
+    out["source"] = source_info
+    if "name" in source_info:
+        out["source_name"] = source_info["name"]
+    if "type" in source_info:
+        out["source_type"] = source_info["type"]
+    if "probe" in source_info:
+        out["source_probe"] = source_info["probe"]
+
+
+def _load_processing_metadata(
+    out: LoadedDataset,
+    entry: h5py.Group,
+    *,
+    path: str,
+) -> tuple[np.ndarray | None, str | None]:
+    processing_grp = entry.get("processing")
+    tomojax_grp = None if processing_grp is None else processing_grp.get("tomojax")
+    if tomojax_grp is None:
+        return None, None
+
+    volume_raw = tomojax_grp["volume"][...] if "volume" in tomojax_grp else None
+    volume_axes_attr = _attr_to_str(tomojax_grp.attrs.get(VOLUME_AXES_ATTR))
+
+    frame_attr = tomojax_grp.attrs.get("frame")
+    if frame_attr is not None:
+        frame = _attr_to_str(frame_attr)
+        if frame:
+            out["frame"] = frame
+
+    align_grp = tomojax_grp.get("align")
+    if align_grp is not None:
+        if "thetas" in align_grp:
+            out["align_params"] = align_grp["thetas"][...]
+        if "angle_offset_deg" in align_grp:
+            out["angle_offset_deg"] = align_grp["angle_offset_deg"][...]
+        misalign_spec = _load_json_mapping_attr(
+            align_grp.attrs.get("misalign_spec_json"),
+            path=path,
+            context="misalignment spec",
+        )
+        if misalign_spec is not None:
+            out["misalign_spec"] = misalign_spec
+
+    return volume_raw, volume_axes_attr
+
+
+def _load_sample_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
+    sample_grp = entry.get("sample")
+    if sample_grp is not None and "name" in sample_grp:
+        out["sample_name"] = _attr_to_str(sample_grp["name"][()], default=None)
+
+
 def save_nxtomo(
     path: str,
     projections: np.ndarray,
     *,
-    thetas_deg: np.ndarray | None = None,
-    image_key: np.ndarray | None = None,
-    grid: Grid | GridDict | None = None,
-    detector: Detector | DetectorDict | None = None,
-    geometry_type: str = "parallel",
-    geometry_meta: JsonObject | None = None,
-    volume: np.ndarray | None = None,
-    align_params: np.ndarray | None = None,
-    angle_offset_deg: np.ndarray | None = None,
-    misalign_spec: JsonObject | None = None,
-    frame: str | None = None,
-    sample_name: str | None = "sample",
-    source_name: str | None = "TomoJAX source",
-    source_type: str | None = None,
-    source_probe: str | None = "x-ray",
+    metadata: NXTomoMetadata | None = None,
     compression: str = "lzf",
     overwrite: bool = True,
-    volume_axes_order: str = DISK_VOLUME_AXES,
 ) -> None:
     """Write a dataset to an HDF5 file using NXtomo + TomoJAX extras.
 
-    Volume inputs are always expected in TomoJAX's internal `xyz` order.
-    `volume_axes_order` controls how that internal volume is serialized on disk:
-    keep the default `zyx` for viewer-friendly output or set `"xyz"` to preserve
-    the in-memory layout without transposition.
-
-    - projections: (n_views, nv, nu) float32
-    - thetas_deg: (n_views,) rotation angles in degrees (around +z by default)
-    - grid/detector: voxel and detector definitions
-    - volume: optional ground-truth volume (nx, ny, nz) in internal `xyz` order
-    - align_params: optional (n_views, 5) [alpha,beta,phi,dx,dz] in radians/world units
-    - geometry_type: "parallel" | "lamino"
-    - geometry_meta: Optional dict with extra geometry metadata (e.g., lamino tilt)
+    `metadata` owns the persistence contract: geometry, detector/grid definitions,
+    optional reconstructed volume, and TomoJAX-specific extras. Volume inputs in
+    `metadata.volume` are always expected in internal `xyz` order; set
+    `metadata.volume_axes_order` to control how that internal volume is serialized
+    on disk.
     """
     # Ensure parent directory exists
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
 
+    meta = metadata or NXTomoMetadata()
     if overwrite:
         mode = "w"
     else:
         mode = "x"
 
     proj = np.asarray(projections)
-    assert proj.ndim == 3, "projections must be (n_views, nv, nu)"
+    if proj.ndim != 3:
+        raise ValueError("projections must be (n_views, nv, nu)")
     n_views, nv, nu = proj.shape
-    geometry_type_norm = _normalize_geometry_type(geometry_type)
+    geometry_type_norm = _normalize_geometry_type(meta.geometry_type)
 
-    disk_axes = volume_axes_order.lower()
+    disk_axes = meta.volume_axes_order.lower()
     try:
         axes_to_perm(INTERNAL_VOLUME_AXES, disk_axes)
     except ValueError as exc:  # pragma: no cover - defensive
         raise ValueError(
-            f"volume_axes_order must be a permutation of 'xyz', got {volume_axes_order!r}"
+            "metadata.volume_axes_order must be a permutation of 'xyz', "
+            f"got {meta.volume_axes_order!r}"
         ) from exc
 
     with h5py.File(path, mode) as f:
@@ -171,8 +542,8 @@ def save_nxtomo(
         # Geometry metadata (mark as NXcollection so common viewers display it)
         geom = _ensure_group(entry, "geometry", "NXcollection")
         _write_string_attr(geom, "type", geometry_type_norm)
-        if geometry_meta:
-            geom.attrs["geometry_meta_json"] = json.dumps(geometry_meta)
+        if meta.geometry_meta:
+            geom.attrs["geometry_meta_json"] = json.dumps(meta.geometry_meta)
 
         # Instrument / detector
         inst = _ensure_group(entry, "instrument", "NXinstrument")
@@ -184,17 +555,17 @@ def save_nxtomo(
             compression=compression,
         )
         det["data"].attrs["long_name"] = "projections"
-        if image_key is None:
+        if meta.image_key is None:
             im_key = np.zeros((n_views,), dtype=np.int32)
         else:
-            im_key = np.asarray(image_key, dtype=np.int32)
+            im_key = np.asarray(meta.image_key, dtype=np.int32)
             if im_key.shape != (n_views,):
                 raise ValueError("image_key must be shape (n_views,)")
         det.create_dataset("image_key", data=im_key, dtype=np.int32)
 
         # Pixel geometry if provided
-        if detector is not None:
-            det_dict = detector if isinstance(detector, dict) else detector.to_dict()
+        if meta.detector is not None:
+            det_dict = meta.detector if isinstance(meta.detector, dict) else meta.detector.to_dict()
             det.attrs["detector_meta_json"] = json.dumps(det_dict)
             # Store basic pixel sizes (units arbitrary for sims)
             det.create_dataset("x_pixel_size", data=np.asarray(det_dict.get("du", 1.0)))
@@ -205,18 +576,19 @@ def save_nxtomo(
         # Sample and transformations (angles)
         sample = _ensure_group(entry, "sample", "NXsample")
         trans = _ensure_group(sample, "transformations", "NXtransformations")
-        if thetas_deg is None:
+        if meta.thetas_deg is None:
             thetas_deg = np.zeros((n_views,), dtype=np.float32)
         else:
-            thetas_deg = np.asarray(thetas_deg, dtype=np.float32)
-            assert thetas_deg.shape == (n_views,), "thetas_deg must be (n_views,)"
+            thetas_deg = np.asarray(meta.thetas_deg, dtype=np.float32)
+            if thetas_deg.shape != (n_views,):
+                raise ValueError("thetas_deg must be (n_views,)")
         d_angle = trans.create_dataset("rotation_angle", data=thetas_deg)
         d_angle.attrs["units"] = "degree"
         _write_string_attr(d_angle, "transformation_type", "rotation")
         # Rotation around +z by default (matching phi in current code)
         trans.create_dataset("rotation_axis", data=np.asarray([0.0, 0.0, 1.0], dtype=np.float32))
         _write_string_attr(trans, "depends_on", "rotation_angle")
-        sample_name_str = "sample" if sample_name is None else str(sample_name)
+        sample_name_str = "sample" if meta.sample_name is None else str(meta.sample_name)
         sample.create_dataset(
             "name",
             data=np.array(sample_name_str, dtype=h5py.string_dtype(encoding="utf-8")),
@@ -230,32 +602,32 @@ def save_nxtomo(
 
         # Source metadata (optional but recommended)
         src_grp = _ensure_group(inst, "SOURCE", "NXsource")
-        if source_name is not None:
+        if meta.source_name is not None:
             src_grp.create_dataset(
                 "name",
-                data=np.array(str(source_name), dtype=h5py.string_dtype(encoding="utf-8")),
+                data=np.array(str(meta.source_name), dtype=h5py.string_dtype(encoding="utf-8")),
             )
-        if source_type is not None:
+        if meta.source_type is not None:
             src_grp.create_dataset(
                 "type",
-                data=np.array(str(source_type), dtype=h5py.string_dtype(encoding="utf-8")),
+                data=np.array(str(meta.source_type), dtype=h5py.string_dtype(encoding="utf-8")),
             )
-        if source_probe is not None:
+        if meta.source_probe is not None:
             src_grp.create_dataset(
                 "probe",
-                data=np.array(str(source_probe), dtype=h5py.string_dtype(encoding="utf-8")),
+                data=np.array(str(meta.source_probe), dtype=h5py.string_dtype(encoding="utf-8")),
             )
 
         # Grid metadata
-        if grid is not None:
-            gdict = grid if isinstance(grid, dict) else grid.to_dict()
+        if meta.grid is not None:
+            gdict = meta.grid if isinstance(meta.grid, dict) else meta.grid.to_dict()
             entry.attrs["grid_meta_json"] = json.dumps(gdict)
 
         # Optional GT / reconstructed volume and TomoJAX metadata
-        if volume is not None:
+        if meta.volume is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
-            vol_data = np.asarray(volume)
+            vol_data = np.asarray(meta.volume)
             if vol_data.ndim != 3:
                 raise ValueError("volume must be 3D (nx, ny, nz)")
             if disk_axes != INTERNAL_VOLUME_AXES:
@@ -269,40 +641,46 @@ def save_nxtomo(
             vol.attrs["long_name"] = "ground_truth_volume"
             _write_string_attr(tj, VOLUME_AXES_ATTR, disk_axes)
             # Persist volume frame metadata if provided (e.g., 'sample' or 'lab')
-            if frame is not None:
-                _write_string_attr(tj, "frame", str(frame))
+            if meta.frame is not None:
+                _write_string_attr(tj, "frame", str(meta.frame))
 
         # Optional alignment params and misalignment metadata
-        if align_params is not None or angle_offset_deg is not None or misalign_spec is not None:
+        if (
+            meta.align_params is not None
+            or meta.angle_offset_deg is not None
+            or meta.misalign_spec is not None
+        ):
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
             align_grp = _ensure_group(tj, "align", "NXcollection")
-            if align_params is not None:
+            if meta.align_params is not None:
                 dset = align_grp.create_dataset(
                     "thetas",
-                    data=np.asarray(align_params, dtype=np.float32),
+                    data=np.asarray(meta.align_params, dtype=np.float32),
                     chunks=True,
                     compression=compression,
                 )
                 dset.attrs["columns"] = np.array(
                     ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
                 )
-            if angle_offset_deg is not None:
+            if meta.angle_offset_deg is not None:
                 align_grp.create_dataset(
                     "angle_offset_deg",
-                    data=np.asarray(angle_offset_deg, dtype=np.float32),
+                    data=np.asarray(meta.angle_offset_deg, dtype=np.float32),
                     chunks=True,
                     compression=compression,
                 )
-            if misalign_spec is not None:
-                align_grp.attrs["misalign_spec_json"] = json.dumps(misalign_spec)
+            if meta.misalign_spec is not None:
+                align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
 
 
-def load_nxtomo(path: str) -> LoadedDataset:
+def load_nxtomo(path: str) -> LoadedNXTomo:
     """Load an NXtomo dataset and TomoJAX extras.
 
-    Returns a dict with keys: projections, thetas_deg, geometry_type, grid, detector,
-    and optional volume, align_params. Volumes are returned in internal `xyz` order.
+    Returns a ``LoadedNXTomo`` payload with typed accessors for projections and
+    persisted metadata. ``grid`` is present when the file stores grid metadata
+    or when a saved volume allows a unit-grid fallback. Volumes are returned in
+    internal ``xyz`` order.
     """
     out: LoadedDataset = {}
     volume_raw: np.ndarray | None = None
@@ -310,142 +688,26 @@ def load_nxtomo(path: str) -> LoadedDataset:
 
     with h5py.File(path, "r") as f:
         entry = f["/entry"]
-        # Projections with fallbacks
         proj = None
-        try:
-            proj = entry["instrument/detector/data"][...]
-        except Exception:
-            try:
-                proj = entry["data/projections"][...]
-            except Exception:
-                if "projections" in entry:
-                    proj = entry["projections"][...]
+        det_grp = _detector_group(entry)
+        if det_grp is not None and "data" in det_grp:
+            proj = det_grp["data"][...]
+        elif "data" in entry and "projections" in entry["data"]:
+            proj = entry["data/projections"][...]
+        elif "projections" in entry:
+            proj = entry["projections"][...]
         if proj is None:
             raise KeyError("Could not find projections dataset under /entry")
         out["projections"] = proj
         n_views = proj.shape[0]
-        # Image key
-        try:
-            im_key = entry["instrument/detector/image_key"][...]
-            out["image_key"] = np.asarray(im_key, dtype=np.int32)
-        except Exception:
-            out["image_key"] = np.zeros((n_views,), dtype=np.int32)
-        # Angles with fallback
-        thetas = None
-        try:
-            thetas = entry["sample/transformations/rotation_angle"][...]
-        except Exception:
-            thetas = np.zeros((n_views,), dtype=np.float32)
-        out["thetas_deg"] = thetas
-        # Geometry type
-        geom = entry.get("geometry")
-        geom_type = "parallel"
-        if geom is not None and "type" in geom.attrs:
-            s = _attr_to_str(geom.attrs.get("type"), default="parallel")
-            if s:
-                geom_type = s
-        out["geometry_type"] = geom_type
-        if geom is not None:
-            meta_attr = geom.attrs.get("geometry_meta_json")
-            if meta_attr is not None:
-                s = _attr_to_str(meta_attr)
-                if s:
-                    try:
-                        meta_dict = json.loads(s)
-                    except Exception:
-                        meta_dict = None
-                    if isinstance(meta_dict, dict):
-                        out["geometry_meta"] = meta_dict
-                        for key, val in meta_dict.items():
-                            out.setdefault(key, val)
-
-        # Grid / Detector metadata (JSON blobs if present)
-        grid_meta = entry.attrs.get("grid_meta_json")
-        if grid_meta is not None:
-            s = _attr_to_str(grid_meta)
-            if s:
-                try:
-                    out["grid"] = json.loads(s)
-                except Exception:
-                    pass
-
-        # Detector metadata (fallback to defaults if missing)
-        try:
-            det_grp = entry["instrument/detector"]
-            det_meta = det_grp.attrs.get("detector_meta_json")
-            if det_meta is not None:
-                s = _attr_to_str(det_meta)
-                if s:
-                    out["detector"] = json.loads(s)
-        except Exception:
-            pass
-        if "detector" not in out:
-            nv, nu = int(proj.shape[1]), int(proj.shape[2])
-            out["detector"] = {
-                "nu": nu,
-                "nv": nv,
-                "du": 1.0,
-                "dv": 1.0,
-                "det_center": [0.0, 0.0],
-            }
-        # Source metadata if present
-        try:
-            inst_grp = entry.get("instrument")
-            source_grp = None
-            if inst_grp is not None:
-                source_grp = inst_grp.get("SOURCE") or inst_grp.get("source")
-            if source_grp is not None:
-                source_info: SourceInfo = {}
-                for key in ("name", "type", "probe"):
-                    if key in source_grp:
-                        source_info[key] = _attr_to_str(source_grp[key][()])
-                if source_info:
-                    out["source"] = source_info
-                    if "name" in source_info:
-                        out["source_name"] = source_info["name"]
-                    if "type" in source_info:
-                        out["source_type"] = source_info["type"]
-                    if "probe" in source_info:
-                        out["source_probe"] = source_info["probe"]
-        except Exception:
-            pass
-
-        # Optional volume (used also to infer grid fallback)
-        try:
-            if "processing" in entry and "tomojax" in entry["processing"]:
-                tj = entry["processing/tomojax"]
-                volume_axes_attr = _attr_to_str(tj.attrs.get(VOLUME_AXES_ATTR))
-                if "volume" in tj:
-                    volume_raw = tj["volume"][...]
-                # Frame metadata for the volume if present
-                fr_attr = tj.attrs.get("frame")
-                if fr_attr is not None:
-                    s = _attr_to_str(fr_attr)
-                    if s:
-                        out["frame"] = s
-                if "align" in tj:
-                    if "thetas" in tj["align"]:
-                        out["align_params"] = tj["align/thetas"][...]
-                    if "angle_offset_deg" in tj["align"]:
-                        out["angle_offset_deg"] = tj["align/angle_offset_deg"][...]
-                    spec_attr = tj["align"].attrs.get("misalign_spec_json")
-                    if spec_attr is not None:
-                        s = _attr_to_str(spec_attr)
-                        if s:
-                            try:
-                                out["misalign_spec"] = json.loads(s)
-                            except Exception:
-                                pass
-        except Exception:
-            pass
-
-        # Sample metadata
-        try:
-            sample_grp = entry.get("sample")
-            if sample_grp is not None and "name" in sample_grp:
-                out["sample_name"] = _attr_to_str(sample_grp["name"][()], default=None)
-        except Exception:
-            pass
+        out["image_key"] = _load_image_key(entry, n_views=n_views, path=path)
+        out["thetas_deg"] = _load_rotation_angles(entry, n_views=n_views, path=path)
+        _load_geometry_metadata(out, entry, path=path)
+        _load_grid_metadata(out, entry, path=path)
+        _load_detector_metadata(out, entry, proj, path=path)
+        _load_source_metadata(out, entry)
+        volume_raw, volume_axes_attr = _load_processing_metadata(out, entry, path=path)
+        _load_sample_metadata(out, entry)
 
         # Normalize volume axes if present
         if volume_raw is not None:
@@ -505,6 +767,10 @@ def load_nxtomo(path: str) -> LoadedDataset:
         if "grid" not in out and volume_raw is not None and "volume" in out:
             vol = out["volume"]
             nx, ny, nz = int(vol.shape[0]), int(vol.shape[1]), int(vol.shape[2])
+            _axes_log_warning(
+                "load_nxtomo: missing grid metadata for %s; synthesizing unit grid from loaded volume shape",
+                path,
+            )
             out["grid"] = {
                 "nx": nx,
                 "ny": ny,
@@ -513,7 +779,7 @@ def load_nxtomo(path: str) -> LoadedDataset:
                 "vy": 1.0,
                 "vz": 1.0,
             }
-    return out
+    return LoadedNXTomo.from_dataset(out)
 
 
 def validate_nxtomo(path: str) -> ValidationReport:
@@ -590,39 +856,13 @@ def convert(in_path: str, out_path: str) -> None:
     """Convert between .npz and .nxs based on file extension."""
     if in_path.endswith(".npz") and out_path.endswith((".nxs", ".h5", ".hdf5")):
         data = load_npz(in_path)
-        projections = data["projections"]
-        thetas_deg = data.get("thetas_deg")
-        image_key = data.get("image_key")
-        grid = data.get("grid")
-        detector = data.get("detector")
-        geometry_type = data.get("geometry_type", "parallel")
-        geometry_meta = data.get("geometry_meta")
-        volume = data.get("volume")
-        align_params = data.get("align_params")
-        angle_offset_deg = data.get("angle_offset_deg")
-        misalign_spec = data.get("misalign_spec")
-        frame = data.get("frame")
         save_nxtomo(
             out_path,
-            projections,
-            thetas_deg=thetas_deg,
-            image_key=image_key,
-            grid=grid,
-            detector=detector,
-            geometry_type=geometry_type,
-            geometry_meta=geometry_meta,
-            volume=volume,
-            align_params=align_params,
-            angle_offset_deg=angle_offset_deg,
-            misalign_spec=misalign_spec,
-            frame=frame,
-            sample_name=data.get("sample_name"),
-            source_name=data.get("source_name"),
-            source_type=data.get("source_type"),
-            source_probe=data.get("source_probe"),
+            np.asarray(data["projections"]),
+            metadata=NXTomoMetadata.from_dataset(data),
         )
     elif in_path.endswith((".nxs", ".h5", ".hdf5")) and out_path.endswith(".npz"):
         data = load_nxtomo(in_path)
-        save_npz(out_path, **data)
+        save_npz(out_path, **data.to_dataset_dict())
     else:
         raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf5")

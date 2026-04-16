@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.recon.fista_tv import fista_tv, grad_data_term
+from tomojax.recon.fista_tv import FistaConfig, fista_tv, grad_data_term
 from tomojax.recon.multires import fista_multires, scale_detector, upsample_volume
 
 
@@ -30,7 +30,13 @@ def make_case(nx=16, ny=16, nz=16, n_views=16):
 def test_multires_beats_single_level():
     grid, det, geom, vol, projs = make_case(12, 12, 12, 12)
     # Single-level
-    x_single, info_single = fista_tv(geom, grid, det, projs, iters=6, lambda_tv=0.001)
+    x_single, info_single = fista_tv(
+        geom,
+        grid,
+        det,
+        projs,
+        config=FistaConfig(iters=6, lambda_tv=0.001),
+    )
     g_single, loss_single = grad_data_term(geom, grid, det, projs, x_single)
 
     # Two-level (2 -> 1) with same total iters

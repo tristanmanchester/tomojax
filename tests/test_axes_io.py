@@ -2,7 +2,7 @@ import numpy as np
 import h5py
 import pytest
 
-from tomojax.data.io_hdf5 import save_nxtomo, load_nxtomo, validate_nxtomo
+from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo, validate_nxtomo
 from tomojax.utils.axes import DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES
 
 
@@ -14,6 +14,18 @@ def _basic_projections():
     return np.zeros((5, DET_META["nv"], DET_META["nu"]), dtype=np.float32)
 
 
+def _metadata(**kwargs: object) -> NXTomoMetadata:
+    metadata = NXTomoMetadata(
+        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
+        grid=GRID_META,
+        detector=DET_META,
+        geometry_type="parallel",
+    )
+    for key, value in kwargs.items():
+        setattr(metadata, key, value)
+    return metadata
+
+
 def test_save_volume_writes_zyx_and_attr(tmp_path):
     path = tmp_path / "sample_zyx.nxs"
     volume_xyz = np.arange(
@@ -23,11 +35,7 @@ def test_save_volume_writes_zyx_and_attr(tmp_path):
     save_nxtomo(
         path,
         projections=_basic_projections(),
-        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-        grid=GRID_META,
-        detector=DET_META,
-        geometry_type="parallel",
-        volume=volume_xyz,
+        metadata=_metadata(volume=volume_xyz),
     )
 
     with h5py.File(path, "r") as f:
@@ -56,12 +64,7 @@ def test_load_legacy_xyz_without_attr(tmp_path):
     save_nxtomo(
         path,
         projections=_basic_projections(),
-        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-        grid=GRID_META,
-        detector=DET_META,
-        geometry_type="parallel",
-        volume=volume_xyz,
-        volume_axes_order="xyz",
+        metadata=_metadata(volume=volume_xyz, volume_axes_order="xyz"),
     )
     with h5py.File(path, "r+") as f:
         del f["/entry/processing/tomojax"].attrs["volume_axes_order"]
@@ -85,11 +88,7 @@ def test_roundtrip_xyz_to_zyx_to_xyz(tmp_path):
     save_nxtomo(
         path,
         projections=_basic_projections(),
-        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-        grid=GRID_META,
-        detector=DET_META,
-        geometry_type="parallel",
-        volume=volume_xyz,
+        metadata=_metadata(volume=volume_xyz),
     )
 
     meta = load_nxtomo(path)
@@ -108,10 +107,7 @@ def test_no_change_for_projections_shape(tmp_path):
     save_nxtomo(
         path,
         projections=projections,
-        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-        grid=GRID_META,
-        detector=DET_META,
-        geometry_type="parallel",
+        metadata=_metadata(),
     )
     meta = load_nxtomo(path)
     assert meta["projections"].shape == projections.shape
@@ -123,10 +119,7 @@ def test_load_ignores_malformed_grid_metadata_without_volume_fallback(tmp_path):
     save_nxtomo(
         path,
         projections=projections,
-        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-        grid=GRID_META,
-        detector=DET_META,
-        geometry_type="parallel",
+        metadata=_metadata(),
     )
     with h5py.File(path, "r+") as f:
         f["/entry"].attrs["grid_meta_json"] = "not valid json {{{"
@@ -137,15 +130,81 @@ def test_load_ignores_malformed_grid_metadata_without_volume_fallback(tmp_path):
     assert meta["detector"] == DET_META
 
 
+def test_load_warns_and_defaults_missing_image_key(tmp_path, caplog):
+    path = tmp_path / "missing_image_key_load.nxs"
+    save_nxtomo(
+        path,
+        projections=_basic_projections(),
+        metadata=_metadata(),
+    )
+    with h5py.File(path, "r+") as f:
+        del f["/entry/instrument/detector/image_key"]
+
+    caplog.set_level("WARNING")
+    meta = load_nxtomo(path)
+
+    assert np.array_equal(meta["image_key"], np.zeros((5,), dtype=np.int32))
+    assert any("missing image_key" in record.message for record in caplog.records)
+
+
+def test_load_warns_and_defaults_missing_rotation_angle(tmp_path, caplog):
+    path = tmp_path / "missing_rotation_angle_load.nxs"
+    save_nxtomo(
+        path,
+        projections=_basic_projections(),
+        metadata=_metadata(),
+    )
+    with h5py.File(path, "r+") as f:
+        del f["/entry/sample/transformations/rotation_angle"]
+
+    caplog.set_level("WARNING")
+    meta = load_nxtomo(path)
+
+    assert np.array_equal(meta["thetas_deg"], np.zeros((5,), dtype=np.float32))
+    assert any("missing rotation_angle" in record.message for record in caplog.records)
+
+
+def test_load_warns_on_malformed_grid_metadata(tmp_path, caplog):
+    path = tmp_path / "malformed_grid_warns.nxs"
+    save_nxtomo(
+        path,
+        projections=_basic_projections(),
+        metadata=_metadata(),
+    )
+    with h5py.File(path, "r+") as f:
+        f["/entry"].attrs["grid_meta_json"] = "{not-json"
+
+    caplog.set_level("WARNING")
+    meta = load_nxtomo(path)
+
+    assert "grid" not in meta
+    assert any("malformed grid metadata JSON" in record.message for record in caplog.records)
+
+
+def test_load_warns_and_defaults_missing_detector_metadata(tmp_path, caplog):
+    path = tmp_path / "missing_detector_meta.nxs"
+    save_nxtomo(
+        path,
+        projections=_basic_projections(),
+        metadata=NXTomoMetadata(
+            thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
+            geometry_type="parallel",
+        ),
+    )
+
+    caplog.set_level("WARNING")
+    meta = load_nxtomo(path)
+
+    assert meta["detector"] == DET_META
+    assert any("missing detector metadata" in record.message for record in caplog.records)
+
+
 def test_validate_detects_missing_image_key(tmp_path):
     path = tmp_path / "missing_image_key.nxs"
     save_nxtomo(
         path,
         projections=_basic_projections(),
-        thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-        grid=GRID_META,
-        detector=DET_META,
-        geometry_type="parallel",
+        metadata=_metadata(),
     )
     with h5py.File(path, "r+") as f:
         del f["/entry/instrument/detector/image_key"]
@@ -161,8 +220,5 @@ def test_save_nxtomo_rejects_unsupported_geometry_types(tmp_path):
         save_nxtomo(
             path,
             projections=_basic_projections(),
-            thetas_deg=np.linspace(0.0, 180.0, 5, dtype=np.float32),
-            grid=GRID_META,
-            detector=DET_META,
-            geometry_type="custom",
+            metadata=_metadata(geometry_type="custom"),
         )

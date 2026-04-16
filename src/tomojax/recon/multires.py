@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jax.image as jimage
 
 from ..core.geometry.base import Grid, Detector, Geometry
-from .fista_tv import fista_tv, grad_data_term
+from .fista_tv import FistaConfig, fista_tv, grad_data_term
 from ..utils.logging import progress_iter
 
 
@@ -176,7 +176,13 @@ def fista_multires(
         coarse_iters = int(sum(iters_per_level[:-1]))
         if coarse_iters <= 3:
             total_iters = int(sum(iters_per_level))
-            x_fine, info = fista_tv(geometry, grid, detector, projections, iters=total_iters, lambda_tv=lambda_tv)
+            x_fine, info = fista_tv(
+                geometry,
+                grid,
+                detector,
+                projections,
+                config=FistaConfig(iters=total_iters, lambda_tv=lambda_tv),
+            )
             return x_fine, {"loss": info.get("loss", []), "factors": list(factors)}
     x_init = None
     prev_factor: int | None = None
@@ -192,7 +198,14 @@ def fista_multires(
             x0 = upsample_volume(x_init, f_up, (g.nx, g.ny, g.nz))
         else:
             x0 = None
-        x_lvl, info = fista_tv(geometry, g, d, y, iters=iters, lambda_tv=lambda_tv, init_x=x0)
+        x_lvl, info = fista_tv(
+            geometry,
+            g,
+            d,
+            y,
+            init_x=x0,
+            config=FistaConfig(iters=iters, lambda_tv=lambda_tv),
+        )
         loss_hist.extend(info.get("loss", []))
         # Prepare initialization for next (finer) level
         prev_factor = lvl["factor"]

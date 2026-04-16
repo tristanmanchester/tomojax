@@ -10,7 +10,7 @@ from tomojax.data.simulate import SimConfig, simulate
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp
-from tomojax.recon.fista_tv import fista_tv
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.align.pipeline import align, AlignConfig
 from tomojax.align.parametrizations import se3_from_5d
 
@@ -75,7 +75,13 @@ def test_integration_parallel_fista_decreases_from_sim():
     grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
     det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
-    x, info = fista_tv(geom, grid, det, jnp.asarray(data["projections"]), iters=5, lambda_tv=0.001)
+    x, info = fista_tv(
+        geom,
+        grid,
+        det,
+        jnp.asarray(data["projections"]),
+        config=FistaConfig(iters=5, lambda_tv=0.001),
+    )
     assert info["loss"][0] >= info["loss"][-1]
 
 
@@ -87,7 +93,13 @@ def test_integration_lamino_fista_decreases():
     det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
     from tomojax.core.geometry import LaminographyGeometry
     geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"], tilt_deg=30.0, tilt_about="x")
-    x, info = fista_tv(geom, grid, det, jnp.asarray(data["projections"]), iters=4, lambda_tv=0.001)
+    x, info = fista_tv(
+        geom,
+        grid,
+        det,
+        jnp.asarray(data["projections"]),
+        config=FistaConfig(iters=4, lambda_tv=0.001),
+    )
     assert info["loss"][0] >= info["loss"][-1]
 
 

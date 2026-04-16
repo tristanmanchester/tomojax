@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from tomojax.cli import loss_bench
+from tomojax.data.io_hdf5 import LoadedNXTomo
 
 
 def test_loss_bench_skipped_loss_does_not_compute_metrics_or_emit_output(
@@ -29,7 +30,11 @@ def test_loss_bench_skipped_loss_does_not_compute_metrics_or_emit_output(
     monkeypatch.setattr(
         loss_bench, "_make_misaligned_dataset", lambda *args, **kwargs: str(mis_path)
     )
-    monkeypatch.setattr(loss_bench, "load_nxtomo", lambda path: meta_mis)
+    monkeypatch.setattr(
+        loss_bench,
+        "load_nxtomo",
+        lambda path: LoadedNXTomo.from_dataset(meta_mis),
+    )
     monkeypatch.setattr(loss_bench, "setup_logging", lambda: None)
     monkeypatch.setattr(loss_bench, "log_jax_env", lambda: None)
 

@@ -2,8 +2,13 @@
 
 This directory contains the fixed benchmark harness used by the remote Runpod controller.
 
-During optimisation work, treat everything under `bench/` as read-only. The optimisation
- target is TomoJAX source code, not the benchmark itself.
+Reusable benchmark helpers that are shared with packaged CLIs live under
+`src/tomojax/bench/`. The `bench/` tree is the controller-facing harness: it owns
+profiles, fixture orchestration, and reporting around those reusable helpers.
+
+During optimisation work, prefer changing TomoJAX source code and shared benchmark support
+under `src/tomojax/bench/` before editing the controller harness. Reach for changes in
+`bench/` only when the benchmark contract itself needs to move.
 
 ## Why this exists
 
@@ -17,6 +22,16 @@ more repeatable contract:
 - one stable metrics JSON.
 
 This harness provides that contract.
+
+## Setup
+
+Benchmark-harness runs need the benchmark extra in addition to the normal dev environment:
+
+```bash
+uv sync --extra bench --extra cuda12 --group dev
+```
+
+For CPU-only benchmark work, replace `--extra cuda12` with `--extra cpu`.
 
 ## Profile tiers
 

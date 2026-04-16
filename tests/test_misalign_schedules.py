@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 from tomojax.core.geometry import Grid, Detector
-from tomojax.data.io_hdf5 import save_nxtomo, load_nxtomo
+from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.cli.misalign import _apply_box
 
 
@@ -14,23 +14,27 @@ if sys.version_info < (3, 8):
     pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
-def _make_gt(path, nx=16, ny=16, nz=16, n_views=8):
+def _make_gt(path, nx=16, ny=16, nz=16, n_views=8, *, include_grid=True):
     grid = Grid(nx=nx, ny=ny, nz=nz, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=nx, nv=nz, du=1.0, dv=1.0, det_center=(0.0, 0.0))
     thetas = np.linspace(0.0, 180.0, n_views, endpoint=False)
     # Simple phantom: centered cube
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
     vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
+    metadata = NXTomoMetadata(
+        thetas_deg=thetas,
+        detector=det,
+        volume=np.asarray(vol),
+        geometry_type="parallel",
+    )
+    if include_grid:
+        metadata.grid = grid
     save_nxtomo(
         path,
         projections=np.zeros(
             (n_views, nz, nx), dtype=np.float32
         ),  # placeholder; misalign will forward project
-        thetas_deg=thetas,
-        grid=grid,
-        detector=det,
-        volume=np.asarray(vol),
-        geometry_type="parallel",
+        metadata=metadata,
     )
     return grid, det, thetas
 
@@ -154,3 +158,35 @@ def test_misalign_cli_rejects_unsupported_geometry_types(tmp_path):
 
     with pytest.raises(ValueError, match="Unsupported geometry_type"):
         _run_cli(tmp_path, in_path, out_path, [])
+
+
+def test_misalign_cli_uses_shared_geometry_builder_for_volume_fallback(
+    monkeypatch,
+    tmp_path,
+):
+    in_path = os.path.join(tmp_path, "gt_volume_only.nxs")
+    out_path = os.path.join(tmp_path, "out_volume_only.nxs")
+    _make_gt(in_path, n_views=8, include_grid=False)
+
+    from tomojax.cli import misalign as cli
+
+    calls = []
+    real_builder = cli.build_geometry_from_meta
+
+    def _tracked_builder(meta, **kwargs):
+        calls.append(kwargs.copy())
+        return real_builder(meta, **kwargs)
+
+    monkeypatch.setattr(cli, "build_geometry_from_meta", _tracked_builder)
+
+    _run_cli(tmp_path, in_path, out_path, ["--pert", "angle:linear:delta=1deg"])
+
+    assert calls
+    assert calls[0]["apply_saved_alignment"] is False
+    assert calls[0]["volume_shape"] == (16, 16, 16)
+
+    data = load_nxtomo(out_path)
+    grid = data["grid"]
+    assert grid["nx"] == 16
+    assert grid["ny"] == 16
+    assert grid["nz"] == 16

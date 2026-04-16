@@ -8,7 +8,7 @@ scalar loss. Heavy precomputations that only depend on the targets happen once i
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Literal, Mapping, Optional, TypeAlias, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -32,6 +32,369 @@ class LossState:
     bw_y: Optional[float] = None
     dt_edge: Optional[jnp.ndarray] = None
     thr: Optional[jnp.ndarray] = None  # per-view scalar thresholds broadcastable
+
+
+@dataclass(frozen=True, slots=True)
+class L2LossSpec:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class L2OtsuLossSpec:
+    temp: float = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class PWLSLossSpec:
+    a: float = 1.0
+    b: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeL2LossSpec:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class RobustLossSpec:
+    kind: Literal[
+        "charbonnier",
+        "huber",
+        "cauchy",
+        "welsch",
+        "student_t",
+        "barron",
+        "correntropy",
+    ]
+    eps: float = 1e-3
+    delta: float = 1.0
+    c: float = 1.0
+    nu: float = 4.0
+    sigma: float = 1.0
+    alpha: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class CorrelationLossSpec:
+    kind: Literal["zncc", "phasecorr", "fft_mag"]
+    eps: float = 1e-5
+    beta: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class SSIMLossSpec:
+    multiscale: bool = False
+    otsu_mask: bool = False
+    K1: float = 0.01
+    K2: float = 0.03
+    window: int = 7
+    levels: int = 3
+
+
+@dataclass(frozen=True, slots=True)
+class TverskyLossSpec:
+    temp: float = 0.5
+    alpha: float = 0.7
+    beta: float = 0.3
+    gamma: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class GradientLossSpec:
+    kind: Literal["grad_l1", "ngf", "grad_orient", "chamfer_edge"]
+    eps: float = 1e-3
+
+
+@dataclass(frozen=True, slots=True)
+class InformationLossSpec:
+    normalized: bool = False
+    renyi_alpha: float | None = None
+    bins: int = 32
+    bw_x: float | None = None
+    bw_y: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SWDLossSpec:
+    n_samples: int = -1
+    p: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class MindLossSpec:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class PoissonLossSpec:
+    pass
+
+
+AlignmentLossSpec: TypeAlias = (
+    L2LossSpec
+    | L2OtsuLossSpec
+    | PWLSLossSpec
+    | EdgeL2LossSpec
+    | RobustLossSpec
+    | CorrelationLossSpec
+    | SSIMLossSpec
+    | TverskyLossSpec
+    | GradientLossSpec
+    | InformationLossSpec
+    | SWDLossSpec
+    | MindLossSpec
+    | PoissonLossSpec
+)
+
+PerViewLossFn: TypeAlias = Callable[
+    [jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]],
+    jnp.ndarray,
+]
+GaussNewtonWeightFn: TypeAlias = Callable[[jnp.ndarray, Optional[jnp.ndarray]], jnp.ndarray]
+
+
+@dataclass(frozen=True, slots=True)
+class LossAdapter:
+    spec: AlignmentLossSpec
+    name: str
+    state: LossState
+    per_view_loss: PerViewLossFn
+    supports_gauss_newton: bool
+    gauss_newton_weights: GaussNewtonWeightFn
+
+
+_LOSS_ALIASES: dict[str, str] = {
+    "charb": "charbonnier",
+    "lorentzian": "cauchy",
+    "leclerc": "welsch",
+    "ncc": "zncc",
+    "ms-ssim": "ms_ssim",
+    "msssim": "ms_ssim",
+    "ms_ssim": "ms_ssim",
+    "go": "grad_orient",
+    "phase_corr_soft": "phasecorr",
+    "fftmag": "fft_mag",
+    "chamfer": "chamfer_edge",
+    "poisson_nll": "poisson",
+    "student-t": "student_t",
+    "robust_general": "barron",
+    "mcc": "correntropy",
+    "mi_kde": "mi",
+    "nmi_kde": "nmi",
+    "tsallis_mi": "renyi_mi",
+    "l2-otsu": "l2_otsu",
+    "otsu-l2": "l2_otsu",
+    "edge_aware_l2": "edge_l2",
+    "sliced_wasserstein": "swd",
+    "focal_tversky": "tversky",
+}
+
+
+def canonicalize_loss_kind(kind: str) -> str:
+    normalized = str(kind).strip().lower()
+    return _LOSS_ALIASES.get(normalized, normalized)
+
+
+def loss_spec_name(spec: AlignmentLossSpec) -> str:
+    if isinstance(spec, L2LossSpec):
+        return "l2"
+    if isinstance(spec, L2OtsuLossSpec):
+        return "l2_otsu"
+    if isinstance(spec, PWLSLossSpec):
+        return "pwls"
+    if isinstance(spec, EdgeL2LossSpec):
+        return "edge_l2"
+    if isinstance(spec, RobustLossSpec):
+        return spec.kind
+    if isinstance(spec, CorrelationLossSpec):
+        return spec.kind
+    if isinstance(spec, SSIMLossSpec):
+        if spec.otsu_mask:
+            return "ssim_otsu"
+        return "ms_ssim" if spec.multiscale else "ssim"
+    if isinstance(spec, TverskyLossSpec):
+        return "tversky"
+    if isinstance(spec, GradientLossSpec):
+        return spec.kind
+    if isinstance(spec, InformationLossSpec):
+        if spec.renyi_alpha is not None:
+            return "renyi_mi"
+        return "nmi" if spec.normalized else "mi"
+    if isinstance(spec, SWDLossSpec):
+        return "swd"
+    if isinstance(spec, MindLossSpec):
+        return "mind"
+    if isinstance(spec, PoissonLossSpec):
+        return "poisson"
+    raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
+
+
+def loss_spec_params(spec: AlignmentLossSpec) -> Dict[str, float]:
+    if isinstance(spec, L2LossSpec | EdgeL2LossSpec | MindLossSpec | PoissonLossSpec):
+        return {}
+    if isinstance(spec, L2OtsuLossSpec):
+        return {"temp": float(spec.temp)}
+    if isinstance(spec, PWLSLossSpec):
+        return {"a": float(spec.a), "b": float(spec.b)}
+    if isinstance(spec, RobustLossSpec):
+        params: Dict[str, float] = {}
+        if spec.kind == "charbonnier":
+            params["eps"] = float(spec.eps)
+        elif spec.kind == "huber":
+            params["delta"] = float(spec.delta)
+        elif spec.kind in {"cauchy", "welsch"}:
+            params["c"] = float(spec.c)
+        elif spec.kind == "student_t":
+            params["nu"] = float(spec.nu)
+            params["sigma"] = float(spec.sigma)
+        elif spec.kind == "barron":
+            params["alpha"] = float(spec.alpha)
+            params["c"] = float(spec.c)
+        elif spec.kind == "correntropy":
+            params["sigma"] = float(spec.sigma)
+        return params
+    if isinstance(spec, CorrelationLossSpec):
+        if spec.kind == "zncc":
+            return {"eps": float(spec.eps)}
+        if spec.kind == "phasecorr":
+            return {"beta": float(spec.beta)}
+        return {}
+    if isinstance(spec, SSIMLossSpec):
+        params = {
+            "K1": float(spec.K1),
+            "K2": float(spec.K2),
+            "window": float(spec.window),
+        }
+        if spec.multiscale:
+            params["levels"] = float(spec.levels)
+        return params
+    if isinstance(spec, TverskyLossSpec):
+        return {
+            "temp": float(spec.temp),
+            "alpha": float(spec.alpha),
+            "beta": float(spec.beta),
+            "gamma": float(spec.gamma),
+        }
+    if isinstance(spec, GradientLossSpec):
+        return {"eps": float(spec.eps)} if spec.kind in {"ngf", "grad_orient"} else {}
+    if isinstance(spec, InformationLossSpec):
+        params = {"bins": float(spec.bins)}
+        if spec.bw_x is not None:
+            params["bw_x"] = float(spec.bw_x)
+        if spec.bw_y is not None:
+            params["bw_y"] = float(spec.bw_y)
+        if spec.normalized:
+            params["nmi"] = 1.0
+        if spec.renyi_alpha is not None:
+            params["alpha"] = float(spec.renyi_alpha)
+        return params
+    if isinstance(spec, SWDLossSpec):
+        return {"n_samples": float(spec.n_samples), "p": float(spec.p)}
+    raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
+
+
+def parse_loss_spec(
+    kind: str,
+    params: Mapping[str, float] | None = None,
+) -> AlignmentLossSpec:
+    canonical = canonicalize_loss_kind(kind)
+    raw = {} if params is None else {str(k): float(v) for k, v in params.items()}
+
+    def _unused(consumed: set[str]) -> None:
+        extras = sorted(set(raw) - consumed)
+        if extras:
+            raise ValueError(f"Unsupported parameters for {canonical}: {', '.join(extras)}")
+
+    if canonical == "l2":
+        _unused(set())
+        return L2LossSpec()
+    if canonical == "l2_otsu":
+        _unused({"temp"})
+        return L2OtsuLossSpec(temp=float(raw.get("temp", 0.5)))
+    if canonical == "pwls":
+        _unused({"a", "b"})
+        return PWLSLossSpec(a=float(raw.get("a", 1.0)), b=float(raw.get("b", 0.0)))
+    if canonical == "edge_l2":
+        _unused(set())
+        return EdgeL2LossSpec()
+    if canonical in {"charbonnier", "huber", "cauchy", "welsch", "student_t", "barron", "correntropy"}:
+        _unused({"eps", "delta", "c", "nu", "sigma", "alpha"})
+        return RobustLossSpec(
+            kind=canonical,  # type: ignore[arg-type]
+            eps=float(raw.get("eps", 1e-3)),
+            delta=float(raw.get("delta", 1.0)),
+            c=float(raw.get("c", 1.0)),
+            nu=float(raw.get("nu", 4.0)),
+            sigma=float(raw.get("sigma", 1.0)),
+            alpha=float(raw.get("alpha", 1.0)),
+        )
+    if canonical in {"zncc", "phasecorr", "fft_mag"}:
+        _unused({"eps", "beta"})
+        return CorrelationLossSpec(
+            kind=canonical,  # type: ignore[arg-type]
+            eps=float(raw.get("eps", 1e-5)),
+            beta=float(raw.get("beta", 10.0)),
+        )
+    if canonical == "ssim":
+        _unused({"K1", "K2", "window"})
+        return SSIMLossSpec(
+            K1=float(raw.get("K1", 0.01)),
+            K2=float(raw.get("K2", 0.03)),
+            window=int(raw.get("window", 7)),
+        )
+    if canonical == "ms_ssim":
+        _unused({"K1", "K2", "window", "levels"})
+        return SSIMLossSpec(
+            multiscale=True,
+            K1=float(raw.get("K1", 0.01)),
+            K2=float(raw.get("K2", 0.03)),
+            window=int(raw.get("window", 7)),
+            levels=int(raw.get("levels", 3)),
+        )
+    if canonical == "ssim_otsu":
+        _unused({"K1", "K2", "window"})
+        return SSIMLossSpec(
+            otsu_mask=True,
+            K1=float(raw.get("K1", 0.01)),
+            K2=float(raw.get("K2", 0.03)),
+            window=int(raw.get("window", 7)),
+        )
+    if canonical == "tversky":
+        _unused({"temp", "alpha", "beta", "gamma"})
+        return TverskyLossSpec(
+            temp=float(raw.get("temp", 0.5)),
+            alpha=float(raw.get("alpha", 0.7)),
+            beta=float(raw.get("beta", 0.3)),
+            gamma=float(raw.get("gamma", 1.0)),
+        )
+    if canonical in {"grad_l1", "ngf", "grad_orient", "chamfer_edge"}:
+        _unused({"eps"})
+        return GradientLossSpec(
+            kind=canonical,  # type: ignore[arg-type]
+            eps=float(raw.get("eps", 1e-3)),
+        )
+    if canonical in {"mi", "nmi", "renyi_mi"}:
+        _unused({"bins", "bw_x", "bw_y", "alpha"})
+        return InformationLossSpec(
+            normalized=(canonical == "nmi"),
+            renyi_alpha=(float(raw.get("alpha", 1.5)) if canonical == "renyi_mi" else None),
+            bins=int(raw.get("bins", 32)),
+            bw_x=raw.get("bw_x"),
+            bw_y=raw.get("bw_y"),
+        )
+    if canonical == "swd":
+        _unused({"n_samples", "p"})
+        return SWDLossSpec(
+            n_samples=int(raw.get("n_samples", -1)),
+            p=int(raw.get("p", 1)),
+        )
+    if canonical == "mind":
+        _unused(set())
+        return MindLossSpec()
+    if canonical == "poisson":
+        _unused(set())
+        return PoissonLossSpec()
+    raise ValueError(f"Unknown loss kind: {kind}")
 
 
 def _safe_epsilon(p: Dict[str, float], key: str, default: float) -> float:
@@ -387,7 +750,11 @@ def _loss_mind(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarra
     return 0.5 * jnp.sum((fp - ft) ** 2)
 
 
-def build_loss(kind: str, params: Optional[Dict[str, float]], targets: jnp.ndarray) -> Tuple:
+def _build_loss_from_kind(
+    kind: str,
+    params: Optional[Dict[str, float]],
+    targets: jnp.ndarray,
+) -> Tuple[PerViewLossFn, LossState]:
     k = str(kind).lower()
     p = {} if params is None else {str(a): float(b) for a, b in params.items()}
     state = LossState(kind=k, params=p)
@@ -534,3 +901,73 @@ def build_loss(kind: str, params: Optional[Dict[str, float]], targets: jnp.ndarr
         )
 
     return per_view_fn, state
+
+
+def _edge_aware_ls_weights(y_chunk: jnp.ndarray) -> jnp.ndarray:
+    edge_kx = jnp.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]], jnp.float32) / 8.0
+    edge_ky = jnp.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], jnp.float32) / 8.0
+    y4 = y_chunk[..., None]
+    gx = jax.lax.conv_general_dilated(
+        y4,
+        edge_kx[:, :, None, None],
+        (1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    )
+    gy = jax.lax.conv_general_dilated(
+        y4,
+        edge_ky[:, :, None, None],
+        (1, 1),
+        padding="SAME",
+        dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    )
+    mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
+    return jnp.sqrt(1.0 + mag)
+
+
+def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNewtonWeightFn]:
+    if isinstance(spec, L2LossSpec):
+        return True, lambda y_chunk, mask_chunk: jnp.ones_like(y_chunk)
+    if isinstance(spec, L2OtsuLossSpec):
+        temp = jnp.float32(max(float(spec.temp), 1e-6))
+
+        def _otsu_weights(y_chunk: jnp.ndarray, mask_chunk: Optional[jnp.ndarray]) -> jnp.ndarray:
+            if mask_chunk is None:
+                return jnp.ones_like(y_chunk)
+            base = mask_chunk.astype(jnp.float32)
+            return jax.nn.sigmoid((base - 0.5) / temp)
+
+        return True, _otsu_weights
+    if isinstance(spec, PWLSLossSpec):
+        a = jnp.float32(spec.a)
+        b = jnp.float32(spec.b)
+        return True, lambda y_chunk, mask_chunk: jnp.sqrt(
+            1.0 / (a * jnp.clip(y_chunk, 0.0) + b + 1e-6)
+        )
+    if isinstance(spec, EdgeL2LossSpec):
+        return True, lambda y_chunk, mask_chunk: _edge_aware_ls_weights(y_chunk)
+    return False, lambda y_chunk, mask_chunk: jnp.ones_like(y_chunk)
+
+
+def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAdapter:
+    name = loss_spec_name(spec)
+    params = loss_spec_params(spec)
+    per_view_loss, state = _build_loss_from_kind(name, params, targets)
+    supports_gauss_newton, gauss_newton_weights = _gauss_newton_weight_builder(spec)
+    return LossAdapter(
+        spec=spec,
+        name=name,
+        state=state,
+        per_view_loss=per_view_loss,
+        supports_gauss_newton=supports_gauss_newton,
+        gauss_newton_weights=gauss_newton_weights,
+    )
+
+
+def build_loss(
+    kind: str,
+    params: Optional[Dict[str, float]],
+    targets: jnp.ndarray,
+) -> Tuple[PerViewLossFn, LossState]:
+    adapter = build_loss_adapter(parse_loss_spec(kind, params), targets)
+    return adapter.per_view_loss, adapter.state

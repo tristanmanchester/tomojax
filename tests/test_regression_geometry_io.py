@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 
 from tomojax.core.geometry.base import Detector, Grid
-from tomojax.data.io_hdf5 import convert, load_nxtomo, load_npz, save_npz
+from tomojax.data.io_hdf5 import NXTomoMetadata, convert, load_nxtomo, load_npz, save_npz
 from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.utils.axes import infer_disk_axes
 from tomojax.utils.fov import grid_from_detector_fov_cube
@@ -108,11 +108,13 @@ def test_load_nxtomo_preserves_legacy_xyz_without_attr_or_grid(tmp_path):
     save_nxtomo(
         str(nxs_path),
         projections,
-        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
-        detector={"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]},
-        geometry_type="parallel",
-        volume=volume_xyz,
-        volume_axes_order="xyz",
+        metadata=NXTomoMetadata(
+            thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+            detector={"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]},
+            geometry_type="parallel",
+            volume=volume_xyz,
+            volume_axes_order="xyz",
+        ),
     )
 
     with h5py.File(nxs_path, "r+") as f:

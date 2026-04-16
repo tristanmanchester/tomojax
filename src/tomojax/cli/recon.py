@@ -7,13 +7,13 @@ import numpy as np
 import jax.numpy as jnp
 import os
 
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
+from ..data.geometry_meta import build_geometry_from_meta
+from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from ..recon.fbp import fbp
-from ..recon.fista_tv import fista_tv
+from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
-from ._geometry import build_geometry_from_meta, build_nominal_geometry_from_meta as build_geometry
 from ._runtime import transfer_guard_context
 
 from ..utils.fov import (
@@ -60,12 +60,8 @@ def main() -> None:
         default=16,
         help="SPDHG: views per stochastic block",
     )
-    p.add_argument(
-        "--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar"
-    )
-    p.add_argument(
-        "--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order"
-    )
+    p.add_argument("--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar")
+    p.add_argument("--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order")
     p.add_argument(
         "--spdhg-tau",
         type=float,
@@ -174,15 +170,14 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     meta = load_nxtomo(args.data)
-    initial_grid_override = (
-        args.grid if ("grid" not in meta and args.grid is not None) else None
-    )
+    geometry_meta = meta.geometry_inputs()
+    initial_grid_override = args.grid if (meta.grid is None and args.grid is not None) else None
     grid, detector, geom = build_geometry_from_meta(
-        meta,
+        geometry_meta,
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
     )
-    proj = jnp.asarray(meta["projections"], dtype=jnp.float32)
+    proj = jnp.asarray(meta.projections, dtype=jnp.float32)
 
     # Keep FBP/FISTA on their streamed defaults; this flag is SPDHG-specific.
     spdhg_vpb = int(args.views_per_batch) if int(args.views_per_batch) > 0 else 1
@@ -196,7 +191,7 @@ def main() -> None:
     # Optional ROI selection
     recon_grid = grid
     roi_mode = str(args.roi).lower()
-    is_parallel = meta.get("geometry_type", "parallel") == "parallel"
+    is_parallel = meta.geometry_type == "parallel"
     if roi_mode != "off":
         try:
             info = compute_roi(grid, detector, crop_y_to_u=is_parallel)
@@ -211,22 +206,16 @@ def main() -> None:
             )
             if roi_mode == "auto" and det_smaller:
                 if is_parallel:
-                    recon_grid = grid_from_detector_fov_slices(
-                        grid, detector, crop_y_to_u=True
-                    )
+                    recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
                 else:
-                    recon_grid = grid_from_detector_fov(
-                        grid, detector, crop_y_to_u=False
-                    )
+                    recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
             elif roi_mode == "cube":
                 # Same as align default policy for cubic volumes
                 from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
 
                 recon_grid = _grid_cube(grid, detector, crop_y_to_u=is_parallel)
             elif roi_mode == "bbox":
-                recon_grid = grid_from_detector_fov(
-                    grid, detector, crop_y_to_u=is_parallel
-                )
+                recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
         except Exception:
             # Fall back silently if FOV computation fails
             recon_grid = grid
@@ -240,7 +229,7 @@ def main() -> None:
         # Once ROI and explicit sizing resolve an effective grid, keep that grid's
         # origin/centre metadata authoritative when rebuilding geometry.
         _, _, geom = build_geometry_from_meta(
-            meta,
+            geometry_meta,
             grid_override=recon_grid,
             apply_saved_alignment=False,
         )
@@ -271,21 +260,24 @@ def main() -> None:
         if vol_mask is not None:
             vol = vol * vol_mask
     elif args.algo == "fista":
+        cfg = FistaConfig(
+            iters=int(args.iters),
+            lambda_tv=float(args.lambda_tv),
+            L=(float(args.L) if args.L is not None else None),
+            views_per_batch=1,
+            projector_unroll=1,
+            checkpoint_projector=bool(args.checkpoint_projector),
+            gather_dtype=_gather,
+            tv_prox_iters=int(args.tv_prox_iters),
+            support=vol_mask,
+        )
         with transfer_guard_context(args.transfer_guard):
             vol, info = fista_tv(
                 geom,
                 recon_grid,
                 detector,
                 proj,
-                iters=args.iters,
-                lambda_tv=args.lambda_tv,
-                L=(float(args.L) if args.L is not None else None),
-                views_per_batch=1,
-                projector_unroll=1,
-                checkpoint_projector=bool(args.checkpoint_projector),
-                gather_dtype=_gather,
-                tv_prox_iters=int(args.tv_prox_iters),
-                vol_mask=vol_mask,
+                config=cfg,
             )
     else:  # spdhg
         # Build SPDHG config
@@ -297,13 +289,9 @@ def main() -> None:
             seed=int(args.spdhg_seed),
             tau=(float(args.spdhg_tau) if args.spdhg_tau is not None else None),
             sigma_data=(
-                float(args.spdhg_sigma_data)
-                if args.spdhg_sigma_data is not None
-                else None
+                float(args.spdhg_sigma_data) if args.spdhg_sigma_data is not None else None
             ),
-            sigma_tv=(
-                float(args.spdhg_sigma_tv) if args.spdhg_sigma_tv is not None else None
-            ),
+            sigma_tv=(float(args.spdhg_sigma_tv) if args.spdhg_sigma_tv is not None else None),
             projector_unroll=1,
             checkpoint_projector=bool(args.checkpoint_projector),
             gather_dtype=_gather,
@@ -342,25 +330,15 @@ def main() -> None:
 
     # Save the reconstruction in the object (sample) frame.
     # Reuse host projections from metadata to avoid a device-to-host copy.
+    save_meta = meta.copy_metadata()
+    save_meta.grid = recon_grid.to_dict()
+    save_meta.volume = np.asarray(vol)
+    save_meta.frame = str(args.frame)
+    save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(
         args.out,
-        projections=meta["projections"],
-        thetas_deg=np.asarray(meta["thetas_deg"]),
-        image_key=meta.get("image_key"),
-        grid=recon_grid.to_dict(),
-        detector=meta.get("detector"),
-        geometry_type=meta.get("geometry_type", "parallel"),
-        geometry_meta=meta.get("geometry_meta"),
-        volume=np.asarray(vol),
-        align_params=meta.get("align_params"),
-        angle_offset_deg=meta.get("angle_offset_deg"),
-        misalign_spec=meta.get("misalign_spec"),
-        frame=str(args.frame),
-        sample_name=meta.get("sample_name"),
-        source_name=meta.get("source_name"),
-        source_type=meta.get("source_type"),
-        source_probe=meta.get("source_probe"),
-        volume_axes_order=str(args.volume_axes),
+        projections=meta.projections,
+        metadata=save_meta,
     )
     logging.info("Saved reconstruction to %s", args.out)
 

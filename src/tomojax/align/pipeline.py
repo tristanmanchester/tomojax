@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import logging
 import math
 import time
@@ -12,10 +12,10 @@ import jax.numpy as jnp
 from ..core.geometry.base import Geometry, Grid, Detector
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device
-from ..recon.fista_tv import fista_tv
+from ..recon.fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
-from .losses import build_loss, loss_is_within_relative_tolerance
+from .losses import L2OtsuLossSpec, AlignmentLossSpec, build_loss_adapter, loss_is_within_relative_tolerance
 from ..utils.fov import cylindrical_mask_xy
 
 
@@ -242,8 +242,7 @@ class AlignConfig:
     gn_accept_only_improving: bool = True
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
-    loss_kind: str = "l2_otsu"
-    loss_params: dict[str, float] | None = None
+    loss: AlignmentLossSpec = field(default_factory=L2OtsuLossSpec)
 
 
 def align(
@@ -321,7 +320,9 @@ def align(
         vol_mask = None
 
     # Build per-view loss once (may precompute masks on targets)
-    per_view_loss_fn, loss_state = build_loss(cfg.loss_kind, cfg.loss_params, projections)
+    loss_adapter = build_loss_adapter(cfg.loss, projections)
+    per_view_loss_fn = loss_adapter.per_view_loss
+    loss_state = loss_adapter.state
 
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
@@ -330,16 +331,7 @@ def align(
     num_chunks = (n_views + chunk_size - 1) // chunk_size
     loss_mask = getattr(loss_state, "mask", None)
     has_loss_mask = loss_mask is not None
-    loss_kind_norm = str(cfg.loss_kind).lower()
-    ls_like = loss_kind_norm in (
-        "l2",
-        "l2_otsu",
-        "l2-otsu",
-        "otsu-l2",
-        "pwls",
-        "edge_l2",
-        "edge_aware_l2",
-    )
+    ls_like = loss_adapter.supports_gauss_newton
 
     def _chunk_schedule(i: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         i = jnp.asarray(i, dtype=jnp.int32)
@@ -605,42 +597,10 @@ def align(
 
     _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
 
-    otsu_temp = jnp.float32((cfg.loss_params or {}).get("temp", 0.5))
-    pwls_a = jnp.float32((cfg.loss_params or {}).get("a", 1.0))
-    pwls_b = jnp.float32((cfg.loss_params or {}).get("b", 0.0))
-    edge_kx = jnp.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]], jnp.float32) / 8.0
-    edge_ky = jnp.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], jnp.float32) / 8.0
-
     if has_loss_mask:
 
         def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
-            if loss_kind_norm in ("l2",):
-                return jnp.ones_like(y_chunk)
-            if loss_kind_norm in ("l2_otsu", "l2-otsu", "otsu-l2"):
-                base = mask_chunk.astype(jnp.float32)
-                return jax.nn.sigmoid((base - 0.5) / jnp.maximum(otsu_temp, 1e-6))
-            if loss_kind_norm == "pwls":
-                w = 1.0 / (pwls_a * jnp.clip(y_chunk, 0.0) + pwls_b + 1e-6)
-                return jnp.sqrt(w)
-            if loss_kind_norm in ("edge_l2", "edge_aware_l2"):
-                y4 = y_chunk[..., None]
-                gx = jax.lax.conv_general_dilated(
-                    y4,
-                    edge_kx[:, :, None, None],
-                    (1, 1),
-                    padding="SAME",
-                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
-                )
-                gy = jax.lax.conv_general_dilated(
-                    y4,
-                    edge_ky[:, :, None, None],
-                    (1, 1),
-                    padding="SAME",
-                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
-                )
-                mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
-                return jnp.sqrt(1.0 + mag)
-            return jnp.ones_like(y_chunk)
+            return loss_adapter.gauss_newton_weights(y_chunk, mask_chunk)
 
         def _gn_update_all(params5, vol):
             masked_vol = _apply_vol_mask(vol)
@@ -676,30 +636,7 @@ def align(
     else:
 
         def _ls_weight_chunk(y_chunk: jnp.ndarray) -> jnp.ndarray:
-            if loss_kind_norm in ("l2", "l2_otsu", "l2-otsu", "otsu-l2"):
-                return jnp.ones_like(y_chunk)
-            if loss_kind_norm == "pwls":
-                w = 1.0 / (pwls_a * jnp.clip(y_chunk, 0.0) + pwls_b + 1e-6)
-                return jnp.sqrt(w)
-            if loss_kind_norm in ("edge_l2", "edge_aware_l2"):
-                y4 = y_chunk[..., None]
-                gx = jax.lax.conv_general_dilated(
-                    y4,
-                    edge_kx[:, :, None, None],
-                    (1, 1),
-                    padding="SAME",
-                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
-                )
-                gy = jax.lax.conv_general_dilated(
-                    y4,
-                    edge_ky[:, :, None, None],
-                    (1, 1),
-                    padding="SAME",
-                    dimension_numbers=("NHWC", "HWIO", "NHWC"),
-                )
-                mag = jnp.sqrt(gx[..., 0] ** 2 + gy[..., 0] ** 2)
-                return jnp.sqrt(1.0 + mag)
-            return jnp.ones_like(y_chunk)
+            return loss_adapter.gauss_newton_weights(y_chunk, None)
 
         def _gn_update_all(params5, vol):
             masked_vol = _apply_vol_mask(vol)
@@ -876,15 +813,10 @@ def align(
                 return geometry.rays_for_view(i)
 
         def _run_fista_safe(vpb: int | None, unroll: int, gather: str, gm: str):
-            return fista_tv(
-                _GAll(),
-                grid,
-                detector,
-                projections,
+            fista_cfg = FistaConfig(
                 iters=cfg.recon_iters,
                 lambda_tv=cfg.lambda_tv,
                 L=L_prev,
-                init_x=x,
                 views_per_batch=vpb,
                 projector_unroll=int(unroll),
                 checkpoint_projector=cfg.checkpoint_projector,
@@ -892,8 +824,17 @@ def align(
                 grad_mode=gm,
                 tv_prox_iters=int(cfg.tv_prox_iters),
                 recon_rel_tol=cfg.recon_rel_tol,
-                recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
-                vol_mask=vol_mask,
+                recon_patience=(
+                    int(cfg.recon_patience) if cfg.recon_patience is not None else 0
+                ),
+            )
+            return fista_tv(
+                _GAll(),
+                grid,
+                detector,
+                projections,
+                init_x=x,
+                config=fista_cfg,
             )
 
         vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
@@ -1204,19 +1145,24 @@ def align_multires(
         params0 = params5
         if li == 0 and cfg.seed_translations:
             # quick seed recon to project nominal poses
+            seed_cfg = FistaConfig(
+                iters=max(3, cfg.recon_iters // 2),
+                lambda_tv=cfg.lambda_tv,
+                projector_unroll=int(cfg.projector_unroll),
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=cfg.gather_dtype,
+                recon_rel_tol=cfg.recon_rel_tol,
+                recon_patience=(
+                    int(cfg.recon_patience) if cfg.recon_patience is not None else 0
+                ),
+            )
             x_seed, _ = fista_tv(
                 geometry,
                 g,
                 d,
                 y,
-                iters=max(3, cfg.recon_iters // 2),
-                lambda_tv=cfg.lambda_tv,
                 init_x=x0,
-                projector_unroll=int(cfg.projector_unroll),
-                checkpoint_projector=cfg.checkpoint_projector,
-                gather_dtype=cfg.gather_dtype,
-                recon_rel_tol=cfg.recon_rel_tol,
-                recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
+                config=seed_cfg,
             )
             T_nom = stack_view_poses(geometry, y.shape[0])
             from ..utils.phasecorr import phase_corr_shift

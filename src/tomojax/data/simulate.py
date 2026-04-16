@@ -26,7 +26,7 @@ from .phantoms import (
     shepp_logan_3d,
     sphere,
 )
-from .io_hdf5 import save_nxtomo
+from .io_hdf5 import NXTomoMetadata, save_nxtomo
 from ..utils.logging import progress_iter
 
 
@@ -251,20 +251,16 @@ def simulate(cfg: SimConfig) -> SimulatedData:
 
 def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
     data = simulate(cfg)
+    metadata = NXTomoMetadata.from_dataset(data)
+    metadata.image_key = np.zeros((cfg.n_views,), dtype=np.int32)
+    metadata.frame = "sample"
+    metadata.sample_name = str(cfg.phantom)
+    metadata.source_name = "TomoJAX simulator"
+    metadata.source_type = "simulation"
+    metadata.source_probe = "x-ray"
     save_nxtomo(
         out_path,
         projections=np.asarray(data["projections"]),
-        thetas_deg=np.asarray(data["thetas_deg"]),
-        image_key=np.zeros((cfg.n_views,), dtype=np.int32),
-        grid=data["grid"],
-        detector=data["detector"],
-        geometry_type=data["geometry_type"],
-        geometry_meta=data.get("geometry_meta"),
-        volume=np.asarray(data["volume"]),
-        frame="sample",
-        sample_name=str(cfg.phantom),
-        source_name="TomoJAX simulator",
-        source_type="simulation",
-        source_probe="x-ray",
+        metadata=metadata,
     )
     return out_path

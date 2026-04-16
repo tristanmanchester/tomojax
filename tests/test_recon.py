@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp
-from tomojax.recon.fista_tv import fista_tv
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
 
 if sys.version_info < (3, 8):
@@ -75,7 +75,13 @@ def test_fbp_default_scaling_recovers_reasonable_absolute_intensity():
 
 def test_fista_loss_decreases():
     grid, det, geom, vol, projs = make_simple_case(12, 12, 12, 16)
-    x, info = fista_tv(geom, grid, det, projs, iters=5, lambda_tv=0.001)
+    x, info = fista_tv(
+        geom,
+        grid,
+        det,
+        projs,
+        config=FistaConfig(iters=5, lambda_tv=0.001),
+    )
     loss = info["loss"]
     assert len(loss) == 5
     # Allow some noise, but expect decreasing trend
@@ -90,10 +96,12 @@ def test_fista_early_stop_triggers():
         grid,
         det,
         zero_projs,
-        iters=8,
-        lambda_tv=0.0,
-        recon_rel_tol=1e-6,
-        recon_patience=1,
+        config=FistaConfig(
+            iters=8,
+            lambda_tv=0.0,
+            recon_rel_tol=1e-6,
+            recon_patience=1,
+        ),
     )
     assert info["early_stop"] is True
     assert info["effective_iters"] <= 2

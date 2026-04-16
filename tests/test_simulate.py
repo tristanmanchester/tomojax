@@ -7,8 +7,8 @@ import jax.numpy as jnp
 
 from tomojax.cli import simulate as simulate_cli
 from tomojax.data import simulate as simulate_mod
+from tomojax.data.io_hdf5 import validate_nxtomo
 from tomojax.data.simulate import SimConfig, simulate, simulate_to_file
-from tomojax.data.datasets import validate_dataset
 
 
 if sys.version_info < (3, 8):
@@ -39,7 +39,7 @@ def test_simulate_nxs_roundtrip(tmp_path):
     )
     out = tmp_path / "sim.nxs"
     simulate_to_file(cfg, str(out))
-    rep = validate_dataset(str(out))
+    rep = validate_nxtomo(str(out))
     assert rep["issues"] == []
 
 

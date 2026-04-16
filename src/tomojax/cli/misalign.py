@@ -7,13 +7,13 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from ..data.geometry_meta import build_geometry_from_meta
+from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..core.geometry import LaminographyGeometry, ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..align.parametrizations import se3_from_5d
 from ..core.projector import forward_project_view_T
 from ..utils.logging import setup_logging, log_jax_env
-from ._geometry import _normalize_geometry_type
 from ._runtime import transfer_guard_context
 
 
@@ -335,51 +335,19 @@ def main() -> None:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
     meta = load_nxtomo(args.data)
-    grid_d = meta.get("grid")
-    det_d = meta.get("detector")
-    # Grid: infer from volume if not provided
-    if grid_d is None:
-        if "volume" in meta:
-            nx, ny, nz = map(int, meta["volume"].shape)
-            grid_d = {"nx": nx, "ny": ny, "nz": nz, "vx": 1.0, "vy": 1.0, "vz": 1.0}
-        else:
-            raise ValueError("Missing grid metadata and no ground-truth volume to infer from.")
-    if det_d is None:
-        # Fallback: infer from projections shape
-        n_views, nv, nu = meta["projections"].shape
-        det_d = {
-            "nu": int(nu),
-            "nv": int(nv),
-            "du": 1.0,
-            "dv": 1.0,
-            "det_center": (0.0, 0.0),
-        }
-    if "volume" not in meta:
+    if meta.volume is None:
         raise ValueError(
             "Input file does not contain a ground-truth volume under /entry/processing/tomojax/volume."
         )
 
-    grid = Grid(**{k: grid_d[k] for k in ("nx", "ny", "nz", "vx", "vy", "vz")})
-    det = Detector(
-        **{k: det_d[k] for k in ("nu", "nv", "du", "dv")},
-        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    volume_shape = tuple(int(v) for v in np.asarray(meta.volume).shape)
+    grid, det, base_geom = build_geometry_from_meta(
+        meta.geometry_inputs(),
+        apply_saved_alignment=False,
+        volume_shape=volume_shape,
     )
-    thetas = meta.get("thetas_deg")
-    geom_type = _normalize_geometry_type(meta.get("geometry_type"))
-    if geom_type == "parallel":
-        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
-    else:
-        tilt_deg = float(meta.get("tilt_deg", 30.0))
-        tilt_about = str(meta.get("tilt_about", "x"))
-        geom = LaminographyGeometry(
-            grid=grid,
-            detector=det,
-            thetas_deg=thetas,
-            tilt_deg=tilt_deg,
-            tilt_about=tilt_about,
-        )
-
-    vol = jnp.asarray(meta["volume"], jnp.float32)
+    thetas = np.asarray(meta.thetas_deg, dtype=np.float32)
+    vol = jnp.asarray(meta.volume, jnp.float32)
     n_views = int(len(thetas))
 
     # Build deterministic schedules if requested
@@ -430,17 +398,15 @@ def main() -> None:
         ).astype(np.float32) * float(det.dv)
 
     # Rebuild T_nom with possibly modified thetas
-    if geom_type == "parallel":
+    if isinstance(base_geom, ParallelGeometry):
         geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_used)
     else:
-        tilt_deg = float(meta.get("tilt_deg", 30.0))
-        tilt_about = str(meta.get("tilt_about", "x"))
         geom = LaminographyGeometry(
             grid=grid,
             detector=det,
             thetas_deg=thetas_used,
-            tilt_deg=tilt_deg,
-            tilt_about=tilt_about,
+            tilt_deg=base_geom.tilt_deg,
+            tilt_about=base_geom.tilt_about,
         )
 
     # Recompute nominal poses with final geometry (possibly modified angles)
@@ -469,24 +435,20 @@ def main() -> None:
         )
         proj = jnp.asarray(noisy, jnp.float32)
 
+    save_meta = meta.copy_metadata()
+    save_meta.thetas_deg = np.asarray(thetas_used)
+    save_meta.grid = grid.to_dict()
+    save_meta.detector = det.to_dict()
+    save_meta.geometry_type = "parallel" if isinstance(base_geom, ParallelGeometry) else "lamino"
+    save_meta.volume = np.asarray(vol)
+    save_meta.align_params = np.asarray(params5)
+    save_meta.angle_offset_deg = np.asarray(angle_offset) if pert_specs else None
+    save_meta.misalign_spec = misalign_spec_dict
+    save_meta.frame = str(meta.frame or "sample")
     save_nxtomo(
         args.out,
         projections=np.asarray(proj),
-        thetas_deg=np.asarray(thetas_used),
-        image_key=meta.get("image_key"),
-        grid=grid.to_dict(),
-        detector=det.to_dict(),
-        geometry_type=geom_type,
-        geometry_meta=meta.get("geometry_meta"),
-        volume=np.asarray(vol),
-        align_params=np.asarray(params5),
-        angle_offset_deg=np.asarray(angle_offset) if pert_specs else None,
-        misalign_spec=misalign_spec_dict,
-        frame=str(meta.get("frame", "sample")),
-        sample_name=meta.get("sample_name"),
-        source_name=meta.get("source_name"),
-        source_type=meta.get("source_type"),
-        source_probe=meta.get("source_probe"),
+        metadata=save_meta,
     )
     logging.info("Wrote dataset: %s", args.out)
 

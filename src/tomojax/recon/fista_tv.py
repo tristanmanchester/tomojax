@@ -24,9 +24,17 @@ GradMode = Literal["auto", "batched", "stream"]
 class FistaConfig:
     iters: int = 50
     lambda_tv: float = 0.005
-    L_init: float = 1.0
-    power_iters: int = 10
-    checkpoint: bool = True
+    L: float | None = None
+    views_per_batch: int | None = 1
+    projector_unroll: int = 1
+    checkpoint_projector: bool = True
+    gather_dtype: str = "fp32"
+    grad_mode: GradMode = "auto"
+    tv_prox_iters: int = 10
+    recon_rel_tol: float | None = None
+    recon_patience: int = 0
+    power_iters: int = 5
+    support: jnp.ndarray | None = None
 
 
 def grad_data_term(
@@ -389,32 +397,13 @@ def fista_tv(
     detector: Detector,
     projections: jnp.ndarray,
     *,
-    iters: int = 50,
-    lambda_tv: float = 0.005,
-    L: float | None = None,
-    callback: Callable[[int, float], None] | None = None,
     init_x: jnp.ndarray | None = None,
-    views_per_batch: int | None = 1,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
-    grad_mode: GradMode = "auto",
-    tv_prox_iters: int = 10,
-    recon_rel_tol: float | None = None,
-    recon_patience: int = 0,
-    vol_mask: Optional[jnp.ndarray] = None,
+    config: FistaConfig = FistaConfig(),
+    callback: Callable[[int, float], None] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
-    """Run FISTA with TV regularization for parallel-ray geometry.
-
-    Args:
-        recon_rel_tol: Relative tolerance on successive objectives for early termination. ``None`` disables.
-        recon_patience: Number of consecutive tolerance hits required before stopping early.
-
-    Returns:
-        Tuple of reconstructed volume and metadata. ``info`` includes the full loss history, the
-        measured/assumed Lipschitz constant, whether early stopping triggered, and the effective
-        iteration count.
-    """
+    """Run FISTA with TV regularization using an explicit solver configuration."""
+    cfg = config
+    vol_mask = cfg.support
     x = (
         jnp.asarray(init_x, dtype=jnp.float32)
         if init_x is not None
@@ -427,6 +416,7 @@ def fista_tv(
     n_views = int(projections.shape[0])
     T_all = stack_view_poses(geometry, n_views)
 
+    L = cfg.L
     if L is None:
         # Use streamed gradient in power-method to avoid batched VJP memory spikes
         L = power_method_L(
@@ -434,11 +424,11 @@ def fista_tv(
             grid,
             detector,
             projections.shape,
-            iters=5,
-            views_per_batch=views_per_batch,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
+            iters=cfg.power_iters,
+            views_per_batch=cfg.views_per_batch,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
             grad_mode="stream",
             T_all=T_all,
             vol_mask=vol_mask,
@@ -452,11 +442,11 @@ def fista_tv(
             detector,
             projections,
             z,
-            views_per_batch=views_per_batch,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
-            grad_mode=grad_mode,
+            views_per_batch=cfg.views_per_batch,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            grad_mode=cfg.grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
         )
@@ -471,11 +461,11 @@ def fista_tv(
             detector,
             projections,
             x,
-            views_per_batch=views_per_batch,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
-            grad_mode=grad_mode,
+            views_per_batch=cfg.views_per_batch,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            grad_mode=cfg.grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
         )
@@ -484,10 +474,12 @@ def fista_tv(
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
     use_early_stop = (
-        (recon_rel_tol is not None) and float(recon_rel_tol) > 0.0 and int(recon_patience) > 0
+        (cfg.recon_rel_tol is not None)
+        and float(cfg.recon_rel_tol) > 0.0
+        and int(cfg.recon_patience) > 0
     )
-    tol = jnp.float32(float(recon_rel_tol) if use_early_stop else 0.0)
-    patience = jnp.int32(int(recon_patience) if use_early_stop else 0)
+    tol = jnp.float32(float(cfg.recon_rel_tol) if use_early_stop else 0.0)
+    patience = jnp.int32(int(cfg.recon_patience) if use_early_stop else 0)
     early_flag = jnp.bool_(use_early_stop)
 
     def step(carry, k):
@@ -508,13 +500,13 @@ def fista_tv(
             ) = state
             _, g = val_and_grad(z_a)
             y = z_a - (1.0 / L) * g
-            x_new = tv_prox_jit(y, lambda_tv / L, iters=int(tv_prox_iters))
+            x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
             t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
             z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
             data_loss_val = data_value(x_new)
             gx, gy, gz = grad3(x_new)
             tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))
-            obj = data_loss_val + lambda_tv * tv_norm
+            obj = data_loss_val + cfg.lambda_tv * tv_norm
             obj32 = obj.astype(jnp.float32)
             rel_change = jnp.abs(obj - prev_a) / jnp.maximum(jnp.abs(prev_a), 1e-6)
             small = jnp.logical_and(early_flag, jnp.logical_and(has_prev_a, rel_change <= tol))
@@ -573,7 +565,7 @@ def fista_tv(
         )
         return new_state, None
 
-    loss_arr0 = jnp.zeros((iters,), dtype=jnp.float32)
+    loss_arr0 = jnp.zeros((int(cfg.iters),), dtype=jnp.float32)
     init_carry = (
         x,
         z,
@@ -586,7 +578,7 @@ def fista_tv(
         jnp.float32(0.0),
         jnp.int32(0),
     )
-    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(iters))
+    carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iters)))
     (
         x_f,
         _,
@@ -603,7 +595,7 @@ def fista_tv(
     # Fire optional callbacks on endpoints only (avoid per-iter host sync)
     if callback is not None:
         callback(0, float(loss_arr[0]))
-        callback(iters - 1, float(loss_arr[-1]))
+        callback(int(cfg.iters) - 1, float(loss_arr[-1]))
 
     info = {
         "loss": [float(v) for v in list(loss_arr)],

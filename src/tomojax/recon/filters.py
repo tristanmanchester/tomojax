@@ -11,6 +11,12 @@ _FILTER_CACHE: "OrderedDict[Tuple[str, int, float], np.ndarray]" = OrderedDict()
 _FILTER_CACHE_CAP = 8
 
 
+def _normalize_filter_name(name: str | None) -> str:
+    """Canonicalize filter aliases and preserve the default ramp fallback."""
+    normalized = str(name or "").strip().lower()
+    return normalized or "ramp"
+
+
 def _ramp_filter_np(n: int, du: float) -> np.ndarray:
     # Frequency coordinates (cycles per unit)
     freqs = np.fft.fftfreq(n, d=du).astype(np.float32, copy=False)
@@ -41,15 +47,16 @@ def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
 
     Returns an np.float32 array of length ``n``.
     """
-    key = (str(name).lower(), int(n), float(du))
+    filter_name = _normalize_filter_name(name)
+    key = (filter_name, int(n), float(du))
     if key in _FILTER_CACHE:
         _FILTER_CACHE.move_to_end(key)
         return _FILTER_CACHE[key]
-    if key[0] in ("ramp", "ram-lak", "ramlak"):
+    if filter_name in ("ramp", "ram-lak", "ramlak"):
         H = _ramp_filter_np(n, du)
-    elif key[0] in ("shepp", "shepp-logan", "shepplogan"):
+    elif filter_name in ("shepp", "shepp-logan", "shepplogan"):
         H = _shepp_logan_filter_np(n, du)
-    elif key[0] in ("hann", "hanning"):
+    elif filter_name in ("hann", "hanning"):
         H = _hann_filter_np(n, du)
     else:
         raise ValueError(f"Unknown filter {name}")
@@ -61,5 +68,5 @@ def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
 
 def get_filter(name: str, n: int, du: float) -> jnp.ndarray:
     """JAX array wrapper for cached, host-computed filters."""
-    H_np = get_filter_np(name or "ramp", n, du)
+    H_np = get_filter_np(name, n, du)
     return jnp.asarray(H_np, dtype=jnp.float32)

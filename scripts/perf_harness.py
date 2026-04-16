@@ -17,7 +17,7 @@ def run(cmd: list[str]) -> dict:
     t0 = time.perf_counter()
     rss0 = psutil.Process().memory_info().rss if psutil else 0
     env = os.environ.copy()
-    env.setdefault("TOMOJAX_PROGRESS", "0")
+    env["TOMOJAX_PROGRESS"] = "0"
     proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     t1 = time.perf_counter()
     rss1 = psutil.Process().memory_info().rss if psutil else 0

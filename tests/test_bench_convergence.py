@@ -60,6 +60,7 @@ def _summary(
         trace=trace or [],
     )
 
+
 def test_convergence_summary_marks_threshold_crossing() -> None:
     summary = fitness._convergence_summary_from_trace(
         metric="gt_mse",
@@ -81,6 +82,7 @@ def test_convergence_summary_marks_threshold_crossing() -> None:
     assert summary.total_outer_iters_executed == 2
     assert summary.final_stop_reason == "threshold"
     assert summary.first_threshold_crossing_level_factor is None
+
 
 def test_convergence_summary_handles_threshold_miss() -> None:
     summary = fitness._convergence_summary_from_trace(
@@ -110,34 +112,46 @@ def test_meaningful_relative_improvement_requires_margin() -> None:
 
 
 def test_convergence_action_advances_coarse_levels_and_stops_finest() -> None:
-    assert fitness._convergence_action_for_level(
-        level_factor=4,
-        finest_factor=1,
-        budget_hit=False,
-        threshold_hit=True,
-        plateau_hit=False,
-    ) == "advance_level"
-    assert fitness._convergence_action_for_level(
-        level_factor=2,
-        finest_factor=1,
-        budget_hit=False,
-        threshold_hit=False,
-        plateau_hit=True,
-    ) == "advance_level"
-    assert fitness._convergence_action_for_level(
-        level_factor=1,
-        finest_factor=1,
-        budget_hit=False,
-        threshold_hit=True,
-        plateau_hit=False,
-    ) == "stop_run"
-    assert fitness._convergence_action_for_level(
-        level_factor=1,
-        finest_factor=1,
-        budget_hit=False,
-        threshold_hit=False,
-        plateau_hit=True,
-    ) == "stop_run"
+    assert (
+        fitness._convergence_action_for_level(
+            level_factor=4,
+            finest_factor=1,
+            budget_hit=False,
+            threshold_hit=True,
+            plateau_hit=False,
+        )
+        == "advance_level"
+    )
+    assert (
+        fitness._convergence_action_for_level(
+            level_factor=2,
+            finest_factor=1,
+            budget_hit=False,
+            threshold_hit=False,
+            plateau_hit=True,
+        )
+        == "advance_level"
+    )
+    assert (
+        fitness._convergence_action_for_level(
+            level_factor=1,
+            finest_factor=1,
+            budget_hit=False,
+            threshold_hit=True,
+            plateau_hit=False,
+        )
+        == "stop_run"
+    )
+    assert (
+        fitness._convergence_action_for_level(
+            level_factor=1,
+            finest_factor=1,
+            budget_hit=False,
+            threshold_hit=False,
+            plateau_hit=True,
+        )
+        == "stop_run"
+    )
 
 
 def test_aggregate_warm_convergence_runs_requires_multiple_hits() -> None:
@@ -293,7 +307,9 @@ def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: 
     )
     warm1 = fitness.RunResult(
         output={
-            "convergence": _summary(reached_finest_level=True, finest_level_first_elapsed_seconds=40.0),
+            "convergence": _summary(
+                reached_finest_level=True, finest_level_first_elapsed_seconds=40.0
+            ),
             "params": np.zeros((1, 5), dtype=np.float32),
             "volume": np.zeros((1, 1), dtype=np.float32),
             "info": {},
@@ -317,7 +333,14 @@ def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: 
             "convergence": _summary(
                 reached_finest_level=True,
                 finest_level_first_elapsed_seconds=38.0,
-                level_summaries=[{"level_factor": 1, "elapsed_seconds_total": 38.0, "outer_iters_executed": 2, "final_gt_mse": 0.25}],
+                level_summaries=[
+                    {
+                        "level_factor": 1,
+                        "elapsed_seconds_total": 38.0,
+                        "outer_iters_executed": 2,
+                        "final_gt_mse": 0.25,
+                    }
+                ],
             ),
             "params": np.zeros((1, 5), dtype=np.float32),
             "volume": np.zeros((1, 1), dtype=np.float32),
@@ -339,9 +362,15 @@ def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: 
     )
 
     scripted_runs = [warmup_run, primer_run, warm1, warm2]
-    with patch.object(fitness, "_bundle_geometry", return_value=(object(), SimpleNamespace(du=1.0, dv=1.0), object())), \
-         patch.object(fitness, "_timed_call", side_effect=scripted_runs), \
-         patch.object(fitness, "_maybe_save_jax_device_memory_profile", return_value=(None, None)):
+    with (
+        patch.object(
+            fitness,
+            "_bundle_geometry",
+            return_value=(object(), SimpleNamespace(du=1.0, dv=1.0), object()),
+        ),
+        patch.object(fitness, "_timed_call", side_effect=scripted_runs),
+        patch.object(fitness, "_maybe_save_jax_device_memory_profile", return_value=(None, None)),
+    ):
         metrics = fitness._run_align_profile(
             bundle,
             profile,

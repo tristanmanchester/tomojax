@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Helpers for materializing geometry objects from persisted NXtomo metadata."""
+
 from dataclasses import dataclass
 from typing import Sequence, TypedDict
 
@@ -28,6 +30,15 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
 
 
 GridOverride = Grid | tuple[int, int, int] | list[int] | None
+
+
+def _volume_shape_nxyz(volume_shape: Sequence[int] | None) -> tuple[int, int, int] | None:
+    if volume_shape is None:
+        return None
+    dims = tuple(int(v) for v in volume_shape)
+    if len(dims) != 3:
+        raise ValueError(f"volume_shape must provide exactly 3 dims, got {dims!r}")
+    return dims
 
 
 def _normalize_geometry_type(geometry_type: str | None) -> str:
@@ -107,6 +118,7 @@ def _grid_from_meta(
     meta: LoadedGeometryMeta,
     detector: Detector,
     grid_override: GridOverride,
+    volume_shape: Sequence[int] | None = None,
 ) -> Grid:
     if isinstance(grid_override, Grid):
         return grid_override
@@ -115,6 +127,8 @@ def _grid_from_meta(
     if grid_d is None:
         if grid_override is not None:
             nx, ny, nz = map(int, grid_override)
+        elif (shape := _volume_shape_nxyz(volume_shape)) is not None:
+            nx, ny, nz = shape
         else:
             nx = int(detector.nu)
             ny = int(detector.nu)
@@ -218,20 +232,22 @@ def build_geometry_from_meta(
     *,
     grid_override: GridOverride = None,
     apply_saved_alignment: bool = False,
+    volume_shape: Sequence[int] | None = None,
 ) -> tuple[Grid, Detector, Geometry]:
     """Build geometry from NXtomo metadata with sensible fallbacks.
 
     When `grid` metadata is missing, the grid is inferred from detector dimensions
-    (or from `grid_override` if supplied) using detector pixel spacings as voxel
-    spacings. When `apply_saved_alignment` is True, any saved `align_params` are
-    composed onto the nominal poses. Saved alignments must provide one row per
-    view and at least five columns ordered as `[alpha, beta, phi, dx, dz]`;
-    extra columns are ignored. Saved `angle_offset_deg` is applied unless it is
-    known to have already been baked into `thetas_deg`.
+    unless an explicit `grid_override` or `volume_shape` is supplied; both reuse
+    detector pixel spacings as voxel spacings. When `apply_saved_alignment` is
+    True, any saved `align_params` are composed onto the nominal poses. Saved
+    alignments must provide one row per view and at least five columns ordered
+    as `[alpha, beta, phi, dx, dz]`; extra columns are ignored. Saved
+    `angle_offset_deg` is applied unless it is known to have already been baked
+    into `thetas_deg`.
     """
 
     detector = _detector_from_meta(meta)
-    grid = _grid_from_meta(meta, detector, grid_override)
+    grid = _grid_from_meta(meta, detector, grid_override, volume_shape)
     thetas_deg = _resolve_thetas_deg(
         meta,
         apply_saved_angle_offset=apply_saved_alignment,
@@ -258,10 +274,13 @@ def build_geometry_from_meta(
 def build_nominal_geometry_from_meta(
     meta: LoadedGeometryMeta,
     grid_override: GridOverride = None,
+    *,
+    volume_shape: Sequence[int] | None = None,
 ) -> tuple[Grid, Detector, Geometry]:
     """Build geometry without composing any saved alignment metadata."""
     return build_geometry_from_meta(
         meta,
         grid_override=grid_override,
         apply_saved_alignment=False,
+        volume_shape=volume_shape,
     )

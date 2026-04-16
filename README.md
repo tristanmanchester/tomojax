@@ -30,6 +30,7 @@ Notes
 - CUDA 12 on Linux is required for GPU; the `cuda12` extra installs `jax[cuda12]`.
 - To force CPU runs: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
 - Optional JAX persistent cache (speeds up re‑runs): set `TOMOJAX_JAX_CACHE_DIR` or rely on the default at `~/.cache/tomojax/jax_cache`.
+- Benchmark-harness runs under `bench/` need `uv sync --extra bench --group dev` in addition to the normal CPU/GPU extra.
 
 
 ## Key Features
@@ -75,6 +76,7 @@ uv run tomojax-simulate ...
 uv run tomojax-misalign ...
 uv run tomojax-recon    ...
 uv run tomojax-align    ...
+uv run tomojax-loss-bench --help
 
 # Full step‑by‑step tutorial
 less docs/tutorial_end_to_end.md
@@ -208,6 +210,8 @@ Troubleshooting tips live in `docs/faq_troubleshooting.md`.
 ## Notes
 
 - Use the new CLIs and Python APIs under `tomojax.*`. Legacy ad‑hoc scripts were removed.
+- Reusable benchmark datasets and scoring helpers live under `tomojax.bench.*`; the
+  controller-facing benchmark harness stays in `bench/`.
 - Tests: `uv run pytest -q tests` (small CPU‑friendly sizes).
 
 
