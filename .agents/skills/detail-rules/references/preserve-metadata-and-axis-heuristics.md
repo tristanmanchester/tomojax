@@ -5,7 +5,7 @@ Verify that CLI overrides and IO operations preserve essential volume metadata, 
 ## What to look for
 
 - **Grid Metadata Preservation:** When overriding volume dimensions (e.g., via `--grid` in CLIs), ensure that `vol_origin` and `vol_center` are preserved. Use `dataclasses.replace` on an existing `Grid` object instead of manual reconstruction.
-- **Centralized Geometry Construction:** CLI modules should use `build_geometry_from_meta` (or `build_nominal_geometry_from_meta`) from `src/tomojax/cli/_geometry.py`. Avoid manual instantiation of `ParallelGeometry` or `LaminographyGeometry` in CLI entry points.
+- **Centralized Geometry Construction:** CLI modules should use `build_geometry_from_meta` (or `build_nominal_geometry_from_meta`) from `src/tomojax/data/geometry_meta.py`. Avoid manual instantiation of `ParallelGeometry` or `LaminographyGeometry` in CLI entry points.
 - **Alignment Application:** Reconstruction workflows (`recon.py`) must build geometry with `apply_saved_alignment=True` to ensure `align_params` and `angle_offset_deg` are used. Conversely, alignment workflows (`align.py`) typically use `apply_saved_alignment=False` for the starting point.
 - **ROI vs. Grid Overrides:** If an explicit `--grid` override is provided, it must take precedence over ROI-derived masks. Specifically, ensure `apply_cyl_mask` is set to `False` if `grid_override` is not `None`.
 - **Robust IO Metadata Handling:**
@@ -59,7 +59,7 @@ if args.grid is not None:
 ### Using Centralized Geometry Builder
 ```python
 # CORRECT: Handles alignment, angle offsets, and grid overrides safely
-from ._geometry import build_geometry_from_meta
+from ..data.geometry_meta import build_geometry_from_meta
 grid, detector, geom = build_geometry_from_meta(
     meta, 
     grid_override=grid_override, 
