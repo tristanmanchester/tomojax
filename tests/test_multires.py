@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import FistaConfig, fista_tv, grad_data_term
-from tomojax.recon.multires import fista_multires, scale_detector, upsample_volume
+from tomojax.recon.multires import fista_multires, scale_detector, scale_grid, upsample_volume
 
 
 if sys.version_info < (3, 8):
@@ -67,6 +67,22 @@ def test_multires_rejects_mismatched_level_lengths():
             iters_per_level=(5, 6),
             lambda_tv=0.001,
         )
+
+
+@pytest.mark.parametrize("factor", [0, -1, 1.5])
+def test_scale_grid_rejects_non_positive_or_non_integral_factor(factor):
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        scale_grid(grid, factor)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("factor", [0, -1, 2.5])
+def test_scale_detector_rejects_non_positive_or_non_integral_factor(factor):
+    det = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        scale_detector(det, factor)  # type: ignore[arg-type]
 
 
 def test_upsample_volume_resizes_when_target_shape_differs_even_if_factor_is_one():

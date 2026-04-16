@@ -4,8 +4,12 @@ import pytest
 from tomojax.align.losses import (
     LossState,
     _loss_cauchy,
+    _loss_chamfer_edge,
+    _loss_l2_otsu_soft,
     _loss_mi_kde,
     _loss_renyi_mi,
+    _loss_ssim_otsu,
+    _loss_tversky,
     _loss_welsch,
     build_loss,
     loss_is_within_relative_tolerance,
@@ -212,3 +216,31 @@ def test_per_view_loss_uses_global_view_indices_for_precomputes():
     wrong = loss_fn(pred, pred, None)
 
     assert float(jnp.mean(correct)) < 0.5 * float(jnp.mean(wrong))
+
+
+def test_chamfer_edge_requires_distance_transform_precompute():
+    with pytest.raises(ValueError, match="dt_edge precompute required"):
+        _loss_chamfer_edge(
+            jnp.ones((4, 4), dtype=jnp.float32),
+            jnp.zeros((4, 4), dtype=jnp.float32),
+            LossState(kind="chamfer_edge", params={}),
+        )
+
+
+@pytest.mark.parametrize("loss_fn", [_loss_l2_otsu_soft, _loss_ssim_otsu])
+def test_otsu_mask_losses_require_mask_precompute(loss_fn):
+    with pytest.raises(ValueError, match="Otsu mask required"):
+        loss_fn(
+            jnp.ones((4, 4), dtype=jnp.float32),
+            jnp.zeros((4, 4), dtype=jnp.float32),
+            LossState(kind="otsu", params={}),
+        )
+
+
+def test_tversky_requires_threshold_precompute():
+    with pytest.raises(ValueError, match="Otsu threshold required"):
+        _loss_tversky(
+            jnp.ones((4, 4), dtype=jnp.float32),
+            jnp.zeros((4, 4), dtype=jnp.float32),
+            LossState(kind="tversky", params={}),
+        )

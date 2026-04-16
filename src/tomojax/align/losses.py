@@ -562,12 +562,18 @@ def _loss_fft_mag(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.nda
     return 0.5 * jnp.sum((mp - mt) ** 2)
 
 
+def _required_state_precompute[T](value: T | None, message: str) -> T:
+    if value is None:
+        raise ValueError(message)
+    return value
+
+
 def _loss_chamfer_edge(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    assert st.dt_edge is not None, "dt_edge precompute required"
+    dt_edge = _required_state_precompute(st.dt_edge, "dt_edge precompute required")
     gx, gy = _sobel(pred.astype(jnp.float32))
     mag = jnp.sqrt(gx * gx + gy * gy)
     e = mag / (jnp.mean(mag) + 1e-6)
-    return jnp.sum(e * st.dt_edge)
+    return jnp.sum(e * dt_edge)
 
 
 def _loss_poisson_nll(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
@@ -681,27 +687,26 @@ def _compute_otsu_threshold(x: np.ndarray, nbins: int = 256) -> float:
 
 
 def _loss_l2_otsu_soft(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    assert st.mask is not None, "Otsu mask required"
+    mask = _required_state_precompute(st.mask, "Otsu mask required")
     temp = _safe_epsilon(st.params, "temp", 0.5)
-    base = st.mask.astype(jnp.float32)
+    base = mask.astype(jnp.float32)
     r = (pred - tar).astype(jnp.float32)
     w = jax.nn.sigmoid((base - 0.5) / temp)
     return 0.5 * jnp.sum((r * w) ** 2)
 
 
 def _loss_ssim_otsu(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    assert st.mask is not None, "Otsu mask required"
-    mask = st.mask.astype(jnp.float32)
+    mask = _required_state_precompute(st.mask, "Otsu mask required").astype(jnp.float32)
     return _loss_ssim(pred * mask, tar * mask, st)
 
 
 def _loss_tversky(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
-    assert st.thr is not None, "Otsu threshold required"
+    thr = _required_state_precompute(st.thr, "Otsu threshold required")
     temp = _safe_epsilon(st.params, "temp", 0.5)
     alpha = float(st.params.get("alpha", 0.7)); beta = float(st.params.get("beta", 0.3))
     gamma = float(st.params.get("gamma", 1.0))
-    p = jax.nn.sigmoid((pred - st.thr) / temp)
-    t = (tar >= st.thr).astype(jnp.float32)
+    p = jax.nn.sigmoid((pred - thr) / temp)
+    t = (tar >= thr).astype(jnp.float32)
     tp = jnp.sum(p * t); fp = jnp.sum(p * (1.0 - t)); fn = jnp.sum((1.0 - p) * t)
     tv = tp / (tp + alpha * fn + beta * fp + 1e-6)
     loss = 1.0 - tv

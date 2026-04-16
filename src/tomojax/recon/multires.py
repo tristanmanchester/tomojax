@@ -11,14 +11,20 @@ from .fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter
 
 
+def _validated_scale_factor(factor: int) -> int:
+    value = float(factor)
+    if value < 1 or int(value) != value:
+        raise ValueError(f"Scale factor must be an integer >= 1, got {factor!r}")
+    return int(value)
+
+
 def scale_grid(grid: Grid, factor: int) -> Grid:
     """Scale grid for a coarser multires level, tolerating non-divisible dims.
 
     - New dims use ceil division to retain coverage when dims aren't divisible.
     - Voxel sizes are multiplied by the factor to preserve physical extent.
     """
-    assert factor >= 1 and int(factor) == factor
-    f = int(factor)
+    f = _validated_scale_factor(factor)
     nx = int(math.ceil(grid.nx / f))
     ny = int(math.ceil(grid.ny / f))
     nz = int(math.ceil(grid.nz / f))
@@ -43,8 +49,7 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     selects the center sample from each padded f×f block, so the coarse detector
     center must shift to keep those coarse rays aligned with the sampled pixels.
     """
-    assert factor >= 1 and int(factor) == factor
-    f = int(factor)
+    f = _validated_scale_factor(factor)
     nu = int(math.ceil(det.nu / f))
     nv = int(math.ceil(det.nv / f))
 
