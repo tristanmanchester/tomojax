@@ -6,14 +6,16 @@
   - Geometry types: `src/tomojax/core/geometry/`
 - Reconstruction lives under `src/tomojax/recon/` (FBP, FISTA‑TV, multires helpers).
 - Alignment workflows live under `src/tomojax/align/` (see `pipeline.py`).
+- Reusable benchmark datasets and scoring helpers live under `src/tomojax/bench/`.
 - CLI entry points live under `src/tomojax/cli/`:
-  - `simulate`, `misalign`, `recon`, `align`.
+  - `simulate`, `misalign`, `recon`, `align`, `loss_bench`.
 - Tests live in `tests/` (CPU‑friendly sizes).
 - Input data and generated artifacts belong in `data/` or `runs/`; these are git‑ignored.
 - Figures for docs live in `images/`.
 
 ## Build, Test, and Development Commands
 - Sync the managed environment with `uv sync --extra cuda12 --group dev` (or `uv sync --extra cpu --group dev` for CPU-only).
+- Benchmark-harness runs under `bench/` need `uv sync --extra bench --group dev` in addition to the normal CPU/GPU extra.
 - Verify JAX/accelerator: `uv run tomojax-test-gpu` (prints backend and devices). For CPU: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
 - Run tests: `uv run pytest -q tests` or target a file, e.g., `uv run pytest -q tests/test_projector.py`.
 - CLI workflows (examples; see `README.md` for more):
