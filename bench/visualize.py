@@ -62,7 +62,7 @@ def _trace_points(
                     int(level_factor) if level_factor is not None else None,
                 )
             )
-        except Exception:
+        except (TypeError, ValueError):
             continue
     if not filtered:
         return np.asarray([], dtype=np.int32), np.asarray([], dtype=np.float32), []
