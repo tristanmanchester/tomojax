@@ -19,7 +19,7 @@ def make_case(nx=16, ny=16, nz=16, n_views=16):
     thetas = np.linspace(0, 180, n_views, endpoint=False)
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-    vol = vol.at[nx//4:3*nx//4, ny//4:3*ny//4, nz//4:3*nz//4].set(1.0)
+    vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
     projs = []
     for i in range(n_views):
         projs.append(forward_project_view(geom, grid, det, vol, view_index=i))
@@ -34,10 +34,19 @@ def test_multires_beats_single_level():
     g_single, loss_single = grad_data_term(geom, grid, det, projs, x_single)
 
     # Two-level (2 -> 1) with same total iters
-    x_multi, info_multi = fista_multires(geom, grid, det, projs, factors=(2, 1), iters_per_level=(3, 3), lambda_tv=0.001)
+    x_multi, info_multi = fista_multires(
+        geom, grid, det, projs, factors=(2, 1), iters_per_level=(3, 3), lambda_tv=0.001
+    )
     g_multi, loss_multi = grad_data_term(geom, grid, det, projs, x_multi)
 
     assert loss_multi <= loss_single + 1e-3
+    assert x_single.shape == vol.shape
+    assert x_multi.shape == vol.shape
+    assert len(info_single["loss"]) == 6
+    assert len(info_multi["loss"]) == 6
+    assert info_multi["factors"] == [2, 1]
+    assert info_single["effective_iters"] <= 6
+    assert float(jnp.linalg.norm(g_multi)) <= float(jnp.linalg.norm(g_single)) + 1e-3
 
 
 def test_multires_rejects_mismatched_level_lengths():
@@ -54,13 +63,22 @@ def test_multires_rejects_mismatched_level_lengths():
         )
 
 
-
 def test_upsample_volume_resizes_when_target_shape_differs_even_if_factor_is_one():
     vol = jnp.arange(8, dtype=jnp.float32).reshape(2, 2, 2)
 
     up = upsample_volume(vol, factor=1, target_shape=(4, 4, 4))
 
     assert up.shape == (4, 4, 4)
+    assert up.dtype == vol.dtype
+
+
+def test_upsample_volume_is_noop_when_target_shape_matches():
+    vol = jnp.arange(8, dtype=jnp.float32).reshape(2, 2, 2)
+
+    up = upsample_volume(vol, factor=3, target_shape=vol.shape)
+
+    assert up is vol
+    np.testing.assert_array_equal(np.asarray(up), np.asarray(vol))
 
 
 @pytest.mark.parametrize(
@@ -83,14 +101,12 @@ def test_scale_detector_matches_centered_projection_samples(nu, factor):
 
     sampled_u, unclipped_u = sampled_positions(det.nu, det.du, det.det_center[0])
     coarse_u = (
-        (np.arange(scaled.nu, dtype=np.float32) - (scaled.nu / 2.0 - 0.5)) * scaled.du
-        + scaled.det_center[0]
-    )
+        np.arange(scaled.nu, dtype=np.float32) - (scaled.nu / 2.0 - 0.5)
+    ) * scaled.du + scaled.det_center[0]
     np.testing.assert_allclose(coarse_u[unclipped_u], sampled_u[unclipped_u], atol=1e-6)
 
     sampled_v, unclipped_v = sampled_positions(det.nv, det.dv, det.det_center[1])
     coarse_v = (
-        (np.arange(scaled.nv, dtype=np.float32) - (scaled.nv / 2.0 - 0.5)) * scaled.dv
-        + scaled.det_center[1]
-    )
+        np.arange(scaled.nv, dtype=np.float32) - (scaled.nv / 2.0 - 0.5)
+    ) * scaled.dv + scaled.det_center[1]
     np.testing.assert_allclose(coarse_v[unclipped_v], sampled_v[unclipped_v], atol=1e-6)

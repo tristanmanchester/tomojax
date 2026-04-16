@@ -9,10 +9,10 @@ import jax.numpy as jnp
 from ..core.geometry.base import Geometry, Grid, Detector
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import (
-    _sum_backproject_views_T,
     backproject_view_T,
     forward_project_view_T,
     get_detector_grid_device,
+    sum_backproject_views_T,
 )
 from ._tv_ops import div3, grad3
 
@@ -99,7 +99,11 @@ def grad_data_term(
         n = int(T_all.shape[0])
         nv = int(projections.shape[1])
         nu = int(projections.shape[2])
-        b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
+        b = (
+            int(views_per_batch)
+            if (views_per_batch is not None and int(views_per_batch) > 0)
+            else n
+        )
         b = min(b, n)
         m = (n + b - 1) // b
 
@@ -118,7 +122,7 @@ def grad_data_term(
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
-            grad_batch = _sum_backproject_views_T(
+            grad_batch = sum_backproject_views_T(
                 T_chunk,
                 grid,
                 detector,
@@ -162,7 +166,11 @@ def grad_data_term(
         return loss_tot, g_tot
 
     # Select execution mode
-    eff_b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else T_all.shape[0]
+    eff_b = (
+        int(views_per_batch)
+        if (views_per_batch is not None and int(views_per_batch) > 0)
+        else T_all.shape[0]
+    )
     mode = grad_mode
     if grad_mode == "auto":
         mode = "stream" if eff_b <= 1 else "batched"
@@ -215,7 +223,11 @@ def data_term_value(
             in_axes=(0, None),
         )
         n = int(T_all.shape[0])
-        b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else n
+        b = (
+            int(views_per_batch)
+            if (views_per_batch is not None and int(views_per_batch) > 0)
+            else n
+        )
         b = min(b, n)
         m = (n + b - 1) // b
 
@@ -264,7 +276,11 @@ def data_term_value(
         loss_tot, _ = jax.lax.scan(one_view, loss0, jnp.arange(T_all.shape[0]))
         return loss_tot
 
-    eff_b = int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else T_all.shape[0]
+    eff_b = (
+        int(views_per_batch)
+        if (views_per_batch is not None and int(views_per_batch) > 0)
+        else T_all.shape[0]
+    )
     mode = grad_mode
     if grad_mode == "auto":
         mode = "stream" if eff_b <= 1 else "batched"
@@ -427,6 +443,7 @@ def fista_tv(
             T_all=T_all,
             vol_mask=vol_mask,
         )
+
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
         g, v = grad_data_term(
@@ -444,6 +461,7 @@ def fista_tv(
             vol_mask=vol_mask,
         )
         return v, g
+
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
 
     def data_value_fn(x):
@@ -466,9 +484,7 @@ def fista_tv(
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
     use_early_stop = (
-        (recon_rel_tol is not None)
-        and float(recon_rel_tol) > 0.0
-        and int(recon_patience) > 0
+        (recon_rel_tol is not None) and float(recon_rel_tol) > 0.0 and int(recon_patience) > 0
     )
     tol = jnp.float32(float(recon_rel_tol) if use_early_stop else 0.0)
     patience = jnp.int32(int(recon_patience) if use_early_stop else 0)
@@ -501,9 +517,7 @@ def fista_tv(
             obj = data_loss_val + lambda_tv * tv_norm
             obj32 = obj.astype(jnp.float32)
             rel_change = jnp.abs(obj - prev_a) / jnp.maximum(jnp.abs(prev_a), 1e-6)
-            small = jnp.logical_and(
-                early_flag, jnp.logical_and(has_prev_a, rel_change <= tol)
-            )
+            small = jnp.logical_and(early_flag, jnp.logical_and(has_prev_a, rel_change <= tol))
             streak_next = jnp.where(
                 early_flag,
                 jnp.where(small, jnp.minimum(streak_a + 1, patience), jnp.int32(0)),

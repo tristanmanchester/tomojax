@@ -12,9 +12,10 @@ def test_transmission_absorption_roundtrip_numpy():
     transmission = np.array([[1.0, 0.5, 0.1]], dtype=np.float32)
     absorption = transmission_to_absorption(transmission)
     rebuilt = absorption_to_transmission(absorption)
-    np.testing.assert_allclose(
-        rebuilt, np.clip(transmission, 1e-6, None), rtol=1e-6, atol=1e-6
-    )
+    assert absorption.shape == transmission.shape
+    assert absorption.dtype == np.float32
+    assert absorption[0, 2] > absorption[0, 1] > absorption[0, 0]
+    np.testing.assert_allclose(rebuilt, np.clip(transmission, 1e-6, None), rtol=1e-6, atol=1e-6)
 
 
 def test_flat_dark_to_absorption_matches_manual():
@@ -31,6 +32,9 @@ def test_flat_dark_to_absorption_matches_manual():
     norm = np.maximum(norm, 1e-5)
     expected = -np.log(norm)
 
+    assert absorption.shape == projections.shape
+    assert absorption.dtype == np.float32
+    assert np.isfinite(absorption).all()
     np.testing.assert_allclose(absorption, expected, rtol=1e-6, atol=1e-6)
 
 
@@ -43,13 +47,13 @@ def test_transmission_absorption_with_jax():
     rebuilt = absorption_to_transmission(absorption)
     assert isinstance(absorption, jax.Array)
     assert isinstance(rebuilt, jax.Array)
+    assert absorption.shape == transmission.shape
     np.testing.assert_allclose(
         np.asarray(rebuilt),
         np.clip(np.asarray(transmission), 1e-6, None),
         rtol=1e-6,
         atol=1e-6,
     )
-
 
 
 def test_flat_dark_to_absorption_preserves_two_dimensional_flat_dark_fields():
@@ -75,3 +79,17 @@ def test_flat_dark_to_absorption_preserves_two_dimensional_flat_dark_fields():
     expected = -np.log(np.maximum(norm, 1e-6))
 
     np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_absorption_to_transmission_clamps_and_casts_integer_inputs():
+    absorption = np.array([0, 2, 20], dtype=np.int32)
+
+    transmission = absorption_to_transmission(absorption, max_absorption=4.0)
+
+    assert transmission.dtype == np.float32
+    np.testing.assert_allclose(
+        transmission,
+        np.exp(-np.array([0.0, 2.0, 4.0], dtype=np.float32)),
+        rtol=1e-6,
+        atol=1e-6,
+    )

@@ -118,3 +118,8 @@ results/
 
 # Local agent skill packs
 .agents/skills/jax-development/
+
+# Local desloppify artifacts
+.desloppify/
+.factory/
+scorecard.png

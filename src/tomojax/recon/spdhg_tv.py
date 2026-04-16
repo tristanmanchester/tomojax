@@ -9,7 +9,11 @@ import jax.numpy as jnp
 
 from ..core.geometry.base import Geometry, Grid, Detector
 from ..core.geometry.views import stack_view_poses
-from ..core.projector import _sum_backproject_views_T, forward_project_view_T, get_detector_grid_device
+from ..core.projector import (
+    forward_project_view_T,
+    get_detector_grid_device,
+    sum_backproject_views_T,
+)
 from ._tv_ops import div3, grad3
 
 
@@ -18,8 +22,8 @@ from ._tv_ops import div3, grad3
 class SPDHGConfig:
     iters: int = 400
     lambda_tv: float = 5e-3
-    theta: float = 1.0           # extrapolation for xbar
-    views_per_batch: int = 16    # size of a stochastic block
+    theta: float = 1.0  # extrapolation for xbar
+    views_per_batch: int = 16  # size of a stochastic block
     seed: int = 0
 
     # step sizes (set to None => auto from operator norms)
@@ -63,7 +67,10 @@ def _estimate_norm_A2(
     def A_apply(vol, T_chunk):
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
-                T, grid, detector, v,
+                T,
+                grid,
+                detector,
+                v,
                 use_checkpoint=checkpoint_projector,
                 unroll=int(projector_unroll),
                 gather_dtype=gather_dtype,
@@ -94,7 +101,7 @@ def _estimate_norm_A2(
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
             proj = proj * mask  # zero padded rows
 
-            g_chunk = _sum_backproject_views_T(
+            g_chunk = sum_backproject_views_T(
                 T_chunk,
                 grid,
                 detector,
@@ -121,7 +128,7 @@ def _estimate_norm_A2(
     for _ in range(num_iters):
         v = normalize(AtranA_jit(v))
     Aw = AtranA_jit(v)
-    L = float(jnp.vdot(v, Aw).real) * float(safety ** 2)  # ~||A||^2 with margin
+    L = float(jnp.vdot(v, Aw).real) * float(safety**2)  # ~||A||^2 with margin
     return max(L, 1e-6)
 
 
@@ -135,7 +142,7 @@ def _proj_pos_support(x: jnp.ndarray, positivity: bool, support: jnp.ndarray | N
 
 def _prox_fstar_l2(u: jnp.ndarray, sigma: float, y_meas: jnp.ndarray, w: jnp.ndarray):
     """prox_{σ f*}(u) for f(z) = 1/2 ||W^{1/2}(z - y)||^2. Elementwise:
-       if w>0: (u - σ y) * w / (σ + w); if w==0: 0  (domain of f*).
+    if w>0: (u - σ y) * w / (σ + w); if w==0: 0  (domain of f*).
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
     denom = sigma + w
@@ -150,7 +157,7 @@ def spdhg_tv(
     detector: Detector,
     projections: jnp.ndarray,
     *,
-    weights: jnp.ndarray | None = None,     # same shape as projections; 0 for unmeasured
+    weights: jnp.ndarray | None = None,  # same shape as projections; 0 for unmeasured
     init_x: jnp.ndarray | None = None,
     config: SPDHGConfig = SPDHGConfig(),
     callback: Callable[[int, float], None] | None = None,
@@ -171,7 +178,10 @@ def spdhg_tv(
     def project_chunk(T_chunk, vol):
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
-                T, grid, detector, v,
+                T,
+                grid,
+                detector,
+                v,
                 use_checkpoint=config.checkpoint_projector,
                 unroll=int(config.projector_unroll),
                 gather_dtype=config.gather_dtype,
@@ -187,7 +197,11 @@ def spdhg_tv(
     b = int(max(1, min(config.views_per_batch, n_views)))
     if config.tau is None or config.sigma_data is None or config.sigma_tv is None:
         L_A2 = _estimate_norm_A2(
-            geometry, grid, detector, y_meas.shape, T_all,
+            geometry,
+            grid,
+            detector,
+            y_meas.shape,
+            T_all,
             views_per_batch=max(1, config.views_per_batch),
             projector_unroll=config.projector_unroll,
             checkpoint_projector=config.checkpoint_projector,
@@ -219,12 +233,18 @@ def spdhg_tv(
     block_ids = jnp.asarray(block_ids[: config.iters], dtype=jnp.int32)
 
     # init variables
-    x0 = jnp.asarray(init_x, dtype=jnp.float32) if init_x is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    x0 = (
+        jnp.asarray(init_x, dtype=jnp.float32)
+        if init_x is not None
+        else jnp.zeros((grid.nx, grid.ny, grid.nz), jnp.float32)
+    )
     x = x0
     # Ensure distinct buffers to avoid double-donation aliasing under JIT
     x_bar = jnp.array(x0, copy=True)
     y_data = jnp.zeros_like(y_meas)
-    p1 = jnp.zeros_like(x); p2 = jnp.zeros_like(x); p3 = jnp.zeros_like(x)
+    p1 = jnp.zeros_like(x)
+    p2 = jnp.zeros_like(x)
+    p3 = jnp.zeros_like(x)
     # accumulator s = A^T y_data - div(p)  (K^T with K=∇ is -div)
     s = jnp.zeros_like(x)
 
@@ -265,7 +285,7 @@ def spdhg_tv(
         # delta dual and its contribution to s via A^T (only changed rows)
         delta_y = (y_dual_new - y_dual_old) * row_mask
 
-        g_block = _sum_backproject_views_T(
+        g_block = sum_backproject_views_T(
             T_chunk,
             grid,
             detector,
@@ -280,8 +300,12 @@ def spdhg_tv(
         p1_u = p1 + sigma_tv * gx
         p2_u = p2 + sigma_tv * gy
         p3_u = p3 + sigma_tv * gz
-        norm = jnp.maximum(1.0, jnp.sqrt(p1_u*p1_u + p2_u*p2_u + p3_u*p3_u) / jnp.maximum(lam, 1e-12))
-        p1_new = p1_u / norm; p2_new = p2_u / norm; p3_new = p3_u / norm
+        norm = jnp.maximum(
+            1.0, jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u) / jnp.maximum(lam, 1e-12)
+        )
+        p1_new = p1_u / norm
+        p2_new = p2_u / norm
+        p3_new = p3_u / norm
         # TV contributes with -div(p) in the primal gradient; track the increment
         delta_div = div3(p1_new - p1, p2_new - p2, p3_new - p3)
 
@@ -302,23 +326,29 @@ def spdhg_tv(
 
         # minibatch objective estimate for logging (optional)
         do_log = (config.log_every > 0) & ((t + 1) % config.log_every == 0)
+
         def _log_step():
             resid = (pred - y_chunk) * jnp.sqrt(w_chunk) * row_mask
-            data_est = 0.5 * jnp.vdot(resid, resid).real * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
+            data_est = (
+                0.5
+                * jnp.vdot(resid, resid).real
+                * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
+            )
             gx2, gy2, gz2 = grad3(x_new)
-            tv = jnp.sum(jnp.sqrt(gx2*gx2 + gy2*gy2 + gz2*gz2 + 1e-8))
+            tv = jnp.sum(jnp.sqrt(gx2 * gx2 + gy2 * gy2 + gz2 * gz2 + 1e-8))
             obj = (data_est + lam * tv).astype(jnp.float32)
             return losses.at[t].set(obj)
+
         def _no_log():
             return losses
+
         losses_new = jax.lax.cond(do_log, _log_step, _no_log)
 
         return (x_new, x_bar_new, y_data_new, p1_new, p2_new, p3_new, s_new, losses_new), None
 
     scan_init = (x, x_bar, y_data, p1, p2, p3, s, losses)
     (x_f, xbar_f, ydata_f, p1_f, p2_f, p3_f, s_f, losses_f), _ = jax.jit(
-        lambda carry: jax.lax.scan(one_step, carry, jnp.arange(config.iters)),
-        donate_argnums=(0,)
+        lambda carry: jax.lax.scan(one_step, carry, jnp.arange(config.iters)), donate_argnums=(0,)
     )(scan_init)
 
     # optional callback with the last logged loss
@@ -337,7 +367,8 @@ def spdhg_tv(
         "sigma_data_base": float(sigma_data_base),
         "sigma_tv": float(sigma_tv),
         "lambda_tv": float(config.lambda_tv),
-        "views_per_batch": int(b), "num_blocks": int(m),
+        "views_per_batch": int(b),
+        "num_blocks": int(m),
         "A_norm": (float(L_A) if L_A is not None else None),
         "grad_norm": float(L_grad),
         "selection_prob": float(p_prob),

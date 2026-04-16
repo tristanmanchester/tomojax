@@ -1,7 +1,10 @@
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.pipeline import _select_gn_candidate
+from tomojax.align.pipeline import (
+    _is_expected_align_eval_failure,
+    _select_gn_candidate,
+)
 
 
 def _scalar_key(x):
@@ -135,3 +138,13 @@ def test_select_gn_candidate_reverts_when_no_candidate_is_acceptable():
 
     np.testing.assert_allclose(best_params, params_prev)
     assert best_loss == 5.0
+
+
+def test_is_expected_align_eval_failure_accepts_numeric_failures():
+    assert _is_expected_align_eval_failure(FloatingPointError("nan in solve"))
+    assert _is_expected_align_eval_failure(RuntimeError("Singular matrix in GN solve"))
+    assert _is_expected_align_eval_failure(RuntimeError("RESOURCE_EXHAUSTED: OOM"))
+
+
+def test_is_expected_align_eval_failure_rejects_unexpected_errors():
+    assert not _is_expected_align_eval_failure(RuntimeError("unexpected callback failure"))

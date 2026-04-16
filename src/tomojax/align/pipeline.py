@@ -71,9 +71,8 @@ def _should_prefer_gn_candidate(
     rel_tol: float,
 ) -> bool:
     """Accept tolerated GN candidates only when they improve the current best step."""
-    candidate_ok = (
-        candidate_loss < loss_before
-        or loss_is_within_relative_tolerance(loss_before, candidate_loss, rel_tol)
+    candidate_ok = candidate_loss < loss_before or loss_is_within_relative_tolerance(
+        loss_before, candidate_loss, rel_tol
     )
     return candidate_ok and candidate_loss < current_loss
 
@@ -180,6 +179,29 @@ def _select_gn_candidate(
     if accepted:
         return best_params, best_loss
     return params5_prev, loss_before
+
+
+_EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS = (
+    "allocator",
+    "cholesky",
+    "failed to converge",
+    "inf",
+    "nan",
+    "non-finite",
+    "not positive definite",
+    "out of memory",
+    "resource_exhausted",
+    "singular",
+    "svd",
+)
+
+
+def _is_expected_align_eval_failure(exc: Exception) -> bool:
+    if isinstance(exc, FloatingPointError):
+        return True
+    msg = str(exc).lower()
+    return any(snippet in msg for snippet in _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS)
+
 
 @dataclass
 class AlignConfig:
@@ -334,6 +356,7 @@ def align(
         return vol * vol_mask if vol_mask is not None else vol
 
     if has_loss_mask:
+
         def _loss_chunk_values(
             pred: jnp.ndarray,
             y_chunk: jnp.ndarray,
@@ -350,6 +373,7 @@ def align(
                 view_indices=view_idx_chunk,
             )
     else:
+
         def _loss_chunk_values(
             pred: jnp.ndarray,
             y_chunk: jnp.ndarray,
@@ -374,9 +398,7 @@ def align(
 
         def body(loss_acc, i):
             start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
-            T_chunk = jax.lax.dynamic_slice(
-                T_aug, (start_shifted, 0, 0), (chunk_size, 4, 4)
-            )
+            T_chunk = jax.lax.dynamic_slice(T_aug, (start_shifted, 0, 0), (chunk_size, 4, 4))
             y_chunk = jax.lax.dynamic_slice(
                 projections, (start_shifted, 0, 0), (chunk_size, nv, nu)
             )
@@ -400,6 +422,7 @@ def align(
 
     # Memory-safe gradient over fixed-size chunks.
     if has_loss_mask:
+
         def _one_view_loss_masked(p5_i, T_nom_i, y_i, masked_vol, mask_i, view_idx):
             T_i = T_nom_i @ se3_from_5d(p5_i)
             pred_i = forward_project_view_T(
@@ -467,12 +490,13 @@ def align(
                     jnp.float32,
                 )
                 total = total + jnp.sum((d2 * w) ** 2)
-                ww = (w ** 2) * 2.0
+                ww = (w**2) * 2.0
                 g = g.at[1:-1].add(-2.0 * d2 * ww)
                 g = g.at[0:-2].add(1.0 * d2 * ww)
                 g = g.at[2:].add(1.0 * d2 * ww)
             return total, g
     else:
+
         def _one_view_loss_unmasked(p5_i, T_nom_i, y_i, masked_vol, view_idx):
             T_i = T_nom_i @ se3_from_5d(p5_i)
             pred_i = forward_project_view_T(
@@ -536,7 +560,7 @@ def align(
                     jnp.float32,
                 )
                 total = total + jnp.sum((d2 * w) ** 2)
-                ww = (w ** 2) * 2.0
+                ww = (w**2) * 2.0
                 g = g.at[1:-1].add(-2.0 * d2 * ww)
                 g = g.at[0:-2].add(1.0 * d2 * ww)
                 g = g.at[2:].add(1.0 * d2 * ww)
@@ -562,14 +586,17 @@ def align(
             T_i = T_nom_i @ se3_from_5d(p5)
             r = _pred_flat(T_i, vol) - y_i.ravel()
             return w_i.ravel() * r
+
         # J^T r
         r = f(p5_i)
         _, vjp = jax.vjp(f, p5_i)
         g = vjp(r)[0]
         # J^T J via 5 JVPs
         eye5 = jnp.eye(5, dtype=jnp.float32)
+
         def jvp_col(v):
             return jax.jvp(f, (p5_i,), (v,))[1]
+
         cols = jax.vmap(jvp_col)(eye5)
         H = cols @ cols.T
         lam = jnp.float32(cfg.gn_damping)
@@ -585,6 +612,7 @@ def align(
     edge_ky = jnp.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], jnp.float32) / 8.0
 
     if has_loss_mask:
+
         def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
             if loss_kind_norm in ("l2",):
                 return jnp.ones_like(y_chunk)
@@ -646,6 +674,7 @@ def align(
             dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
             return dp_all
     else:
+
         def _ls_weight_chunk(y_chunk: jnp.ndarray) -> jnp.ndarray:
             if loss_kind_norm in ("l2", "l2_otsu", "l2-otsu", "otsu-l2"):
                 return jnp.ones_like(y_chunk)
@@ -725,10 +754,13 @@ def align(
                 rbits.append(f"{format_duration(rt)}")
             if stat.get("recon_retry"):
                 rbits.append("retry")
-            lm = stat.get("L_meas"); ln = stat.get("L_next")
+            lm = stat.get("L_meas")
+            ln = stat.get("L_next")
             if (lm is not None) and (ln is not None):
                 rbits.append(f"L {lm:.2e}->{ln:.2e}")
-            ff = stat.get("fista_first"); fl = stat.get("fista_last"); fm = stat.get("fista_min")
+            ff = stat.get("fista_first")
+            fl = stat.get("fista_last")
+            fm = stat.get("fista_min")
             if (ff is not None) and (fl is not None):
                 if fm is not None:
                     rbits.append(f"loss {ff:.2e}->{fl:.2e} (min {fm:.2e})")
@@ -743,14 +775,23 @@ def align(
                 abits.append(f"{format_duration(at)}")
             sk = stat.get("step_kind")
             if sk == "gn":
-                rm = stat.get("rot_mean"); tm = stat.get("trans_mean")
-                if rm is not None: abits.append(f"|drot| {rm:.2e}")
-                if tm is not None: abits.append(f"|dtrans| {tm:.2e}")
+                rm = stat.get("rot_mean")
+                tm = stat.get("trans_mean")
+                if rm is not None:
+                    abits.append(f"|drot| {rm:.2e}")
+                if tm is not None:
+                    abits.append(f"|dtrans| {tm:.2e}")
             elif sk == "gd":
-                rr = stat.get("rot_rms"); tr = stat.get("trans_rms")
-                if rr is not None: abits.append(f"rotRMS {rr:.2e}")
-                if tr is not None: abits.append(f"transRMS {tr:.2e}")
-            lb = stat.get("loss_before"); la = stat.get("loss_after"); ld = stat.get("loss_delta"); rp = stat.get("loss_rel_pct")
+                rr = stat.get("rot_rms")
+                tr = stat.get("trans_rms")
+                if rr is not None:
+                    abits.append(f"rotRMS {rr:.2e}")
+                if tr is not None:
+                    abits.append(f"transRMS {tr:.2e}")
+            lb = stat.get("loss_before")
+            la = stat.get("loss_after")
+            ld = stat.get("loss_delta")
+            rp = stat.get("loss_rel_pct")
             if (lb is not None) and (la is not None):
                 rel = f" {rp:+.2f}%" if rp is not None else ""
                 abits.append(f"loss {lb:.2e}->{la:.2e} (Δ {ld:+.2e}{rel})")
@@ -817,7 +858,9 @@ def align(
             )
         logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
 
-    for it in progress_iter(range(cfg.outer_iters), total=cfg.outer_iters, desc="Align: outer iters"):
+    for it in progress_iter(
+        range(cfg.outer_iters), total=cfg.outer_iters, desc="Align: outer iters"
+    ):
         outer_idx = it + 1
         stat: OuterStat = {"outer_idx": outer_idx}
         outer_start = time.perf_counter()
@@ -849,13 +892,11 @@ def align(
                 grad_mode=gm,
                 tv_prox_iters=int(cfg.tv_prox_iters),
                 recon_rel_tol=cfg.recon_rel_tol,
-                recon_patience=(
-                    int(cfg.recon_patience) if cfg.recon_patience is not None else 0
-                ),
+                recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
                 vol_mask=vol_mask,
             )
 
-        vpb0 = (cfg.views_per_batch if cfg.views_per_batch > 0 else None)
+        vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
         recon_retry = False
         recon_start = time.perf_counter()
         try:
@@ -863,13 +904,19 @@ def align(
         except Exception as e:
             msg = str(e)
             if ("RESOURCE_EXHAUSTED" in msg) or ("Out of memory" in msg) or ("Allocator" in msg):
-                logging.warning("FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)")
+                logging.warning(
+                    "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
+                )
                 try:
                     recon_retry = True
                     x, info_rec = _run_fista_safe(1, 1, cfg.gather_dtype, "stream")
                 except Exception as e2:
                     msg2 = str(e2)
-                    if ("RESOURCE_EXHAUSTED" in msg2) or ("Out of memory" in msg2) or ("Allocator" in msg2):
+                    if (
+                        ("RESOURCE_EXHAUSTED" in msg2)
+                        or ("Out of memory" in msg2)
+                        or ("Allocator" in msg2)
+                    ):
                         logging.error(
                             "FISTA still OOM at finest level. Reduce memory pressure (smaller problem size or lower internal batching), or provide --recon-L to skip power-method."
                         )
@@ -904,8 +951,15 @@ def align(
         align_start = time.perf_counter()
         try:
             loss_before = float(align_loss_jit(params5, x))
-        except Exception:
-            loss_before = None
+        except Exception as exc:
+            if _is_expected_align_eval_failure(exc):
+                logging.warning(
+                    "Skipping pre-step alignment loss evaluation after expected numeric failure: %s",
+                    exc,
+                )
+                loss_before = None
+            else:
+                raise
         stat["loss_before"] = loss_before
         if opt_mode == "gn" and ls_like:
             step_kind = "gn"
@@ -919,12 +973,10 @@ def align(
                 try:
                     smooth_candidate = None
                     if int(params5.shape[0]) >= 3:
-                        smooth_candidate = (
-                            lambda candidate, weights: _smooth_gn_candidate(
-                                candidate,
-                                smoothness_gram,
-                                weights,
-                            )
+                        smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
+                            candidate,
+                            smoothness_gram,
+                            weights,
                         )
                     params5, loss_after = _select_gn_candidate(
                         params5_prev,
@@ -938,9 +990,16 @@ def align(
                         smoothness_weights_sq=smoothness_weights_sq,
                         trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
                     )
-                except Exception:
-                    params5 = params5_prev
-                    loss_after = loss_before
+                except Exception as exc:
+                    if _is_expected_align_eval_failure(exc):
+                        logging.warning(
+                            "GN candidate evaluation failed; reverting to previous parameters: %s",
+                            exc,
+                        )
+                        params5 = params5_prev
+                        loss_after = loss_before
+                    else:
+                        raise
             else:
                 params5 = params5_prev + dp_all
                 loss_after = float(align_loss_jit(params5, x)) if loss_before is not None else None
@@ -950,7 +1009,7 @@ def align(
                 stat["trans_mean"] = float(jnp.mean(jnp.abs(dp_all[:, 3:])))
             except Exception:
                 pass
-        
+
         else:
             scales = jnp.array(
                 [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32
@@ -965,8 +1024,12 @@ def align(
             best_loss = align_loss_jit(best_params, x)
             cand_params = p5_in - 2.0 * g_params * eff_scales
             cand_loss = align_loss_jit(cand_params, x)
-            params5 = jax.lax.cond(cand_loss < best_loss, lambda _: cand_params, lambda _: best_params, operand=None)
-            loss_after = float(jnp.minimum(best_loss, cand_loss)) if loss_before is not None else None
+            params5 = jax.lax.cond(
+                cand_loss < best_loss, lambda _: cand_params, lambda _: best_params, operand=None
+            )
+            loss_after = (
+                float(jnp.minimum(best_loss, cand_loss)) if loss_before is not None else None
+            )
             try:
                 stat["rot_rms"] = float(jnp.mean(rms[:3]))
                 stat["trans_rms"] = float(jnp.mean(rms[3:]))
@@ -1040,8 +1103,12 @@ def align(
             small_impr_streak = 0
 
     if cfg.log_summary and outer_stats:
-        recon_total = sum(float(s.get("recon_time", 0.0)) for s in outer_stats if s.get("recon_time") is not None)
-        align_total = sum(float(s.get("align_time", 0.0)) for s in outer_stats if s.get("align_time") is not None)
+        recon_total = sum(
+            float(s.get("recon_time", 0.0)) for s in outer_stats if s.get("recon_time") is not None
+        )
+        align_total = sum(
+            float(s.get("align_time", 0.0)) for s in outer_stats if s.get("align_time") is not None
+        )
         wall_total = time.perf_counter() - wall_start
         logging.info(
             "Alignment completed in %s (recon %s, align %s over %d outer iters)",
@@ -1123,7 +1190,9 @@ def align_multires(
     global_elapsed_offset = 0.0
 
     for li, lvl in enumerate(levels):
-        g = lvl["grid"]; d = lvl["detector"]; y = lvl["projections"]
+        g = lvl["grid"]
+        d = lvl["detector"]
+        y = lvl["projections"]
         if x_init is not None and prev_factor is not None:
             # Upsample previous x to current level as init
             f_up = prev_factor // lvl["factor"]
@@ -1147,12 +1216,11 @@ def align_multires(
                 checkpoint_projector=cfg.checkpoint_projector,
                 gather_dtype=cfg.gather_dtype,
                 recon_rel_tol=cfg.recon_rel_tol,
-                recon_patience=(
-                    int(cfg.recon_patience) if cfg.recon_patience is not None else 0
-                ),
+                recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
             )
             T_nom = stack_view_poses(geometry, y.shape[0])
             from ..utils.phasecorr import phase_corr_shift
+
             vm_pred = jax.vmap(
                 lambda T: forward_project_view_T(
                     T,
@@ -1177,6 +1245,7 @@ def align_multires(
         # Run alignment at this level
         # Re-estimate L at each level using a fresh (streamed) power-method for stability
         cfg_level = replace(cfg, recon_L=None)
+
         def _level_observer(x_obs, params_obs, stat_obs):
             nonlocal global_outer_idx, stopped_by_observer
             global_outer_idx += 1
@@ -1232,11 +1301,15 @@ def align_multires(
     else:
         x_final = x_init
 
-    return x_final, params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32), {
-        "loss": loss_hist,
-        "factors": list(factors),
-        "stopped_by_observer": stopped_by_observer,
-        "observer_action": final_observer_action,
-        "total_outer_iters": int(global_outer_idx),
-        "wall_time_total": float(global_elapsed_offset),
-    }
+    return (
+        x_final,
+        params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32),
+        {
+            "loss": loss_hist,
+            "factors": list(factors),
+            "stopped_by_observer": stopped_by_observer,
+            "observer_action": final_observer_action,
+            "total_outer_iters": int(global_outer_idx),
+            "wall_time_total": float(global_elapsed_offset),
+        },
+    )

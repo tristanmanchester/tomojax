@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import numpy as np
 import jax.numpy as jnp
 
+from tomojax.cli._geometry import build_geometry_from_meta
 from tomojax.cli.align import build_geometry as build_align_geometry
 from tomojax.cli import recon as recon_cli
 from tomojax.cli.recon import build_geometry as build_recon_geometry
@@ -34,6 +35,47 @@ def _parallel_meta(**updates):
     }
     meta.update(updates)
     return meta
+
+
+def test_build_geometry_from_meta_applies_saved_angle_offsets():
+    meta = _parallel_meta(
+        angle_offset_deg=np.asarray([2.0, -3.0], dtype=np.float32),
+    )
+
+    grid, detector, geom = build_geometry_from_meta(meta, apply_saved_alignment=True)
+    expected = ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=meta["thetas_deg"] + meta["angle_offset_deg"],
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(geom.pose_for_view(1), dtype=np.float32),
+        np.asarray(expected.pose_for_view(1), dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
+def test_build_geometry_from_meta_skips_double_applying_saved_angle_offsets():
+    meta = _parallel_meta(
+        angle_offset_deg=np.asarray([2.0, -3.0], dtype=np.float32),
+        misalign_spec={"schedule": "already-baked"},
+    )
+
+    grid, detector, geom = build_geometry_from_meta(meta, apply_saved_alignment=True)
+    expected = ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=meta["thetas_deg"],
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(geom.pose_for_view(1), dtype=np.float32),
+        np.asarray(expected.pose_for_view(1), dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def test_align_build_geometry_uses_grid_override_when_grid_metadata_missing():
@@ -79,7 +121,6 @@ def test_recon_build_geometry_accepts_positional_grid_override_for_compatibility
     grid, _, _ = build_recon_geometry(meta, (11, 13, 15))
 
     assert (grid.nx, grid.ny, grid.nz) == (11, 13, 15)
-
 
 
 def test_recon_build_geometry_preserves_grid_origin_and_center():
@@ -245,7 +286,6 @@ def test_recon_cli_grid_override_preserves_roi_centering(monkeypatch, tmp_path):
     assert captured["geom_grid"].vol_center is None
 
 
-
 def test_recon_build_geometry_keeps_nominal_geometry_for_saved_alignment_metadata():
     align_params = np.asarray(
         [[0.0, 0.0, 0.0, 1.25, -0.5], [0.1, -0.2, 0.3, 0.0, 0.25]],
@@ -268,7 +308,6 @@ def test_recon_build_geometry_keeps_nominal_geometry_for_saved_alignment_metadat
             rtol=1e-6,
             atol=1e-6,
         )
-
 
 
 def test_recon_build_geometry_skips_double_applying_baked_angle_offsets():

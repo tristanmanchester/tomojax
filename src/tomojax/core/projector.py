@@ -30,7 +30,9 @@ def _default_volume_origin(grid: Grid) -> jnp.ndarray:
     return jnp.array([ox, oy, oz], dtype=jnp.float32)
 
 
-def _interpolation_support_bounds(grid: Grid, vol_origin: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def _interpolation_support_bounds(
+    grid: Grid, vol_origin: jnp.ndarray
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Return a conservative object-space support box for trilinear sampling.
 
     ``vol_origin`` denotes the centre of voxel ``(0, 0, 0)``. The projector
@@ -44,7 +46,6 @@ def _interpolation_support_bounds(grid: Grid, vol_origin: jnp.ndarray) -> Tuple[
         dtype=jnp.float32,
     )
     return vol_origin - voxel, upper
-
 
 
 def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
@@ -142,7 +143,18 @@ def _projector_traversal_state(
     step_size: float | None = None,
     n_steps: int | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.float32, int, int]:
+) -> tuple[
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.ndarray,
+    jnp.float32,
+    int,
+    int,
+]:
     """Return the fixed per-ray traversal state shared by forward and adjoint passes."""
     vol_origin = (
         jnp.asarray(grid.vol_origin, dtype=jnp.float32)
@@ -225,14 +237,9 @@ def _trilinear_gather(recon_flat, ix_f, iy_f, iz_f, nx, ny, nz):
     wz0 = 1.0 - wz1
 
     def gather(ix, iy, iz):
-        inb = (
-            (ix >= 0)
-            & (ix < nx)
-            & (iy >= 0)
-            & (iy < ny)
-            & (iz >= 0)
-            & (iz < nz)
-        ).astype(jnp.float32)
+        inb = ((ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)).astype(
+            jnp.float32
+        )
         idx = _flat_index(ix, iy, iz, nx, ny, nz)
         val = jnp.take(recon_flat, idx, mode="clip")
         return inb * val
@@ -256,7 +263,6 @@ def _trilinear_scatter_add(acc_flat, ray_vals, ix_f, iy_f, iz_f, nx, ny, nz):
         acc_flat,
     )
     return acc_flat + scatter(ray_vals)[0]
-
 
 
 def forward_project_view_T(
@@ -284,15 +290,17 @@ def forward_project_view_T(
         raise ValueError("volume must be 3D array")
     nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
     if vol.shape != (nx, ny, nz):
-        raise ValueError(f"Volume must be (nx,ny,nz)={nx,ny,nz}, got {vol.shape}")
+        raise ValueError(f"Volume must be (nx,ny,nz)={nx, ny, nz}, got {vol.shape}")
     recon_flat = _prepare_volume_for_gather(vol, gather_dtype)
-    ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, n_rays = _projector_traversal_state(
-        T,
-        grid,
-        detector,
-        step_size=step_size,
-        n_steps=n_steps,
-        det_grid=det_grid,
+    ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, n_rays = (
+        _projector_traversal_state(
+            T,
+            grid,
+            detector,
+            step_size=step_size,
+            n_steps=n_steps,
+            det_grid=det_grid,
+        )
     )
 
     def step(carry, step_idx):
@@ -397,7 +405,7 @@ def backproject_view_T(
     return acc
 
 
-def _sum_backproject_views_T(
+def sum_backproject_views_T(
     T_all: jnp.ndarray,
     grid: Grid,
     detector: Detector,
@@ -430,6 +438,9 @@ def _sum_backproject_views_T(
     init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     acc, _ = jax.lax.scan(body, init, (T_all, img))
     return acc
+
+
+_sum_backproject_views_T = sum_backproject_views_T
 
 
 def forward_project_view(

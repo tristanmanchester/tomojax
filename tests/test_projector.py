@@ -5,7 +5,14 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.core.projector import backproject_view, forward_project_view
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import (
+    backproject_view,
+    backproject_view_T,
+    forward_project_view,
+    get_detector_grid_device,
+    sum_backproject_views_T,
+)
 from tomojax.core.operators import adjoint_test_once
 
 
@@ -45,7 +52,6 @@ def test_adjoint_small_case(gather_dtype: str):
         gather_dtype=gather_dtype,
     )
     assert rel < 5e-3
-
 
 
 def test_forward_project_non_cubic_rotated_volume_uses_full_ray_extent():
@@ -160,3 +166,23 @@ def test_backproject_matches_vjp_lamino(gather_dtype: str):
     )
 
     assert np.allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-5, rtol=1e-5)
+
+
+def test_sum_backproject_views_matches_per_view_sum():
+    grid = Grid(nx=6, ny=7, nz=5, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 35.0])
+    images = jax.random.normal(jax.random.PRNGKey(2), (2, det.nv, det.nu), dtype=jnp.float32)
+    poses = stack_view_poses(geom, images.shape[0])
+    det_grid = get_detector_grid_device(det)
+
+    summed = sum_backproject_views_T(poses, grid, det, images, det_grid=det_grid)
+    expected = jnp.stack(
+        [
+            backproject_view_T(poses[i], grid, det, images[i], det_grid=det_grid)
+            for i in range(images.shape[0])
+        ],
+        axis=0,
+    ).sum(axis=0)
+
+    assert np.allclose(np.asarray(summed), np.asarray(expected), atol=1e-5, rtol=1e-5)
