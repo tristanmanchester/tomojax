@@ -4,7 +4,8 @@ from typing import Optional
 import os
 import math
 from functools import lru_cache
-import subprocess
+
+from .subprocesses import check_output_command
 
 
 def _bytes_per(dtype: str) -> int:
@@ -199,9 +200,9 @@ def _device_supports_dtype(dtype_name: str) -> bool:
 def _gpu_compute_capability() -> Optional[tuple[int, int]]:
     """Return (major, minor) compute capability for the first CUDA device, if available."""
     try:
-        output = subprocess.check_output(
+        output = check_output_command(  # nosec B603,B607
             ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
-            stderr=subprocess.DEVNULL,
+            stderr=-3,
             text=True,
         )
         first_line = output.strip().splitlines()[0]

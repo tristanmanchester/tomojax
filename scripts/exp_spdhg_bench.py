@@ -7,7 +7,6 @@ import time
 from dataclasses import asdict
 from typing import Dict, Any
 import sys
-import subprocess
 
 import numpy as np
 import jax
@@ -16,11 +15,12 @@ from skimage.metrics import peak_signal_noise_ratio, structural_similarity, mean
 import matplotlib
 matplotlib.use("Agg")
 
-from tomojax.data.simulate import SimConfig, simulate, simulate_to_file, make_phantom
+from tomojax.data.simulate import SimConfig, make_phantom
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
 from tomojax.utils.fov import cylindrical_mask_xy
+from tomojax.utils.subprocesses import run_command
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
 from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
@@ -139,7 +139,6 @@ def main() -> None:
 
     # Simulate or reuse dataset
     sim_path = os.path.join(args.outdir, "dataset.nxs")
-    meta_path = os.path.join(args.outdir, "dataset_meta.json")
     if args.overwrite_data or not os.path.exists(sim_path):
         cfg = SimConfig(
             nx=args.nx, ny=args.ny, nz=args.nz,
@@ -260,7 +259,7 @@ def main() -> None:
             # Optionally avoid command buffers if backend struggles
             env.setdefault("XLA_FLAGS", "--xla_gpu_enable_command_buffer=")
             print("[simulate] launching:", " ".join(cmd))
-            subprocess.run(cmd, check=True, env=env)
+            run_command(cmd, check=True, env=env)  # nosec B603
     else:
         print(f"[simulate] reusing dataset at {sim_path}")
 
@@ -289,8 +288,6 @@ def main() -> None:
     if gather == "auto":
         from tomojax.utils.memory import default_gather_dtype
         gather = default_gather_dtype()
-
-    results: Dict[str, Any] = {}
 
     # FBP
     t0 = time.perf_counter()
@@ -321,7 +318,7 @@ def main() -> None:
             "--out", fbp_tmp,
         ]
         env = os.environ.copy(); env["JAX_PLATFORM_NAME"] = "cpu"
-        subprocess.run(cmd, check=True, env=env)
+        run_command(cmd, check=True, env=env)  # nosec B603
         import h5py
         with h5py.File(fbp_tmp, "r") as f:
             vol_fbp = np.asarray(f["/entry/processing/tomojax/volume"])  # zyx on disk by default

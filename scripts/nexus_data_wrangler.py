@@ -34,7 +34,6 @@ Output structure:
 import json
 import numpy as np
 import h5py
-from pathlib import Path
 
 from tomojax.utils.axes import DISK_VOLUME_AXES, VOLUME_AXES_ATTR
 from tomojax.data.contrast import flat_dark_to_absorption
@@ -271,7 +270,7 @@ def write_nexus_h5(
         ang.attrs["units"] = "degree"
         ang.attrs["summary"] = json.dumps(summarize_angles(angles_deg))
 
-        axis = trans.create_dataset("rotation_axis", data=np.array([0.0, 0.0, 1.0], dtype=np.float32))
+        trans.create_dataset("rotation_axis", data=np.array([0.0, 0.0, 1.0], dtype=np.float32))
 
         # /entry/data (NXdata) with hard link to detector data
         nxdata = entry.create_group("data")

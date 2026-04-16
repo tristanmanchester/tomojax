@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jax.image as jimage
 
 from ..core.geometry.base import Grid, Detector, Geometry
-from .fista_tv import FistaConfig, fista_tv, grad_data_term
+from .fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter
 
 

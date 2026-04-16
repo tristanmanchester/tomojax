@@ -64,7 +64,7 @@ def test_perf_harness_run_sets_progress_env_and_truncates_stdout(monkeypatch):
 
     perf_mod.psutil = SimpleNamespace(Process=lambda: FakeProcess())
     monkeypatch.setattr(perf_mod.time, "perf_counter", iter([1.0, 2.25]).__next__)
-    monkeypatch.setattr(perf_mod.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(perf_mod, "run_command", fake_subprocess_run)
 
     result = perf_mod.run(["python", "-m", "tomojax.cli.recon"])
 
@@ -157,7 +157,7 @@ def test_bench_memory_monitor_parses_nvidia_smi_and_tracks_pids(monkeypatch):
         root_pid=1,
         process_factory=lambda pid: FakeRoot(),
     )
-    monkeypatch.setattr(mem_mod.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(mem_mod, "run_command", fake_subprocess_run)
 
     assert monitor._resolve_pids() == {1, 2}
     assert monitor._sample_process_memory_via_nvidia_smi({2}) == int(10 * mem_mod.MB)

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import csv
 import os
-import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Any
 
 import psutil
+from tomojax.utils.subprocesses import run_command
 
 MB = 1024.0 * 1024.0
 
@@ -135,7 +135,7 @@ class GpuMemoryMonitor:
 
     def _sample_process_memory_via_nvidia_smi(self, target_pids: set[int]) -> int | None:
         try:
-            result = subprocess.run(
+            result = run_command(  # nosec B603,B607
                 [
                     "nvidia-smi",
                     "--query-compute-apps=pid,used_memory",

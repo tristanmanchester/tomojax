@@ -6,7 +6,6 @@ Provides jit-agnostic helpers for geometry composition and conversions.
 from __future__ import annotations
 
 import numpy as np
-from typing import Tuple
 
 
 def hat_so3(w: np.ndarray) -> np.ndarray:
@@ -79,4 +78,3 @@ def rot_axis_angle(axis: np.ndarray, theta: float) -> np.ndarray:
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R
     return T
-

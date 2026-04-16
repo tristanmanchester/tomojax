@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..core.geometry.lamino import laminography_axis_unit
-
 
 def sphere(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0) -> np.ndarray:
     """Centered solid sphere in a zero background.

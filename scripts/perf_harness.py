@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -12,13 +11,15 @@ try:
 except Exception:  # pragma: no cover - optional
     psutil = None
 
+from tomojax.utils.subprocesses import run_command
+
 
 def run(cmd: list[str]) -> dict:
     t0 = time.perf_counter()
     rss0 = psutil.Process().memory_info().rss if psutil else 0
     env = os.environ.copy()
     env["TOMOJAX_PROGRESS"] = "0"
-    proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = run_command(cmd, env=env, stdout=-1, stderr=-2, text=True)  # nosec B603
     t1 = time.perf_counter()
     rss1 = psutil.Process().memory_info().rss if psutil else 0
     return {

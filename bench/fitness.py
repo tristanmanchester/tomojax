@@ -1905,8 +1905,6 @@ def _run_align_profile(
     warm_convergences = [
         run.output.get("convergence") for run in warms if run.output.get("convergence") is not None
     ]
-    warm_convergence = representative_run.output.get("convergence")
-
     gt_params = np.asarray(bundle.align_params, dtype=np.float32)
     warm_gt_mse_values: list[float] = []
     warm_trans_rmse_values: list[float | None] = []
