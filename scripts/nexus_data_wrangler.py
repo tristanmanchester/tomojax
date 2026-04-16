@@ -166,6 +166,12 @@ def summarize_angles(angles_deg):
     return out
 
 
+def _volume_chunks(shape: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Clamp placeholder-volume chunks so small grids remain writable."""
+    target = (16, 16, 32)
+    return tuple(min(dim, chunk) for dim, chunk in zip(shape, target, strict=True))
+
+
 def write_nexus_h5(
     output_path,
     projections,
@@ -287,11 +293,12 @@ def write_nexus_h5(
         tj.attrs["frame"] = "sample"
         tj.attrs[VOLUME_AXES_ATTR] = np.array(DISK_VOLUME_AXES, dtype=h5py.string_dtype(encoding="utf-8"))
 
+        volume_shape = (int(nz_grid), int(ny_grid), int(nx_grid))
         vol = tj.create_dataset(
             "volume",
-            shape=(int(nz_grid), int(ny_grid), int(nx_grid)),
+            shape=volume_shape,
             dtype="float32",
-            chunks=(16, 16, 32),
+            chunks=_volume_chunks(volume_shape),
             compression="lzf",
             shuffle=False,
             fletcher32=False,
