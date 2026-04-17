@@ -42,4 +42,4 @@ tests to the surface that owns the user-visible contract you are changing.
 - Boundary smoke checks after CLI changes:
   `uv run pytest -q tests/test_cli_entrypoints.py tests/test_cli_geometry_build.py tests/test_loss_bench.py`
 - Benchmark contract checks after harness changes:
-  `uv run pytest -q tests/test_bench_convergence.py tests/test_exp_spdhg_bench.py tests/test_support_modules.py`
+  `uv run pytest -q tests/test_bench_convergence.py tests/test_exp_spdhg_bench.py tests/test_exp_spdhg_report.py tests/test_support_modules.py`
