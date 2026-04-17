@@ -31,6 +31,7 @@ Notes
 - To force CPU runs: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
 - Optional JAX persistent cache (speeds up re‑runs): set `TOMOJAX_JAX_CACHE_DIR` or rely on the default at `~/.cache/tomojax/jax_cache`.
 - Benchmark-harness runs under `bench/` need `uv sync --extra bench --group dev` in addition to the normal CPU/GPU extra.
+- `random_shapes` sphere rasterisation uses an ROI-bounded pure-Python implementation by default.
 
 
 ## Key Features
@@ -134,7 +135,6 @@ uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_angle_lin.nxs
 uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_dx_sin.nxs \
   --pert dx:sin-window:amp=5px
 ```
-
 
 ## Python API (Short Tour)
 

@@ -81,7 +81,6 @@ def test_perf_harness_main_writes_json_and_prints_summary(monkeypatch, tmp_path,
     assert all(row["algo"] == "fbp" for row in saved)
     assert "fbp   dt=fp32" in captured.out
 
-
 def test_visualize_helpers_cover_empty_and_filtered_cases():
     viz_mod = _load_module("bench_visualize_test", "bench/visualize.py")
     volume = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)

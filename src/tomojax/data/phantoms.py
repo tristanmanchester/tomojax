@@ -168,6 +168,78 @@ def _add_rotated_cube_soft(vol: np.ndarray, center, size: float, value: float, a
     np.maximum(sub, (value * alpha).astype(np.float32), out=sub)
 
 
+def _sample_random_sphere_params(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    n_spheres: int,
+    min_size: int,
+    max_size: int,
+    min_value: float,
+    max_value: float,
+    use_inscribed_fov: bool,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Sample sphere parameters while preserving the legacy RNG sequence."""
+    cx0, cy0 = nx / 2.0, ny / 2.0
+    fov_r = min(nx, ny) / 2.0 if use_inscribed_fov else float("inf")
+    params: list[tuple[float, float, float, float, float]] = []
+
+    for _ in range(max(0, int(n_spheres))):
+        radius = float(rng.uniform(min_size / 2.0, max_size / 2.0))
+        if use_inscribed_fov:
+            rmax = fov_r - radius
+            if rmax <= 1:
+                continue
+            r = rng.uniform(0, rmax)
+            th = rng.uniform(0, 2 * np.pi)
+            cx = cx0 + r * np.cos(th)
+            cy = cy0 + r * np.sin(th)
+            cz = float(rng.uniform(radius, nz - radius))
+        else:
+            cx = float(rng.uniform(radius, nx - radius))
+            cy = float(rng.uniform(radius, ny - radius))
+            cz = float(rng.uniform(radius, nz - radius))
+        val = float(rng.uniform(min_value, max_value))
+        params.append((float(cx), float(cy), float(cz), radius, val))
+
+    if not params:
+        return np.empty((0, 5), dtype=np.float64)
+    return np.ascontiguousarray(np.asarray(params, dtype=np.float64))
+
+
+def _sphere_bounds_1d(center: float, radius: float, limit: int) -> tuple[int, int]:
+    lo = max(0, int(np.floor(center - radius)))
+    hi = min(limit - 1, int(np.ceil(center + radius)))
+    return lo, hi
+
+
+def _rasterize_spheres_python_roi(vol: np.ndarray, params: np.ndarray) -> None:
+    """ROI-bounded exact reference implementation for sphere rasterisation."""
+    if params.size == 0:
+        return
+
+    nx, ny, nz = vol.shape
+    for cx, cy, cz, radius, value in np.asarray(params, dtype=np.float64):
+        x0, x1 = _sphere_bounds_1d(float(cx), float(radius), nx)
+        y0, y1 = _sphere_bounds_1d(float(cy), float(radius), ny)
+        z0, z1 = _sphere_bounds_1d(float(cz), float(radius), nz)
+        if x1 < x0 or y1 < y0 or z1 < z0:
+            continue
+
+        xs = np.arange(x0, x1 + 1, dtype=np.int64)
+        ys = np.arange(y0, y1 + 1, dtype=np.int64)
+        zs = np.arange(z0, z1 + 1, dtype=np.int64)
+        X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+        dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2 + (Z - cz) ** 2)
+        mask = dist <= radius
+        if not np.any(mask):
+            continue
+        sub = vol[x0 : x1 + 1, y0 : y1 + 1, z0 : z1 + 1]
+        sub[mask] = np.maximum(sub[mask], value)
+
+
 def random_cubes_spheres(
     nx: int,
     ny: int,
@@ -215,26 +287,19 @@ def random_cubes_spheres(
         ang = np.deg2rad(rng.uniform(-max_rot_degrees, max_rot_degrees, size=3))
         _add_rotated_cube_soft(vol, (cx, cy, cz), size, val, ang)
 
-    # Spheres
-    X, Y, Z = np.mgrid[0:nx, 0:ny, 0:nz]
-    for _ in range(max(0, int(n_spheres))):
-        radius = float(rng.uniform(min_size / 2.0, max_size / 2.0))
-        if use_inscribed_fov:
-            rmax = fov_r - radius
-            if rmax <= 1:
-                continue
-            r = rng.uniform(0, rmax)
-            th = rng.uniform(0, 2 * np.pi)
-            cx = cx0 + r * np.cos(th)
-            cy = cy0 + r * np.sin(th)
-            cz = float(rng.uniform(radius, nz - radius))
-        else:
-            cx = float(rng.uniform(radius, nx - radius))
-            cy = float(rng.uniform(radius, ny - radius))
-            cz = float(rng.uniform(radius, nz - radius))
-        val = float(rng.uniform(min_value, max_value))
-        dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2 + (Z - cz) ** 2)
-        vol[dist <= radius] = np.maximum(vol[dist <= radius], val)
+    params = _sample_random_sphere_params(
+        nx,
+        ny,
+        nz,
+        n_spheres=n_spheres,
+        min_size=min_size,
+        max_size=max_size,
+        min_value=min_value,
+        max_value=max_value,
+        use_inscribed_fov=use_inscribed_fov,
+        rng=rng,
+    )
+    _rasterize_spheres_python_roi(vol, params)
 
     return vol.astype(np.float32)
 
