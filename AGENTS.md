@@ -29,6 +29,7 @@
 - Follow snake_case for functions/variables, UPPER_SNAKE_CASE for constants; extend APIs with kwargs instead of breaking signatures (e.g., projector functions).
 
 ## Testing Guidelines
+- Test surface ownership and placement rules live in `tests/README.md`; use that guide when deciding whether a change needs a unit, workflow, CLI, or benchmark-harness regression.
 - Mirror existing patterns in `tests/test_*.py`; keep problem sizes CPU‑friendly.
 - Name tests `test_*` and guard expensive cases behind flags or explicit CLI switches.
 - Record CLI commands and seeds when running experiments; capture them in PR descriptions or notes.
