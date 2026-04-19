@@ -58,6 +58,56 @@ def test_runtime_checks_cpu_main_sets_cpu_backend_and_prints_devices(monkeypatch
     assert os.environ["JAX_PLATFORM_NAME"] == "cpu"
 
 
+def test_align_compilation_cache_uses_current_jax_config_api(monkeypatch, tmp_path):
+    updates: list[tuple[str, str | int]] = []
+
+    def update(name: str, value: str | int) -> None:
+        updates.append((name, value))
+
+    def initialize_cache(_: str) -> None:
+        raise AssertionError("deprecated initialize_cache must not be used")
+
+    fake_jax = SimpleNamespace(config=SimpleNamespace(update=update))
+    fake_experimental = SimpleNamespace(
+        compilation_cache=SimpleNamespace(initialize_cache=initialize_cache)
+    )
+    cache_dir = tmp_path / "jax-cache"
+
+    monkeypatch.setitem(sys.modules, "jax", fake_jax)
+    monkeypatch.setitem(sys.modules, "jax.experimental", fake_experimental)
+    monkeypatch.setenv("TOMOJAX_JAX_CACHE_DIR", str(cache_dir))
+
+    align_cli._init_jax_compilation_cache()
+
+    assert cache_dir.is_dir()
+    assert updates == [
+        ("jax_compilation_cache_dir", str(cache_dir)),
+        ("jax_persistent_cache_min_entry_size_bytes", -1),
+        ("jax_persistent_cache_min_compile_time_secs", 0),
+        (
+            "jax_persistent_cache_enable_xla_caches",
+            "xla_gpu_per_fusion_autotune_cache_dir",
+        ),
+    ]
+
+
+def test_align_compilation_cache_defaults_under_xdg_cache_home(monkeypatch, tmp_path):
+    updates: list[tuple[str, str | int]] = []
+    fake_jax = SimpleNamespace(
+        config=SimpleNamespace(update=lambda name, value: updates.append((name, value)))
+    )
+    expected_cache_dir = tmp_path / "xdg" / "tomojax" / "jax_cache"
+
+    monkeypatch.setitem(sys.modules, "jax", fake_jax)
+    monkeypatch.delenv("TOMOJAX_JAX_CACHE_DIR", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+
+    align_cli._init_jax_compilation_cache()
+
+    assert expected_cache_dir.is_dir()
+    assert updates[0] == ("jax_compilation_cache_dir", str(expected_cache_dir))
+
+
 def test_recon_help_documents_quicklook_aliases(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["tomojax-recon", "--help"])
 

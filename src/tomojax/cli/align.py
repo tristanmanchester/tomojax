@@ -64,17 +64,20 @@ def _init_jax_compilation_cache() -> None:
     - ${XDG_CACHE_HOME:-~/.cache}/tomojax/jax_cache
     """
     try:
-        # Avoid noisy logs on environments without this feature
-        from jax.experimental import compilation_cache as cc  # type: ignore
-    except Exception:
-        return
-    try:
+        import jax
+
         cache_dir = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
         if not cache_dir:
             base = os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
             cache_dir = os.path.join(base, "tomojax", "jax_cache")
         os.makedirs(cache_dir, exist_ok=True)
-        cc.initialize_cache(cache_dir)
+        jax.config.update("jax_compilation_cache_dir", cache_dir)
+        jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+        jax.config.update(
+            "jax_persistent_cache_enable_xla_caches",
+            "xla_gpu_per_fusion_autotune_cache_dir",
+        )
         logging.info("JAX compilation cache: %s", cache_dir)
     except Exception:
         # Best-effort; skip on any failure silently

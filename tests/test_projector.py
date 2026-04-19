@@ -135,7 +135,7 @@ def test_backproject_matches_vjp_parallel(gather_dtype: str):
     grid = Grid(nx=6, ny=7, nz=5, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
-    image = jax.random.normal(jax.random.PRNGKey(0), (det.nv, det.nu), dtype=jnp.float32)
+    image = jax.random.normal(jax.random.key(0), (det.nv, det.nu), dtype=jnp.float32)
 
     explicit = backproject_view(
         geom,
@@ -168,7 +168,7 @@ def test_backproject_matches_vjp_lamino(gather_dtype: str):
         tilt_deg=30.0,
         tilt_about="x",
     )
-    image = jax.random.normal(jax.random.PRNGKey(1), (det.nv, det.nu), dtype=jnp.float32)
+    image = jax.random.normal(jax.random.key(1), (det.nv, det.nu), dtype=jnp.float32)
 
     explicit = backproject_view(
         geom,
@@ -194,7 +194,7 @@ def test_sum_backproject_views_matches_per_view_sum():
     grid = Grid(nx=6, ny=7, nz=5, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 35.0])
-    images = jax.random.normal(jax.random.PRNGKey(2), (2, det.nv, det.nu), dtype=jnp.float32)
+    images = jax.random.normal(jax.random.key(2), (2, det.nv, det.nu), dtype=jnp.float32)
     poses = stack_view_poses(geom, images.shape[0])
     det_grid = get_detector_grid_device(det)
 

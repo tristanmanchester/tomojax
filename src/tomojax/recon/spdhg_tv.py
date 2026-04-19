@@ -141,7 +141,7 @@ def _estimate_norm_A2(
     AtranA_jit = jax.jit(AtranA)
 
     if key is None:
-        key = jax.random.PRNGKey(0)
+        key = jax.random.key(0)
     v0 = jax.random.normal(key, (grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     v = normalize(v0)
     for _ in range(num_iters):
@@ -262,7 +262,7 @@ def spdhg_tv(
             projector_unroll=config.projector_unroll,
             checkpoint_projector=config.checkpoint_projector,
             gather_dtype=config.gather_dtype,
-            key=jax.random.PRNGKey(config.seed),
+            key=jax.random.key(config.seed),
             power_iters=20,
             safety=1.05,
         )

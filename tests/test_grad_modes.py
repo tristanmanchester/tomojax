@@ -17,7 +17,7 @@ def make_case(n_views=5, nx=12, ny=12, nz=12):
     thetas = list(np.linspace(0.0, 180.0, n_views, endpoint=False))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     # random small volume and projections
-    key = jax.random.PRNGKey(0)
+    key = jax.random.key(0)
     vol = jax.random.normal(key, (nx, ny, nz), dtype=jnp.float32) * 0.1
     # Generate projections from this volume for consistency
     # Build them by calling projector through grad_data_term's path (batched)

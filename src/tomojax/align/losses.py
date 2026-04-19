@@ -847,7 +847,7 @@ def _loss_swd(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray
     n = int(st.params.get("n_samples", -1)); p = int(st.params.get("p", 1))
     xr = pred.ravel(); yr = tar.ravel()
     if n > 0 and n < xr.size:
-        idx = jax.random.choice(jax.random.PRNGKey(0), xr.size, (n,), replace=False)
+        idx = jax.random.choice(jax.random.key(0), xr.size, (n,), replace=False)
         xr = xr[idx]; yr = yr[idx]
     xs = jnp.sort(xr); ys = jnp.sort(yr)
     d = jnp.mean((xs - ys) ** 2) if p == 2 else jnp.mean(jnp.abs(xs - ys))
