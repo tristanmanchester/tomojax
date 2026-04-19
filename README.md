@@ -241,6 +241,10 @@ for a common 4-DOF run, or omit DOF flags for full 5-DOF alignment. Outputs stil
 store all five columns; inactive columns are held fixed at their initial values.
 Use bounds such as `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` to keep active
 DOFs inside physical limits; rotations are radians and translations are world units.
+For translation-only coarse-to-fine alignment, start with
+`--optimise-dofs dx,dz --loss-schedule 4:phasecorr,2:ssim,1:l2_otsu`;
+for full 5-DOF alignment, start more conservatively with `--loss ssim` or
+`--loss charbonnier` before trying sharper GN-compatible losses.
 
 
 ## Notes

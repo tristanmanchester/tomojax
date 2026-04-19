@@ -11,7 +11,12 @@ import sys
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from ..align.dofs import DofBounds, active_dof_mask, normalize_bounds, normalize_dofs
-from ..align.losses import parse_loss_spec
+from ..align.losses import (
+    AlignmentLossConfig,
+    parse_loss_schedule,
+    parse_loss_spec,
+    validate_loss_schedule_levels,
+)
 from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
 from ..align.checkpoint import (
@@ -131,6 +136,31 @@ def _parse_bounds_arg(value: object) -> DofBounds:
         return normalize_bounds(value, option_name="--bounds")
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _parse_loss_config(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> tuple[AlignmentLossConfig, dict[str, float]]:
+    loss_params: dict[str, float] = {}
+    for kv in args.loss_param:
+        if "=" not in kv:
+            parser.error(f"--loss-param must be k=v, got: {kv}")
+        k, v = kv.split("=", 1)
+        try:
+            loss_params[k.strip()] = float(v)
+        except ValueError:
+            parser.error(f"--loss-param value must be numeric: {kv}")
+
+    try:
+        loss_spec = parse_loss_spec(str(args.loss), loss_params if loss_params else None)
+        if args.loss_schedule is None:
+            return loss_spec, loss_params
+        return parse_loss_schedule(args.loss_schedule, default=loss_spec), loss_params
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
+
+    raise AssertionError("unreachable")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -304,6 +334,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ],
         default="l2_otsu",
         help="Data term / similarity to optimize (default: l2_otsu)",
+    )
+    p.add_argument(
+        "--loss-schedule",
+        default=None,
+        help=(
+            "Pyramid-level loss schedule as LEVEL:LOSS entries, e.g. "
+            "4:phasecorr,2:ssim,1:l2_otsu. Unspecified levels use --loss."
+        ),
     )
     p.add_argument(
         "--loss-param",
@@ -537,18 +575,17 @@ def main() -> None:
     _init_jax_compilation_cache()
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
-    # Parse loss params (k=v -> float)
-    loss_params: dict[str, float] = {}
-    for kv in args.loss_param:
-        if "=" not in kv:
-            raise SystemExit(f"--loss-param must be k=v, got: {kv}")
-        k, v = kv.split("=", 1)
-        try:
-            loss_params[k.strip()] = float(v)
-        except ValueError:
-            raise SystemExit(f"--loss-param value must be numeric: {kv}")
-    loss_spec = parse_loss_spec(str(args.loss), loss_params if loss_params else None)
+    loss_config, loss_params = _parse_loss_config(args, p)
     optimise_dofs, freeze_dofs = _parse_dof_args(args, p)
+    levels = (
+        [int(v) for v in args.levels]
+        if args.levels is not None and len(args.levels) > 0
+        else None
+    )
+    try:
+        validate_loss_schedule_levels(loss_config, levels if levels is not None else [1])
+    except ValueError as exc:
+        p.error(str(exc))
 
     meta = load_nxtomo(args.data)
     geometry_meta = meta.geometry_inputs()
@@ -591,7 +628,7 @@ def main() -> None:
         pose_model=str(args.pose_model),
         knot_spacing=int(args.knot_spacing),
         degree=int(args.degree),
-        loss=loss_spec,
+        loss=loss_config,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
         log_compact=bool(args.log_compact),
@@ -624,7 +661,6 @@ def main() -> None:
             apply_saved_alignment=False,
         )
 
-    levels = [int(v) for v in args.levels] if args.levels is not None and len(args.levels) > 0 else None
     checkpoint_path = args.checkpoint or args.resume
     checkpoint_every = args.checkpoint_every
     if checkpoint_path is not None and checkpoint_every is None:
@@ -905,7 +941,7 @@ def main() -> None:
                 "checkpoint_every": args.checkpoint_every,
                 "resume_path": args.resume,
                 "loss_params": loss_params,
-                "loss_spec": loss_spec,
+                "loss_spec": loss_config,
                 "align_config": cfg,
                 "alignment_params_shape": list(params5_np.shape),
                 "volume_shape": list(np.asarray(x).shape),

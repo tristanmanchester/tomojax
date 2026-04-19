@@ -32,9 +32,12 @@ from .dofs import (
 )
 from .losses import (
     L2OtsuLossSpec,
-    AlignmentLossSpec,
+    AlignmentLossConfig,
     build_loss_adapter,
+    loss_spec_name,
     loss_is_within_relative_tolerance,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
 )
 from .motion_models import (
     build_pose_motion_model,
@@ -53,6 +56,7 @@ ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverActio
 
 class AlignInfo(TypedDict):
     loss: list[float]
+    loss_kind: str
     L: float | None
     outer_stats: list[OuterStat]
     stopped_by_observer: bool
@@ -71,6 +75,7 @@ class AlignInfo(TypedDict):
 class AlignMultiresInfo(TypedDict):
     loss: list[float]
     factors: list[int]
+    loss_kind: str | None
     outer_stats: list[OuterStat]
     stopped_by_observer: bool
     observer_action: ObserverAction
@@ -345,7 +350,7 @@ class AlignConfig:
     gn_accept_only_improving: bool = True
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
-    loss: AlignmentLossSpec = field(default_factory=L2OtsuLossSpec)
+    loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
 
     def __post_init__(self) -> None:
         if self.optimise_dofs is not None:
@@ -525,7 +530,9 @@ def align(
         vol_mask = None
 
     # Build per-view loss once (may precompute masks on targets)
-    loss_adapter = build_loss_adapter(cfg.loss, projections)
+    active_loss_spec = resolve_loss_for_level(cfg.loss, level_factor=1)
+    active_loss_name = loss_spec_name(active_loss_spec)
+    loss_adapter = build_loss_adapter(active_loss_spec, projections)
     per_view_loss_fn = loss_adapter.per_view_loss
     loss_state = loss_adapter.state
 
@@ -1043,7 +1050,7 @@ def align(
         desc="Align: outer iters",
     ):
         outer_idx = it + 1
-        stat: OuterStat = {"outer_idx": outer_idx}
+        stat: OuterStat = {"outer_idx": outer_idx, "loss_kind": active_loss_name}
         outer_start = time.perf_counter()
 
         # Reconstruction step
@@ -1394,6 +1401,7 @@ def align(
     wall_total = time.perf_counter() - wall_start
     info = {
         "loss": loss_hist,
+        "loss_kind": active_loss_name,
         "L": (float(L_prev) if L_prev is not None else None),
         "outer_stats": outer_stats,
         "stopped_by_observer": stopped_by_observer,
@@ -1448,6 +1456,7 @@ def align_multires(
     )
 
     factors_list = [int(f) for f in factors]
+    validate_loss_schedule_levels(cfg.loss, factors_list)
     levels: list[MultiresLevel] = []
     for f in factors_list:
         g = scale_grid(grid, int(f))
@@ -1489,6 +1498,7 @@ def align_multires(
     final_pose_model_variables: int | None = None
     final_per_view_variables: int | None = None
     final_pose_model_basis_shape: list[int] | None = None
+    final_loss_kind: str | None = None
     last_level_index_processed: int | None = None
 
     if resume_state is not None and resume_state.run_complete:
@@ -1506,6 +1516,16 @@ def align_multires(
         g = lvl["grid"]
         d = lvl["detector"]
         y = lvl["projections"]
+        active_loss_spec = resolve_loss_for_level(cfg.loss, int(lvl["factor"]))
+        active_loss_name = loss_spec_name(active_loss_spec)
+        final_loss_kind = active_loss_name
+        logging.info(
+            "Alignment level %d/%d factor=%d using loss=%s",
+            int(li) + 1,
+            len(levels),
+            int(lvl["factor"]),
+            active_loss_name,
+        )
         resuming_this_level = (
             resume_state is not None
             and not resume_state.level_complete
@@ -1576,7 +1596,7 @@ def align_multires(
 
         # Run alignment at this level
         # Re-estimate L at each level using a fresh (streamed) power-method for stability
-        cfg_level = replace(cfg, recon_L=None)
+        cfg_level = replace(cfg, recon_L=None, loss=active_loss_spec)
         level_completed_before = (
             int(resume_state.completed_outer_iters_in_level) if resuming_this_level else 0
         )
@@ -1597,6 +1617,7 @@ def align_multires(
                 enriched["level_factor"] = int(lvl["factor"])
                 enriched["level_index"] = int(li)
                 enriched["global_outer_idx"] = int(global_before_level + idx)
+                enriched["loss_kind"] = str(enriched.get("loss_kind") or active_loss_name)
                 level_elapsed = stat.get("cumulative_time")
                 try:
                     level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
@@ -1660,6 +1681,7 @@ def align_multires(
             enriched["level_factor"] = int(lvl["factor"])
             enriched["level_index"] = int(li)
             enriched["global_outer_idx"] = int(global_before_level + int(stat_obs["outer_idx"]))
+            enriched["loss_kind"] = str(enriched.get("loss_kind") or active_loss_name)
             level_elapsed = stat_obs.get("cumulative_time")
             try:
                 level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
@@ -1784,6 +1806,7 @@ def align_multires(
         {
             "loss": loss_hist,
             "factors": factors_list,
+            "loss_kind": final_loss_kind,
             "stopped_by_observer": stopped_by_observer,
             "observer_action": final_observer_action,
             "total_outer_iters": int(executed_outer_iters),

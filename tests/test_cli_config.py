@@ -4,6 +4,7 @@ import pytest
 
 import tomojax.cli.align as align_cli
 from tomojax.align.dofs import normalize_bounds
+from tomojax.align.losses import loss_spec_name, resolve_loss_for_level
 from tomojax.align.pipeline import AlignConfig
 from tomojax.cli.config import parse_args_with_config
 import tomojax.cli.recon as recon_cli
@@ -103,6 +104,117 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
     assert "checkpoint_every" in metadata["explicit_cli_keys"]
     assert "loss_param" in metadata["explicit_cli_keys"]
     assert metadata["effective_options"]["levels"] == [2, 1]
+
+
+def test_align_config_toml_accepts_loss_schedule_string(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'loss = "l2"',
+                'loss_schedule = "4:phasecorr,2:ssim,1:l2_otsu"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path)],
+        required=("data", "out"),
+    )
+    loss_config, loss_params = align_cli._parse_loss_config(args, parser)
+
+    assert loss_params == {}
+    assert metadata["config_file_values"]["loss_schedule"] == "4:phasecorr,2:ssim,1:l2_otsu"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 4)) == "phasecorr"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 2)) == "ssim"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 1)) == "l2_otsu"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 8)) == "l2"
+
+
+def test_align_config_toml_accepts_loss_schedule_mapping(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'loss_schedule = { "4" = "phasecorr", "2" = "ssim" }',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, _ = parse_args_with_config(
+        parser,
+        ["--config", str(config_path)],
+        required=("data", "out"),
+    )
+    loss_config, _ = align_cli._parse_loss_config(args, parser)
+
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 4)) == "phasecorr"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 2)) == "ssim"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 1)) == "l2_otsu"
+
+
+def test_align_cli_loss_schedule_overrides_config(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'loss = "l2"',
+                'loss_schedule = "4:phasecorr"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        [
+            "--config",
+            str(config_path),
+            "--loss-schedule",
+            "2:ssim",
+        ],
+        required=("data", "out"),
+    )
+    loss_config, _ = align_cli._parse_loss_config(args, parser)
+
+    assert "loss_schedule" in metadata["explicit_cli_keys"]
+    assert metadata["effective_options"]["loss_schedule"] == "2:ssim"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 2)) == "ssim"
+    assert loss_spec_name(resolve_loss_for_level(loss_config, 4)) == "l2"
+
+
+def test_align_cli_rejects_invalid_loss_schedule_before_main_work(capsys):
+    parser = align_cli._build_parser()
+    args, _ = parse_args_with_config(
+        parser,
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--loss-schedule",
+            "4phasecorr",
+        ],
+        required=("data", "out"),
+    )
+
+    with pytest.raises(SystemExit):
+        align_cli._parse_loss_config(args, parser)
+
+    captured = capsys.readouterr()
+    assert "LEVEL:LOSS" in captured.err
 
 
 def test_align_cli_dof_options_parse_and_normalize_named_dofs():

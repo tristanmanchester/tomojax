@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import tomojax.align.pipeline as align_pipeline
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
+from tomojax.align.losses import loss_spec_name, parse_loss_schedule, parse_loss_spec
 from tomojax.align.pipeline import align, align_multires, AlignConfig
 from tomojax.align.parametrizations import se3_from_5d
 
@@ -163,6 +164,92 @@ def test_align_multires_counts_executed_outer_iters_without_observer():
 
     assert info["factors"] == [2, 1]
     assert info["total_outer_iters"] == 2
+
+
+def test_align_multires_uses_scheduled_loss_by_level(monkeypatch):
+    grid, det, geom, _, projs, _ = make_misaligned_case(8, 8, 8, 4, 6)
+    observed_loss_names: list[str] = []
+
+    def fake_align(
+        geometry,
+        level_grid,
+        level_detector,
+        level_projections,
+        *,
+        cfg,
+        init_x=None,
+        init_params5=None,
+        observer=None,
+        resume_state=None,
+        checkpoint_callback=None,
+    ):
+        del geometry, observer, resume_state, checkpoint_callback
+        loss_name = loss_spec_name(cfg.loss)
+        observed_loss_names.append(loss_name)
+        params = (
+            jnp.zeros((level_projections.shape[0], 5), dtype=jnp.float32)
+            if init_params5 is None
+            else jnp.asarray(init_params5, dtype=jnp.float32)
+        )
+        x = (
+            jnp.zeros(
+                (level_grid.nx, level_grid.ny, level_grid.nz),
+                dtype=jnp.float32,
+            )
+            if init_x is None
+            else jnp.asarray(init_x, dtype=jnp.float32)
+        )
+        info = {
+            "loss": [float(len(observed_loss_names))],
+            "loss_kind": loss_name,
+            "outer_stats": [
+                {
+                    "outer_idx": 1,
+                    "loss_kind": loss_name,
+                    "loss_after": float(len(observed_loss_names)),
+                }
+            ],
+            "stopped_by_observer": False,
+            "observer_action": "continue",
+            "wall_time_total": 0.0,
+            "pose_model": "per_view",
+            "pose_model_variables": int(level_projections.shape[0] * 5),
+            "per_view_variables": 5,
+            "pose_model_basis_shape": [int(level_projections.shape[0]), 1],
+            "active_dofs": ["alpha", "beta", "phi", "dx", "dz"],
+            "completed_outer_iters": 1,
+            "small_impr_streak": 0,
+            "motion_coeffs": None,
+            "L": None,
+        }
+        return x, params, info
+
+    monkeypatch.setattr(align_pipeline, "align", fake_align)
+    cfg = AlignConfig(
+        outer_iters=1,
+        recon_iters=1,
+        loss=parse_loss_schedule(
+            "4:phasecorr,2:ssim,1:l2_otsu",
+            default=parse_loss_spec("l2"),
+        ),
+        early_stop=False,
+    )
+
+    _, _, info = align_pipeline.align_multires(
+        geom,
+        grid,
+        det,
+        projs,
+        factors=[4, 2, 1],
+        cfg=cfg,
+    )
+
+    assert observed_loss_names == ["phasecorr", "ssim", "l2_otsu"]
+    assert [stat["loss_kind"] for stat in info["outer_stats"]] == [
+        "phasecorr",
+        "ssim",
+        "l2_otsu",
+    ]
 
 
 def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):

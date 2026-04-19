@@ -172,6 +172,7 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--early-stop|--no-early-stop] [--early-stop-rel <float>] [--early-stop-patience <int>] \
   [--pose-model per_view|polynomial|spline] [--knot-spacing <int>] [--degree <int>] \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
+  [--loss <name>] [--loss-schedule <LEVEL:LOSS,...>] \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
   [--checkpoint <checkpoint.npz>] [--checkpoint-every <N>] [--resume <checkpoint.npz>] \
@@ -191,6 +192,7 @@ Key options
   - Threshold and patience: `--early-stop-rel` (default 1e-3), `--early-stop-patience` (default 2).
 - Smoothness across views: `--w-rot`, `--w-trans` (default 1e‑3 in CLI) add a second-difference prior on the expanded per-view parameters. Smooth pose models usually need less explicit prior strength because the basis already reduces freedom.
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
+- Loss scheduling: `--loss` selects one loss for every level. `--loss-schedule 4:phasecorr,2:ssim,1:l2_otsu` overrides the loss per pyramid factor, so numeric keys refer to `--levels` values. Levels omitted from the schedule fall back to `--loss`.
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
 - Checkpoint/resume: `--checkpoint PATH` writes an atomic `.npz` checkpoint after completed alignment outer iterations, and `--checkpoint-every N` controls the completed global outer-iteration cadence. `--resume PATH` loads a checkpoint and continues from the next outer iteration or pyramid level; if `--checkpoint` is omitted, future checkpoints are written back to the resume path. Checkpoints are outer-iteration boundaries only, not mid-FISTA inner-iteration snapshots.
@@ -204,6 +206,14 @@ Notes
 - DOF selection does not change the saved parameter format: outputs still use five columns in `[alpha, beta, phi, dx, dz]` order, with inactive columns held fixed.
 - Smooth motion models are best for slow drift, stage sag, thermal/mechanical trends, or noisy data where independent per-view parameters overfit. Keep `per_view` for abrupt shifts, dropped-view artifacts, or genuinely view-local motion.
 - The align CLI initializes a persistent JAX compilation cache automatically. Set `TOMOJAX_JAX_CACHE_DIR` to control the cache location.
+
+Loss schedule guidance
+- For translation-only coarse-to-fine alignment, start with:
+  `--optimise-dofs dx,dz --loss-schedule 4:phasecorr,2:ssim,1:l2_otsu`.
+  Small `40^3` smoke tests over three seeds reduced translation RMSE most consistently with this schedule. The next-best tested schedule was `4:ssim,2:l2,1:l2_otsu`.
+- For full 5-DOF alignment, prefer a conservative image-similarity loss first, especially `--loss ssim` or `--loss charbonnier`. In the same smoke tests, coarse GN-compatible L2-style losses (`l2`, `l2_otsu`, `edge_l2`) often improved translation but over-rotated the poses.
+- Treat `phasecorr` as a coarse translation helper, not a good all-level loss. It was useful in the `dx,dz` schedule above, but poor when used at every level.
+- Use `l2_otsu` as a fine-level stabilizer or fallback. It is conservative and can reject unsafe GN steps, but it may not move much by itself on coarse levels.
 
 Examples
 ```
@@ -246,6 +256,13 @@ uv run tomojax-align --data data/sim_misaligned_poisson.nxs \
   --levels 4 2 1 --opt-method gn \
   --pose-model spline --knot-spacing 12 --degree 3 \
   --out out/align_spline.nxs
+
+# Coarse-to-fine loss schedule: robust/coarse objectives early, sharper loss at full resolution
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 \
+  --loss-schedule 4:phasecorr,2:ssim,1:l2_otsu \
+  --opt-method gn \
+  --out out/align_loss_schedule.nxs
 
 # Low-order polynomial model for simple scan-length drift
 uv run tomojax-align --data data/sim_misaligned.nxs \

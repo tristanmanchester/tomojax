@@ -13,6 +13,11 @@ from tomojax.align.losses import (
     _loss_welsch,
     build_loss,
     loss_is_within_relative_tolerance,
+    loss_spec_name,
+    parse_loss_schedule,
+    parse_loss_spec,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
 )
 from tomojax.align.pipeline import _should_prefer_gn_candidate
 
@@ -21,6 +26,52 @@ def test_loss_is_within_relative_tolerance_allows_small_increase():
     assert loss_is_within_relative_tolerance(100.0, 100.5, 0.01)
     assert loss_is_within_relative_tolerance(100.0, 99.0, 0.01)
     assert not loss_is_within_relative_tolerance(100.0, 101.0, 0.01)
+
+
+def test_parse_loss_schedule_selects_expected_level_losses():
+    schedule = parse_loss_schedule(
+        "4:phasecorr,2:ssim,1:l2_otsu",
+        default=parse_loss_spec("l2"),
+    )
+
+    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "phasecorr"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 2)) == "ssim"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 1)) == "l2_otsu"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 8)) == "l2"
+
+
+def test_parse_loss_schedule_canonicalizes_loss_aliases():
+    schedule = parse_loss_schedule(
+        "4:phase_corr_soft,1:l2-otsu",
+        default=parse_loss_spec("ssim"),
+    )
+
+    assert loss_spec_name(resolve_loss_for_level(schedule, 4)) == "phasecorr"
+    assert loss_spec_name(resolve_loss_for_level(schedule, 1)) == "l2_otsu"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("4phasecorr", "LEVEL:LOSS"),
+        (":phasecorr", "must not be empty"),
+        ("4:", "must name a loss"),
+        ("coarse:phasecorr", "positive integer"),
+        ("0:phasecorr", "positive integer"),
+        ("4:phasecorr,4:ssim", "Duplicate"),
+        ("4:not_a_loss", "Unknown loss kind"),
+    ],
+)
+def test_parse_loss_schedule_rejects_invalid_strings(raw, expected):
+    with pytest.raises(ValueError, match=expected):
+        parse_loss_schedule(raw, default=parse_loss_spec("l2"))
+
+
+def test_validate_loss_schedule_levels_rejects_unconfigured_level():
+    schedule = parse_loss_schedule("8:phasecorr", default=parse_loss_spec("l2"))
+
+    with pytest.raises(ValueError, match="8.*4, 2, 1"):
+        validate_loss_schedule_levels(schedule, [4, 2, 1])
 
 
 def test_cauchy_matches_log1p_form():

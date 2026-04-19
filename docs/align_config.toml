@@ -11,6 +11,19 @@ lambda_tv = 0.003
 levels = [4, 2, 1]
 opt_method = "gn"
 gn_damping = 0.001
+# Optional pyramid-level loss schedule. Numeric keys are pyramid factors from
+# levels, and omitted levels fall back to loss (default: l2_otsu).
+# loss = "l2"
+#
+# Recommended first pass for translation-only coarse-to-fine alignment:
+# optimise_dofs = ["dx", "dz"]
+# loss_schedule = "4:phasecorr,2:ssim,1:l2_otsu"
+#
+# For full 5-DOF alignment, prefer a conservative single loss first:
+# loss = "ssim"
+#
+# Equivalent TOML mapping form:
+# loss_schedule = { "4" = "phasecorr", "2" = "ssim", "1" = "l2_otsu" }
 # Common DOF selections:
 #   2-DOF translation-only alignment: optimise_dofs = ["dx", "dz"]
 #   4-DOF with in-plane spin fixed: freeze_dofs = ["phi"]

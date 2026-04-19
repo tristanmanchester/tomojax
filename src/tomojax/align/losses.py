@@ -8,7 +8,7 @@ scalar loss. Heavy precomputations that only depend on the targets happen once i
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Literal, Mapping, Optional, TypeAlias, Tuple
+from typing import Callable, Dict, Iterable, Literal, Mapping, Optional, TypeAlias, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -145,6 +145,21 @@ AlignmentLossSpec: TypeAlias = (
     | MindLossSpec
     | PoissonLossSpec
 )
+
+
+@dataclass(frozen=True, slots=True)
+class LossScheduleEntry:
+    level_factor: int
+    spec: AlignmentLossSpec
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentLossSchedule:
+    default: AlignmentLossSpec
+    by_level: tuple[LossScheduleEntry, ...]
+
+
+AlignmentLossConfig: TypeAlias = AlignmentLossSpec | AlignmentLossSchedule
 
 PerViewLossFn: TypeAlias = Callable[
     [jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]],
@@ -395,6 +410,119 @@ def parse_loss_spec(
         _unused(set())
         return PoissonLossSpec()
     raise ValueError(f"Unknown loss kind: {kind}")
+
+
+def _parse_loss_schedule_level(raw_level: object) -> int:
+    level_text = str(raw_level).strip()
+    if not level_text:
+        raise ValueError("Loss schedule level must not be empty")
+    try:
+        level = int(level_text)
+    except ValueError as exc:
+        raise ValueError(f"Loss schedule level must be a positive integer: {raw_level!r}") from exc
+    if level < 1:
+        raise ValueError(f"Loss schedule level must be a positive integer: {raw_level!r}")
+    return level
+
+
+def _parse_loss_schedule_loss(raw_loss: object, *, level: int) -> AlignmentLossSpec:
+    loss_name = str(raw_loss).strip()
+    if not loss_name:
+        raise ValueError(f"Loss schedule entry for level {level} must name a loss")
+    try:
+        return parse_loss_spec(loss_name)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid loss schedule entry for level {level}: {exc}"
+        ) from exc
+
+
+def parse_loss_schedule(
+    value: str | Mapping[object, object],
+    default: AlignmentLossSpec,
+) -> AlignmentLossSchedule:
+    """Parse a pyramid-level loss schedule.
+
+    String values use ``LEVEL:LOSS`` comma-separated entries, for example
+    ``"4:phasecorr,2:ssim,1:l2_otsu"``. Mapping values are intended for TOML
+    config files, for example ``{"4": "phasecorr", "2": "ssim"}``.
+    """
+    raw_entries: list[tuple[object, object]] = []
+    if isinstance(value, Mapping):
+        raw_entries = list(value.items())
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("Loss schedule must not be empty")
+        for entry in text.split(","):
+            item = entry.strip()
+            if not item:
+                raise ValueError("Loss schedule contains an empty entry")
+            if ":" not in item:
+                raise ValueError(
+                    f"Loss schedule entry {item!r} must use LEVEL:LOSS format"
+                )
+            raw_level, raw_loss = item.split(":", 1)
+            raw_entries.append((raw_level, raw_loss))
+    else:
+        raise TypeError("Loss schedule must be a string or mapping")
+
+    if not raw_entries:
+        raise ValueError("Loss schedule must contain at least one entry")
+
+    entries: list[LossScheduleEntry] = []
+    seen: set[int] = set()
+    for raw_level, raw_loss in raw_entries:
+        level = _parse_loss_schedule_level(raw_level)
+        if level in seen:
+            raise ValueError(f"Duplicate loss schedule level: {level}")
+        seen.add(level)
+        entries.append(
+            LossScheduleEntry(
+                level_factor=level,
+                spec=_parse_loss_schedule_loss(raw_loss, level=level),
+            )
+        )
+
+    return AlignmentLossSchedule(
+        default=default,
+        by_level=tuple(sorted(entries, key=lambda entry: entry.level_factor)),
+    )
+
+
+def resolve_loss_for_level(
+    loss_config: AlignmentLossConfig,
+    level_factor: int,
+) -> AlignmentLossSpec:
+    if not isinstance(loss_config, AlignmentLossSchedule):
+        return loss_config
+    level = int(level_factor)
+    for entry in loss_config.by_level:
+        if int(entry.level_factor) == level:
+            return entry.spec
+    return loss_config.default
+
+
+def validate_loss_schedule_levels(
+    loss_config: AlignmentLossConfig,
+    factors: Iterable[int],
+) -> None:
+    if not isinstance(loss_config, AlignmentLossSchedule):
+        return
+    factor_list = [int(factor) for factor in factors]
+    valid = set(factor_list)
+    missing = sorted(
+        int(entry.level_factor)
+        for entry in loss_config.by_level
+        if int(entry.level_factor) not in valid
+    )
+    if not missing:
+        return
+    valid_text = ", ".join(str(factor) for factor in factor_list)
+    missing_text = ", ".join(str(factor) for factor in missing)
+    raise ValueError(
+        f"Loss schedule level(s) {missing_text} do not match configured levels: {valid_text}"
+    )
 
 
 def _safe_epsilon(p: Dict[str, float], key: str, default: float) -> float:
