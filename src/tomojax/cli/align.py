@@ -6,6 +6,7 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
+import sys
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
@@ -16,6 +17,7 @@ from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
+from .manifest import build_manifest, save_manifest
 
 from ..utils.fov import (
     compute_roi,
@@ -251,6 +253,12 @@ def main() -> None:
         help="Optional CSV sidecar for final per-view alignment parameters",
     )
     p.add_argument(
+        "--save-manifest",
+        metavar="PATH",
+        default=None,
+        help="Write a JSON reproducibility manifest for this alignment run.",
+    )
+    p.add_argument(
         "--progress",
         action="store_true",
         help="Show progress bars if tqdm is available",
@@ -429,6 +437,57 @@ def main() -> None:
             dv=float(detector.dv),
         )
         logging.info("Saved alignment parameter CSV to %s", args.save_params_csv)
+    if args.save_manifest is not None:
+        loss_values = info.get("loss", []) if isinstance(info, dict) else []
+        manifest = build_manifest(
+            "tomojax-align",
+            list(sys.argv),
+            args,
+            {
+                "input_path": args.data,
+                "output_path": args.out,
+                "save_params_json": args.save_params_json,
+                "save_params_csv": args.save_params_csv,
+                "manifest_path": args.save_manifest,
+                "geometry_type": str(meta.geometry_type),
+                "input_projection_shape": list(meta.projections.shape),
+                "reconstruction_grid": recon_grid.to_dict(),
+                "detector": detector.to_dict(),
+                "roi": {
+                    "requested": str(args.roi),
+                    "is_parallel": bool(meta.geometry_type == "parallel"),
+                    "grid_changed": recon_grid != grid,
+                    "cylindrical_output_mask": bool(apply_cyl_mask),
+                },
+                "requested_gather_dtype": str(args.gather_dtype),
+                "gather_dtype": _gather,
+                "views_per_batch": int(vpb_est),
+                "projector_unroll": 1,
+                "checkpoint_projector": bool(args.checkpoint_projector),
+                "transfer_guard": str(args.transfer_guard),
+                "levels": args.levels,
+                "used_multires": bool(args.levels is not None and len(args.levels) > 0),
+                "loss_params": loss_params,
+                "loss_spec": loss_spec,
+                "align_config": cfg,
+                "alignment_params_shape": list(params5_np.shape),
+                "volume_shape": list(np.asarray(x).shape),
+                "volume_axes": str(args.volume_axes),
+                "frame": str(save_meta.frame),
+                "run_info": {
+                    "loss_count": len(loss_values),
+                    "final_loss": loss_values[-1] if len(loss_values) else None,
+                    "stopped_by_observer": (
+                        info.get("stopped_by_observer") if isinstance(info, dict) else None
+                    ),
+                    "observer_action": (
+                        info.get("observer_action") if isinstance(info, dict) else None
+                    ),
+                },
+            },
+        )
+        save_manifest(args.save_manifest, manifest)
+        logging.info("Saved reproducibility manifest to %s", args.save_manifest)
 
 
 if __name__ == "__main__":  # pragma: no cover

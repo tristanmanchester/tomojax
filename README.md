@@ -118,7 +118,8 @@ uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned_po
 # Naive reconstructions (FBP)
 uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp --gather-dtype bf16 \
-  --checkpoint-projector --out out/fbp_misaligned.nxs
+  --checkpoint-projector --out out/fbp_misaligned.nxs \
+  --save-manifest out/fbp_misaligned.manifest.json
 
 # Iterative alignment + reconstruction (multires)
 uv run tomojax-align --data data/sim_misaligned.nxs \
@@ -127,7 +128,8 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --gather-dtype bf16 --checkpoint-projector \
   --log-summary --out out/align_misaligned.nxs \
   --save-params-json out/align_misaligned.params.json \
-  --save-params-csv out/align_misaligned.params.csv
+  --save-params-csv out/align_misaligned.params.csv \
+  --save-manifest out/align_misaligned.manifest.json
 
 # Deterministic misalignment schedules (see docs/misalign_modes.md)
 # Linear angle drift 0→+5° across the scan

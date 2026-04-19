@@ -78,6 +78,97 @@ def test_recon_views_per_batch_parser_accepts_auto_and_integers():
         recon_cli._parse_views_per_batch("fast")
 
 
+def test_recon_main_writes_manifest_sidecar(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    detector = recon_cli.Detector(
+        nu=2,
+        nv=1,
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    grid = recon_cli.Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    meta = LoadedNXTomo.from_dataset(
+        {
+            "projections": np.zeros((2, 1, 2), dtype=np.float32),
+            "thetas_deg": np.asarray([0.0, 90.0], dtype=np.float32),
+            "detector": detector.to_dict(),
+            "grid": grid.to_dict(),
+            "geometry_type": "parallel",
+        }
+    )
+
+    @contextmanager
+    def fake_transfer_guard(mode: str):
+        captured["transfer_guard"] = mode
+        yield
+
+    def fake_fbp(geom, recon_grid, recon_detector, projections, **kwargs):
+        captured["fbp_kwargs"] = kwargs
+        return jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+
+    def fake_save_nxtomo(path, *, projections, metadata):
+        captured["save_path"] = path
+        captured["save_metadata"] = metadata
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(
+        recon_cli,
+        "build_geometry_from_meta",
+        lambda geometry_meta, grid_override=None, apply_saved_alignment=False: (
+            grid,
+            detector,
+            object(),
+        ),
+    )
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", fake_transfer_guard)
+    monkeypatch.setattr(recon_cli, "fbp", fake_fbp)
+    monkeypatch.setattr(recon_cli, "save_nxtomo", fake_save_nxtomo)
+
+    out_path = tmp_path / "recon.nxs"
+    manifest_path = tmp_path / "manifests" / "recon.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tomojax-recon",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--out",
+            str(out_path),
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--transfer-guard",
+            "log",
+            "--save-manifest",
+            str(manifest_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["transfer_guard"] == "log"
+    assert captured["save_path"] == str(out_path)
+    assert manifest_path.exists()
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["command"] == "tomojax-recon"
+    assert payload["argv"][0] == "tomojax-recon"
+    assert payload["cli_args"]["save_manifest"] == str(manifest_path)
+    assert payload["resolved_config"]["output_path"] == str(out_path)
+    assert payload["resolved_config"]["gather_dtype"] == "fp32"
+    assert payload["resolved_config"]["views_per_batch"] == 1
+    assert payload["resolved_config"]["views_per_batch_mode"] == "default"
+    assert payload["resolved_config"]["reconstruction_grid"]["nx"] == 2
+    assert payload["versions"]["tomojax"]
+    assert "created_at" in payload
+    assert "available" in payload["jax"]
+
+
 def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 
@@ -244,6 +335,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     out_path = tmp_path / "aligned.nxs"
     json_path = tmp_path / "params" / "aligned.json"
     csv_path = tmp_path / "params" / "aligned.csv"
+    manifest_path = tmp_path / "manifests" / "aligned.json"
     monkeypatch.setattr(
         sys,
         "argv",
@@ -263,6 +355,8 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
             str(json_path),
             "--save-params-csv",
             str(csv_path),
+            "--save-manifest",
+            str(manifest_path),
         ],
     )
 
@@ -285,3 +379,17 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert len(rows) == 2
     assert rows[0]["view_index"] == "0"
     assert float(rows[0]["dx_px"]) == pytest.approx(2.0)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 1
+    assert manifest["command"] == "tomojax-align"
+    assert manifest["argv"][0] == "tomojax-align"
+    assert manifest["cli_args"]["save_manifest"] == str(manifest_path)
+    assert manifest["resolved_config"]["output_path"] == str(out_path)
+    assert manifest["resolved_config"]["gather_dtype"] == "fp32"
+    assert manifest["resolved_config"]["levels"] is None
+    assert manifest["resolved_config"]["reconstruction_grid"]["nx"] == 2
+    assert manifest["resolved_config"]["alignment_params_shape"] == [2, 5]
+    assert manifest["versions"]["tomojax"]
+    assert "created_at" in manifest
+    assert "available" in manifest["jax"]

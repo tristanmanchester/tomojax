@@ -6,6 +6,7 @@ import logging
 import numpy as np
 import jax.numpy as jnp
 import os
+import sys
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
@@ -18,6 +19,7 @@ from ..utils.logging import setup_logging, log_jax_env
 from ..utils.memory import estimate_views_per_batch_info
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
+from .manifest import build_manifest, save_manifest
 
 from ..utils.fov import (
     compute_roi,
@@ -178,6 +180,12 @@ def main() -> None:
         help="Write a percentile-scaled central xy slice PNG preview to PATH.",
     )
     p.add_argument(
+        "--save-manifest",
+        metavar="PATH",
+        default=None,
+        help="Write a JSON reproducibility manifest for this reconstruction run.",
+    )
+    p.add_argument(
         "--roi",
         choices=["off", "auto", "cube", "bbox"],
         default="auto",
@@ -322,7 +330,15 @@ def main() -> None:
         args.algo,
     )
 
+    algorithm_config: dict[str, object]
     if args.algo == "fbp":
+        algorithm_config = {
+            "filter": str(args.filter),
+            "views_per_batch": int(resolved_vpb),
+            "projector_unroll": 1,
+            "checkpoint_projector": bool(args.checkpoint_projector),
+            "gather_dtype": _gather,
+        }
         with transfer_guard_context(args.transfer_guard):
             vol = fbp(
                 geom,
@@ -350,6 +366,21 @@ def main() -> None:
             tv_prox_iters=int(args.tv_prox_iters),
             support=vol_mask,
         )
+        algorithm_config = {
+            "iters": int(cfg.iters),
+            "lambda_tv": float(cfg.lambda_tv),
+            "L": cfg.L,
+            "views_per_batch": int(resolved_vpb),
+            "projector_unroll": int(cfg.projector_unroll),
+            "checkpoint_projector": bool(cfg.checkpoint_projector),
+            "gather_dtype": str(cfg.gather_dtype),
+            "grad_mode": str(cfg.grad_mode),
+            "tv_prox_iters": int(cfg.tv_prox_iters),
+            "recon_rel_tol": cfg.recon_rel_tol,
+            "recon_patience": int(cfg.recon_patience),
+            "power_iters": int(cfg.power_iters),
+            "support": "cylindrical" if vol_mask is not None else None,
+        }
         with transfer_guard_context(args.transfer_guard):
             vol, info = fista_tv(
                 geom,
@@ -378,6 +409,23 @@ def main() -> None:
             support=vol_mask if vol_mask is not None else None,
             log_every=1,
         )
+        algorithm_config = {
+            "iters": int(cfg.iters),
+            "lambda_tv": float(cfg.lambda_tv),
+            "theta": float(cfg.theta),
+            "views_per_batch": int(cfg.views_per_batch),
+            "seed": int(cfg.seed),
+            "tau": cfg.tau,
+            "sigma_data": cfg.sigma_data,
+            "sigma_tv": cfg.sigma_tv,
+            "projector_unroll": int(cfg.projector_unroll),
+            "checkpoint_projector": bool(cfg.checkpoint_projector),
+            "gather_dtype": str(cfg.gather_dtype),
+            "positivity": bool(cfg.positivity),
+            "support": "cylindrical" if vol_mask is not None else None,
+            "log_every": int(cfg.log_every),
+            "warm_start": str(args.warm_start),
+        }
         # Optional warm-start for SPDHG
         init_x = None
         if str(args.warm_start).lower() == "fbp":
@@ -425,6 +473,43 @@ def main() -> None:
     if args.quicklook is not None:
         save_quicklook_png(args.quicklook, volume_np)
         logging.info("Saved reconstruction quicklook to %s", args.quicklook)
+    if args.save_manifest is not None:
+        manifest = build_manifest(
+            "tomojax-recon",
+            list(sys.argv),
+            args,
+            {
+                "input_path": args.data,
+                "output_path": args.out,
+                "quicklook_path": args.quicklook,
+                "manifest_path": args.save_manifest,
+                "algorithm": str(args.algo),
+                "algorithm_config": algorithm_config,
+                "geometry_type": str(meta.geometry_type),
+                "input_projection_shape": list(meta.projections.shape),
+                "reconstruction_grid": recon_grid.to_dict(),
+                "detector": detector.to_dict(),
+                "roi": {
+                    "requested": roi_mode,
+                    "is_parallel": bool(is_parallel),
+                    "grid_changed": recon_grid != grid,
+                },
+                "requested_views_per_batch": args.views_per_batch,
+                "views_per_batch": int(resolved_vpb),
+                "views_per_batch_mode": vpb_mode,
+                "requested_gather_dtype": str(args.gather_dtype),
+                "gather_dtype": _gather,
+                "checkpoint_projector": bool(args.checkpoint_projector),
+                "transfer_guard": str(args.transfer_guard),
+                "mask_vol": str(args.mask_vol),
+                "mask_applied": vol_mask is not None,
+                "volume_shape": list(volume_np.shape),
+                "volume_axes": str(args.volume_axes),
+                "frame": str(args.frame),
+            },
+        )
+        save_manifest(args.save_manifest, manifest)
+        logging.info("Saved reproducibility manifest to %s", args.save_manifest)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -100,7 +100,7 @@ python -m tomojax.cli.recon --data <in.nxs> \
   [--roi off|auto|cube|bbox] [--mask-vol off|cyl] [--grid NX NY NZ] \
   [--gather-dtype fp32|bf16|fp16] [--checkpoint-projector|--no-checkpoint-projector] \
   --out <out.nxs> [--quicklook <out.png>|--save-preview <out.png>] \
-  [--frame sample|lab] [--progress]
+  [--save-manifest <manifest.json>] [--frame sample|lab] [--progress]
 ```
 
 Key options
@@ -111,6 +111,7 @@ Key options
 - Memory/performance: use `--gather-dtype` (bf16 recommended on modern GPUs) and keep projector checkpointing on by default.
 - ROI/masking: `--roi auto|cube|bbox|off` to crop the recon grid to the detector FOV; `--mask-vol cyl` applies a cylindrical x–y mask (used as a support in SPDHG and post‑hoc for FBP).
 - Preview: `--quicklook out.png` or `--save-preview out.png` writes a percentile-scaled central `xy` slice PNG after the `.nxs` reconstruction is saved.
+- Reproducibility: `--save-manifest manifest.json` writes a JSON sidecar with raw argv, parsed CLI args, resolved config, TomoJAX/Python/JAX versions, JAX backend/devices, and a UTC timestamp.
 - Frame: `--frame sample` (default; recommended) records that the saved volume is in the sample/object frame. `lab` is recorded for compatibility exports.
 
 Examples
@@ -118,7 +119,8 @@ Examples
 # FBP with bf16 gathers
 uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp --gather-dtype bf16 \
-  --checkpoint-projector --out out/fbp_misaligned.nxs --progress
+  --checkpoint-projector --out out/fbp_misaligned.nxs \
+  --save-manifest out/fbp_misaligned.manifest.json --progress
 
 # FBP with a central-slice quicklook PNG
 uv run tomojax-recon --data data/sim_misaligned.nxs \
@@ -158,7 +160,7 @@ python -m tomojax.cli.align --data <in.nxs> \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
   --out <out.nxs> [--save-params-json <out.json>] [--save-params-csv <out.csv>] \
-  [--progress]
+  [--save-manifest <manifest.json>] [--progress]
 ```
 
 Key options
@@ -172,6 +174,7 @@ Key options
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
 - Parameter exports: `--save-params-json` and `--save-params-csv` write named per-view sidecars with `alpha_rad`, `beta_rad`, `phi_rad`, `dx_world`, `dz_world`, `dx_px`, and `dz_px`.
+- Reproducibility: `--save-manifest manifest.json` writes a JSON sidecar with raw argv, parsed CLI args, resolved config, TomoJAX/Python/JAX versions, JAX backend/devices, and a UTC timestamp.
 - Early stopping and GN acceptance are enabled by default during alignment: outers stop when relative improvement is tiny, and GN steps are rejected if they don’t reduce loss.
   Use `--log-summary` to see when early stopping triggers.
 
@@ -189,6 +192,7 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --log-summary --out out/align_misaligned.nxs \
   --save-params-json out/align_misaligned.params.json \
   --save-params-csv out/align_misaligned.params.csv \
+  --save-manifest out/align_misaligned.manifest.json \
   --progress
 
 # GD with learning rates (single level)

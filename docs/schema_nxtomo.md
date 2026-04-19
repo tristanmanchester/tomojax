@@ -31,6 +31,7 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
   - `@volume_axes_order` (attr on `tomojax`, default `"zyx"`; loaders always return internal `xyz` volume order)
   - `@frame` (optional attr on `tomojax`): `"sample"|"lab"` indicates the frame of the saved volume (default `sample`)
   - `align/thetas` (optional, shape `(n_views,5)`, columns=`[alpha,beta,phi,dx,dz]`)
+- Reproducibility manifests from `tomojax-recon --save-manifest` and `tomojax-align --save-manifest` are JSON sidecars; they are not embedded in the NXtomo file.
 
 ## Units & Conventions
 - Angles stored in degrees (NX convention). Internal math uses radians.
