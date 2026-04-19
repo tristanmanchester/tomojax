@@ -54,6 +54,8 @@ def _run_fixed_volume_alignment(
     opt_method: str,
     views_per_batch: int,
     loss_name: str,
+    init_params5=None,
+    **cfg_kwargs,
 ):
     _freeze_reconstruction(monkeypatch)
     grid, det, geom, vol, projs = make_misaligned_case(seed=7)
@@ -67,8 +69,17 @@ def _run_fixed_volume_alignment(
         opt_method=opt_method,
         loss=parse_loss_spec(loss_name),
         early_stop=False,
+        **cfg_kwargs,
     )
-    _, params5, info = align(geom, grid, det, projs, cfg=cfg, init_x=vol)
+    _, params5, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=cfg,
+        init_x=vol,
+        init_params5=init_params5,
+    )
     return np.asarray(params5), info
 
 
@@ -110,3 +121,189 @@ def test_align_gn_chunking_matches_streamed_reference(monkeypatch):
     assert info_chunked["loss"][-1] == pytest.approx(
         info_stream["loss"][-1], rel=1e-5, abs=1e-6
     )
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_freeze_phi_keeps_initial_values(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=8)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.03, 0.03, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        freeze_dofs=("phi",),
+    )
+
+    np.testing.assert_array_equal(params5[:, 2], init_params5[:, 2])
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_optimise_only_dx_dz_keeps_rotations_initial(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=9)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 0] = np.linspace(-0.02, 0.02, projs.shape[0], dtype=np.float32)
+    init_params5[:, 1] = np.linspace(0.01, -0.01, projs.shape[0], dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.03, 0.03, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        optimise_dofs=("dx", "dz"),
+        bounds={"dx": (-0.01, 0.01), "dz": (-0.02, 0.02)},
+    )
+
+    np.testing.assert_array_equal(params5[:, :3], init_params5[:, :3])
+    assert np.max(params5[:, 3]) <= 0.01 + 1e-6
+    assert np.min(params5[:, 3]) >= -0.01 - 1e-6
+    assert np.max(params5[:, 4]) <= 0.02 + 1e-6
+    assert np.min(params5[:, 4]) >= -0.02 - 1e-6
+
+
+def test_align_polynomial_pose_model_returns_per_view_shape_and_variable_count(monkeypatch):
+    params5, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="gd",
+        views_per_batch=2,
+        loss_name="l2_otsu",
+        pose_model="polynomial",
+        degree=2,
+    )
+
+    assert params5.shape == (5, 5)
+    assert info["pose_model"] == "polynomial"
+    assert info["pose_model_basis_shape"] == [5, 3]
+    assert info["pose_model_variables"] == 15
+    assert info["per_view_variables"] == 25
+    assert info["pose_model_variables"] < info["per_view_variables"]
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_smooth_pose_model_keeps_frozen_dofs(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=12)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.03, 0.03, projs.shape[0], dtype=np.float32)
+
+    params5, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        pose_model="polynomial",
+        degree=2,
+        freeze_dofs=("phi",),
+    )
+
+    assert info["pose_model"] == "polynomial"
+    np.testing.assert_array_equal(params5[:, 2], init_params5[:, 2])
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_smooth_pose_model_clips_active_bounds_only(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=13)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+    init_params5[:, 3] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+    init_params5[:, 4] = np.linspace(0.4, -0.4, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        pose_model="polynomial",
+        degree=2,
+        freeze_dofs=("phi",),
+        bounds={"phi": (-0.01, 0.01), "dx": (-0.05, 0.05), "dz": (-0.04, 0.04)},
+    )
+
+    np.testing.assert_array_equal(params5[:, 2], init_params5[:, 2])
+    assert np.max(params5[:, 3]) <= 0.05 + 1e-6
+    assert np.min(params5[:, 3]) >= -0.05 - 1e-6
+    assert np.max(params5[:, 4]) <= 0.04 + 1e-6
+    assert np.min(params5[:, 4]) >= -0.04 - 1e-6
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_bounds_clip_active_translations(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=10)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 3] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+    init_params5[:, 4] = np.linspace(0.4, -0.4, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        bounds={"dx": (-0.05, 0.05), "dz": (-0.04, 0.04)},
+    )
+
+    assert np.max(params5[:, 3]) <= 0.05 + 1e-6
+    assert np.min(params5[:, 3]) >= -0.05 - 1e-6
+    assert np.max(params5[:, 4]) <= 0.04 + 1e-6
+    assert np.min(params5[:, 4]) >= -0.04 - 1e-6
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_bounds_do_not_clip_frozen_dofs(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=11)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        freeze_dofs=("phi",),
+        bounds={"phi": (-0.01, 0.01)},
+    )
+
+    np.testing.assert_array_equal(params5[:, 2], init_params5[:, 2])

@@ -168,7 +168,9 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--tv-prox-iters <int>] \
   [--lr-rot <float>] [--lr-trans <float>] \
   [--opt-method gd|gn] [--gn-damping <float>] \
+  [--optimise-dofs <names>] [--freeze-dofs <names>] [--bounds <spec>] \
   [--early-stop|--no-early-stop] [--early-stop-rel <float>] [--early-stop-patience <int>] \
+  [--pose-model per_view|polynomial|spline] [--knot-spacing <int>] [--degree <int>] \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
@@ -180,10 +182,13 @@ Key options
 - Config: `--config docs/align_config.toml` loads flat TOML defaults. Explicit CLI flags override file values, including list values such as `--levels 2 1` and booleans such as `--no-checkpoint-projector`.
 - Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--tv-prox-iters` (10; increase to 20–30 for noisy data).
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
+- Active DOFs: choose from `alpha`, `beta`, `phi`, `dx`, `dz`. By default all five are optimised. Use `--optimise-dofs dx,dz` for translation-only alignment, or `--freeze-dofs phi` to keep selected parameters fixed at their initial values.
+- Parameter bounds: `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` clips named DOFs after each update. Rotations (`alpha`, `beta`, `phi`) are in radians; translations (`dx`, `dz`) are in world units. Omitted DOFs are unconstrained, and frozen DOFs stay fixed even if a bound is supplied for them.
+- Pose model: `--pose-model per_view` (default) optimises one independent parameter vector per view. `--pose-model spline --knot-spacing N --degree 3` optimises smooth knot trajectories and expands them back to per-view parameters before projection. `--pose-model polynomial --degree D` fits each active DOF as a low-degree polynomial over the scan coordinate.
 - Early stopping (alignment across outers):
   - Enable/disable: `--early-stop` (default) or `--no-early-stop`.
   - Threshold and patience: `--early-stop-rel` (default 1e-3), `--early-stop-patience` (default 2).
-- Smoothness across views: `--w-rot`, `--w-trans` (default 1e‑3 in CLI).
+- Smoothness across views: `--w-rot`, `--w-trans` (default 1e‑3 in CLI) add a second-difference prior on the expanded per-view parameters. Smooth pose models usually need less explicit prior strength because the basis already reduces freedom.
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
@@ -194,6 +199,8 @@ Key options
 
 Notes
 - The `.nxs` output still stores the final alignment parameters; JSON/CSV sidecars are optional convenience exports for plotting and reproducibility.
+- DOF selection does not change the saved parameter format: outputs still use five columns in `[alpha, beta, phi, dx, dz]` order, with inactive columns held fixed.
+- Smooth motion models are best for slow drift, stage sag, thermal/mechanical trends, or noisy data where independent per-view parameters overfit. Keep `per_view` for abrupt shifts, dropped-view artifacts, or genuinely view-local motion.
 - The align CLI initializes a persistent JAX compilation cache automatically. Set `TOMOJAX_JAX_CACHE_DIR` to control the cache location.
 
 Examples
@@ -214,6 +221,39 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --outer-iters 6 --recon-iters 30 --lambda-tv 0.005 \
   --opt-method gd --lr-rot 3e-3 --lr-trans 1e-1 \
   --out out/align_gd.nxs --progress
+
+# 2-DOF translation-only alignment
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --opt-method gn --optimise-dofs dx,dz \
+  --out out/align_translation_only.nxs
+
+# 4-DOF alignment with in-plane spin fixed
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --opt-method gn --freeze-dofs phi \
+  --out out/align_no_phi.nxs
+
+# Bounded translations and one rotation, preserving unconstrained behavior for other DOFs
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --opt-method gn \
+  --bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05 \
+  --out out/align_bounded.nxs
+
+# Smooth spline model for noisy drift-like motion
+uv run tomojax-align --data data/sim_misaligned_poisson.nxs \
+  --levels 4 2 1 --opt-method gn \
+  --pose-model spline --knot-spacing 12 --degree 3 \
+  --out out/align_spline.nxs
+
+# Low-order polynomial model for simple scan-length drift
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --opt-method gn \
+  --pose-model polynomial --degree 2 \
+  --out out/align_poly2.nxs
+
+# 5-DOF full alignment is the default; this explicit form is equivalent
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --opt-method gn --optimise-dofs alpha,beta,phi,dx,dz \
+  --out out/align_full_5dof.nxs
 
 # TOML config with an explicit CLI override
 uv run tomojax-align --config docs/align_config.toml --levels 2 1
