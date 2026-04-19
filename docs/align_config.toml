@@ -11,6 +11,12 @@ lambda_tv = 0.003
 levels = [4, 2, 1]
 opt_method = "gn"
 gn_damping = 0.001
+# Common DOF selections:
+#   2-DOF translation-only alignment: optimise_dofs = ["dx", "dz"]
+#   4-DOF with in-plane spin fixed: freeze_dofs = ["phi"]
+#   5-DOF full alignment: omit both keys, or set all names explicitly.
+# optimise_dofs = ["dx", "dz"]
+# freeze_dofs = ["phi"]
 gather_dtype = "auto"
 checkpoint_projector = true
 log_summary = true

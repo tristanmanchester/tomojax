@@ -22,7 +22,13 @@ from ..core.validation import (
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
-from .losses import L2OtsuLossSpec, AlignmentLossSpec, build_loss_adapter, loss_is_within_relative_tolerance
+from .dofs import active_dof_mask, normalize_dofs
+from .losses import (
+    L2OtsuLossSpec,
+    AlignmentLossSpec,
+    build_loss_adapter,
+    loss_is_within_relative_tolerance,
+)
 from ..utils.fov import cylindrical_mask_xy
 
 
@@ -247,6 +253,8 @@ class AlignConfig:
     gn_damping: float = 1e-6
     w_rot: float = 0.0
     w_trans: float = 0.0
+    optimise_dofs: tuple[str, ...] | None = None
+    freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
     seed_translations: bool = False
     # Volume masking before forward projection (modeling for ROI/truncation)
     # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
@@ -265,6 +273,15 @@ class AlignConfig:
     gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
     # Data term / similarity
     loss: AlignmentLossSpec = field(default_factory=L2OtsuLossSpec)
+
+    def __post_init__(self) -> None:
+        if self.optimise_dofs is not None:
+            self.optimise_dofs = normalize_dofs(
+                self.optimise_dofs,
+                option_name="optimise_dofs",
+            )
+        self.freeze_dofs = normalize_dofs(self.freeze_dofs, option_name="freeze_dofs")
+        active_dof_mask(optimise_dofs=self.optimise_dofs, freeze_dofs=self.freeze_dofs)
 
 
 def align(
@@ -311,6 +328,15 @@ def align(
         if init_params5 is not None
         else jnp.zeros((n_views, 5), dtype=jnp.float32)
     )
+    frozen_params5 = params5
+    active_mask_bool = jnp.asarray(
+        active_dof_mask(optimise_dofs=cfg.optimise_dofs, freeze_dofs=cfg.freeze_dofs),
+        dtype=bool,
+    )
+    active_mask = active_mask_bool.astype(jnp.float32)
+
+    def _restore_frozen(candidate: jnp.ndarray) -> jnp.ndarray:
+        return jnp.where(active_mask_bool, candidate, frozen_params5)
 
     loss_hist = []
     stopped_by_observer = False
@@ -340,7 +366,7 @@ def align(
     # Static smoothness weights to avoid rebuilding inside jitted loss
     W_weights = jnp.array(
         [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32
-    )
+    ) * active_mask
     smoothness_gram = _second_difference_gram(n_views)
     smoothness_weights_sq = W_weights * W_weights
     medium_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.4)
@@ -517,7 +543,7 @@ def align(
                 w = jnp.array(
                     [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
                     jnp.float32,
-                )
+                ) * active_mask
                 total = total + jnp.sum((d2 * w) ** 2)
                 ww = (w**2) * 2.0
                 g = g.at[1:-1].add(-2.0 * d2 * ww)
@@ -587,7 +613,7 @@ def align(
                 w = jnp.array(
                     [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
                     jnp.float32,
-                )
+                ) * active_mask
                 total = total + jnp.sum((d2 * w) ** 2)
                 ww = (w**2) * 2.0
                 g = g.at[1:-1].add(-2.0 * d2 * ww)
@@ -629,8 +655,13 @@ def align(
         cols = jax.vmap(jvp_col)(eye5)
         H = cols @ cols.T
         lam = jnp.float32(cfg.gn_damping)
-        dp = jnp.linalg.solve(H + lam * jnp.eye(5, dtype=H.dtype), -g)
-        return dp
+        active = active_mask.astype(H.dtype)
+        inactive = jnp.float32(1.0) - active
+        H_active = H * active[:, None] * active[None, :]
+        system = H_active + lam * jnp.diag(active) + jnp.diag(inactive)
+        rhs = -g * active
+        dp = jnp.linalg.solve(system, rhs)
+        return dp * active
 
     _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
 
@@ -940,12 +971,12 @@ def align(
         loss_after = None
         if step_kind == "gn":
             params5_prev = params5
-            dp_all = _gn_update_all(params5_prev, x)
+            dp_all = _gn_update_all(params5_prev, x) * active_mask
             if cfg.gn_accept_only_improving and (loss_before is not None):
                 smooth_candidate = None
                 if int(params5.shape[0]) >= 3:
                     smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
-                        candidate,
+                        _restore_frozen(candidate),
                         smoothness_gram,
                         weights,
                     )
@@ -967,8 +998,9 @@ def align(
                     smoothness_weights_sq=smoothness_weights_sq,
                     trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
                 )
+                params5 = _restore_frozen(params5)
             else:
-                params5 = params5_prev + dp_all
+                params5 = _restore_frozen(params5_prev + dp_all)
                 candidate_loss = _evaluate_align_loss(
                     lambda: align_loss_jit(params5, x),
                     fallback=math.inf,
@@ -993,16 +1025,17 @@ def align(
             # Keep a copy for line search; donated arg may be reused internally
             p5_in = params5
             _, g_params = loss_and_grad_manual(params5, x)
+            g_params = g_params * active_mask
             rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
             eff_scales = scales / rms
             # Simple 2-point line search on step factor to improve single-iter progress
-            best_params = p5_in - g_params * eff_scales
+            best_params = _restore_frozen(p5_in - g_params * eff_scales)
             best_loss = _evaluate_align_loss(
                 lambda: align_loss_jit(best_params, x),
                 fallback=math.inf,
                 context="Treating GD base candidate as rejected during alignment loss evaluation",
             )
-            cand_params = p5_in - 2.0 * g_params * eff_scales
+            cand_params = _restore_frozen(p5_in - 2.0 * g_params * eff_scales)
             cand_loss = _evaluate_align_loss(
                 lambda: align_loss_jit(cand_params, x),
                 fallback=math.inf,
@@ -1165,6 +1198,10 @@ def align_multires(
 
     if cfg is None:
         cfg = AlignConfig()
+    active_mask_tuple = active_dof_mask(
+        optimise_dofs=cfg.optimise_dofs,
+        freeze_dofs=cfg.freeze_dofs,
+    )
 
     validate_grid(grid, "align_multires grid")
     validate_projection_stack(
@@ -1258,9 +1295,16 @@ def align_multires(
             # Convert pixel shifts to world units using detector spacing
             dx = shifts[:, 0] * jnp.float32(d.du)
             dz = shifts[:, 1] * jnp.float32(d.dv)
-            params0 = jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
-            params0 = params0.at[:, 3].set(dx)
-            params0 = params0.at[:, 4].set(dz)
+            seed_params = (
+                jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
+                if params0 is None
+                else jnp.asarray(params0, dtype=jnp.float32)
+            )
+            if active_mask_tuple[3]:
+                seed_params = seed_params.at[:, 3].set(dx)
+            if active_mask_tuple[4]:
+                seed_params = seed_params.at[:, 4].set(dz)
+            params0 = seed_params
 
         # Run alignment at this level
         # Re-estimate L at each level using a fresh (streamed) power-method for stability

@@ -54,6 +54,8 @@ def _run_fixed_volume_alignment(
     opt_method: str,
     views_per_batch: int,
     loss_name: str,
+    init_params5=None,
+    **cfg_kwargs,
 ):
     _freeze_reconstruction(monkeypatch)
     grid, det, geom, vol, projs = make_misaligned_case(seed=7)
@@ -67,8 +69,17 @@ def _run_fixed_volume_alignment(
         opt_method=opt_method,
         loss=parse_loss_spec(loss_name),
         early_stop=False,
+        **cfg_kwargs,
     )
-    _, params5, info = align(geom, grid, det, projs, cfg=cfg, init_x=vol)
+    _, params5, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=cfg,
+        init_x=vol,
+        init_params5=init_params5,
+    )
     return np.asarray(params5), info
 
 
@@ -110,3 +121,53 @@ def test_align_gn_chunking_matches_streamed_reference(monkeypatch):
     assert info_chunked["loss"][-1] == pytest.approx(
         info_stream["loss"][-1], rel=1e-5, abs=1e-6
     )
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_freeze_phi_keeps_initial_values(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=8)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.03, 0.03, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        freeze_dofs=("phi",),
+    )
+
+    np.testing.assert_array_equal(params5[:, 2], init_params5[:, 2])
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_optimise_only_dx_dz_keeps_rotations_initial(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=9)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 0] = np.linspace(-0.02, 0.02, projs.shape[0], dtype=np.float32)
+    init_params5[:, 1] = np.linspace(0.01, -0.01, projs.shape[0], dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.03, 0.03, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        optimise_dofs=("dx", "dz"),
+    )
+
+    np.testing.assert_array_equal(params5[:, :3], init_params5[:, :3])

@@ -212,6 +212,11 @@ Troubleshooting tips live in `docs/faq_troubleshooting.md`.
 3. Transfer parameters across levels and rescale
 4. Monitor objective and parameter deltas for convergence/early stop
 
+Alignment optimises per-view parameters in `[alpha, beta, phi, dx, dz]` order by default.
+Use `--optimise-dofs dx,dz` for translation-only 2-DOF runs, `--freeze-dofs phi`
+for a common 4-DOF run, or omit DOF flags for full 5-DOF alignment. Outputs still
+store all five columns; inactive columns are held fixed at their initial values.
+
 
 ## Notes
 

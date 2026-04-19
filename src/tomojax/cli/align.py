@@ -10,6 +10,7 @@ import sys
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..align.dofs import active_dof_mask, normalize_dofs
 from ..align.losses import parse_loss_spec
 from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
@@ -96,6 +97,23 @@ def _resolve_recon_grid_and_mask(
     return recon_grid, apply_cyl_mask
 
 
+def _parse_dof_args(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
+    try:
+        optimise_dofs = (
+            None
+            if args.optimise_dofs is None
+            else normalize_dofs(args.optimise_dofs, option_name="--optimise-dofs")
+        )
+        freeze_dofs = normalize_dofs(args.freeze_dofs, option_name="--freeze-dofs")
+        active_dof_mask(optimise_dofs=optimise_dofs, freeze_dofs=freeze_dofs)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return optimise_dofs, freeze_dofs
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
@@ -139,6 +157,20 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1e-3,
         help="Levenberg-Marquardt damping for GN",
+    )
+    p.add_argument(
+        "--optimise-dofs",
+        nargs="+",
+        default=None,
+        metavar="DOF[,DOF]",
+        help="Named alignment DOFs to optimise: alpha,beta,phi,dx,dz. Example: dx,dz",
+    )
+    p.add_argument(
+        "--freeze-dofs",
+        nargs="+",
+        default=None,
+        metavar="DOF[,DOF]",
+        help="Named alignment DOFs to keep fixed at initial values. Example: phi",
     )
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
@@ -321,6 +353,7 @@ def main() -> None:
         except ValueError:
             raise SystemExit(f"--loss-param value must be numeric: {kv}")
     loss_spec = parse_loss_spec(str(args.loss), loss_params if loss_params else None)
+    optimise_dofs, freeze_dofs = _parse_dof_args(args, p)
 
     meta = load_nxtomo(args.data)
     geometry_meta = meta.geometry_inputs()
@@ -357,6 +390,8 @@ def main() -> None:
         gn_damping=float(args.gn_damping),
         w_rot=float(args.w_rot),
         w_trans=float(args.w_trans),
+        optimise_dofs=optimise_dofs,
+        freeze_dofs=freeze_dofs,
         loss=loss_spec,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),

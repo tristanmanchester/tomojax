@@ -94,6 +94,81 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
     assert metadata["effective_options"]["levels"] == [2, 1]
 
 
+def test_align_cli_dof_options_parse_and_normalize_named_dofs():
+    parser = align_cli._build_parser()
+    args, _ = parse_args_with_config(
+        parser,
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--optimise-dofs",
+            "dx,dz",
+            "--freeze-dofs",
+            "phi",
+        ],
+        required=("data", "out"),
+    )
+
+    optimise_dofs, freeze_dofs = align_cli._parse_dof_args(args, parser)
+
+    assert optimise_dofs == ("dx", "dz")
+    assert freeze_dofs == ("phi",)
+
+
+def test_align_config_toml_accepts_dof_arrays(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'optimise_dofs = ["dx", "dz"]',
+                'freeze_dofs = ["phi"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path)],
+        required=("data", "out"),
+    )
+    optimise_dofs, freeze_dofs = align_cli._parse_dof_args(args, parser)
+
+    assert metadata["config_file_values"]["optimise_dofs"] == ["dx", "dz"]
+    assert metadata["config_file_values"]["freeze_dofs"] == ["phi"]
+    assert optimise_dofs == ("dx", "dz")
+    assert freeze_dofs == ("phi",)
+
+
+def test_align_cli_rejects_unknown_dof_name(capsys):
+    parser = align_cli._build_parser()
+    args, _ = parse_args_with_config(
+        parser,
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--optimise-dofs",
+            "theta",
+        ],
+        required=("data", "out"),
+    )
+
+    with pytest.raises(SystemExit):
+        align_cli._parse_dof_args(args, parser)
+
+    captured = capsys.readouterr()
+    assert "Unknown alignment DOF" in captured.err
+    assert "theta" in captured.err
+    assert "alpha" in captured.err
+
+
 def test_config_unknown_key_reports_useful_error(tmp_path, capsys):
     config_path = tmp_path / "bad.toml"
     config_path.write_text(
