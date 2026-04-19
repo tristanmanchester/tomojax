@@ -7,6 +7,15 @@ Common tips
 - Keep `--checkpoint-projector` on for lower memory, and consider `--gather-dtype bf16`.
 - Disable JAX preallocation to reduce spikes: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 
+Config files
+- `tomojax-recon` and `tomojax-align` support `--config <path.toml>` for reproducible long commands.
+- Precedence is `built-in defaults < TOML config file < explicit CLI flags`.
+- Config keys are flat top-level TOML keys matching argparse destination names: use underscores, not dashes, for example `lambda_tv`, `views_per_batch`, `checkpoint_projector`, `save_manifest`.
+- Lists use TOML arrays, for example `grid = [128, 128, 128]`, `levels = [4, 2, 1]`, and `loss_param = ["delta=1.0", "eps=0.001"]`.
+- Booleans use TOML booleans, for example `checkpoint_projector = true` or `progress = false`.
+- YAML is not supported by the runtime CLI because `pyyaml` is only an optional benchmark dependency. Use TOML (`.toml`) instead.
+- Example files: `docs/recon_config.toml` and `docs/align_config.toml`.
+
 
 ## simulate
 
@@ -92,7 +101,7 @@ Reconstruct a volume from projections via FBP, FISTA‑TV, or SPDHG‑TV. Saves 
 
 Usage
 ```
-python -m tomojax.cli.recon --data <in.nxs> \
+python -m tomojax.cli.recon [--config <config.toml>] --data <in.nxs> \
   [--algo fbp|fista|spdhg] [--filter ramp|shepp|hann] \
   [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
   [--views-per-batch <int>] [--theta <float>] \
@@ -104,6 +113,7 @@ python -m tomojax.cli.recon --data <in.nxs> \
 ```
 
 Key options
+- Config: `--config docs/recon_config.toml` loads flat TOML defaults. Explicit CLI flags override file values, so `--config cfg.toml --lambda-tv 0.01` replaces any `lambda_tv` value in the file.
 - Algorithm: `--algo fbp` (default), `fista`, or `spdhg`.
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
 - FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method.
@@ -141,6 +151,9 @@ uv run tomojax-recon --data data/sim_aligned.nxs \
   --gather-dtype bf16 --checkpoint-projector \
   --roi auto --mask-vol cyl \
   --out out/spdhg_aligned.nxs --progress
+
+# Same command style from TOML, with one explicit override
+uv run tomojax-recon --config docs/recon_config.toml --gather-dtype bf16
 ```
 
 
@@ -150,7 +163,7 @@ Joint per‑view alignment and reconstruction (alternating FISTA‑TV and alignm
 
 Usage
 ```
-python -m tomojax.cli.align --data <in.nxs> \
+python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--outer-iters <int>] [--recon-iters <int>] [--lambda-tv <float>] \
   [--tv-prox-iters <int>] \
   [--lr-rot <float>] [--lr-trans <float>] \
@@ -164,6 +177,7 @@ python -m tomojax.cli.align --data <in.nxs> \
 ```
 
 Key options
+- Config: `--config docs/align_config.toml` loads flat TOML defaults. Explicit CLI flags override file values, including list values such as `--levels 2 1` and booleans such as `--no-checkpoint-projector`.
 - Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--tv-prox-iters` (10; increase to 20–30 for noisy data).
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
 - Early stopping (alignment across outers):
@@ -200,6 +214,9 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --outer-iters 6 --recon-iters 30 --lambda-tv 0.005 \
   --opt-method gd --lr-rot 3e-3 --lr-trans 1e-1 \
   --out out/align_gd.nxs --progress
+
+# TOML config with an explicit CLI override
+uv run tomojax-align --config docs/align_config.toml --levels 2 1
 ```
 
 

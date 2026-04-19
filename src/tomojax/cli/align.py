@@ -17,6 +17,7 @@ from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
+from .config import parse_args_with_config
 from .manifest import build_manifest, save_manifest
 
 from ..utils.fov import (
@@ -95,9 +96,10 @@ def _resolve_recon_grid_and_mask(
     return recon_grid, apply_cyl_mask
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
-    p.add_argument("--data", required=True, help="Input .nxs")
+    p.add_argument("--config", help="Load command defaults from a TOML config file")
+    p.add_argument("--data", help="Input .nxs")
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
     p.add_argument("--lambda-tv", type=float, default=0.005)
@@ -241,7 +243,7 @@ def main() -> None:
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
         help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
     )
-    p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
+    p.add_argument("--out", help="Output .nxs with recon and alignment params")
     p.add_argument(
         "--save-params-json",
         default=None,
@@ -296,7 +298,12 @@ def main() -> None:
         default=DISK_VOLUME_AXES,
         help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
     )
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    p = _build_parser()
+    args, config_metadata = parse_args_with_config(p, required=("data", "out"))
 
     setup_logging()
     log_jax_env()
@@ -449,6 +456,10 @@ def main() -> None:
                 "save_params_json": args.save_params_json,
                 "save_params_csv": args.save_params_csv,
                 "manifest_path": args.save_manifest,
+                "config_path": config_metadata["config_path"],
+                "config_file_values": config_metadata["config_file_values"],
+                "explicit_cli_keys": config_metadata["explicit_cli_keys"],
+                "effective_options": config_metadata["effective_options"],
                 "geometry_type": str(meta.geometry_type),
                 "input_projection_shape": list(meta.projections.shape),
                 "reconstruction_grid": recon_grid.to_dict(),

@@ -1,0 +1,14 @@
+# Minimal tomojax-recon config.
+# Run with:
+#   uv run tomojax-recon --config docs/recon_config.toml
+
+data = "data/sim_misaligned.nxs"
+out = "runs/recon_from_config.nxs"
+
+algo = "fbp"
+filter = "ramp"
+roi = "auto"
+gather_dtype = "auto"
+checkpoint_projector = true
+progress = true
+save_manifest = "runs/recon_from_config.manifest.json"

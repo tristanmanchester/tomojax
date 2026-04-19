@@ -19,6 +19,7 @@ from ..utils.logging import setup_logging, log_jax_env
 from ..utils.memory import estimate_views_per_batch_info
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
+from .config import parse_args_with_config
 from .manifest import build_manifest, save_manifest
 
 from ..utils.fov import (
@@ -81,9 +82,10 @@ def _resolve_views_per_batch(
     return max(1, int(requested)), "explicit"
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Reconstruct volume from dataset (.nxs)")
-    p.add_argument("--data", required=True, help="Input .nxs")
+    p.add_argument("--config", help="Load command defaults from a TOML config file")
+    p.add_argument("--data", help="Input .nxs")
     p.add_argument("--algo", choices=["fbp", "fista", "spdhg"], default="fbp")
     p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
     p.add_argument(
@@ -168,7 +170,6 @@ def main() -> None:
     p.set_defaults(checkpoint_projector=True)
     p.add_argument(
         "--out",
-        required=True,
         help="Output .nxs containing recon (and copying projections)",
     )
     p.add_argument(
@@ -236,7 +237,12 @@ def main() -> None:
             "off (default), cyl for cylindrical x–y mask broadcast along z."
         ),
     )
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    p = _build_parser()
+    args, config_metadata = parse_args_with_config(p, required=("data", "out"))
 
     setup_logging()
     log_jax_env()
@@ -483,6 +489,10 @@ def main() -> None:
                 "output_path": args.out,
                 "quicklook_path": args.quicklook,
                 "manifest_path": args.save_manifest,
+                "config_path": config_metadata["config_path"],
+                "config_file_values": config_metadata["config_file_values"],
+                "explicit_cli_keys": config_metadata["explicit_cli_keys"],
+                "effective_options": config_metadata["effective_options"],
                 "algorithm": str(args.algo),
                 "algorithm_config": algorithm_config,
                 "geometry_type": str(meta.geometry_type),

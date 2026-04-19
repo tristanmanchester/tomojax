@@ -1,0 +1,20 @@
+# Minimal tomojax-align config.
+# Run with:
+#   uv run tomojax-align --config docs/align_config.toml
+
+data = "data/sim_misaligned.nxs"
+out = "runs/align_from_config.nxs"
+
+outer_iters = 4
+recon_iters = 25
+lambda_tv = 0.003
+levels = [4, 2, 1]
+opt_method = "gn"
+gn_damping = 0.001
+gather_dtype = "auto"
+checkpoint_projector = true
+log_summary = true
+progress = true
+save_params_json = "runs/align_from_config.params.json"
+save_params_csv = "runs/align_from_config.params.csv"
+save_manifest = "runs/align_from_config.manifest.json"

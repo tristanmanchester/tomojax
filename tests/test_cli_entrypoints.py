@@ -129,23 +129,31 @@ def test_recon_main_writes_manifest_sidecar(monkeypatch, tmp_path):
 
     out_path = tmp_path / "recon.nxs"
     manifest_path = tmp_path / "manifests" / "recon.json"
+    config_path = tmp_path / "recon.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                f'data = "{tmp_path / "input.nxs"}"',
+                f'out = "{out_path}"',
+                'roi = "off"',
+                'gather_dtype = "bf16"',
+                'transfer_guard = "off"',
+                f'save_manifest = "{manifest_path}"',
+            ]
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "tomojax-recon",
-            "--data",
-            str(tmp_path / "input.nxs"),
-            "--out",
-            str(out_path),
-            "--roi",
-            "off",
+            "--config",
+            str(config_path),
             "--gather-dtype",
             "fp32",
             "--transfer-guard",
             "log",
-            "--save-manifest",
-            str(manifest_path),
         ],
     )
 
@@ -158,8 +166,13 @@ def test_recon_main_writes_manifest_sidecar(monkeypatch, tmp_path):
     assert payload["schema_version"] == 1
     assert payload["command"] == "tomojax-recon"
     assert payload["argv"][0] == "tomojax-recon"
+    assert payload["cli_args"]["config"] == str(config_path)
     assert payload["cli_args"]["save_manifest"] == str(manifest_path)
     assert payload["resolved_config"]["output_path"] == str(out_path)
+    assert payload["resolved_config"]["config_path"] == str(config_path)
+    assert payload["resolved_config"]["config_file_values"]["gather_dtype"] == "bf16"
+    assert "gather_dtype" in payload["resolved_config"]["explicit_cli_keys"]
+    assert payload["resolved_config"]["effective_options"]["gather_dtype"] == "fp32"
     assert payload["resolved_config"]["gather_dtype"] == "fp32"
     assert payload["resolved_config"]["views_per_batch"] == 1
     assert payload["resolved_config"]["views_per_batch_mode"] == "default"
@@ -336,27 +349,33 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     json_path = tmp_path / "params" / "aligned.json"
     csv_path = tmp_path / "params" / "aligned.csv"
     manifest_path = tmp_path / "manifests" / "aligned.json"
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                f'data = "{tmp_path / "input.nxs"}"',
+                f'out = "{out_path}"',
+                'roi = "off"',
+                'gather_dtype = "bf16"',
+                'transfer_guard = "off"',
+                f'save_params_json = "{json_path}"',
+                f'save_params_csv = "{csv_path}"',
+                f'save_manifest = "{manifest_path}"',
+            ]
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "tomojax-align",
-            "--data",
-            str(tmp_path / "input.nxs"),
-            "--out",
-            str(out_path),
-            "--roi",
-            "off",
+            "--config",
+            str(config_path),
             "--gather-dtype",
             "fp32",
             "--transfer-guard",
             "log",
-            "--save-params-json",
-            str(json_path),
-            "--save-params-csv",
-            str(csv_path),
-            "--save-manifest",
-            str(manifest_path),
         ],
     )
 
@@ -384,8 +403,13 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert manifest["schema_version"] == 1
     assert manifest["command"] == "tomojax-align"
     assert manifest["argv"][0] == "tomojax-align"
+    assert manifest["cli_args"]["config"] == str(config_path)
     assert manifest["cli_args"]["save_manifest"] == str(manifest_path)
     assert manifest["resolved_config"]["output_path"] == str(out_path)
+    assert manifest["resolved_config"]["config_path"] == str(config_path)
+    assert manifest["resolved_config"]["config_file_values"]["gather_dtype"] == "bf16"
+    assert "gather_dtype" in manifest["resolved_config"]["explicit_cli_keys"]
+    assert manifest["resolved_config"]["effective_options"]["gather_dtype"] == "fp32"
     assert manifest["resolved_config"]["gather_dtype"] == "fp32"
     assert manifest["resolved_config"]["levels"] is None
     assert manifest["resolved_config"]["reconstruction_grid"]["nx"] == 2
