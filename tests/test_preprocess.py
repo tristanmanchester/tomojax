@@ -124,9 +124,10 @@ def test_preprocess_log_outputs_absorption(tmp_path):
         atol=1e-6,
     )
     with h5py.File(out_path, "r") as handle:
-        assert _attr_to_str(
-            handle["/entry/processing/tomojax/preprocess"].attrs["output_domain"]
-        ) == "absorption"
+        assert (
+            _attr_to_str(handle["/entry/processing/tomojax/preprocess"].attrs["output_domain"])
+            == "absorption"
+        )
 
 
 def test_preprocess_missing_flats_requires_explicit_override(tmp_path):
@@ -216,9 +217,7 @@ def test_preprocess_output_dtype_float64(tmp_path):
 
     with h5py.File(out_path, "r") as handle:
         assert handle["/entry/instrument/detector/data"].dtype == np.dtype("float64")
-        assert handle["/entry/processing/tomojax/preprocess/flat_mean"].dtype == np.dtype(
-            "float64"
-        )
+        assert handle["/entry/processing/tomojax/preprocess/flat_mean"].dtype == np.dtype("float64")
 
 
 def test_preprocess_finds_unique_nonstandard_image_key(tmp_path):
@@ -276,3 +275,273 @@ def test_preprocess_cli_smoke(tmp_path, capsys):
     assert "Wrote corrected transmission projections" in capsys.readouterr().out
     corrected = load_nxtomo(str(out_path))
     np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), 0.5))
+
+
+def test_preprocess_reject_views_keeps_projections_angles_and_metadata_aligned(tmp_path):
+    frames = np.array(
+        [
+            np.full((1, 1), 1.0, dtype=np.float32),  # dark
+            np.full((1, 1), 2.0, dtype=np.float32),  # sample view 0
+            np.full((1, 1), 3.0, dtype=np.float32),  # sample view 1
+            np.full((1, 1), 11.0, dtype=np.float32),  # flat
+            np.full((1, 1), 4.0, dtype=np.float32),  # sample view 2
+            np.full((1, 1), 5.0, dtype=np.float32),  # sample view 3
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 1, 0, 0]))
+    out_path = tmp_path / "reject.nxs"
+
+    result = preprocess_nxtomo(raw_path, out_path, PreprocessConfig(reject_views="1:3"))
+
+    assert result.sample_count == 2
+    corrected = load_nxtomo(str(out_path))
+    np.testing.assert_allclose(
+        corrected.projections[:, 0, 0],
+        np.array([0.1, 0.4], dtype=np.float32),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(corrected.thetas_deg, np.array([30.0, 150.0], dtype=np.float32))
+    np.testing.assert_array_equal(corrected.image_key, np.zeros((2,), dtype=np.int32))
+
+    with h5py.File(out_path, "r") as handle:
+        provenance = handle["/entry/processing/tomojax/preprocess"].attrs
+        assert json.loads(provenance["final_sample_view_indices"]) == [0, 3]
+        assert json.loads(provenance["final_raw_frame_indices"]) == [1, 5]
+
+
+def test_preprocess_select_and_reject_files_are_deduped_in_sample_view_order(tmp_path):
+    frames = np.array(
+        [
+            np.full((1, 1), 1.0, dtype=np.float32),
+            np.full((1, 1), 2.0, dtype=np.float32),
+            np.full((1, 1), 3.0, dtype=np.float32),
+            np.full((1, 1), 4.0, dtype=np.float32),
+            np.full((1, 1), 5.0, dtype=np.float32),
+            np.full((1, 1), 11.0, dtype=np.float32),
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 0, 0, 1]))
+    select_file = tmp_path / "select.txt"
+    reject_file = tmp_path / "reject.txt"
+    select_file.write_text("3, 1:4\n# duplicate below\n1\n", encoding="utf-8")
+    reject_file.write_text("2 2\n", encoding="utf-8")
+    out_path = tmp_path / "select_reject.nxs"
+
+    preprocess_nxtomo(
+        raw_path,
+        out_path,
+        PreprocessConfig(select_views_file=select_file, reject_views_file=reject_file),
+    )
+
+    corrected = load_nxtomo(str(out_path))
+    np.testing.assert_allclose(corrected.projections[:, 0, 0], np.array([0.2, 0.4]))
+    np.testing.assert_allclose(corrected.thetas_deg, np.array([60.0, 120.0], dtype=np.float32))
+    with h5py.File(out_path, "r") as handle:
+        provenance = handle["/entry/processing/tomojax/preprocess"].attrs
+        assert json.loads(provenance["final_sample_view_indices"]) == [1, 3]
+
+
+def test_preprocess_crop_updates_output_shape_and_detector_metadata(tmp_path):
+    dark = np.zeros((4, 5), dtype=np.float32)
+    sample = np.arange(20, dtype=np.float32).reshape(4, 5) + 1.0
+    flat = np.full((4, 5), 10.0, dtype=np.float32)
+    raw_path = _raw_path(
+        tmp_path,
+        frames=np.stack([dark, sample, flat]),
+        image_key=np.array([2, 0, 1]),
+    )
+    out_path = tmp_path / "crop.nxs"
+
+    preprocess_nxtomo(raw_path, out_path, PreprocessConfig(crop="1:3,2:5"))
+
+    corrected = load_nxtomo(str(out_path))
+    assert corrected.projections.shape == (1, 2, 3)
+    np.testing.assert_allclose(corrected.projections[0], sample[1:3, 2:5] / 10.0)
+    assert corrected.detector["nu"] == 3
+    assert corrected.detector["nv"] == 2
+    assert corrected.detector["du"] == 1.25
+    assert corrected.detector["dv"] == 2.5
+    np.testing.assert_allclose(corrected.detector["det_center"], [1.75, -0.5])
+
+    with h5py.File(out_path, "r") as handle:
+        preprocess = handle["/entry/processing/tomojax/preprocess"]
+        np.testing.assert_allclose(preprocess["flat_mean"][...], np.full((2, 3), 10.0))
+        assert json.loads(preprocess.attrs["crop_bounds"]) == {
+            "x0": 2,
+            "x1": 5,
+            "y0": 1,
+            "y1": 3,
+        }
+
+
+def test_preprocess_filters_optional_sample_length_alignment_metadata(tmp_path):
+    frames = np.array(
+        [
+            np.zeros((1, 1), dtype=np.float32),
+            np.full((1, 1), 0.2, dtype=np.float32),
+            np.full((1, 1), 0.3, dtype=np.float32),
+            np.full((1, 1), 0.4, dtype=np.float32),
+            np.ones((1, 1), dtype=np.float32),
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 0, 1]))
+    align_params = np.arange(15, dtype=np.float32).reshape(3, 5)
+    angle_offset = np.array([0.5, 1.5, 2.5], dtype=np.float32)
+    with h5py.File(raw_path, "r+") as handle:
+        align = handle.require_group("/entry/processing/tomojax/align")
+        align.create_dataset("thetas", data=align_params)
+        align.create_dataset("angle_offset_deg", data=angle_offset)
+
+    out_path = tmp_path / "optional_metadata.nxs"
+
+    preprocess_nxtomo(raw_path, out_path, PreprocessConfig(reject_views="1"))
+
+    corrected = load_nxtomo(str(out_path))
+    np.testing.assert_allclose(corrected.align_params, align_params[[0, 2]])
+    np.testing.assert_allclose(corrected.angle_offset_deg, angle_offset[[0, 2]])
+    with h5py.File(out_path, "r") as handle:
+        filtered = json.loads(
+            handle["/entry/processing/tomojax/preprocess"].attrs[
+                "optional_sample_metadata_filtered"
+            ]
+        )
+        assert filtered == {"align_params": True, "angle_offset_deg": True}
+
+
+def test_preprocess_auto_reject_nonfinite_drops_bad_corrected_view(tmp_path):
+    frames = np.array(
+        [
+            np.zeros((1, 2), dtype=np.float32),
+            np.full((1, 2), 0.5, dtype=np.float32),
+            np.array([[np.nan, 0.5]], dtype=np.float32),
+            np.full((1, 2), 1.0, dtype=np.float32),
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 1]))
+    out_path = tmp_path / "nonfinite_reject.nxs"
+
+    result = preprocess_nxtomo(
+        raw_path,
+        out_path,
+        PreprocessConfig(auto_reject="nonfinite"),
+    )
+
+    assert result.sample_count == 1
+    corrected = load_nxtomo(str(out_path))
+    np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), 0.5))
+    np.testing.assert_allclose(corrected.thetas_deg, np.array([30.0], dtype=np.float32))
+    with h5py.File(out_path, "r") as handle:
+        auto = json.loads(handle["/entry/processing/tomojax/preprocess"].attrs["auto_reject"])
+        assert auto["rejected_sample_view_indices"] == [1]
+        assert auto["rejected_reasons"] == {"1": ["nonfinite"]}
+
+
+def test_preprocess_auto_reject_outliers_uses_robust_view_medians(tmp_path):
+    values = [1.0, 1.1, 1.2, 50.0, 1.1]
+    frames = [np.zeros((1, 2), dtype=np.float32)]
+    frames.extend(np.full((1, 2), value, dtype=np.float32) for value in values)
+    frames.append(np.ones((1, 2), dtype=np.float32))
+    raw_path = _raw_path(
+        tmp_path,
+        frames=np.stack(frames),
+        image_key=np.array([2, 0, 0, 0, 0, 0, 1]),
+    )
+    out_path = tmp_path / "outlier_reject.nxs"
+
+    preprocess_nxtomo(
+        raw_path,
+        out_path,
+        PreprocessConfig(auto_reject="outliers", outlier_z_threshold=6.0),
+    )
+
+    corrected = load_nxtomo(str(out_path))
+    assert corrected.projections.shape == (4, 1, 2)
+    np.testing.assert_allclose(corrected.projections[:, 0, 0], np.array([1.0, 1.1, 1.2, 1.1]))
+    with h5py.File(out_path, "r") as handle:
+        auto = json.loads(handle["/entry/processing/tomojax/preprocess"].attrs["auto_reject"])
+        assert auto["rejected_sample_view_indices"] == [3]
+        assert auto["rejected_reasons"] == {"3": ["outlier"]}
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (PreprocessConfig(reject_views="abc"), "invalid view index"),
+        (PreprocessConfig(reject_views="9"), "out of bounds"),
+        (PreprocessConfig(select_views="1:1"), "non-empty"),
+        (PreprocessConfig(crop="0:2,0:9"), "out of bounds"),
+        (PreprocessConfig(crop="1:1,0:1"), "non-empty"),
+        (PreprocessConfig(reject_views="0:2"), "removed all sample views"),
+    ],
+)
+def test_preprocess_invalid_view_and_crop_ranges_fail_clearly(tmp_path, config, message):
+    frames = np.array(
+        [
+            np.zeros((2, 2), dtype=np.float32),
+            np.full((2, 2), 0.5, dtype=np.float32),
+            np.full((2, 2), 0.6, dtype=np.float32),
+            np.ones((2, 2), dtype=np.float32),
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 1]))
+
+    with pytest.raises(ValueError, match=message):
+        preprocess_nxtomo(raw_path, tmp_path / "bad.nxs", config)
+
+
+def test_preprocess_warns_when_rejection_changes_angular_coverage(tmp_path, caplog):
+    frames = np.array(
+        [
+            np.zeros((1, 1), dtype=np.float32),
+            np.full((1, 1), 0.5, dtype=np.float32),
+            np.full((1, 1), 0.6, dtype=np.float32),
+            np.full((1, 1), 0.7, dtype=np.float32),
+            np.ones((1, 1), dtype=np.float32),
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 0, 1]))
+
+    caplog.set_level("WARNING")
+    preprocess_nxtomo(raw_path, tmp_path / "coverage.nxs", PreprocessConfig(reject_views="0"))
+
+    assert any("changed angular coverage" in record.message for record in caplog.records)
+
+
+def test_preprocess_cli_combines_crop_reject_and_auto_reject(tmp_path, capsys):
+    frames = np.array(
+        [
+            np.zeros((2, 3), dtype=np.float32),
+            np.full((2, 3), 0.5, dtype=np.float32),
+            np.full((2, 3), 0.6, dtype=np.float32),
+            np.array([[0.7, 0.7, 0.7], [np.nan, 0.7, 0.7]], dtype=np.float32),
+            np.ones((2, 3), dtype=np.float32),
+        ],
+        dtype=np.float32,
+    )
+    raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 0, 1]))
+    out_path = tmp_path / "cli_combined.nxs"
+
+    status = preprocess_cli.main(
+        [
+            raw_path,
+            str(out_path),
+            "--crop",
+            "0:1,0:2",
+            "--reject-views",
+            "1",
+            "--auto-reject",
+            "both",
+        ]
+    )
+
+    assert status == 0
+    assert "shape=[2, 1, 2]" in capsys.readouterr().out
+    corrected = load_nxtomo(str(out_path))
+    assert corrected.projections.shape == (2, 1, 2)

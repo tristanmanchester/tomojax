@@ -281,8 +281,29 @@ By default it writes normalised transmission. Add `--log` to write absorption
 Usage
 ```
 python -m tomojax.cli.preprocess <raw.nxs> <corrected.nxs> \
-  [--log] [--epsilon 1e-6] [--clip-min 1e-6]
+  [--log] [--epsilon 1e-6] [--clip-min 1e-6] \
+  [--select-views SPEC] [--reject-views SPEC] \
+  [--select-views-file PATH] [--reject-views-file PATH] \
+  [--auto-reject off|nonfinite|outliers|both] [--outlier-z-threshold 6] \
+  [--crop y0:y1,x0:x1]
 ```
+
+View filtering
+- View indices are sample-view indices after `image_key == 0` filtering, not raw
+  acquisition frame numbers.
+- Specs accept comma or whitespace separated integers and half-open ranges such as
+  `0:90` or `120:180:2`. Files use the same syntax and may include `#` comments.
+- Selection is applied first, then rejection. Output order always follows the
+  original sample-view order.
+- `--auto-reject nonfinite` drops corrected views containing NaN/Inf before
+  non-finite repair. `--auto-reject outliers` drops robust-MAD outliers by
+  per-view median intensity. `both` applies both checks.
+
+Detector crop
+- `--crop y0:y1,x0:x1` crops projection axes `(views, y, x)` before correction.
+- The output detector metadata is updated to the cropped `nv`/`nu`, and
+  `det_center` is shifted so cropped pixel coordinates remain physically aligned
+  with the original detector.
 
 Examples
 ```
@@ -294,6 +315,18 @@ uv run tomojax-preprocess raw.nxs corrected_absorption.nxs \
 # Missing flats/darks fail by default; this explicitly uses a zero dark field.
 uv run tomojax-preprocess raw_without_darks.nxs corrected_absorption.nxs \
   --log --assume-dark-field 0
+
+# Crop detector ROI before correction.
+uv run tomojax-preprocess raw.nxs corrected_cropped.nxs \
+  --log --crop 120:900,64:960
+
+# Reject known bad sample views by index/range.
+uv run tomojax-preprocess raw.nxs corrected_rejected.nxs \
+  --reject-views 12,57:61
+
+# Combine a file of bad views with automatic non-finite/outlier rejection.
+uv run tomojax-preprocess raw.nxs corrected_robust.nxs \
+  --reject-views-file bad_views.txt --auto-reject both --outlier-z-threshold 6
 ```
 
 Path overrides
@@ -308,7 +341,8 @@ Notes
 - Output `image_key` values are all `0` because the corrected file contains sample
   projections only.
 - Provenance is written to `/entry/processing/tomojax/preprocess`, including the source
-  dataset paths, frame counts, correction options, warning counts, and mean flat/dark fields.
+  dataset paths, frame counts, view filtering, crop bounds, angular coverage before/after
+  filtering, correction options, warning counts, and mean flat/dark fields.
 - Stripe and ring correction are intentionally not part of this first conservative path.
 
 

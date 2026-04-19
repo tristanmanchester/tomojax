@@ -41,6 +41,13 @@ class PreprocessConfig:
     image_key_path: str | None = None
     assume_dark_field: float | None = None
     assume_flat_field: float | None = None
+    select_views: str | None = None
+    reject_views: str | None = None
+    select_views_file: str | Path | None = None
+    reject_views_file: str | Path | None = None
+    auto_reject: str = "off"
+    outlier_z_threshold: float = 6.0
+    crop: str | None = None
 
 
 @dataclass(slots=True)
@@ -131,8 +138,7 @@ def _find_unique_image_key(file: h5py.File) -> tuple[str, h5py.Dataset]:
     if len(matches) > 1:
         paths = ", ".join(path for path, _dataset in matches)
         raise KeyError(
-            "Found multiple image_key datasets; pass --image-key-path explicitly: "
-            f"{paths}"
+            f"Found multiple image_key datasets; pass --image-key-path explicitly: {paths}"
         )
     return matches[0]
 
@@ -163,6 +169,9 @@ def _detector_meta_from_raw(
     *,
     nv: int,
     nu: int,
+    crop_bounds: tuple[int, int, int, int] | None = None,
+    original_nv: int | None = None,
+    original_nu: int | None = None,
 ) -> dict[str, Any]:
     detector = entry.get("instrument/detector")
     meta = (
@@ -175,12 +184,28 @@ def _detector_meta_from_raw(
     detector_group = detector if isinstance(detector, h5py.Group) else None
     x_pixel_size = _read_scalar_dataset(detector_group, "x_pixel_size")
     y_pixel_size = _read_scalar_dataset(detector_group, "y_pixel_size")
+    du = float(meta.get("du", 1.0 if x_pixel_size is None else x_pixel_size))
+    dv = float(meta.get("dv", 1.0 if y_pixel_size is None else y_pixel_size))
+    det_center = meta.get("det_center", [0.0, 0.0])
+    try:
+        cx = float(det_center[0])
+        cz = float(det_center[1])
+    except (TypeError, ValueError, IndexError):
+        cx, cz = 0.0, 0.0
+
+    if crop_bounds is not None:
+        y0, y1, x0, x1 = crop_bounds
+        old_nv = int(original_nv if original_nv is not None else meta.get("nv", nv))
+        old_nu = int(original_nu if original_nu is not None else meta.get("nu", nu))
+        cx = cx + ((float(x0) + float(x1) - float(old_nu)) / 2.0) * du
+        cz = cz + ((float(y0) + float(y1) - float(old_nv)) / 2.0) * dv
+
     return {
-        "nu": int(meta.get("nu", nu)),
-        "nv": int(meta.get("nv", nv)),
-        "du": float(meta.get("du", 1.0 if x_pixel_size is None else x_pixel_size)),
-        "dv": float(meta.get("dv", 1.0 if y_pixel_size is None else y_pixel_size)),
-        "det_center": meta.get("det_center", [0.0, 0.0]),
+        "nu": int(nu),
+        "nv": int(nv),
+        "du": du,
+        "dv": dv,
+        "det_center": [cx, cz],
     }
 
 
@@ -205,14 +230,17 @@ def _metadata_from_raw(
     output_image_key: np.ndarray,
     nv: int,
     nu: int,
+    crop_bounds: tuple[int, int, int, int] | None = None,
+    original_nv: int | None = None,
+    original_nu: int | None = None,
+    align_params: np.ndarray | None = None,
+    angle_offset_deg: np.ndarray | None = None,
 ) -> NXTomoMetadata:
     geometry_type = "parallel"
     geometry_meta = None
     geometry = entry.get("geometry")
     if isinstance(geometry, h5py.Group):
-        geometry_type = (
-            _attr_to_str(geometry.attrs.get("type"), default="parallel") or "parallel"
-        )
+        geometry_type = _attr_to_str(geometry.attrs.get("type"), default="parallel") or "parallel"
         geometry_meta = _json_mapping_attr(geometry.attrs.get("geometry_meta_json"))
 
     grid = _json_mapping_attr(entry.attrs.get("grid_meta_json"))
@@ -226,9 +254,18 @@ def _metadata_from_raw(
         thetas_deg=np.asarray(thetas_deg, dtype=np.float32),
         image_key=output_image_key,
         grid=grid,
-        detector=_detector_meta_from_raw(entry, nv=nv, nu=nu),
+        detector=_detector_meta_from_raw(
+            entry,
+            nv=nv,
+            nu=nu,
+            crop_bounds=crop_bounds,
+            original_nv=original_nv,
+            original_nu=original_nu,
+        ),
         geometry_type=geometry_type,
         geometry_meta=geometry_meta,
+        align_params=align_params,
+        angle_offset_deg=angle_offset_deg,
         sample_name=sample_name,
         source_name=source.get("name", "TomoJAX preprocess"),
         source_type=source.get("type"),
@@ -239,14 +276,217 @@ def _metadata_from_raw(
 def _validate_config(config: PreprocessConfig) -> np.dtype:
     if not np.isfinite(config.epsilon) or config.epsilon <= 0:
         raise ValueError("epsilon must be a positive finite value")
-    if config.clip_min is not None and (
-        not np.isfinite(config.clip_min) or config.clip_min <= 0
-    ):
+    if config.clip_min is not None and (not np.isfinite(config.clip_min) or config.clip_min <= 0):
         raise ValueError("clip_min must be a positive finite value when provided")
     if config.output_dtype not in _OUTPUT_DTYPES:
         allowed = ", ".join(sorted(_OUTPUT_DTYPES))
         raise ValueError(f"output_dtype must be one of: {allowed}")
+    auto_reject = str(config.auto_reject).strip().lower()
+    if auto_reject not in {"off", "nonfinite", "outliers", "both"}:
+        raise ValueError("auto_reject must be one of: off, nonfinite, outliers, both")
+    if not np.isfinite(config.outlier_z_threshold) or config.outlier_z_threshold <= 0:
+        raise ValueError("outlier_z_threshold must be a positive finite value")
     return np.dtype(_OUTPUT_DTYPES[config.output_dtype])
+
+
+def _view_tokens_from_text(text: str) -> list[str]:
+    tokens: list[str] = []
+    for line in str(text).splitlines():
+        line = line.split("#", 1)[0]
+        if not line.strip():
+            continue
+        tokens.extend(part for part in line.replace(",", " ").split() if part)
+    return tokens
+
+
+def _read_view_spec_file(path: str | Path) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"could not read view index file {path!s}: {exc}") from exc
+
+
+def _parse_nonnegative_int(text: str, *, label: str, token: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise ValueError(f"invalid {label} {text!r} in view spec token {token!r}") from exc
+    if value < 0:
+        raise ValueError(f"negative view indices are not supported in token {token!r}")
+    return value
+
+
+def _parse_view_spec(text: str | None, *, n_views: int, label: str) -> np.ndarray:
+    if text is None or not str(text).strip():
+        return np.asarray([], dtype=np.int64)
+
+    selected: dict[int, None] = {}
+    for token in _view_tokens_from_text(str(text)):
+        if ":" in token:
+            parts = token.split(":")
+            if len(parts) not in {2, 3}:
+                raise ValueError(f"malformed {label} range {token!r}")
+            if parts[0] == "" or parts[1] == "":
+                raise ValueError(f"{label} ranges must provide explicit start and stop: {token!r}")
+            start = _parse_nonnegative_int(parts[0], label="range start", token=token)
+            stop = _parse_nonnegative_int(parts[1], label="range stop", token=token)
+            step = 1
+            if len(parts) == 3:
+                if parts[2] == "":
+                    raise ValueError(f"{label} ranges must provide an explicit step: {token!r}")
+                step = _parse_nonnegative_int(parts[2], label="range step", token=token)
+            if step <= 0:
+                raise ValueError(f"{label} range step must be positive in token {token!r}")
+            if stop <= start:
+                raise ValueError(f"{label} range must be non-empty in token {token!r}")
+            if start >= n_views or stop > n_views:
+                raise ValueError(
+                    f"{label} range {token!r} is out of bounds for {n_views} sample views"
+                )
+            values = range(start, stop, step)
+            for value in values:
+                selected[int(value)] = None
+        else:
+            value = _parse_nonnegative_int(token, label="view index", token=token)
+            if value >= n_views:
+                raise ValueError(
+                    f"{label} index {value} is out of bounds for {n_views} sample views"
+                )
+            selected[int(value)] = None
+
+    return np.asarray(sorted(selected), dtype=np.int64)
+
+
+def _combine_view_specs(
+    spec: str | None,
+    file_path: str | Path | None,
+    *,
+    n_views: int,
+    label: str,
+) -> np.ndarray | None:
+    parts: list[str] = []
+    if spec is not None and str(spec).strip():
+        parts.append(str(spec))
+    if file_path is not None:
+        parts.append(_read_view_spec_file(file_path))
+    if not parts:
+        return None
+    return _parse_view_spec("\n".join(parts), n_views=n_views, label=label)
+
+
+def _resolve_sample_view_indices(
+    *,
+    n_sample_views: int,
+    config: PreprocessConfig,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    select = _combine_view_specs(
+        config.select_views,
+        config.select_views_file,
+        n_views=n_sample_views,
+        label="select-views",
+    )
+    reject = _combine_view_specs(
+        config.reject_views,
+        config.reject_views_file,
+        n_views=n_sample_views,
+        label="reject-views",
+    )
+
+    if select is None:
+        candidate = np.arange(n_sample_views, dtype=np.int64)
+    else:
+        candidate = select.astype(np.int64, copy=False)
+
+    explicit_rejected = np.asarray([], dtype=np.int64)
+    if reject is not None and reject.size:
+        reject_set = set(int(v) for v in reject.tolist())
+        keep_mask = np.asarray([int(v) not in reject_set for v in candidate], dtype=bool)
+        explicit_rejected = candidate[~keep_mask]
+        candidate = candidate[keep_mask]
+
+    if candidate.size == 0:
+        raise ValueError("view selection/rejection removed all sample views")
+
+    meta = {
+        "select_views": None if select is None else select.tolist(),
+        "reject_views": [] if reject is None else reject.tolist(),
+        "explicit_rejected_sample_view_indices": explicit_rejected.tolist(),
+        "candidate_sample_view_indices": candidate.tolist(),
+    }
+    return candidate, meta
+
+
+def _parse_crop_spec(
+    crop: str | None,
+    *,
+    nv: int,
+    nu: int,
+) -> tuple[int, int, int, int] | None:
+    if crop is None or not str(crop).strip():
+        return None
+    text = str(crop).strip()
+    parts = text.split(",")
+    if len(parts) != 2:
+        raise ValueError("--crop must be formatted as y0:y1,x0:x1")
+
+    def parse_axis(axis_text: str, limit: int, axis_name: str) -> tuple[int, int]:
+        axis_parts = axis_text.split(":")
+        if len(axis_parts) != 2 or axis_parts[0] == "" or axis_parts[1] == "":
+            raise ValueError(f"--crop {axis_name} range must be formatted as start:stop")
+        start = _parse_nonnegative_int(axis_parts[0], label=f"{axis_name} start", token=axis_text)
+        stop = _parse_nonnegative_int(axis_parts[1], label=f"{axis_name} stop", token=axis_text)
+        if stop <= start:
+            raise ValueError(f"--crop {axis_name} range must be non-empty")
+        if stop > limit:
+            raise ValueError(
+                f"--crop {axis_name} range {axis_text!r} is out of bounds for size {limit}"
+            )
+        return start, stop
+
+    y0, y1 = parse_axis(parts[0].strip(), nv, "y")
+    x0, x1 = parse_axis(parts[1].strip(), nu, "x")
+    return y0, y1, x0, x1
+
+
+def _coverage_stats(angles: np.ndarray) -> dict[str, float | int | None]:
+    values = np.asarray(angles, dtype=np.float64).reshape(-1)
+    finite = np.sort(values[np.isfinite(values)])
+    if finite.size == 0:
+        return {
+            "count": int(values.size),
+            "finite_count": 0,
+            "min_deg": None,
+            "max_deg": None,
+            "span_deg": None,
+            "max_gap_deg": None,
+        }
+    if finite.size >= 2:
+        max_gap = float(np.max(np.diff(finite)))
+    else:
+        max_gap = 0.0
+    return {
+        "count": int(values.size),
+        "finite_count": int(finite.size),
+        "min_deg": float(finite[0]),
+        "max_deg": float(finite[-1]),
+        "span_deg": float(finite[-1] - finite[0]),
+        "max_gap_deg": max_gap,
+    }
+
+
+def _coverage_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    for key in ("min_deg", "max_deg", "span_deg"):
+        if before.get(key) is None or after.get(key) is None:
+            if before.get(key) != after.get(key):
+                return True
+        elif not np.isclose(float(before[key]), float(after[key]), rtol=0.0, atol=1e-6):
+            return True
+    before_gap = before.get("max_gap_deg")
+    after_gap = after.get("max_gap_deg")
+    if before_gap is not None and after_gap is not None:
+        if float(after_gap) > float(before_gap) + 1e-6:
+            return True
+    return False
 
 
 def _constant_field(value: float, shape: tuple[int, int], *, label: str) -> np.ndarray:
@@ -334,16 +574,6 @@ def _correct_frames(
         output = transmission
         output_domain = "transmission"
 
-    nonfinite = int(np.count_nonzero(~np.isfinite(output)))
-    _warn_count(
-        warning_counts,
-        "nonfinite_output",
-        "Corrected output contained non-finite values and was repaired",
-        nonfinite,
-    )
-    if nonfinite:
-        output = np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0)
-
     correction_meta = {
         "flat_override_used": flat_override_used,
         "dark_override_used": dark_override_used,
@@ -353,6 +583,122 @@ def _correct_frames(
         "output_domain": output_domain,
     }
     return output, flat_mean, dark_mean, warning_counts, correction_meta
+
+
+def _auto_reject_views(
+    output: np.ndarray,
+    sample_view_indices: np.ndarray,
+    *,
+    mode: str,
+    threshold: float,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    mode_norm = str(mode).strip().lower()
+    keep = np.ones((int(output.shape[0]),), dtype=bool)
+    reason_by_index: dict[int, list[str]] = {}
+    outlier_meta: dict[str, Any] = {
+        "ran": mode_norm in {"outliers", "both"},
+        "skipped": False,
+        "skip_reason": None,
+        "view_medians": [],
+        "median": None,
+        "mad": None,
+        "robust_scale": None,
+    }
+
+    if mode_norm in {"nonfinite", "both"}:
+        nonfinite = np.any(~np.isfinite(output), axis=(1, 2))
+        for pos in np.flatnonzero(nonfinite):
+            sample_idx = int(sample_view_indices[int(pos)])
+            reason_by_index.setdefault(sample_idx, []).append("nonfinite")
+        keep &= ~nonfinite
+
+    if mode_norm in {"outliers", "both"}:
+        medians = np.full((int(output.shape[0]),), np.nan, dtype=np.float64)
+        for i, view in enumerate(output):
+            finite = np.asarray(view, dtype=np.float64)[np.isfinite(view)]
+            if finite.size:
+                medians[i] = float(np.median(finite))
+        finite_medians = medians[np.isfinite(medians)]
+        outlier_meta["view_medians"] = [
+            None if not np.isfinite(value) else float(value) for value in medians
+        ]
+        if finite_medians.size < 3:
+            outlier_meta["skipped"] = True
+            outlier_meta["skip_reason"] = "fewer than 3 finite per-view medians"
+        else:
+            center = float(np.median(finite_medians))
+            mad = float(np.median(np.abs(finite_medians - center)))
+            scale = 1.4826 * mad
+            outlier_meta["median"] = center
+            outlier_meta["mad"] = mad
+            outlier_meta["robust_scale"] = scale
+            if scale <= 0.0 or not np.isfinite(scale):
+                outlier_meta["skipped"] = True
+                outlier_meta["skip_reason"] = "zero or non-finite MAD"
+            else:
+                robust_z = np.abs((medians - center) / scale)
+                outliers = np.isfinite(robust_z) & (robust_z > float(threshold))
+                for pos in np.flatnonzero(outliers):
+                    sample_idx = int(sample_view_indices[int(pos)])
+                    reason_by_index.setdefault(sample_idx, []).append("outlier")
+                keep &= ~outliers
+
+    if not np.any(keep):
+        raise ValueError("automatic rejection removed all sample views")
+
+    rejected = sorted(reason_by_index)
+    meta = {
+        "mode": mode_norm,
+        "outlier_z_threshold": float(threshold),
+        "rejected_sample_view_indices": rejected,
+        "rejected_reasons": {str(k): v for k, v in sorted(reason_by_index.items())},
+        "outlier": outlier_meta,
+    }
+    return keep, meta
+
+
+def _repair_nonfinite_output(
+    output: np.ndarray,
+    warning_counts: dict[str, int],
+) -> np.ndarray:
+    nonfinite = int(np.count_nonzero(~np.isfinite(output)))
+    _warn_count(
+        warning_counts,
+        "nonfinite_output",
+        "Corrected output contained non-finite values and was repaired",
+        nonfinite,
+    )
+    if nonfinite:
+        return np.nan_to_num(output, nan=0.0, posinf=0.0, neginf=0.0)
+    return output
+
+
+def _optional_sample_metadata(
+    entry: h5py.Group,
+    *,
+    n_sample_views: int,
+    selected_sample_view_indices: np.ndarray,
+) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, bool]]:
+    align = entry.get("processing/tomojax/align")
+    if not isinstance(align, h5py.Group):
+        return None, None, {"align_params": False, "angle_offset_deg": False}
+
+    align_params = None
+    angle_offset = None
+    found = {"align_params": False, "angle_offset_deg": False}
+    params_dataset = align.get("thetas")
+    if isinstance(params_dataset, h5py.Dataset) and params_dataset.shape[0] == n_sample_views:
+        align_params = np.asarray(params_dataset[...], dtype=np.float32)[
+            selected_sample_view_indices
+        ]
+        found["align_params"] = True
+    offset_dataset = align.get("angle_offset_deg")
+    if isinstance(offset_dataset, h5py.Dataset) and offset_dataset.shape[0] == n_sample_views:
+        angle_offset = np.asarray(offset_dataset[...], dtype=np.float32)[
+            selected_sample_view_indices
+        ]
+        found["angle_offset_deg"] = True
+    return align_params, angle_offset, found
 
 
 def _json_safe(value: Any) -> Any:
@@ -427,11 +773,16 @@ def preprocess_nxtomo(
         )
         if frame_dataset.ndim != 3:
             raise ValueError(
-                "raw frame dataset must be 3D (n_frames, nv, nu), "
-                f"got {frame_dataset.shape}"
+                f"raw frame dataset must be 3D (n_frames, nv, nu), got {frame_dataset.shape}"
             )
-        frames = np.asarray(frame_dataset[...])
-        n_frames, nv, nu = (int(v) for v in frames.shape)
+        n_frames, raw_nv, raw_nu = (int(v) for v in frame_dataset.shape)
+        crop_bounds = _parse_crop_spec(cfg.crop, nv=raw_nv, nu=raw_nu)
+        if crop_bounds is None:
+            y0, y1, x0, x1 = 0, raw_nv, 0, raw_nu
+        else:
+            y0, y1, x0, x1 = crop_bounds
+        frames = np.asarray(frame_dataset[:, y0:y1, x0:x1])
+        cropped_nv, cropped_nu = int(y1 - y0), int(x1 - x0)
 
         key_path, key_dataset = _resolve_image_key_dataset(file, cfg.image_key_path)
         image_key = np.asarray(key_dataset[...], dtype=np.int32).reshape(-1)
@@ -452,21 +803,83 @@ def preprocess_nxtomo(
                 f"rotation_angle length must match raw frame count ({n_frames}), got {angles_all.shape[0]}"
             )
 
-        corrected, flat_mean, dark_mean, warning_counts, correction_meta = _correct_frames(
-            frames,
-            image_key,
+        sample_mask = image_key == 0
+        flat_mask = image_key == 1
+        dark_mask = image_key == 2
+        sample_raw_indices = np.flatnonzero(sample_mask)
+        flat_raw_indices = np.flatnonzero(flat_mask)
+        dark_raw_indices = np.flatnonzero(dark_mask)
+        raw_frame_counts = {
+            "sample": int(sample_raw_indices.size),
+            "flat": int(flat_raw_indices.size),
+            "dark": int(dark_raw_indices.size),
+        }
+        if sample_raw_indices.size == 0:
+            raise ValueError("No sample frames found (image_key==0)")
+
+        candidate_sample_indices, view_selection_meta = _resolve_sample_view_indices(
+            n_sample_views=int(sample_raw_indices.size),
             config=cfg,
         )
-        output = np.asarray(corrected, dtype=output_dtype)
-        sample_mask = image_key == 0
-        output_angles = angles_all[sample_mask]
-        output_image_key = np.zeros((int(sample_mask.sum()),), dtype=np.int32)
+        candidate_sample_raw_indices = sample_raw_indices[candidate_sample_indices]
+        reduced_raw_indices = np.concatenate(
+            [candidate_sample_raw_indices, flat_raw_indices, dark_raw_indices]
+        )
+        reduced_image_key = np.concatenate(
+            [
+                np.zeros((int(candidate_sample_indices.size),), dtype=np.int32),
+                np.ones((int(flat_raw_indices.size),), dtype=np.int32),
+                np.full((int(dark_raw_indices.size),), 2, dtype=np.int32),
+            ]
+        )
+        reduced_frames = frames[reduced_raw_indices]
+        candidate_angles = angles_all[candidate_sample_raw_indices]
+
+        corrected, flat_mean, dark_mean, warning_counts, correction_meta = _correct_frames(
+            reduced_frames,
+            reduced_image_key,
+            config=cfg,
+        )
+
+        auto_keep, auto_reject_meta = _auto_reject_views(
+            corrected,
+            candidate_sample_indices,
+            mode=cfg.auto_reject,
+            threshold=float(cfg.outlier_z_threshold),
+        )
+        output_unrepaired = corrected[auto_keep]
+        final_sample_indices = candidate_sample_indices[auto_keep]
+        final_raw_sample_indices = candidate_sample_raw_indices[auto_keep]
+        output_angles = candidate_angles[auto_keep]
+        output_repaired = _repair_nonfinite_output(output_unrepaired, warning_counts)
+        output = np.asarray(output_repaired, dtype=output_dtype)
+        output_image_key = np.zeros((int(output.shape[0]),), dtype=np.int32)
+
+        coverage_before = _coverage_stats(angles_all[sample_raw_indices])
+        coverage_after = _coverage_stats(output_angles)
+        if _coverage_changed(coverage_before, coverage_after):
+            LOG.warning(
+                "View rejection changed angular coverage: before=%s after=%s",
+                coverage_before,
+                coverage_after,
+            )
+
+        align_params, angle_offset_deg, optional_meta_found = _optional_sample_metadata(
+            file["/entry"],
+            n_sample_views=int(sample_raw_indices.size),
+            selected_sample_view_indices=final_sample_indices,
+        )
         metadata = _metadata_from_raw(
             file["/entry"],
             thetas_deg=output_angles,
             output_image_key=output_image_key,
-            nv=nv,
-            nu=nu,
+            nv=cropped_nv,
+            nu=cropped_nu,
+            crop_bounds=crop_bounds,
+            original_nv=raw_nv,
+            original_nu=raw_nu,
+            align_params=align_params,
+            angle_offset_deg=angle_offset_deg,
         )
 
     save_nxtomo(str(output_path), output, metadata=metadata)
@@ -477,8 +890,10 @@ def preprocess_nxtomo(
         "data_path": frame_path,
         "angles_path": angle_path,
         "image_key_path": key_path,
-        "frame_counts": {
-            "sample": int(correction_meta["sample_count"]),
+        "frame_counts": raw_frame_counts,
+        "processing_frame_counts": {
+            "candidate_sample": int(correction_meta["sample_count"]),
+            "final_sample": int(output.shape[0]),
             "flat": int(correction_meta["flat_count"]),
             "dark": int(correction_meta["dark_count"]),
         },
@@ -496,6 +911,29 @@ def preprocess_nxtomo(
         "dark_override_used": bool(correction_meta["dark_override_used"]),
         "flat_override_used": bool(correction_meta["flat_override_used"]),
         "warning_counts": dict(warning_counts),
+        "select_views": cfg.select_views,
+        "reject_views": cfg.reject_views,
+        "select_views_file": None if cfg.select_views_file is None else str(cfg.select_views_file),
+        "reject_views_file": None if cfg.reject_views_file is None else str(cfg.reject_views_file),
+        "view_selection": view_selection_meta,
+        "final_sample_view_indices": final_sample_indices.tolist(),
+        "final_raw_frame_indices": final_raw_sample_indices.tolist(),
+        "auto_reject": auto_reject_meta,
+        "crop": cfg.crop,
+        "crop_bounds": None
+        if crop_bounds is None
+        else {
+            "y0": int(y0),
+            "y1": int(y1),
+            "x0": int(x0),
+            "x1": int(x1),
+        },
+        "original_projection_shape": [int(n_frames), int(raw_nv), int(raw_nu)],
+        "cropped_projection_shape": [int(n_frames), int(cropped_nv), int(cropped_nu)],
+        "final_projection_shape": [int(v) for v in output.shape],
+        "angular_coverage_before": coverage_before,
+        "angular_coverage_after": coverage_after,
+        "optional_sample_metadata_filtered": optional_meta_found,
     }
     _write_preprocess_provenance(
         output_path,
@@ -505,7 +943,7 @@ def preprocess_nxtomo(
     )
 
     return PreprocessResult(
-        sample_count=int(correction_meta["sample_count"]),
+        sample_count=int(output.shape[0]),
         flat_count=int(correction_meta["flat_count"]),
         dark_count=int(correction_meta["dark_count"]),
         output_shape=tuple(int(v) for v in output.shape),

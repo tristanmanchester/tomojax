@@ -121,6 +121,10 @@ uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned_po
 uv run tomojax-preprocess raw.nxs data/corrected_absorption.nxs \
   --log --epsilon 1e-6 --clip-min 1e-6
 
+# Drop known bad sample views and crop detector ROI before reconstruction
+uv run tomojax-preprocess raw.nxs data/corrected_cropped.nxs \
+  --log --reject-views 12,57:61 --crop 120:900,64:960
+
 # Naive reconstructions (FBP)
 uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp --gather-dtype bf16 \

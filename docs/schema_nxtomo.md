@@ -34,6 +34,7 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
   - `align/thetas` (optional, shape `(n_views,5)`, columns=`[alpha,beta,phi,dx,dz]`)
   - `preprocess` (optional NXcollection): provenance for `tomojax-preprocess`
     - attrs: `schema_version`, `input_path`, `data_path`, `angles_path`, `image_key_path`, `frame_counts`, `output_domain`, `epsilon`, `clip_min`, `output_dtype`, `correction_formula`, `log`, `assume_dark_field`, `assume_flat_field`, `warning_counts`
+    - view/ROI attrs when applicable: `select_views`, `reject_views`, `select_views_file`, `reject_views_file`, `view_selection`, `final_sample_view_indices`, `final_raw_frame_indices`, `auto_reject`, `crop`, `crop_bounds`, `original_projection_shape`, `cropped_projection_shape`, `final_projection_shape`, `angular_coverage_before`, `angular_coverage_after`
     - `flat_mean` and `dark_mean`: mean correction fields used for output, compressed with `lzf`
 - Reproducibility manifests from `tomojax-recon --save-manifest` and `tomojax-align --save-manifest` are JSON sidecars; they are not embedded in the NXtomo file.
 
@@ -49,3 +50,6 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
 - Set `TOMOJAX_AXES_SILENCE=1` to silence heuristic load-time warnings when processing large batches.
 - Raw NXtomo preprocessing expects mixed sample/flat/dark frames in the same detector stack.
   `tomojax-preprocess` writes sample-only output with all output `image_key` values reset to `0`.
+- `tomojax-preprocess` view selection/rejection uses sample-view indices after `image_key == 0`
+  filtering. Detector ROI crop specs use projection axis order `y0:y1,x0:x1`; cropped output
+  updates detector `nv`, `nu`, and `det_center`.

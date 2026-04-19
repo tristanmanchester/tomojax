@@ -71,6 +71,48 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Explicit constant flat field to use when no flat frames are present",
     )
+    parser.add_argument(
+        "--select-views",
+        default=None,
+        help=(
+            "Keep only these sample-view indices/ranges after image_key filtering "
+            "(e.g. '0:90,120:180:2')"
+        ),
+    )
+    parser.add_argument(
+        "--reject-views",
+        default=None,
+        help=(
+            "Reject these sample-view indices/ranges after image_key filtering (e.g. '12,57:61')"
+        ),
+    )
+    parser.add_argument(
+        "--select-views-file",
+        default=None,
+        help="File containing sample-view indices/ranges to keep; commas, whitespace, and # comments allowed",
+    )
+    parser.add_argument(
+        "--reject-views-file",
+        default=None,
+        help="File containing sample-view indices/ranges to reject; commas, whitespace, and # comments allowed",
+    )
+    parser.add_argument(
+        "--auto-reject",
+        choices=["off", "nonfinite", "outliers", "both"],
+        default="off",
+        help="Optionally reject corrected sample views with non-finite values and/or robust intensity outliers",
+    )
+    parser.add_argument(
+        "--outlier-z-threshold",
+        type=float,
+        default=6.0,
+        help="Robust z-score threshold for --auto-reject outliers/both",
+    )
+    parser.add_argument(
+        "--crop",
+        default=None,
+        help="Detector ROI crop in projection axis order y0:y1,x0:x1",
+    )
     return parser
 
 
@@ -100,6 +142,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         image_key_path=args.image_key_path,
         assume_dark_field=args.assume_dark_field,
         assume_flat_field=args.assume_flat_field,
+        select_views=args.select_views,
+        reject_views=args.reject_views,
+        select_views_file=args.select_views_file,
+        reject_views_file=args.reject_views_file,
+        auto_reject=str(args.auto_reject),
+        outlier_z_threshold=float(args.outlier_z_threshold),
+        crop=args.crop,
     )
     try:
         result = preprocess_nxtomo(input_path, output_path, config)
