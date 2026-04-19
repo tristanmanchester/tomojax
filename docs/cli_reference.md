@@ -179,7 +179,9 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--views-per-batch <int>] [--spdhg-seed <int>] \
   [--recon-positivity|--no-recon-positivity] \
   [--lr-rot <float>] [--lr-trans <float>] \
-  [--opt-method gd|gn] [--gn-damping <float>] \
+  [--opt-method gd|gn|lbfgs] [--gn-damping <float>] \
+  [--lbfgs-maxiter <int>] [--lbfgs-ftol <float>] [--lbfgs-gtol <float>] \
+  [--lbfgs-maxls <int>] [--lbfgs-memory-size <int>] \
   [--optimise-dofs <names>] [--freeze-dofs <names>] [--bounds <spec>] \
   [--early-stop|--no-early-stop] [--early-stop-rel <float>] [--early-stop-patience <int>] \
   [--pose-model per_view|polynomial|spline] [--knot-spacing <int>] [--degree <int>] \
@@ -199,9 +201,9 @@ Key options
 - Inner solver choice: FISTA is the conservative default for continuity with existing workflows. SPDHG uses stochastic view subsets and can scale better for larger view counts; control its subset size with `--views-per-batch` and deterministic subset order with `--spdhg-seed`.
 - SPDHG details: `--recon-positivity` is enabled by default and applies only to SPDHG. SPDHG objective logs are minibatch estimates, so compare their trend rather than treating them as identical to FISTA's full objective trace.
 - Smoke benchmark: see `docs/alignment_inner_solver_benchmark_64.md` for a `64^3` CPU comparison of FISTA and SPDHG as alignment inner solvers.
-- Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
+- Alignment step: gradient descent (`--lr-rot`, `--lr-trans`), Gauss‑Newton (`--opt-method gn`, `--gn-damping`), or Optax L‑BFGS (`--opt-method lbfgs`, `--lbfgs-maxiter`, `--lbfgs-memory-size`). GN is usually best for L2-like losses; L‑BFGS is useful for differentiable robust or similarity losses where GN is not available. See `docs/alignment_lbfgs_benchmark_64.md` for `64^3` CPU comparison and tuning notes.
 - Active DOFs: choose from `alpha`, `beta`, `phi`, `dx`, `dz`. By default all five are optimised. Use `--optimise-dofs dx,dz` for translation-only alignment, or `--freeze-dofs phi` to keep selected parameters fixed at their initial values.
-- Parameter bounds: `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` clips named DOFs after each update. Rotations (`alpha`, `beta`, `phi`) are in radians; translations (`dx`, `dz`) are in world units. Omitted DOFs are unconstrained, and frozen DOFs stay fixed even if a bound is supplied for them.
+- Parameter bounds: `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` clips named DOFs after each update. Rotations (`alpha`, `beta`, `phi`) are in radians; translations (`dx`, `dz`) are in world units. Omitted DOFs are unconstrained, and frozen DOFs stay fixed even if a bound is supplied for them. L‑BFGS optimises an unconstrained active-DOF vector and maps it through the same bounds before evaluating the JAX objective; smooth pose models project expanded per-view parameters back into those bounds.
 - Pose model: `--pose-model per_view` (default) optimises one independent parameter vector per view. `--pose-model spline --knot-spacing N --degree 3` optimises smooth knot trajectories and expands them back to per-view parameters before projection. `--pose-model polynomial --degree D` fits each active DOF as a low-degree polynomial over the scan coordinate.
 - Early stopping (alignment across outers):
   - Enable/disable: `--early-stop` (default) or `--no-early-stop`.
@@ -221,6 +223,7 @@ Notes
 - The `.nxs` output still stores the final alignment parameters; JSON/CSV sidecars are optional convenience exports for plotting and reproducibility.
 - DOF selection does not change the saved parameter format: outputs still use five columns in `[alpha, beta, phi, dx, dz]` order, with inactive columns held fixed.
 - Smooth motion models are best for slow drift, stage sag, thermal/mechanical trends, or noisy data where independent per-view parameters overfit. Keep `per_view` for abrupt shifts, dropped-view artifacts, or genuinely view-local motion.
+- Optax L‑BFGS optimises only pose/alignment parameters for each outer step, not the reconstruction volume. Bounds are enforced by a differentiable transform, not by a Fortran-style active-set L-BFGS-B backend. If its initial objective/gradient is incompatible with the selected loss or a numerical failure occurs, the run logs the reason and falls back to GD for that step. Use `--log-summary` to see accepted/rejected status, objective values, and iteration counts.
 - The align CLI initializes a persistent JAX compilation cache automatically. Set `TOMOJAX_JAX_CACHE_DIR` to control the cache location.
 
 Loss schedule guidance
@@ -259,6 +262,12 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --outer-iters 6 --recon-iters 30 --lambda-tv 0.005 \
   --opt-method gd --lr-rot 3e-3 --lr-trans 1e-1 \
   --out out/align_gd.nxs --progress
+
+# Optax L-BFGS pose refinement for a differentiable robust loss
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --outer-iters 3 --recon-iters 25 --lambda-tv 0.003 \
+  --opt-method lbfgs --lbfgs-maxiter 20 --loss charbonnier \
+  --log-summary --out out/align_lbfgs.nxs
 
 # 2-DOF translation-only alignment
 uv run tomojax-align --data data/sim_misaligned.nxs \

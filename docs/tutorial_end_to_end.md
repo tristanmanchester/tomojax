@@ -202,7 +202,7 @@ ccpi, tomviz) or by writing a small slice/isosurface notebook.
 - `--[no-]checkpoint-projector`: toggles rematerialization to cut activation memory at ~10–25% extra compute.
 - `--lambda-tv`: increase for noisy data; keep accumulations in fp32.
 - `--tv-prox-iters`: increase (e.g., 20–30) for heavy noise to strengthen the TV prox effect.
-- `--opt-method`: `gn` is robust and fast; `gd` is simpler but may need more outer iterations.
+- `--opt-method`: `gn` is robust and fast for L2-like losses; `gd` is simpler but may need more outer iterations; `lbfgs` uses Optax L-BFGS for differentiable robust/similarity losses and logs accepted/rejected pose steps with objective values under `--log-summary`.
 
 Logging and progress
 - Add `--log-summary` to print per‑outer summaries:

@@ -175,4 +175,4 @@ Aligned outputs include per‑view alignment parameters.
 - `--phantom {sphere,cube}` with `--single-size` (diameter/side as fraction of min dim) and `--single-value`.
 - `--gather-dtype {auto,fp32,bf16,fp16}`; `bf16` recommended on modern GPUs.
 - `--[no-]checkpoint-projector` to trade compute for memory.
-- `--opt-method {gn,gd}`; GN is typically faster to high quality.
+- `--opt-method {gn,gd,lbfgs}`; GN is typically faster for L2-like losses, while Optax L-BFGS can be useful for differentiable robust/similarity losses.

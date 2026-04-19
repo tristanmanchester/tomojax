@@ -164,6 +164,8 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--checkpoint" in captured.out
     assert "--checkpoint-every" in captured.out
     assert "--resume" in captured.out
+    assert "lbfgs" in captured.out
+    assert "--lbfgs-memory-size" in captured.out
 
 
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
@@ -579,6 +581,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
                 "views_per_batch = 8",
                 "spdhg_seed = 7",
                 "recon_positivity = false",
+                "lbfgs_memory_size = 9",
                 f'save_params_json = "{json_path}"',
                 f'save_params_csv = "{csv_path}"',
                 f'save_manifest = "{manifest_path}"',
@@ -618,6 +621,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert captured["align_cfg"].views_per_batch == 2
     assert captured["align_cfg"].spdhg_seed == 7
     assert captured["align_cfg"].recon_positivity is False
+    assert captured["align_cfg"].lbfgs_memory_size == 9
     assert captured["align_resume_state"] is None
     assert captured["align_checkpoint_callback"] is None
     saved_meta = captured["save_metadata"]

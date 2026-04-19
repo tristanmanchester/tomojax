@@ -53,7 +53,7 @@ Notes
 ### Joint Reconstruction & Alignment
 - Multi‑resolution: hierarchical optimisation (e.g., 4× → 2× → 1×)
 - Alternating steps: FISTA‑TV reconstruction + per‑view alignment
-- Optimisers: gradient descent or Gauss–Newton (LM damping)
+- Optimisers: gradient descent, Gauss–Newton (LM damping), or L‑BFGS‑B for pose parameters
 - 4‑DOF or 5‑DOF: choose whether to optimise φ
 
 ### Reconstruction
@@ -141,6 +141,12 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --save-params-json out/align_misaligned.params.json \
   --save-params-csv out/align_misaligned.params.csv \
   --save-manifest out/align_misaligned.manifest.json
+
+# Optax L-BFGS pose refinement can be useful for non-L2 differentiable losses
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --outer-iters 3 --recon-iters 25 --lambda-tv 0.003 \
+  --opt-method lbfgs --lbfgs-maxiter 20 \
+  --loss charbonnier --log-summary --out out/align_lbfgs.nxs
 
 # Resume the same alignment after interruption or pre-emption
 uv run tomojax-align --data data/sim_misaligned.nxs \

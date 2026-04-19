@@ -470,6 +470,52 @@ def test_align_config_toml_accepts_bounds_mapping(tmp_path):
     )
 
 
+def test_align_cli_parses_lbfgs_memory_size():
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--opt-method",
+            "lbfgs",
+            "--lbfgs-memory-size",
+            "7",
+        ],
+        required=("data", "out"),
+    )
+
+    assert args.lbfgs_memory_size == 7
+    assert "lbfgs_memory_size" in metadata["explicit_cli_keys"]
+
+
+def test_align_config_toml_accepts_lbfgs_memory_size(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'opt_method = "lbfgs"',
+                "lbfgs_memory_size = 12",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path)],
+        required=("data", "out"),
+    )
+
+    assert args.lbfgs_memory_size == 12
+    assert metadata["config_file_values"]["lbfgs_memory_size"] == 12
+
+
 def test_align_config_toml_accepts_and_cli_overrides_pose_model_options(tmp_path):
     config_path = tmp_path / "align.toml"
     config_path.write_text(
@@ -550,6 +596,7 @@ def test_align_config_toml_accepts_spdhg_recon_options(tmp_path):
         ({"pose_model": "polynomial", "degree": -1}, "degree must be >= 0"),
         ({"pose_model": "spline", "knot_spacing": 0}, "knot_spacing must be >= 1"),
         ({"pose_model": "spline", "degree": 4}, "degree must be one of"),
+        ({"lbfgs_memory_size": 0}, "lbfgs_memory_size must be >= 1"),
     ],
 )
 def test_align_config_rejects_invalid_pose_model_options(kwargs, expected):

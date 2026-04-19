@@ -20,6 +20,13 @@ regulariser = "tv"
 levels = [4, 2, 1]
 opt_method = "gn"
 gn_damping = 0.001
+# L-BFGS-only tuning. `lbfgs_memory_size` is the number of previous
+# gradient/step pairs retained by Optax's limited-memory approximation.
+# lbfgs_maxiter = 20
+# lbfgs_ftol = 0.000001
+# lbfgs_gtol = 0.00001
+# lbfgs_maxls = 20
+# lbfgs_memory_size = 10
 # Optional pyramid-level loss schedule. Numeric keys are pyramid factors from
 # levels, and omitted levels fall back to loss (default: l2_otsu).
 # loss = "l2"

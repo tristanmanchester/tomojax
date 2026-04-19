@@ -17,6 +17,11 @@ _ALIGN_CONFIG_COMPAT_DEFAULTS = {
     "recon_algo": "fista",
     "recon_positivity": True,
     "spdhg_seed": 0,
+    "lbfgs_maxiter": 20,
+    "lbfgs_ftol": 1e-6,
+    "lbfgs_gtol": 1e-5,
+    "lbfgs_maxls": 20,
+    "lbfgs_memory_size": 10,
 }
 _ALIGN_CLI_COMPAT_DEFAULTS = {
     "recon_algo": "fista",
@@ -64,7 +69,10 @@ def normalize_json(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return normalize_json(asdict(value))
     if isinstance(value, Mapping):
-        return {str(k): normalize_json(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+        return {
+            str(k): normalize_json(v)
+            for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+        }
     if isinstance(value, tuple | list | set | frozenset):
         return [normalize_json(v) for v in value]
     if isinstance(value, np.generic):
@@ -225,7 +233,6 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
             required = {
                 "x",
                 "params5",
-                "motion_coeffs",
                 "loss_history",
                 "metadata_json",
                 "outer_stats_json",
@@ -244,11 +251,19 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
                 raise CheckpointError("corrupt checkpoint: outer_stats_json must contain a list")
 
             has_motion_coeffs = bool(metadata.get("has_motion_coeffs", False))
-            motion_coeffs = np.asarray(z["motion_coeffs"], dtype=np.float32)
+            if has_motion_coeffs:
+                if "motion_coeffs" not in files:
+                    raise CheckpointError(
+                        "corrupt checkpoint: metadata declares motion_coeffs but "
+                        "the array is missing"
+                    )
+                motion_coeffs = np.asarray(z["motion_coeffs"], dtype=np.float32)
+            else:
+                motion_coeffs = None
             return AlignmentCheckpoint(
                 x=np.asarray(z["x"], dtype=np.float32),
                 params5=np.asarray(z["params5"], dtype=np.float32),
-                motion_coeffs=motion_coeffs if has_motion_coeffs else None,
+                motion_coeffs=motion_coeffs,
                 loss_history=[float(v) for v in np.asarray(z["loss_history"]).reshape(-1)],
                 outer_stats=[dict(item) for item in outer_stats],
                 metadata=dict(metadata),
@@ -282,13 +297,11 @@ def validate_alignment_checkpoint(
     metadata = checkpoint.metadata
     if metadata.get("checkpoint_kind") != CHECKPOINT_KIND:
         raise CheckpointError(
-            "corrupt checkpoint: unsupported checkpoint kind "
-            f"{metadata.get('checkpoint_kind')!r}"
+            f"corrupt checkpoint: unsupported checkpoint kind {metadata.get('checkpoint_kind')!r}"
         )
     if int(metadata.get("schema_version", -1)) != SCHEMA_VERSION:
         raise CheckpointError(
-            "corrupt checkpoint: unsupported schema version "
-            f"{metadata.get('schema_version')!r}"
+            f"corrupt checkpoint: unsupported schema version {metadata.get('schema_version')!r}"
         )
 
     expected = normalize_json(dict(expected_metadata))
@@ -330,7 +343,9 @@ def validate_alignment_checkpoint(
 
     projection_shape = metadata.get("projection_shape")
     if not isinstance(projection_shape, list) or len(projection_shape) != 3:
-        raise CheckpointError("corrupt checkpoint: metadata projection_shape must be a length-3 list")
+        raise CheckpointError(
+            "corrupt checkpoint: metadata projection_shape must be a length-3 list"
+        )
     expected_params_shape = (int(projection_shape[0]), 5)
     if tuple(checkpoint.params5.shape) != expected_params_shape:
         raise CheckpointError(

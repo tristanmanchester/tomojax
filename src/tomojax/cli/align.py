@@ -254,15 +254,48 @@ def _build_parser() -> argparse.ArgumentParser:
     p.set_defaults(checkpoint_projector=True)
     p.add_argument(
         "--opt-method",
-        choices=["gd", "gn"],
+        choices=["gd", "gn", "lbfgs"],
         default="gn",
-        help="Alignment optimizer: gd or gn (GN supported for L2-like losses: l2, l2_otsu, edge_l2, pwls)",
+        help=(
+            "Alignment optimizer: gd, gn, or lbfgs. GN is supported for L2-like "
+            "losses: l2, l2_otsu, edge_l2, pwls."
+        ),
     )
     p.add_argument(
         "--gn-damping",
         type=float,
         default=1e-3,
         help="Levenberg-Marquardt damping for GN",
+    )
+    p.add_argument(
+        "--lbfgs-maxiter",
+        type=int,
+        default=20,
+        help="Maximum Optax L-BFGS iterations per alignment outer step",
+    )
+    p.add_argument(
+        "--lbfgs-ftol",
+        type=float,
+        default=1e-6,
+        help="Relative function tolerance for Optax L-BFGS",
+    )
+    p.add_argument(
+        "--lbfgs-gtol",
+        type=float,
+        default=1e-5,
+        help="Gradient-norm tolerance for Optax L-BFGS",
+    )
+    p.add_argument(
+        "--lbfgs-maxls",
+        type=int,
+        default=20,
+        help="Maximum Optax L-BFGS line-search steps per iteration",
+    )
+    p.add_argument(
+        "--lbfgs-memory-size",
+        type=int,
+        default=10,
+        help="Number of previous gradient/step pairs stored by Optax L-BFGS",
     )
     p.add_argument(
         "--optimise-dofs",
@@ -590,16 +623,10 @@ def _resume_state_from_checkpoint(
             ),
             level_index=int(metadata.get("level_index", 0)),
             level_factor=int(metadata.get("level_factor", 1)),
-            completed_outer_iters_in_level=int(
-                metadata.get("completed_outer_iters_in_level", 0)
-            ),
-            global_outer_iters_completed=int(
-                metadata.get("global_outer_iters_completed", 0)
-            ),
+            completed_outer_iters_in_level=int(metadata.get("completed_outer_iters_in_level", 0)),
+            global_outer_iters_completed=int(metadata.get("global_outer_iters_completed", 0)),
             prev_factor=(
-                None
-                if metadata.get("prev_factor") is None
-                else int(metadata.get("prev_factor"))
+                None if metadata.get("prev_factor") is None else int(metadata.get("prev_factor"))
             ),
             loss=list(checkpoint.loss_history),
             outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
@@ -638,9 +665,7 @@ def main() -> None:
     loss_config, loss_params = _parse_loss_config(args, p)
     optimise_dofs, freeze_dofs = _parse_dof_args(args, p)
     levels = (
-        [int(v) for v in args.levels]
-        if args.levels is not None and len(args.levels) > 0
-        else None
+        [int(v) for v in args.levels] if args.levels is not None and len(args.levels) > 0 else None
     )
     try:
         validate_loss_schedule_levels(loss_config, levels if levels is not None else [1])
@@ -682,6 +707,11 @@ def main() -> None:
         gather_dtype=_gather,
         opt_method=str(args.opt_method),
         gn_damping=float(args.gn_damping),
+        lbfgs_maxiter=int(args.lbfgs_maxiter),
+        lbfgs_ftol=float(args.lbfgs_ftol),
+        lbfgs_gtol=float(args.lbfgs_gtol),
+        lbfgs_maxls=int(args.lbfgs_maxls),
+        lbfgs_memory_size=int(args.lbfgs_memory_size),
         w_rot=float(args.w_rot),
         w_trans=float(args.w_trans),
         optimise_dofs=optimise_dofs,
@@ -773,7 +803,9 @@ def main() -> None:
             return recon_grid, detector
         from ..recon.multires import scale_detector, scale_grid
 
-        return scale_grid(recon_grid, int(level_factor)), scale_detector(detector, int(level_factor))
+        return scale_grid(recon_grid, int(level_factor)), scale_detector(
+            detector, int(level_factor)
+        )
 
     def _write_single_checkpoint(
         state: AlignResumeState,
@@ -892,7 +924,9 @@ def main() -> None:
                 proj,
                 cfg=cfg,
                 resume_state=resume_state if isinstance(resume_state, AlignResumeState) else None,
-                checkpoint_callback=_write_single_checkpoint if checkpoint_path is not None else None,
+                checkpoint_callback=_write_single_checkpoint
+                if checkpoint_path is not None
+                else None,
             )
         if checkpoint_path is not None:
             _write_single_checkpoint(

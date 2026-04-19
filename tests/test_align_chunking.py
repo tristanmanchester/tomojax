@@ -18,7 +18,7 @@ def make_misaligned_case(nx=10, ny=10, nz=10, n_views=5, seed=0):
     geom_nom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
 
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-    vol = vol.at[nx // 4:3 * nx // 4, ny // 4:3 * ny // 4, nz // 4:3 * nz // 4].set(1.0)
+    vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
 
     true_params = np.zeros((n_views, 5), dtype=np.float32)
     true_params[:, :3] = rng.normal(scale=np.deg2rad(0.15), size=(n_views, 3))
@@ -26,6 +26,7 @@ def make_misaligned_case(nx=10, ny=10, nz=10, n_views=5, seed=0):
 
     projs = []
     for i in range(n_views):
+
         class _G:
             def pose_for_view(self, _):
                 T_nom = jnp.asarray(geom_nom.pose_for_view(i), dtype=jnp.float32)
@@ -98,9 +99,7 @@ def test_align_gd_chunking_matches_streamed_reference(monkeypatch):
     )
 
     np.testing.assert_allclose(params_chunked, params_stream, rtol=2e-4, atol=1e-5)
-    assert info_chunked["loss"][-1] == pytest.approx(
-        info_stream["loss"][-1], rel=1e-5, abs=1e-6
-    )
+    assert info_chunked["loss"][-1] == pytest.approx(info_stream["loss"][-1], rel=1e-5, abs=1e-6)
 
 
 def test_align_gn_chunking_matches_streamed_reference(monkeypatch):
@@ -118,9 +117,51 @@ def test_align_gn_chunking_matches_streamed_reference(monkeypatch):
     )
 
     np.testing.assert_allclose(params_chunked, params_stream, rtol=2e-4, atol=1e-5)
-    assert info_chunked["loss"][-1] == pytest.approx(
-        info_stream["loss"][-1], rel=1e-5, abs=1e-6
+    assert info_chunked["loss"][-1] == pytest.approx(info_stream["loss"][-1], rel=1e-5, abs=1e-6)
+
+
+def test_align_lbfgs_decreases_fixed_volume_loss(monkeypatch):
+    _, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="lbfgs",
+        views_per_batch=2,
+        loss_name="l2",
+        lbfgs_maxiter=8,
     )
+
+    stat = info["outer_stats"][0]
+    assert stat["step_kind"] == "lbfgs"
+    assert stat["lbfgs_accepted"] is True
+    assert stat["lbfgs_fallback_to_gd"] is False
+    assert stat["loss_after"] < stat["loss_before"]
+    assert info["loss"][-1] < stat["loss_before"]
+
+
+def test_align_lbfgs_respects_active_dofs_and_bounds(monkeypatch):
+    _, _, _, _, projs = make_misaligned_case(seed=14)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 0] = np.linspace(-0.02, 0.02, projs.shape[0], dtype=np.float32)
+    init_params5[:, 1] = np.linspace(0.01, -0.01, projs.shape[0], dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+
+    params5, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="lbfgs",
+        views_per_batch=2,
+        loss_name="l2",
+        init_params5=jnp.asarray(init_params5),
+        optimise_dofs=("dx", "dz"),
+        freeze_dofs=("phi",),
+        bounds={"dx": (-0.03, 0.03), "dz": (-0.04, 0.04), "phi": (-0.01, 0.01)},
+        lbfgs_maxiter=5,
+    )
+
+    assert info["outer_stats"][0]["step_kind"] == "lbfgs"
+    np.testing.assert_array_equal(params5[:, :3], init_params5[:, :3])
+    assert np.max(params5[:, 3]) <= 0.03 + 1e-6
+    assert np.min(params5[:, 3]) >= -0.03 - 1e-6
+    assert np.max(params5[:, 4]) <= 0.04 + 1e-6
+    assert np.min(params5[:, 4]) >= -0.04 - 1e-6
 
 
 @pytest.mark.parametrize(
@@ -201,6 +242,7 @@ def test_align_polynomial_pose_model_returns_per_view_shape_and_variable_count(m
     [
         ("gd", "l2_otsu"),
         ("gn", "l2"),
+        ("lbfgs", "l2"),
     ],
 )
 def test_align_smooth_pose_model_keeps_frozen_dofs(monkeypatch, opt_method, loss_name):
@@ -228,6 +270,7 @@ def test_align_smooth_pose_model_keeps_frozen_dofs(monkeypatch, opt_method, loss
     [
         ("gd", "l2_otsu"),
         ("gn", "l2"),
+        ("lbfgs", "l2"),
     ],
 )
 def test_align_smooth_pose_model_clips_active_bounds_only(monkeypatch, opt_method, loss_name):
