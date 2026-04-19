@@ -10,6 +10,11 @@ import jax.numpy as jnp
 from ..core.geometry.base import Grid, Detector, Geometry
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import backproject_view_T
+from ..core.validation import (
+    validate_grid,
+    validate_pose_stack,
+    validate_projection_stack,
+)
 from .filters import get_filter_np
 from ..utils.logging import progress_iter
 
@@ -289,10 +294,17 @@ def fbp(
     projections: (n_views, nv, nu) -> volume (nx, ny, nz).
     Memory-safe: filters and backprojects per view-batch.
     """
+    validate_grid(grid, "fbp grid")
+    n_views, _, _ = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="fbp projections",
+    )
     proj = jnp.asarray(projections, dtype=jnp.float32)
-    n_views, nv, nu = proj.shape
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_all, n_views, context="fbp geometry")
     requested_b = int(views_per_batch) if int(views_per_batch) > 0 else n_views
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))

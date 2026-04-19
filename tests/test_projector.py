@@ -38,6 +38,28 @@ def test_forward_project_uniform_volume_returns_path_length():
     assert np.allclose(np.asarray(proj), expected, atol=1e-4)
 
 
+def test_forward_project_rejects_bad_volume_shape_with_expected_and_actual():
+    grid, det, geom, _ = make_aligned_case(8, 8, 8)
+    bad_vol = jnp.zeros((grid.nx, grid.ny), dtype=jnp.float32)
+
+    with pytest.raises(
+        ValueError,
+        match=r"expected .*=\(8, 8, 8\).*actual \(8, 8\).*Likely fix",
+    ):
+        forward_project_view(geom, grid, det, bad_vol, view_index=0)
+
+
+def test_backproject_rejects_bad_detector_image_shape_with_expected_and_actual():
+    grid, det, _, _ = make_aligned_case(8, 8, 8)
+    bad_image = jnp.zeros((det.nv + 1, det.nu), dtype=jnp.float32)
+
+    with pytest.raises(
+        ValueError,
+        match=r"expected .*=\(8, 8\).*actual \(9, 8\).*Likely fix",
+    ):
+        backproject_view_T(jnp.eye(4, dtype=jnp.float32), grid, det, bad_image)
+
+
 @pytest.mark.parametrize("gather_dtype", ["fp32", "bf16", "fp16"])
 def test_adjoint_small_case(gather_dtype: str):
     grid, det, geom, vol = make_aligned_case(8, 8, 8)

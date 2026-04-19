@@ -12,6 +12,13 @@ import jax.numpy as jnp
 from ..core.geometry.base import Geometry, Grid, Detector
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device
+from ..core.validation import (
+    validate_grid,
+    validate_optional_same_shape,
+    validate_pose_stack,
+    validate_projection_stack,
+    validate_volume,
+)
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
@@ -277,7 +284,22 @@ def align(
     """
     if cfg is None:
         cfg = AlignConfig()
-    n_views = int(projections.shape[0])
+    validate_grid(grid, "align grid")
+    n_views, _, _ = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="align projections",
+    )
+    if init_x is not None:
+        validate_volume(init_x, grid, context="align init_x", name="init_x")
+    validate_optional_same_shape(
+        init_params5,
+        (n_views, 5),
+        context="align init_params5",
+        name="init_params5",
+        fix="pass one 5-parameter alignment row per projection view.",
+    )
     # Initialize volume and params
     x = (
         jnp.asarray(init_x, dtype=jnp.float32)
@@ -295,8 +317,8 @@ def align(
     observer_action: ObserverAction = "continue"
 
     # Precompute nominal poses once
-    n_views = int(projections.shape[0])
     T_nom_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_nom_all, n_views, context="align geometry")
 
     # Precompute detector grid once (device arrays) to avoid repeated transfers/logging
     det_grid = get_detector_grid_device(detector)
@@ -1144,14 +1166,31 @@ def align_multires(
     if cfg is None:
         cfg = AlignConfig()
 
+    validate_grid(grid, "align_multires grid")
+    validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="align_multires projections",
+    )
+
     levels: list[MultiresLevel] = []
     for f in factors:
+        g = scale_grid(grid, int(f))
+        d = scale_detector(detector, int(f))
+        y = bin_projections(projections, int(f))
+        validate_projection_stack(
+            y,
+            d,
+            geometry=geometry,
+            context=f"align_multires level factor {int(f)} projections",
+        )
         levels.append(
             {
                 "factor": int(f),
-                "grid": scale_grid(grid, int(f)),
-                "detector": scale_detector(detector, int(f)),
-                "projections": bin_projections(projections, int(f)),
+                "grid": g,
+                "detector": d,
+                "projections": y,
             }
         )
 

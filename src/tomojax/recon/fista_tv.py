@@ -14,6 +14,15 @@ from ..core.projector import (
     get_detector_grid_device,
     sum_backproject_views_T,
 )
+from ..core.validation import (
+    validate_grid,
+    validate_optional_broadcastable_shape,
+    validate_optional_same_shape,
+    validate_pose_stack,
+    validate_projection_shape,
+    validate_projection_stack,
+    validate_volume,
+)
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import div3, grad3
 
@@ -61,11 +70,24 @@ def grad_data_term(
 
     When grad_mode="auto", selects stream if the effective batch is 1, else batched.
     """
-    n_views = int(projections.shape[0])
-    nv = int(projections.shape[1])
-    nu = int(projections.shape[2])
+    validate_grid(grid, "grad_data_term grid")
+    n_views, nv, nu = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="grad_data_term projections",
+    )
+    validate_volume(x, grid, context="grad_data_term", name="x")
+    validate_optional_broadcastable_shape(
+        vol_mask,
+        (grid.nx, grid.ny, grid.nz),
+        context="grad_data_term support",
+        name="vol_mask",
+        fix="use a volume mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+    )
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_all, n_views, context="grad_data_term geometry")
 
     det_grid = get_detector_grid_device(detector)
     mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
@@ -208,11 +230,24 @@ def data_term_value(
     vol_mask: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
-    n_views = int(projections.shape[0])
-    nv = int(projections.shape[1])
-    nu = int(projections.shape[2])
+    validate_grid(grid, "data_term_value grid")
+    n_views, nv, nu = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="data_term_value projections",
+    )
+    validate_volume(x, grid, context="data_term_value", name="x")
+    validate_optional_broadcastable_shape(
+        vol_mask,
+        (grid.nx, grid.ny, grid.nz),
+        context="data_term_value support",
+        name="vol_mask",
+        fix="use a volume mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+    )
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_all, n_views, context="data_term_value geometry")
 
     det_grid = get_detector_grid_device(detector)
 
@@ -315,9 +350,23 @@ def power_method_L(
     vol_mask: Optional[jnp.ndarray] = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
-    n_views, nv, nu = projections_shape
+    validate_grid(grid, "power_method_L grid")
+    n_views, nv, nu = validate_projection_shape(
+        projections_shape,
+        detector,
+        geometry=geometry,
+        context="power_method_L projections_shape",
+    )
+    validate_optional_broadcastable_shape(
+        vol_mask,
+        (grid.nx, grid.ny, grid.nz),
+        context="power_method_L support",
+        name="vol_mask",
+        fix="use a volume mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+    )
     if T_all is None:
         T_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_all, n_views, context="power_method_L geometry")
     zero_proj = jnp.zeros((n_views, nv, nu), dtype=jnp.float32)
     num_iters = max(1, int(iters))
 
@@ -412,6 +461,22 @@ def fista_tv(
     """
     cfg = config
     vol_mask = cfg.support
+    validate_grid(grid, "fista_tv grid")
+    n_views, _, _ = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="fista_tv projections",
+    )
+    validate_optional_broadcastable_shape(
+        vol_mask,
+        (grid.nx, grid.ny, grid.nz),
+        context="fista_tv support",
+        name="support",
+        fix="use a support mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+    )
+    if init_x is not None:
+        validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
     x = (
         jnp.asarray(init_x, dtype=jnp.float32)
         if init_x is not None
@@ -421,8 +486,8 @@ def fista_tv(
     t = 1.0
     # Precompute poses once and thread them through the projector calls to avoid
     # repeatedly stacking in inner loops.
-    n_views = int(projections.shape[0])
     T_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_all, n_views, context="fista_tv geometry")
 
     L = cfg.L
     if L is None:
