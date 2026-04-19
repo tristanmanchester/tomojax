@@ -15,6 +15,7 @@ import pytest
 
 import tomojax.cli.align as align_cli
 import tomojax.cli.convert as convert_cli
+import tomojax.cli.inspect as inspect_cli
 import tomojax.cli.recon as recon_cli
 import tomojax.cli.runtime_checks as runtime_checks_cli
 import tomojax.cli.simulate as simulate_cli
@@ -66,6 +67,18 @@ def test_recon_help_documents_quicklook_aliases(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--quicklook" in captured.out
     assert "--save-preview" in captured.out
+
+
+def test_inspect_help_documents_json_and_quicklook(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["tomojax-inspect", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        inspect_cli.main()
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "--json" in captured.out
+    assert "--quicklook" in captured.out
 
 
 def test_align_help_documents_bounds_example(monkeypatch, capsys):

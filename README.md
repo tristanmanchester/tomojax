@@ -198,6 +198,10 @@ See `docs/schema_nxtomo.md` for the HDF5/NXtomo format used by the CLIs.
 
 Validate an NXtomo file with `uv run tomojax-validate data/sim.nxs`.
 
+Inspect projection shape, metadata, stats, NaN/Inf counts, and memory estimates with
+`uv run tomojax-inspect data/sim.nxs`; add `--json report.json` for automation or
+`--quicklook projection.png` for a central-projection preview.
+
 Viewer tip: saved reconstructions write volumes in `(nz, ny, nx)` order with `@volume_axes_order="zyx"`, so most NX/HDF5 tools display slice counts matching `nz`. `load_nxtomo()` always returns `(nx, ny, nz)` arrays for compute, and `/entry/instrument/detector/data` stores absorption (`-log` transmission) projections.
 
 ## Memory and Performance

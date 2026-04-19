@@ -271,6 +271,49 @@ uv run tomojax-align --config docs/align_config.toml --levels 2 1
 ```
 
 
+## inspect
+
+Inspect an NXtomo/HDF5 file before reconstruction. The command reads metadata and projection
+statistics only; it does not run JAX or reconstruct a volume.
+
+Usage
+```
+python -m tomojax.cli.inspect <scan.nxs> [--json <report.json>] [--quicklook <preview.png>]
+```
+
+Examples
+```
+uv run tomojax-inspect data/sim_aligned.nxs
+uv run tomojax-inspect data/sim_aligned.nxs \
+  --json runs/sim_aligned.inspect.json \
+  --quicklook runs/sim_aligned.projection.png
+```
+
+Sample output
+```
+TomoJAX inspection: data/sim_aligned.nxs
+Projection shape: [180, 256, 256]
+Dtype: float32
+Views: 180
+Detector shape: {'nv': 256, 'nu': 256}
+Stats: min=0, p01=0, mean=0.12, p50=0.08, p99=1.7, max=2.3
+NaN/Inf counts: nan=0, +inf=0, -inf=0, inf_total=0
+Angle coverage: 179 deg (min=0, max=179, count=180, units=degree)
+Geometry type: parallel
+Geometry metadata: not found
+Detector metadata: nu=256, nv=256, du=1.0, dv=1.0, det_center=[0.0, 0.0]
+Flats/darks: not found (image_key present; no flat/dark frames)
+Alignment parameters: not found
+Memory estimates: grid=[256, 256, 256], fbp_fp32=181403648 bytes, fista_tv_fp32=382730240 bytes, spdhg_tv_fp32=382730240 bytes
+```
+
+Notes
+- Missing optional metadata is reported as `not found`; valid projection data are enough for a
+  successful inspection.
+- `--json` writes stable machine-readable keys for automated checks and does not suppress stdout.
+- `--quicklook` writes the central projection view as a percentile-scaled PNG.
+
+
 ## convert
 
 Convert between `.npz` and `.nxs` (HDF5). In `.nxs`, data follow the NXtomo convention with TomoJAX extras. See `docs/schema_nxtomo.md`.
