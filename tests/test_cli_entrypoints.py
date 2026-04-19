@@ -78,6 +78,7 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--bounds" in captured.out
     assert "dx=-20:20,dz=-20:20,alpha=-0.05:0.05" in captured.out
+    assert "--pose-model" in captured.out
 
 
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
@@ -372,6 +373,9 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
                 'gather_dtype = "bf16"',
                 'transfer_guard = "off"',
                 "bounds = { dx = [-20, 20], alpha = [-0.05, 0.05] }",
+                'pose_model = "spline"',
+                "knot_spacing = 5",
+                "degree = 2",
                 f'save_params_json = "{json_path}"',
                 f'save_params_csv = "{csv_path}"',
                 f'save_manifest = "{manifest_path}"',
@@ -402,6 +406,9 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
         ("alpha", -0.05, 0.05),
         ("dx", -20.0, 20.0),
     )
+    assert captured["align_cfg"].pose_model == "spline"
+    assert captured["align_cfg"].knot_spacing == 5
+    assert captured["align_cfg"].degree == 2
     saved_meta = captured["save_metadata"]
     np.testing.assert_allclose(np.asarray(saved_meta.align_params), np.asarray(params5))
     assert json_path.exists()
@@ -430,6 +437,8 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
         ["alpha", -0.05, 0.05],
         ["dx", -20.0, 20.0],
     ]
+    assert manifest["resolved_config"]["config_file_values"]["pose_model"] == "spline"
+    assert manifest["resolved_config"]["align_config"]["pose_model"] == "spline"
     assert "gather_dtype" in manifest["resolved_config"]["explicit_cli_keys"]
     assert manifest["resolved_config"]["effective_options"]["gather_dtype"] == "fp32"
     assert manifest["resolved_config"]["gather_dtype"] == "fp32"

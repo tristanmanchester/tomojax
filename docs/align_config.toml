@@ -20,6 +20,12 @@ gn_damping = 0.001
 # Optional finite parameter bounds by DOF. Rotations are radians; translations
 # are world units. Omitted DOFs are unconstrained.
 # bounds = { dx = [-20, 20], dz = [-20, 20], alpha = [-0.05, 0.05] }
+# Optional smooth motion model for drift-like or mechanically smooth alignment.
+# The default per_view model optimises one independent 5-DOF vector per view.
+# Use spline or polynomial on noisy data when per-view fitting overfits view-local noise.
+# pose_model = "spline"
+# knot_spacing = 12
+# degree = 3
 gather_dtype = "auto"
 checkpoint_projector = true
 log_summary = true

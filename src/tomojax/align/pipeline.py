@@ -22,12 +22,25 @@ from ..core.validation import (
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
-from .dofs import DofBounds, active_dof_mask, bounds_vectors, normalize_bounds, normalize_dofs
+from .dofs import (
+    DofBounds,
+    active_dof_mask,
+    active_dofs,
+    bounds_vectors,
+    normalize_bounds,
+    normalize_dofs,
+)
 from .losses import (
     L2OtsuLossSpec,
     AlignmentLossSpec,
     build_loss_adapter,
     loss_is_within_relative_tolerance,
+)
+from .motion_models import (
+    build_pose_motion_model,
+    expand_motion_coefficients,
+    fit_motion_coefficients,
+    scan_coordinate_from_geometry,
 )
 from ..utils.fov import cylindrical_mask_xy
 
@@ -45,6 +58,11 @@ class AlignInfo(TypedDict):
     stopped_by_observer: bool
     observer_action: ObserverAction
     wall_time_total: float
+    pose_model: str
+    pose_model_variables: int
+    per_view_variables: int
+    pose_model_basis_shape: list[int]
+    active_dofs: list[str]
 
 
 class AlignMultiresInfo(TypedDict):
@@ -54,6 +72,11 @@ class AlignMultiresInfo(TypedDict):
     observer_action: ObserverAction
     total_outer_iters: int
     wall_time_total: float
+    pose_model: str
+    pose_model_variables: int | None
+    per_view_variables: int | None
+    pose_model_basis_shape: list[int] | None
+    active_dofs: list[str]
 
 
 class MultiresLevel(TypedDict):
@@ -262,6 +285,9 @@ class AlignConfig:
     optimise_dofs: tuple[str, ...] | None = None
     freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
+    pose_model: Literal["per_view", "polynomial", "spline"] = "per_view"
+    knot_spacing: int = 8
+    degree: int = 3
     seed_translations: bool = False
     # Volume masking before forward projection (modeling for ROI/truncation)
     # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
@@ -290,6 +316,19 @@ class AlignConfig:
         self.freeze_dofs = normalize_dofs(self.freeze_dofs, option_name="freeze_dofs")
         active_dof_mask(optimise_dofs=self.optimise_dofs, freeze_dofs=self.freeze_dofs)
         self.bounds = normalize_bounds(self.bounds, option_name="bounds")
+        pose_model = str(self.pose_model).strip().lower().replace("-", "_")
+        self.pose_model = pose_model  # type: ignore[assignment]
+        if self.pose_model not in {"per_view", "polynomial", "spline"}:
+            raise ValueError(
+                "pose_model must be one of 'per_view', 'polynomial', or 'spline'"
+            )
+        if self.pose_model == "polynomial" and int(self.degree) < 0:
+            raise ValueError("degree must be >= 0 for polynomial pose_model")
+        if self.pose_model == "spline":
+            if int(self.knot_spacing) < 1:
+                raise ValueError("knot_spacing must be >= 1 for spline pose_model")
+            if int(self.degree) not in (1, 2, 3):
+                raise ValueError("degree must be one of 1, 2, or 3 for spline pose_model")
 
 
 def align(
@@ -341,6 +380,10 @@ def align(
         active_dof_mask(optimise_dofs=cfg.optimise_dofs, freeze_dofs=cfg.freeze_dofs),
         dtype=bool,
     )
+    active_names = active_dofs(
+        optimise_dofs=cfg.optimise_dofs,
+        freeze_dofs=cfg.freeze_dofs,
+    )
     active_mask = active_mask_bool.astype(jnp.float32)
     bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
 
@@ -349,6 +392,33 @@ def align(
         return jnp.where(active_mask_bool, clipped, frozen_params5)
 
     params5 = _apply_param_constraints(params5)
+
+    scan_coordinate = scan_coordinate_from_geometry(geometry, n_views)
+    motion_model = build_pose_motion_model(
+        pose_model=str(cfg.pose_model),
+        n_views=n_views,
+        active_dofs=active_names,
+        frozen_params5=frozen_params5,
+        scan_coordinate=scan_coordinate,
+        knot_spacing=int(cfg.knot_spacing),
+        degree=int(cfg.degree),
+    )
+    use_smooth_pose_model = motion_model.name != "per_view"
+    motion_coeffs = None
+    active_coeff_indices = jnp.asarray(motion_model.active_indices, dtype=jnp.int32)
+
+    def _coeffs_to_constrained_params(coeffs: jnp.ndarray) -> jnp.ndarray:
+        return _apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+
+    def _project_params_to_smooth(candidate: jnp.ndarray) -> jnp.ndarray:
+        constrained = _apply_param_constraints(candidate)
+        coeffs = fit_motion_coefficients(motion_model, constrained)
+        return _coeffs_to_constrained_params(coeffs)
+
+    if use_smooth_pose_model:
+        motion_coeffs = fit_motion_coefficients(motion_model, params5)
+        params5 = _coeffs_to_constrained_params(motion_coeffs)
+        motion_coeffs = fit_motion_coefficients(motion_model, params5)
 
     loss_hist = []
     stopped_by_observer = False
@@ -486,6 +556,15 @@ def align(
 
     # Value function for whole batch (forward only) kept for logging and line search
     align_loss_jit = jax.jit(align_loss)
+
+    if use_smooth_pose_model:
+
+        def motion_align_loss(coeffs, vol):
+            return align_loss(_coeffs_to_constrained_params(coeffs), vol)
+
+        motion_loss_and_grad = jax.jit(jax.value_and_grad(motion_align_loss))
+    else:
+        motion_loss_and_grad = None
 
     # Memory-safe gradient over fixed-size chunks.
     if has_loss_mask:
@@ -984,11 +1063,14 @@ def align(
         if step_kind == "gn":
             params5_prev = params5
             dp_all = _gn_update_all(params5_prev, x) * active_mask
+            constrain_candidate = (
+                _project_params_to_smooth if use_smooth_pose_model else _apply_param_constraints
+            )
             if cfg.gn_accept_only_improving and (loss_before is not None):
                 smooth_candidate = None
                 if int(params5.shape[0]) >= 3:
                     smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
-                        _apply_param_constraints(candidate),
+                        constrain_candidate(candidate),
                         smoothness_gram,
                         weights,
                     )
@@ -1004,16 +1086,16 @@ def align(
                         )
                     ),
                     gn_accept_tol=cfg.gn_accept_tol,
-                    constrain_candidate=_apply_param_constraints,
+                    constrain_candidate=constrain_candidate,
                     smooth_candidate=smooth_candidate,
                     light_smoothness_weights_sq=light_smoothness_weights_sq,
                     medium_smoothness_weights_sq=medium_smoothness_weights_sq,
                     smoothness_weights_sq=smoothness_weights_sq,
                     trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
                 )
-                params5 = _apply_param_constraints(params5)
+                params5 = constrain_candidate(params5)
             else:
-                params5 = _apply_param_constraints(params5_prev + dp_all)
+                params5 = constrain_candidate(params5_prev + dp_all)
                 candidate_loss = _evaluate_align_loss(
                     lambda: align_loss_jit(params5, x),
                     fallback=math.inf,
@@ -1024,6 +1106,9 @@ def align(
                 else:
                     params5 = params5_prev
                     loss_after = loss_before
+            if use_smooth_pose_model:
+                motion_coeffs = fit_motion_coefficients(motion_model, params5)
+                params5 = _coeffs_to_constrained_params(motion_coeffs)
             # Log step stats
             try:
                 stat["rot_mean"] = float(jnp.mean(jnp.abs(dp_all[:, :3])))
@@ -1035,34 +1120,69 @@ def align(
             scales = jnp.array(
                 [cfg.lr_rot, cfg.lr_rot, cfg.lr_rot, cfg.lr_trans, cfg.lr_trans], dtype=jnp.float32
             )
-            # Keep a copy for line search; donated arg may be reused internally
-            p5_in = params5
-            _, g_params = loss_and_grad_manual(params5, x)
-            g_params = g_params * active_mask
-            rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
-            eff_scales = scales / rms
-            # Simple 2-point line search on step factor to improve single-iter progress
-            best_params = _apply_param_constraints(p5_in - g_params * eff_scales)
-            best_loss = _evaluate_align_loss(
-                lambda: align_loss_jit(best_params, x),
-                fallback=math.inf,
-                context="Treating GD base candidate as rejected during alignment loss evaluation",
-            )
-            cand_params = _apply_param_constraints(p5_in - 2.0 * g_params * eff_scales)
-            cand_loss = _evaluate_align_loss(
-                lambda: align_loss_jit(cand_params, x),
-                fallback=math.inf,
-                context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
-            )
-            best_loss_f = float(best_loss) if best_loss is not None else math.inf
-            cand_loss_f = float(cand_loss) if cand_loss is not None else math.inf
-            if not math.isfinite(best_loss_f) and not math.isfinite(cand_loss_f):
-                params5 = p5_in
-                loss_after = loss_before
+            if use_smooth_pose_model:
+                if motion_coeffs is None or motion_loss_and_grad is None:
+                    raise RuntimeError("smooth pose model coefficients were not initialized")
+                coeffs_in = motion_coeffs
+                _, g_coeffs = motion_loss_and_grad(coeffs_in, x)
+                active_scales = scales[active_coeff_indices]
+                rms_active = jnp.sqrt(jnp.mean(jnp.square(g_coeffs), axis=0)) + 1e-6
+                eff_scales = active_scales / rms_active
+                best_coeffs = coeffs_in - g_coeffs * eff_scales[None, :]
+                best_params = _coeffs_to_constrained_params(best_coeffs)
+                best_loss = _evaluate_align_loss(
+                    lambda: align_loss_jit(best_params, x),
+                    fallback=math.inf,
+                    context="Treating GD base candidate as rejected during alignment loss evaluation",
+                )
+                cand_coeffs = coeffs_in - 2.0 * g_coeffs * eff_scales[None, :]
+                cand_params = _coeffs_to_constrained_params(cand_coeffs)
+                cand_loss = _evaluate_align_loss(
+                    lambda: align_loss_jit(cand_params, x),
+                    fallback=math.inf,
+                    context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
+                )
+                best_loss_f = float(best_loss) if best_loss is not None else math.inf
+                cand_loss_f = float(cand_loss) if cand_loss is not None else math.inf
+                if not math.isfinite(best_loss_f) and not math.isfinite(cand_loss_f):
+                    params5 = _coeffs_to_constrained_params(coeffs_in)
+                    loss_after = loss_before
+                else:
+                    params5 = cand_params if cand_loss_f < best_loss_f else best_params
+                    chosen_loss = min(best_loss_f, cand_loss_f)
+                    loss_after = float(chosen_loss) if math.isfinite(chosen_loss) else loss_before
+                motion_coeffs = fit_motion_coefficients(motion_model, params5)
+                params5 = _coeffs_to_constrained_params(motion_coeffs)
+                rms = jnp.zeros((5,), dtype=jnp.float32).at[active_coeff_indices].set(rms_active)
             else:
-                params5 = cand_params if cand_loss_f < best_loss_f else best_params
-                chosen_loss = min(best_loss_f, cand_loss_f)
-                loss_after = float(chosen_loss) if math.isfinite(chosen_loss) else loss_before
+                # Keep a copy for line search; donated arg may be reused internally
+                p5_in = params5
+                _, g_params = loss_and_grad_manual(params5, x)
+                g_params = g_params * active_mask
+                rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
+                eff_scales = scales / rms
+                # Simple 2-point line search on step factor to improve single-iter progress
+                best_params = _apply_param_constraints(p5_in - g_params * eff_scales)
+                best_loss = _evaluate_align_loss(
+                    lambda: align_loss_jit(best_params, x),
+                    fallback=math.inf,
+                    context="Treating GD base candidate as rejected during alignment loss evaluation",
+                )
+                cand_params = _apply_param_constraints(p5_in - 2.0 * g_params * eff_scales)
+                cand_loss = _evaluate_align_loss(
+                    lambda: align_loss_jit(cand_params, x),
+                    fallback=math.inf,
+                    context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
+                )
+                best_loss_f = float(best_loss) if best_loss is not None else math.inf
+                cand_loss_f = float(cand_loss) if cand_loss is not None else math.inf
+                if not math.isfinite(best_loss_f) and not math.isfinite(cand_loss_f):
+                    params5 = p5_in
+                    loss_after = loss_before
+                else:
+                    params5 = cand_params if cand_loss_f < best_loss_f else best_params
+                    chosen_loss = min(best_loss_f, cand_loss_f)
+                    loss_after = float(chosen_loss) if math.isfinite(chosen_loss) else loss_before
             try:
                 stat["rot_rms"] = float(jnp.mean(rms[:3]))
                 stat["trans_rms"] = float(jnp.mean(rms[3:]))
@@ -1189,6 +1309,14 @@ def align(
         "stopped_by_observer": stopped_by_observer,
         "observer_action": observer_action,
         "wall_time_total": float(wall_total),
+        "pose_model": motion_model.name,
+        "pose_model_variables": int(motion_model.variable_count),
+        "per_view_variables": int(motion_model.per_view_variable_count),
+        "pose_model_basis_shape": [
+            int(motion_model.basis.shape[0]),
+            int(motion_model.basis.shape[1]),
+        ],
+        "active_dofs": list(motion_model.active_names),
     }
     return x, params5, info
 
@@ -1253,6 +1381,9 @@ def align_multires(
     global_outer_idx = 0
     global_elapsed_offset = 0.0
     executed_outer_iters = 0
+    final_pose_model_variables: int | None = None
+    final_per_view_variables: int | None = None
+    final_pose_model_basis_shape: list[int] | None = None
 
     for li, lvl in enumerate(levels):
         g = lvl["grid"]
@@ -1357,6 +1488,9 @@ def align_multires(
         )
         loss_hist.extend(info.get("loss", []))
         executed_outer_iters += len(info.get("outer_stats", []))
+        final_pose_model_variables = int(info["pose_model_variables"])
+        final_per_view_variables = int(info["per_view_variables"])
+        final_pose_model_basis_shape = list(info["pose_model_basis_shape"])
         x_init = x_lvl
         prev_factor = lvl["factor"]
         try:
@@ -1389,5 +1523,15 @@ def align_multires(
             "observer_action": final_observer_action,
             "total_outer_iters": int(executed_outer_iters),
             "wall_time_total": float(global_elapsed_offset),
+            "pose_model": str(cfg.pose_model),
+            "pose_model_variables": final_pose_model_variables,
+            "per_view_variables": final_per_view_variables,
+            "pose_model_basis_shape": final_pose_model_basis_shape,
+            "active_dofs": list(
+                active_dofs(
+                    optimise_dofs=cfg.optimise_dofs,
+                    freeze_dofs=cfg.freeze_dofs,
+                )
+            ),
         },
     )

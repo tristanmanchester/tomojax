@@ -189,6 +189,27 @@ def _build_parser() -> argparse.ArgumentParser:
             "world units. Example: dx=-20:20,dz=-20:20,alpha=-0.05:0.05"
         ),
     )
+    p.add_argument(
+        "--pose-model",
+        choices=["per_view", "polynomial", "spline"],
+        default="per_view",
+        help=(
+            "Alignment pose parameterization: per_view optimizes one 5-DOF vector per "
+            "view; polynomial and spline optimize smooth low-dimensional trajectories"
+        ),
+    )
+    p.add_argument(
+        "--knot-spacing",
+        type=int,
+        default=8,
+        help="View spacing between spline knots when --pose-model spline is used",
+    )
+    p.add_argument(
+        "--degree",
+        type=int,
+        default=3,
+        help="Polynomial degree or spline degree for smooth pose models",
+    )
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
     p.add_argument(
@@ -410,6 +431,9 @@ def main() -> None:
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
         bounds=args.bounds,
+        pose_model=str(args.pose_model),
+        knot_spacing=int(args.knot_spacing),
+        degree=int(args.degree),
         loss=loss_spec,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),

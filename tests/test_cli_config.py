@@ -4,6 +4,7 @@ import pytest
 
 import tomojax.cli.align as align_cli
 from tomojax.align.dofs import normalize_bounds
+from tomojax.align.pipeline import AlignConfig
 from tomojax.cli.config import parse_args_with_config
 import tomojax.cli.recon as recon_cli
 
@@ -261,6 +262,59 @@ def test_align_config_toml_accepts_bounds_mapping(tmp_path):
         ("alpha", -0.05, 0.05),
         ("dx", -20.0, 20.0),
     )
+
+
+def test_align_config_toml_accepts_and_cli_overrides_pose_model_options(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'pose_model = "spline"',
+                "knot_spacing = 6",
+                "degree = 3",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        [
+            "--config",
+            str(config_path),
+            "--pose-model",
+            "polynomial",
+            "--degree",
+            "2",
+        ],
+        required=("data", "out"),
+    )
+
+    assert args.pose_model == "polynomial"
+    assert args.knot_spacing == 6
+    assert args.degree == 2
+    assert metadata["config_file_values"]["pose_model"] == "spline"
+    assert metadata["config_file_values"]["knot_spacing"] == 6
+    assert metadata["config_file_values"]["degree"] == 3
+    assert "pose_model" in metadata["explicit_cli_keys"]
+    assert "degree" in metadata["explicit_cli_keys"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"pose_model": "not-a-model"}, "pose_model must be one of"),
+        ({"pose_model": "polynomial", "degree": -1}, "degree must be >= 0"),
+        ({"pose_model": "spline", "knot_spacing": 0}, "knot_spacing must be >= 1"),
+        ({"pose_model": "spline", "degree": 4}, "degree must be one of"),
+    ],
+)
+def test_align_config_rejects_invalid_pose_model_options(kwargs, expected):
+    with pytest.raises(ValueError, match=expected):
+        AlignConfig(**kwargs)
 
 
 def test_align_cli_rejects_invalid_bounds_before_main_work(capsys):
