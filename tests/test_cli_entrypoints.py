@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import csv
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+import tomojax.cli.align as align_cli
 import tomojax.cli.convert as convert_cli
 import tomojax.cli.runtime_checks as runtime_checks_cli
 import tomojax.cli.simulate as simulate_cli
+from tomojax.data.io_hdf5 import LoadedNXTomo
 
 
 def test_convert_main_delegates_to_converter(monkeypatch):
@@ -139,3 +147,117 @@ def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):
     assert cfg.seed == 7
     assert Path(captured["out_path"]).name == "simulated.nxs"
     assert os.environ["TOMOJAX_PROGRESS"] == "1"
+
+
+def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    detector = align_cli.Detector(
+        nu=2,
+        nv=1,
+        du=0.5,
+        dv=2.0,
+        det_center=(0.0, 0.0),
+    )
+    grid = align_cli.Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    meta = LoadedNXTomo.from_dataset(
+        {
+            "projections": np.zeros((2, 1, 2), dtype=np.float32),
+            "thetas_deg": np.asarray([0.0, 90.0], dtype=np.float32),
+            "detector": detector.to_dict(),
+            "grid": grid.to_dict(),
+            "geometry_type": "parallel",
+        }
+    )
+    params5 = jnp.asarray(
+        [
+            [0.1, 0.2, 0.3, 1.0, 4.0],
+            [-0.1, -0.2, -0.3, -2.0, -6.0],
+        ],
+        dtype=jnp.float32,
+    )
+
+    @contextmanager
+    def fake_transfer_guard(mode: str):
+        captured["transfer_guard"] = mode
+        yield
+
+    def fake_align(geom, recon_grid, recon_detector, projections, *, cfg):
+        captured["align_grid"] = recon_grid
+        captured["align_detector"] = recon_detector
+        captured["align_projections_shape"] = tuple(projections.shape)
+        x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+        info = {
+            "loss": [1.0],
+            "outer_stats": [],
+            "stopped_by_observer": False,
+            "observer_action": "continue",
+            "wall_time_total": 0.0,
+        }
+        return x, params5, info
+
+    def fake_save_nxtomo(path, *, projections, metadata):
+        captured["save_path"] = path
+        captured["save_projections_shape"] = tuple(projections.shape)
+        captured["save_metadata"] = metadata
+
+    monkeypatch.setattr(align_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(align_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(align_cli, "_init_jax_compilation_cache", lambda: None)
+    monkeypatch.setattr(align_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(
+        align_cli,
+        "build_geometry_from_meta",
+        lambda geometry_meta, grid_override=None, apply_saved_alignment=False: (
+            grid,
+            detector,
+            object(),
+        ),
+    )
+    monkeypatch.setattr(align_cli, "transfer_guard_context", fake_transfer_guard)
+    monkeypatch.setattr(align_cli, "align", fake_align)
+    monkeypatch.setattr(align_cli, "save_nxtomo", fake_save_nxtomo)
+
+    out_path = tmp_path / "aligned.nxs"
+    json_path = tmp_path / "params" / "aligned.json"
+    csv_path = tmp_path / "params" / "aligned.csv"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tomojax-align",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--out",
+            str(out_path),
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--transfer-guard",
+            "log",
+            "--save-params-json",
+            str(json_path),
+            "--save-params-csv",
+            str(csv_path),
+        ],
+    )
+
+    align_cli.main()
+
+    assert captured["transfer_guard"] == "log"
+    assert captured["save_path"] == str(out_path)
+    assert captured["save_projections_shape"] == (2, 1, 2)
+    saved_meta = captured["save_metadata"]
+    np.testing.assert_allclose(np.asarray(saved_meta.align_params), np.asarray(params5))
+    assert json_path.exists()
+    assert csv_path.exists()
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert len(payload["views"]) == 2
+    assert payload["views"][0]["dx_px"] == pytest.approx(2.0)
+    assert payload["views"][1]["dz_px"] == pytest.approx(-3.0)
+
+    rows = list(csv.DictReader(csv_path.read_text(encoding="utf-8").splitlines()))
+    assert len(rows) == 2
+    assert rows[0]["view_index"] == "0"
+    assert float(rows[0]["dx_px"]) == pytest.approx(2.0)

@@ -149,7 +149,8 @@ python -m tomojax.cli.align --data <in.nxs> \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
-  --out <out.nxs> [--progress]
+  --out <out.nxs> [--save-params-json <out.json>] [--save-params-csv <out.csv>] \
+  [--progress]
 ```
 
 Key options
@@ -162,10 +163,12 @@ Key options
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
+- Parameter exports: `--save-params-json` and `--save-params-csv` write named per-view sidecars with `alpha_rad`, `beta_rad`, `phi_rad`, `dx_world`, `dz_world`, `dx_px`, and `dz_px`.
 - Early stopping and GN acceptance are enabled by default during alignment: outers stop when relative improvement is tiny, and GN steps are rejected if they don’t reduce loss.
   Use `--log-summary` to see when early stopping triggers.
 
 Notes
+- The `.nxs` output still stores the final alignment parameters; JSON/CSV sidecars are optional convenience exports for plotting and reproducibility.
 - The align CLI initializes a persistent JAX compilation cache automatically. Set `TOMOJAX_JAX_CACHE_DIR` to control the cache location.
 
 Examples
@@ -175,7 +178,10 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
   --gather-dtype bf16 --checkpoint-projector \
-  --log-summary --out out/align_misaligned.nxs --progress
+  --log-summary --out out/align_misaligned.nxs \
+  --save-params-json out/align_misaligned.params.json \
+  --save-params-csv out/align_misaligned.params.csv \
+  --progress
 
 # GD with learning rates (single level)
 uv run tomojax-align --data data/sim_misaligned.nxs \

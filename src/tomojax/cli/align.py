@@ -10,6 +10,7 @@ import os
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from ..align.losses import parse_loss_spec
+from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
 from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env
@@ -240,6 +241,16 @@ def main() -> None:
     )
     p.add_argument("--out", required=True, help="Output .nxs with recon and alignment params")
     p.add_argument(
+        "--save-params-json",
+        default=None,
+        help="Optional JSON sidecar for final per-view alignment parameters",
+    )
+    p.add_argument(
+        "--save-params-csv",
+        default=None,
+        help="Optional CSV sidecar for final per-view alignment parameters",
+    )
+    p.add_argument(
         "--progress",
         action="store_true",
         help="Show progress bars if tqdm is available",
@@ -389,10 +400,11 @@ def main() -> None:
             x = jnp.asarray(_np.asarray(x) * m)
 
     # Avoid copying projections back from device: reuse host array from metadata
+    params5_np = np.asarray(params5)
     save_meta = meta.copy_metadata()
     save_meta.grid = recon_grid.to_dict()
     save_meta.volume = np.asarray(x)
-    save_meta.align_params = np.asarray(params5)
+    save_meta.align_params = params5_np
     save_meta.frame = str(meta.frame or "sample")
     save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(
@@ -401,6 +413,22 @@ def main() -> None:
         metadata=save_meta,
     )
     logging.info("Saved alignment results to %s", args.out)
+    if args.save_params_json is not None:
+        save_alignment_params_json(
+            args.save_params_json,
+            params5_np,
+            du=float(detector.du),
+            dv=float(detector.dv),
+        )
+        logging.info("Saved alignment parameter JSON to %s", args.save_params_json)
+    if args.save_params_csv is not None:
+        save_alignment_params_csv(
+            args.save_params_csv,
+            params5_np,
+            du=float(detector.du),
+            dv=float(detector.dv),
+        )
+        logging.info("Saved alignment parameter CSV to %s", args.save_params_csv)
 
 
 if __name__ == "__main__":  # pragma: no cover
