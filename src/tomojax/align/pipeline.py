@@ -48,6 +48,14 @@ from .motion_models import (
     fit_motion_coefficients,
     scan_coordinate_from_geometry,
 )
+from .gauge import (
+    GaugeFixMode,
+    active_gauge_dofs,
+    apply_alignment_gauge,
+    gauge_stats_to_python,
+    normalize_gauge_fix,
+    validate_alignment_gauge_feasible,
+)
 from .optimizers import PoseLbfgsConfig, run_pose_lbfgs
 from ..utils.fov import cylindrical_mask_xy
 
@@ -75,6 +83,9 @@ class AlignInfo(TypedDict):
     completed_outer_iters: int
     small_impr_streak: int
     motion_coeffs: jnp.ndarray | None
+    gauge_fix: str
+    gauge_fix_dofs: list[str]
+    gauge_fix_final: dict[str, float | str | list[str]]
 
 
 class AlignMultiresInfo(TypedDict):
@@ -92,6 +103,9 @@ class AlignMultiresInfo(TypedDict):
     per_view_variables: int | None
     pose_model_basis_shape: list[int] | None
     active_dofs: list[str]
+    gauge_fix: str
+    gauge_fix_dofs: list[str]
+    gauge_fix_final: dict[str, float | str | list[str]] | None
 
 
 class MultiresLevel(TypedDict):
@@ -349,6 +363,7 @@ class AlignConfig:
     pose_model: Literal["per_view", "polynomial", "spline"] = "per_view"
     knot_spacing: int = 8
     degree: int = 3
+    gauge_fix: GaugeFixMode = "mean_translation"
     seed_translations: bool = False
     # Volume masking before forward projection (modeling for ROI/truncation)
     # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
@@ -412,6 +427,18 @@ class AlignConfig:
                 raise ValueError("knot_spacing must be >= 1 for spline pose_model")
             if int(self.degree) not in (1, 2, 3):
                 raise ValueError("degree must be one of 1, 2, or 3 for spline pose_model")
+        self.gauge_fix = normalize_gauge_fix(self.gauge_fix)
+        if self.gauge_fix == "mean_translation":
+            bounds_lower, bounds_upper = bounds_vectors(self.bounds)
+            validate_alignment_gauge_feasible(
+                mode=self.gauge_fix,
+                active_mask=active_dof_mask(
+                    optimise_dofs=self.optimise_dofs,
+                    freeze_dofs=self.freeze_dofs,
+                ),
+                bounds_lower=bounds_lower,
+                bounds_upper=bounds_upper,
+            )
 
 
 def align(
@@ -479,12 +506,65 @@ def align(
     )
     active_mask = active_mask_bool.astype(jnp.float32)
     bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
+    gauge_fix = normalize_gauge_fix(cfg.gauge_fix)
+    gauge_dofs = active_gauge_dofs(mode=gauge_fix, active_mask=active_mask_tuple)
+    validate_alignment_gauge_feasible(
+        mode=gauge_fix,
+        active_mask=active_mask_tuple,
+        bounds_lower=bounds_lower,
+        bounds_upper=bounds_upper,
+    )
 
     def _apply_param_constraints(candidate: jnp.ndarray) -> jnp.ndarray:
         clipped = jnp.clip(candidate, bounds_lower, bounds_upper)
         return jnp.where(active_mask_bool, clipped, frozen_params5)
 
-    params5 = _apply_param_constraints(params5)
+    def _apply_full_constraints(candidate: jnp.ndarray) -> jnp.ndarray:
+        constrained = _apply_param_constraints(candidate)
+        gauged, _ = apply_alignment_gauge(
+            constrained,
+            mode=gauge_fix,
+            active_mask=active_mask_tuple,
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+        )
+        return _apply_param_constraints(gauged)
+
+    def _apply_full_constraints_with_stats(
+        candidate: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, dict[str, float | str | list[str]]]:
+        constrained = _apply_param_constraints(candidate)
+        gauged, stats = apply_alignment_gauge(
+            constrained,
+            mode=gauge_fix,
+            active_mask=active_mask_tuple,
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+        )
+        gauged = _apply_param_constraints(gauged)
+        final_gauged, final_stats = apply_alignment_gauge(
+            gauged,
+            mode=gauge_fix,
+            active_mask=active_mask_tuple,
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+        )
+        final_gauged = _apply_param_constraints(final_gauged)
+        stats_py = gauge_stats_to_python(stats)
+        final_py = gauge_stats_to_python(final_stats)
+        stats_py["dx_mean_after"] = final_py["dx_mean_after"]
+        stats_py["dz_mean_after"] = final_py["dz_mean_after"]
+        return final_gauged, stats_py
+
+    params5, initial_gauge_stats = _apply_full_constraints_with_stats(params5)
+    gauge_dofs_label = ",".join(gauge_dofs) if gauge_dofs else "no translation DOFs"
+    gauge_desc = (
+        "none"
+        if gauge_fix == "none"
+        else f"{gauge_fix} over active {gauge_dofs_label}"
+    )
+    logging.info("Alignment gauge fix: %s", gauge_desc)
+    final_gauge_stats = dict(initial_gauge_stats)
 
     scan_coordinate = scan_coordinate_from_geometry(geometry, n_views)
     motion_model = build_pose_motion_model(
@@ -501,10 +581,10 @@ def align(
     active_coeff_indices = jnp.asarray(motion_model.active_indices, dtype=jnp.int32)
 
     def _coeffs_to_constrained_params(coeffs: jnp.ndarray) -> jnp.ndarray:
-        return _apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+        return _apply_full_constraints(expand_motion_coefficients(motion_model, coeffs))
 
     def _project_params_to_smooth(candidate: jnp.ndarray) -> jnp.ndarray:
-        constrained = _apply_param_constraints(candidate)
+        constrained = _apply_full_constraints(candidate)
         coeffs = fit_motion_coefficients(motion_model, constrained)
         return _coeffs_to_constrained_params(coeffs)
 
@@ -1052,6 +1132,13 @@ def align(
             if (lb is not None) and (la is not None):
                 rel = f" {rp:+.2f}%" if rp is not None else ""
                 abits.append(f"loss {lb:.2e}->{la:.2e} (Δ {ld:+.2e}{rel})")
+            if stat.get("gauge_fix") == "mean_translation":
+                dxm = stat.get("dx_mean_before_gauge")
+                dzm = stat.get("dz_mean_before_gauge")
+                if dxm is not None and dzm is not None:
+                    abits.append(f"gauge mean dx,dz {dxm:+.2e},{dzm:+.2e}->0")
+            elif stat.get("gauge_fix") == "none":
+                abits.append("gauge none")
             if abits:
                 parts.append("align " + " ".join(abits))
             parts.append(f"elapsed {elapsed}")
@@ -1142,6 +1229,17 @@ def align(
             align_parts.append(
                 f"loss {loss_before:.3e}->{loss_after:.3e} (Δ {loss_delta:+.3e}{rel_str})"
             )
+        if stat.get("gauge_fix") == "mean_translation":
+            dxm = stat.get("dx_mean_before_gauge")
+            dzm = stat.get("dz_mean_before_gauge")
+            dxa = stat.get("dx_mean_after_gauge")
+            dza = stat.get("dz_mean_after_gauge")
+            if dxm is not None and dzm is not None and dxa is not None and dza is not None:
+                align_parts.append(
+                    f"gauge mean dx,dz {dxm:+.3e},{dzm:+.3e}->{dxa:+.3e},{dza:+.3e}"
+                )
+        elif stat.get("gauge_fix") == "none":
+            align_parts.append("gauge none")
         logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
 
     def _run_gd_alignment_step(
@@ -1197,13 +1295,13 @@ def align(
         g_params = g_params * active_mask
         rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
         eff_scales = scales / rms
-        best_params = _apply_param_constraints(p5_in - g_params * eff_scales)
+        best_params = _apply_full_constraints(p5_in - g_params * eff_scales)
         best_loss = _evaluate_align_loss(
             lambda: align_loss_jit(best_params, vol),
             fallback=math.inf,
             context="Treating GD base candidate as rejected during alignment loss evaluation",
         )
-        cand_params = _apply_param_constraints(p5_in - 2.0 * g_params * eff_scales)
+        cand_params = _apply_full_constraints(p5_in - 2.0 * g_params * eff_scales)
         cand_loss = _evaluate_align_loss(
             lambda: align_loss_jit(cand_params, vol),
             fallback=math.inf,
@@ -1243,7 +1341,7 @@ def align(
                 context=f"Treating L-BFGS {label} candidate as rejected "
                 "during alignment loss evaluation",
             ),
-            apply_param_constraints=_apply_param_constraints,
+            apply_param_constraints=_apply_full_constraints,
             is_expected_failure=_is_expected_align_eval_failure,
             cfg=PoseLbfgsConfig(
                 maxiter=int(cfg.lbfgs_maxiter),
@@ -1447,7 +1545,7 @@ def align(
             params5_prev = params5
             dp_all = _gn_update_all(params5_prev, x) * active_mask
             constrain_candidate = (
-                _project_params_to_smooth if use_smooth_pose_model else _apply_param_constraints
+                _project_params_to_smooth if use_smooth_pose_model else _apply_full_constraints
             )
             if cfg.gn_accept_only_improving and (loss_before is not None):
                 smooth_candidate = None
@@ -1534,6 +1632,20 @@ def align(
                 pass
         stat["step_kind"] = step_kind
         stat["loss_after_step"] = loss_after
+        params5, final_gauge_stats = _apply_full_constraints_with_stats(params5)
+        if use_smooth_pose_model:
+            motion_coeffs = fit_motion_coefficients(motion_model, params5)
+            params5, final_gauge_stats = _apply_full_constraints_with_stats(
+                expand_motion_coefficients(motion_model, motion_coeffs)
+            )
+            motion_coeffs = fit_motion_coefficients(motion_model, params5)
+        stat["gauge_fix"] = gauge_fix
+        stat["gauge_fix_dofs"] = ",".join(gauge_dofs)
+        if gauge_fix == "mean_translation":
+            stat["dx_mean_before_gauge"] = float(final_gauge_stats["dx_mean_before"])
+            stat["dz_mean_before_gauge"] = float(final_gauge_stats["dz_mean_before"])
+            stat["dx_mean_after_gauge"] = float(final_gauge_stats["dx_mean_after"])
+            stat["dz_mean_after_gauge"] = float(final_gauge_stats["dz_mean_after"])
         # Ensure device work from alignment step is finished before timing.
         jax.block_until_ready(params5)
         stat["align_time"] = time.perf_counter() - align_start
@@ -1671,6 +1783,9 @@ def align(
         "completed_outer_iters": len(outer_stats),
         "small_impr_streak": int(small_impr_streak),
         "motion_coeffs": motion_coeffs,
+        "gauge_fix": gauge_fix,
+        "gauge_fix_dofs": list(gauge_dofs),
+        "gauge_fix_final": dict(final_gauge_stats),
     }
     return x, params5, info
 
@@ -1754,6 +1869,11 @@ def align_multires(
     final_per_view_variables: int | None = None
     final_pose_model_basis_shape: list[int] | None = None
     final_loss_kind: str | None = None
+    final_gauge_fix = normalize_gauge_fix(cfg.gauge_fix)
+    final_gauge_fix_dofs = list(
+        active_gauge_dofs(mode=final_gauge_fix, active_mask=active_mask_tuple)
+    )
+    final_gauge_fix_stats: dict[str, float | str | list[str]] | None = None
     last_level_index_processed: int | None = None
 
     if resume_state is not None and resume_state.run_complete:
@@ -1985,6 +2105,9 @@ def align_multires(
         final_pose_model_variables = int(info["pose_model_variables"])
         final_per_view_variables = int(info["per_view_variables"])
         final_pose_model_basis_shape = list(info["pose_model_basis_shape"])
+        final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
+        final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))
+        final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
         x_init = x_lvl
         prev_factor = lvl["factor"]
         last_level_index_processed = int(li)
@@ -2080,5 +2203,8 @@ def align_multires(
                     freeze_dofs=cfg.freeze_dofs,
                 )
             ),
+            "gauge_fix": final_gauge_fix,
+            "gauge_fix_dofs": final_gauge_fix_dofs,
+            "gauge_fix_final": final_gauge_fix_stats,
         },
     )

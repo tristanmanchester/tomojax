@@ -342,6 +342,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Polynomial degree or spline degree for smooth pose models",
     )
+    p.add_argument(
+        "--gauge-fix",
+        choices=["mean_translation", "none"],
+        default="mean_translation",
+        help=(
+            "Gauge fixing for alignment parameters: mean_translation subtracts the "
+            "scan-wide mean from active dx,dz after updates (default); none preserves "
+            "historical unconstrained traces"
+        ),
+    )
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
     p.add_argument(
@@ -543,6 +553,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "projector_unroll": 1,
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
+        "gauge_fix": str(args.gauge_fix),
     }
 
 
@@ -720,6 +731,7 @@ def main() -> None:
         pose_model=str(args.pose_model),
         knot_spacing=int(args.knot_spacing),
         degree=int(args.degree),
+        gauge_fix=str(args.gauge_fix),
         loss=loss_config,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
@@ -971,10 +983,18 @@ def main() -> None:
 
     # Avoid copying projections back from device: reuse host array from metadata
     params5_np = np.asarray(params5)
+    align_gauge_metadata = None
+    if isinstance(info, dict):
+        align_gauge_metadata = {
+            "mode": str(info.get("gauge_fix", args.gauge_fix)),
+            "dofs": list(info.get("gauge_fix_dofs", [])),
+            "final": dict(info.get("gauge_fix_final", {}) or {}),
+        }
     save_meta = meta.copy_metadata()
     save_meta.grid = recon_grid.to_dict()
     save_meta.volume = np.asarray(x)
     save_meta.align_params = params5_np
+    save_meta.align_gauge = align_gauge_metadata
     save_meta.frame = str(meta.frame or "sample")
     save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(
@@ -989,6 +1009,7 @@ def main() -> None:
             params5_np,
             du=float(detector.du),
             dv=float(detector.dv),
+            gauge_metadata=align_gauge_metadata,
         )
         logging.info("Saved alignment parameter JSON to %s", args.save_params_json)
     if args.save_params_csv is not None:
@@ -1045,6 +1066,7 @@ def main() -> None:
                 "loss_spec": loss_config,
                 "align_config": cfg,
                 "alignment_params_shape": list(params5_np.shape),
+                "alignment_gauge": align_gauge_metadata,
                 "volume_shape": list(np.asarray(x).shape),
                 "volume_axes": str(args.volume_axes),
                 "frame": str(save_meta.frame),

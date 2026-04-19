@@ -203,6 +203,32 @@ def test_alignment_checkpoint_accepts_missing_recon_solver_defaults(tmp_path):
     validate_alignment_checkpoint(checkpoint, metadata)
 
 
+def test_alignment_checkpoint_treats_missing_gauge_fix_as_legacy_none(tmp_path):
+    grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)
+    projections = jnp.zeros((4, 2, 3), dtype=jnp.float32)
+    cfg = AlignConfig(outer_iters=2, recon_iters=1, early_stop=False, gauge_fix="none")
+    metadata = _metadata(cfg=cfg, grid=grid, detector=detector, projections=projections)
+    legacy_metadata = dict(metadata)
+    legacy_metadata["config"] = dict(legacy_metadata["config"])
+    legacy_metadata["cli_options"] = dict(legacy_metadata["cli_options"])
+    legacy_metadata["config"].pop("gauge_fix", None)
+    legacy_metadata["cli_options"].pop("gauge_fix", None)
+
+    path = tmp_path / "legacy_gauge_none_checkpoint.npz"
+    save_alignment_checkpoint(
+        path,
+        x=np.ones((3, 3, 2), dtype=np.float32),
+        params5=np.zeros((4, 5), dtype=np.float32),
+        loss_history=[],
+        outer_stats=[],
+        metadata=legacy_metadata,
+    )
+
+    checkpoint = load_alignment_checkpoint(path)
+    validate_alignment_checkpoint(checkpoint, metadata)
+
+
 def test_alignment_checkpoint_accepts_legacy_missing_motion_coeffs(tmp_path):
     grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)

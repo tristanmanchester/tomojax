@@ -84,16 +84,20 @@ def alignment_params_payload(
     *,
     du: float,
     dv: float,
+    gauge_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the versioned JSON payload for exported alignment parameters."""
     du_f, dv_f = _validate_detector_spacing(du=du, dv=dv)
-    return {
+    payload = {
         "schema": ALIGNMENT_PARAMS_SCHEMA,
         "parameter_order": list(PARAMETER_ORDER),
         "units": dict(PARAMETER_UNITS),
         "detector_spacing": {"du": du_f, "dv": dv_f},
         "views": alignment_param_records(params5, du=du_f, dv=dv_f),
     }
+    if gauge_metadata is not None:
+        payload["gauge_fix"] = dict(gauge_metadata)
+    return payload
 
 
 def _ensure_parent(path: str | Path) -> Path:
@@ -109,10 +113,16 @@ def save_alignment_params_json(
     *,
     du: float,
     dv: float,
+    gauge_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Write per-view alignment parameters as a named JSON sidecar."""
     out_path = _ensure_parent(path)
-    payload = alignment_params_payload(params5, du=du, dv=dv)
+    payload = alignment_params_payload(
+        params5,
+        du=du,
+        dv=dv,
+        gauge_metadata=gauge_metadata,
+    )
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
         f.write("\n")

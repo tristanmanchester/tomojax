@@ -107,6 +107,30 @@ def test_load_npz_unwraps_dict_metadata_and_convert_roundtrips_to_nxs(tmp_path):
     assert meta["misalign_spec"] == misalign_spec
 
 
+def test_nxtomo_roundtrips_alignment_gauge_metadata(tmp_path):
+    from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
+
+    nxs_path = tmp_path / "alignment_gauge.nxs"
+    projections = np.zeros((2, 3, 4), dtype=np.float32)
+    gauge = {
+        "mode": "mean_translation",
+        "dofs": ["dx", "dz"],
+        "final": {"dx_mean_after": 0.0, "dz_mean_after": 0.0},
+    }
+    metadata = NXTomoMetadata(
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+        detector={"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]},
+        align_params=np.zeros((2, 5), dtype=np.float32),
+        align_gauge=gauge,
+    )
+
+    save_nxtomo(str(nxs_path), projections=projections, metadata=metadata)
+    loaded = load_nxtomo(str(nxs_path))
+
+    assert loaded.align_gauge == gauge
+    assert loaded["align_gauge"] == gauge
+
+
 def test_load_nxtomo_preserves_legacy_xyz_without_attr_or_grid(tmp_path):
     nxs_path = tmp_path / "legacy_no_attr_no_grid.nxs"
 

@@ -55,6 +55,10 @@ gn_damping = 0.001
 # pose_model = "spline"
 # knot_spacing = 12
 # degree = 3
+# Gauge fixing removes ambiguous global translation from saved per-view traces.
+# The default mean_translation subtracts the scan-wide mean from active dx,dz.
+# Set to "none" to reproduce historical unconstrained alignment traces.
+gauge_fix = "mean_translation"
 gather_dtype = "auto"
 checkpoint_projector = true
 # Resumable alignment checkpoints are written after completed outer iterations.

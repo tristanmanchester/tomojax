@@ -84,6 +84,101 @@ def _run_fixed_volume_alignment(
     return np.asarray(params5), info
 
 
+def test_align_default_gauge_fix_zeroes_final_translation_means():
+    grid, det, geom, vol, projs = make_misaligned_case(seed=21)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 3] = np.linspace(1.0, 3.0, projs.shape[0], dtype=np.float32)
+    init_params5[:, 4] = np.linspace(-2.0, 1.0, projs.shape[0], dtype=np.float32)
+
+    _, params5, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=AlignConfig(outer_iters=0, recon_iters=1, early_stop=False),
+        init_x=vol,
+        init_params5=jnp.asarray(init_params5),
+    )
+
+    params5_np = np.asarray(params5)
+    assert info["gauge_fix"] == "mean_translation"
+    assert info["gauge_fix_dofs"] == ["dx", "dz"]
+    assert np.mean(params5_np[:, 3]) == pytest.approx(0.0, abs=1e-6)
+    assert np.mean(params5_np[:, 4]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_align_gauge_fix_none_preserves_initial_translation_means():
+    grid, det, geom, vol, projs = make_misaligned_case(seed=22)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 3] = np.linspace(1.0, 3.0, projs.shape[0], dtype=np.float32)
+    init_params5[:, 4] = np.linspace(-2.0, 1.0, projs.shape[0], dtype=np.float32)
+
+    _, params5, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=AlignConfig(outer_iters=0, recon_iters=1, early_stop=False, gauge_fix="none"),
+        init_x=vol,
+        init_params5=jnp.asarray(init_params5),
+    )
+
+    assert info["gauge_fix"] == "none"
+    np.testing.assert_array_equal(np.asarray(params5), init_params5)
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_gauge_fix_records_zero_post_update_means(monkeypatch, opt_method, loss_name):
+    params5, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+    )
+
+    stat = info["outer_stats"][0]
+    assert stat["gauge_fix"] == "mean_translation"
+    assert stat["dx_mean_after_gauge"] == pytest.approx(0.0, abs=1e-6)
+    assert stat["dz_mean_after_gauge"] == pytest.approx(0.0, abs=1e-6)
+    assert np.mean(params5[:, 3]) == pytest.approx(0.0, abs=1e-6)
+    assert np.mean(params5[:, 4]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_align_lbfgs_gauge_fix_zeroes_final_translation_means(monkeypatch):
+    params5, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="lbfgs",
+        views_per_batch=2,
+        loss_name="l2",
+        lbfgs_maxiter=8,
+    )
+
+    assert info["outer_stats"][0]["step_kind"] == "lbfgs"
+    assert np.mean(params5[:, 3]) == pytest.approx(0.0, abs=1e-6)
+    assert np.mean(params5[:, 4]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_align_smooth_pose_model_gauge_fix_survives_coefficient_refit(monkeypatch):
+    params5, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="gd",
+        views_per_batch=2,
+        loss_name="l2_otsu",
+        pose_model="polynomial",
+        degree=2,
+    )
+
+    assert info["pose_model"] == "polynomial"
+    assert np.mean(params5[:, 3]) == pytest.approx(0.0, abs=1e-6)
+    assert np.mean(params5[:, 4]) == pytest.approx(0.0, abs=1e-6)
+
+
 def test_align_gd_chunking_matches_streamed_reference(monkeypatch):
     params_stream, info_stream = _run_fixed_volume_alignment(
         monkeypatch,

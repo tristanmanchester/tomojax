@@ -316,19 +316,27 @@ def _alignment_report(file: h5py.File) -> dict[str, Any]:
             "angle_offset_found": False,
             "angle_offset_shape": None,
             "misalign_spec_found": False,
+            "gauge_fix_found": False,
         }
     params = align.get("thetas")
     angle_offset = align.get("angle_offset_deg")
     misalign_spec = _json_attr_to_mapping(align.attrs.get("misalign_spec_json"))
+    gauge_fix = _json_attr_to_mapping(align.attrs.get("gauge_fix_json"))
     params_found = isinstance(params, h5py.Dataset)
     angle_offset_found = isinstance(angle_offset, h5py.Dataset)
     return {
-        "found": bool(params_found or angle_offset_found or misalign_spec is not None),
+        "found": bool(
+            params_found
+            or angle_offset_found
+            or misalign_spec is not None
+            or gauge_fix is not None
+        ),
         "params_found": bool(params_found),
         "params_shape": [int(v) for v in params.shape] if params_found else None,
         "angle_offset_found": bool(angle_offset_found),
         "angle_offset_shape": [int(v) for v in angle_offset.shape] if angle_offset_found else None,
         "misalign_spec_found": misalign_spec is not None,
+        "gauge_fix_found": gauge_fix is not None,
     }
 
 
@@ -516,6 +524,8 @@ def format_inspection_report(report: InspectionReport) -> str:
             parts.append(f"angle_offset shape={alignment['angle_offset_shape']}")
         if alignment["misalign_spec_found"]:
             parts.append("misalign_spec present")
+        if alignment["gauge_fix_found"]:
+            parts.append("gauge_fix present")
         lines.append(f"Alignment parameters: {', '.join(parts)}")
     else:
         lines.append("Alignment parameters: not found")

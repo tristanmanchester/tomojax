@@ -57,6 +57,7 @@ class NXTomoMetadata:
     geometry_meta: JsonObject | None = None
     volume: np.ndarray | None = None
     align_params: np.ndarray | None = None
+    align_gauge: JsonObject | None = None
     angle_offset_deg: np.ndarray | None = None
     misalign_spec: JsonObject | None = None
     frame: str | None = None
@@ -90,6 +91,7 @@ class NXTomoMetadata:
             geometry_meta=data.get("geometry_meta"),
             volume=data.get("volume"),
             align_params=data.get("align_params"),
+            align_gauge=data.get("align_gauge"),
             angle_offset_deg=data.get("angle_offset_deg"),
             misalign_spec=data.get("misalign_spec"),
             frame=None if data.get("frame") is None else str(data.get("frame")),
@@ -224,6 +226,8 @@ class LoadedNXTomo:
             payload["misalign_spec"] = self.metadata.misalign_spec
         if self.metadata.align_params is not None:
             payload["align_params"] = np.asarray(self.metadata.align_params)
+        if self.metadata.align_gauge is not None:
+            payload["align_gauge"] = self.metadata.align_gauge
         geom_meta = self.metadata.geometry_meta or {}
         tilt_deg = geom_meta.get("tilt_deg")
         if tilt_deg is not None:
@@ -474,6 +478,13 @@ def _load_processing_metadata(
     if align_grp is not None:
         if "thetas" in align_grp:
             out["align_params"] = align_grp["thetas"][...]
+        align_gauge = _load_json_mapping_attr(
+            align_grp.attrs.get("gauge_fix_json"),
+            path=path,
+            context="alignment gauge fix",
+        )
+        if align_gauge is not None:
+            out["align_gauge"] = align_gauge
         if "angle_offset_deg" in align_grp:
             out["angle_offset_deg"] = align_grp["angle_offset_deg"][...]
         misalign_spec = _load_json_mapping_attr(
@@ -647,6 +658,7 @@ def save_nxtomo(
         # Optional alignment params and misalignment metadata
         if (
             meta.align_params is not None
+            or meta.align_gauge is not None
             or meta.angle_offset_deg is not None
             or meta.misalign_spec is not None
         ):
@@ -663,6 +675,8 @@ def save_nxtomo(
                 dset.attrs["columns"] = np.array(
                     ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
                 )
+            if meta.align_gauge is not None:
+                align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
             if meta.angle_offset_deg is not None:
                 align_grp.create_dataset(
                     "angle_offset_deg",

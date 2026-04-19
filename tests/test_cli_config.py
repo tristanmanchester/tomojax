@@ -555,6 +555,32 @@ def test_align_config_toml_accepts_and_cli_overrides_pose_model_options(tmp_path
     assert "degree" in metadata["explicit_cli_keys"]
 
 
+def test_align_cli_and_config_accept_gauge_fix_options(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'gauge_fix = "mean_translation"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path), "--gauge-fix", "none"],
+        required=("data", "out"),
+    )
+
+    assert args.gauge_fix == "none"
+    assert metadata["config_file_values"]["gauge_fix"] == "mean_translation"
+    assert "gauge_fix" in metadata["explicit_cli_keys"]
+    assert AlignConfig(gauge_fix=args.gauge_fix).gauge_fix == "none"
+
+
 def test_align_config_toml_accepts_spdhg_recon_options(tmp_path):
     config_path = tmp_path / "align.toml"
     config_path.write_text(
@@ -597,6 +623,11 @@ def test_align_config_toml_accepts_spdhg_recon_options(tmp_path):
         ({"pose_model": "spline", "knot_spacing": 0}, "knot_spacing must be >= 1"),
         ({"pose_model": "spline", "degree": 4}, "degree must be one of"),
         ({"lbfgs_memory_size": 0}, "lbfgs_memory_size must be >= 1"),
+        ({"gauge_fix": "anchor"}, "gauge_fix must be one of"),
+        (
+            {"gauge_fix": "mean_translation", "bounds": {"dx": [1, 2]}},
+            "requires active dx bounds to include 0",
+        ),
     ],
 )
 def test_align_config_rejects_invalid_pose_model_options(kwargs, expected):

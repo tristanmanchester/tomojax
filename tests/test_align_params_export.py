@@ -26,7 +26,18 @@ def test_alignment_params_export_writes_named_json_and_csv(tmp_path):
     json_path = tmp_path / "nested" / "params.json"
     csv_path = tmp_path / "nested" / "params.csv"
 
-    save_alignment_params_json(json_path, params5, du=0.5, dv=2.0)
+    gauge_metadata = {
+        "mode": "mean_translation",
+        "dofs": ["dx", "dz"],
+        "final": {"dx_mean_after": 0.0, "dz_mean_after": 0.0},
+    }
+    save_alignment_params_json(
+        json_path,
+        params5,
+        du=0.5,
+        dv=2.0,
+        gauge_metadata=gauge_metadata,
+    )
     save_alignment_params_csv(csv_path, params5, du=0.5, dv=2.0)
 
     assert json_path.exists()
@@ -53,6 +64,7 @@ def test_alignment_params_export_writes_named_json_and_csv(tmp_path):
     assert payload["units"]["dx"] == "world"
     assert payload["units"]["dx_px"] == "pixel"
     assert payload["detector_spacing"] == {"du": 0.5, "dv": 2.0}
+    assert payload["gauge_fix"] == gauge_metadata
     assert len(payload["views"]) == 2
     assert set(payload["views"][0]) == set(CSV_FIELDNAMES)
     assert payload["views"][0]["view_index"] == 0
