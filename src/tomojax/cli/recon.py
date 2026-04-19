@@ -11,6 +11,7 @@ from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from ..recon.fbp import fbp
 from ..recon.fista_tv import FistaConfig, fista_tv
+from ..recon.quicklook import save_quicklook_png
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
@@ -110,6 +111,14 @@ def main() -> None:
         "--out",
         required=True,
         help="Output .nxs containing recon (and copying projections)",
+    )
+    p.add_argument(
+        "--quicklook",
+        "--save-preview",
+        dest="quicklook",
+        metavar="PATH",
+        default=None,
+        help="Write a percentile-scaled central xy slice PNG preview to PATH.",
     )
     p.add_argument(
         "--roi",
@@ -330,9 +339,10 @@ def main() -> None:
 
     # Save the reconstruction in the object (sample) frame.
     # Reuse host projections from metadata to avoid a device-to-host copy.
+    volume_np = np.asarray(vol)
     save_meta = meta.copy_metadata()
     save_meta.grid = recon_grid.to_dict()
-    save_meta.volume = np.asarray(vol)
+    save_meta.volume = volume_np
     save_meta.frame = str(args.frame)
     save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(
@@ -341,6 +351,9 @@ def main() -> None:
         metadata=save_meta,
     )
     logging.info("Saved reconstruction to %s", args.out)
+    if args.quicklook is not None:
+        save_quicklook_png(args.quicklook, volume_np)
+        logging.info("Saved reconstruction quicklook to %s", args.quicklook)
 
 
 if __name__ == "__main__":  # pragma: no cover

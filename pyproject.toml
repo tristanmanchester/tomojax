@@ -12,6 +12,7 @@ license = "GPL-3.0-only"
 authors = [{ name = "Tristan Manchester", email = "tristan.manchester@diamond.ac.uk" }]
 dependencies = [
     "h5py>=3.14.0,<4",
+    "imageio>=2.37.3,<3",
     "jax>=0.5.3,<0.6",
     "numpy>=2.3.2,<3",
     "scipy>=1.16.1,<2",

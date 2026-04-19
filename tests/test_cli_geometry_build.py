@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+import imageio.v3 as iio
 import numpy as np
 import jax.numpy as jnp
 import pytest
@@ -330,6 +331,69 @@ def test_recon_cli_real_io_grid_override_preserves_roi_centering(
     assert out.grid["nz"] == 12
     assert "vol_origin" not in out.grid
     assert "vol_center" not in out.grid
+
+
+def test_recon_cli_writes_quicklook_png(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((2, 3, 4), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+        detector={
+            "nu": 4,
+            "nv": 3,
+            "du": 1.0,
+            "dv": 1.0,
+            "det_center": [0.0, 0.0],
+        },
+        grid={
+            "nx": 4,
+            "ny": 5,
+            "nz": 3,
+            "vx": 1.0,
+            "vy": 1.0,
+            "vz": 1.0,
+        },
+    )
+    in_path = tmp_path / "quicklook_in.nxs"
+    out_path = tmp_path / "quicklook_out.nxs"
+    quicklook_path = tmp_path / "previews" / "quicklook.png"
+    volume = np.arange(4 * 5 * 3, dtype=np.float32).reshape(4, 5, 3)
+    _write_recon_input(in_path, meta)
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(
+        recon_cli,
+        "fbp",
+        lambda geom, grid, detector, proj, **kwargs: jnp.asarray(volume),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(in_path),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--out",
+            str(out_path),
+            "--quicklook",
+            str(quicklook_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    out = load_nxtomo(out_path)
+    assert out.volume is not None
+    np.testing.assert_allclose(out.volume, volume)
+    assert quicklook_path.exists()
+    preview = iio.imread(quicklook_path)
+    assert preview.dtype == np.uint8
+    assert preview.shape == (5, 4)
+    assert preview.max() > preview.min()
 
 
 def test_recon_build_geometry_keeps_nominal_geometry_for_saved_alignment_metadata():

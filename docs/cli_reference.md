@@ -99,7 +99,8 @@ python -m tomojax.cli.recon --data <in.nxs> \
   [--spdhg-seed <int>] [--spdhg-tau <float>] [--spdhg-sigma-data <float>] [--spdhg-sigma-tv <float>] \
   [--roi off|auto|cube|bbox] [--mask-vol off|cyl] [--grid NX NY NZ] \
   [--gather-dtype fp32|bf16|fp16] [--checkpoint-projector|--no-checkpoint-projector] \
-  --out <out.nxs> [--frame sample|lab] [--progress]
+  --out <out.nxs> [--quicklook <out.png>|--save-preview <out.png>] \
+  [--frame sample|lab] [--progress]
 ```
 
 Key options
@@ -109,6 +110,7 @@ Key options
 - SPDHG‑TV: `--iters` (outer PDHG steps), `--lambda-tv` (TV weight), `--views-per-batch` (stochastic block size, e.g. 16–64), `--theta` (extrapolation, e.g. 0.5–1.0). Step sizes default to operator‑norm‑based auto; override with `--spdhg-tau`, `--spdhg-sigma-data`, `--spdhg-sigma-tv`. Use `--spdhg-seed` to fix block order.
 - Memory/performance: use `--gather-dtype` (bf16 recommended on modern GPUs) and keep projector checkpointing on by default.
 - ROI/masking: `--roi auto|cube|bbox|off` to crop the recon grid to the detector FOV; `--mask-vol cyl` applies a cylindrical x–y mask (used as a support in SPDHG and post‑hoc for FBP).
+- Preview: `--quicklook out.png` or `--save-preview out.png` writes a percentile-scaled central `xy` slice PNG after the `.nxs` reconstruction is saved.
 - Frame: `--frame sample` (default; recommended) records that the saved volume is in the sample/object frame. `lab` is recorded for compatibility exports.
 
 Examples
@@ -117,6 +119,12 @@ Examples
 uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fbp --filter ramp --gather-dtype bf16 \
   --checkpoint-projector --out out/fbp_misaligned.nxs --progress
+
+# FBP with a central-slice quicklook PNG
+uv run tomojax-recon --data data/sim_misaligned.nxs \
+  --algo fbp --filter ramp \
+  --out out/fbp_misaligned.nxs \
+  --quicklook out/fbp_misaligned.png
 
 # FISTA with TV (streamed)
 uv run tomojax-recon --data data/sim_misaligned.nxs \

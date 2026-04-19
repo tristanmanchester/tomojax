@@ -14,6 +14,7 @@ import pytest
 
 import tomojax.cli.align as align_cli
 import tomojax.cli.convert as convert_cli
+import tomojax.cli.recon as recon_cli
 import tomojax.cli.runtime_checks as runtime_checks_cli
 import tomojax.cli.simulate as simulate_cli
 from tomojax.data.io_hdf5 import LoadedNXTomo
@@ -52,6 +53,18 @@ def test_runtime_checks_cpu_main_sets_cpu_backend_and_prints_devices(monkeypatch
     assert "JAX backend: cpu" in captured.out
     assert "Devices: ['cpu:0']" in captured.out
     assert os.environ["JAX_PLATFORM_NAME"] == "cpu"
+
+
+def test_recon_help_documents_quicklook_aliases(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["tomojax-recon", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        recon_cli.main()
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "--quicklook" in captured.out
+    assert "--save-preview" in captured.out
 
 
 def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):
