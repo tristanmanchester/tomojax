@@ -97,13 +97,14 @@ uv run tomojax-misalign --data data/sim_aligned.nxs --out runs/mis_dx_step.nxs \
 
 ## recon
 
-Reconstruct a volume from projections via FBP, FISTA‑TV, or SPDHG‑TV. Saves a new `.nxs` with the reconstruction.
+Reconstruct a volume from projections via FBP, FISTA, or SPDHG. Saves a new `.nxs` with the reconstruction.
 
 Usage
 ```
 python -m tomojax.cli.recon [--config <config.toml>] --data <in.nxs> \
   [--algo fbp|fista|spdhg] [--filter ramp|shepp|hann] \
-  [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
+  [--iters <int>] [--lambda-tv <float>] [--regulariser tv|huber_tv] [--huber-delta <float>] \
+  [--tv-prox-iters <int>] [--L <float>] \
   [--positivity|--no-positivity] [--lower-bound <float>] [--upper-bound <float>] \
   [--views-per-batch <int>] [--theta <float>] \
   [--spdhg-seed <int>] [--spdhg-tau <float>] [--spdhg-sigma-data <float>] [--spdhg-sigma-tv <float>] \
@@ -118,7 +119,8 @@ Key options
 - Algorithm: `--algo fbp` (default), `fista`, or `spdhg`.
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
 - FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method. Add `--positivity`, `--lower-bound`, and/or `--upper-bound` to project each iterate onto common physical voxel constraints. See `docs/fista_constraints_validation_64.md` for the `64^3` constraint validation smoke test.
-- SPDHG‑TV: `--iters` (outer PDHG steps), `--lambda-tv` (TV weight), `--views-per-batch` (stochastic block size, e.g. 16–64), `--theta` (extrapolation, e.g. 0.5–1.0). Step sizes default to operator‑norm‑based auto; override with `--spdhg-tau`, `--spdhg-sigma-data`, `--spdhg-sigma-tv`. Use `--spdhg-seed` to fix block order.
+- Regulariser: `--regulariser tv` is the default and uses the existing isotropic TV path. `--regulariser huber_tv` uses a smoother Huber-TV penalty; smaller `--huber-delta` is more TV/L1-like, while gradients below `huber_delta` are penalised quadratically.
+- SPDHG: `--iters` (outer PDHG steps), `--lambda-tv` (regularisation weight), `--views-per-batch` (stochastic block size, e.g. 16–64), `--theta` (extrapolation, e.g. 0.5–1.0). Step sizes default to operator‑norm‑based auto; override with `--spdhg-tau`, `--spdhg-sigma-data`, `--spdhg-sigma-tv`. Use `--spdhg-seed` to fix block order.
 - Memory/performance: use `--gather-dtype` (bf16 recommended on modern GPUs) and keep projector checkpointing on by default.
 - ROI/masking: `--roi auto|cube|bbox|off` to crop the recon grid to the detector FOV; `--mask-vol cyl` applies a cylindrical x–y mask (used as a support in SPDHG and post‑hoc for FBP).
 - Preview: `--quicklook out.png` or `--save-preview out.png` writes a percentile-scaled central `xy` slice PNG after the `.nxs` reconstruction is saved.
@@ -172,6 +174,7 @@ Usage
 ```
 python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--outer-iters <int>] [--recon-iters <int>] [--lambda-tv <float>] \
+  [--regulariser tv|huber_tv] [--huber-delta <float>] \
   [--recon-algo fista|spdhg] [--tv-prox-iters <int>] \
   [--views-per-batch <int>] [--spdhg-seed <int>] \
   [--recon-positivity|--no-recon-positivity] \
@@ -192,6 +195,7 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
 Key options
 - Config: `--config docs/align_config.toml` loads flat TOML defaults. Explicit CLI flags override file values, including list values such as `--levels 2 1` and booleans such as `--no-checkpoint-projector`.
 - Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--recon-algo fista|spdhg` (`fista` default), `--tv-prox-iters` (10; FISTA only, increase to 20–30 for noisy data).
+- Regulariser: `--regulariser tv` keeps the standard inner reconstruction TV behavior. `--regulariser huber_tv` is smoother near zero gradients; tune `--huber-delta` to control the transition from quadratic smoothing to TV-like edge behavior.
 - Inner solver choice: FISTA is the conservative default for continuity with existing workflows. SPDHG uses stochastic view subsets and can scale better for larger view counts; control its subset size with `--views-per-batch` and deterministic subset order with `--spdhg-seed`.
 - SPDHG details: `--recon-positivity` is enabled by default and applies only to SPDHG. SPDHG objective logs are minibatch estimates, so compare their trend rather than treating them as identical to FISTA's full objective trace.
 - Smoke benchmark: see `docs/alignment_inner_solver_benchmark_64.md` for a `64^3` CPU comparison of FISTA and SPDHG as alignment inner solvers.

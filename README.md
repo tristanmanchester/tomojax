@@ -220,6 +220,7 @@ Viewer tip: saved reconstructions write volumes in `(nz, ny, nx)` order with `@v
 - Mixed precision gather (`--gather-dtype bf16`) reduces bandwidth while accumulating in fp32.
 - To avoid JAX preallocation spikes: `export XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 - For noisy data, increase `--lambda-tv` and consider raising `--tv-prox-iters` to 20–30 to strengthen the TV proximal step.
+- Use `--regulariser huber_tv` for a smoother TV-like penalty that can reduce staircasing and be easier to optimise. `--huber-delta` controls the transition: smaller values behave more like L1 TV, while gradients below the threshold are smoothed quadratically.
 - When the FISTA loss stabilizes, set `AlignConfig.recon_rel_tol` / `recon_patience` (or pass the same kwargs to `fista_tv`) to
   terminate reconstructions early and skip redundant iterations.
 

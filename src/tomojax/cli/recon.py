@@ -41,6 +41,16 @@ def _parse_views_per_batch(value: str) -> int | str:
         raise argparse.ArgumentTypeError("--views-per-batch must be 'auto' or an integer")
 
 
+def _positive_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("value must be a positive float")
+    if not np.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("value must be a positive float")
+    return parsed
+
+
 def _default_views_per_batch(algo: str) -> int:
     return 16 if str(algo).lower() == "spdhg" else 1
 
@@ -99,6 +109,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.005,
         help="TV regularization weight (FISTA/SPDHG)",
+    )
+    p.add_argument(
+        "--regulariser",
+        choices=["tv", "huber_tv"],
+        default="tv",
+        help="Regulariser for iterative algos: tv (default) or huber_tv",
+    )
+    p.add_argument(
+        "--huber-delta",
+        type=_positive_float,
+        default=1e-2,
+        help="Huber-TV transition radius for --regulariser huber_tv",
     )
     p.add_argument(
         "--tv-prox-iters",
@@ -390,6 +412,8 @@ def main() -> None:
         cfg = FistaConfig(
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
+            regulariser=str(args.regulariser),
+            huber_delta=float(args.huber_delta),
             L=(float(args.L) if args.L is not None else None),
             views_per_batch=resolved_vpb,
             projector_unroll=1,
@@ -408,6 +432,8 @@ def main() -> None:
         algorithm_config = {
             "iters": int(cfg.iters),
             "lambda_tv": float(cfg.lambda_tv),
+            "regulariser": str(cfg.regulariser),
+            "huber_delta": float(cfg.huber_delta),
             "L": cfg.L,
             "views_per_batch": int(resolved_vpb),
             "projector_unroll": int(cfg.projector_unroll),
@@ -436,6 +462,8 @@ def main() -> None:
         cfg = SPDHGConfig(
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
+            regulariser=str(args.regulariser),
+            huber_delta=float(args.huber_delta),
             theta=float(args.theta),
             views_per_batch=int(resolved_vpb),
             seed=int(args.spdhg_seed),
@@ -454,6 +482,8 @@ def main() -> None:
         algorithm_config = {
             "iters": int(cfg.iters),
             "lambda_tv": float(cfg.lambda_tv),
+            "regulariser": str(cfg.regulariser),
+            "huber_delta": float(cfg.huber_delta),
             "theta": float(cfg.theta),
             "views_per_batch": int(cfg.views_per_batch),
             "seed": int(cfg.seed),

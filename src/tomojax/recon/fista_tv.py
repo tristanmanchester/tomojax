@@ -25,7 +25,15 @@ from ..core.validation import (
     validate_volume,
 )
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
-from ._tv_ops import div3, grad3
+from ._tv_ops import (
+    Regulariser,
+    div3,
+    grad3,
+    huber_tv_grad,
+    huber_tv_value,
+    isotropic_tv_value,
+    validate_regulariser,
+)
 
 
 GradMode = Literal["auto", "batched", "stream"]
@@ -35,6 +43,8 @@ GradMode = Literal["auto", "batched", "stream"]
 class FistaConfig:
     iters: int = 50
     lambda_tv: float = 0.005
+    regulariser: Regulariser = "tv"
+    huber_delta: float = 1e-2
     L: float | None = None
     views_per_batch: int | None = 1
     projector_unroll: int = 1
@@ -505,6 +515,12 @@ def fista_tv(
     """
     cfg = config
     vol_mask = cfg.support
+    regulariser = validate_regulariser(
+        cfg.regulariser,
+        cfg.huber_delta,
+        context="fista_tv config",
+    )
+    huber_delta = float(cfg.huber_delta)
     positivity, lower_bound, upper_bound = _normalize_constraint_config(cfg)
     constraints_enabled = positivity or lower_bound is not None or upper_bound is not None
     validate_grid(grid, "fista_tv grid")
@@ -559,6 +575,8 @@ def fista_tv(
             T_all=T_all,
             vol_mask=vol_mask,
         )
+        if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
+            L += float(cfg.lambda_tv) * 12.0 / huber_delta
 
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
@@ -576,6 +594,8 @@ def fista_tv(
             T_all=T_all,
             vol_mask=vol_mask,
         )
+        if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
+            g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
         return v, g
 
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
@@ -598,6 +618,11 @@ def fista_tv(
 
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
+
+    def regulariser_value_fn(x):
+        if regulariser == "huber_tv":
+            return huber_tv_value(x, huber_delta)
+        return isotropic_tv_value(x)
 
     use_early_stop = (
         (cfg.recon_rel_tol is not None)
@@ -626,7 +651,10 @@ def fista_tv(
             ) = state
             _, g = val_and_grad(z_a)
             y = z_a - (1.0 / L) * g
-            x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
+            if regulariser == "huber_tv":
+                x_new = y
+            else:
+                x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
             x_new = _project_constraints(
                 x_new,
                 positivity=positivity,
@@ -642,9 +670,8 @@ def fista_tv(
                 upper_bound=upper_bound,
             )
             data_loss_val = data_value(x_new)
-            gx, gy, gz = grad3(x_new)
-            tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))
-            obj = data_loss_val + cfg.lambda_tv * tv_norm
+            reg_value = regulariser_value_fn(x_new)
+            obj = data_loss_val + cfg.lambda_tv * reg_value
             obj32 = obj.astype(jnp.float32)
             rel_change = jnp.abs(obj - prev_a) / jnp.maximum(jnp.abs(prev_a), 1e-6)
             small = jnp.logical_and(early_flag, jnp.logical_and(has_prev_a, rel_change <= tol))
@@ -745,5 +772,7 @@ def fista_tv(
         "L": L,
         "effective_iters": int(iters_done),
         "early_stop": bool(done_flag),
+        "regulariser": regulariser,
+        "huber_delta": float(cfg.huber_delta),
     }
     return x_f, info

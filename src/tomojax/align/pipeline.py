@@ -20,6 +20,7 @@ from ..core.validation import (
     validate_volume,
 )
 from ..recon.fista_tv import FistaConfig, fista_tv
+from ..recon._tv_ops import Regulariser
 from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
@@ -313,6 +314,8 @@ class AlignConfig:
     outer_iters: int = 5
     recon_iters: int = 10
     lambda_tv: float = 0.005
+    regulariser: Regulariser = "tv"
+    huber_delta: float = 1e-2
     tv_prox_iters: int = 10
     recon_algo: Literal["fista", "spdhg"] = "fista"
     recon_positivity: bool = True
@@ -1091,6 +1094,8 @@ def align(
             fista_cfg = FistaConfig(
                 iters=cfg.recon_iters,
                 lambda_tv=cfg.lambda_tv,
+                regulariser=cfg.regulariser,
+                huber_delta=cfg.huber_delta,
                 L=L_prev,
                 views_per_batch=vpb,
                 projector_unroll=int(unroll),
@@ -1116,6 +1121,8 @@ def align(
             spdhg_cfg = SPDHGConfig(
                 iters=int(cfg.recon_iters),
                 lambda_tv=float(cfg.lambda_tv),
+                regulariser=cfg.regulariser,
+                huber_delta=float(cfg.huber_delta),
                 views_per_batch=max(1, int(cfg.views_per_batch)),
                 seed=int(cfg.spdhg_seed) + int(outer_idx) - 1,
                 projector_unroll=int(cfg.projector_unroll),
@@ -1630,6 +1637,8 @@ def align_multires(
             seed_cfg = FistaConfig(
                 iters=max(3, cfg.recon_iters // 2),
                 lambda_tv=cfg.lambda_tv,
+                regulariser=cfg.regulariser,
+                huber_delta=cfg.huber_delta,
                 projector_unroll=int(cfg.projector_unroll),
                 checkpoint_projector=cfg.checkpoint_projector,
                 gather_dtype=cfg.gather_dtype,

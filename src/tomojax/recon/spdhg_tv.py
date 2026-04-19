@@ -23,7 +23,15 @@ from ..core.validation import (
     validate_volume,
 )
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
-from ._tv_ops import div3, grad3
+from ._tv_ops import (
+    Regulariser,
+    div3,
+    grad3,
+    huber_tv_value,
+    isotropic_tv_value,
+    prox_huber_tv_conj,
+    validate_regulariser,
+)
 
 
 # --------- config ----------
@@ -31,6 +39,8 @@ from ._tv_ops import div3, grad3
 class SPDHGConfig:
     iters: int = 400
     lambda_tv: float = 5e-3
+    regulariser: Regulariser = "tv"
+    huber_delta: float = 1e-2
     theta: float = 1.0  # extrapolation for xbar
     views_per_batch: int = 16  # size of a stochastic block
     seed: int = 0
@@ -172,7 +182,7 @@ def spdhg_tv(
     callback: LossCallback | None = None,
 ) -> tuple[jnp.ndarray, dict]:
     """
-    SPDHG (stochastic Chambolle–Pock) with weighted L2 data term and isotropic TV.
+    SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
 
     If ``callback`` is provided, it fires on the first logged objective sample and
     on the final logged objective sample. The callback arguments are ``(step,
@@ -181,6 +191,13 @@ def spdhg_tv(
     are eligible for callbacks; if a single logged sample exists, the callback
     fires once.
     """
+    regulariser = validate_regulariser(
+        config.regulariser,
+        config.huber_delta,
+        context="spdhg_tv config",
+    )
+    huber_delta = float(config.huber_delta)
+
     validate_grid(grid, "spdhg_tv grid")
     n_views, nv, nu = validate_projection_stack(
         projections,
@@ -339,12 +356,24 @@ def spdhg_tv(
         p1_u = p1 + sigma_tv * gx
         p2_u = p2 + sigma_tv * gy
         p3_u = p3 + sigma_tv * gz
-        norm = jnp.maximum(
-            1.0, jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u) / jnp.maximum(lam, 1e-12)
-        )
-        p1_new = p1_u / norm
-        p2_new = p2_u / norm
-        p3_new = p3_u / norm
+        if regulariser == "huber_tv":
+            p1_new, p2_new, p3_new = prox_huber_tv_conj(
+                p1_u,
+                p2_u,
+                p3_u,
+                sigma=sigma_tv,
+                lam=lam,
+                delta=huber_delta,
+            )
+        else:
+            norm = jnp.maximum(
+                1.0,
+                jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u)
+                / jnp.maximum(lam, 1e-12),
+            )
+            p1_new = p1_u / norm
+            p2_new = p2_u / norm
+            p3_new = p3_u / norm
         # TV contributes with -div(p) in the primal gradient; track the increment
         delta_div = div3(p1_new - p1, p2_new - p2, p3_new - p3)
 
@@ -373,9 +402,11 @@ def spdhg_tv(
                 * jnp.vdot(resid, resid).real
                 * (float(n_views) / jnp.maximum(valid.astype(jnp.float32), 1.0))
             )
-            gx2, gy2, gz2 = grad3(x_new)
-            tv = jnp.sum(jnp.sqrt(gx2 * gx2 + gy2 * gy2 + gz2 * gz2 + 1e-8))
-            obj = (data_est + lam * tv).astype(jnp.float32)
+            if regulariser == "huber_tv":
+                reg_value = huber_tv_value(x_new, huber_delta)
+            else:
+                reg_value = isotropic_tv_value(x_new)
+            obj = (data_est + lam * reg_value).astype(jnp.float32)
             return losses.at[t].set(obj)
 
         def _no_log():
@@ -418,5 +449,7 @@ def spdhg_tv(
         "A_norm": (float(L_A) if L_A is not None else None),
         "grad_norm": float(L_grad),
         "selection_prob": float(p_prob),
+        "regulariser": regulariser,
+        "huber_delta": float(config.huber_delta),
     }
     return x_f, info

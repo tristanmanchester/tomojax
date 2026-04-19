@@ -7,6 +7,10 @@ out = "runs/recon_from_config.nxs"
 
 algo = "fbp"
 filter = "ramp"
+# Iterative regulariser options:
+regulariser = "tv"
+# regulariser = "huber_tv"
+# huber_delta = 0.01
 # FISTA-only optional physical constraints:
 # positivity = true
 # lower_bound = 0.0

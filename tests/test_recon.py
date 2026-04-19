@@ -127,6 +127,29 @@ def test_fista_loss_decreases():
     assert loss[-1] <= loss[0]
 
 
+def test_fista_runs_with_huber_tv_regulariser():
+    grid, det, geom, _, projs = make_simple_case(6, 6, 6, 6)
+    x, info = fista_tv(
+        geom,
+        grid,
+        det,
+        projs,
+        config=FistaConfig(
+            iters=3,
+            lambda_tv=0.001,
+            regulariser="huber_tv",
+            huber_delta=0.1,
+            L=100.0,
+        ),
+    )
+
+    assert np.isfinite(np.asarray(x)).all()
+    assert np.isfinite(np.asarray(info["loss"])).all()
+    assert len(info["loss"]) == 3
+    assert info["regulariser"] == "huber_tv"
+    assert info["huber_delta"] == pytest.approx(0.1)
+
+
 def test_fista_early_stop_triggers():
     grid, det, geom, _, projs = make_simple_case(8, 8, 8, 8)
     zero_projs = jnp.zeros_like(projs)

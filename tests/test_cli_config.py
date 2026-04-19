@@ -19,6 +19,8 @@ def test_recon_config_supplies_required_args_and_typed_values(tmp_path):
                 'out = "runs/recon.nxs"',
                 'algo = "spdhg"',
                 "lambda_tv = 0.01",
+                'regulariser = "huber_tv"',
+                "huber_delta = 0.05",
                 'views_per_batch = "auto"',
                 "grid = [8, 9, 10]",
                 "checkpoint_projector = false",
@@ -40,13 +42,51 @@ def test_recon_config_supplies_required_args_and_typed_values(tmp_path):
     assert args.out == "runs/recon.nxs"
     assert args.algo == "spdhg"
     assert args.lambda_tv == pytest.approx(0.01)
+    assert args.regulariser == "huber_tv"
+    assert args.huber_delta == pytest.approx(0.05)
     assert args.views_per_batch == "auto"
     assert args.grid == [8, 9, 10]
     assert args.checkpoint_projector is False
     assert args.progress is True
     assert metadata["config_path"] == str(config_path)
     assert metadata["config_file_values"]["algo"] == "spdhg"
+    assert metadata["config_file_values"]["regulariser"] == "huber_tv"
     assert metadata["effective_options"]["out"] == "runs/recon.nxs"
+
+
+def test_recon_cli_overrides_regulariser_config_values(tmp_path):
+    config_path = tmp_path / "recon_regulariser.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/recon.nxs"',
+                'regulariser = "tv"',
+                "huber_delta = 0.2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = recon_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        [
+            "--config",
+            str(config_path),
+            "--regulariser",
+            "huber_tv",
+            "--huber-delta",
+            "0.03",
+        ],
+        required=("data", "out"),
+    )
+
+    assert args.regulariser == "huber_tv"
+    assert args.huber_delta == pytest.approx(0.03)
+    assert metadata["config_file_values"]["regulariser"] == "tv"
+    assert "regulariser" in metadata["explicit_cli_keys"]
+    assert "huber_delta" in metadata["explicit_cli_keys"]
 
 
 def test_recon_config_accepts_fista_constraints_and_cli_can_disable_positivity(tmp_path):
@@ -91,6 +131,8 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
                 'data = "input.nxs"',
                 'out = "runs/align.nxs"',
                 "lambda_tv = 0.02",
+                'regulariser = "tv"',
+                "huber_delta = 0.2",
                 "levels = [4, 2, 1]",
                 "checkpoint_projector = false",
                 'checkpoint = "runs/align.ckpt.npz"',
@@ -109,6 +151,10 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
             str(config_path),
             "--lambda-tv",
             "0.03",
+            "--regulariser",
+            "huber_tv",
+            "--huber-delta",
+            "0.04",
             "--levels",
             "2",
             "1",
@@ -124,6 +170,8 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
     assert args.data == "input.nxs"
     assert args.out == "runs/align.nxs"
     assert args.lambda_tv == pytest.approx(0.03)
+    assert args.regulariser == "huber_tv"
+    assert args.huber_delta == pytest.approx(0.04)
     assert args.levels == [2, 1]
     assert args.checkpoint_projector is True
     assert args.checkpoint == "runs/align.ckpt.npz"
@@ -132,7 +180,10 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
     assert metadata["config_file_values"]["levels"] == [4, 2, 1]
     assert metadata["config_file_values"]["checkpoint"] == "runs/align.ckpt.npz"
     assert metadata["config_file_values"]["checkpoint_every"] == 2
+    assert metadata["config_file_values"]["regulariser"] == "tv"
     assert "lambda_tv" in metadata["explicit_cli_keys"]
+    assert "regulariser" in metadata["explicit_cli_keys"]
+    assert "huber_delta" in metadata["explicit_cli_keys"]
     assert "levels" in metadata["explicit_cli_keys"]
     assert "checkpoint_projector" in metadata["explicit_cli_keys"]
     assert "checkpoint_every" in metadata["explicit_cli_keys"]
@@ -557,6 +608,10 @@ def test_config_unknown_key_reports_useful_error(tmp_path, capsys):
     [
         ('data = "input.nxs"\nout = "runs/recon.nxs"\nalgo = "not-real"\n', "invalid choice"),
         ('data = "input.nxs"\nout = "runs/recon.nxs"\ngrid = [8, 9]\n', "expected 3 values"),
+        (
+            'data = "input.nxs"\nout = "runs/recon.nxs"\nregulariser = "not-real"\n',
+            "invalid choice",
+        ),
     ],
 )
 def test_config_invalid_values_report_parser_errors(tmp_path, capsys, body, expected):

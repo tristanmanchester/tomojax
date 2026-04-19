@@ -46,6 +46,16 @@ from ..utils.fov import (
 )
 
 
+def _positive_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("value must be a positive float")
+    if not np.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("value must be a positive float")
+    return parsed
+
+
 def _init_jax_compilation_cache() -> None:
     """Enable JAX persistent compilation cache for faster re-runs.
 
@@ -176,6 +186,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Inner reconstruction solver used during alignment (default: fista)",
     )
     p.add_argument("--lambda-tv", type=float, default=0.005)
+    p.add_argument(
+        "--regulariser",
+        choices=["tv", "huber_tv"],
+        default="tv",
+        help="Regulariser for inner reconstruction: tv (default) or huber_tv",
+    )
+    p.add_argument(
+        "--huber-delta",
+        type=_positive_float,
+        default=1e-2,
+        help="Huber-TV transition radius for --regulariser huber_tv",
+    )
     p.add_argument(
         "--tv-prox-iters",
         type=int,
@@ -644,6 +666,8 @@ def main() -> None:
         recon_iters=args.recon_iters,
         recon_algo=str(args.recon_algo),
         lambda_tv=args.lambda_tv,
+        regulariser=str(args.regulariser),
+        huber_delta=float(args.huber_delta),
         tv_prox_iters=int(args.tv_prox_iters),
         recon_positivity=bool(args.recon_positivity),
         spdhg_seed=int(args.spdhg_seed),
@@ -967,6 +991,8 @@ def main() -> None:
                 "requested_gather_dtype": str(args.gather_dtype),
                 "gather_dtype": _gather,
                 "recon_algo": str(args.recon_algo),
+                "regulariser": str(args.regulariser),
+                "huber_delta": float(args.huber_delta),
                 "views_per_batch": int(args.views_per_batch),
                 "spdhg_seed": int(args.spdhg_seed),
                 "recon_positivity": bool(args.recon_positivity),

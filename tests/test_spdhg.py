@@ -51,6 +51,28 @@ def test_spdhg_from_sim_decreases():
     assert loss[-1] <= loss[0]
 
 
+def test_spdhg_runs_with_huber_tv_regulariser():
+    grid, det, geom, _, projs = make_simple_case(6, 6, 6, 6)
+    cfg = SPDHGConfig(
+        iters=2,
+        lambda_tv=1e-3,
+        regulariser="huber_tv",
+        huber_delta=0.1,
+        views_per_batch=2,
+        tau=0.01,
+        sigma_data=0.01,
+        sigma_tv=0.1,
+        log_every=1,
+        seed=0,
+    )
+    x, info = spdhg_tv(geom, grid, det, projs, config=cfg)
+
+    assert np.isfinite(np.asarray(x)).all()
+    assert np.isfinite(np.asarray(info["loss"])).all()
+    assert info["regulariser"] == "huber_tv"
+    assert info["huber_delta"] == pytest.approx(0.1)
+
+
 def test_spdhg_keeps_configured_data_dual_step_under_block_sampling():
     grid, det, geom, vol, projs = make_simple_case(8, 8, 8, 12)
     cfg = SPDHGConfig(

@@ -1,7 +1,7 @@
 # FISTA Constraint Validation, 64^3
 
-This note records the smoke validation used when adding optional positivity and
-box constraints to the FISTA-TV reconstruction path. It is a correctness and
+This note records smoke validation for optional positivity/box constraints and
+regulariser selection in the FISTA reconstruction path. It is a correctness and
 regression check, not a production benchmark.
 
 ## Regression Commands
@@ -57,7 +57,27 @@ Result:
 
 `git diff --check` was clean.
 
+After adding Huber-TV, the expanded solver/config regression set passed with:
+
+```bash
+uv run pytest -q \
+  tests/test_recon_math_fixes.py \
+  tests/test_cli_entrypoints.py \
+  tests/test_tv_ops.py \
+  tests/test_recon.py \
+  tests/test_spdhg.py \
+  tests/test_cli_config.py
+```
+
+Result:
+
+```text
+78 passed in 48.37s
+```
+
 ## 64^3 Constraint Comparison
+
+This is the original FISTA-TV constraint smoke run.
 
 Environment:
 
@@ -101,3 +121,62 @@ Results:
 - The tighter/lower-shifted boxes scored worse against this phantom because they
   imposed constraints that do not match the phantom background and intensity
   distribution.
+
+## 64^3 TV vs Huber-TV Constraint Comparison
+
+This follow-up smoke run checks that the new Huber-TV regulariser remains finite
+and respects the same FISTA constraint projections on the same problem class.
+The run intentionally uses a mild regularisation weight, so TV and Huber-TV are
+expected to be close; unit tests cover the Huber-TV small-delta TV-like limit and
+quadratic near-zero-gradient behavior.
+
+Environment:
+
+- Backend: CPU (`TFRT_CPU_0`)
+- Volume: synthetic nonnegative `64 x 64 x 64` phantom
+- Geometry: parallel beam
+- Views: `32`
+- Detector: `64 x 64`
+- FISTA iterations: `10`
+- Regularisation weight: `lambda_tv=0.001`
+- TV prox iterations: `5`
+- Huber transition radius: `huber_delta=0.05`
+- Data Lipschitz estimate: `L_data=1957.70556640625`
+- Huber smooth-step Lipschitz estimate: `L_huber=1957.94556640625`
+
+Setup timings:
+
+| Stage | Time |
+| --- | ---: |
+| Projection generation | `6.952s` |
+| Power-method estimate | `10.353s` |
+
+Results:
+
+| Regulariser | Variant | Min | Max | Negative voxels | Lower violations | Upper violations | Final loss | RMSE vs GT | PSNR vs GT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `tv` | none | `-0.06030` | `1.06495` | `72819` | n/a | n/a | `9045.52` | `0.04425` | `27.63` |
+| `tv` | positivity | `0.00000` | `1.06005` | `0` | n/a | n/a | `8609.88` | `0.04307` | `27.82` |
+| `tv` | lower `0.05` | `0.05000` | `1.01602` | `0` | `0` | n/a | `453558.66` | `0.06932` | `23.32` |
+| `tv` | upper `0.80` | `-0.05638` | `0.80000` | `52989` | n/a | `0` | `40768.12` | `0.05294` | `25.52` |
+| `tv` | box `0.00..0.80` | `0.00000` | `0.80000` | `0` | `0` | `0` | `40960.88` | `0.05206` | `25.67` |
+| `tv` | positivity + box `0.05..0.80` | `0.05000` | `0.80000` | `0` | `0` | `0` | `467828.66` | `0.07084` | `22.99` |
+| `huber_tv` | none | `-0.06031` | `1.06496` | `71416` | n/a | n/a | `9045.68` | `0.04425` | `27.63` |
+| `huber_tv` | positivity | `0.00000` | `1.06007` | `0` | n/a | n/a | `8611.23` | `0.04307` | `27.82` |
+| `huber_tv` | lower `0.05` | `0.05000` | `1.01603` | `0` | `0` | n/a | `453559.78` | `0.06932` | `23.32` |
+| `huber_tv` | upper `0.80` | `-0.05638` | `0.80000` | `51598` | n/a | `0` | `40767.36` | `0.05294` | `25.52` |
+| `huber_tv` | box `0.00..0.80` | `0.00000` | `0.80000` | `0` | `0` | `0` | `40961.31` | `0.05206` | `25.67` |
+| `huber_tv` | positivity + box `0.05..0.80` | `0.05000` | `0.80000` | `0` | `0` | `0` | `467829.69` | `0.07084` | `22.99` |
+
+Notes:
+
+- Huber-TV completed all constraint variants with finite losses and volumes.
+- The unconstrained default still permits negative voxels for both regularisers.
+- Positivity removed all negative voxels and slightly improved RMSE/PSNR on this
+  nonnegative phantom for both regularisers.
+- Upper-only constraints capped maxima but did not imply positivity; negative
+  voxels remained in upper-only runs.
+- Box-constrained runs had zero lower and upper violations for both
+  regularisers.
+- The `0.05` lower floor worsened RMSE/PSNR because the phantom background is
+  truly zero, so that constraint is intentionally mismatched.
