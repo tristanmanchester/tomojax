@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 import logging
 import math
 import time
-from typing import Callable, Iterable, Literal, TypedDict
+from typing import Callable, Iterable, Literal, Mapping, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +22,7 @@ from ..core.validation import (
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
-from .dofs import active_dof_mask, normalize_dofs
+from .dofs import DofBounds, active_dof_mask, bounds_vectors, normalize_bounds, normalize_dofs
 from .losses import (
     L2OtsuLossSpec,
     AlignmentLossSpec,
@@ -131,6 +131,7 @@ def _select_gn_candidate(
     loss_before: float,
     eval_loss: Callable[[jnp.ndarray], float],
     gn_accept_tol: float,
+    constrain_candidate: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
     smooth_candidate: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray] | None = None,
     light_smoothness_weights_sq: jnp.ndarray | None = None,
     medium_smoothness_weights_sq: jnp.ndarray | None = None,
@@ -147,12 +148,17 @@ def _select_gn_candidate(
             gn_accept_tol,
         )
 
-    raw_params = params5_prev + dp_all
+    def _constrain(candidate: jnp.ndarray) -> jnp.ndarray:
+        if constrain_candidate is None:
+            return candidate
+        return constrain_candidate(candidate)
+
+    raw_params = _constrain(params5_prev + dp_all)
     raw_loss = eval_loss(raw_params)
     if _accepts(raw_loss):
         return raw_params, raw_loss
 
-    half_params = params5_prev + jnp.float32(0.5) * dp_all
+    half_params = _constrain(params5_prev + jnp.float32(0.5) * dp_all)
     half_loss = eval_loss(half_params)
     if _accepts(half_loss):
         return half_params, half_loss
@@ -182,7 +188,7 @@ def _select_gn_candidate(
     best_loss = float("inf")
     accepted = False
     for weights in smooth_weights:
-        candidate_params = smooth_candidate(base_params, weights)
+        candidate_params = _constrain(smooth_candidate(base_params, weights))
         candidate_loss = eval_loss(candidate_params)
         if _accepts(candidate_loss, best_loss):
             best_params = candidate_params
@@ -255,6 +261,7 @@ class AlignConfig:
     w_trans: float = 0.0
     optimise_dofs: tuple[str, ...] | None = None
     freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
+    bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
     seed_translations: bool = False
     # Volume masking before forward projection (modeling for ROI/truncation)
     # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
@@ -282,6 +289,7 @@ class AlignConfig:
             )
         self.freeze_dofs = normalize_dofs(self.freeze_dofs, option_name="freeze_dofs")
         active_dof_mask(optimise_dofs=self.optimise_dofs, freeze_dofs=self.freeze_dofs)
+        self.bounds = normalize_bounds(self.bounds, option_name="bounds")
 
 
 def align(
@@ -334,9 +342,13 @@ def align(
         dtype=bool,
     )
     active_mask = active_mask_bool.astype(jnp.float32)
+    bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
 
-    def _restore_frozen(candidate: jnp.ndarray) -> jnp.ndarray:
-        return jnp.where(active_mask_bool, candidate, frozen_params5)
+    def _apply_param_constraints(candidate: jnp.ndarray) -> jnp.ndarray:
+        clipped = jnp.clip(candidate, bounds_lower, bounds_upper)
+        return jnp.where(active_mask_bool, clipped, frozen_params5)
+
+    params5 = _apply_param_constraints(params5)
 
     loss_hist = []
     stopped_by_observer = False
@@ -976,7 +988,7 @@ def align(
                 smooth_candidate = None
                 if int(params5.shape[0]) >= 3:
                     smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
-                        _restore_frozen(candidate),
+                        _apply_param_constraints(candidate),
                         smoothness_gram,
                         weights,
                     )
@@ -992,15 +1004,16 @@ def align(
                         )
                     ),
                     gn_accept_tol=cfg.gn_accept_tol,
+                    constrain_candidate=_apply_param_constraints,
                     smooth_candidate=smooth_candidate,
                     light_smoothness_weights_sq=light_smoothness_weights_sq,
                     medium_smoothness_weights_sq=medium_smoothness_weights_sq,
                     smoothness_weights_sq=smoothness_weights_sq,
                     trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
                 )
-                params5 = _restore_frozen(params5)
+                params5 = _apply_param_constraints(params5)
             else:
-                params5 = _restore_frozen(params5_prev + dp_all)
+                params5 = _apply_param_constraints(params5_prev + dp_all)
                 candidate_loss = _evaluate_align_loss(
                     lambda: align_loss_jit(params5, x),
                     fallback=math.inf,
@@ -1029,13 +1042,13 @@ def align(
             rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
             eff_scales = scales / rms
             # Simple 2-point line search on step factor to improve single-iter progress
-            best_params = _restore_frozen(p5_in - g_params * eff_scales)
+            best_params = _apply_param_constraints(p5_in - g_params * eff_scales)
             best_loss = _evaluate_align_loss(
                 lambda: align_loss_jit(best_params, x),
                 fallback=math.inf,
                 context="Treating GD base candidate as rejected during alignment loss evaluation",
             )
-            cand_params = _restore_frozen(p5_in - 2.0 * g_params * eff_scales)
+            cand_params = _apply_param_constraints(p5_in - 2.0 * g_params * eff_scales)
             cand_loss = _evaluate_align_loss(
                 lambda: align_loss_jit(cand_params, x),
                 fallback=math.inf,

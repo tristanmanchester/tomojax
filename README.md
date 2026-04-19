@@ -216,6 +216,8 @@ Alignment optimises per-view parameters in `[alpha, beta, phi, dx, dz]` order by
 Use `--optimise-dofs dx,dz` for translation-only 2-DOF runs, `--freeze-dofs phi`
 for a common 4-DOF run, or omit DOF flags for full 5-DOF alignment. Outputs still
 store all five columns; inactive columns are held fixed at their initial values.
+Use bounds such as `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` to keep active
+DOFs inside physical limits; rotations are radians and translations are world units.
 
 
 ## Notes

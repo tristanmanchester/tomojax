@@ -168,6 +168,64 @@ def test_align_optimise_only_dx_dz_keeps_rotations_initial(monkeypatch, opt_meth
         loss_name=loss_name,
         init_params5=jnp.asarray(init_params5),
         optimise_dofs=("dx", "dz"),
+        bounds={"dx": (-0.01, 0.01), "dz": (-0.02, 0.02)},
     )
 
     np.testing.assert_array_equal(params5[:, :3], init_params5[:, :3])
+    assert np.max(params5[:, 3]) <= 0.01 + 1e-6
+    assert np.min(params5[:, 3]) >= -0.01 - 1e-6
+    assert np.max(params5[:, 4]) <= 0.02 + 1e-6
+    assert np.min(params5[:, 4]) >= -0.02 - 1e-6
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_bounds_clip_active_translations(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=10)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 3] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+    init_params5[:, 4] = np.linspace(0.4, -0.4, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        bounds={"dx": (-0.05, 0.05), "dz": (-0.04, 0.04)},
+    )
+
+    assert np.max(params5[:, 3]) <= 0.05 + 1e-6
+    assert np.min(params5[:, 3]) >= -0.05 - 1e-6
+    assert np.max(params5[:, 4]) <= 0.04 + 1e-6
+    assert np.min(params5[:, 4]) >= -0.04 - 1e-6
+
+
+@pytest.mark.parametrize(
+    ("opt_method", "loss_name"),
+    [
+        ("gd", "l2_otsu"),
+        ("gn", "l2"),
+    ],
+)
+def test_align_bounds_do_not_clip_frozen_dofs(monkeypatch, opt_method, loss_name):
+    _, _, _, _, projs = make_misaligned_case(seed=11)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 2] = np.linspace(-0.5, 0.5, projs.shape[0], dtype=np.float32)
+
+    params5, _ = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method=opt_method,
+        views_per_batch=2,
+        loss_name=loss_name,
+        init_params5=jnp.asarray(init_params5),
+        freeze_dofs=("phi",),
+        bounds={"phi": (-0.01, 0.01)},
+    )
+
+    np.testing.assert_array_equal(params5[:, 2], init_params5[:, 2])

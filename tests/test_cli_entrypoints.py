@@ -68,6 +68,18 @@ def test_recon_help_documents_quicklook_aliases(monkeypatch, capsys):
     assert "--save-preview" in captured.out
 
 
+def test_align_help_documents_bounds_example(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["tomojax-align", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        align_cli.main()
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "--bounds" in captured.out
+    assert "dx=-20:20,dz=-20:20,alpha=-0.05:0.05" in captured.out
+
+
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
     assert recon_cli._parse_views_per_batch("auto") == "auto"
     assert recon_cli._parse_views_per_batch("AUTO") == "auto"
@@ -313,6 +325,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
         captured["align_grid"] = recon_grid
         captured["align_detector"] = recon_detector
         captured["align_projections_shape"] = tuple(projections.shape)
+        captured["align_cfg"] = cfg
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         info = {
             "loss": [1.0],
@@ -358,6 +371,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
                 'roi = "off"',
                 'gather_dtype = "bf16"',
                 'transfer_guard = "off"',
+                "bounds = { dx = [-20, 20], alpha = [-0.05, 0.05] }",
                 f'save_params_json = "{json_path}"',
                 f'save_params_csv = "{csv_path}"',
                 f'save_manifest = "{manifest_path}"',
@@ -384,6 +398,10 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert captured["transfer_guard"] == "log"
     assert captured["save_path"] == str(out_path)
     assert captured["save_projections_shape"] == (2, 1, 2)
+    assert captured["align_cfg"].bounds == (
+        ("alpha", -0.05, 0.05),
+        ("dx", -20.0, 20.0),
+    )
     saved_meta = captured["save_metadata"]
     np.testing.assert_allclose(np.asarray(saved_meta.align_params), np.asarray(params5))
     assert json_path.exists()
@@ -408,6 +426,10 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert manifest["resolved_config"]["output_path"] == str(out_path)
     assert manifest["resolved_config"]["config_path"] == str(config_path)
     assert manifest["resolved_config"]["config_file_values"]["gather_dtype"] == "bf16"
+    assert manifest["resolved_config"]["config_file_values"]["bounds"] == [
+        ["alpha", -0.05, 0.05],
+        ["dx", -20.0, 20.0],
+    ]
     assert "gather_dtype" in manifest["resolved_config"]["explicit_cli_keys"]
     assert manifest["resolved_config"]["effective_options"]["gather_dtype"] == "fp32"
     assert manifest["resolved_config"]["gather_dtype"] == "fp32"

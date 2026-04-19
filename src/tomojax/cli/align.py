@@ -10,7 +10,7 @@ import sys
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from ..align.dofs import active_dof_mask, normalize_dofs
+from ..align.dofs import DofBounds, active_dof_mask, normalize_bounds, normalize_dofs
 from ..align.losses import parse_loss_spec
 from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
@@ -114,6 +114,13 @@ def _parse_dof_args(
     return optimise_dofs, freeze_dofs
 
 
+def _parse_bounds_arg(value: object) -> DofBounds:
+    try:
+        return normalize_bounds(value, option_name="--bounds")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
@@ -171,6 +178,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DOF[,DOF]",
         help="Named alignment DOFs to keep fixed at initial values. Example: phi",
+    )
+    p.add_argument(
+        "--bounds",
+        type=_parse_bounds_arg,
+        default=None,
+        metavar="DOF=LOWER:UPPER[,DOF=LOWER:UPPER]",
+        help=(
+            "Finite per-DOF parameter bounds. Rotations are radians; translations are "
+            "world units. Example: dx=-20:20,dz=-20:20,alpha=-0.05:0.05"
+        ),
     )
     p.add_argument("--w-rot", type=float, default=1e-3, help="Smoothness weight for rotations")
     p.add_argument("--w-trans", type=float, default=1e-3, help="Smoothness weight for translations")
@@ -392,6 +409,7 @@ def main() -> None:
         w_trans=float(args.w_trans),
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
+        bounds=args.bounds,
         loss=loss_spec,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),

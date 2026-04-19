@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 import tomojax.cli.align as align_cli
+from tomojax.align.dofs import normalize_bounds
 from tomojax.cli.config import parse_args_with_config
 import tomojax.cli.recon as recon_cli
 
@@ -167,6 +168,122 @@ def test_align_cli_rejects_unknown_dof_name(capsys):
     assert "Unknown alignment DOF" in captured.err
     assert "theta" in captured.err
     assert "alpha" in captured.err
+
+
+def test_normalize_bounds_accepts_cli_string_in_canonical_order():
+    bounds = normalize_bounds(
+        "dx=-20:20,dz=-10:10,alpha=-0.05:0.05",
+        option_name="--bounds",
+    )
+
+    assert bounds == (
+        ("alpha", -0.05, 0.05),
+        ("dx", -20.0, 20.0),
+        ("dz", -10.0, 10.0),
+    )
+
+
+def test_normalize_bounds_accepts_toml_style_mapping():
+    bounds = normalize_bounds(
+        {"dz": [-10, 10], "alpha": [-0.05, 0.05]},
+        option_name="bounds",
+    )
+
+    assert bounds == (
+        ("alpha", -0.05, 0.05),
+        ("dz", -10.0, 10.0),
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("theta=-1:1", "Unknown alignment DOF"),
+        ("dx=-1:1,dx=-2:2", "Duplicate alignment bounds"),
+        ("dx=1:1", "lower bound 1 must be less than upper bound 1"),
+        ("dx=-inf:1", "must be finite"),
+        ("dx=left:1", "is not numeric"),
+    ],
+)
+def test_normalize_bounds_rejects_invalid_values(raw, expected):
+    with pytest.raises(ValueError, match=expected):
+        normalize_bounds(raw, option_name="--bounds")
+
+
+def test_align_cli_bounds_option_parses_named_bounds():
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--bounds",
+            "dx=-20:20,dz=-20:20,alpha=-0.05:0.05",
+        ],
+        required=("data", "out"),
+    )
+
+    assert args.bounds == (
+        ("alpha", -0.05, 0.05),
+        ("dx", -20.0, 20.0),
+        ("dz", -20.0, 20.0),
+    )
+    assert "bounds" in metadata["explicit_cli_keys"]
+
+
+def test_align_config_toml_accepts_bounds_mapping(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                "bounds = { dx = [-20, 20], alpha = [-0.05, 0.05] }",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path)],
+        required=("data", "out"),
+    )
+
+    assert args.bounds == (
+        ("alpha", -0.05, 0.05),
+        ("dx", -20.0, 20.0),
+    )
+    assert metadata["config_file_values"]["bounds"] == (
+        ("alpha", -0.05, 0.05),
+        ("dx", -20.0, 20.0),
+    )
+
+
+def test_align_cli_rejects_invalid_bounds_before_main_work(capsys):
+    parser = align_cli._build_parser()
+
+    with pytest.raises(SystemExit):
+        parse_args_with_config(
+            parser,
+            [
+                "--data",
+                "input.nxs",
+                "--out",
+                "runs/align.nxs",
+                "--bounds",
+                "dx=20:-20",
+            ],
+            required=("data", "out"),
+        )
+
+    captured = capsys.readouterr()
+    assert "Invalid alignment bounds" in captured.err
+    assert "dx" in captured.err
+    assert "lower bound 20 must be less than upper bound -20" in captured.err
 
 
 def test_config_unknown_key_reports_useful_error(tmp_path, capsys):

@@ -17,6 +17,9 @@ gn_damping = 0.001
 #   5-DOF full alignment: omit both keys, or set all names explicitly.
 # optimise_dofs = ["dx", "dz"]
 # freeze_dofs = ["phi"]
+# Optional finite parameter bounds by DOF. Rotations are radians; translations
+# are world units. Omitted DOFs are unconstrained.
+# bounds = { dx = [-20, 20], dz = [-20, 20], alpha = [-0.05, 0.05] }
 gather_dtype = "auto"
 checkpoint_projector = true
 log_summary = true

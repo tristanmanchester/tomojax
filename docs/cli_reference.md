@@ -168,7 +168,7 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--tv-prox-iters <int>] \
   [--lr-rot <float>] [--lr-trans <float>] \
   [--opt-method gd|gn] [--gn-damping <float>] \
-  [--optimise-dofs <names>] [--freeze-dofs <names>] \
+  [--optimise-dofs <names>] [--freeze-dofs <names>] [--bounds <spec>] \
   [--early-stop|--no-early-stop] [--early-stop-rel <float>] [--early-stop-patience <int>] \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
@@ -182,6 +182,7 @@ Key options
 - Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--tv-prox-iters` (10; increase to 20–30 for noisy data).
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
 - Active DOFs: choose from `alpha`, `beta`, `phi`, `dx`, `dz`. By default all five are optimised. Use `--optimise-dofs dx,dz` for translation-only alignment, or `--freeze-dofs phi` to keep selected parameters fixed at their initial values.
+- Parameter bounds: `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` clips named DOFs after each update. Rotations (`alpha`, `beta`, `phi`) are in radians; translations (`dx`, `dz`) are in world units. Omitted DOFs are unconstrained, and frozen DOFs stay fixed even if a bound is supplied for them.
 - Early stopping (alignment across outers):
   - Enable/disable: `--early-stop` (default) or `--no-early-stop`.
   - Threshold and patience: `--early-stop-rel` (default 1e-3), `--early-stop-patience` (default 2).
@@ -227,6 +228,12 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
 uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --opt-method gn --freeze-dofs phi \
   --out out/align_no_phi.nxs
+
+# Bounded translations and one rotation, preserving unconstrained behavior for other DOFs
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --opt-method gn \
+  --bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05 \
+  --out out/align_bounded.nxs
 
 # 5-DOF full alignment is the default; this explicit form is equivalent
 uv run tomojax-align --data data/sim_misaligned.nxs \
