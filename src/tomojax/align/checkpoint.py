@@ -13,6 +13,16 @@ import numpy as np
 
 CHECKPOINT_KIND = "tomojax.align.checkpoint"
 SCHEMA_VERSION = 1
+_ALIGN_CONFIG_COMPAT_DEFAULTS = {
+    "recon_algo": "fista",
+    "recon_positivity": True,
+    "spdhg_seed": 0,
+}
+_ALIGN_CLI_COMPAT_DEFAULTS = {
+    "recon_algo": "fista",
+    "spdhg_seed": 0,
+    "recon_positivity": True,
+}
 
 
 class CheckpointError(RuntimeError):
@@ -69,6 +79,21 @@ def normalize_json(value: Any) -> Any:
         except Exception:
             pass
     return str(value)
+
+
+def _normalize_checkpoint_compare_value(key: str, value: Any) -> Any:
+    normalized = normalize_json(value)
+    if key == "config" and isinstance(normalized, Mapping):
+        with_defaults = dict(normalized)
+        for default_key, default_value in _ALIGN_CONFIG_COMPAT_DEFAULTS.items():
+            with_defaults.setdefault(default_key, default_value)
+        return with_defaults
+    if key == "cli_options" and isinstance(normalized, Mapping):
+        with_defaults = dict(normalized)
+        for default_key, default_value in _ALIGN_CLI_COMPAT_DEFAULTS.items():
+            with_defaults.setdefault(default_key, default_value)
+        return with_defaults
+    return normalized
 
 
 def build_alignment_checkpoint_metadata(
@@ -281,8 +306,8 @@ def validate_alignment_checkpoint(
     ):
         if key not in expected:
             continue
-        actual_value = normalize_json(metadata.get(key))
-        expected_value = normalize_json(expected.get(key))
+        actual_value = _normalize_checkpoint_compare_value(key, metadata.get(key))
+        expected_value = _normalize_checkpoint_compare_value(key, expected.get(key))
         if actual_value != expected_value:
             raise CheckpointError(
                 f"incompatible checkpoint: {key.replace('_', ' ')} "

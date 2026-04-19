@@ -20,6 +20,7 @@ from ..core.validation import (
     validate_volume,
 )
 from ..recon.fista_tv import FistaConfig, fista_tv
+from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
 from .dofs import (
@@ -57,6 +58,7 @@ ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverActio
 class AlignInfo(TypedDict):
     loss: list[float]
     loss_kind: str
+    recon_algo: str
     L: float | None
     outer_stats: list[OuterStat]
     stopped_by_observer: bool
@@ -76,6 +78,7 @@ class AlignMultiresInfo(TypedDict):
     loss: list[float]
     factors: list[int]
     loss_kind: str | None
+    recon_algo: str
     outer_stats: list[OuterStat]
     stopped_by_observer: bool
     observer_action: ObserverAction
@@ -311,13 +314,16 @@ class AlignConfig:
     recon_iters: int = 10
     lambda_tv: float = 0.005
     tv_prox_iters: int = 10
+    recon_algo: Literal["fista", "spdhg"] = "fista"
+    recon_positivity: bool = True
+    spdhg_seed: int = 0
     # Reconstruction stopping criteria
     recon_rel_tol: float | None = None
     recon_patience: int = 2
     # Alignment step sizes
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
-    # Memory/throughput knobs (hidden defaults)
+    # Memory/throughput knobs
     views_per_batch: int = 1  # stream one view at a time
     projector_unroll: int = 1
     checkpoint_projector: bool = True
@@ -353,6 +359,14 @@ class AlignConfig:
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
 
     def __post_init__(self) -> None:
+        recon_algo = str(self.recon_algo).strip().lower().replace("-", "_")
+        if recon_algo in {"fista_tv"}:
+            recon_algo = "fista"
+        elif recon_algo in {"spdhg_tv"}:
+            recon_algo = "spdhg"
+        self.recon_algo = recon_algo  # type: ignore[assignment]
+        if self.recon_algo not in {"fista", "spdhg"}:
+            raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
         if self.optimise_dofs is not None:
             self.optimise_dofs = normalize_dofs(
                 self.optimise_dofs,
@@ -906,6 +920,7 @@ def align(
     )
     elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
     wall_start = time.perf_counter() - elapsed_offset
+    recon_algo = str(cfg.recon_algo)
 
     def _emit_checkpoint_state() -> None:
         if checkpoint_callback is None:
@@ -929,6 +944,7 @@ def align(
         total_iters = int(cfg.outer_iters)
         total_time = format_duration(stat.get("outer_time"))
         elapsed = format_duration(stat.get("cumulative_time"))
+        solver_label = str(stat.get("recon_algo") or recon_algo).upper()
         if cfg.log_compact:
             # Build compact one-liner with key fields
             parts: list[str] = [f"Outer {outer_idx}/{total_iters}"]
@@ -943,16 +959,16 @@ def align(
             ln = stat.get("L_next")
             if (lm is not None) and (ln is not None):
                 rbits.append(f"L {lm:.2e}->{ln:.2e}")
-            ff = stat.get("fista_first")
-            fl = stat.get("fista_last")
-            fm = stat.get("fista_min")
+            ff = stat.get("recon_loss_first")
+            fl = stat.get("recon_loss_last")
+            fm = stat.get("recon_loss_min")
             if (ff is not None) and (fl is not None):
                 if fm is not None:
                     rbits.append(f"loss {ff:.2e}->{fl:.2e} (min {fm:.2e})")
                 else:
                     rbits.append(f"loss {ff:.2e}->{fl:.2e}")
             if rbits:
-                parts.append("recon " + " ".join(rbits))
+                parts.append("recon " + solver_label.lower() + " " + " ".join(rbits))
             # Align summary
             abits: list[str] = []
             at = stat.get("align_time")
@@ -1003,15 +1019,19 @@ def align(
         l_next = stat.get("L_next")
         if (l_meas is not None) and (l_next is not None):
             recon_parts.append(f"L {l_meas:.3e}->{l_next:.3e}")
-        f_first = stat.get("fista_first")
-        f_last = stat.get("fista_last")
-        f_min = stat.get("fista_min")
+        f_first = stat.get("recon_loss_first")
+        f_last = stat.get("recon_loss_last")
+        f_min = stat.get("recon_loss_min")
         if (f_first is not None) and (f_last is not None):
             if f_min is not None:
                 recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e} (min {f_min:.3e})")
             else:
                 recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e}")
-        logging.info("  Recon | %s", " | ".join(recon_parts) if recon_parts else "-")
+        logging.info(
+            "  Recon (%s) | %s",
+            solver_label,
+            " | ".join(recon_parts) if recon_parts else "-",
+        )
 
         align_parts: list[str] = []
         align_time = stat.get("align_time")
@@ -1050,7 +1070,11 @@ def align(
         desc="Align: outer iters",
     ):
         outer_idx = it + 1
-        stat: OuterStat = {"outer_idx": outer_idx, "loss_kind": active_loss_name}
+        stat: OuterStat = {
+            "outer_idx": outer_idx,
+            "loss_kind": active_loss_name,
+            "recon_algo": recon_algo,
+        }
         outer_start = time.perf_counter()
 
         # Reconstruction step
@@ -1088,55 +1112,113 @@ def align(
                 config=fista_cfg,
             )
 
+        def _run_spdhg():
+            spdhg_cfg = SPDHGConfig(
+                iters=int(cfg.recon_iters),
+                lambda_tv=float(cfg.lambda_tv),
+                views_per_batch=max(1, int(cfg.views_per_batch)),
+                seed=int(cfg.spdhg_seed) + int(outer_idx) - 1,
+                projector_unroll=int(cfg.projector_unroll),
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=cfg.gather_dtype,
+                positivity=bool(cfg.recon_positivity),
+                log_every=1,
+            )
+            return spdhg_tv(
+                _GAll(),
+                grid,
+                detector,
+                projections,
+                init_x=x,
+                config=spdhg_cfg,
+            )
+
         vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
         recon_retry = False
         recon_start = time.perf_counter()
-        try:
-            x, info_rec = _run_fista_safe(vpb0, int(cfg.projector_unroll), cfg.gather_dtype, "auto")
-        except Exception as e:
-            msg = str(e)
-            if ("RESOURCE_EXHAUSTED" in msg) or ("Out of memory" in msg) or ("Allocator" in msg):
-                logging.warning(
-                    "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
+        if recon_algo == "fista":
+            try:
+                x, info_rec = _run_fista_safe(
+                    vpb0,
+                    int(cfg.projector_unroll),
+                    cfg.gather_dtype,
+                    "auto",
                 )
-                try:
-                    recon_retry = True
-                    x, info_rec = _run_fista_safe(1, 1, cfg.gather_dtype, "stream")
-                except Exception as e2:
-                    msg2 = str(e2)
-                    if (
-                        ("RESOURCE_EXHAUSTED" in msg2)
-                        or ("Out of memory" in msg2)
-                        or ("Allocator" in msg2)
-                    ):
-                        logging.error(
-                            "FISTA still OOM at finest level. Reduce memory pressure (smaller problem size or lower internal batching), or provide --recon-L to skip power-method."
-                        )
+            except Exception as e:
+                msg = str(e)
+                is_oom = (
+                    ("RESOURCE_EXHAUSTED" in msg)
+                    or ("Out of memory" in msg)
+                    or ("Allocator" in msg)
+                )
+                if is_oom:
+                    logging.warning(
+                        "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
+                    )
+                    try:
+                        recon_retry = True
+                        x, info_rec = _run_fista_safe(1, 1, cfg.gather_dtype, "stream")
+                    except Exception as e2:
+                        msg2 = str(e2)
+                        if (
+                            ("RESOURCE_EXHAUSTED" in msg2)
+                            or ("Out of memory" in msg2)
+                            or ("Allocator" in msg2)
+                        ):
+                            logging.error(
+                                "FISTA still OOM at finest level. Reduce memory pressure "
+                                "(smaller problem size or lower internal batching), or "
+                                "provide --recon-L to skip power-method."
+                            )
+                        raise
+                else:
                     raise
-            else:
-                raise
+        else:
+            x, info_rec = _run_spdhg()
         # Ensure device work is finished before timing recon.
         jax.block_until_ready(x)
         recon_time = time.perf_counter() - recon_start
         stat["recon_time"] = recon_time
         stat["recon_retry"] = recon_retry
         # Capture and reuse measured L next iteration (with small safety margin)
-        try:
-            L_meas = float(info_rec.get("L", 0.0))
-            if L_meas > 0.0:
-                L_prev = 1.2 * L_meas
-                stat["L_meas"] = L_meas
-                stat["L_next"] = L_prev
-        except Exception:
-            pass
+        if recon_algo == "fista":
+            try:
+                L_meas = float(info_rec.get("L", 0.0))
+                if L_meas > 0.0:
+                    L_prev = 1.2 * L_meas
+                    stat["L_meas"] = L_meas
+                    stat["L_next"] = L_prev
+            except Exception:
+                pass
         if info_rec and "loss" in info_rec and info_rec["loss"]:
             try:
                 lhist = info_rec["loss"]
-                stat["fista_first"] = float(lhist[0])
-                stat["fista_last"] = float(lhist[-1])
-                stat["fista_min"] = float(min(lhist))
+                stat["recon_loss_first"] = float(lhist[0])
+                stat["recon_loss_last"] = float(lhist[-1])
+                stat["recon_loss_min"] = float(min(lhist))
+                if recon_algo == "fista":
+                    stat["fista_first"] = float(lhist[0])
+                    stat["fista_last"] = float(lhist[-1])
+                    stat["fista_min"] = float(min(lhist))
             except Exception:
                 pass
+        if recon_algo == "spdhg" and info_rec:
+            for src, dst in (
+                ("tau", "spdhg_tau"),
+                ("sigma_data", "spdhg_sigma_data"),
+                ("sigma_tv", "spdhg_sigma_tv"),
+                ("views_per_batch", "spdhg_views_per_batch"),
+                ("num_blocks", "spdhg_num_blocks"),
+                ("A_norm", "spdhg_A_norm"),
+            ):
+                value = info_rec.get(src)
+                if value is not None:
+                    stat[dst] = (
+                        int(value)
+                        if dst in {"spdhg_views_per_batch", "spdhg_num_blocks"}
+                        else float(value)
+                    )
+            stat["spdhg_seed"] = int(cfg.spdhg_seed) + int(outer_idx) - 1
 
         # Alignment step: Gauss–Newton, LBFGS, or gradient descent
         # Evaluate alignment loss before update (needed for GN acceptance / early stop)
@@ -1402,6 +1484,7 @@ def align(
     info = {
         "loss": loss_hist,
         "loss_kind": active_loss_name,
+        "recon_algo": recon_algo,
         "L": (float(L_prev) if L_prev is not None else None),
         "outer_stats": outer_stats,
         "stopped_by_observer": stopped_by_observer,
@@ -1807,6 +1890,7 @@ def align_multires(
             "loss": loss_hist,
             "factors": factors_list,
             "loss_kind": final_loss_kind,
+            "recon_algo": str(cfg.recon_algo),
             "stopped_by_observer": stopped_by_observer,
             "observer_action": final_observer_action,
             "total_outer_iters": int(executed_outer_iters),

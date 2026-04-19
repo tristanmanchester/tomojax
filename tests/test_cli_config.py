@@ -424,9 +424,43 @@ def test_align_config_toml_accepts_and_cli_overrides_pose_model_options(tmp_path
     assert "degree" in metadata["explicit_cli_keys"]
 
 
+def test_align_config_toml_accepts_spdhg_recon_options(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'recon_algo = "spdhg"',
+                "views_per_batch = 2",
+                "spdhg_seed = 7",
+                "recon_positivity = false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path)],
+        required=("data", "out"),
+    )
+
+    assert args.recon_algo == "spdhg"
+    assert args.views_per_batch == 2
+    assert args.spdhg_seed == 7
+    assert args.recon_positivity is False
+    assert metadata["config_file_values"]["recon_algo"] == "spdhg"
+    assert metadata["config_file_values"]["views_per_batch"] == 2
+    assert metadata["config_file_values"]["spdhg_seed"] == 7
+    assert metadata["config_file_values"]["recon_positivity"] is False
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected"),
     [
+        ({"recon_algo": "not-a-solver"}, "recon_algo must be one of"),
         ({"pose_model": "not-a-model"}, "pose_model must be one of"),
         ({"pose_model": "polynomial", "degree": -1}, "degree must be >= 0"),
         ({"pose_model": "spline", "knot_spacing": 0}, "knot_spacing must be >= 1"),

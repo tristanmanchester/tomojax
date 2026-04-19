@@ -7,6 +7,12 @@ out = "runs/align_from_config.nxs"
 
 outer_iters = 4
 recon_iters = 25
+recon_algo = "fista"
+# Use SPDHG-TV as the inner reconstruction solver for larger view counts.
+# recon_algo = "spdhg"
+# views_per_batch = 8
+# spdhg_seed = 0
+# recon_positivity = true
 lambda_tv = 0.003
 levels = [4, 2, 1]
 opt_method = "gn"

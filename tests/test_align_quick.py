@@ -72,6 +72,36 @@ def test_align_quick_recovers_small_misalignments():
     assert trans_rmse < 1.5
     # Loss should decrease overall
     assert info["loss"][-1] <= info["loss"][0]
+    assert info["recon_algo"] == "fista"
+    assert info["outer_stats"][0]["recon_algo"] == "fista"
+    assert "fista_first" in info["outer_stats"][0]
+    assert "recon_loss_first" in info["outer_stats"][0]
+
+
+def test_align_runs_with_spdhg_inner_reconstruction():
+    grid, det, geom, vol, projs, _ = make_misaligned_case(4, 4, 4, 4, 7)
+    cfg = AlignConfig(
+        recon_algo="spdhg",
+        outer_iters=1,
+        recon_iters=2,
+        lambda_tv=0.0,
+        views_per_batch=2,
+        opt_method="gd",
+        lr_rot=5e-3,
+        lr_trans=1e-1,
+        early_stop=False,
+    )
+
+    x, est_params, info = align(geom, grid, det, projs, cfg=cfg)
+
+    assert x.shape == vol.shape
+    assert est_params.shape == (projs.shape[0], 5)
+    assert np.isfinite(np.asarray(x)).all()
+    assert np.isfinite(np.asarray(est_params)).all()
+    assert info["recon_algo"] == "spdhg"
+    assert info["outer_stats"][0]["recon_algo"] == "spdhg"
+    assert info["outer_stats"][0]["spdhg_views_per_batch"] == 2
+    assert info["outer_stats"][0]["spdhg_num_blocks"] == 2
 
 
 def test_align_reports_true_relative_improvement_scaling():

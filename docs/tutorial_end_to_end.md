@@ -160,6 +160,24 @@ uv run tomojax-align \
 Tips
 - If memory is tight, keep projector checkpointing enabled and prefer `--gather-dtype bf16`.
 - If convergence stalls under GD, switch to GN (`--opt-method gn`) or increase `--outer-iters`.
+- FISTA remains the default inner reconstruction solver for continuity with existing
+  workflows. For larger scans, use SPDHG-TV to update stochastic view subsets:
+
+```
+uv run tomojax-align \
+  --data data/sim_misaligned_poisson.nxs \
+  --levels 4 2 1 \
+  --outer-iters 5 --recon-iters 120 --lambda-tv 0.03 \
+  --recon-algo spdhg --views-per-batch 16 --spdhg-seed 0 --recon-positivity \
+  --opt-method gn --gn-damping 1e-3 \
+  --gather-dtype bf16 --checkpoint-projector \
+  --log-summary \
+  --out out/align_misaligned_noisy_spdhg.nxs \
+  --progress
+```
+
+SPDHG is intended for scalable inner reconstruction; its logged objective is a
+minibatch estimate, so compare trends rather than direct values against FISTA logs.
 
 
 ## 6) Outputs and Comparison

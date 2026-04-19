@@ -107,6 +107,10 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--bounds" in captured.out
     assert "dx=-20:20,dz=-20:20,alpha=-0.05:0.05" in captured.out
     assert "--pose-model" in captured.out
+    assert "--recon-algo" in captured.out
+    assert "--views-per-batch" in captured.out
+    assert "--spdhg-seed" in captured.out
+    assert "--no-recon-positivity" in captured.out
     assert "--checkpoint" in captured.out
     assert "--checkpoint-every" in captured.out
     assert "--resume" in captured.out
@@ -418,6 +422,10 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
                 'pose_model = "spline"',
                 "knot_spacing = 5",
                 "degree = 2",
+                'recon_algo = "spdhg"',
+                "views_per_batch = 8",
+                "spdhg_seed = 7",
+                "recon_positivity = false",
                 f'save_params_json = "{json_path}"',
                 f'save_params_csv = "{csv_path}"',
                 f'save_manifest = "{manifest_path}"',
@@ -434,6 +442,8 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
             str(config_path),
             "--gather-dtype",
             "fp32",
+            "--views-per-batch",
+            "2",
             "--transfer-guard",
             "log",
         ],
@@ -451,6 +461,10 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert captured["align_cfg"].pose_model == "spline"
     assert captured["align_cfg"].knot_spacing == 5
     assert captured["align_cfg"].degree == 2
+    assert captured["align_cfg"].recon_algo == "spdhg"
+    assert captured["align_cfg"].views_per_batch == 2
+    assert captured["align_cfg"].spdhg_seed == 7
+    assert captured["align_cfg"].recon_positivity is False
     assert captured["align_resume_state"] is None
     assert captured["align_checkpoint_callback"] is None
     saved_meta = captured["save_metadata"]

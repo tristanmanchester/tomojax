@@ -169,13 +169,45 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", help="Input .nxs")
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
+    p.add_argument(
+        "--recon-algo",
+        choices=["fista", "spdhg"],
+        default="fista",
+        help="Inner reconstruction solver used during alignment (default: fista)",
+    )
     p.add_argument("--lambda-tv", type=float, default=0.005)
     p.add_argument(
         "--tv-prox-iters",
         type=int,
         default=10,
-        help="Inner iterations for TV proximal operator",
+        help="Inner iterations for the FISTA TV proximal operator",
     )
+    p.add_argument(
+        "--views-per-batch",
+        type=int,
+        default=1,
+        help="Projection views per inner reconstruction batch/subset (default: 1)",
+    )
+    p.add_argument(
+        "--spdhg-seed",
+        type=int,
+        default=0,
+        help="Base random seed for SPDHG subset order inside alignment",
+    )
+    rp = p.add_mutually_exclusive_group()
+    rp.add_argument(
+        "--recon-positivity",
+        dest="recon_positivity",
+        action="store_true",
+        help="Enable positivity projection for SPDHG inner reconstructions (default)",
+    )
+    rp.add_argument(
+        "--no-recon-positivity",
+        dest="recon_positivity",
+        action="store_false",
+        help="Disable positivity projection for SPDHG inner reconstructions",
+    )
+    p.set_defaults(recon_positivity=True)
     p.add_argument("--lr-rot", type=float, default=1e-3)
     p.add_argument("--lr-trans", type=float, default=1e-1)
     p.add_argument(
@@ -446,7 +478,10 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "grid": args.grid,
         "requested_gather_dtype": str(args.gather_dtype),
         "gather_dtype": str(gather_dtype),
-        "views_per_batch": 1,
+        "recon_algo": str(args.recon_algo),
+        "views_per_batch": int(args.views_per_batch),
+        "spdhg_seed": int(args.spdhg_seed),
+        "recon_positivity": bool(args.recon_positivity),
         "projector_unroll": 1,
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
@@ -597,9 +632,6 @@ def main() -> None:
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
 
-    # Hidden defaults: stream one view at a time; unroll=1
-    vpb_est = 1
-
     # Resolve default gather dtype lazily at runtime
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
@@ -610,11 +642,14 @@ def main() -> None:
     cfg = AlignConfig(
         outer_iters=args.outer_iters,
         recon_iters=args.recon_iters,
+        recon_algo=str(args.recon_algo),
         lambda_tv=args.lambda_tv,
         tv_prox_iters=int(args.tv_prox_iters),
+        recon_positivity=bool(args.recon_positivity),
+        spdhg_seed=int(args.spdhg_seed),
         lr_rot=args.lr_rot,
         lr_trans=args.lr_trans,
-        views_per_batch=int(vpb_est),
+        views_per_batch=int(args.views_per_batch),
         projector_unroll=1,
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=_gather,
@@ -931,7 +966,10 @@ def main() -> None:
                 },
                 "requested_gather_dtype": str(args.gather_dtype),
                 "gather_dtype": _gather,
-                "views_per_batch": int(vpb_est),
+                "recon_algo": str(args.recon_algo),
+                "views_per_batch": int(args.views_per_batch),
+                "spdhg_seed": int(args.spdhg_seed),
+                "recon_positivity": bool(args.recon_positivity),
                 "projector_unroll": 1,
                 "checkpoint_projector": bool(args.checkpoint_projector),
                 "transfer_guard": str(args.transfer_guard),

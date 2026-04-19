@@ -159,13 +159,15 @@ uv run tomojax-recon --config docs/recon_config.toml --gather-dtype bf16
 
 ## align
 
-Joint per‑view alignment and reconstruction (alternating FISTA‑TV and alignment updates). Supports single‑level or multi‑resolution.
+Joint per‑view alignment and reconstruction (alternating TV reconstruction and alignment updates). Supports single‑level or multi‑resolution.
 
 Usage
 ```
 python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--outer-iters <int>] [--recon-iters <int>] [--lambda-tv <float>] \
-  [--tv-prox-iters <int>] \
+  [--recon-algo fista|spdhg] [--tv-prox-iters <int>] \
+  [--views-per-batch <int>] [--spdhg-seed <int>] \
+  [--recon-positivity|--no-recon-positivity] \
   [--lr-rot <float>] [--lr-trans <float>] \
   [--opt-method gd|gn] [--gn-damping <float>] \
   [--optimise-dofs <names>] [--freeze-dofs <names>] [--bounds <spec>] \
@@ -182,7 +184,10 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
 
 Key options
 - Config: `--config docs/align_config.toml` loads flat TOML defaults. Explicit CLI flags override file values, including list values such as `--levels 2 1` and booleans such as `--no-checkpoint-projector`.
-- Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--tv-prox-iters` (10; increase to 20–30 for noisy data).
+- Outer/inner loops: `--outer-iters` (5), `--recon-iters` (10), `--lambda-tv` (0.005), `--recon-algo fista|spdhg` (`fista` default), `--tv-prox-iters` (10; FISTA only, increase to 20–30 for noisy data).
+- Inner solver choice: FISTA is the conservative default for continuity with existing workflows. SPDHG uses stochastic view subsets and can scale better for larger view counts; control its subset size with `--views-per-batch` and deterministic subset order with `--spdhg-seed`.
+- SPDHG details: `--recon-positivity` is enabled by default and applies only to SPDHG. SPDHG objective logs are minibatch estimates, so compare their trend rather than treating them as identical to FISTA's full objective trace.
+- Smoke benchmark: see `docs/alignment_inner_solver_benchmark_64.md` for a `64^3` CPU comparison of FISTA and SPDHG as alignment inner solvers.
 - Alignment step: gradient descent (`--lr-rot`, `--lr-trans`) or Gauss‑Newton (`--opt-method gn`, `--gn-damping`).
 - Active DOFs: choose from `alpha`, `beta`, `phi`, `dx`, `dz`. By default all five are optimised. Use `--optimise-dofs dx,dz` for translation-only alignment, or `--freeze-dofs phi` to keep selected parameters fixed at their initial values.
 - Parameter bounds: `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` clips named DOFs after each update. Rotations (`alpha`, `beta`, `phi`) are in radians; translations (`dx`, `dz`) are in world units. Omitted DOFs are unconstrained, and frozen DOFs stay fixed even if a bound is supplied for them.
@@ -194,7 +199,7 @@ Key options
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
 - Loss scheduling: `--loss` selects one loss for every level. `--loss-schedule 4:phasecorr,2:ssim,1:l2_otsu` overrides the loss per pyramid factor, so numeric keys refer to `--levels` values. Levels omitted from the schedule fall back to `--loss`.
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).
-- `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
+- `--recon-L`: FISTA-only fixed Lipschitz constant to skip per‑level power‑method if you already know a good bound.
 - Checkpoint/resume: `--checkpoint PATH` writes an atomic `.npz` checkpoint after completed alignment outer iterations, and `--checkpoint-every N` controls the completed global outer-iteration cadence. `--resume PATH` loads a checkpoint and continues from the next outer iteration or pyramid level; if `--checkpoint` is omitted, future checkpoints are written back to the resume path. Checkpoints are outer-iteration boundaries only, not mid-FISTA inner-iteration snapshots.
 - Parameter exports: `--save-params-json` and `--save-params-csv` write named per-view sidecars with `alpha_rad`, `beta_rad`, `phi_rad`, `dx_world`, `dz_world`, `dx_px`, and `dz_px`.
 - Reproducibility: `--save-manifest manifest.json` writes a JSON sidecar with raw argv, parsed CLI args, resolved config, TomoJAX/Python/JAX versions, JAX backend/devices, and a UTC timestamp.
@@ -227,6 +232,15 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --save-params-json out/align_misaligned.params.json \
   --save-params-csv out/align_misaligned.params.csv \
   --save-manifest out/align_misaligned.manifest.json \
+  --progress
+
+# GN, multires with SPDHG-TV inner reconstructions
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --outer-iters 4 --recon-iters 80 --lambda-tv 0.003 \
+  --recon-algo spdhg --views-per-batch 16 --spdhg-seed 0 --recon-positivity \
+  --opt-method gn --gn-damping 1e-3 \
+  --gather-dtype bf16 --checkpoint-projector \
+  --log-summary --out out/align_misaligned_spdhg.nxs \
   --progress
 
 # GD with learning rates (single level)
