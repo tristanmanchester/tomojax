@@ -104,6 +104,7 @@ Usage
 python -m tomojax.cli.recon [--config <config.toml>] --data <in.nxs> \
   [--algo fbp|fista|spdhg] [--filter ramp|shepp|hann] \
   [--iters <int>] [--lambda-tv <float>] [--tv-prox-iters <int>] [--L <float>] \
+  [--positivity|--no-positivity] [--lower-bound <float>] [--upper-bound <float>] \
   [--views-per-batch <int>] [--theta <float>] \
   [--spdhg-seed <int>] [--spdhg-tau <float>] [--spdhg-sigma-data <float>] [--spdhg-sigma-tv <float>] \
   [--roi off|auto|cube|bbox] [--mask-vol off|cyl] [--grid NX NY NZ] \
@@ -116,7 +117,7 @@ Key options
 - Config: `--config docs/recon_config.toml` loads flat TOML defaults. Explicit CLI flags override file values, so `--config cfg.toml --lambda-tv 0.01` replaces any `lambda_tv` value in the file.
 - Algorithm: `--algo fbp` (default), `fista`, or `spdhg`.
 - FBP filter: `--filter ramp` (aliases: ram‑lak/ramlak), `shepp`, `hann`.
-- FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method.
+- FISTA: `--iters` (50), `--lambda-tv` (0.005), `--tv-prox-iters` (10) controls the inner TV proximal iterations (use 20–30 for heavy noise), optional fixed `--L` to skip power‑method. Add `--positivity`, `--lower-bound`, and/or `--upper-bound` to project each iterate onto common physical voxel constraints. See `docs/fista_constraints_validation_64.md` for the `64^3` constraint validation smoke test.
 - SPDHG‑TV: `--iters` (outer PDHG steps), `--lambda-tv` (TV weight), `--views-per-batch` (stochastic block size, e.g. 16–64), `--theta` (extrapolation, e.g. 0.5–1.0). Step sizes default to operator‑norm‑based auto; override with `--spdhg-tau`, `--spdhg-sigma-data`, `--spdhg-sigma-tv`. Use `--spdhg-seed` to fix block order.
 - Memory/performance: use `--gather-dtype` (bf16 recommended on modern GPUs) and keep projector checkpointing on by default.
 - ROI/masking: `--roi auto|cube|bbox|off` to crop the recon grid to the detector FOV; `--mask-vol cyl` applies a cylindrical x–y mask (used as a support in SPDHG and post‑hoc for FBP).
@@ -143,6 +144,12 @@ uv run tomojax-recon --data data/sim_misaligned.nxs \
   --algo fista --iters 60 --lambda-tv 0.005 \
   --gather-dtype bf16 --checkpoint-projector \
   --out out/fista_misaligned.nxs --progress
+
+# FISTA with positivity and box constraints
+uv run tomojax-recon --data data/sim_misaligned.nxs \
+  --algo fista --iters 80 --lambda-tv 0.005 \
+  --positivity --lower-bound 0 --upper-bound 1 \
+  --out out/fista_bounded.nxs --progress
 
 # SPDHG‑TV with moderate block size
 uv run tomojax-recon --data data/sim_aligned.nxs \

@@ -230,6 +230,109 @@ def test_recon_main_writes_manifest_sidecar(monkeypatch, tmp_path):
     assert "available" in payload["jax"]
 
 
+def test_recon_main_passes_fista_constraints_and_records_manifest(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    detector = recon_cli.Detector(
+        nu=2,
+        nv=1,
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    grid = recon_cli.Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    meta = LoadedNXTomo.from_dataset(
+        {
+            "projections": np.zeros((2, 1, 2), dtype=np.float32),
+            "thetas_deg": np.asarray([0.0, 90.0], dtype=np.float32),
+            "detector": detector.to_dict(),
+            "grid": grid.to_dict(),
+            "geometry_type": "parallel",
+        }
+    )
+
+    @contextmanager
+    def fake_transfer_guard(mode: str):
+        captured["transfer_guard"] = mode
+        yield
+
+    def fake_fista_tv(geom, recon_grid, recon_detector, projections, *, config):
+        captured["fista_grid"] = recon_grid
+        captured["fista_detector"] = recon_detector
+        captured["fista_projections_shape"] = tuple(projections.shape)
+        captured["fista_config"] = config
+        volume = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+        return volume, {"loss": [0.0]}
+
+    def fake_save_nxtomo(path, *, projections, metadata):
+        captured["save_path"] = path
+        captured["save_metadata"] = metadata
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(
+        recon_cli,
+        "build_geometry_from_meta",
+        lambda geometry_meta, grid_override=None, apply_saved_alignment=False: (
+            grid,
+            detector,
+            object(),
+        ),
+    )
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", fake_transfer_guard)
+    monkeypatch.setattr(recon_cli, "fista_tv", fake_fista_tv)
+    monkeypatch.setattr(recon_cli, "save_nxtomo", fake_save_nxtomo)
+
+    out_path = tmp_path / "fista.nxs"
+    manifest_path = tmp_path / "manifests" / "fista.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tomojax-recon",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--algo",
+            "fista",
+            "--iters",
+            "3",
+            "--lambda-tv",
+            "0.0",
+            "--L",
+            "1.0",
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--positivity",
+            "--lower-bound",
+            "0",
+            "--upper-bound",
+            "1",
+            "--out",
+            str(out_path),
+            "--save-manifest",
+            str(manifest_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    cfg = captured["fista_config"]
+    assert cfg.positivity is True
+    assert cfg.lower_bound == pytest.approx(0.0)
+    assert cfg.upper_bound == pytest.approx(1.0)
+    assert cfg.iters == 3
+    assert cfg.L == pytest.approx(1.0)
+    assert captured["save_path"] == str(out_path)
+    assert manifest_path.exists()
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    algorithm_config = payload["resolved_config"]["algorithm_config"]
+    assert algorithm_config["positivity"] is True
+    assert algorithm_config["lower_bound"] == pytest.approx(0.0)
+    assert algorithm_config["upper_bound"] == pytest.approx(1.0)
+
+
 def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
 

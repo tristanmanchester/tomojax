@@ -11,6 +11,47 @@ import tomojax.recon.fista_tv as fista_mod
 from tomojax.recon.spdhg_tv import _estimate_norm_A2, _prox_fstar_l2
 
 
+class _OneVoxelGeometry:
+    def pose_for_view(self, i: int):
+        return jnp.eye(4, dtype=jnp.float32)
+
+
+def _patch_one_voxel_quadratic(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: float,
+) -> None:
+    target_arr = jnp.asarray([[[target]]], dtype=jnp.float32)
+
+    def fake_grad_data_term(
+        geometry,
+        grid,
+        detector,
+        projections,
+        x,
+        *,
+        views_per_batch=None,
+        projector_unroll=1,
+        checkpoint_projector=True,
+        gather_dtype="fp32",
+        grad_mode="auto",
+        T_all=None,
+        vol_mask=None,
+    ):
+        resid = x - target_arr
+        loss = 0.5 * jnp.vdot(resid, resid).real
+        return resid, loss
+
+    monkeypatch.setattr(fista_mod, "grad_data_term", fake_grad_data_term)
+    monkeypatch.setattr(
+        fista_mod,
+        "data_term_value",
+        lambda geometry, grid, detector, projections, x, **kwargs: fake_grad_data_term(
+            geometry, grid, detector, projections, x, **kwargs
+        )[1],
+    )
+
+
 def test_prox_fstar_l2_matches_closed_form_for_nonuniform_weights():
     u = jnp.array([2.0, -1.0, 0.5, 3.0], dtype=jnp.float32)
     sigma = 0.5
@@ -81,6 +122,128 @@ def test_fista_reports_objective_at_primal_iterate_not_momentum(monkeypatch: pyt
     # The true objective at the second primal iterate is 0.5 * (0.75 - 1)^2 = 0.03125.
     # The buggy implementation reported f(z1)=0.5 * (0.5 - 1)^2 = 0.125 instead.
     assert info["loss"][1] == pytest.approx(0.03125, rel=1e-6, abs=1e-6)
+
+
+def test_fista_constraints_are_disabled_by_default(monkeypatch: pytest.MonkeyPatch):
+    _patch_one_voxel_quadratic(monkeypatch, target=-1.0)
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
+    projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+
+    x, _ = fista_mod.fista_tv(
+        _OneVoxelGeometry(),
+        grid,
+        detector,
+        projections,
+        config=fista_mod.FistaConfig(iters=1, lambda_tv=0.0, L=2.0, tv_prox_iters=1),
+    )
+
+    assert float(x[0, 0, 0]) == pytest.approx(-0.5, rel=1e-6, abs=1e-6)
+
+
+def test_fista_positivity_clamps_negative_voxels(monkeypatch: pytest.MonkeyPatch):
+    _patch_one_voxel_quadratic(monkeypatch, target=-1.0)
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
+    projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+
+    x, _ = fista_mod.fista_tv(
+        _OneVoxelGeometry(),
+        grid,
+        detector,
+        projections,
+        config=fista_mod.FistaConfig(
+            iters=1,
+            lambda_tv=0.0,
+            L=2.0,
+            tv_prox_iters=1,
+            positivity=True,
+        ),
+    )
+
+    assert float(x[0, 0, 0]) == pytest.approx(0.0, rel=1e-6, abs=1e-6)
+
+
+def test_fista_box_constraints_are_respected(monkeypatch: pytest.MonkeyPatch):
+    _patch_one_voxel_quadratic(monkeypatch, target=2.0)
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
+    projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+
+    x, _ = fista_mod.fista_tv(
+        _OneVoxelGeometry(),
+        grid,
+        detector,
+        projections,
+        config=fista_mod.FistaConfig(
+            iters=2,
+            lambda_tv=0.0,
+            L=1.0,
+            tv_prox_iters=1,
+            lower_bound=0.25,
+            upper_bound=0.75,
+        ),
+    )
+
+    assert float(jnp.min(x)) >= 0.25 - 1e-6
+    assert float(jnp.max(x)) <= 0.75 + 1e-6
+
+
+def test_fista_positivity_intersects_with_box_constraints(monkeypatch: pytest.MonkeyPatch):
+    _patch_one_voxel_quadratic(monkeypatch, target=-2.0)
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
+    projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+
+    x, _ = fista_mod.fista_tv(
+        _OneVoxelGeometry(),
+        grid,
+        detector,
+        projections,
+        config=fista_mod.FistaConfig(
+            iters=1,
+            lambda_tv=0.0,
+            L=1.0,
+            tv_prox_iters=1,
+            positivity=True,
+            lower_bound=-1.0,
+            upper_bound=0.5,
+        ),
+    )
+
+    assert float(x[0, 0, 0]) == pytest.approx(0.0, rel=1e-6, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        (
+            fista_mod.FistaConfig(iters=1, L=1.0, lower_bound=1.0, upper_bound=0.0),
+            "upper_bound",
+        ),
+        (
+            fista_mod.FistaConfig(iters=1, L=1.0, lower_bound=float("inf")),
+            "lower_bound must be finite",
+        ),
+        (
+            fista_mod.FistaConfig(iters=1, L=1.0, positivity=True, upper_bound=-0.1),
+            "effective lower bound",
+        ),
+    ],
+)
+def test_fista_rejects_invalid_constraints(config, expected):
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
+    projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match=expected):
+        fista_mod.fista_tv(
+            _OneVoxelGeometry(),
+            grid,
+            detector,
+            projections,
+            config=config,
+        )
 
 
 def _make_small_parallel_case(nx=6, ny=6, nz=6, n_views=4):

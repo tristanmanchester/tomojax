@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Callable, Literal, Tuple, Optional
 
 import jax
@@ -45,6 +46,9 @@ class FistaConfig:
     recon_patience: int = 0
     power_iters: int = 5
     support: jnp.ndarray | None = None
+    positivity: bool = False
+    lower_bound: float | None = None
+    upper_bound: float | None = None
 
 
 def grad_data_term(
@@ -441,6 +445,46 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarr
     return jax.lax.cond(lam > 0, prox_impl, lambda _: x, lam)
 
 
+def _normalize_constraint_config(cfg: FistaConfig) -> tuple[bool, float | None, float | None]:
+    """Validate FISTA feasibility constraints and return scalar bounds."""
+    lower = None if cfg.lower_bound is None else float(cfg.lower_bound)
+    upper = None if cfg.upper_bound is None else float(cfg.upper_bound)
+
+    if lower is not None and not math.isfinite(lower):
+        raise ValueError("fista_tv constraints: lower_bound must be finite when provided")
+    if upper is not None and not math.isfinite(upper):
+        raise ValueError("fista_tv constraints: upper_bound must be finite when provided")
+
+    effective_lower = lower
+    if bool(cfg.positivity):
+        effective_lower = max(0.0, lower) if lower is not None else 0.0
+
+    if upper is not None and effective_lower is not None and upper < effective_lower:
+        raise ValueError(
+            "fista_tv constraints: upper_bound must be greater than or equal to "
+            "the effective lower bound"
+        )
+
+    return bool(cfg.positivity), lower, upper
+
+
+def _project_constraints(
+    x: jnp.ndarray,
+    *,
+    positivity: bool,
+    lower_bound: float | None,
+    upper_bound: float | None,
+) -> jnp.ndarray:
+    """Project a volume onto optional elementwise physical constraints."""
+    if lower_bound is not None:
+        x = jnp.maximum(x, jnp.asarray(lower_bound, dtype=x.dtype))
+    if positivity:
+        x = jnp.maximum(x, jnp.asarray(0.0, dtype=x.dtype))
+    if upper_bound is not None:
+        x = jnp.minimum(x, jnp.asarray(upper_bound, dtype=x.dtype))
+    return x
+
+
 def fista_tv(
     geometry: Geometry,
     grid: Grid,
@@ -461,6 +505,8 @@ def fista_tv(
     """
     cfg = config
     vol_mask = cfg.support
+    positivity, lower_bound, upper_bound = _normalize_constraint_config(cfg)
+    constraints_enabled = positivity or lower_bound is not None or upper_bound is not None
     validate_grid(grid, "fista_tv grid")
     n_views, _, _ = validate_projection_stack(
         projections,
@@ -482,6 +528,13 @@ def fista_tv(
         if init_x is not None
         else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
     )
+    if constraints_enabled:
+        x = _project_constraints(
+            x,
+            positivity=positivity,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+        )
     z = x
     t = 1.0
     # Precompute poses once and thread them through the projector calls to avoid
@@ -574,8 +627,20 @@ def fista_tv(
             _, g = val_and_grad(z_a)
             y = z_a - (1.0 / L) * g
             x_new = tv_prox_jit(y, cfg.lambda_tv / L, iters=int(cfg.tv_prox_iters))
+            x_new = _project_constraints(
+                x_new,
+                positivity=positivity,
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+            )
             t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
             z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
+            z_new = _project_constraints(
+                z_new,
+                positivity=positivity,
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+            )
             data_loss_val = data_value(x_new)
             gx, gy, gz = grad3(x_new)
             tv_norm = jnp.sum(jnp.sqrt(gx * gx + gy * gy + gz * gz + 1e-8))

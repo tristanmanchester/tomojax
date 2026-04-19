@@ -7,6 +7,10 @@ out = "runs/recon_from_config.nxs"
 
 algo = "fbp"
 filter = "ramp"
+# FISTA-only optional physical constraints:
+# positivity = true
+# lower_bound = 0.0
+# upper_bound = 1.0
 roi = "auto"
 gather_dtype = "auto"
 checkpoint_projector = true

@@ -112,6 +112,32 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Fixed Lipschitz constant for FISTA (skip power-method)",
     )
+    pos = p.add_mutually_exclusive_group()
+    pos.add_argument(
+        "--positivity",
+        dest="positivity",
+        action="store_true",
+        help="Enable nonnegative projection for FISTA reconstructions",
+    )
+    pos.add_argument(
+        "--no-positivity",
+        dest="positivity",
+        action="store_false",
+        help="Disable nonnegative projection for FISTA reconstructions",
+    )
+    p.set_defaults(positivity=False)
+    p.add_argument(
+        "--lower-bound",
+        type=float,
+        default=None,
+        help="Optional lower voxel bound for FISTA reconstructions",
+    )
+    p.add_argument(
+        "--upper-bound",
+        type=float,
+        default=None,
+        help="Optional upper voxel bound for FISTA reconstructions",
+    )
     # SPDHG-specific knobs
     p.add_argument(
         "--views-per-batch",
@@ -371,6 +397,13 @@ def main() -> None:
             gather_dtype=_gather,
             tv_prox_iters=int(args.tv_prox_iters),
             support=vol_mask,
+            positivity=bool(args.positivity),
+            lower_bound=(
+                float(args.lower_bound) if args.lower_bound is not None else None
+            ),
+            upper_bound=(
+                float(args.upper_bound) if args.upper_bound is not None else None
+            ),
         )
         algorithm_config = {
             "iters": int(cfg.iters),
@@ -386,6 +419,9 @@ def main() -> None:
             "recon_patience": int(cfg.recon_patience),
             "power_iters": int(cfg.power_iters),
             "support": "cylindrical" if vol_mask is not None else None,
+            "positivity": bool(cfg.positivity),
+            "lower_bound": cfg.lower_bound,
+            "upper_bound": cfg.upper_bound,
         }
         with transfer_guard_context(args.transfer_guard):
             vol, info = fista_tv(

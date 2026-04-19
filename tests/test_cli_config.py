@@ -49,6 +49,40 @@ def test_recon_config_supplies_required_args_and_typed_values(tmp_path):
     assert metadata["effective_options"]["out"] == "runs/recon.nxs"
 
 
+def test_recon_config_accepts_fista_constraints_and_cli_can_disable_positivity(tmp_path):
+    config_path = tmp_path / "recon.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/recon.nxs"',
+                'algo = "fista"',
+                "positivity = true",
+                "lower_bound = 0.0",
+                "upper_bound = 1.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = recon_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path), "--no-positivity"],
+        required=("data", "out"),
+    )
+
+    assert args.algo == "fista"
+    assert args.positivity is False
+    assert args.lower_bound == pytest.approx(0.0)
+    assert args.upper_bound == pytest.approx(1.0)
+    assert metadata["config_file_values"]["positivity"] is True
+    assert metadata["config_file_values"]["lower_bound"] == pytest.approx(0.0)
+    assert metadata["config_file_values"]["upper_bound"] == pytest.approx(1.0)
+    assert "positivity" in metadata["explicit_cli_keys"]
+    assert metadata["effective_options"]["positivity"] is False
+
+
 def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp_path):
     config_path = tmp_path / "align.toml"
     config_path.write_text(
