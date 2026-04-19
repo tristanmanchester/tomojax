@@ -14,7 +14,19 @@ from ..align.dofs import DofBounds, active_dof_mask, normalize_bounds, normalize
 from ..align.losses import parse_loss_spec
 from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
-from ..align.pipeline import align, AlignConfig
+from ..align.checkpoint import (
+    CheckpointError,
+    build_alignment_checkpoint_metadata,
+    load_alignment_checkpoint,
+    save_alignment_checkpoint,
+    validate_alignment_checkpoint,
+)
+from ..align.pipeline import (
+    align,
+    AlignConfig,
+    AlignResumeState,
+    AlignMultiresResumeState,
+)
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
@@ -236,6 +248,25 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Fixed Lipschitz constant for FISTA inside alignment (skip power-method)",
     )
+    p.add_argument(
+        "--checkpoint",
+        default=None,
+        metavar="PATH",
+        help="Write resumable alignment checkpoints to PATH after completed outer iterations.",
+    )
+    p.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Checkpoint every N completed global outer iterations (default: 1 when enabled).",
+    )
+    p.add_argument(
+        "--resume",
+        default=None,
+        metavar="PATH",
+        help="Resume alignment from a checkpoint. Defaults future checkpoint writes to this path.",
+    )
     # Data term / similarity
     p.add_argument(
         "--loss",
@@ -371,6 +402,132 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> dict[str, object]:
+    return {
+        "roi": str(args.roi),
+        "grid": args.grid,
+        "requested_gather_dtype": str(args.gather_dtype),
+        "gather_dtype": str(gather_dtype),
+        "views_per_batch": 1,
+        "projector_unroll": 1,
+        "checkpoint_projector": bool(args.checkpoint_projector),
+        "mask_vol": str(args.mask_vol),
+    }
+
+
+def _checkpoint_metadata(
+    *,
+    meta: object,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    args: argparse.Namespace,
+    recon_grid: Grid,
+    detector: Detector,
+    state_grid: Grid,
+    state_detector: Detector,
+    gather_dtype: str,
+    levels: list[int] | None,
+    level_index: int,
+    level_factor: int,
+    completed_outer_iters_in_level: int,
+    global_outer_iters_completed: int,
+    prev_factor: int | None,
+    L_prev: float | None,
+    small_impr_streak: int,
+    elapsed_offset: float,
+    level_complete: bool,
+    run_complete: bool,
+) -> dict[str, object]:
+    geometry_meta = getattr(getattr(meta, "metadata", meta), "geometry_meta", None)
+    geometry_type = getattr(meta, "geometry_type", "parallel")
+    return build_alignment_checkpoint_metadata(
+        projections_shape=tuple(int(v) for v in projections.shape),
+        projections_dtype=str(projections.dtype),
+        geometry_type=str(geometry_type),
+        geometry_meta=geometry_meta,
+        reconstruction_grid=recon_grid.to_dict(),
+        detector=detector.to_dict(),
+        state_grid=state_grid.to_dict(),
+        state_detector=state_detector.to_dict(),
+        levels=levels,
+        level_index=int(level_index),
+        level_factor=int(level_factor),
+        completed_outer_iters_in_level=int(completed_outer_iters_in_level),
+        global_outer_iters_completed=int(global_outer_iters_completed),
+        config=cfg,
+        cli_options=_checkpoint_cli_options(args, gather_dtype=gather_dtype),
+        prev_factor=prev_factor,
+        current_inner_iteration=0,
+        L_prev=L_prev,
+        small_impr_streak=small_impr_streak,
+        elapsed_offset=elapsed_offset,
+        random_state={
+            "alignment": None,
+            "seed_translations": (
+                "deterministic_phase_correlation" if cfg.seed_translations else None
+            ),
+        },
+        level_complete=level_complete,
+        run_complete=run_complete,
+    )
+
+
+def _resume_state_from_checkpoint(
+    checkpoint_path: str,
+    *,
+    expected_metadata: dict[str, object],
+    used_multires: bool,
+) -> AlignResumeState | AlignMultiresResumeState:
+    checkpoint = load_alignment_checkpoint(checkpoint_path)
+    validate_alignment_checkpoint(checkpoint, expected_metadata)
+    metadata = checkpoint.metadata
+    if used_multires:
+        return AlignMultiresResumeState(
+            x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
+            params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
+            motion_coeffs=(
+                None
+                if checkpoint.motion_coeffs is None
+                else jnp.asarray(checkpoint.motion_coeffs, dtype=jnp.float32)
+            ),
+            level_index=int(metadata.get("level_index", 0)),
+            level_factor=int(metadata.get("level_factor", 1)),
+            completed_outer_iters_in_level=int(
+                metadata.get("completed_outer_iters_in_level", 0)
+            ),
+            global_outer_iters_completed=int(
+                metadata.get("global_outer_iters_completed", 0)
+            ),
+            prev_factor=(
+                None
+                if metadata.get("prev_factor") is None
+                else int(metadata.get("prev_factor"))
+            ),
+            loss=list(checkpoint.loss_history),
+            outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
+            L=metadata.get("L_prev"),
+            small_impr_streak=int(metadata.get("small_impr_streak", 0)),
+            elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
+            level_complete=bool(metadata.get("level_complete", False)),
+            run_complete=bool(metadata.get("run_complete", False)),
+        )
+    return AlignResumeState(
+        x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
+        params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
+        motion_coeffs=(
+            None
+            if checkpoint.motion_coeffs is None
+            else jnp.asarray(checkpoint.motion_coeffs, dtype=jnp.float32)
+        ),
+        start_outer_iter=int(metadata.get("completed_outer_iters_in_level", 0)),
+        loss=list(checkpoint.loss_history),
+        outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
+        L=metadata.get("L_prev"),
+        small_impr_streak=int(metadata.get("small_impr_streak", 0)),
+        elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
+    )
+
+
 def main() -> None:
     p = _build_parser()
     args, config_metadata = parse_args_with_config(p, required=("data", "out"))
@@ -467,16 +624,205 @@ def main() -> None:
             apply_saved_alignment=False,
         )
 
+    levels = [int(v) for v in args.levels] if args.levels is not None and len(args.levels) > 0 else None
+    checkpoint_path = args.checkpoint or args.resume
+    checkpoint_every = args.checkpoint_every
+    if checkpoint_path is not None and checkpoint_every is None:
+        checkpoint_every = 1
+    if checkpoint_every is not None and int(checkpoint_every) < 1:
+        p.error("--checkpoint-every must be an integer >= 1")
+
+    expected_checkpoint_metadata = _checkpoint_metadata(
+        meta=meta,
+        projections=proj,
+        cfg=cfg,
+        args=args,
+        recon_grid=recon_grid,
+        detector=detector,
+        state_grid=recon_grid,
+        state_detector=detector,
+        gather_dtype=_gather,
+        levels=levels,
+        level_index=0,
+        level_factor=1,
+        completed_outer_iters_in_level=0,
+        global_outer_iters_completed=0,
+        prev_factor=None,
+        L_prev=None,
+        small_impr_streak=0,
+        elapsed_offset=0.0,
+        level_complete=False,
+        run_complete=False,
+    )
+    resume_state = None
+    if args.resume is not None:
+        try:
+            resume_state = _resume_state_from_checkpoint(
+                args.resume,
+                expected_metadata=expected_checkpoint_metadata,
+                used_multires=levels is not None,
+            )
+        except CheckpointError as exc:
+            raise SystemExit(f"tomojax-align: {exc}") from exc
+        logging.info("Resuming alignment from checkpoint %s", args.resume)
+
+    def _state_grid_detector(
+        level_factor: int,
+        *,
+        run_complete: bool,
+    ) -> tuple[Grid, Detector]:
+        if levels is None or run_complete:
+            return recon_grid, detector
+        from ..recon.multires import scale_detector, scale_grid
+
+        return scale_grid(recon_grid, int(level_factor)), scale_detector(detector, int(level_factor))
+
+    def _write_single_checkpoint(
+        state: AlignResumeState,
+        *,
+        run_complete: bool = False,
+    ) -> None:
+        if checkpoint_path is None:
+            return
+        completed = int(state.start_outer_iter)
+        if not run_complete and (completed <= 0 or completed % int(checkpoint_every or 1) != 0):
+            return
+        metadata = _checkpoint_metadata(
+            meta=meta,
+            projections=proj,
+            cfg=cfg,
+            args=args,
+            recon_grid=recon_grid,
+            detector=detector,
+            state_grid=recon_grid,
+            state_detector=detector,
+            gather_dtype=_gather,
+            levels=None,
+            level_index=0,
+            level_factor=1,
+            completed_outer_iters_in_level=completed,
+            global_outer_iters_completed=completed,
+            prev_factor=None,
+            L_prev=state.L,
+            small_impr_streak=int(state.small_impr_streak),
+            elapsed_offset=float(state.elapsed_offset),
+            level_complete=run_complete or completed >= int(cfg.outer_iters),
+            run_complete=run_complete,
+        )
+        save_alignment_checkpoint(
+            checkpoint_path,
+            x=state.x,
+            params5=state.params5,
+            motion_coeffs=state.motion_coeffs,
+            loss_history=state.loss,
+            outer_stats=state.outer_stats,
+            metadata=metadata,
+        )
+        logging.info("Saved alignment checkpoint to %s", checkpoint_path)
+
+    def _write_multires_checkpoint(state: AlignMultiresResumeState) -> None:
+        if checkpoint_path is None:
+            return
+        completed = int(state.global_outer_iters_completed)
+        if (
+            not state.run_complete
+            and not state.level_complete
+            and (completed <= 0 or completed % int(checkpoint_every or 1) != 0)
+        ):
+            return
+        state_grid, state_detector = _state_grid_detector(
+            int(state.level_factor),
+            run_complete=bool(state.run_complete),
+        )
+        metadata = _checkpoint_metadata(
+            meta=meta,
+            projections=proj,
+            cfg=cfg,
+            args=args,
+            recon_grid=recon_grid,
+            detector=detector,
+            state_grid=state_grid,
+            state_detector=state_detector,
+            gather_dtype=_gather,
+            levels=levels,
+            level_index=int(state.level_index),
+            level_factor=int(state.level_factor),
+            completed_outer_iters_in_level=int(state.completed_outer_iters_in_level),
+            global_outer_iters_completed=completed,
+            prev_factor=state.prev_factor,
+            L_prev=state.L,
+            small_impr_streak=int(state.small_impr_streak),
+            elapsed_offset=float(state.elapsed_offset),
+            level_complete=bool(state.level_complete),
+            run_complete=bool(state.run_complete),
+        )
+        save_alignment_checkpoint(
+            checkpoint_path,
+            x=state.x,
+            params5=state.params5,
+            motion_coeffs=state.motion_coeffs,
+            loss_history=state.loss,
+            outer_stats=state.outer_stats,
+            metadata=metadata,
+        )
+        logging.info("Saved alignment checkpoint to %s", checkpoint_path)
+
     if args.levels is not None and len(args.levels) > 0:
         from ..align.pipeline import align_multires
 
         with transfer_guard_context(args.transfer_guard):
             x, params5, info = align_multires(
-                geom, recon_grid, detector, proj, factors=args.levels, cfg=cfg
+                geom,
+                recon_grid,
+                detector,
+                proj,
+                factors=args.levels,
+                cfg=cfg,
+                resume_state=(
+                    resume_state if isinstance(resume_state, AlignMultiresResumeState) else None
+                ),
+                checkpoint_callback=_write_multires_checkpoint
+                if checkpoint_path is not None
+                else None,
             )
     else:
         with transfer_guard_context(args.transfer_guard):
-            x, params5, info = align(geom, recon_grid, detector, proj, cfg=cfg)
+            x, params5, info = align(
+                geom,
+                recon_grid,
+                detector,
+                proj,
+                cfg=cfg,
+                resume_state=resume_state if isinstance(resume_state, AlignResumeState) else None,
+                checkpoint_callback=_write_single_checkpoint if checkpoint_path is not None else None,
+            )
+        if checkpoint_path is not None:
+            _write_single_checkpoint(
+                AlignResumeState(
+                    x=x,
+                    params5=params5,
+                    motion_coeffs=info.get("motion_coeffs") if isinstance(info, dict) else None,
+                    start_outer_iter=int(
+                        info.get("completed_outer_iters", len(info.get("outer_stats", [])))
+                        if isinstance(info, dict)
+                        else int(cfg.outer_iters)
+                    ),
+                    loss=list(info.get("loss", [])) if isinstance(info, dict) else [],
+                    outer_stats=(
+                        [dict(stat) for stat in info.get("outer_stats", [])]
+                        if isinstance(info, dict)
+                        else []
+                    ),
+                    L=info.get("L") if isinstance(info, dict) else None,
+                    small_impr_streak=int(info.get("small_impr_streak", 0))
+                    if isinstance(info, dict)
+                    else 0,
+                    elapsed_offset=float(info.get("wall_time_total", 0.0))
+                    if isinstance(info, dict)
+                    else 0.0,
+                ),
+                run_complete=True,
+            )
 
     # Optional cylindrical mask in x–y
     if apply_cyl_mask:
@@ -555,6 +901,9 @@ def main() -> None:
                 "transfer_guard": str(args.transfer_guard),
                 "levels": args.levels,
                 "used_multires": bool(args.levels is not None and len(args.levels) > 0),
+                "checkpoint_path": args.checkpoint,
+                "checkpoint_every": args.checkpoint_every,
+                "resume_path": args.resume,
                 "loss_params": loss_params,
                 "loss_spec": loss_spec,
                 "align_config": cfg,

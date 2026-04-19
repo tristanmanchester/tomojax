@@ -79,6 +79,9 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--bounds" in captured.out
     assert "dx=-20:20,dz=-20:20,alpha=-0.05:0.05" in captured.out
     assert "--pose-model" in captured.out
+    assert "--checkpoint" in captured.out
+    assert "--checkpoint-every" in captured.out
+    assert "--resume" in captured.out
 
 
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
@@ -322,11 +325,22 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
         captured["transfer_guard"] = mode
         yield
 
-    def fake_align(geom, recon_grid, recon_detector, projections, *, cfg):
+    def fake_align(
+        geom,
+        recon_grid,
+        recon_detector,
+        projections,
+        *,
+        cfg,
+        resume_state=None,
+        checkpoint_callback=None,
+    ):
         captured["align_grid"] = recon_grid
         captured["align_detector"] = recon_detector
         captured["align_projections_shape"] = tuple(projections.shape)
         captured["align_cfg"] = cfg
+        captured["align_resume_state"] = resume_state
+        captured["align_checkpoint_callback"] = checkpoint_callback
         x = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         info = {
             "loss": [1.0],
@@ -409,6 +423,8 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert captured["align_cfg"].pose_model == "spline"
     assert captured["align_cfg"].knot_spacing == 5
     assert captured["align_cfg"].degree == 2
+    assert captured["align_resume_state"] is None
+    assert captured["align_checkpoint_callback"] is None
     saved_meta = captured["save_metadata"]
     np.testing.assert_allclose(np.asarray(saved_meta.align_params), np.asarray(params5))
     assert json_path.exists()
@@ -443,6 +459,9 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert manifest["resolved_config"]["effective_options"]["gather_dtype"] == "fp32"
     assert manifest["resolved_config"]["gather_dtype"] == "fp32"
     assert manifest["resolved_config"]["levels"] is None
+    assert manifest["resolved_config"]["checkpoint_path"] is None
+    assert manifest["resolved_config"]["checkpoint_every"] is None
+    assert manifest["resolved_config"]["resume_path"] is None
     assert manifest["resolved_config"]["reconstruction_grid"]["nx"] == 2
     assert manifest["resolved_config"]["alignment_params_shape"] == [2, 5]
     assert manifest["versions"]["tomojax"]

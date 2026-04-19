@@ -63,11 +63,15 @@ class AlignInfo(TypedDict):
     per_view_variables: int
     pose_model_basis_shape: list[int]
     active_dofs: list[str]
+    completed_outer_iters: int
+    small_impr_streak: int
+    motion_coeffs: jnp.ndarray | None
 
 
 class AlignMultiresInfo(TypedDict):
     loss: list[float]
     factors: list[int]
+    outer_stats: list[OuterStat]
     stopped_by_observer: bool
     observer_action: ObserverAction
     total_outer_iters: int
@@ -84,6 +88,42 @@ class MultiresLevel(TypedDict):
     grid: Grid
     detector: Detector
     projections: jnp.ndarray
+
+
+@dataclass
+class AlignResumeState:
+    x: jnp.ndarray
+    params5: jnp.ndarray
+    motion_coeffs: jnp.ndarray | None = None
+    start_outer_iter: int = 0
+    loss: list[float] = field(default_factory=list)
+    outer_stats: list[OuterStat] = field(default_factory=list)
+    L: float | None = None
+    small_impr_streak: int = 0
+    elapsed_offset: float = 0.0
+
+
+@dataclass
+class AlignMultiresResumeState:
+    x: jnp.ndarray
+    params5: jnp.ndarray
+    motion_coeffs: jnp.ndarray | None = None
+    level_index: int = 0
+    level_factor: int = 1
+    completed_outer_iters_in_level: int = 0
+    global_outer_iters_completed: int = 0
+    prev_factor: int | None = None
+    loss: list[float] = field(default_factory=list)
+    outer_stats: list[OuterStat] = field(default_factory=list)
+    L: float | None = None
+    small_impr_streak: int = 0
+    elapsed_offset: float = 0.0
+    level_complete: bool = False
+    run_complete: bool = False
+
+
+AlignCheckpointCallback = Callable[[AlignResumeState], None]
+AlignMultiresCheckpointCallback = Callable[[AlignMultiresResumeState], None]
 
 
 def _normalize_observer_action(
@@ -341,6 +381,8 @@ def align(
     init_x: jnp.ndarray | None = None,
     init_params5: jnp.ndarray | None = None,
     observer: ObserverCallback | None = None,
+    resume_state: AlignResumeState | None = None,
+    checkpoint_callback: AlignCheckpointCallback | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
     """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
 
@@ -355,6 +397,9 @@ def align(
         geometry=geometry,
         context="align projections",
     )
+    if resume_state is not None:
+        init_x = resume_state.x
+        init_params5 = resume_state.params5
     if init_x is not None:
         validate_volume(init_x, grid, context="align init_x", name="init_x")
     validate_optional_same_shape(
@@ -419,8 +464,23 @@ def align(
         motion_coeffs = fit_motion_coefficients(motion_model, params5)
         params5 = _coeffs_to_constrained_params(motion_coeffs)
         motion_coeffs = fit_motion_coefficients(motion_model, params5)
+        if resume_state is not None and resume_state.motion_coeffs is not None:
+            resume_coeffs = jnp.asarray(resume_state.motion_coeffs, dtype=jnp.float32)
+            if tuple(resume_coeffs.shape) != tuple(motion_coeffs.shape):
+                raise ValueError(
+                    "align resume_state motion_coeffs shape mismatch: "
+                    f"expected {tuple(motion_coeffs.shape)}, got {tuple(resume_coeffs.shape)}"
+                )
+            motion_coeffs = resume_coeffs
+            params5 = _coeffs_to_constrained_params(motion_coeffs)
 
-    loss_hist = []
+    start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
+    if start_outer_iter < 0 or start_outer_iter > int(cfg.outer_iters):
+        raise ValueError(
+            "align resume_state start_outer_iter must be between 0 and cfg.outer_iters; "
+            f"got {start_outer_iter} for outer_iters={int(cfg.outer_iters)}"
+        )
+    loss_hist = list(resume_state.loss) if resume_state is not None else []
     stopped_by_observer = False
     observer_action: ObserverAction = "continue"
 
@@ -829,11 +889,33 @@ def align(
     _gn_update_all = jax.jit(_gn_update_all)
 
     # Reuse measured Lipschitz across outer iterations to avoid repeated power-method
-    L_prev = cfg.recon_L
-    small_impr_streak = 0
+    L_prev = resume_state.L if resume_state is not None else cfg.recon_L
+    small_impr_streak = (
+        int(resume_state.small_impr_streak) if resume_state is not None else 0
+    )
     opt_mode = str(cfg.opt_method).lower()
-    outer_stats: list[OuterStat] = []
-    wall_start = time.perf_counter()
+    outer_stats: list[OuterStat] = (
+        [dict(stat) for stat in resume_state.outer_stats] if resume_state is not None else []
+    )
+    elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
+    wall_start = time.perf_counter() - elapsed_offset
+
+    def _emit_checkpoint_state() -> None:
+        if checkpoint_callback is None:
+            return
+        checkpoint_callback(
+            AlignResumeState(
+                x=x,
+                params5=params5,
+                motion_coeffs=motion_coeffs,
+                start_outer_iter=len(outer_stats),
+                loss=list(loss_hist),
+                outer_stats=[dict(stat) for stat in outer_stats],
+                L=(float(L_prev) if L_prev is not None else None),
+                small_impr_streak=int(small_impr_streak),
+                elapsed_offset=float(time.perf_counter() - wall_start),
+            )
+        )
 
     def _log_outer_summary(stat: OuterStat) -> None:
         outer_idx = int(stat.get("outer_idx", 0))
@@ -954,8 +1036,11 @@ def align(
             )
         logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
 
+    iter_range = range(start_outer_iter, int(cfg.outer_iters))
     for it in progress_iter(
-        range(cfg.outer_iters), total=cfg.outer_iters, desc="Align: outer iters"
+        iter_range,
+        total=max(0, int(cfg.outer_iters) - start_outer_iter),
+        desc="Align: outer iters",
     ):
         outer_idx = it + 1
         stat: OuterStat = {"outer_idx": outer_idx}
@@ -1234,13 +1319,14 @@ def align(
         if cfg.log_summary:
             _log_outer_summary(stat)
 
+        should_break = False
         if observer is not None:
             observer_action = _normalize_observer_action(observer(x, params5, dict(stat)))
             stat["observer_action"] = observer_action
             stat["observer_stop"] = observer_action != "continue"
             if observer_action != "continue":
                 stopped_by_observer = observer_action == "stop_run"
-                break
+                should_break = True
 
         # Early stopping based on alignment improvement during GN/GD step
         if cfg.early_stop and (rel_impr is not None):
@@ -1261,9 +1347,13 @@ def align(
                         float(cfg.early_stop_rel_impr),
                         int(cfg.early_stop_patience),
                     )
-                break
+                should_break = True
         elif cfg.early_stop:
             small_impr_streak = 0
+
+        _emit_checkpoint_state()
+        if should_break:
+            break
 
     if cfg.log_summary and outer_stats:
         recon_total = sum(
@@ -1317,6 +1407,9 @@ def align(
             int(motion_model.basis.shape[1]),
         ],
         "active_dofs": list(motion_model.active_names),
+        "completed_outer_iters": len(outer_stats),
+        "small_impr_streak": int(small_impr_streak),
+        "motion_coeffs": motion_coeffs,
     }
     return x, params5, info
 
@@ -1330,6 +1423,8 @@ def align_multires(
     factors: Iterable[int] = (2, 1),
     cfg: AlignConfig | None = None,
     observer: ObserverCallback | None = None,
+    resume_state: AlignMultiresResumeState | None = None,
+    checkpoint_callback: AlignMultiresCheckpointCallback | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignMultiresInfo]:
     """Coarse-to-fine alignment using simple binning for speed and robustness.
 
@@ -1352,8 +1447,9 @@ def align_multires(
         context="align_multires projections",
     )
 
+    factors_list = [int(f) for f in factors]
     levels: list[MultiresLevel] = []
-    for f in factors:
+    for f in factors_list:
         g = scale_grid(grid, int(f))
         d = scale_detector(detector, int(f))
         y = bin_projections(projections, int(f))
@@ -1372,24 +1468,52 @@ def align_multires(
             }
         )
 
-    x_init = None
-    params5 = None
-    prev_factor: int | None = None
-    loss_hist: list[float] = []
+    x_init = resume_state.x if resume_state is not None and resume_state.level_complete else None
+    params5 = resume_state.params5 if resume_state is not None and resume_state.level_complete else None
+    prev_factor: int | None = (
+        int(resume_state.level_factor)
+        if resume_state is not None and resume_state.level_complete
+        else None
+    )
+    loss_hist: list[float] = list(resume_state.loss) if resume_state is not None else []
+    global_outer_stats: list[OuterStat] = (
+        [dict(stat) for stat in resume_state.outer_stats] if resume_state is not None else []
+    )
     stopped_by_observer = False
     final_observer_action: ObserverAction = "continue"
-    global_outer_idx = 0
-    global_elapsed_offset = 0.0
-    executed_outer_iters = 0
+    global_outer_idx = (
+        int(resume_state.global_outer_iters_completed) if resume_state is not None else 0
+    )
+    global_elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
+    executed_outer_iters = int(global_outer_idx)
     final_pose_model_variables: int | None = None
     final_per_view_variables: int | None = None
     final_pose_model_basis_shape: list[int] | None = None
+    last_level_index_processed: int | None = None
 
-    for li, lvl in enumerate(levels):
+    if resume_state is not None and resume_state.run_complete:
+        levels_to_run: list[tuple[int, MultiresLevel]] = []
+        x_init = resume_state.x
+        params5 = resume_state.params5
+        prev_factor = 1
+    else:
+        start_level = 0
+        if resume_state is not None:
+            start_level = int(resume_state.level_index) + (1 if resume_state.level_complete else 0)
+        levels_to_run = list(enumerate(levels))[start_level:]
+
+    for li, lvl in levels_to_run:
         g = lvl["grid"]
         d = lvl["detector"]
         y = lvl["projections"]
-        if x_init is not None and prev_factor is not None:
+        resuming_this_level = (
+            resume_state is not None
+            and not resume_state.level_complete
+            and int(resume_state.level_index) == int(li)
+        )
+        if resuming_this_level:
+            x0 = resume_state.x
+        elif x_init is not None and prev_factor is not None:
             # Upsample previous x to current level as init
             f_up = prev_factor // lvl["factor"]
             x0 = upsample_volume(x_init, f_up, (g.nx, g.ny, g.nz))
@@ -1397,7 +1521,7 @@ def align_multires(
             x0 = None
 
         # Optional translation seeding at the coarsest level via phase correlation
-        params0 = params5
+        params0 = resume_state.params5 if resuming_this_level else params5
         if li == 0 and cfg.seed_translations:
             # quick seed recon to project nominal poses
             seed_cfg = FistaConfig(
@@ -1453,14 +1577,89 @@ def align_multires(
         # Run alignment at this level
         # Re-estimate L at each level using a fresh (streamed) power-method for stability
         cfg_level = replace(cfg, recon_L=None)
+        level_completed_before = (
+            int(resume_state.completed_outer_iters_in_level) if resuming_this_level else 0
+        )
+        stats_before_level = [
+            dict(stat) for stat in global_outer_stats if stat.get("level_index") != int(li)
+        ]
+        loss_before_level = (
+            list(loss_hist[:-level_completed_before])
+            if resuming_this_level and level_completed_before > 0
+            else list(loss_hist)
+        )
+        global_before_level = len(stats_before_level)
+
+        def _enrich_level_stats(local_stats: list[OuterStat]) -> list[OuterStat]:
+            enriched_stats: list[OuterStat] = []
+            for idx, stat in enumerate(local_stats, start=1):
+                enriched = dict(stat)
+                enriched["level_factor"] = int(lvl["factor"])
+                enriched["level_index"] = int(li)
+                enriched["global_outer_idx"] = int(global_before_level + idx)
+                level_elapsed = stat.get("cumulative_time")
+                try:
+                    level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
+                except Exception:
+                    level_elapsed_f = None
+                enriched["level_elapsed_seconds"] = level_elapsed_f
+                enriched["global_elapsed_seconds"] = (
+                    float(global_elapsed_offset + level_elapsed_f)
+                    if level_elapsed_f is not None
+                    else None
+                )
+                enriched_stats.append(enriched)
+            return enriched_stats
+
+        def _emit_multires_checkpoint(state: AlignResumeState, *, level_complete: bool) -> None:
+            if checkpoint_callback is None:
+                return
+            enriched_stats = _enrich_level_stats([dict(stat) for stat in state.outer_stats])
+            checkpoint_callback(
+                AlignMultiresResumeState(
+                    x=state.x,
+                    params5=state.params5,
+                    motion_coeffs=state.motion_coeffs,
+                    level_index=int(li),
+                    level_factor=int(lvl["factor"]),
+                    completed_outer_iters_in_level=int(state.start_outer_iter),
+                    global_outer_iters_completed=int(global_before_level + state.start_outer_iter),
+                    prev_factor=prev_factor,
+                    loss=loss_before_level + list(state.loss),
+                    outer_stats=stats_before_level + enriched_stats,
+                    L=state.L,
+                    small_impr_streak=int(state.small_impr_streak),
+                    elapsed_offset=float(global_elapsed_offset + state.elapsed_offset),
+                    level_complete=bool(level_complete),
+                    run_complete=False,
+                )
+            )
+
+        current_level_stats = [
+            dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(li)
+        ]
+        align_resume_state = None
+        if resuming_this_level:
+            align_resume_state = AlignResumeState(
+                x=resume_state.x,
+                params5=resume_state.params5,
+                motion_coeffs=resume_state.motion_coeffs,
+                start_outer_iter=level_completed_before,
+                loss=list(loss_hist[-level_completed_before:])
+                if level_completed_before > 0
+                else [],
+                outer_stats=current_level_stats,
+                L=resume_state.L,
+                small_impr_streak=int(resume_state.small_impr_streak),
+                elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
+            )
 
         def _level_observer(x_obs, params_obs, stat_obs):
-            nonlocal global_outer_idx, stopped_by_observer
-            global_outer_idx += 1
+            nonlocal stopped_by_observer
             enriched = dict(stat_obs)
             enriched["level_factor"] = int(lvl["factor"])
             enriched["level_index"] = int(li)
-            enriched["global_outer_idx"] = int(global_outer_idx)
+            enriched["global_outer_idx"] = int(global_before_level + int(stat_obs["outer_idx"]))
             level_elapsed = stat_obs.get("cumulative_time")
             try:
                 level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
@@ -1485,19 +1684,55 @@ def align_multires(
             init_x=x0,
             init_params5=params0,
             observer=_level_observer if observer is not None else None,
+            resume_state=align_resume_state,
+            checkpoint_callback=lambda state: _emit_multires_checkpoint(
+                state,
+                level_complete=False,
+            ),
         )
-        loss_hist.extend(info.get("loss", []))
-        executed_outer_iters += len(info.get("outer_stats", []))
+        level_completed_after = int(info.get("completed_outer_iters", len(info.get("outer_stats", []))))
+        level_action = _normalize_observer_action(info.get("observer_action"))
+        level_complete = (
+            level_completed_after >= int(cfg.outer_iters)
+            or level_action == "advance_level"
+            or not bool(info.get("stopped_by_observer", False))
+        )
+        loss_hist = loss_before_level + list(info.get("loss", []))
+        global_outer_stats = stats_before_level + _enrich_level_stats(
+            [dict(stat) for stat in info.get("outer_stats", [])]
+        )
+        global_outer_idx = global_before_level + level_completed_after
+        executed_outer_iters = int(global_outer_idx)
         final_pose_model_variables = int(info["pose_model_variables"])
         final_per_view_variables = int(info["per_view_variables"])
         final_pose_model_basis_shape = list(info["pose_model_basis_shape"])
         x_init = x_lvl
         prev_factor = lvl["factor"]
+        last_level_index_processed = int(li)
         try:
             global_elapsed_offset += float(info.get("wall_time_total") or 0.0)
         except Exception:
             pass
-        level_action = _normalize_observer_action(info.get("observer_action"))
+        if checkpoint_callback is not None:
+            checkpoint_callback(
+                AlignMultiresResumeState(
+                    x=x_lvl,
+                    params5=params5,
+                    motion_coeffs=info.get("motion_coeffs"),
+                    level_index=int(li),
+                    level_factor=int(lvl["factor"]),
+                    completed_outer_iters_in_level=level_completed_after,
+                    global_outer_iters_completed=int(global_outer_idx),
+                    prev_factor=prev_factor,
+                    loss=list(loss_hist),
+                    outer_stats=[dict(stat) for stat in global_outer_stats],
+                    L=info.get("L"),
+                    small_impr_streak=int(info.get("small_impr_streak", 0)),
+                    elapsed_offset=float(global_elapsed_offset),
+                    level_complete=bool(level_complete),
+                    run_complete=False,
+                )
+            )
         final_observer_action = level_action
         if level_action == "stop_run":
             stopped_by_observer = True
@@ -1513,16 +1748,47 @@ def align_multires(
     else:
         x_final = x_init
 
+    run_complete = (
+        params5 is not None
+        and not stopped_by_observer
+        and (
+            (resume_state is not None and resume_state.run_complete)
+            or last_level_index_processed == len(levels) - 1
+            or not levels
+        )
+    )
+    if checkpoint_callback is not None and params5 is not None and run_complete:
+        checkpoint_callback(
+            AlignMultiresResumeState(
+                x=x_final,
+                params5=params5,
+                motion_coeffs=None,
+                level_index=max(0, len(levels) - 1),
+                level_factor=1,
+                completed_outer_iters_in_level=0,
+                global_outer_iters_completed=int(executed_outer_iters),
+                prev_factor=1,
+                loss=list(loss_hist),
+                outer_stats=[dict(stat) for stat in global_outer_stats],
+                L=None,
+                small_impr_streak=0,
+                elapsed_offset=float(global_elapsed_offset),
+                level_complete=True,
+                run_complete=True,
+            )
+        )
+
     return (
         x_final,
         params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32),
         {
             "loss": loss_hist,
-            "factors": list(factors),
+            "factors": factors_list,
             "stopped_by_observer": stopped_by_observer,
             "observer_action": final_observer_action,
             "total_outer_iters": int(executed_outer_iters),
             "wall_time_total": float(global_elapsed_offset),
+            "outer_stats": global_outer_stats,
             "pose_model": str(cfg.pose_model),
             "pose_model_variables": final_pose_model_variables,
             "per_view_variables": final_per_view_variables,

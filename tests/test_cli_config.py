@@ -58,6 +58,8 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
                 "lambda_tv = 0.02",
                 "levels = [4, 2, 1]",
                 "checkpoint_projector = false",
+                'checkpoint = "runs/align.ckpt.npz"',
+                "checkpoint_every = 2",
                 'loss_param = ["delta=1.0"]',
             ]
         ),
@@ -76,6 +78,8 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
             "2",
             "1",
             "--checkpoint-projector",
+            "--checkpoint-every",
+            "3",
             "--loss-param",
             "eps=0.001",
         ],
@@ -87,11 +91,16 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
     assert args.lambda_tv == pytest.approx(0.03)
     assert args.levels == [2, 1]
     assert args.checkpoint_projector is True
+    assert args.checkpoint == "runs/align.ckpt.npz"
+    assert args.checkpoint_every == 3
     assert args.loss_param == ["eps=0.001"]
     assert metadata["config_file_values"]["levels"] == [4, 2, 1]
+    assert metadata["config_file_values"]["checkpoint"] == "runs/align.ckpt.npz"
+    assert metadata["config_file_values"]["checkpoint_every"] == 2
     assert "lambda_tv" in metadata["explicit_cli_keys"]
     assert "levels" in metadata["explicit_cli_keys"]
     assert "checkpoint_projector" in metadata["explicit_cli_keys"]
+    assert "checkpoint_every" in metadata["explicit_cli_keys"]
     assert "loss_param" in metadata["explicit_cli_keys"]
     assert metadata["effective_options"]["levels"] == [2, 1]
 

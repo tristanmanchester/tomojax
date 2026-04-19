@@ -126,10 +126,19 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
   --gather-dtype bf16 --checkpoint-projector \
+  --checkpoint out/align_misaligned.checkpoint.npz --checkpoint-every 1 \
   --log-summary --out out/align_misaligned.nxs \
   --save-params-json out/align_misaligned.params.json \
   --save-params-csv out/align_misaligned.params.csv \
   --save-manifest out/align_misaligned.manifest.json
+
+# Resume the same alignment after interruption or pre-emption
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
+  --opt-method gn --gn-damping 1e-3 \
+  --gather-dtype bf16 --checkpoint-projector \
+  --resume out/align_misaligned.checkpoint.npz \
+  --out out/align_misaligned.nxs
 
 # Deterministic misalignment schedules (see docs/misalign_modes.md)
 # Linear angle drift 0→+5° across the scan

@@ -28,6 +28,12 @@ gn_damping = 0.001
 # degree = 3
 gather_dtype = "auto"
 checkpoint_projector = true
+# Resumable alignment checkpoints are written after completed outer iterations.
+# They do not checkpoint inside FISTA reconstruction inner iterations.
+# checkpoint = "runs/align_from_config.checkpoint.npz"
+# checkpoint_every = 1
+# To resume, run the CLI with:
+#   uv run tomojax-align --config docs/align_config.toml --resume runs/align_from_config.checkpoint.npz
 log_summary = true
 progress = true
 save_params_json = "runs/align_from_config.params.json"

@@ -174,6 +174,7 @@ python -m tomojax.cli.align [--config <config.toml>] --data <in.nxs> \
   [--w-rot <float>] [--w-trans <float>] [--seed-translations] \
   [--levels <ints...>] [--gather-dtype fp32|bf16|fp16] \
   [--checkpoint-projector|--no-checkpoint-projector] [--recon-L <float>] [--log-summary] \
+  [--checkpoint <checkpoint.npz>] [--checkpoint-every <N>] [--resume <checkpoint.npz>] \
   --out <out.nxs> [--save-params-json <out.json>] [--save-params-csv <out.csv>] \
   [--save-manifest <manifest.json>] [--progress]
 ```
@@ -192,6 +193,7 @@ Key options
 - Multi‑resolution: `--levels 4 2 1` for coarse→fine; optional `--seed-translations` uses phase correlation at the coarsest level.
 - Memory/performance: same knobs as recon (gather dtype and checkpointing).
 - `--recon-L`: fixes the Lipschitz constant to skip per‑level power‑method if you already know a good bound.
+- Checkpoint/resume: `--checkpoint PATH` writes an atomic `.npz` checkpoint after completed alignment outer iterations, and `--checkpoint-every N` controls the completed global outer-iteration cadence. `--resume PATH` loads a checkpoint and continues from the next outer iteration or pyramid level; if `--checkpoint` is omitted, future checkpoints are written back to the resume path. Checkpoints are outer-iteration boundaries only, not mid-FISTA inner-iteration snapshots.
 - Parameter exports: `--save-params-json` and `--save-params-csv` write named per-view sidecars with `alpha_rad`, `beta_rad`, `phi_rad`, `dx_world`, `dz_world`, `dx_px`, and `dz_px`.
 - Reproducibility: `--save-manifest manifest.json` writes a JSON sidecar with raw argv, parsed CLI args, resolved config, TomoJAX/Python/JAX versions, JAX backend/devices, and a UTC timestamp.
 - Early stopping and GN acceptance are enabled by default during alignment: outers stop when relative improvement is tiny, and GN steps are rejected if they don’t reduce loss.
@@ -210,6 +212,7 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
   --opt-method gn --gn-damping 1e-3 \
   --gather-dtype bf16 --checkpoint-projector \
+  --checkpoint out/align_misaligned.checkpoint.npz --checkpoint-every 1 \
   --log-summary --out out/align_misaligned.nxs \
   --save-params-json out/align_misaligned.params.json \
   --save-params-csv out/align_misaligned.params.csv \
@@ -254,6 +257,14 @@ uv run tomojax-align --data data/sim_misaligned.nxs \
 uv run tomojax-align --data data/sim_misaligned.nxs \
   --levels 4 2 1 --opt-method gn --optimise-dofs alpha,beta,phi,dx,dz \
   --out out/align_full_5dof.nxs
+
+# Resume a checkpointed long run
+uv run tomojax-align --data data/sim_misaligned.nxs \
+  --levels 4 2 1 --outer-iters 4 --recon-iters 25 --lambda-tv 0.003 \
+  --opt-method gn --gn-damping 1e-3 \
+  --gather-dtype bf16 --checkpoint-projector \
+  --resume out/align_misaligned.checkpoint.npz \
+  --out out/align_misaligned.nxs
 
 # TOML config with an explicit CLI override
 uv run tomojax-align --config docs/align_config.toml --levels 2 1
