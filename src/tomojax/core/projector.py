@@ -9,6 +9,16 @@ import jax.numpy as jnp
 import numpy as np
 
 from .geometry.base import Grid, Detector, Geometry
+from .validation import (
+    validate_detector,
+    validate_detector_grid,
+    validate_detector_image,
+    validate_grid,
+    validate_pose_matrix,
+    validate_pose_stack,
+    validate_projection_stack,
+    validate_volume,
+)
 
 # Frame conventions:
 # - geometry.pose_for_view(i) must return a 4x4 transform T_world_from_obj that maps
@@ -286,11 +296,10 @@ def forward_project_view_T(
     in the object frame. This avoids a matmul per step and keeps gradients clean.
     """
     vol = volume
-    if vol.ndim != 3:
-        raise ValueError("volume must be 3D array")
-    nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
-    if vol.shape != (nx, ny, nz):
-        raise ValueError(f"Volume must be (nx,ny,nz)={nx, ny, nz}, got {vol.shape}")
+    nx, ny, nz = validate_volume(vol, grid, context="forward_project_view_T", name="volume")
+    validate_detector(detector, "forward_project_view_T")
+    validate_detector_grid(det_grid, detector, context="forward_project_view_T")
+    validate_pose_matrix(T, context="forward_project_view_T")
     recon_flat = _prepare_volume_for_gather(vol, gather_dtype)
     ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, n_rays = (
         _projector_traversal_state(
@@ -336,13 +345,10 @@ def _backproject_view_accum_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     img = jnp.asarray(image, dtype=jnp.float32)
-    if img.ndim != 2:
-        raise ValueError("image must be 2D array")
-    if img.shape != (int(detector.nv), int(detector.nu)):
-        raise ValueError(
-            f"Image must be (nv,nu)={(int(detector.nv), int(detector.nu))}, got {img.shape}"
-        )
-    nx, ny, nz = int(grid.nx), int(grid.ny), int(grid.nz)
+    nx, ny, nz = validate_grid(grid, "backproject_view_T")
+    validate_detector_image(img, detector, context="backproject_view_T", name="image")
+    validate_detector_grid(det_grid, detector, context="backproject_view_T")
+    validate_pose_matrix(T, context="backproject_view_T")
     ix0, iy0, iz0, dix, diy, diz, n_steps_ray, step_size32, n_steps, _ = _projector_traversal_state(
         T,
         grid,
@@ -418,6 +424,14 @@ def sum_backproject_views_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Sum explicit mixed-precision adjoints over a fixed chunk without stacking volumes."""
+    n_views, _, _ = validate_projection_stack(
+        images,
+        detector,
+        context="sum_backproject_views_T",
+    )
+    validate_pose_stack(T_all, n_views, context="sum_backproject_views_T")
+    validate_detector_grid(det_grid, detector, context="sum_backproject_views_T")
+    validate_grid(grid, "sum_backproject_views_T")
     img = jnp.asarray(images, dtype=jnp.float32)
 
     def body(accum, inputs):

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -65,8 +63,8 @@ def test_fista_reports_objective_at_primal_iterate_not_momentum(monkeypatch: pyt
         def pose_for_view(self, i: int):
             return jnp.eye(4, dtype=jnp.float32)
 
-    grid = SimpleNamespace(nx=1, ny=1, nz=1)
-    detector = SimpleNamespace()
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
     projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
 
     _, info = fista_mod.fista_tv(

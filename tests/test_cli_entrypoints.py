@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 from contextlib import contextmanager
 import json
@@ -65,6 +66,16 @@ def test_recon_help_documents_quicklook_aliases(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--quicklook" in captured.out
     assert "--save-preview" in captured.out
+
+
+def test_recon_views_per_batch_parser_accepts_auto_and_integers():
+    assert recon_cli._parse_views_per_batch("auto") == "auto"
+    assert recon_cli._parse_views_per_batch("AUTO") == "auto"
+    assert recon_cli._parse_views_per_batch("4") == 4
+    assert recon_cli._parse_views_per_batch("0") == 0
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        recon_cli._parse_views_per_batch("fast")
 
 
 def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):

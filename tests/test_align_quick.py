@@ -127,6 +127,27 @@ def test_align_runs_with_cylindrical_volume_mask():
     assert np.isfinite(np.asarray(info["loss"])).all()
 
 
+def test_align_rejects_bad_init_params5_shape_with_expected_and_actual():
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 45.0, 90.0])
+    projs = jnp.zeros((3, det.nv, det.nu), dtype=jnp.float32)
+    bad_params = jnp.zeros((2, 5), dtype=jnp.float32)
+
+    with pytest.raises(
+        ValueError,
+        match=r"expected \(3, 5\).*actual \(2, 5\).*Likely fix",
+    ):
+        align(
+            geom,
+            grid,
+            det,
+            projs,
+            cfg=AlignConfig(outer_iters=1, recon_iters=1, recon_L=1.0),
+            init_params5=bad_params,
+        )
+
+
 def test_align_multires_counts_executed_outer_iters_without_observer():
     grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 6, 4)
     cfg = AlignConfig(

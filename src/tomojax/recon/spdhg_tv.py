@@ -14,6 +14,14 @@ from ..core.projector import (
     get_detector_grid_device,
     sum_backproject_views_T,
 )
+from ..core.validation import (
+    validate_grid,
+    validate_optional_broadcastable_shape,
+    validate_optional_same_shape,
+    validate_pose_stack,
+    validate_projection_stack,
+    validate_volume,
+)
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import div3, grad3
 
@@ -173,12 +181,36 @@ def spdhg_tv(
     are eligible for callbacks; if a single logged sample exists, the callback
     fires once.
     """
+    validate_grid(grid, "spdhg_tv grid")
+    n_views, nv, nu = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="spdhg_tv projections",
+    )
+    expected_proj_shape = (n_views, nv, nu)
+    validate_optional_same_shape(
+        weights,
+        expected_proj_shape,
+        context="spdhg_tv weights",
+        name="weights",
+        fix="use weights with the same shape as projections.",
+    )
+    validate_optional_broadcastable_shape(
+        config.support,
+        (grid.nx, grid.ny, grid.nz),
+        context="spdhg_tv support",
+        name="support",
+        fix="use a support mask broadcastable to shape (grid.nx, grid.ny, grid.nz).",
+    )
+    if init_x is not None:
+        validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
     y_meas = jnp.asarray(projections, dtype=jnp.float32)
-    n_views, nv, nu = int(y_meas.shape[0]), int(y_meas.shape[1]), int(y_meas.shape[2])
     W = jnp.ones_like(y_meas) if weights is None else jnp.asarray(weights, dtype=jnp.float32)
 
     # precompute per-view poses once (like your FISTA)
     T_all = stack_view_poses(geometry, n_views)
+    validate_pose_stack(T_all, n_views, context="spdhg_tv geometry")
     det_grid = get_detector_grid_device(detector)
 
     # batched projector over a chunk of views

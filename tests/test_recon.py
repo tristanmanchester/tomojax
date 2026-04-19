@@ -73,6 +73,45 @@ def test_fbp_default_scaling_recovers_reasonable_absolute_intensity():
     assert roi_mean == pytest.approx(1.0, rel=0.1, abs=0.1)
 
 
+def test_fbp_rejects_angle_projection_count_mismatch():
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 45.0, 90.0])
+    projs = jnp.zeros((2, det.nv, det.nu), dtype=jnp.float32)
+
+    with pytest.raises(
+        ValueError,
+        match=r"expected .*=\(3, 4, 4\).*actual \(2, 4, 4\).*Likely fix",
+    ):
+        fbp(geom, grid, det, projs)
+
+
+def test_fbp_rejects_detector_shape_mismatch():
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 45.0, 90.0])
+    projs = jnp.zeros((3, det.nv + 1, det.nu), dtype=jnp.float32)
+
+    with pytest.raises(
+        ValueError,
+        match=r"expected .*=\(3, 4, 4\).*actual \(3, 5, 4\).*Likely fix",
+    ):
+        fbp(geom, grid, det, projs)
+
+
+def test_fista_rejects_invalid_reconstruction_grid_shape():
+    grid = Grid(nx=0, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
+    projs = jnp.zeros((1, det.nv, det.nu), dtype=jnp.float32)
+
+    with pytest.raises(
+        ValueError,
+        match=r"positive integer \(nx, ny, nz\).*actual \(0, 4, 4\).*Likely fix",
+    ):
+        fista_tv(geom, grid, det, projs, config=FistaConfig(iters=1, L=1.0))
+
+
 def test_fista_loss_decreases():
     grid, det, geom, vol, projs = make_simple_case(12, 12, 12, 16)
     x, info = fista_tv(

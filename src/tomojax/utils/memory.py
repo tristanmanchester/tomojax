@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 import os
 import math
@@ -8,12 +9,24 @@ from functools import lru_cache
 from .subprocesses import check_output_command
 
 
+@dataclass(frozen=True)
+class ViewsPerBatchEstimate:
+    """Memory-estimator result for callers that need fallback diagnostics."""
+
+    views_per_batch: int
+    free_bytes: Optional[int]
+    fallback_used: bool
+    fallback_reason: str | None = None
+
+
 def _bytes_per(dtype: str) -> int:
-    d = dtype.lower()
+    d = str(dtype).lower()
     if d in ("fp16", "float16", "half"):  # no int here; only used for gather
         return 2
     if d in ("bf16", "bfloat16"):
         return 2
+    if d in ("fp64", "float64", "double"):
+        return 8
     return 4  # default fp32
 
 
@@ -70,6 +83,8 @@ def estimate_views_per_batch(
     grid_nxyz: tuple[int, int, int],
     det_nuv: tuple[int, int],
     gather_dtype: str = "fp32",
+    projection_dtype: str = "fp32",
+    volume_dtype: str = "fp32",
     checkpoint_projector: bool = True,
     algo: str = "fbp",
     safety_frac: float = 0.75,
@@ -83,14 +98,50 @@ def estimate_views_per_batch(
     Returns at least 1 and at most n_views. Falls back to a conservative default (8 or all)
     if free memory cannot be determined.
     """
+    estimate = estimate_views_per_batch_info(
+        n_views=n_views,
+        grid_nxyz=grid_nxyz,
+        det_nuv=det_nuv,
+        gather_dtype=gather_dtype,
+        projection_dtype=projection_dtype,
+        volume_dtype=volume_dtype,
+        checkpoint_projector=checkpoint_projector,
+        algo=algo,
+        safety_frac=safety_frac,
+        free_bytes_override=free_bytes_override,
+        fallback_batch=8,
+    )
+    return estimate.views_per_batch
+
+
+def estimate_views_per_batch_info(
+    *,
+    n_views: int,
+    grid_nxyz: tuple[int, int, int],
+    det_nuv: tuple[int, int],
+    gather_dtype: str = "fp32",
+    projection_dtype: str = "fp32",
+    volume_dtype: str = "fp32",
+    checkpoint_projector: bool = True,
+    algo: str = "fbp",
+    safety_frac: float = 0.75,
+    free_bytes_override: Optional[int] = None,
+    fallback_batch: int = 8,
+) -> ViewsPerBatchEstimate:
+    """Estimate views-per-batch and report whether a fallback was required.
+
+    ``fallback_batch`` lets user-facing CLIs choose a stricter fallback while the
+    legacy integer API keeps its previous small-batch fallback behavior.
+    """
+    n_views_i = max(1, int(n_views))
     nx, ny, nz = map(int, grid_nxyz)
     nv, nu = map(int, det_nuv)
     rays = nv * nu
     vox = nx * ny * nz
 
-    # Base dtypes: projections and volumes are fp32; gather buffer can be reduced
-    proj_bytes = 4
-    vol_bytes = 4
+    # Base dtypes: projections and volumes default to fp32; gather can be reduced.
+    proj_bytes = _bytes_per(projection_dtype)
+    vol_bytes = _bytes_per(volume_dtype)
     gather_bytes = _bytes_per(gather_dtype)
 
     # Per-view footprint (rough upper bound)
@@ -112,6 +163,8 @@ def estimate_views_per_batch(
 
     # Empirical overhead fudge to cover extra buffers, remat, etc.
     fudge = 2.0 if algo.lower() == "fbp" else 4.0
+    if not checkpoint_projector:
+        fudge *= 1.25
 
     free_bytes = free_bytes_override
     if free_bytes is None:
@@ -119,11 +172,22 @@ def estimate_views_per_batch(
 
     if not free_bytes or free_bytes <= 0:
         # Fallback heuristics: pick a small-but-reasonable batch
-        return max(1, min(n_views, 8))
+        fallback = max(1, min(n_views_i, int(fallback_batch)))
+        return ViewsPerBatchEstimate(
+            views_per_batch=fallback,
+            free_bytes=free_bytes,
+            fallback_used=True,
+            fallback_reason="available memory could not be determined",
+        )
 
     budget = int(_normalized_safety_fraction(safety_frac) * free_bytes)
     if budget <= static_bytes:
-        return 1
+        return ViewsPerBatchEstimate(
+            views_per_batch=1,
+            free_bytes=int(free_bytes),
+            fallback_used=False,
+            fallback_reason=None,
+        )
 
     # Largest b such that per_batch(b) <= budget
     b_est = (budget - static_bytes) / float(algo_factor * fudge * per_view)
@@ -141,7 +205,13 @@ def estimate_views_per_batch(
     elif vox >= 256**3:
         cap_env = min(cap_env, 2)
     cap = max(1, cap_env)
-    return max(1, min(int(n_views), cap, b))
+    batch = max(1, min(n_views_i, cap, b))
+    return ViewsPerBatchEstimate(
+        views_per_batch=batch,
+        free_bytes=int(free_bytes),
+        fallback_used=False,
+        fallback_reason=None,
+    )
 
 
 def default_gather_dtype() -> str:
