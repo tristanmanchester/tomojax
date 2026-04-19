@@ -69,12 +69,14 @@ Notes
 # Explore CLIs inside the uv-managed environment
 python -m tomojax.cli.simulate --help
 python -m tomojax.cli.misalign --help
+python -m tomojax.cli.preprocess --help
 python -m tomojax.cli.recon    --help
 python -m tomojax.cli.align    --help
 
 # Or use the installed console scripts
 uv run tomojax-simulate ...
 uv run tomojax-misalign ...
+uv run tomojax-preprocess ...
 uv run tomojax-recon    ...
 uv run tomojax-align    ...
 uv run tomojax-loss-bench --help
@@ -114,6 +116,10 @@ uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned.nx
   --rot-deg 1.0 --trans-px 10 --seed 0
 uv run tomojax-misalign --data data/sim_aligned.nxs --out data/sim_misaligned_poisson5k.nxs \
   --rot-deg 1.0 --trans-px 10 --poisson 100 --seed 0
+
+# Preprocess raw NXtomo sample/flat/dark frames before reconstruction
+uv run tomojax-preprocess raw.nxs data/corrected_absorption.nxs \
+  --log --epsilon 1e-6 --clip-min 1e-6
 
 # Naive reconstructions (FBP)
 uv run tomojax-recon --data data/sim_misaligned.nxs \

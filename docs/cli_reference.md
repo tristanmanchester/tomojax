@@ -271,6 +271,47 @@ uv run tomojax-align --config docs/align_config.toml --levels 2 1
 ```
 
 
+## preprocess
+
+Preprocess raw NXtomo sample/flat/dark frames into sample-only corrected projections.
+The command uses `image_key` values `0=sample`, `1=flat`, and `2=dark`.
+By default it writes normalised transmission. Add `--log` to write absorption
+(`-log` transmission) for reconstruction workflows that expect line integrals.
+
+Usage
+```
+python -m tomojax.cli.preprocess <raw.nxs> <corrected.nxs> \
+  [--log] [--epsilon 1e-6] [--clip-min 1e-6]
+```
+
+Examples
+```
+uv run tomojax-preprocess raw.nxs corrected_transmission.nxs
+
+uv run tomojax-preprocess raw.nxs corrected_absorption.nxs \
+  --log --epsilon 1e-6 --clip-min 1e-6
+
+# Missing flats/darks fail by default; this explicitly uses a zero dark field.
+uv run tomojax-preprocess raw_without_darks.nxs corrected_absorption.nxs \
+  --log --assume-dark-field 0
+```
+
+Path overrides
+```
+uv run tomojax-preprocess raw.nxs corrected.nxs \
+  --data-path /entry/imaging/data \
+  --angles-path /entry/imaging_sum/smaract_zrot_value_set \
+  --image-key-path /entry/instrument/EtherCAT/image_key
+```
+
+Notes
+- Output `image_key` values are all `0` because the corrected file contains sample
+  projections only.
+- Provenance is written to `/entry/processing/tomojax/preprocess`, including the source
+  dataset paths, frame counts, correction options, warning counts, and mean flat/dark fields.
+- Stripe and ring correction are intentionally not part of this first conservative path.
+
+
 ## inspect
 
 Inspect an NXtomo/HDF5 file before reconstruction. The command reads metadata and projection

@@ -8,6 +8,7 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
   - `/instrument (NXinstrument)`
     - `/detector (NXdetector)`
       - `data` (float32, shape `(n_views, nv, nu)`, chunks `(1,256,256)`) — absorption projections (`-log` transmission)
+      - `image_key` (int32, shape `(n_views,)`) — NXtomo frame kind; TomoJAX uses `0=sample/projection`, `1=flat`, `2=dark`
       - `x_pixel_size` (float, units: `pixel`)
       - `y_pixel_size` (float, units: `pixel`)
   - `/sample (NXsample)`
@@ -31,6 +32,9 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
   - `@volume_axes_order` (attr on `tomojax`, default `"zyx"`; loaders always return internal `xyz` volume order)
   - `@frame` (optional attr on `tomojax`): `"sample"|"lab"` indicates the frame of the saved volume (default `sample`)
   - `align/thetas` (optional, shape `(n_views,5)`, columns=`[alpha,beta,phi,dx,dz]`)
+  - `preprocess` (optional NXcollection): provenance for `tomojax-preprocess`
+    - attrs: `schema_version`, `input_path`, `data_path`, `angles_path`, `image_key_path`, `frame_counts`, `output_domain`, `epsilon`, `clip_min`, `output_dtype`, `correction_formula`, `log`, `assume_dark_field`, `assume_flat_field`, `warning_counts`
+    - `flat_mean` and `dark_mean`: mean correction fields used for output, compressed with `lzf`
 - Reproducibility manifests from `tomojax-recon --save-manifest` and `tomojax-align --save-manifest` are JSON sidecars; they are not embedded in the NXtomo file.
 
 ## Units & Conventions
@@ -43,3 +47,5 @@ Primary file type: HDF5 with NeXus NXtomo conventions. Default extension: `.nxs`
 - Prefer local SSD for writing to avoid NFS locking issues.
 - Keep arrays float32 for interoperability and performance.
 - Set `TOMOJAX_AXES_SILENCE=1` to silence heuristic load-time warnings when processing large batches.
+- Raw NXtomo preprocessing expects mixed sample/flat/dark frames in the same detector stack.
+  `tomojax-preprocess` writes sample-only output with all output `image_key` values reset to `0`.
