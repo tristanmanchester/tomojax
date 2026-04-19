@@ -9,11 +9,13 @@ import os
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..core.geometry import Detector, Grid
 from ..recon.fbp import fbp
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.quicklook import save_quicklook_png
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from ..utils.logging import setup_logging, log_jax_env
+from ..utils.memory import estimate_views_per_batch_info
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
 
@@ -23,6 +25,58 @@ from ..utils.fov import (
     grid_from_detector_fov,
 )
 from ..utils.fov import cylindrical_mask_xy
+
+
+def _parse_views_per_batch(value: str) -> int | str:
+    """Parse ``--views-per-batch`` as a positive/zero integer or ``auto``."""
+    text = str(value).strip()
+    if text.lower() == "auto":
+        return "auto"
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--views-per-batch must be 'auto' or an integer")
+
+
+def _default_views_per_batch(algo: str) -> int:
+    return 16 if str(algo).lower() == "spdhg" else 1
+
+
+def _resolve_views_per_batch(
+    requested: int | str | None,
+    *,
+    algo: str,
+    n_views: int,
+    grid: Grid,
+    detector: Detector,
+    gather_dtype: str,
+    checkpoint_projector: bool,
+) -> tuple[int, str]:
+    """Resolve CLI batching after ROI/grid choices are known."""
+    if requested is None:
+        return _default_views_per_batch(algo), "default"
+
+    if isinstance(requested, str) and requested.lower() == "auto":
+        estimate = estimate_views_per_batch_info(
+            n_views=int(n_views),
+            grid_nxyz=(int(grid.nx), int(grid.ny), int(grid.nz)),
+            det_nuv=(int(detector.nv), int(detector.nu)),
+            gather_dtype=str(gather_dtype),
+            projection_dtype="fp32",
+            volume_dtype="fp32",
+            checkpoint_projector=bool(checkpoint_projector),
+            algo=str(algo),
+            fallback_batch=1,
+        )
+        if estimate.fallback_used:
+            logging.warning(
+                "Could not determine available memory for --views-per-batch auto; "
+                "using views_per_batch=%d",
+                estimate.views_per_batch,
+            )
+        return int(estimate.views_per_batch), "auto"
+
+    return max(1, int(requested)), "explicit"
 
 
 def main() -> None:
@@ -57,9 +111,12 @@ def main() -> None:
     # SPDHG-specific knobs
     p.add_argument(
         "--views-per-batch",
-        type=int,
-        default=16,
-        help="SPDHG: views per stochastic block",
+        type=_parse_views_per_batch,
+        default=None,
+        help=(
+            "Views per projection batch, or 'auto' to estimate from available memory "
+            "(default: 1 for FBP/FISTA, 16 for SPDHG)"
+        ),
     )
     p.add_argument("--theta", type=float, default=1.0, help="SPDHG: extrapolation for xbar")
     p.add_argument("--spdhg-seed", type=int, default=0, help="SPDHG: RNG seed for block order")
@@ -188,9 +245,6 @@ def main() -> None:
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
 
-    # Keep FBP/FISTA on their streamed defaults; this flag is SPDHG-specific.
-    spdhg_vpb = int(args.views_per_batch) if int(args.views_per_batch) > 0 else 1
-
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
     _gather = str(args.gather_dtype)
@@ -252,6 +306,22 @@ def main() -> None:
     except Exception:
         vol_mask = None
 
+    resolved_vpb, vpb_mode = _resolve_views_per_batch(
+        args.views_per_batch,
+        algo=str(args.algo),
+        n_views=int(proj.shape[0]),
+        grid=recon_grid,
+        detector=detector,
+        gather_dtype=_gather,
+        checkpoint_projector=bool(args.checkpoint_projector),
+    )
+    logging.info(
+        "Reconstruction views_per_batch=%d (mode=%s, algo=%s)",
+        resolved_vpb,
+        vpb_mode,
+        args.algo,
+    )
+
     if args.algo == "fbp":
         with transfer_guard_context(args.transfer_guard):
             vol = fbp(
@@ -260,7 +330,7 @@ def main() -> None:
                 detector,
                 proj,
                 filter_name=args.filter,
-                views_per_batch=1,
+                views_per_batch=resolved_vpb,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
@@ -273,7 +343,7 @@ def main() -> None:
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
             L=(float(args.L) if args.L is not None else None),
-            views_per_batch=1,
+            views_per_batch=resolved_vpb,
             projector_unroll=1,
             checkpoint_projector=bool(args.checkpoint_projector),
             gather_dtype=_gather,
@@ -294,7 +364,7 @@ def main() -> None:
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
             theta=float(args.theta),
-            views_per_batch=int(spdhg_vpb),
+            views_per_batch=int(resolved_vpb),
             seed=int(args.spdhg_seed),
             tau=(float(args.spdhg_tau) if args.spdhg_tau is not None else None),
             sigma_data=(
@@ -312,13 +382,14 @@ def main() -> None:
         init_x = None
         if str(args.warm_start).lower() == "fbp":
             # Compute a quick FBP and use as initialization
+            warm_start_vpb = 1 if vpb_mode == "default" else int(resolved_vpb)
             init_x = fbp(
                 geom,
                 recon_grid,
                 detector,
                 proj,
                 filter_name=str(args.filter),
-                views_per_batch=1,
+                views_per_batch=warm_start_vpb,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,

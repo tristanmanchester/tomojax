@@ -14,6 +14,7 @@ from tomojax.data.geometry_meta import (
 from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.cli import recon as recon_cli
 from tomojax.core.geometry import Grid, ParallelGeometry
+from tomojax.utils.memory import ViewsPerBatchEstimate
 
 
 def _parallel_meta(**updates):
@@ -394,6 +395,266 @@ def test_recon_cli_writes_quicklook_png(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert preview.dtype == np.uint8
     assert preview.shape == (5, 4)
     assert preview.max() > preview.min()
+
+
+def test_recon_cli_auto_views_per_batch_uses_estimator_and_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((5, 7, 9), dtype=np.float32),
+        thetas_deg=np.linspace(0.0, 180.0, 5, endpoint=False, dtype=np.float32),
+        image_key=np.zeros((5,), dtype=np.int32),
+    )
+    in_path = tmp_path / "auto_vpb_in.nxs"
+    out_path = tmp_path / "auto_vpb_out.nxs"
+    _write_recon_input(in_path, meta)
+    captured: dict[str, object] = {}
+
+    def fake_estimate(**kwargs):
+        captured["estimate_kwargs"] = kwargs
+        return ViewsPerBatchEstimate(
+            views_per_batch=3,
+            free_bytes=123_456,
+            fallback_used=False,
+        )
+
+    def fake_fbp(geom, recon_grid, detector, proj, **kwargs):
+        captured["fbp_kwargs"] = kwargs
+        return jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+
+    caplog.set_level("INFO")
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(recon_cli, "estimate_views_per_batch_info", fake_estimate)
+    monkeypatch.setattr(recon_cli, "fbp", fake_fbp)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(in_path),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--views-per-batch",
+            "auto",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    estimate_kwargs = captured["estimate_kwargs"]
+    assert estimate_kwargs["n_views"] == 5
+    assert estimate_kwargs["grid_nxyz"] == (8, 10, 6)
+    assert estimate_kwargs["det_nuv"] == (7, 9)
+    assert estimate_kwargs["algo"] == "fbp"
+    assert estimate_kwargs["gather_dtype"] == "fp32"
+    assert estimate_kwargs["fallback_batch"] == 1
+    assert captured["fbp_kwargs"]["views_per_batch"] == 3
+    assert "views_per_batch=3 (mode=auto, algo=fbp)" in caplog.text
+
+
+def test_recon_cli_auto_views_per_batch_warns_on_memory_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((2, 7, 9), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+    )
+    in_path = tmp_path / "auto_vpb_fallback_in.nxs"
+    out_path = tmp_path / "auto_vpb_fallback_out.nxs"
+    _write_recon_input(in_path, meta)
+    captured: dict[str, object] = {}
+
+    def fake_estimate(**kwargs):
+        return ViewsPerBatchEstimate(
+            views_per_batch=1,
+            free_bytes=None,
+            fallback_used=True,
+            fallback_reason="available memory could not be determined",
+        )
+
+    def fake_fbp(geom, recon_grid, detector, proj, **kwargs):
+        captured["views_per_batch"] = kwargs["views_per_batch"]
+        return jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+
+    caplog.set_level("WARNING")
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(recon_cli, "estimate_views_per_batch_info", fake_estimate)
+    monkeypatch.setattr(recon_cli, "fbp", fake_fbp)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(in_path),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--views-per-batch",
+            "auto",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["views_per_batch"] == 1
+    assert "Could not determine available memory" in caplog.text
+
+
+def test_recon_cli_explicit_views_per_batch_skips_estimator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((2, 7, 9), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+    )
+    in_path = tmp_path / "explicit_vpb_in.nxs"
+    out_path = tmp_path / "explicit_vpb_out.nxs"
+    _write_recon_input(in_path, meta)
+    captured: dict[str, object] = {}
+
+    def fail_estimate(**kwargs):
+        raise AssertionError("explicit views_per_batch should not call estimator")
+
+    def fake_fbp(geom, recon_grid, detector, proj, **kwargs):
+        captured["views_per_batch"] = kwargs["views_per_batch"]
+        return jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(recon_cli, "estimate_views_per_batch_info", fail_estimate)
+    monkeypatch.setattr(recon_cli, "fbp", fake_fbp)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(in_path),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--views-per-batch",
+            "4",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["views_per_batch"] == 4
+
+
+def test_recon_cli_default_views_per_batch_keeps_fbp_conservative(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((2, 7, 9), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+    )
+    in_path = tmp_path / "default_vpb_in.nxs"
+    out_path = tmp_path / "default_vpb_out.nxs"
+    _write_recon_input(in_path, meta)
+    captured: dict[str, object] = {}
+
+    def fake_fbp(geom, recon_grid, detector, proj, **kwargs):
+        captured["views_per_batch"] = kwargs["views_per_batch"]
+        return jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(recon_cli, "fbp", fake_fbp)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(in_path),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["views_per_batch"] == 1
+
+
+def test_recon_cli_spdhg_default_and_explicit_views_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((2, 7, 9), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+    )
+    captured: list[int] = []
+
+    def fake_spdhg(geom, recon_grid, detector, proj, *, init_x, config):
+        captured.append(config.views_per_batch)
+        vol = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+        return vol, {}
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(recon_cli, "spdhg_tv", fake_spdhg)
+
+    for suffix, extra_args in (("default", []), ("explicit", ["--views-per-batch", "5"])):
+        in_path = tmp_path / f"spdhg_{suffix}_vpb_in.nxs"
+        out_path = tmp_path / f"spdhg_{suffix}_vpb_out.nxs"
+        _write_recon_input(in_path, meta)
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "recon",
+                "--data",
+                str(in_path),
+                "--algo",
+                "spdhg",
+                "--roi",
+                "off",
+                "--gather-dtype",
+                "fp32",
+                "--out",
+                str(out_path),
+                *extra_args,
+            ],
+        )
+        recon_cli.main()
+
+    assert captured == [16, 5]
 
 
 def test_recon_build_geometry_keeps_nominal_geometry_for_saved_alignment_metadata():
