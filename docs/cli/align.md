@@ -181,6 +181,9 @@ parameters are easier to interpret as residual alignment motion.
   (default)
 - `--gauge-fix none` -- preserve historical unconstrained traces
 
+See [alignment-gauge-benchmark.md](../internal/alignment-gauge-benchmark.md)
+for a 64³ validation comparison.
+
 ## Early stopping
 
 Early stopping terminates the outer loop when alignment improvement
