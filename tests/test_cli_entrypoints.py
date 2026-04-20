@@ -446,6 +446,10 @@ def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):
             "gaussian",
             "--noise-level",
             "0.1",
+            "--gaussian-sigma",
+            "0.2",
+            "--dropped-view-fraction",
+            "0.1",
             "--seed",
             "7",
             "--progress",
@@ -475,6 +479,10 @@ def test_simulate_main_builds_config_and_runs_writer(monkeypatch, tmp_path):
     assert cfg.single_value == 2.5
     assert cfg.noise == "gaussian"
     assert cfg.noise_level == 0.1
+    assert cfg.artefacts is not None
+    assert cfg.artefacts.gaussian_sigma == 0.2
+    assert cfg.artefacts.dropped_view_fraction == 0.1
+    assert cfg.artefacts.poisson_scale == 0.0
     assert cfg.seed == 7
     assert Path(captured["out_path"]).name == "simulated.nxs"
     assert os.environ["TOMOJAX_PROGRESS"] == "1"

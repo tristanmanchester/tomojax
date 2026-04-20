@@ -26,6 +26,12 @@ from .phantoms import (
     shepp_logan_3d,
     sphere,
 )
+from .artefacts import (
+    ArtefactMetadata,
+    SimulationArtefacts,
+    apply_simulation_artefacts,
+    normalise_simulation_artefacts,
+)
 from .io_hdf5 import NXTomoMetadata, save_nxtomo
 from ..utils.logging import progress_iter
 
@@ -35,10 +41,11 @@ class LaminoGeometryMeta(TypedDict):
     tilt_about: str
 
 
-class SimMetadata(TypedDict):
+class SimMetadata(TypedDict, total=False):
     seed: int
     noise: str
     noise_level: float
+    artefacts: ArtefactMetadata
 
 
 class SimulatedData(TypedDict):
@@ -50,6 +57,7 @@ class SimulatedData(TypedDict):
     volume: jnp.ndarray
     geometry_meta: LaminoGeometryMeta | None
     meta: SimMetadata
+    simulation_artefacts: ArtefactMetadata | None
 
 
 @dataclass
@@ -86,6 +94,7 @@ class SimConfig:
     max_rot_deg: float = 180.0
     noise: str = "none"  # none|poisson|gaussian
     noise_level: float = 0.0  # gaussian sigma or poisson scale
+    artefacts: SimulationArtefacts | None = None
     seed: int = 0
     lamino_thickness_ratio: float = 0.2
 
@@ -226,16 +235,26 @@ def simulate(cfg: SimConfig) -> SimulatedData:
             projs.append(p)
         proj = jnp.stack(projs, axis=0)
 
-    rng = np.random.default_rng(cfg.seed)
-    if cfg.noise == "gaussian" and cfg.noise_level > 0:
-        proj = proj + jnp.asarray(
-            rng.normal(scale=cfg.noise_level, size=proj.shape), dtype=proj.dtype
+    artefacts = normalise_simulation_artefacts(
+        cfg.artefacts,
+        noise=cfg.noise,
+        noise_level=cfg.noise_level,
+    )
+    artefact_metadata: ArtefactMetadata | None = None
+    if artefacts.has_enabled():
+        proj, artefact_metadata = apply_simulation_artefacts(
+            proj,
+            artefacts,
+            seed=cfg.seed,
         )
-    elif cfg.noise == "poisson" and cfg.noise_level > 0:
-        s = cfg.noise_level
-        lam = np.maximum(0.0, np.asarray(proj)) * s
-        noisy = rng.poisson(lam=lam).astype(np.float32) / max(s, 1e-6)
-        proj = jnp.asarray(noisy, dtype=proj.dtype)
+
+    meta: SimMetadata = {
+        "seed": cfg.seed,
+        "noise": cfg.noise,
+        "noise_level": cfg.noise_level,
+    }
+    if artefact_metadata is not None:
+        meta["artefacts"] = artefact_metadata
 
     return {
         "projections": proj,
@@ -245,7 +264,8 @@ def simulate(cfg: SimConfig) -> SimulatedData:
         "geometry_type": geometry_type,
         "volume": vol,
         "geometry_meta": geometry_meta,
-        "meta": {"seed": cfg.seed, "noise": cfg.noise, "noise_level": cfg.noise_level},
+        "meta": meta,
+        "simulation_artefacts": artefact_metadata,
     }
 
 

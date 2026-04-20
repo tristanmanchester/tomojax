@@ -60,6 +60,7 @@ class NXTomoMetadata:
     align_gauge: JsonObject | None = None
     angle_offset_deg: np.ndarray | None = None
     misalign_spec: JsonObject | None = None
+    simulation_artefacts: JsonObject | None = None
     frame: str | None = None
     sample_name: str | None = "sample"
     source_name: str | None = "TomoJAX source"
@@ -94,6 +95,7 @@ class NXTomoMetadata:
             align_gauge=data.get("align_gauge"),
             angle_offset_deg=data.get("angle_offset_deg"),
             misalign_spec=data.get("misalign_spec"),
+            simulation_artefacts=data.get("simulation_artefacts"),
             frame=None if data.get("frame") is None else str(data.get("frame")),
             sample_name=(
                 None if data.get("sample_name") is None else str(data.get("sample_name"))
@@ -495,6 +497,16 @@ def _load_processing_metadata(
         if misalign_spec is not None:
             out["misalign_spec"] = misalign_spec
 
+    simulation_grp = tomojax_grp.get("simulation")
+    if simulation_grp is not None:
+        simulation_artefacts = _load_json_mapping_attr(
+            simulation_grp.attrs.get("artefacts_json"),
+            path=path,
+            context="simulation artefacts",
+        )
+        if simulation_artefacts is not None:
+            out["simulation_artefacts"] = simulation_artefacts
+
     return volume_raw, volume_axes_attr
 
 
@@ -686,6 +698,13 @@ def save_nxtomo(
                 )
             if meta.misalign_spec is not None:
                 align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
+
+        # Optional simulation artefact metadata
+        if meta.simulation_artefacts is not None:
+            processing = _ensure_group(entry, "processing", "NXprocess")
+            tj = _ensure_group(processing, "tomojax", "NXcollection")
+            simulation_grp = _ensure_group(tj, "simulation", "NXcollection")
+            simulation_grp.attrs["artefacts_json"] = json.dumps(meta.simulation_artefacts)
 
 
 def load_nxtomo(path: str) -> LoadedNXTomo:

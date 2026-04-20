@@ -124,6 +124,10 @@ def test_simulate_cli_builds_config_and_calls_simulate_to_file(monkeypatch, tmp_
             "gaussian",
             "--noise-level",
             "0.1",
+            "--poisson-scale",
+            "5000",
+            "--zinger-fraction",
+            "0.01",
             "--seed",
             "7",
             "--transfer-guard",
@@ -143,6 +147,10 @@ def test_simulate_cli_builds_config_and_calls_simulate_to_file(monkeypatch, tmp_
     assert cfg.phantom == "cube"
     assert cfg.noise == "gaussian"
     assert cfg.noise_level == 0.1
+    assert cfg.artefacts is not None
+    assert cfg.artefacts.poisson_scale == 5000.0
+    assert cfg.artefacts.zinger_fraction == 0.01
+    assert cfg.artefacts.gaussian_sigma == 0.0
     assert cfg.seed == 7
     assert captured["guard"] == "log"
     assert captured["out_path"] == str(tmp_path / "sim.nxs")
