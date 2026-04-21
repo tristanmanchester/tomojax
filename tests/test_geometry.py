@@ -100,6 +100,11 @@ def test_lamino_axis_tilt_and_pose():
     assert np.isclose(np.linalg.det(R), 1.0, atol=1e-6)
 
 
+def test_rot_axis_angle_rejects_zero_axis():
+    with pytest.raises(ValueError, match="rotation axis"):
+        rot_axis_angle(np.zeros(3), np.pi / 4.0)
+
+
 def test_se3_exp_compose_invert_consistency():
     # Small random twists
     rng = np.random.default_rng(0)

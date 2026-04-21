@@ -73,7 +73,10 @@ def rotz(phi: float) -> np.ndarray:
 
 def rot_axis_angle(axis: np.ndarray, theta: float) -> np.ndarray:
     a = np.asarray(axis, dtype=np.float64)
-    a = a / (np.linalg.norm(a) + 1e-12)
+    axis_norm = float(np.linalg.norm(a))
+    if axis_norm < 1e-12:
+        raise ValueError("rotation axis must be non-zero")
+    a = a / axis_norm
     R = exp_so3(a * theta)
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R
