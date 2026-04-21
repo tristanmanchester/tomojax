@@ -41,6 +41,24 @@ def test_parallel_rays_direction_and_pixel_centers():
     assert np.isclose(o[0], -1.0) and np.isclose(o[2], -1.0)
 
 
+def test_parallel_rays_use_grid_volume_center_when_origin_missing():
+    grid = Grid(
+        nx=4,
+        ny=4,
+        nz=4,
+        vx=2.0,
+        vy=2.0,
+        vz=2.0,
+        vol_center=(10.0, 20.0, 30.0),
+    )
+    det = Detector(nu=1, nv=1, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
+    origin_fn, _ = geom.rays_for_view(0)
+
+    # For 4 voxels at spacing 2, voxel (0, 0, 0) is 3 units below the grid center.
+    assert origin_fn(0, 0)[1] == pytest.approx(17.0)
+
+
 def test_lamino_axis_tilt_and_pose():
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=4, nv=4, du=1.0, dv=1.0)

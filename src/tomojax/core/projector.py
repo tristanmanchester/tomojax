@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .geometry.base import Grid, Detector, Geometry
+from .geometry.base import Grid, Detector, Geometry, _grid_volume_origin
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -32,12 +32,9 @@ _DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple
 _DET_GRID_CACHE_CAP = 8
 
 
-def _default_volume_origin(grid: Grid) -> jnp.ndarray:
-    """Return the centred default location of voxel (0, 0, 0)'s centre."""
-    ox = -((grid.nx / 2.0) - 0.5) * grid.vx
-    oy = -((grid.ny / 2.0) - 0.5) * grid.vy
-    oz = -((grid.nz / 2.0) - 0.5) * grid.vz
-    return jnp.array([ox, oy, oz], dtype=jnp.float32)
+def _volume_origin(grid: Grid) -> jnp.ndarray:
+    """Return the configured location of voxel (0, 0, 0)'s centre."""
+    return jnp.asarray(_grid_volume_origin(grid), dtype=jnp.float32)
 
 
 def _interpolation_support_bounds(
@@ -166,11 +163,7 @@ def _projector_traversal_state(
     int,
 ]:
     """Return the fixed per-ray traversal state shared by forward and adjoint passes."""
-    vol_origin = (
-        jnp.asarray(grid.vol_origin, dtype=jnp.float32)
-        if grid.vol_origin is not None
-        else _default_volume_origin(grid)
-    )
+    vol_origin = _volume_origin(grid)
     Xr, Zr, n_rays = _resolve_detector_grid(detector, det_grid)
     if step_size is None:
         step_size = float(grid.vy)

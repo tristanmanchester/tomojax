@@ -105,6 +105,28 @@ def test_forward_project_localized_voxel_uses_center_indexed_origin() -> None:
     assert proj[np.argmax(proj)] == pytest.approx(1.0, abs=1e-6)
 
 
+def test_forward_project_localized_voxel_uses_grid_volume_center() -> None:
+    grid = Grid(
+        nx=5,
+        ny=5,
+        nz=5,
+        vx=1.0,
+        vy=1.0,
+        vz=1.0,
+        vol_center=(1.0, 0.0, 0.0),
+    )
+    det = Detector(nu=9, nv=1, du=0.25, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0])
+    vol = jnp.zeros((5, 5, 5), dtype=jnp.float32).at[2, 2, 2].set(1.0)
+
+    proj = np.asarray(forward_project_view(geom, grid, det, vol, view_index=0))[0]
+    u = (np.arange(det.nu, dtype=np.float32) - (det.nu / 2.0 - 0.5)) * det.du
+
+    # With vol_center=(1, 0, 0), voxel (2, 2, 2) lives at x=1 instead of x=0.
+    assert u[np.argmax(proj)] == pytest.approx(1.0, abs=1e-6)
+    assert proj[np.argmax(proj)] == pytest.approx(1.0, abs=1e-6)
+
+
 def _vjp_backproject(
     geom,
     grid: Grid,

@@ -59,6 +59,9 @@ class Grid:
     TomoJAX treats ``vol_origin`` as the physical location of voxel ``(0, 0, 0)``'s
     centre. When ``vol_origin`` is omitted, the default centred convention places
     voxel centres on coordinates ``(i - (n/2 - 0.5)) * v`` along each axis.
+    ``vol_center`` can override that default centre while still deriving the
+    voxel ``(0, 0, 0)`` location from the grid dimensions and voxel sizes. If
+    both are provided, ``vol_origin`` is the authoritative placement.
     """
 
     nx: int
@@ -100,6 +103,22 @@ class Grid:
         return d
 
 
+def _grid_volume_origin(grid: Grid) -> Vec3:
+    """Return the physical centre of voxel (0, 0, 0) for a grid."""
+    if grid.vol_origin is not None:
+        return grid.vol_origin
+
+    if grid.vol_center is None:
+        cx, cy, cz = (0.0, 0.0, 0.0)
+    else:
+        cx, cy, cz = tuple(float(v) for v in grid.vol_center)
+    return (
+        cx - ((grid.nx / 2.0) - 0.5) * float(grid.vx),
+        cy - ((grid.ny / 2.0) - 0.5) * float(grid.vy),
+        cz - ((grid.nz / 2.0) - 0.5) * float(grid.vz),
+    )
+
+
 @dataclass(frozen=True)
 class Detector:
     nu: int
@@ -134,11 +153,7 @@ def _parallel_detector_rays(
     du, dv = float(detector.du), float(detector.dv)
     cx, cz = float(detector.det_center[0]), float(detector.det_center[1])
 
-    y0 = (
-        float(grid.vol_origin[1])
-        if grid.vol_origin is not None
-        else -((grid.ny / 2.0) - 0.5) * float(grid.vy)
-    )
+    y0 = _grid_volume_origin(grid)[1]
 
     def origin_fn(u: int, v: int) -> Vec3:
         x = (u - (nu / 2.0 - 0.5)) * du + cx
