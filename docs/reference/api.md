@@ -27,8 +27,8 @@ grid = Grid(nx=128, ny=128, nz=128, vx=1.0, vy=1.0, vz=1.0)
 | `vol_origin` | `tuple[float,float,float]` | `None` | Physical location of voxel (0,0,0) center |
 | `vol_center` | `tuple[float,float,float]` | `None` | Volume center override |
 
-When `vol_origin` is `None`, voxel centers use the default centered
-convention.
+When `vol_origin` is `None`, the voxel (0,0,0) location is derived from
+`vol_center` if provided, or defaults to a centered convention.
 
 ### `Detector`
 

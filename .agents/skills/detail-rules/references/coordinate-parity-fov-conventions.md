@@ -5,7 +5,7 @@ Maintain center-indexed coordinate conventions, preserve dimension parity in ROI
 ## What to look for
 
 - **Center-Indexed Voxel Origin**: TomoJAX convention treats `vol_origin` as the physical location of voxel `(0, 0, 0)`'s **centre**.
-- **Default Centered Origin**: The default `vol_origin` for an axis of length `n` and voxel size `v` must be `-((n / 2.0) - 0.5) * v`. Using `- (n / 2.0) * v` introduces a half-voxel shift.
+- **Default Centered Origin**: When both `vol_origin` and `vol_center` are `None`, the default voxel (0, 0, 0) location for an axis of length `n` and voxel size `v` must be `-((n / 2.0) - 0.5) * v`. When `vol_center` is provided but `vol_origin` is `None`, voxel (0, 0, 0) is derived as `vol_center - ((n / 2.0) - 0.5) * v` for each axis. Using `- (n / 2.0) * v` introduces a half-voxel shift.
 - **Projector Index Mapping**: Mapping from physical position `pos` to voxel index must be `(pos - vol_origin) / v`. Integer indices must land exactly on voxel centers. There should be NO `-0.5` offset in this mapping when `vol_origin` is center-indexed.
 - **ROI Parity Preservation**: When cropping grids to an ROI, the output grid dimensions should match the original grid's parity (odd/even) whenever possible to avoid off-by-half voxel shifts in the centered-origin convention. Use `_choose_shared_side` or `match_parity=True` in FOV helpers.
 - **FOV Bound Enforcement**: All axes in the rotation plane (typically `x` and `y` for parallel-beam) must be bounded by the detector's horizontal FOV radius `r_u`. Helpers like `grid_from_detector_fov_cube` must not ignore the `y` axis (depth) fit.
