@@ -17,6 +17,7 @@ def view_loss(
     *,
     step_size: float | None = None,
     n_steps: int | None = None,
+    gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
     pred = forward_project_view(
         geometry=geometry,
@@ -27,6 +28,7 @@ def view_loss(
         step_size=step_size,
         n_steps=n_steps,
         use_checkpoint=True,
+        gather_dtype=gather_dtype,
     )
     resid = (pred - measured).astype(jnp.float32)
     return 0.5 * jnp.vdot(resid, resid).real
@@ -34,7 +36,15 @@ def view_loss(
 
 view_loss_value_and_grad = jax.jit(
     jax.value_and_grad(view_loss, argnums=3),  # grad wrt volume
-    static_argnames=("geometry", "grid", "detector", "view_index", "step_size", "n_steps"),
+    static_argnames=(
+        "geometry",
+        "grid",
+        "detector",
+        "view_index",
+        "step_size",
+        "n_steps",
+        "gather_dtype",
+    ),
 )
 
 

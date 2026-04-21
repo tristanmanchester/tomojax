@@ -13,6 +13,7 @@ from tomojax.core.projector import (
     get_detector_grid_device,
     sum_backproject_views_T,
 )
+from tomojax.core import operators as operators_mod
 from tomojax.core.operators import adjoint_test_once
 
 
@@ -74,6 +75,69 @@ def test_adjoint_small_case(gather_dtype: str):
         gather_dtype=gather_dtype,
     )
     assert rel < 5e-3
+
+
+def test_view_loss_forwards_gather_dtype(monkeypatch):
+    grid, det, geom, vol = make_aligned_case(4, 4, 4)
+    measured = jnp.zeros((det.nv, det.nu), dtype=jnp.float32)
+    seen: dict[str, str] = {}
+
+    def fake_forward_project_view(**kwargs):
+        seen["gather_dtype"] = kwargs["gather_dtype"]
+        assert kwargs["geometry"] is geom
+        assert kwargs["grid"] is grid
+        assert kwargs["detector"] is det
+        assert kwargs["volume"] is vol
+        assert kwargs["view_index"] == 0
+        assert kwargs["use_checkpoint"] is True
+        return jnp.ones_like(measured)
+
+    monkeypatch.setattr(operators_mod, "forward_project_view", fake_forward_project_view)
+
+    loss = operators_mod.view_loss(
+        geom,
+        grid,
+        det,
+        vol,
+        measured,
+        view_index=0,
+        gather_dtype="bf16",
+    )
+
+    assert seen["gather_dtype"] == "bf16"
+    assert float(loss) == pytest.approx(0.5 * det.nu * det.nv)
+
+
+def test_view_loss_value_and_grad_accepts_gather_dtype():
+    class HashableIdentityGeometry:
+        def __hash__(self):
+            return hash("HashableIdentityGeometry")
+
+        def __eq__(self, other):
+            return isinstance(other, HashableIdentityGeometry)
+
+        def pose_for_view(self, _view_index):
+            return tuple(map(tuple, np.eye(4, dtype=np.float64)))
+
+        def rays_for_view(self, _view_index):
+            raise NotImplementedError
+
+    grid, det, _, vol = make_aligned_case(4, 4, 4)
+    geom = HashableIdentityGeometry()
+    measured = forward_project_view(geom, grid, det, vol, view_index=0, gather_dtype="bf16")
+
+    loss, grad = operators_mod.view_loss_value_and_grad(
+        geom,
+        grid,
+        det,
+        vol,
+        measured,
+        view_index=0,
+        gather_dtype="bf16",
+    )
+
+    assert np.isfinite(float(loss))
+    assert grad.shape == vol.shape
 
 
 def test_forward_project_non_cubic_rotated_volume_uses_full_ray_extent():
