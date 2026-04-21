@@ -79,6 +79,29 @@ def test_build_geometry_from_meta_applies_saved_angle_offsets():
     )
 
 
+def test_build_geometry_from_meta_ignores_nonfinite_angle_offsets():
+    meta = _parallel_meta(
+        angle_offset_deg=np.asarray([np.nan, 5.0], dtype=np.float32),
+    )
+
+    grid, detector, geom = build_geometry_from_meta(meta, apply_saved_alignment=True)
+    expected = ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=meta["thetas_deg"],
+    )
+
+    for i in range(2):
+        pose = np.asarray(geom.pose_for_view(i), dtype=np.float32)
+        assert np.isfinite(pose).all()
+        np.testing.assert_allclose(
+            pose,
+            np.asarray(expected.pose_for_view(i), dtype=np.float32),
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+
 def test_build_geometry_from_meta_skips_double_applying_saved_angle_offsets():
     meta = _parallel_meta(
         angle_offset_deg=np.asarray([2.0, -3.0], dtype=np.float32),

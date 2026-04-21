@@ -194,7 +194,7 @@ def _resolve_thetas_deg(
     offset = np.asarray(angle_offset, dtype=np.float32)
     if offset.shape != thetas.shape:
         return thetas
-    if not np.isfinite(offset).any() or np.allclose(offset, 0.0):
+    if not np.isfinite(offset).all() or np.allclose(offset, 0.0):
         return thetas
 
     # TomoJAX's misalign CLI already bakes scheduled angle offsets into
