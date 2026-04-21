@@ -8,7 +8,7 @@
 - Alignment workflows live under `src/tomojax/align/` (see `pipeline.py`).
 - Reusable benchmark datasets and scoring helpers live under `src/tomojax/bench/`.
 - CLI entry points live under `src/tomojax/cli/`:
-  - `simulate`, `misalign`, `recon`, `align`, `loss_bench`.
+  - `simulate`, `misalign`, `preprocess`, `recon`, `align`, `inspect`, `validate`, `convert`, `loss_bench`.
 - Tests live in `tests/` (CPU‑friendly sizes).
 - Input data and generated artifacts belong in `data/` or `runs/`; these are git‑ignored.
 - Figures for docs live in `images/`.

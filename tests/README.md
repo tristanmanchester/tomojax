@@ -11,9 +11,10 @@ tests to the surface that owns the user-visible contract you are changing.
 - Alignment and reconstruction workflows: focused regression tests for multires orchestration,
   loss contracts, convergence, and failure behavior. These should protect the public pipeline
   and config contracts rather than re-testing projector internals.
-- CLI workflows: file-backed smoke tests for `simulate`, `misalign`, `recon`, `align`, and
-  `loss_bench`. Prefer real temporary `.nxs` or JSON artifacts over deep monkeypatch stacks so
-  the test covers the boundary users actually invoke.
+- CLI workflows: file-backed smoke tests for `simulate`, `misalign`, `preprocess`, `recon`,
+  `align`, `inspect`, `validate`, `convert`, and `loss_bench`. Prefer real temporary `.nxs` or
+  JSON artifacts over deep monkeypatch stacks so the test covers the boundary users actually
+  invoke.
 - Benchmark harness and support modules: contract tests for `bench/`, `scripts/`, and
   `tomojax.bench.*` that lock profile parsing, shared helpers, and report or artifact schemas.
   Controller-specific policy belongs here instead of leaking into product CLI tests.
