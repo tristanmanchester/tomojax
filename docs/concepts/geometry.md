@@ -22,8 +22,9 @@ grid = Grid(nx=128, ny=128, nz=128, vx=1.0, vy=1.0, vz=1.0)
 | `vol_origin` | `tuple` or `None` | Physical location of voxel (0,0,0) center; defaults to centered |
 | `vol_center` | `tuple` or `None` | Volume center override |
 
-When `vol_origin` is omitted, TomoJAX uses a centered convention:
-voxel centers sit at `(i - (n/2 - 0.5)) * v` along each axis.
+When `vol_origin` is omitted, the voxel (0,0,0) location is derived from
+`vol_center` if provided, or defaults to a centered convention where voxel
+centers sit at `(i - (n/2 - 0.5)) * v` along each axis.
 
 ## The detector
 
