@@ -6,7 +6,14 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import FistaConfig, fista_tv, grad_data_term
-from tomojax.recon.multires import fista_multires, scale_detector, scale_grid, upsample_volume
+from tomojax.recon.multires import (
+    bin_projections,
+    bin_volume,
+    fista_multires,
+    scale_detector,
+    scale_grid,
+    upsample_volume,
+)
 
 
 if sys.version_info < (3, 8):
@@ -69,6 +76,21 @@ def test_multires_rejects_mismatched_level_lengths():
         )
 
 
+def test_multires_rejects_non_integral_factors_before_truncating():
+    grid, det, geom, vol, projs = make_case(8, 8, 8, 4)
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        fista_multires(
+            geom,
+            grid,
+            det,
+            projs,
+            factors=(1.5,),
+            iters_per_level=(1,),
+            lambda_tv=0.001,
+        )
+
+
 @pytest.mark.parametrize("factor", [0, -1, 1.5])
 def test_scale_grid_rejects_non_positive_or_non_integral_factor(factor):
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
@@ -83,6 +105,26 @@ def test_scale_detector_rejects_non_positive_or_non_integral_factor(factor):
 
     with pytest.raises(ValueError, match="integer >= 1"):
         scale_detector(det, factor)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("factor", [0, -1, 1.5])
+def test_multires_binning_rejects_non_positive_or_non_integral_factor(factor):
+    projections = jnp.ones((2, 4, 4), dtype=jnp.float32)
+    volume = jnp.ones((4, 4, 4), dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        bin_projections(projections, factor)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        bin_volume(volume, factor)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("factor", [0, -1, 1.5])
+def test_upsample_volume_rejects_non_positive_or_non_integral_factor(factor):
+    vol = jnp.arange(8, dtype=jnp.float32).reshape(2, 2, 2)
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        upsample_volume(vol, factor=factor, target_shape=(4, 4, 4))  # type: ignore[arg-type]
 
 
 def test_upsample_volume_resizes_when_target_shape_differs_even_if_factor_is_one():
@@ -101,6 +143,25 @@ def test_upsample_volume_is_noop_when_target_shape_matches():
 
     assert up is vol
     np.testing.assert_array_equal(np.asarray(up), np.asarray(vol))
+
+
+def test_bin_volume_pads_non_divisible_dimensions_to_factor_blocks():
+    vol = jnp.arange(3 * 4 * 5, dtype=jnp.float32).reshape(3, 4, 5)
+
+    binned = bin_volume(vol, 2)
+
+    assert binned.shape == (2, 2, 3)
+
+
+def test_scale_helpers_validate_grid_and_detector_inputs():
+    bad_grid = Grid(nx=0, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    bad_detector = Detector(nu=0, nv=8, du=1.0, dv=1.0)
+
+    with pytest.raises(ValueError, match="scale_grid grid"):
+        scale_grid(bad_grid, 2)
+
+    with pytest.raises(ValueError, match="scale_detector detector"):
+        scale_detector(bad_detector, 2)
 
 
 @pytest.mark.parametrize(

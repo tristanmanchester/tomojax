@@ -196,6 +196,20 @@ def test_align_multires_counts_executed_outer_iters_without_observer():
     assert info["total_outer_iters"] == 2
 
 
+def test_align_multires_rejects_non_integral_factors_before_truncating():
+    grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 3, 5)
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        align_multires(
+            geom,
+            grid,
+            det,
+            projs,
+            factors=[1.5],
+            cfg=AlignConfig(outer_iters=0, recon_iters=1, early_stop=False),
+        )
+
+
 def test_align_multires_uses_scheduled_loss_by_level(monkeypatch):
     grid, det, geom, _, projs, _ = make_misaligned_case(8, 8, 8, 4, 6)
     observed_loss_names: list[str] = []

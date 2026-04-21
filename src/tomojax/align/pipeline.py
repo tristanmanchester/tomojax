@@ -1808,7 +1808,13 @@ def align_multires(
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
-    from ..recon.multires import scale_grid, scale_detector, bin_projections, upsample_volume
+    from ..recon.multires import (
+        _validated_scale_factor,
+        bin_projections,
+        scale_detector,
+        scale_grid,
+        upsample_volume,
+    )
 
     if cfg is None:
         cfg = AlignConfig()
@@ -1825,22 +1831,22 @@ def align_multires(
         context="align_multires projections",
     )
 
-    factors_list = [int(f) for f in factors]
+    factors_list = [_validated_scale_factor(f) for f in factors]
     validate_loss_schedule_levels(cfg.loss, factors_list)
     levels: list[MultiresLevel] = []
     for f in factors_list:
-        g = scale_grid(grid, int(f))
-        d = scale_detector(detector, int(f))
-        y = bin_projections(projections, int(f))
+        g = scale_grid(grid, f)
+        d = scale_detector(detector, f)
+        y = bin_projections(projections, f)
         validate_projection_stack(
             y,
             d,
             geometry=geometry,
-            context=f"align_multires level factor {int(f)} projections",
+            context=f"align_multires level factor {f} projections",
         )
         levels.append(
             {
-                "factor": int(f),
+                "factor": f,
                 "grid": g,
                 "detector": d,
                 "projections": y,

@@ -7,13 +7,17 @@ import jax.numpy as jnp
 import jax.image as jimage
 
 from ..core.geometry.base import Grid, Detector, Geometry
+from ..core.validation import validate_detector, validate_grid, validate_projection_stack
 from .fista_tv import FistaConfig, fista_tv
 from ..utils.logging import progress_iter
 
 
-def _validated_scale_factor(factor: int) -> int:
-    value = float(factor)
-    if value < 1 or int(value) != value:
+def _validated_scale_factor(factor: object) -> int:
+    try:
+        value = float(factor)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Scale factor must be an integer >= 1, got {factor!r}") from exc
+    if not math.isfinite(value) or value < 1 or int(value) != value:
         raise ValueError(f"Scale factor must be an integer >= 1, got {factor!r}")
     return int(value)
 
@@ -25,6 +29,7 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
     - Voxel sizes are multiplied by the factor to preserve physical extent.
     """
     f = _validated_scale_factor(factor)
+    validate_grid(grid, "scale_grid grid")
     nx = int(math.ceil(grid.nx / f))
     ny = int(math.ceil(grid.ny / f))
     nz = int(math.ceil(grid.nz / f))
@@ -50,6 +55,7 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     center must shift to keep those coarse rays aligned with the sampled pixels.
     """
     f = _validated_scale_factor(factor)
+    validate_detector(det, "scale_detector detector")
     nu = int(math.ceil(det.nu / f))
     nv = int(math.ceil(det.nv / f))
 
@@ -96,9 +102,9 @@ def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
       per f×f block using a centered offset (f//2). This preserves per-ray scale
       better than averaging while tolerating arbitrary input sizes.
     """
-    if factor == 1:
+    f = _validated_scale_factor(factor)
+    if f == 1:
         return proj
-    f = int(factor)
     y = _pad_to_multiple_jnp(proj, f, f)
     v0 = f // 2
     u0 = f // 2
@@ -106,9 +112,9 @@ def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
 
 
 def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
-    if factor == 1:
+    f = _validated_scale_factor(factor)
+    if f == 1:
         return vol
-    f = int(factor)
     # Pad to multiples on all three dims (edge) then average f^3 blocks
     nx, ny, nz = vol.shape
     px = (f - (nx % f)) % f
@@ -128,8 +134,10 @@ def upsample_volume(vol: jnp.ndarray, factor: int, target_shape: Tuple[int, int,
     but the actual resize decision is driven by the input and target shapes. This
     keeps non-power-of-two schedules like (3, 2, 1) working correctly.
     """
-    del factor  # shape decides whether a resize is needed
-    out_shape = (int(target_shape[0]), int(target_shape[1]), int(target_shape[2]))
+    _validated_scale_factor(factor)
+    out_shape = tuple(int(s) for s in target_shape)
+    if len(out_shape) != 3 or any(s < 1 for s in out_shape):
+        raise ValueError(f"target_shape must contain positive dimensions, got {target_shape!r}")
     if tuple(int(s) for s in vol.shape) == out_shape:
         return vol
     # Trilinear resize to avoid nearest-neighbor blockiness when moving to finer levels
@@ -142,13 +150,19 @@ def create_resolution_pyramid(
 ):
     levels: List[dict] = []
     for f in factors:
+        factor = _validated_scale_factor(f)
         levels.append(
             {
-                "factor": int(f),
-                "grid": scale_grid(grid, f),
-                "detector": scale_detector(detector, f),
-                "projections": bin_projections(projections, f),
+                "factor": factor,
+                "grid": scale_grid(grid, factor),
+                "detector": scale_detector(detector, factor),
+                "projections": bin_projections(projections, factor),
             }
+        )
+        validate_projection_stack(
+            levels[-1]["projections"],
+            levels[-1]["detector"],
+            context=f"create_resolution_pyramid factor {factor} projections",
         )
     return levels
 
@@ -167,7 +181,7 @@ def fista_multires(
 
     Returns (x, info) where x is at finest resolution.
     """
-    factors = tuple(int(f) for f in factors)
+    factors = tuple(_validated_scale_factor(f) for f in factors)
     iters_per_level = tuple(int(it) for it in iters_per_level)
     if len(factors) != len(iters_per_level):
         raise ValueError(
