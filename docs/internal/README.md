@@ -7,7 +7,7 @@ user-facing documentation and are kept here for contributor reference.
 | File | Description |
 |------|-------------|
 | [axes-unification-checklist.md](axes-unification-checklist.md) | Volume axis-ordering migration plan |
-| [notes-lbfgs.md](notes-lbfgs.md) | L-BFGS-B optimizer implementation notes |
+| [notes-lbfgs.md](notes-lbfgs.md) | L-BFGS optimizer implementation notes |
 | [fista-constraints-validation.md](fista-constraints-validation.md) | 64^3 FISTA constraint smoke test |
 | [alignment-gauge-benchmark.md](alignment-gauge-benchmark.md) | Gauge-fixing validation benchmark |
 | [alignment-lbfgs-benchmark.md](alignment-lbfgs-benchmark.md) | L-BFGS alignment smoke tests |
