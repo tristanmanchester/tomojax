@@ -483,9 +483,11 @@ def _coverage_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
             return True
     before_gap = before.get("max_gap_deg")
     after_gap = after.get("max_gap_deg")
-    if before_gap is not None and after_gap is not None:
-        if float(after_gap) > float(before_gap) + 1e-6:
+    if before_gap is None or after_gap is None:
+        if before_gap != after_gap:
             return True
+    elif not np.isclose(float(before_gap), float(after_gap), rtol=0.0, atol=1e-6):
+        return True
     return False
 
 

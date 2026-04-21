@@ -8,7 +8,7 @@ import pytest
 
 from tomojax.cli import preprocess as preprocess_cli
 from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from tomojax.data.preprocess import PreprocessConfig, preprocess_nxtomo
+from tomojax.data.preprocess import PreprocessConfig, _coverage_changed, preprocess_nxtomo
 
 
 def _attr_to_str(value) -> str:
@@ -512,6 +512,22 @@ def test_preprocess_warns_when_rejection_changes_angular_coverage(tmp_path, capl
     preprocess_nxtomo(raw_path, tmp_path / "coverage.nxs", PreprocessConfig(reject_views="0"))
 
     assert any("changed angular coverage" in record.message for record in caplog.records)
+
+
+def test_coverage_changed_detects_max_gap_decreases():
+    before = {"min_deg": 0.0, "max_deg": 180.0, "span_deg": 180.0, "max_gap_deg": 90.0}
+    after = {"min_deg": 0.0, "max_deg": 180.0, "span_deg": 180.0, "max_gap_deg": 45.0}
+
+    assert _coverage_changed(before, after)
+
+
+def test_coverage_changed_detects_max_gap_none_transitions():
+    base = {"min_deg": 0.0, "max_deg": 180.0, "span_deg": 180.0}
+    with_gap = {**base, "max_gap_deg": 45.0}
+    without_gap = {**base, "max_gap_deg": None}
+
+    assert _coverage_changed(without_gap, with_gap)
+    assert _coverage_changed(with_gap, without_gap)
 
 
 def test_preprocess_cli_combines_crop_reject_and_auto_reject(tmp_path, capsys):
