@@ -204,7 +204,7 @@ volume, info = fista_tv(geom, grid, det, projections, config=config)
 | `lambda_tv` | `float` | `0.005` | TV weight |
 | `regulariser` | `str` | `"tv"` | `"tv"` or `"huber_tv"` |
 | `huber_delta` | `float` | `0.01` | Huber smoothing |
-| `L` | `float \| None` | `None` | Lipschitz constant (auto if None) |
+| `L` | `float \| None` | `None` | Data-term Lipschitz constant (auto if None; huber_tv adds extra contribution) |
 | `tv_prox_iters` | `int` | `10` | Chambolle-Pock inner steps |
 | `recon_rel_tol` | `float \| None` | `None` | Early-stop tolerance |
 | `recon_patience` | `int` | `0` | Consecutive below-tol iters |

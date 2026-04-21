@@ -59,7 +59,7 @@ controlled by `--tv-prox-iters`.
 | Iterations | `--iters` | 50 | Number of FISTA iterations |
 | TV weight | `--lambda-tv` | 0.005 | Regularization strength |
 | TV prox iters | `--tv-prox-iters` | 10 | Inner Chambolle-Pock steps |
-| Lipschitz | `--L` | auto | Step size (auto-estimated via power method) |
+| Lipschitz | `--L` | auto | Data-term step size (auto-estimated via power method; huber_tv adds extra contribution) |
 
 **Constraints:**
 

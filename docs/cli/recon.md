@@ -45,8 +45,9 @@ suppression, and physical constraints on the reconstruction.
 - `--tv-prox-iters` -- inner iterations for the TV proximal
   operator (default: 10). We recommend increasing to 20--30 for
   heavily noisy data.
-- `--L` -- fixed Lipschitz constant. When set, FISTA skips the
-  power-method estimation at startup.
+- `--L` -- data-term Lipschitz constant. When set, FISTA skips the
+  power-method estimation at startup. Note: when using `huber_tv`,
+  an additional Lipschitz contribution is added to this value.
 - `--regulariser tv|huber_tv` -- regulariser type (default: `tv`).
   `huber_tv` is smoother near zero gradients; tune `--huber-delta`
   to control the transition radius.
