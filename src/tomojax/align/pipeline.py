@@ -601,6 +601,8 @@ def align(
                 )
             motion_coeffs = resume_coeffs
             params5 = _coeffs_to_constrained_params(motion_coeffs)
+        _, initial_gauge_stats = _apply_full_constraints_with_stats(params5)
+        final_gauge_stats = dict(initial_gauge_stats)
 
     start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
     if start_outer_iter < 0 or start_outer_iter > int(cfg.outer_iters):

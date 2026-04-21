@@ -179,6 +179,39 @@ def test_align_smooth_pose_model_gauge_fix_survives_coefficient_refit(monkeypatc
     assert np.mean(params5[:, 4]) == pytest.approx(0.0, abs=1e-6)
 
 
+def test_align_smooth_pose_model_outer_zero_refreshes_final_gauge_stats():
+    grid, det, geom, vol, projs = make_misaligned_case(seed=23)
+    init_params5 = np.zeros((projs.shape[0], 5), dtype=np.float32)
+    init_params5[:, 3] = np.linspace(1.0, 3.0, projs.shape[0], dtype=np.float32)
+    init_params5[:, 4] = np.linspace(-2.0, 1.0, projs.shape[0], dtype=np.float32)
+
+    _, params5, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=AlignConfig(
+            outer_iters=0,
+            recon_iters=1,
+            early_stop=False,
+            pose_model="polynomial",
+            degree=2,
+        ),
+        init_x=vol,
+        init_params5=jnp.asarray(init_params5),
+    )
+
+    params5_np = np.asarray(params5)
+    gauge_stats = info["gauge_fix_final"]
+    assert info["pose_model"] == "polynomial"
+    assert np.mean(params5_np[:, 3]) == pytest.approx(0.0, abs=1e-6)
+    assert np.mean(params5_np[:, 4]) == pytest.approx(0.0, abs=1e-6)
+    assert gauge_stats["dx_mean_before"] == pytest.approx(0.0, abs=1e-6)
+    assert gauge_stats["dz_mean_before"] == pytest.approx(0.0, abs=1e-6)
+    assert gauge_stats["dx_mean_after"] == pytest.approx(0.0, abs=1e-6)
+    assert gauge_stats["dz_mean_after"] == pytest.approx(0.0, abs=1e-6)
+
+
 def test_align_gd_chunking_matches_streamed_reference(monkeypatch):
     params_stream, info_stream = _run_fixed_volume_alignment(
         monkeypatch,
