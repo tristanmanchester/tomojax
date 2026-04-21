@@ -83,8 +83,9 @@ artifact flags can be combined freely in a single run.
 
 > [!NOTE]
 > Explicit artifact flags override the legacy `--noise` /
-> `--noise-level` pair. If both are present, the legacy options are
-> ignored with a warning.
+> `--noise-level` pair only when at least one artifact is enabled. If
+> all explicit artifact flags are disabled (set to 0 or their default
+> values), the legacy options are preserved.
 
 ### Photon and read noise
 
