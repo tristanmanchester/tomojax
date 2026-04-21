@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import csv
 import json
 from pathlib import Path
@@ -79,6 +80,28 @@ def alignment_param_records(
     return records
 
 
+def _json_native(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): _json_native(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_native(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, str | int | float | bool | type(None)):
+        return value
+
+    try:
+        arr = np.asarray(value)
+    except (TypeError, ValueError):
+        return value
+
+    if arr.shape == ():
+        if arr.dtype == object:
+            return value
+        return _json_native(arr.item())
+    return _json_native(arr.tolist())
+
+
 def alignment_params_payload(
     params5: np.ndarray,
     *,
@@ -96,7 +119,7 @@ def alignment_params_payload(
         "views": alignment_param_records(params5, du=du_f, dv=dv_f),
     }
     if gauge_metadata is not None:
-        payload["gauge_fix"] = dict(gauge_metadata)
+        payload["gauge_fix"] = _json_native(gauge_metadata)
     return payload
 
 

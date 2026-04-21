@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import json
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.align.gauge import apply_alignment_gauge
 from tomojax.align.params_export import (
     ALIGNMENT_PARAMS_SCHEMA,
     CSV_FIELDNAMES,
@@ -70,3 +72,39 @@ def test_alignment_params_export_writes_named_json_and_csv(tmp_path):
     assert payload["views"][0]["view_index"] == 0
     assert payload["views"][0]["dx_px"] == pytest.approx(2.0)
     assert payload["views"][1]["dz_px"] == pytest.approx(-3.0)
+
+
+def test_alignment_params_json_serializes_raw_jax_gauge_metadata(tmp_path):
+    params5 = jnp.asarray(
+        [
+            [0.0, 0.0, 0.0, 1.5, -0.5],
+            [0.0, 0.0, 0.0, 2.5, 1.5],
+        ],
+        dtype=jnp.float32,
+    )
+    bounds_lower = jnp.full((5,), -jnp.inf, dtype=jnp.float32)
+    bounds_upper = jnp.full((5,), jnp.inf, dtype=jnp.float32)
+    _, gauge_metadata = apply_alignment_gauge(
+        params5,
+        mode="mean_translation",
+        active_mask=(True, True, True, True, True),
+        bounds_lower=bounds_lower,
+        bounds_upper=bounds_upper,
+    )
+    json_path = tmp_path / "params.json"
+
+    save_alignment_params_json(
+        json_path,
+        params5,
+        du=1.0,
+        dv=1.0,
+        gauge_metadata=dict(gauge_metadata),
+    )
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["gauge_fix"]["mode"] == "mean_translation"
+    assert payload["gauge_fix"]["dofs"] == ["dx", "dz"]
+    assert payload["gauge_fix"]["dx_mean_before"] == pytest.approx(2.0)
+    assert payload["gauge_fix"]["dz_mean_before"] == pytest.approx(0.5)
+    assert payload["gauge_fix"]["dx_mean_after"] == pytest.approx(0.0)
+    assert payload["gauge_fix"]["dz_mean_after"] == pytest.approx(0.0)
