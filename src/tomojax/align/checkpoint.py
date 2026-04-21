@@ -22,13 +22,13 @@ _ALIGN_CONFIG_COMPAT_DEFAULTS = {
     "lbfgs_gtol": 1e-5,
     "lbfgs_maxls": 20,
     "lbfgs_memory_size": 10,
-    "gauge_fix": "none",
+    "gauge_fix": "mean_translation",
 }
 _ALIGN_CLI_COMPAT_DEFAULTS = {
     "recon_algo": "fista",
     "spdhg_seed": 0,
     "recon_positivity": True,
-    "gauge_fix": "none",
+    "gauge_fix": "mean_translation",
 }
 
 
