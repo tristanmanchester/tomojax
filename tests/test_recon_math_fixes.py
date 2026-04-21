@@ -124,6 +124,41 @@ def test_fista_reports_objective_at_primal_iterate_not_momentum(monkeypatch: pyt
     assert info["loss"][1] == pytest.approx(0.03125, rel=1e-6, abs=1e-6)
 
 
+def test_fista_explicit_l_includes_huber_tv_lipschitz_contribution(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _patch_one_voxel_quadratic(monkeypatch, target=0.0)
+    monkeypatch.setattr(fista_mod, "power_method_L", lambda *args, **kwargs: 2.0)
+    grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=1, nv=1, du=1.0, dv=1.0)
+    projections = jnp.zeros((1, 1, 1), dtype=jnp.float32)
+    config_kwargs = {
+        "iters": 1,
+        "lambda_tv": 0.2,
+        "regulariser": "huber_tv",
+        "huber_delta": 0.1,
+    }
+
+    _, auto_info = fista_mod.fista_tv(
+        _OneVoxelGeometry(),
+        grid,
+        detector,
+        projections,
+        config=fista_mod.FistaConfig(**config_kwargs),
+    )
+    _, explicit_info = fista_mod.fista_tv(
+        _OneVoxelGeometry(),
+        grid,
+        detector,
+        projections,
+        config=fista_mod.FistaConfig(**config_kwargs, L=2.0),
+    )
+
+    expected = 2.0 + 0.2 * 12.0 / 0.1
+    assert auto_info["L"] == pytest.approx(expected)
+    assert explicit_info["L"] == pytest.approx(expected)
+
+
 def test_fista_constraints_are_disabled_by_default(monkeypatch: pytest.MonkeyPatch):
     _patch_one_voxel_quadratic(monkeypatch, target=-1.0)
     grid = Grid(nx=1, ny=1, nz=1, vx=1.0, vy=1.0, vz=1.0)

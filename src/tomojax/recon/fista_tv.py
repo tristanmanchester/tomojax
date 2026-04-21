@@ -575,8 +575,8 @@ def fista_tv(
             T_all=T_all,
             vol_mask=vol_mask,
         )
-        if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
-            L += float(cfg.lambda_tv) * 12.0 / huber_delta
+    if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
+        L += float(cfg.lambda_tv) * 12.0 / huber_delta
 
     # Precompute jitted loss/grad using the chunked grad_data_term
     def val_and_grad_fn(z):
