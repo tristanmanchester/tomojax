@@ -122,11 +122,6 @@ def main() -> None:
     explicit_artefacts = _artefact_options_present(sys.argv[1:])
     artefacts = None
     if explicit_artefacts:
-        if args.noise != "none" and float(args.noise_level) > 0.0:
-            logging.warning(
-                "Ignoring legacy --noise/--noise-level because explicit artefact "
-                "options were supplied"
-            )
         artefacts = SimulationArtefacts(
             poisson_scale=args.poisson_scale,
             gaussian_sigma=args.gaussian_sigma,
@@ -144,6 +139,14 @@ def main() -> None:
             intensity_drift_amplitude=args.intensity_drift_amplitude,
             intensity_drift_mode=args.intensity_drift_mode,
         )
+        if artefacts.has_enabled():
+            if args.noise != "none" and float(args.noise_level) > 0.0:
+                logging.warning(
+                    "Ignoring legacy --noise/--noise-level because explicit artefact "
+                    "options were supplied"
+                )
+        else:
+            artefacts = None
 
     cfg = SimConfig(
         nx=args.nx, ny=args.ny, nz=args.nz,
