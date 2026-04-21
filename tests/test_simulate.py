@@ -209,3 +209,45 @@ def test_simulate_cli_incomplete_explicit_artefacts_preserve_legacy_noise(
     assert cfg.noise == "gaussian"
     assert cfg.noise_level == pytest.approx(0.1)
     assert cfg.artefacts is None
+
+
+def test_simulate_cli_rejects_invalid_explicit_artefact(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(simulate_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(simulate_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(simulate_cli, "transfer_guard_context", lambda _mode: nullcontext())
+
+    def fake_simulate_to_file(cfg: SimConfig, out_path: str) -> str:
+        captured["cfg"] = cfg
+        captured["out_path"] = out_path
+        return out_path
+
+    monkeypatch.setattr(simulate_cli, "simulate_to_file", fake_simulate_to_file)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "simulate",
+            "--out",
+            str(tmp_path / "sim.nxs"),
+            "--nx",
+            "8",
+            "--ny",
+            "8",
+            "--nz",
+            "8",
+            "--nu",
+            "8",
+            "--nv",
+            "8",
+            "--n-views",
+            "3",
+            "--gaussian-sigma",
+            "-0.1",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="gaussian_sigma must be non-negative"):
+        simulate_cli.main()
+
+    assert "cfg" not in captured

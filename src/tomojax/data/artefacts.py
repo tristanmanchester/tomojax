@@ -121,8 +121,15 @@ def normalise_simulation_artefacts(
     """Return explicit artefacts, or legacy noise mapped into artefact fields."""
 
     if artefacts is not None:
+        validate_simulation_artefacts(artefacts)
         return artefacts
     return artefacts_from_legacy_noise(noise, noise_level)
+
+
+def validate_simulation_artefacts(artefacts: SimulationArtefacts | None) -> None:
+    """Raise if an artefact configuration contains invalid parameter values."""
+
+    _validate_config(artefacts or SimulationArtefacts())
 
 
 def apply_simulation_artefacts(
@@ -139,6 +146,7 @@ def apply_simulation_artefacts(
     """
 
     cfg = artefacts or SimulationArtefacts()
+    validate_simulation_artefacts(cfg)
     metadata: ArtefactMetadata = {
         "enabled": cfg.has_enabled(),
         "seed": int(seed),
@@ -147,8 +155,6 @@ def apply_simulation_artefacts(
     }
     if not cfg.has_enabled():
         return projections, metadata
-
-    _validate_config(cfg)
 
     original_dtype = np.asarray(projections).dtype
     out = np.asarray(projections, dtype=np.float32).copy()

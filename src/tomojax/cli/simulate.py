@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from ..data.artefacts import SimulationArtefacts
+from ..data.artefacts import SimulationArtefacts, validate_simulation_artefacts
 from ..data.simulate import SimConfig, simulate_to_file
 from ..utils.logging import setup_logging, log_jax_env
 from ._runtime import transfer_guard_context
@@ -139,6 +139,7 @@ def main() -> None:
             intensity_drift_amplitude=args.intensity_drift_amplitude,
             intensity_drift_mode=args.intensity_drift_mode,
         )
+        validate_simulation_artefacts(artefacts)
         if artefacts.has_enabled():
             if args.noise != "none" and float(args.noise_level) > 0.0:
                 logging.warning(

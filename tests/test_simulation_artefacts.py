@@ -59,6 +59,17 @@ def test_default_artefacts_are_exact_noop() -> None:
     assert meta_default["enabled"] is False
 
 
+def test_invalid_disabled_artefact_config_is_rejected() -> None:
+    source = _base()
+
+    with pytest.raises(ValueError, match="gaussian_sigma must be non-negative"):
+        apply_simulation_artefacts(
+            source,
+            SimulationArtefacts(gaussian_sigma=-0.1),
+            seed=1,
+        )
+
+
 def test_poisson_noise_shape_dtype_determinism_and_effect() -> None:
     source = _base(0.5)
     out, meta = _assert_common(source, SimulationArtefacts(poisson_scale=20.0))
