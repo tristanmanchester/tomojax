@@ -231,6 +231,8 @@ def run_pose_lbfgs(
             params = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
             coeffs = fit_motion_coefficients(motion_model, params)
             params = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+            coeffs = fit_motion_coefficients(motion_model, params)
+            params = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
             return params, coeffs
 
     else:

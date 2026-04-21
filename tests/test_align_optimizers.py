@@ -5,6 +5,11 @@ import pytest
 
 import jax.numpy as jnp
 
+from tomojax.align.motion_models import (
+    PoseMotionModel,
+    expand_motion_coefficients,
+    fit_motion_coefficients,
+)
 from tomojax.align.optimizers import (
     BoundTransform,
     PoseLbfgsConfig,
@@ -99,6 +104,62 @@ def test_pose_lbfgs_active_packing_excludes_frozen_dofs():
     assert result.stats["lbfgs_backend"] == "optax"
     assert result.stats["optimizer"] == "lbfgs"
     assert result.stats["optimizer_backend"] == "optax"
+
+
+def test_pose_lbfgs_smooth_unbounded_refines_constraints_like_active_path():
+    params0 = jnp.zeros((2, 5), dtype=jnp.float32)
+    basis = jnp.asarray([[1.0], [0.0]], dtype=jnp.float32)
+    model = PoseMotionModel(
+        name="polynomial",
+        basis=basis,
+        basis_pinv=jnp.linalg.pinv(basis),
+        active_indices=(3,),
+        active_names=("dx",),
+        frozen_params5=params0,
+    )
+    coeffs0 = jnp.asarray([[4.0]], dtype=jnp.float32)
+    bounds_lower = jnp.full((5,), -jnp.inf, dtype=jnp.float32)
+    bounds_upper = jnp.full((5,), jnp.inf, dtype=jnp.float32)
+
+    def zero_mean_dx(params5):
+        dx = params5[:, 3]
+        return params5.at[:, 3].set(dx - jnp.mean(dx))
+
+    expected_params = zero_mean_dx(expand_motion_coefficients(model, coeffs0))
+    expected_coeffs = fit_motion_coefficients(model, expected_params)
+    expected_params = zero_mean_dx(expand_motion_coefficients(model, expected_coeffs))
+    expected_coeffs = fit_motion_coefficients(model, expected_params)
+    expected_params = zero_mean_dx(expand_motion_coefficients(model, expected_coeffs))
+
+    result = run_pose_lbfgs(
+        params5_in=params0,
+        motion_coeffs_in=coeffs0,
+        frozen_params5=params0,
+        active_cols=np.asarray([3], dtype=np.int32),
+        bounds_lower=bounds_lower,
+        bounds_upper=bounds_upper,
+        loss_before_value=10.0,
+        objective_fn=lambda params: jnp.sum(params[:, 3] ** 2),
+        eval_loss_fn=lambda _params, _label: 0.0,
+        apply_param_constraints=zero_mean_dx,
+        is_expected_failure=lambda _exc: False,
+        cfg=_lbfgs_config(maxiter=0),
+        motion_model=model,
+    )
+
+    assert result.accepted is True
+    np.testing.assert_allclose(
+        np.asarray(result.params5),
+        np.asarray(expected_params),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.motion_coeffs),
+        np.asarray(expected_coeffs),
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def test_pose_lbfgs_selects_best_candidate_when_last_is_worse():
