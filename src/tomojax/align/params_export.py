@@ -45,10 +45,10 @@ def _normalize_params5(params5: np.ndarray) -> np.ndarray:
 def _validate_detector_spacing(*, du: float, dv: float) -> tuple[float, float]:
     du_f = float(du)
     dv_f = float(dv)
-    if du_f == 0.0:
-        raise ValueError("detector du must be non-zero to export dx_px")
-    if dv_f == 0.0:
-        raise ValueError("detector dv must be non-zero to export dz_px")
+    if not np.isfinite(du_f) or du_f <= 0.0:
+        raise ValueError("detector du must be positive finite to export dx_px")
+    if not np.isfinite(dv_f) or dv_f <= 0.0:
+        raise ValueError("detector dv must be positive finite to export dz_px")
     return du_f, dv_f
 
 

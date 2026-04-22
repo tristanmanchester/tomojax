@@ -12,6 +12,7 @@ from tomojax.align.params_export import (
     ALIGNMENT_PARAMS_SCHEMA,
     CSV_FIELDNAMES,
     PARAMETER_ORDER,
+    alignment_param_records,
     save_alignment_params_csv,
     save_alignment_params_json,
 )
@@ -108,3 +109,21 @@ def test_alignment_params_json_serializes_raw_jax_gauge_metadata(tmp_path):
     assert payload["gauge_fix"]["dz_mean_before"] == pytest.approx(0.5)
     assert payload["gauge_fix"]["dx_mean_after"] == pytest.approx(0.0)
     assert payload["gauge_fix"]["dz_mean_after"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("du", "dv"),
+    [
+        (0.0, 1.0),
+        (-1.0, 1.0),
+        (np.nan, 1.0),
+        (1.0, 0.0),
+        (1.0, -1.0),
+        (1.0, np.inf),
+    ],
+)
+def test_alignment_param_records_reject_nonpositive_or_nonfinite_spacing(du, dv):
+    params5 = np.zeros((1, 5), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="positive finite"):
+        alignment_param_records(params5, du=du, dv=dv)
