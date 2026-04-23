@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Optional
 import os
@@ -56,22 +57,55 @@ def _host_available_memory_bytes() -> Optional[int]:
         return None
 
 
+def _free_bytes_from_memory_info(info: object) -> Optional[int]:
+    """Extract free bytes from JAX/XLA memory-info shapes."""
+    if isinstance(info, Mapping):
+        for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
+            if key in info:
+                try:
+                    return int(info[key])
+                except (TypeError, ValueError):
+                    return None
+        if "bytes_limit" in info and "bytes_in_use" in info:
+            try:
+                return max(0, int(info["bytes_limit"]) - int(info["bytes_in_use"]))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    if isinstance(info, tuple | list) and len(info) >= 1:
+        try:
+            return int(info[0])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def device_free_memory_bytes() -> Optional[int]:
     """Best-effort query of free device memory (bytes).
 
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
+    - Also support current `Device.memory_stats()` reports when exposed.
     - Fall back to host available memory via `os.sysconf` when supported.
     - Returns None if nothing is available.
     """
     try:  # JAX GPU/TPU or CPU
         import jax  # type: ignore
 
+        devs = jax.devices("gpu")
+        if not devs:
+            return _host_available_memory_bytes()
         if hasattr(jax, "device_get_memory_info"):
-            devs = jax.devices("gpu")
-            if devs:
-                free, total = jax.device_get_memory_info(devs[0])  # type: ignore[attr-defined]
-                # On CPU backends, this may reflect host RAM; still usable as a bound
-                return int(free)
+            free = _free_bytes_from_memory_info(
+                jax.device_get_memory_info(devs[0])  # type: ignore[attr-defined]
+            )
+            if free is not None:
+                return free
+        memory_stats = getattr(devs[0], "memory_stats", None)
+        if callable(memory_stats):
+            free = _free_bytes_from_memory_info(memory_stats())
+            if free is not None:
+                return free
     except Exception:
         pass
     return _host_available_memory_bytes()

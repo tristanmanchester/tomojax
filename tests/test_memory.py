@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 from tomojax.utils import memory as memory_utils
 
 
@@ -73,6 +76,18 @@ def test_host_available_memory_bytes_returns_none_without_sysconf_support(monkey
     monkeypatch.setattr(memory_utils.os, "sysconf_names", {})
 
     assert memory_utils._host_available_memory_bytes() is None
+
+
+def test_device_free_memory_bytes_uses_device_memory_stats(monkeypatch):
+    device = SimpleNamespace(
+        memory_stats=lambda: {"bytes_limit": 1_000, "bytes_in_use": 250},
+    )
+    fake_jax = SimpleNamespace(devices=lambda backend=None: [device] if backend == "gpu" else [])
+
+    monkeypatch.setitem(sys.modules, "jax", fake_jax)
+    monkeypatch.setattr(memory_utils, "_host_available_memory_bytes", lambda: None)
+
+    assert memory_utils.device_free_memory_bytes() == 750
 
 
 def test_estimate_views_per_batch_info_reports_safe_fallback():
