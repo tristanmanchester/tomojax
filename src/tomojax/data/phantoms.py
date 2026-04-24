@@ -188,6 +188,8 @@ def _sample_random_sphere_params(
 
     for _ in range(max(0, int(n_spheres))):
         radius = float(rng.uniform(min_size / 2.0, max_size / 2.0))
+        if radius > nz / 2.0:
+            continue
         if use_inscribed_fov:
             rmax = fov_r - radius
             if rmax <= 1:
@@ -198,6 +200,8 @@ def _sample_random_sphere_params(
             cy = cy0 + r * np.sin(th)
             cz = float(rng.uniform(radius, nz - radius))
         else:
+            if radius > nx / 2.0 or radius > ny / 2.0:
+                continue
             cx = float(rng.uniform(radius, nx - radius))
             cy = float(rng.uniform(radius, ny - radius))
             cz = float(rng.uniform(radius, nz - radius))
@@ -268,6 +272,8 @@ def random_cubes_spheres(
     # Cubes
     for _ in range(max(0, int(n_cubes))):
         size = float(rng.uniform(min_size, max_size))
+        if size > nz:
+            continue
         if use_inscribed_fov:
             max_xy_extent = size * np.sqrt(3) / 2.0
             rmax = fov_r - max_xy_extent
@@ -280,6 +286,8 @@ def random_cubes_spheres(
             cz = float(rng.uniform(size / 2.0, nz - size / 2.0))
         else:
             margin = size * np.sqrt(3) / 2.0
+            if margin > nx / 2.0 or margin > ny / 2.0 or margin > nz / 2.0:
+                continue
             cx = float(rng.uniform(margin, nx - margin))
             cy = float(rng.uniform(margin, ny - margin))
             cz = float(rng.uniform(margin, nz - margin))

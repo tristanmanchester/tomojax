@@ -76,6 +76,23 @@ def test_random_shapes_matches_expected_hash(name, case):
     assert _hash_volume(vol) == _EXPECTED_SHA256[name]
 
 
+def test_random_shapes_skips_oversized_objects_in_thin_volumes():
+    vol = random_cubes_spheres(
+        64,
+        64,
+        8,
+        n_cubes=1,
+        n_spheres=1,
+        min_size=20,
+        max_size=30,
+        seed=0,
+        use_inscribed_fov=True,
+    )
+
+    assert vol.shape == (64, 64, 8)
+    assert np.isfinite(vol).all()
+
+
 @pytest.mark.skipif(
     not bool(int(os.environ.get("TOMOJAX_RUN_HEAVY_PHANTOM_TESTS", "0"))),
     reason="set TOMOJAX_RUN_HEAVY_PHANTOM_TESTS=1 to run heavy phantom regression checks",
