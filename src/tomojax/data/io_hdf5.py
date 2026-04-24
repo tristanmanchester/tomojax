@@ -58,6 +58,7 @@ class NXTomoMetadata:
     volume: np.ndarray | None = None
     align_params: np.ndarray | None = None
     align_gauge: JsonObject | None = None
+    geometry_calibration: JsonObject | None = None
     angle_offset_deg: np.ndarray | None = None
     misalign_spec: JsonObject | None = None
     simulation_artefacts: JsonObject | None = None
@@ -93,6 +94,7 @@ class NXTomoMetadata:
             volume=data.get("volume"),
             align_params=data.get("align_params"),
             align_gauge=data.get("align_gauge"),
+            geometry_calibration=data.get("geometry_calibration"),
             angle_offset_deg=data.get("angle_offset_deg"),
             misalign_spec=data.get("misalign_spec"),
             simulation_artefacts=data.get("simulation_artefacts"),
@@ -497,6 +499,16 @@ def _load_processing_metadata(
         if misalign_spec is not None:
             out["misalign_spec"] = misalign_spec
 
+    calibration_grp = tomojax_grp.get("calibration")
+    if calibration_grp is not None:
+        geometry_calibration = _load_json_mapping_attr(
+            calibration_grp.attrs.get("geometry_calibration_json"),
+            path=path,
+            context="geometry calibration",
+        )
+        if geometry_calibration is not None:
+            out["geometry_calibration"] = geometry_calibration
+
     simulation_grp = tomojax_grp.get("simulation")
     if simulation_grp is not None:
         simulation_artefacts = _load_json_mapping_attr(
@@ -667,37 +679,45 @@ def save_nxtomo(
             if meta.frame is not None:
                 _write_string_attr(tj, "frame", str(meta.frame))
 
-        # Optional alignment params and misalignment metadata
-        if (
+        # Optional alignment and geometry-calibration metadata
+        has_alignment_metadata = (
             meta.align_params is not None
             or meta.align_gauge is not None
             or meta.angle_offset_deg is not None
             or meta.misalign_spec is not None
-        ):
+        )
+        if has_alignment_metadata or meta.geometry_calibration is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
-            align_grp = _ensure_group(tj, "align", "NXcollection")
-            if meta.align_params is not None:
-                dset = align_grp.create_dataset(
-                    "thetas",
-                    data=np.asarray(meta.align_params, dtype=np.float32),
-                    chunks=True,
-                    compression=compression,
+            if has_alignment_metadata:
+                align_grp = _ensure_group(tj, "align", "NXcollection")
+                if meta.align_params is not None:
+                    dset = align_grp.create_dataset(
+                        "thetas",
+                        data=np.asarray(meta.align_params, dtype=np.float32),
+                        chunks=True,
+                        compression=compression,
+                    )
+                    dset.attrs["columns"] = np.array(
+                        ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
+                    )
+                if meta.align_gauge is not None:
+                    align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
+                if meta.angle_offset_deg is not None:
+                    align_grp.create_dataset(
+                        "angle_offset_deg",
+                        data=np.asarray(meta.angle_offset_deg, dtype=np.float32),
+                        chunks=True,
+                        compression=compression,
+                    )
+                if meta.misalign_spec is not None:
+                    align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
+
+            if meta.geometry_calibration is not None:
+                calibration_grp = _ensure_group(tj, "calibration", "NXcollection")
+                calibration_grp.attrs["geometry_calibration_json"] = json.dumps(
+                    meta.geometry_calibration
                 )
-                dset.attrs["columns"] = np.array(
-                    ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
-                )
-            if meta.align_gauge is not None:
-                align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
-            if meta.angle_offset_deg is not None:
-                align_grp.create_dataset(
-                    "angle_offset_deg",
-                    data=np.asarray(meta.angle_offset_deg, dtype=np.float32),
-                    chunks=True,
-                    compression=compression,
-                )
-            if meta.misalign_spec is not None:
-                align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
 
         # Optional simulation artefact metadata
         if meta.simulation_artefacts is not None:

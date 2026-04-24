@@ -45,6 +45,7 @@ tomojax-convert = "tomojax.cli.convert:main"
 tomojax-validate = "tomojax.cli.validate:main"
 tomojax-inspect = "tomojax.cli.inspect:main"
 tomojax-loss-bench = "tomojax.cli.loss_bench:main"
+tomojax-calibrate-geometry = "tomojax.cli.calibrate_geometry:main"
 tomojax-test-gpu = "tomojax.cli.runtime_checks:test_gpu_main"
 tomojax-test-cpu = "tomojax.cli.runtime_checks:test_cpu_main"
 

@@ -131,6 +131,40 @@ def test_nxtomo_roundtrips_alignment_gauge_metadata(tmp_path):
     assert loaded["align_gauge"] == gauge
 
 
+def test_nxtomo_roundtrips_geometry_calibration_metadata(tmp_path):
+    from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
+
+    nxs_path = tmp_path / "geometry_calibration.nxs"
+    projections = np.zeros((2, 3, 4), dtype=np.float32)
+    calibration = {
+        "schema_version": 1,
+        "calibration_state": {
+            "detector": [
+                {
+                    "name": "det_u_px",
+                    "value": -4.0,
+                    "unit": "native_detector_px",
+                    "status": "estimated",
+                    "frame": "detector",
+                    "gauge": "detector_ray_grid_center",
+                }
+            ],
+        },
+    }
+    metadata = NXTomoMetadata(
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+        detector={"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [-4.0, 0.0]},
+        geometry_calibration=calibration,
+    )
+
+    save_nxtomo(str(nxs_path), projections=projections, metadata=metadata)
+    loaded = load_nxtomo(str(nxs_path))
+
+    assert loaded.detector["det_center"] == [-4.0, 0.0]
+    assert loaded.geometry_calibration == calibration
+    assert loaded["geometry_calibration"] == calibration
+
+
 def test_load_nxtomo_preserves_legacy_xyz_without_attr_or_grid(tmp_path):
     nxs_path = tmp_path / "legacy_no_attr_no_grid.nxs"
 

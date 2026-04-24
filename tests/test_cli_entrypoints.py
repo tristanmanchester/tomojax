@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 import tomojax.cli.align as align_cli
+import tomojax.cli.calibrate_geometry as calibrate_geometry_cli
 import tomojax.cli.convert as convert_cli
 import tomojax.cli.inspect as inspect_cli
 import tomojax.cli.preprocess as preprocess_cli
@@ -21,6 +22,7 @@ import tomojax.cli.recon as recon_cli
 import tomojax.cli.runtime_checks as runtime_checks_cli
 import tomojax.cli.simulate as simulate_cli
 from tomojax.data.io_hdf5 import LoadedNXTomo
+from tomojax.core.geometry import Detector, Grid
 
 
 def test_convert_main_delegates_to_converter(monkeypatch):
@@ -166,6 +168,134 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--resume" in captured.out
     assert "lbfgs" in captured.out
     assert "--lbfgs-memory-size" in captured.out
+
+
+def test_calibrate_geometry_help_documents_detector_center(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["tomojax-calibrate-geometry", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        calibrate_geometry_cli.main()
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "detector-center" in captured.out
+    assert "--search-pass" in captured.out
+    assert "RADIUS:STEP" in captured.out
+
+
+def test_calibrate_geometry_search_pass_parser_rejects_malformed_values():
+    assert calibrate_geometry_cli._parse_search_pass("10:2") == (10.0, 2.0)
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        calibrate_geometry_cli._parse_search_pass("10")
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        calibrate_geometry_cli._parse_search_pass("10:0")
+
+
+def test_calibrate_geometry_main_writes_calibrated_metadata_and_manifest(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, object] = {}
+    detector = Detector(
+        nu=2,
+        nv=1,
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    grid = Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    meta = LoadedNXTomo.from_dataset(
+        {
+            "projections": np.zeros((2, 1, 2), dtype=np.float32),
+            "thetas_deg": np.asarray([0.0, 90.0], dtype=np.float32),
+            "detector": detector.to_dict(),
+            "grid": grid.to_dict(),
+            "geometry_type": "parallel",
+        }
+    )
+
+    calibrated_detector = Detector(
+        nu=2,
+        nv=1,
+        du=1.0,
+        dv=1.0,
+        det_center=(-4.0, 0.0),
+    )
+    fake_manifest = {
+        "schema_version": 1,
+        "calibration_state": {"detector": [{"name": "det_u_px", "value": -4.0}]},
+    }
+
+    fake_result = SimpleNamespace(
+        best_det_u_px=-4.0,
+        det_v_px=0.0,
+        calibrated_detector=calibrated_detector,
+        final_volume=np.zeros((2, 2, 1), dtype=np.float32),
+        manifest=fake_manifest,
+        confidence={"level": "high"},
+    )
+
+    def fake_calibrate(geometry_inputs, *, grid, detector, projections, config, workdir):
+        captured["geometry_inputs"] = geometry_inputs
+        captured["grid"] = grid
+        captured["detector"] = detector
+        captured["config"] = config
+        captured["workdir"] = workdir
+        return fake_result
+
+    def fake_save_nxtomo(path, *, projections, metadata):
+        captured["save_path"] = path
+        captured["save_metadata"] = metadata
+
+    def fake_save_manifest(path, manifest):
+        captured["manifest_path"] = path
+        captured["manifest"] = manifest
+
+    monkeypatch.setattr(calibrate_geometry_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(calibrate_geometry_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(calibrate_geometry_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(
+        calibrate_geometry_cli,
+        "build_geometry_from_meta",
+        lambda geometry_inputs, grid_override=None, apply_saved_alignment=False: (
+            grid,
+            detector,
+            object(),
+        ),
+    )
+    monkeypatch.setattr(calibrate_geometry_cli, "calibrate_detector_center", fake_calibrate)
+    monkeypatch.setattr(calibrate_geometry_cli, "save_nxtomo", fake_save_nxtomo)
+    monkeypatch.setattr(calibrate_geometry_cli, "save_manifest", fake_save_manifest)
+
+    out_path = tmp_path / "calibrated.nxs"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tomojax-calibrate-geometry",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--out",
+            str(out_path),
+            "--roi",
+            "off",
+            "--search-pass",
+            "5:1",
+            "--det-v-px",
+            "0.5",
+        ],
+    )
+
+    calibrate_geometry_cli.main()
+
+    assert captured["save_path"] == str(out_path)
+    saved_meta = captured["save_metadata"]
+    assert saved_meta.detector["det_center"] == [-4.0, 0.0]
+    assert saved_meta.geometry_calibration == fake_manifest
+    assert captured["manifest"] == fake_manifest
+    assert captured["config"].search_passes == ((5.0, 1.0),)
+    assert captured["config"].det_v_status == "supplied"
 
 
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
