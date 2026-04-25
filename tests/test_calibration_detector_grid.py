@@ -5,7 +5,12 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.calibration import detector_grid_from_center_offset, zero_center_detector_grid
-from tomojax.calibration.detector_grid import offset_detector_grid
+from tomojax.calibration.detector_grid import (
+    detector_grid_from_calibration,
+    detector_grid_from_detector_roll,
+    offset_detector_grid,
+    transform_detector_grid,
+)
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import backproject_view_T, forward_project_view_T
@@ -57,3 +62,42 @@ def test_detector_grid_offsets_accept_jax_scalars_for_future_optimisation():
 
     np.testing.assert_allclose(np.asarray(shifted[0] - base[0]), 1.0)
     np.testing.assert_allclose(np.asarray(shifted[1] - base[1]), -1.0)
+
+
+def test_detector_grid_roll_rotates_about_zero_centre_before_offset():
+    detector = Detector(nu=3, nv=3, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    base = zero_center_detector_grid(detector)
+
+    rolled = transform_detector_grid(
+        base,
+        detector_roll_deg=90.0,
+        det_u_px=2.0,
+        det_v_px=-1.0,
+        native_du=detector.du,
+        native_dv=detector.dv,
+    )
+
+    expected_u = -base[1] + 2.0
+    expected_v = base[0] - 1.0
+    np.testing.assert_allclose(np.asarray(rolled[0]), np.asarray(expected_u), atol=1e-6)
+    np.testing.assert_allclose(np.asarray(rolled[1]), np.asarray(expected_v), atol=1e-6)
+
+
+def test_detector_grid_from_calibration_accepts_jax_roll_scalar():
+    detector = Detector(nu=3, nv=3, du=1.0, dv=2.0, det_center=(0.0, 0.0))
+    direct = detector_grid_from_calibration(
+        detector,
+        detector_roll_deg=jnp.asarray(15.0, dtype=jnp.float32),
+    )
+
+    assert direct[0].shape == (detector.nu * detector.nv,)
+    assert direct[1].shape == (detector.nu * detector.nv,)
+
+
+def test_detector_roll_grid_preserves_detector_physical_center():
+    detector = Detector(nu=3, nv=3, du=0.5, dv=0.25, det_center=(1.0, -0.5))
+    unrolled = detector_grid_from_detector_roll(detector, detector_roll_deg=0.0)
+    static = detector_grid_from_center_offset(detector, det_u_px=2.0, det_v_px=-2.0)
+
+    np.testing.assert_allclose(np.asarray(unrolled[0]), np.asarray(static[0]), atol=1e-6)
+    np.testing.assert_allclose(np.asarray(unrolled[1]), np.asarray(static[1]), atol=1e-6)

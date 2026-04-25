@@ -462,6 +462,7 @@ def forward_project_view(
     use_checkpoint: bool = True,
     unroll: int | None = None,
     gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Wrapper that fetches pose from geometry and calls pose-aware variant."""
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
@@ -475,6 +476,7 @@ def forward_project_view(
         use_checkpoint=use_checkpoint,
         unroll=unroll,
         gather_dtype=gather_dtype,
+        det_grid=det_grid,
     )
 
 
@@ -489,6 +491,7 @@ def backproject_view(
     n_steps: int | None = None,
     unroll: int | None = None,
     gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Wrapper that fetches pose and calls the explicit gather-dtype adjoint."""
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
@@ -501,4 +504,5 @@ def backproject_view(
         n_steps=n_steps,
         unroll=unroll,
         gather_dtype=gather_dtype,
+        det_grid=det_grid,
     )

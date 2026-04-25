@@ -180,11 +180,15 @@ def test_calibrate_geometry_help_documents_detector_center(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "detector-center" in captured.out
     assert "axis-direction" in captured.out
+    assert "detector-roll" in captured.out
     assert "detector-center-axis" in captured.out
+    assert "detector-center-axis-roll" in captured.out
     assert "--active-detector-dofs" in captured.out
     assert "--active-axis-dofs" in captured.out
+    assert "--initial-detector-roll-deg" in captured.out
     assert "--outer-iters" in captured.out
     assert "--axis-outer-iters" in captured.out
+    assert "--roll-outer-iters" in captured.out
     assert "--gn-damping" in captured.out
     assert "--search-pass" not in captured.out
 
@@ -554,6 +558,100 @@ def test_recon_main_writes_manifest_sidecar(monkeypatch, tmp_path):
     assert "available" in payload["jax"]
 
 
+def test_calibrate_geometry_detector_roll_main_writes_roll_metadata(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, object] = {}
+    detector = Detector(nu=2, nv=1, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    grid = Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    meta = LoadedNXTomo.from_dataset(
+        {
+            "projections": np.zeros((2, 1, 2), dtype=np.float32),
+            "thetas_deg": np.asarray([0.0, 90.0], dtype=np.float32),
+            "detector": detector.to_dict(),
+            "grid": grid.to_dict(),
+            "geometry_type": "parallel",
+        }
+    )
+    fake_manifest = {
+        "schema_version": 1,
+        "calibration_state": {"detector": [{"name": "detector_roll_deg", "value": 1.25}]},
+        "calibrated_geometry": {"detector_roll_deg": 1.25},
+    }
+    fake_result = SimpleNamespace(
+        detector_roll_deg=1.25,
+        final_volume=np.zeros((2, 2, 1), dtype=np.float32),
+        manifest=fake_manifest,
+        confidence={"level": "medium"},
+    )
+
+    def fake_roll_calibrate(geometry_inputs, *, grid, detector, projections, config, workdir):
+        captured["geometry_inputs"] = geometry_inputs
+        captured["config"] = config
+        captured["workdir"] = workdir
+        return fake_result
+
+    def fake_save_nxtomo(path, *, projections, metadata):
+        captured["save_path"] = path
+        captured["save_metadata"] = metadata
+
+    monkeypatch.setattr(calibrate_geometry_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(calibrate_geometry_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(calibrate_geometry_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(
+        calibrate_geometry_cli,
+        "build_geometry_from_meta",
+        lambda geometry_inputs, grid_override=None, apply_saved_alignment=False: (
+            grid,
+            detector,
+            object(),
+        ),
+    )
+    monkeypatch.setattr(calibrate_geometry_cli, "calibrate_detector_roll", fake_roll_calibrate)
+    monkeypatch.setattr(calibrate_geometry_cli, "save_nxtomo", fake_save_nxtomo)
+    monkeypatch.setattr(
+        calibrate_geometry_cli,
+        "save_manifest",
+        lambda path, manifest: captured.update(
+            {"manifest_path": path, "manifest": manifest}
+        ),
+    )
+
+    out_path = tmp_path / "roll_calibrated.nxs"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tomojax-calibrate-geometry",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--out",
+            str(out_path),
+            "--mode",
+            "detector-roll",
+            "--roi",
+            "off",
+            "--initial-detector-roll-deg",
+            "0.5",
+            "--roll-outer-iters",
+            "4",
+            "--roll-max-step-deg",
+            "0.75",
+        ],
+    )
+
+    calibrate_geometry_cli.main()
+
+    saved_meta = captured["save_metadata"]
+    assert captured["save_path"] == str(out_path)
+    assert saved_meta.geometry_meta["detector_roll_deg"] == pytest.approx(1.25)
+    assert saved_meta.geometry_calibration == fake_manifest
+    assert captured["manifest"] == fake_manifest
+    assert captured["config"].initial_detector_roll_deg == pytest.approx(0.5)
+    assert captured["config"].outer_iters == 4
+    assert captured["config"].max_step_deg == pytest.approx(0.75)
+
+
 def test_recon_main_passes_fista_constraints_and_records_manifest(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
     detector = recon_cli.Detector(
@@ -579,11 +677,12 @@ def test_recon_main_passes_fista_constraints_and_records_manifest(monkeypatch, t
         captured["transfer_guard"] = mode
         yield
 
-    def fake_fista_tv(geom, recon_grid, recon_detector, projections, *, config):
+    def fake_fista_tv(geom, recon_grid, recon_detector, projections, *, config, det_grid=None):
         captured["fista_grid"] = recon_grid
         captured["fista_detector"] = recon_detector
         captured["fista_projections_shape"] = tuple(projections.shape)
         captured["fista_config"] = config
+        captured["fista_det_grid"] = det_grid
         volume = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         return volume, {"loss": [0.0]}
 

@@ -33,6 +33,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     tilt_deg: float
     tilt_about: str
     axis_unit_lab: Sequence[float]
+    detector_roll_deg: float
     angle_offset_deg: np.ndarray
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray

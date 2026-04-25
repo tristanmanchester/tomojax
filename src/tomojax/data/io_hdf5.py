@@ -242,6 +242,9 @@ class LoadedNXTomo:
         axis_unit_lab = geom_meta.get("axis_unit_lab")
         if axis_unit_lab is not None:
             payload["axis_unit_lab"] = axis_unit_lab
+        detector_roll_deg = geom_meta.get("detector_roll_deg")
+        if detector_roll_deg is not None:
+            payload["detector_roll_deg"] = float(detector_roll_deg)
         return payload
 
 

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import os
 import sys
 
+from ..calibration.detector_grid import detector_grid_from_geometry_inputs
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from ..core.geometry import Detector, Grid
@@ -306,6 +307,12 @@ def main() -> None:
         apply_saved_alignment=False,
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
+    det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
+    if det_grid is not None:
+        logging.info(
+            "Applying saved detector_roll_deg=%s from geometry metadata",
+            geometry_meta.get("detector_roll_deg"),
+        )
 
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
@@ -404,6 +411,7 @@ def main() -> None:
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
+                det_grid=det_grid,
             )
         # For FBP, apply mask post-hoc if requested for parity
         if vol_mask is not None:
@@ -456,6 +464,7 @@ def main() -> None:
                 detector,
                 proj,
                 config=cfg,
+                det_grid=det_grid,
             )
     else:  # spdhg
         # Build SPDHG config
@@ -513,6 +522,7 @@ def main() -> None:
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
+                det_grid=det_grid,
             )
             if vol_mask is not None:
                 init_x = init_x * vol_mask
@@ -526,6 +536,7 @@ def main() -> None:
                 proj,
                 init_x=init_x,
                 config=cfg,
+                det_grid=det_grid,
             )
 
     # Save the reconstruction in the object (sample) frame.
@@ -565,6 +576,8 @@ def main() -> None:
                 "input_projection_shape": list(meta.projections.shape),
                 "reconstruction_grid": recon_grid.to_dict(),
                 "detector": detector.to_dict(),
+                "detector_roll_deg": geometry_meta.get("detector_roll_deg"),
+                "detector_grid_replayed": det_grid is not None,
                 "roi": {
                     "requested": roi_mode,
                     "is_parallel": bool(is_parallel),

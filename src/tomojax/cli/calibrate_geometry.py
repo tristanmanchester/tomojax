@@ -14,6 +14,7 @@ from tomojax.calibration.center import (
     calibrate_detector_center,
 )
 from tomojax.calibration.manifest import build_calibration_manifest
+from tomojax.calibration.roll import DetectorRollCalibrationConfig, calibrate_detector_roll
 from tomojax.calibration.state import CalibrationState
 from tomojax.data.geometry_meta import build_geometry_from_meta
 from tomojax.data.io_hdf5 import load_nxtomo, save_nxtomo
@@ -99,7 +100,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="Output calibrated .nxs")
     p.add_argument(
         "--mode",
-        choices=["detector-center", "axis-direction", "detector-center-axis"],
+        choices=[
+            "detector-center",
+            "axis-direction",
+            "detector-roll",
+            "detector-center-axis",
+            "detector-center-axis-roll",
+        ],
         default="detector-center",
         help="Calibration mode.",
     )
@@ -190,6 +197,36 @@ def _build_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="Maximum rotation-axis GN step length in degrees.",
     )
+    p.add_argument(
+        "--initial-detector-roll-deg",
+        type=float,
+        default=0.0,
+        help="Initial detector-plane roll angle in degrees.",
+    )
+    p.add_argument(
+        "--roll-outer-iters",
+        type=_positive_int,
+        default=12,
+        help="Maximum detector-roll Gauss-Newton outer iterations.",
+    )
+    p.add_argument(
+        "--roll-gn-damping",
+        type=_nonnegative_float,
+        default=1e-3,
+        help="Levenberg-Marquardt damping for detector-roll GN.",
+    )
+    p.add_argument(
+        "--roll-gn-accept-tol",
+        type=_nonnegative_float,
+        default=0.0,
+        help="Relative loss improvement required to accept a detector-roll GN step.",
+    )
+    p.add_argument(
+        "--roll-max-step-deg",
+        type=_positive_float,
+        default=1.0,
+        help="Maximum detector-roll GN step length in degrees.",
+    )
     refine = p.add_mutually_exclusive_group()
     refine.add_argument(
         "--refine-detector-center-after-axis",
@@ -204,6 +241,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="In combined mode, skip the final detector-centre refinement after axis calibration.",
     )
     p.set_defaults(refine_detector_center_after_axis=True)
+    refine_roll = p.add_mutually_exclusive_group()
+    refine_roll.add_argument(
+        "--refine-detector-center-after-roll",
+        dest="refine_detector_center_after_roll",
+        action="store_true",
+        help="In roll staged mode, run a final detector-centre refinement after roll.",
+    )
+    refine_roll.add_argument(
+        "--no-refine-detector-center-after-roll",
+        dest="refine_detector_center_after_roll",
+        action="store_false",
+        help="In roll staged mode, skip the final detector-centre refinement after roll.",
+    )
+    p.set_defaults(refine_detector_center_after_roll=True)
     p.add_argument(
         "--heldout-stride",
         type=_heldout_stride,
@@ -368,6 +419,21 @@ def _axis_direction_config(args: argparse.Namespace) -> AxisDirectionCalibration
     )
 
 
+def _detector_roll_config(args: argparse.Namespace) -> DetectorRollCalibrationConfig:
+    return DetectorRollCalibrationConfig(
+        initial_detector_roll_deg=float(args.initial_detector_roll_deg),
+        outer_iters=int(args.roll_outer_iters),
+        gn_damping=float(args.roll_gn_damping),
+        gn_accept_tol=float(args.roll_gn_accept_tol),
+        max_step_deg=float(args.roll_max_step_deg),
+        heldout_stride=int(args.heldout_stride),
+        filter_name=str(args.filter),
+        views_per_batch=int(args.views_per_batch),
+        checkpoint_projector=bool(args.checkpoint_projector),
+        gather_dtype=str(args.gather_dtype),
+    )
+
+
 def _geometry_inputs_with_detector(geometry_inputs: dict, detector) -> dict:
     updated = dict(geometry_inputs)
     updated["detector"] = detector.to_dict()
@@ -380,6 +446,12 @@ def _geometry_inputs_with_axis(geometry_inputs: dict, axis_unit_lab) -> dict:
     return updated
 
 
+def _geometry_inputs_with_detector_roll(geometry_inputs: dict, detector_roll_deg: float) -> dict:
+    updated = dict(geometry_inputs)
+    updated["detector_roll_deg"] = float(detector_roll_deg)
+    return updated
+
+
 def _save_calibrated_dataset(
     *,
     args: argparse.Namespace,
@@ -389,6 +461,7 @@ def _save_calibrated_dataset(
     volume,
     manifest: dict,
     axis_unit_lab=None,
+    detector_roll_deg=None,
 ) -> None:
     save_meta = meta.copy_metadata()
     save_meta.detector = detector.to_dict()
@@ -396,9 +469,12 @@ def _save_calibrated_dataset(
     save_meta.volume = volume
     save_meta.frame = str(args.frame)
     save_meta.volume_axes_order = str(args.volume_axes)
-    if axis_unit_lab is not None:
+    if axis_unit_lab is not None or detector_roll_deg is not None:
         geometry_meta = dict(save_meta.geometry_meta or {})
-        geometry_meta["axis_unit_lab"] = [float(v) for v in axis_unit_lab]
+        if axis_unit_lab is not None:
+            geometry_meta["axis_unit_lab"] = [float(v) for v in axis_unit_lab]
+        if detector_roll_deg is not None:
+            geometry_meta["detector_roll_deg"] = float(detector_roll_deg)
         save_meta.geometry_meta = geometry_meta
     save_meta.geometry_calibration = manifest
     save_nxtomo(
@@ -415,20 +491,29 @@ def _combine_stage_manifests(
     detector_result,
     axis_result,
     refine_result=None,
+    roll_result=None,
+    refine_after_roll_result=None,
 ) -> dict:
     detector_state = (
-        refine_result.calibration_state
+        refine_after_roll_result.calibration_state
+        if refine_after_roll_result is not None
+        else refine_result.calibration_state
         if refine_result is not None
         else detector_result.calibration_state
     )
+    detector_variables = tuple(detector_state.detector)
+    if roll_result is not None:
+        detector_variables = detector_variables + tuple(roll_result.calibration_state.detector)
     combined_state = CalibrationState(
-        detector=detector_state.detector,
+        detector=detector_variables,
         scan=axis_result.calibration_state.scan,
         object_residual=axis_result.calibration_state.object_residual,
         reconstruction=axis_result.calibration_state.reconstruction,
     )
     calibrated_detector = (
-        refine_result.calibrated_detector
+        refine_after_roll_result.calibrated_detector
+        if refine_after_roll_result is not None
+        else refine_result.calibrated_detector
         if refine_result is not None
         else detector_result.calibrated_detector
     )
@@ -438,19 +523,41 @@ def _combine_stage_manifests(
     }
     if refine_result is not None:
         stage_manifests["detector_center_refine"] = copy.deepcopy(refine_result.manifest)
+    if roll_result is not None:
+        stage_manifests["detector_roll"] = copy.deepcopy(roll_result.manifest)
+    if refine_after_roll_result is not None:
+        stage_manifests["detector_center_refine_after_roll"] = copy.deepcopy(
+            refine_after_roll_result.manifest
+        )
+    mode = "detector-center-axis-roll" if roll_result is not None else "detector-center-axis"
     return build_calibration_manifest(
         calibration_state=combined_state,
-        objective_card=axis_result.objective_card,
+        objective_card=(
+            roll_result.objective_card if roll_result is not None else axis_result.objective_card
+        ),
         calibrated_geometry={
             "detector": calibrated_detector.to_dict(),
             "axis_unit_lab": [float(v) for v in axis_result.axis_unit_lab],
+            **(
+                {"detector_roll_deg": float(roll_result.detector_roll_deg)}
+                if roll_result is not None
+                else {}
+            ),
             "stages": list(stage_manifests),
         },
         source={
-            "mode": "detector-center-axis",
+            "mode": mode,
             "detector_center_confidence": detector_result.confidence,
             "axis_direction_confidence": axis_result.confidence,
             "refined_detector_center": refine_result is not None,
+            **(
+                {
+                    "detector_roll_confidence": roll_result.confidence,
+                    "refined_detector_center_after_roll": refine_after_roll_result is not None,
+                }
+                if roll_result is not None
+                else {}
+            ),
         },
         extra={"stages": stage_manifests},
     )
@@ -477,6 +584,7 @@ def main() -> None:
     )
     detector_cfg = _detector_center_config(args, config_metadata)
     axis_cfg = _axis_direction_config(args)
+    roll_cfg = _detector_roll_config(args)
 
     if args.mode == "detector-center":
         result = calibrate_detector_center(
@@ -491,6 +599,7 @@ def main() -> None:
         final_volume = result.final_volume
         final_manifest = result.manifest
         final_axis_unit_lab = None
+        final_detector_roll_deg = None
         logging.info(
             "Estimated detector/ray-grid centre det_u_px=%.4f, det_v_px=%.4f, confidence=%s",
             result.best_det_u_px,
@@ -510,6 +619,7 @@ def main() -> None:
         final_volume = axis_result.final_volume
         final_manifest = axis_result.manifest
         final_axis_unit_lab = axis_result.axis_unit_lab
+        final_detector_roll_deg = None
         logging.info(
             "Estimated rotation axis unit=(%.6f, %.6f, %.6f), confidence=%s",
             float(axis_result.axis_unit_lab[0]),
@@ -517,7 +627,26 @@ def main() -> None:
             float(axis_result.axis_unit_lab[2]),
             axis_result.confidence.get("level"),
         )
-    elif args.mode == "detector-center-axis":
+    elif args.mode == "detector-roll":
+        roll_result = calibrate_detector_roll(
+            geometry_inputs,
+            grid=recon_grid,
+            detector=detector,
+            projections=meta.projections,
+            config=roll_cfg,
+            workdir=workdir,
+        )
+        final_detector = detector
+        final_volume = roll_result.final_volume
+        final_manifest = roll_result.manifest
+        final_axis_unit_lab = None
+        final_detector_roll_deg = roll_result.detector_roll_deg
+        logging.info(
+            "Estimated detector roll %.6f deg, confidence=%s",
+            float(roll_result.detector_roll_deg),
+            roll_result.confidence.get("level"),
+        )
+    elif args.mode in {"detector-center-axis", "detector-center-axis-roll"}:
         detector_result = calibrate_detector_center(
             geometry_inputs,
             grid=recon_grid,
@@ -540,6 +669,7 @@ def main() -> None:
         refine_result = None
         final_detector = detector_result.calibrated_detector
         final_volume = axis_result.final_volume
+        final_detector_roll_deg = None
         if bool(args.refine_detector_center_after_axis):
             refine_inputs = _geometry_inputs_with_detector(
                 _geometry_inputs_with_axis(axis_inputs, axis_result.axis_unit_lab),
@@ -555,19 +685,61 @@ def main() -> None:
             )
             final_detector = refine_result.calibrated_detector
             final_volume = refine_result.final_volume
+        roll_result = None
+        refine_after_roll_result = None
+        if args.mode == "detector-center-axis-roll":
+            roll_inputs = _geometry_inputs_with_detector(
+                _geometry_inputs_with_axis(axis_inputs, axis_result.axis_unit_lab),
+                final_detector,
+            )
+            roll_result = calibrate_detector_roll(
+                roll_inputs,
+                grid=recon_grid,
+                detector=final_detector,
+                projections=meta.projections,
+                config=roll_cfg,
+                workdir=workdir / "04_detector_roll",
+            )
+            final_volume = roll_result.final_volume
+            final_detector_roll_deg = roll_result.detector_roll_deg
+            if bool(args.refine_detector_center_after_roll):
+                refine_roll_inputs = _geometry_inputs_with_detector_roll(
+                    roll_inputs,
+                    roll_result.detector_roll_deg,
+                )
+                refine_after_roll_result = calibrate_detector_center(
+                    refine_roll_inputs,
+                    grid=recon_grid,
+                    detector=final_detector,
+                    projections=meta.projections,
+                    config=detector_cfg,
+                    workdir=workdir / "05_detector_center_refine_after_roll",
+                )
+                final_detector = refine_after_roll_result.calibrated_detector
+                final_volume = refine_after_roll_result.final_volume
         final_manifest = _combine_stage_manifests(
             detector_result=detector_result,
             axis_result=axis_result,
             refine_result=refine_result,
+            roll_result=roll_result,
+            refine_after_roll_result=refine_after_roll_result,
         )
         final_axis_unit_lab = axis_result.axis_unit_lab
-        logging.info(
-            "Estimated detector centre then axis: det_u_px=%.4f, axis=(%.6f, %.6f, %.6f)",
-            float(final_manifest["calibrated_geometry"]["detector"].get("det_u_px", 0.0)),
-            float(axis_result.axis_unit_lab[0]),
-            float(axis_result.axis_unit_lab[1]),
-            float(axis_result.axis_unit_lab[2]),
-        )
+        if roll_result is None:
+            logging.info(
+                "Estimated detector centre then axis: axis=(%.6f, %.6f, %.6f)",
+                float(axis_result.axis_unit_lab[0]),
+                float(axis_result.axis_unit_lab[1]),
+                float(axis_result.axis_unit_lab[2]),
+            )
+        else:
+            logging.info(
+                "Estimated detector centre, axis, roll: axis=(%.6f, %.6f, %.6f), roll=%.6f deg",
+                float(axis_result.axis_unit_lab[0]),
+                float(axis_result.axis_unit_lab[1]),
+                float(axis_result.axis_unit_lab[2]),
+                float(roll_result.detector_roll_deg),
+            )
     else:  # pragma: no cover - argparse choices keep this unreachable.
         raise ValueError(f"unknown calibration mode: {args.mode}")
 
@@ -579,6 +751,7 @@ def main() -> None:
         volume=final_volume,
         manifest=final_manifest,
         axis_unit_lab=final_axis_unit_lab,
+        detector_roll_deg=final_detector_roll_deg,
     )
     save_manifest(manifest_path, final_manifest)
     logging.info("Saved calibrated dataset to %s", args.out)

@@ -28,6 +28,11 @@ def _var(name: str, status: str) -> CalibrationVariable:
             "detector_roll_object_orientation",
         ),
         (
+            "detector_roll_deg",
+            "object_phi_mean",
+            "detector_roll_object_phi_mean",
+        ),
+        (
             "det_u_px",
             "rotation_axis_intercept_u_px",
             "det_u_px_rotation_axis_intercept_u",

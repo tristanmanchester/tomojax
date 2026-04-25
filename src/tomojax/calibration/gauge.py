@@ -85,6 +85,11 @@ _CONFLICT_RULES: tuple[GaugeConflict, ...] = (
         message="Estimate detector roll or global object in-plane orientation, not both.",
     ),
     GaugeConflict(
+        code="detector_roll_object_phi_mean",
+        variables=("detector_roll_deg", "object_phi_mean"),
+        message="Estimate detector roll or mean object phi, not both.",
+    ),
+    GaugeConflict(
         code="object_translation_mean_volume_center",
         variables=("object_translation_mean", "volume_center"),
         message="Estimate object mean translation or volume centre, not both.",

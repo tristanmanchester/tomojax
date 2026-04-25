@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 import csv
 import json
@@ -20,32 +20,25 @@ from tomojax.recon.fbp import _default_fbp_scale, _run_fbp_fast_path, fbp
 from tomojax.recon.quicklook import extract_central_slice, scale_to_uint8
 
 from ._json import JsonValue, normalize_json
-from .detector_grid import (
-    detector_grid_from_detector_roll,
-    transform_detector_grid,
-    zero_center_detector_grid,
-)
+from .detector_grid import detector_grid_from_detector_roll
 from .gauge import validate_calibration_gauges
 from .manifest import build_calibration_manifest
 from .objectives import MetricSpec, ObjectiveCard
 from .state import CalibrationState, CalibrationVariable
 
 
-DETECTOR_CENTER_DOFS: tuple[str, ...] = ("det_u_px", "det_v_px")
+DETECTOR_ROLL_DOFS: tuple[str, ...] = ("detector_roll_deg",)
 
 
 @dataclass(frozen=True)
-class DetectorCenterCalibrationConfig:
-    """Configuration for detector/ray-grid centre Gauss-Newton calibration."""
+class DetectorRollCalibrationConfig:
+    """Configuration for detector-plane roll Gauss-Newton calibration."""
 
-    initial_det_u_px: float = 0.0
-    det_v_px: float = 0.0
-    det_v_status: str = "frozen"
-    active_detector_dofs: tuple[str, ...] = ("det_u_px",)
+    initial_detector_roll_deg: float = 0.0
     outer_iters: int = 12
     gn_damping: float = 1e-3
     gn_accept_tol: float = 0.0
-    max_step_px: float = 2.0
+    max_step_deg: float = 1.0
     heldout_stride: int = 8
     filter_name: str = "ramp"
     views_per_batch: int = 1
@@ -54,26 +47,16 @@ class DetectorCenterCalibrationConfig:
     gather_dtype: str = "auto"
 
     def __post_init__(self) -> None:
-        if self.det_v_status not in {"frozen", "supplied"}:
-            raise ValueError("det_v_status must be 'frozen' or 'supplied'")
-        active = tuple(str(name) for name in self.active_detector_dofs)
-        if not active:
-            raise ValueError("active_detector_dofs must not be empty")
-        unknown = sorted(set(active) - set(DETECTOR_CENTER_DOFS))
-        if unknown:
-            raise ValueError(f"Unknown detector-centre DOFs: {unknown}")
-        if len(set(active)) != len(active):
-            raise ValueError("active_detector_dofs must not contain duplicates")
-        object.__setattr__(self, "active_detector_dofs", active)
-
+        if not math.isfinite(float(self.initial_detector_roll_deg)):
+            raise ValueError("initial_detector_roll_deg must be finite")
         if int(self.outer_iters) < 1:
             raise ValueError("outer_iters must be >= 1")
         if not math.isfinite(float(self.gn_damping)) or float(self.gn_damping) < 0.0:
             raise ValueError("gn_damping must be finite and >= 0")
         if not math.isfinite(float(self.gn_accept_tol)) or float(self.gn_accept_tol) < 0.0:
             raise ValueError("gn_accept_tol must be finite and >= 0")
-        if not math.isfinite(float(self.max_step_px)) or float(self.max_step_px) <= 0.0:
-            raise ValueError("max_step_px must be finite and > 0")
+        if not math.isfinite(float(self.max_step_deg)) or float(self.max_step_deg) <= 0.0:
+            raise ValueError("max_step_deg must be finite and > 0")
         if int(self.heldout_stride) < 2:
             raise ValueError("heldout_stride must be >= 2")
         if int(self.views_per_batch) < 1:
@@ -81,14 +64,11 @@ class DetectorCenterCalibrationConfig:
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
-            "initial_det_u_px": float(self.initial_det_u_px),
-            "det_v_px": float(self.det_v_px),
-            "det_v_status": str(self.det_v_status),
-            "active_detector_dofs": [str(name) for name in self.active_detector_dofs],
+            "initial_detector_roll_deg": float(self.initial_detector_roll_deg),
             "outer_iters": int(self.outer_iters),
             "gn_damping": float(self.gn_damping),
             "gn_accept_tol": float(self.gn_accept_tol),
-            "max_step_px": float(self.max_step_px),
+            "max_step_deg": float(self.max_step_deg),
             "heldout_stride": int(self.heldout_stride),
             "filter_name": str(self.filter_name),
             "views_per_batch": int(self.views_per_batch),
@@ -99,65 +79,45 @@ class DetectorCenterCalibrationConfig:
 
 
 @dataclass(frozen=True)
-class DetectorCenterIteration:
+class DetectorRollIteration:
     iteration: int
-    det_u_px: float
-    det_v_px: float
+    detector_roll_deg: float
     loss_before: float
     loss_after: float
     accepted: bool
-    raw_step_px: tuple[float, ...]
-    applied_step_px: tuple[float, ...]
+    raw_step_deg: float
+    applied_step_deg: float
     step_scale: float
     gradient_norm: float
-    curvature: tuple[tuple[float, ...], ...]
+    curvature: float
     validation_mode: str
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "iteration": int(self.iteration),
-            "det_u_px": float(self.det_u_px),
-            "det_v_px": float(self.det_v_px),
+            "detector_roll_deg": float(self.detector_roll_deg),
             "loss_before": float(self.loss_before),
             "loss_after": float(self.loss_after),
             "accepted": bool(self.accepted),
-            "raw_step_px": [float(v) for v in self.raw_step_px],
-            "applied_step_px": [float(v) for v in self.applied_step_px],
+            "raw_step_deg": float(self.raw_step_deg),
+            "applied_step_deg": float(self.applied_step_deg),
             "step_scale": float(self.step_scale),
             "gradient_norm": float(self.gradient_norm),
-            "curvature": [[float(v) for v in row] for row in self.curvature],
+            "curvature": float(self.curvature),
             "validation_mode": self.validation_mode,
         }
 
 
 @dataclass(frozen=True)
-class DetectorCenterCalibrationResult:
-    best_det_u_px: float
-    det_v_px: float
-    calibrated_detector: Detector
+class DetectorRollCalibrationResult:
+    detector_roll_deg: float
     final_volume: np.ndarray
-    iterations: tuple[DetectorCenterIteration, ...]
+    iterations: tuple[DetectorRollIteration, ...]
     objective_card: ObjectiveCard
     calibration_state: CalibrationState
     manifest: dict[str, JsonValue]
     confidence: dict[str, JsonValue]
     artifact_paths: dict[str, str] = field(default_factory=dict)
-
-
-def detector_with_center_offset(
-    detector: Detector,
-    *,
-    det_u_px: float,
-    det_v_px: float = 0.0,
-) -> Detector:
-    """Return a detector whose centre is shifted by native detector pixel offsets."""
-    return replace(
-        detector,
-        det_center=(
-            float(detector.det_center[0]) + float(det_u_px) * float(detector.du),
-            float(detector.det_center[1]) + float(det_v_px) * float(detector.dv),
-        ),
-    )
 
 
 def _geometry_from_inputs(
@@ -185,60 +145,11 @@ def _split_views(n_views: int, heldout_stride: int) -> tuple[np.ndarray, np.ndar
     return train, heldout, "heldout_projection_nmse"
 
 
-def _det_grid_from_offsets(
-    base_grid: tuple[jnp.ndarray, jnp.ndarray],
-    detector: Detector,
-    *,
-    det_u_px: object,
-    det_v_px: object,
-    detector_roll_deg: object = 0.0,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    base_det_u_px = float(detector.det_center[0]) / float(detector.du)
-    base_det_v_px = float(detector.det_center[1]) / float(detector.dv)
-    return transform_detector_grid(
-        base_grid,
-        det_u_px=jnp.asarray(det_u_px, dtype=jnp.float32) + jnp.float32(base_det_u_px),
-        det_v_px=jnp.asarray(det_v_px, dtype=jnp.float32) + jnp.float32(base_det_v_px),
-        detector_roll_deg=detector_roll_deg,
-        native_du=float(detector.du),
-        native_dv=float(detector.dv),
-    )
+def _loss_from_residual(residual: jnp.ndarray) -> float:
+    return float(jnp.mean(jnp.square(residual)))
 
 
-def _active_values_from_offsets(
-    *,
-    active_names: Sequence[str],
-    det_u_px: float,
-    det_v_px: float,
-) -> jnp.ndarray:
-    values = []
-    for name in active_names:
-        if name == "det_u_px":
-            values.append(float(det_u_px))
-        elif name == "det_v_px":
-            values.append(float(det_v_px))
-    return jnp.asarray(values, dtype=jnp.float32)
-
-
-def _det_u_v_from_active(
-    active_values: jnp.ndarray,
-    *,
-    active_names: Sequence[str],
-    fixed_det_u_px: float,
-    fixed_det_v_px: float,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    values = jnp.asarray(active_values, dtype=jnp.float32)
-    det_u = jnp.asarray(fixed_det_u_px, dtype=jnp.float32)
-    det_v = jnp.asarray(fixed_det_v_px, dtype=jnp.float32)
-    for idx, name in enumerate(active_names):
-        if name == "det_u_px":
-            det_u = values[idx]
-        elif name == "det_v_px":
-            det_v = values[idx]
-    return det_u, det_v
-
-
-def _reconstruct_with_detector_center(
+def _reconstruct_with_roll(
     geometry_inputs: Mapping[str, object],
     *,
     grid: Grid,
@@ -247,7 +158,7 @@ def _reconstruct_with_detector_center(
     thetas_deg: np.ndarray,
     view_indices: np.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    config: DetectorCenterCalibrationConfig,
+    config: DetectorRollCalibrationConfig,
 ) -> jnp.ndarray:
     subset_thetas = thetas_deg[view_indices]
     geometry = _geometry_from_inputs(
@@ -259,8 +170,6 @@ def _reconstruct_with_detector_center(
     subset_projections = jnp.asarray(projections[view_indices], dtype=jnp.float32)
     n_views = int(subset_projections.shape[0])
     batch_size = max(1, min(int(config.views_per_batch), n_views))
-    # Use the differentiable FBP core directly here. The public FBP wrapper blocks
-    # for runtime/progress diagnostics, which is invalid under JAX JVP/VJP tracing.
     volume = _run_fbp_fast_path(
         stack_view_poses(geometry, n_views),
         subset_projections,
@@ -286,7 +195,7 @@ def _residual_vector(
     score_indices: np.ndarray,
     volume: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    config: DetectorCenterCalibrationConfig,
+    config: DetectorRollCalibrationConfig,
 ) -> jnp.ndarray:
     score_geometry = _geometry_from_inputs(
         geometry_inputs,
@@ -314,79 +223,48 @@ def _residual_vector(
     return ((preds - measured) / denom).ravel()
 
 
-def _loss_from_residual(residual: jnp.ndarray) -> float:
-    return float(jnp.mean(jnp.square(residual)))
-
-
 def _confidence_diagnostics(
-    iterations: Sequence[DetectorCenterIteration],
+    iterations: Sequence[DetectorRollIteration],
 ) -> dict[str, JsonValue]:
     accepted = [it for it in iterations if it.accepted]
     final = iterations[-1] if iterations else None
+    level = "low"
     final_update_norm = None
     final_gradient_norm = None
-    curvature_min_eig = None
+    curvature = None
     loss_rel_drop = None
-    level = "low"
     if final is not None:
-        final_update_norm = float(np.linalg.norm(np.asarray(final.applied_step_px)))
+        final_update_norm = abs(float(final.applied_step_deg))
         final_gradient_norm = float(final.gradient_norm)
-        curvature = np.asarray(final.curvature, dtype=np.float64)
-        if curvature.size:
-            try:
-                curvature_min_eig = float(np.min(np.linalg.eigvalsh(curvature)))
-            except np.linalg.LinAlgError:
-                curvature_min_eig = None
+        curvature = float(final.curvature)
         first = float(iterations[0].loss_before)
         last = float(final.loss_after)
         loss_rel_drop = (first - last) / max(abs(first), 1e-12)
-        if (
-            accepted
-            and curvature_min_eig is not None
-            and curvature_min_eig > 0.0
-            and final_update_norm <= 0.05
-            and final_gradient_norm <= 1e-2
-        ):
+        if accepted and curvature > 0.0 and final_update_norm <= 0.02 and final_gradient_norm <= 1e-2:
             level = "high"
-        elif accepted and curvature_min_eig is not None and curvature_min_eig > 0.0:
+        elif accepted and curvature > 0.0:
             level = "medium"
     return {
         "level": level,
         "accepted_steps": int(len(accepted)),
-        "final_update_norm_px": final_update_norm,
+        "final_update_norm_deg": final_update_norm,
         "final_gradient_norm": final_gradient_norm,
-        "curvature_min_eig": curvature_min_eig,
+        "curvature_min_eig": curvature,
         "loss_rel_drop": loss_rel_drop,
     }
 
 
-def _write_iterations_csv(path: Path, iterations: Sequence[DetectorCenterIteration]) -> None:
+def _write_iterations_csv(path: Path, iterations: Sequence[DetectorRollIteration]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    keys = [
-        "iteration",
-        "det_u_px",
-        "det_v_px",
-        "loss_before",
-        "loss_after",
-        "accepted",
-        "raw_step_px",
-        "applied_step_px",
-        "step_scale",
-        "gradient_norm",
-        "validation_mode",
-    ]
+    keys = list(DetectorRollIteration.__dataclass_fields__.keys())
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=keys)
         writer.writeheader()
         for iteration in iterations:
-            row = iteration.to_dict()
-            row["raw_step_px"] = json.dumps(row["raw_step_px"])
-            row["applied_step_px"] = json.dumps(row["applied_step_px"])
-            row.pop("curvature", None)
-            writer.writerow(row)
+            writer.writerow(iteration.to_dict())
 
 
-def _write_iterations_json(path: Path, iterations: Sequence[DetectorCenterIteration]) -> None:
+def _write_iterations_json(path: Path, iterations: Sequence[DetectorRollIteration]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         json.dump([iteration.to_dict() for iteration in iterations], fh, indent=2, sort_keys=True)
@@ -401,10 +279,10 @@ def _volume_preview(
     projections: jnp.ndarray,
     thetas_deg: np.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    config: DetectorCenterCalibrationConfig,
+    config: DetectorRollCalibrationConfig,
 ) -> np.ndarray:
     all_views = np.arange(len(thetas_deg), dtype=np.int32)
-    volume = _reconstruct_with_detector_center(
+    volume = _reconstruct_with_roll(
         geometry_inputs,
         grid=grid,
         detector=detector,
@@ -445,27 +323,18 @@ def _write_artifacts(
     detector: Detector,
     projections: jnp.ndarray,
     thetas_deg: np.ndarray,
-    iterations: Sequence[DetectorCenterIteration],
-    final_det_u_px: float,
-    final_det_v_px: float,
-    config: DetectorCenterCalibrationConfig,
+    iterations: Sequence[DetectorRollIteration],
+    final_detector_roll_deg: float,
+    config: DetectorRollCalibrationConfig,
 ) -> dict[str, str]:
     workdir.mkdir(parents=True, exist_ok=True)
-    detector_roll_deg = float(geometry_inputs.get("detector_roll_deg", 0.0))
-    base_grid = zero_center_detector_grid(detector)
-    nominal_grid = _det_grid_from_offsets(
-        base_grid,
+    nominal_grid = detector_grid_from_detector_roll(
         detector,
-        det_u_px=0.0,
-        det_v_px=float(config.det_v_px),
-        detector_roll_deg=detector_roll_deg,
+        detector_roll_deg=float(config.initial_detector_roll_deg),
     )
-    final_grid = _det_grid_from_offsets(
-        base_grid,
+    final_grid = detector_grid_from_detector_roll(
         detector,
-        det_u_px=float(final_det_u_px),
-        det_v_px=float(final_det_v_px),
-        detector_roll_deg=detector_roll_deg,
+        detector_roll_deg=float(final_detector_roll_deg),
     )
     nominal_preview = _volume_preview(
         geometry_inputs,
@@ -485,9 +354,9 @@ def _write_artifacts(
         det_grid=final_grid,
         config=config,
     )
-    final_preview_path = workdir / "final_detector_center.png"
+    final_preview_path = workdir / "final_detector_roll.png"
     iio.imwrite(final_preview_path, final_preview)
-    contact_sheet = workdir / "detector_center_before_after.png"
+    contact_sheet = workdir / "detector_roll_before_after.png"
     _write_contact_sheet(contact_sheet, (nominal_preview, final_preview))
     iterations_csv = workdir / "iterations.csv"
     iterations_json = workdir / "iterations.json"
@@ -501,54 +370,41 @@ def _write_artifacts(
     }
 
 
-def _calibration_state_for_config(
-    cfg: DetectorCenterCalibrationConfig,
+def _calibration_state_for_roll(
     *,
-    det_u_px: float,
-    det_v_px: float,
+    detector_roll_deg: float,
     confidence: Mapping[str, object] | None = None,
 ) -> CalibrationState:
-    det_u_status = "estimated" if "det_u_px" in cfg.active_detector_dofs else "frozen"
-    det_v_status = "estimated" if "det_v_px" in cfg.active_detector_dofs else cfg.det_v_status
     return CalibrationState(
         detector=(
             CalibrationVariable(
-                name="det_u_px",
-                value=float(det_u_px),
-                unit="native_detector_px",
-                status=det_u_status,  # type: ignore[arg-type]
+                name="detector_roll_deg",
+                value=float(detector_roll_deg),
+                unit="deg",
+                status="estimated",
                 frame="detector",
-                gauge="detector_ray_grid_center",
+                gauge="detector_plane_roll",
                 uncertainty=normalize_json(confidence),
-                description=(
-                    "Detector/ray-grid horizontal centre representation of a static "
-                    "COR-like offset under the detector-centre gauge."
-                ),
-            ),
-            CalibrationVariable(
-                name="det_v_px",
-                value=float(det_v_px),
-                unit="native_detector_px",
-                status=det_v_status,  # type: ignore[arg-type]
-                frame="detector",
-                gauge="detector_ray_grid_center",
+                description="Detector-plane roll around the detector centre.",
             ),
         )
     )
 
 
-def calibrate_detector_center(
+def calibrate_detector_roll(
     geometry_inputs: Mapping[str, object],
     *,
     grid: Grid,
     detector: Detector,
     projections: object,
-    config: DetectorCenterCalibrationConfig | None = None,
+    config: DetectorRollCalibrationConfig | None = None,
     workdir: str | Path | None = None,
-) -> DetectorCenterCalibrationResult:
-    """Estimate static detector/ray-grid centre offsets with damped Gauss-Newton."""
-    cfg = config or DetectorCenterCalibrationConfig()
-    validate_calibration_gauges(_calibration_state_for_config(cfg, det_u_px=0.0, det_v_px=0.0))
+) -> DetectorRollCalibrationResult:
+    """Estimate detector-plane roll with damped Gauss-Newton."""
+    cfg = config or DetectorRollCalibrationConfig()
+    validate_calibration_gauges(
+        _calibration_state_for_roll(detector_roll_deg=float(cfg.initial_detector_roll_deg))
+    )
 
     y = jnp.asarray(projections, dtype=jnp.float32)
     if y.ndim != 3:
@@ -568,40 +424,16 @@ def calibrate_detector_center(
         int(y.shape[0]),
         int(cfg.heldout_stride),
     )
-    active_names = tuple(cfg.active_detector_dofs)
-    fixed_det_u = float(cfg.initial_det_u_px)
-    fixed_det_v = float(cfg.det_v_px)
-    active_values = _active_values_from_offsets(
-        active_names=active_names,
-        det_u_px=fixed_det_u,
-        det_v_px=fixed_det_v,
-    )
-    detector_roll_deg = float(geometry_inputs.get("detector_roll_deg", 0.0))
-    base_grid = zero_center_detector_grid(detector)
-    iterations: list[DetectorCenterIteration] = []
+    roll_value = jnp.asarray([float(cfg.initial_detector_roll_deg)], dtype=jnp.float32)
+    iterations: list[DetectorRollIteration] = []
 
-    def det_grid_for_values(values: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        det_u, det_v = _det_u_v_from_active(
-            values,
-            active_names=active_names,
-            fixed_det_u_px=fixed_det_u,
-            fixed_det_v_px=fixed_det_v,
-        )
-        return _det_grid_from_offsets(
-            base_grid,
-            detector,
-            det_u_px=det_u,
-            det_v_px=det_v,
-            detector_roll_deg=detector_roll_deg,
-        )
+    def det_grid_for_roll(value: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        return detector_grid_from_detector_roll(detector, detector_roll_deg=value[0])
 
     for iteration_idx in range(1, int(cfg.outer_iters) + 1):
-        def residual_for_values(values: jnp.ndarray) -> jnp.ndarray:
-            det_grid = det_grid_for_values(values)
-            # Detector-centre is an instrument geometry parameter, so the volume estimate
-            # depends on the candidate detector grid. Differentiating only the held-out
-            # reprojection with a fixed volume gives the wrong local direction.
-            volume = _reconstruct_with_detector_center(
+        def residual_for_roll(value: jnp.ndarray) -> jnp.ndarray:
+            det_grid = det_grid_for_roll(value)
+            volume = _reconstruct_with_roll(
                 geometry_inputs,
                 grid=grid,
                 detector=detector,
@@ -623,112 +455,81 @@ def calibrate_detector_center(
                 config=cfg,
             )
 
-        residual = residual_for_values(active_values)
+        residual = residual_for_roll(roll_value)
         loss_before = _loss_from_residual(residual)
-        _, pullback = jax.vjp(residual_for_values, active_values)
+        _, pullback = jax.vjp(residual_for_roll, roll_value)
         gradient = pullback(residual)[0] * jnp.float32(2.0 / max(int(residual.size), 1))
-        eye = jnp.eye(int(active_values.size), dtype=jnp.float32)
-
-        def jvp_col(direction: jnp.ndarray) -> jnp.ndarray:
-            return jax.jvp(residual_for_values, (active_values,), (direction,))[1]
-
-        jac_cols = jax.vmap(jvp_col)(eye)
-        curvature = (jac_cols @ jac_cols.T) * jnp.float32(2.0 / max(int(residual.size), 1))
-        system = curvature + jnp.eye(int(active_values.size), dtype=jnp.float32) * jnp.float32(
-            cfg.gn_damping
+        direction = jnp.asarray([1.0], dtype=jnp.float32)
+        jac_col = jax.jvp(residual_for_roll, (roll_value,), (direction,))[1]
+        curvature = (
+            jnp.sum(jac_col * jac_col) * jnp.float32(2.0 / max(int(residual.size), 1))
         )
-        raw_step = jnp.linalg.solve(system, -gradient)
+        raw_step = -gradient / (curvature + jnp.float32(cfg.gn_damping))
+        raw_step = jnp.asarray(raw_step, dtype=jnp.float32)
         raw_norm = jnp.linalg.norm(raw_step)
-        max_step = jnp.asarray(float(cfg.max_step_px), dtype=jnp.float32)
+        max_step = jnp.asarray(float(cfg.max_step_deg), dtype=jnp.float32)
         clipped_step = jnp.where(
             raw_norm > max_step,
             raw_step * (max_step / jnp.maximum(raw_norm, jnp.float32(1e-6))),
             raw_step,
         )
 
-        best_values = active_values
+        best_value = roll_value
         best_loss = loss_before
-        best_step = jnp.zeros_like(active_values)
+        best_step = jnp.zeros_like(roll_value)
         best_scale = 0.0
         for scale in (1.0, 0.5, 0.25):
             trial_step = clipped_step * jnp.float32(scale)
-            trial_values = active_values + trial_step
-            trial_loss = _loss_from_residual(residual_for_values(trial_values))
+            trial_value = roll_value + trial_step
+            trial_loss = _loss_from_residual(residual_for_roll(trial_value))
             improvement = loss_before - trial_loss
             threshold = float(cfg.gn_accept_tol) * max(abs(loss_before), 1e-12)
             if math.isfinite(trial_loss) and improvement >= threshold and trial_loss < best_loss:
-                best_values = trial_values
+                best_value = trial_value
                 best_loss = trial_loss
                 best_step = trial_step
                 best_scale = float(scale)
                 break
 
-        active_values = jnp.asarray(best_values, dtype=jnp.float32)
-        det_u, det_v = _det_u_v_from_active(
-            active_values,
-            active_names=active_names,
-            fixed_det_u_px=fixed_det_u,
-            fixed_det_v_px=fixed_det_v,
-        )
+        roll_value = jnp.asarray(best_value, dtype=jnp.float32)
         iterations.append(
-            DetectorCenterIteration(
+            DetectorRollIteration(
                 iteration=iteration_idx,
-                det_u_px=float(det_u),
-                det_v_px=float(det_v),
+                detector_roll_deg=float(roll_value[0]),
                 loss_before=float(loss_before),
                 loss_after=float(best_loss),
                 accepted=bool(best_scale > 0.0),
-                raw_step_px=tuple(float(v) for v in np.asarray(raw_step)),
-                applied_step_px=tuple(float(v) for v in np.asarray(best_step)),
+                raw_step_deg=float(raw_step[0]),
+                applied_step_deg=float(best_step[0]),
                 step_scale=float(best_scale),
                 gradient_norm=float(jnp.linalg.norm(gradient)),
-                curvature=tuple(
-                    tuple(float(v) for v in row) for row in np.asarray(curvature)
-                ),
+                curvature=float(curvature),
                 validation_mode=validation_mode,
             )
         )
         if float(jnp.linalg.norm(best_step)) <= 1e-4:
             break
 
-    final_det_u, final_det_v = _det_u_v_from_active(
-        active_values,
-        active_names=active_names,
-        fixed_det_u_px=fixed_det_u,
-        fixed_det_v_px=fixed_det_v,
-    )
-    final_det_u_f = float(final_det_u)
-    final_det_v_f = float(final_det_v)
-    calibrated_detector = detector_with_center_offset(
-        detector,
-        det_u_px=final_det_u_f,
-        det_v_px=final_det_v_f,
-    )
+    final_roll = float(roll_value[0])
+    final_det_grid = detector_grid_from_detector_roll(detector, detector_roll_deg=final_roll)
     final_geometry = _geometry_from_inputs(
         geometry_inputs,
         grid=grid,
-        detector=calibrated_detector,
+        detector=detector,
         thetas_deg=thetas,
     )
     final_volume = np.asarray(
         fbp(
             final_geometry,
             grid,
-            calibrated_detector,
+            detector,
             y,
             filter_name=str(cfg.filter_name),
             views_per_batch=int(cfg.views_per_batch),
             projector_unroll=int(cfg.projector_unroll),
             checkpoint_projector=bool(cfg.checkpoint_projector),
             gather_dtype=str(cfg.gather_dtype),
-            det_grid=(
-                detector_grid_from_detector_roll(
-                    calibrated_detector,
-                    detector_roll_deg=detector_roll_deg,
-                )
-                if detector_roll_deg != 0.0
-                else None
-            ),
+            det_grid=final_det_grid,
         )
     )
     confidence = _confidence_diagnostics(iterations)
@@ -742,8 +543,7 @@ def calibrate_detector_center(
             projections=y,
             thetas_deg=thetas,
             iterations=iterations,
-            final_det_u_px=final_det_u_f,
-            final_det_v_px=final_det_v_f,
+            final_detector_roll_deg=final_roll,
             config=cfg,
         )
     objective = ObjectiveCard(
@@ -759,22 +559,18 @@ def calibrate_detector_center(
             "train_indices": train_indices.tolist(),
             "score_indices": score_indices.tolist(),
         },
-        curvature={"detector_center": confidence.get("curvature_min_eig")},
+        curvature={"detector_roll": confidence.get("curvature_min_eig")},
         contact_sheet=artifact_paths.get("contact_sheet"),
     )
-    state = _calibration_state_for_config(
-        cfg,
-        det_u_px=final_det_u_f,
-        det_v_px=final_det_v_f,
-        confidence=confidence,
-    )
+    state = _calibration_state_for_roll(detector_roll_deg=final_roll, confidence=confidence)
     manifest = build_calibration_manifest(
         calibration_state=state,
         objective_card=objective,
         calibrated_geometry={
-            "detector": calibrated_detector.to_dict(),
+            "detector": detector.to_dict(),
             "input_detector": detector.to_dict(),
-            "gauge": "detector_ray_grid_center",
+            "detector_roll_deg": final_roll,
+            "gauge": "detector_plane_roll",
         },
         source={
             "geometry_type": normalize_json(geometry_inputs.get("geometry_type", "parallel")),
@@ -786,16 +582,10 @@ def calibrate_detector_center(
             "confidence": confidence,
             "iterations": [iteration.to_dict() for iteration in iterations],
             "artifact_paths": artifact_paths,
-            "wording": (
-                "det_u_px is the detector/ray-grid centre representation of a static "
-                "COR-like offset under the detector-centre gauge."
-            ),
         },
     )
-    return DetectorCenterCalibrationResult(
-        best_det_u_px=final_det_u_f,
-        det_v_px=final_det_v_f,
-        calibrated_detector=calibrated_detector,
+    return DetectorRollCalibrationResult(
+        detector_roll_deg=final_roll,
         final_volume=final_volume,
         iterations=tuple(iterations),
         objective_card=objective,

@@ -56,6 +56,7 @@ def _write_recon_input(path: Path, meta: dict[str, object]) -> None:
         grid=meta["grid"],
         detector=meta["detector"],
         geometry_type=str(meta["geometry_type"]),
+        geometry_meta=meta.get("geometry_meta"),
     )
     save_nxtomo(path, projections=projections, metadata=metadata)
 
@@ -650,6 +651,50 @@ def test_recon_cli_default_views_per_batch_keeps_fbp_conservative(
     assert captured["views_per_batch"] == 1
 
 
+def test_recon_cli_replays_saved_detector_roll_grid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    meta = _parallel_meta(
+        projections=np.zeros((2, 7, 9), dtype=np.float32),
+        image_key=np.zeros((2,), dtype=np.int32),
+        geometry_meta={"detector_roll_deg": 1.5},
+    )
+    in_path = tmp_path / "roll_replay_in.nxs"
+    out_path = tmp_path / "roll_replay_out.nxs"
+    _write_recon_input(in_path, meta)
+    captured: dict[str, object] = {}
+
+    def fake_fbp(geom, recon_grid, detector, proj, **kwargs):
+        captured["det_grid"] = kwargs["det_grid"]
+        return jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
+
+    monkeypatch.setattr(recon_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(recon_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(recon_cli, "transfer_guard_context", lambda mode: nullcontext())
+    monkeypatch.setattr(recon_cli, "fbp", fake_fbp)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recon",
+            "--data",
+            str(in_path),
+            "--algo",
+            "fbp",
+            "--roi",
+            "off",
+            "--gather-dtype",
+            "fp32",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    recon_cli.main()
+
+    assert captured["det_grid"] is not None
+
+
 def test_recon_cli_spdhg_default_and_explicit_views_per_batch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -660,7 +705,7 @@ def test_recon_cli_spdhg_default_and_explicit_views_per_batch(
     )
     captured: list[int] = []
 
-    def fake_spdhg(geom, recon_grid, detector, proj, *, init_x, config):
+    def fake_spdhg(geom, recon_grid, detector, proj, *, init_x, config, det_grid=None):
         captured.append(config.views_per_batch)
         vol = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         return vol, {}

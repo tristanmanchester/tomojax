@@ -75,6 +75,7 @@ def grad_data_term(
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> Tuple[jnp.ndarray, float]:
     """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
 
@@ -103,7 +104,7 @@ def grad_data_term(
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="grad_data_term geometry")
 
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
 
     def apply_mask(vol):
@@ -242,6 +243,7 @@ def data_term_value(
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
     validate_grid(grid, "data_term_value grid")
@@ -263,7 +265,7 @@ def data_term_value(
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="data_term_value geometry")
 
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
     def batched_loss(vol):
         masked_vol = vol * vol_mask if vol_mask is not None else vol
@@ -362,6 +364,7 @@ def power_method_L(
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     validate_grid(grid, "power_method_L grid")
@@ -398,6 +401,7 @@ def power_method_L(
             grad_mode=grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
         return g
 
@@ -504,6 +508,7 @@ def fista_tv(
     init_x: jnp.ndarray | None = None,
     config: FistaConfig = FistaConfig(),
     callback: LossCallback | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
@@ -574,6 +579,7 @@ def fista_tv(
             grad_mode="stream",
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
     if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
         L += float(cfg.lambda_tv) * 12.0 / huber_delta
@@ -593,6 +599,7 @@ def fista_tv(
             grad_mode=cfg.grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
         if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
@@ -614,6 +621,7 @@ def fista_tv(
             grad_mode=cfg.grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
 
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
