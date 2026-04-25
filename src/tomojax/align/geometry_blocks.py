@@ -55,7 +55,7 @@ def normalize_geometry_dofs(
             name = part.strip()
             if not name:
                 continue
-            if name == "tilt_deg":
+            if name == "tilt_deg" and geometry is not None:
                 name = _tilt_alias_for_geometry(geometry)
             if name not in GEOMETRY_DOFS and name not in {"axis_rot_x_deg", "axis_rot_y_deg"}:
                 allowed = ", ".join(GEOMETRY_DOFS)

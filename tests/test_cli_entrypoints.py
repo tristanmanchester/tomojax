@@ -177,7 +177,7 @@ def test_align_geometry_dof_parser_accepts_detector_and_axis_aliases():
         "det_u_px",
         "detector_roll_deg",
     )
-    assert align_cli._parse_geometry_dofs_arg("tilt_deg") == ("axis_rot_x_deg",)
+    assert align_cli._parse_geometry_dofs_arg("tilt_deg") == ("tilt_deg",)
     with pytest.raises(argparse.ArgumentTypeError):
         align_cli._parse_geometry_dofs_arg("dx")
 

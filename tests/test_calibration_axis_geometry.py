@@ -11,6 +11,8 @@ from tomojax.calibration.axis_geometry import (
     default_active_axis_dofs,
     nominal_axis_unit_from_inputs,
 )
+from tomojax.align.geometry_blocks import GeometryCalibrationState
+from tomojax.align.pipeline import AlignConfig
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, RotationAxisGeometry
 
 
@@ -22,6 +24,27 @@ def test_laminography_default_axis_dof_matches_tilt_plane():
     }
 
     assert default_active_axis_dofs(geometry_inputs) == ("axis_rot_x_deg",)
+
+
+def test_align_config_tilt_alias_resolves_against_laminography_tilt_plane():
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0)
+    geometry = LaminographyGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=[0.0, 45.0],
+        tilt_deg=30.0,
+        tilt_about="z",
+    )
+    cfg = AlignConfig(geometry_dofs=("tilt_deg",))
+
+    state = GeometryCalibrationState.from_geometry(
+        geometry,
+        active_geometry_dofs=cfg.geometry_dofs,
+    )
+
+    assert cfg.geometry_dofs == ("tilt_deg",)
+    assert state.active_geometry_dofs == ("axis_rot_y_deg",)
 
 
 def test_axis_rotation_x_adjusts_laminography_tilt_angle():
