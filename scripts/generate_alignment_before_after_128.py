@@ -772,8 +772,11 @@ def _write_master_panel(rows: list[dict[str, Any]], master_path: Path) -> None:
     panels: list[np.ndarray] = []
     for row in rows:
         panel_path = row.get("before_after_panel")
-        if isinstance(panel_path, str) and Path(panel_path).exists():
-            panels.append(iio.imread(panel_path))
+        if not isinstance(panel_path, str) or not panel_path.strip():
+            continue
+        path = Path(panel_path)
+        if path.is_file():
+            panels.append(iio.imread(path))
     if panels:
         iio.imwrite(master_path, _vstack(panels, pad=10))
 

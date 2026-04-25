@@ -80,3 +80,18 @@ def test_geometry_block_taxonomy_scenarios_cover_new_geometry_blocks():
     assert dof_sets["parallel_det_u_roll_combo"] == {"det_u_px", "detector_roll_deg"}
     assert dof_sets["parallel_det_u_axis_refine"] == {"det_u_px", "axis_rot_x_deg"}
     assert dof_sets["lamino_det_u_tilt_combo"] == {"det_u_px", "tilt_deg"}
+
+
+def test_master_panel_ignores_failed_rows_without_panel_paths(tmp_path):
+    generator = _load_generator()
+    master = tmp_path / "master.png"
+
+    generator._write_master_panel(
+        [
+            {"slug": "failed", "before_after_panel": ""},
+            {"slug": "also_failed"},
+        ],
+        master,
+    )
+
+    assert not master.exists()

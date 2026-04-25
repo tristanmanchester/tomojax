@@ -523,7 +523,7 @@ def _optimize_one_block(
     denom = jnp.sqrt(jnp.maximum(jnp.mean(y.astype(jnp.float32) ** 2), jnp.float32(1e-6)))
     initial_values = state.values_for(active_names)
 
-    def residual_for_values(values: jnp.ndarray) -> jnp.ndarray:
+    def residual_chunk_for_values(values: jnp.ndarray, idx: jnp.ndarray) -> jnp.ndarray:
         candidate = _state_with_active_values(state, active_names, values)
         T_all = _pose_stack_for_state(geometry, candidate)
         if pad_views:
@@ -532,38 +532,80 @@ def _optimize_one_block(
         y_chunks = y_pad.reshape((n_chunks, chunk_size, nv, nu))
         det_grid = level_detector_grid(detector, state=candidate, factor=factor)
 
-        def body(_, idx):
-            T_chunk = T_chunks[idx]
-            y_chunk = y_chunks[idx]
-            valid_chunk = valid[idx]
-            pred = jax.vmap(
-                lambda T: forward_project_view_T(
-                    T,
-                    grid,
-                    detector,
-                    volume,
-                    use_checkpoint=checkpoint_projector,
-                    unroll=int(projector_unroll),
-                    gather_dtype=gather_dtype,
-                    det_grid=det_grid,
-                )
-            )(T_chunk)
-            return None, ((pred - y_chunk) * valid_chunk / denom).reshape(-1)
+        T_chunk = T_chunks[idx]
+        y_chunk = y_chunks[idx]
+        valid_chunk = valid[idx]
+        pred = jax.vmap(
+            lambda T: forward_project_view_T(
+                T,
+                grid,
+                detector,
+                volume,
+                use_checkpoint=checkpoint_projector,
+                unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
+        )(T_chunk)
+        return ((pred - y_chunk) * valid_chunk / denom).reshape(-1)
 
-        _, chunks = jax.lax.scan(body, None, jnp.arange(n_chunks, dtype=jnp.int32))
-        return chunks.reshape(-1)
-
-    residual = residual_for_values(initial_values)
-    loss_before = float(jnp.mean(jnp.square(residual)))
-    _, pullback = jax.vjp(residual_for_values, initial_values)
-    gradient = pullback(residual)[0] * jnp.float32(2.0 / max(int(residual.size), 1))
     eye = jnp.eye(int(initial_values.size), dtype=jnp.float32)
+    residual_count = jnp.float32(max(int(n_views) * int(nv) * int(nu), 1))
 
-    def jvp_col(direction: jnp.ndarray) -> jnp.ndarray:
-        return jax.jvp(residual_for_values, (initial_values,), (direction,))[1]
+    def loss_for_values(values: jnp.ndarray) -> jnp.ndarray:
+        def body(loss_acc, idx):
+            residual = residual_chunk_for_values(values, idx)
+            return loss_acc + jnp.sum(jnp.square(residual)), None
 
-    jac_cols = jax.vmap(jvp_col)(eye)
-    curvature = (jac_cols @ jac_cols.T) * jnp.float32(2.0 / max(int(residual.size), 1))
+        loss_sum, _ = jax.lax.scan(
+            body,
+            jnp.float32(0.0),
+            jnp.arange(n_chunks, dtype=jnp.int32),
+        )
+        return loss_sum / residual_count
+
+    def loss_gradient_curvature(values: jnp.ndarray):
+        def body(carry, idx):
+            loss_acc, grad_acc, curvature_acc = carry
+
+            def chunk_residual(candidate_values):
+                return residual_chunk_for_values(candidate_values, idx)
+
+            residual = chunk_residual(values)
+            _, pullback = jax.vjp(chunk_residual, values)
+            grad_chunk = pullback(residual)[0] * jnp.float32(2.0)
+
+            def jvp_col(direction: jnp.ndarray) -> jnp.ndarray:
+                return jax.jvp(chunk_residual, (values,), (direction,))[1]
+
+            jac_cols = jax.vmap(jvp_col)(eye)
+            curvature_chunk = (jac_cols @ jac_cols.T) * jnp.float32(2.0)
+            loss_acc = loss_acc + jnp.sum(jnp.square(residual))
+            grad_acc = grad_acc + grad_chunk
+            curvature_acc = curvature_acc + curvature_chunk
+            return (loss_acc, grad_acc, curvature_acc), None
+
+        init = (
+            jnp.float32(0.0),
+            jnp.zeros_like(values),
+            jnp.zeros((int(values.size), int(values.size)), dtype=jnp.float32),
+        )
+        (loss_sum, gradient_sum, curvature_sum), _ = jax.lax.scan(
+            body,
+            init,
+            jnp.arange(n_chunks, dtype=jnp.int32),
+        )
+        return (
+            loss_sum / residual_count,
+            gradient_sum / residual_count,
+            curvature_sum / residual_count,
+        )
+
+    loss_gradient_curvature = jax.jit(loss_gradient_curvature)
+    loss_for_values = jax.jit(loss_for_values)
+
+    loss_before_arr, gradient, curvature = loss_gradient_curvature(initial_values)
+    loss_before = float(loss_before_arr)
     system = curvature + jnp.eye(int(initial_values.size), dtype=jnp.float32) * jnp.float32(
         gn_damping
     )
@@ -583,8 +625,7 @@ def _optimize_one_block(
     for scale in (1.0, 0.5, 0.25):
         trial_step = clipped_step * jnp.float32(scale)
         trial_values = initial_values + trial_step
-        trial_residual = residual_for_values(trial_values)
-        trial_loss = float(jnp.mean(jnp.square(trial_residual)))
+        trial_loss = float(loss_for_values(trial_values))
         if math.isfinite(trial_loss) and trial_loss < best_loss:
             best_values = trial_values
             best_loss = trial_loss
