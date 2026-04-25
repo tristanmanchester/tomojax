@@ -39,9 +39,40 @@ _CONFLICT_RULES: tuple[GaugeConflict, ...] = (
         message="Estimate detector/ray-grid u-centre or static world dx, not both.",
     ),
     GaugeConflict(
+        code="det_u_px_rotation_axis_intercept_u",
+        variables=("det_u_px", "rotation_axis_intercept_u_px"),
+        message=(
+            "Estimate detector/ray-grid u-centre or rotation-axis u-intercept, not both "
+            "under the detector-centre gauge."
+        ),
+    ),
+    GaugeConflict(
         code="det_v_px_world_dz",
         variables=("det_v_px", "world_dz"),
         message="Estimate detector/ray-grid v-centre or static world dz, not both.",
+    ),
+    GaugeConflict(
+        code="det_v_px_rotation_axis_intercept_v",
+        variables=("det_v_px", "rotation_axis_intercept_v_px"),
+        message=(
+            "Estimate detector/ray-grid v-centre or rotation-axis v-intercept, not both "
+            "under the detector-centre gauge."
+        ),
+    ),
+    GaugeConflict(
+        code="axis_rot_x_object_alpha_mean",
+        variables=("axis_rot_x_deg", "object_alpha_mean"),
+        message="Estimate scanner axis x-tilt or mean object alpha, not both.",
+    ),
+    GaugeConflict(
+        code="axis_rot_y_object_beta_mean",
+        variables=("axis_rot_y_deg", "object_beta_mean"),
+        message="Estimate scanner axis y-tilt or mean object beta, not both.",
+    ),
+    GaugeConflict(
+        code="axis_unit_lab_tilt_pair",
+        variables=("axis_unit_lab", "axis_tilt_deg"),
+        message="Estimate axis unit vector or tilt/azimuth parameterization, not both.",
     ),
     GaugeConflict(
         code="theta0_object_phi_mean",

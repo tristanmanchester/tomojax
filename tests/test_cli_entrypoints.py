@@ -179,8 +179,12 @@ def test_calibrate_geometry_help_documents_detector_center(monkeypatch, capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "detector-center" in captured.out
+    assert "axis-direction" in captured.out
+    assert "detector-center-axis" in captured.out
     assert "--active-detector-dofs" in captured.out
+    assert "--active-axis-dofs" in captured.out
     assert "--outer-iters" in captured.out
+    assert "--axis-outer-iters" in captured.out
     assert "--gn-damping" in captured.out
     assert "--search-pass" not in captured.out
 
@@ -191,6 +195,15 @@ def test_calibrate_geometry_gn_option_parsers_reject_malformed_values():
         "det_u_px",
         "det_v_px",
     )
+    assert calibrate_geometry_cli._parse_active_axis_dofs("axis_rot_x_deg") == (
+        "axis_rot_x_deg",
+    )
+    assert calibrate_geometry_cli._parse_active_axis_dofs(
+        "axis_rot_x_deg,axis_rot_y_deg"
+    ) == (
+        "axis_rot_x_deg",
+        "axis_rot_y_deg",
+    )
     assert calibrate_geometry_cli._positive_float("1.5") == pytest.approx(1.5)
     assert calibrate_geometry_cli._nonnegative_float("0") == pytest.approx(0.0)
 
@@ -199,6 +212,9 @@ def test_calibrate_geometry_gn_option_parsers_reject_malformed_values():
 
     with pytest.raises(argparse.ArgumentTypeError):
         calibrate_geometry_cli._parse_active_detector_dofs("")
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        calibrate_geometry_cli._parse_active_axis_dofs("alpha")
 
     with pytest.raises(argparse.ArgumentTypeError):
         calibrate_geometry_cli._positive_float("0")
@@ -319,6 +335,109 @@ def test_calibrate_geometry_main_writes_calibrated_metadata_and_manifest(
     assert captured["config"].gn_damping == pytest.approx(0.2)
     assert captured["config"].max_step_px == pytest.approx(1.5)
     assert captured["config"].det_v_status == "supplied"
+
+
+def test_calibrate_geometry_axis_direction_main_writes_axis_metadata(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, object] = {}
+    detector = Detector(
+        nu=2,
+        nv=1,
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    grid = Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
+    meta = LoadedNXTomo.from_dataset(
+        {
+            "projections": np.zeros((2, 1, 2), dtype=np.float32),
+            "thetas_deg": np.asarray([0.0, 90.0], dtype=np.float32),
+            "detector": detector.to_dict(),
+            "grid": grid.to_dict(),
+            "geometry_type": "lamino",
+            "tilt_deg": 30.0,
+            "tilt_about": "x",
+        }
+    )
+    fake_manifest = {
+        "schema_version": 1,
+        "calibration_state": {"scan": [{"name": "axis_rot_x_deg", "value": 4.4}]},
+        "calibrated_geometry": {"axis_unit_lab": [0.0, 0.565, 0.825]},
+    }
+    fake_result = SimpleNamespace(
+        axis_unit_lab=(0.0, 0.565, 0.825),
+        final_volume=np.zeros((2, 2, 1), dtype=np.float32),
+        manifest=fake_manifest,
+        confidence={"level": "medium"},
+    )
+
+    def fake_axis_calibrate(geometry_inputs, *, grid, detector, projections, config, workdir):
+        captured["geometry_inputs"] = geometry_inputs
+        captured["config"] = config
+        captured["workdir"] = workdir
+        return fake_result
+
+    def fake_save_nxtomo(path, *, projections, metadata):
+        captured["save_path"] = path
+        captured["save_metadata"] = metadata
+
+    monkeypatch.setattr(calibrate_geometry_cli, "setup_logging", lambda: None)
+    monkeypatch.setattr(calibrate_geometry_cli, "log_jax_env", lambda: None)
+    monkeypatch.setattr(calibrate_geometry_cli, "load_nxtomo", lambda path: meta)
+    monkeypatch.setattr(
+        calibrate_geometry_cli,
+        "build_geometry_from_meta",
+        lambda geometry_inputs, grid_override=None, apply_saved_alignment=False: (
+            grid,
+            detector,
+            object(),
+        ),
+    )
+    monkeypatch.setattr(calibrate_geometry_cli, "calibrate_axis_direction", fake_axis_calibrate)
+    monkeypatch.setattr(calibrate_geometry_cli, "save_nxtomo", fake_save_nxtomo)
+    monkeypatch.setattr(
+        calibrate_geometry_cli,
+        "save_manifest",
+        lambda path, manifest: captured.update(
+            {"manifest_path": path, "manifest": manifest}
+        ),
+    )
+
+    out_path = tmp_path / "axis_calibrated.nxs"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tomojax-calibrate-geometry",
+            "--data",
+            str(tmp_path / "input.nxs"),
+            "--out",
+            str(out_path),
+            "--mode",
+            "axis-direction",
+            "--roi",
+            "off",
+            "--active-axis-dofs",
+            "axis_rot_x_deg",
+            "--axis-outer-iters",
+            "5",
+            "--axis-max-step-deg",
+            "1.25",
+        ],
+    )
+
+    calibrate_geometry_cli.main()
+
+    assert captured["save_path"] == str(out_path)
+    saved_meta = captured["save_metadata"]
+    assert saved_meta.detector["det_center"] == [0.0, 0.0]
+    assert saved_meta.geometry_meta["axis_unit_lab"] == [0.0, 0.565, 0.825]
+    assert saved_meta.geometry_calibration == fake_manifest
+    assert captured["manifest"] == fake_manifest
+    assert captured["config"].active_axis_dofs == ("axis_rot_x_deg",)
+    assert captured["config"].outer_iters == 5
+    assert captured["config"].max_step_deg == pytest.approx(1.25)
 
 
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():

@@ -27,6 +27,26 @@ def _var(name: str, status: str) -> CalibrationVariable:
             "object_in_plane_orientation",
             "detector_roll_object_orientation",
         ),
+        (
+            "det_u_px",
+            "rotation_axis_intercept_u_px",
+            "det_u_px_rotation_axis_intercept_u",
+        ),
+        (
+            "det_v_px",
+            "rotation_axis_intercept_v_px",
+            "det_v_px_rotation_axis_intercept_v",
+        ),
+        (
+            "axis_rot_x_deg",
+            "object_alpha_mean",
+            "axis_rot_x_object_alpha_mean",
+        ),
+        (
+            "axis_rot_y_deg",
+            "object_beta_mean",
+            "axis_rot_y_object_beta_mean",
+        ),
         ("object_translation_mean", "volume_center", "object_translation_mean_volume_center"),
     ],
 )

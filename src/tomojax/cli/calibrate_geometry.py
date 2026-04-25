@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import replace
 import logging
 from pathlib import Path
 
+from tomojax.calibration.axis import AxisDirectionCalibrationConfig, calibrate_axis_direction
+from tomojax.calibration.axis_geometry import AXIS_DIRECTION_DOFS
 from tomojax.calibration.center import (
     DETECTOR_CENTER_DOFS,
     DetectorCenterCalibrationConfig,
     calibrate_detector_center,
 )
+from tomojax.calibration.manifest import build_calibration_manifest
+from tomojax.calibration.state import CalibrationState
 from tomojax.data.geometry_meta import build_geometry_from_meta
 from tomojax.data.io_hdf5 import load_nxtomo, save_nxtomo
 from tomojax.recon.quicklook import save_quicklook_png
@@ -70,6 +75,21 @@ def _parse_active_detector_dofs(value: str) -> tuple[str, ...]:
     return names
 
 
+def _parse_active_axis_dofs(value: str) -> tuple[str, ...]:
+    names = tuple(part.strip() for part in str(value).split(",") if part.strip())
+    if not names:
+        raise argparse.ArgumentTypeError("active axis DOFs must not be empty")
+    unknown = sorted(set(names) - set(AXIS_DIRECTION_DOFS))
+    if unknown:
+        allowed = ", ".join(AXIS_DIRECTION_DOFS)
+        raise argparse.ArgumentTypeError(
+            f"unknown axis DOF(s) {unknown}; expected one or more of: {allowed}"
+        )
+    if len(set(names)) != len(names):
+        raise argparse.ArgumentTypeError("active axis DOFs must not contain duplicates")
+    return names
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Estimate scanner/instrument geometry calibration parameters."
@@ -79,9 +99,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="Output calibrated .nxs")
     p.add_argument(
         "--mode",
-        choices=["detector-center"],
+        choices=["detector-center", "axis-direction", "detector-center-axis"],
         default="detector-center",
-        help="Calibration mode (currently only detector-center).",
+        help="Calibration mode.",
     )
     p.add_argument(
         "--initial-det-u-px",
@@ -104,7 +124,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--outer-iters",
         type=_positive_int,
-        default=6,
+        default=12,
         help="Maximum detector-centre Gauss-Newton outer iterations.",
     )
     p.add_argument(
@@ -125,6 +145,65 @@ def _build_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="Maximum detector-centre GN step length in native detector pixels.",
     )
+    p.add_argument(
+        "--active-axis-dofs",
+        type=_parse_active_axis_dofs,
+        default=None,
+        help=(
+            "Comma-separated rotation-axis direction DOFs to optimize. "
+            "Default is geometry-aware; laminography tilted about x uses axis_rot_x_deg."
+        ),
+    )
+    p.add_argument(
+        "--initial-axis-rot-x-deg",
+        type=float,
+        default=0.0,
+        help="Initial lab-frame x-axis correction to the nominal rotation axis.",
+    )
+    p.add_argument(
+        "--initial-axis-rot-y-deg",
+        type=float,
+        default=0.0,
+        help="Initial lab-frame y-axis correction to the nominal rotation axis.",
+    )
+    p.add_argument(
+        "--axis-outer-iters",
+        type=_positive_int,
+        default=12,
+        help="Maximum rotation-axis Gauss-Newton outer iterations.",
+    )
+    p.add_argument(
+        "--axis-gn-damping",
+        type=_nonnegative_float,
+        default=1e-3,
+        help="Levenberg-Marquardt damping for rotation-axis GN.",
+    )
+    p.add_argument(
+        "--axis-gn-accept-tol",
+        type=_nonnegative_float,
+        default=0.0,
+        help="Relative loss improvement required to accept a rotation-axis GN step.",
+    )
+    p.add_argument(
+        "--axis-max-step-deg",
+        type=_positive_float,
+        default=2.0,
+        help="Maximum rotation-axis GN step length in degrees.",
+    )
+    refine = p.add_mutually_exclusive_group()
+    refine.add_argument(
+        "--refine-detector-center-after-axis",
+        dest="refine_detector_center_after_axis",
+        action="store_true",
+        help="In combined mode, run a final detector-centre refinement after axis calibration.",
+    )
+    refine.add_argument(
+        "--no-refine-detector-center-after-axis",
+        dest="refine_detector_center_after_axis",
+        action="store_false",
+        help="In combined mode, skip the final detector-centre refinement after axis calibration.",
+    )
+    p.set_defaults(refine_detector_center_after_axis=True)
     p.add_argument(
         "--heldout-stride",
         type=_heldout_stride,
@@ -243,6 +322,140 @@ def _default_workdir(out_path: str) -> Path:
     return out.with_name(f"{out.stem}_calibration")
 
 
+def _detector_center_config(
+    args: argparse.Namespace,
+    config_metadata: dict,
+) -> DetectorCenterCalibrationConfig:
+    det_v_status = (
+        "supplied"
+        if "det_v_px" in config_metadata["explicit_cli_keys"]
+        or "det_v_px" in config_metadata["config_file_values"]
+        else "frozen"
+    )
+    return DetectorCenterCalibrationConfig(
+        initial_det_u_px=float(args.initial_det_u_px),
+        det_v_px=float(args.det_v_px),
+        det_v_status=det_v_status,
+        active_detector_dofs=tuple(args.active_detector_dofs),
+        outer_iters=int(args.outer_iters),
+        gn_damping=float(args.gn_damping),
+        gn_accept_tol=float(args.gn_accept_tol),
+        max_step_px=float(args.max_step_px),
+        heldout_stride=int(args.heldout_stride),
+        filter_name=str(args.filter),
+        views_per_batch=int(args.views_per_batch),
+        checkpoint_projector=bool(args.checkpoint_projector),
+        gather_dtype=str(args.gather_dtype),
+    )
+
+
+def _axis_direction_config(args: argparse.Namespace) -> AxisDirectionCalibrationConfig:
+    return AxisDirectionCalibrationConfig(
+        active_axis_dofs=(
+            None if args.active_axis_dofs is None else tuple(args.active_axis_dofs)
+        ),
+        initial_axis_rot_x_deg=float(args.initial_axis_rot_x_deg),
+        initial_axis_rot_y_deg=float(args.initial_axis_rot_y_deg),
+        outer_iters=int(args.axis_outer_iters),
+        gn_damping=float(args.axis_gn_damping),
+        gn_accept_tol=float(args.axis_gn_accept_tol),
+        max_step_deg=float(args.axis_max_step_deg),
+        heldout_stride=int(args.heldout_stride),
+        filter_name=str(args.filter),
+        views_per_batch=int(args.views_per_batch),
+        checkpoint_projector=bool(args.checkpoint_projector),
+        gather_dtype=str(args.gather_dtype),
+    )
+
+
+def _geometry_inputs_with_detector(geometry_inputs: dict, detector) -> dict:
+    updated = dict(geometry_inputs)
+    updated["detector"] = detector.to_dict()
+    return updated
+
+
+def _geometry_inputs_with_axis(geometry_inputs: dict, axis_unit_lab) -> dict:
+    updated = dict(geometry_inputs)
+    updated["axis_unit_lab"] = [float(v) for v in axis_unit_lab]
+    return updated
+
+
+def _save_calibrated_dataset(
+    *,
+    args: argparse.Namespace,
+    meta,
+    recon_grid,
+    detector,
+    volume,
+    manifest: dict,
+    axis_unit_lab=None,
+) -> None:
+    save_meta = meta.copy_metadata()
+    save_meta.detector = detector.to_dict()
+    save_meta.grid = recon_grid.to_dict()
+    save_meta.volume = volume
+    save_meta.frame = str(args.frame)
+    save_meta.volume_axes_order = str(args.volume_axes)
+    if axis_unit_lab is not None:
+        geometry_meta = dict(save_meta.geometry_meta or {})
+        geometry_meta["axis_unit_lab"] = [float(v) for v in axis_unit_lab]
+        save_meta.geometry_meta = geometry_meta
+    save_meta.geometry_calibration = manifest
+    save_nxtomo(
+        args.out,
+        projections=meta.projections,
+        metadata=save_meta,
+    )
+    if args.quicklook is not None:
+        save_quicklook_png(args.quicklook, volume)
+
+
+def _combine_stage_manifests(
+    *,
+    detector_result,
+    axis_result,
+    refine_result=None,
+) -> dict:
+    detector_state = (
+        refine_result.calibration_state
+        if refine_result is not None
+        else detector_result.calibration_state
+    )
+    combined_state = CalibrationState(
+        detector=detector_state.detector,
+        scan=axis_result.calibration_state.scan,
+        object_residual=axis_result.calibration_state.object_residual,
+        reconstruction=axis_result.calibration_state.reconstruction,
+    )
+    calibrated_detector = (
+        refine_result.calibrated_detector
+        if refine_result is not None
+        else detector_result.calibrated_detector
+    )
+    stage_manifests = {
+        "detector_center_initial": copy.deepcopy(detector_result.manifest),
+        "axis_direction": copy.deepcopy(axis_result.manifest),
+    }
+    if refine_result is not None:
+        stage_manifests["detector_center_refine"] = copy.deepcopy(refine_result.manifest)
+    return build_calibration_manifest(
+        calibration_state=combined_state,
+        objective_card=axis_result.objective_card,
+        calibrated_geometry={
+            "detector": calibrated_detector.to_dict(),
+            "axis_unit_lab": [float(v) for v in axis_result.axis_unit_lab],
+            "stages": list(stage_manifests),
+        },
+        source={
+            "mode": "detector-center-axis",
+            "detector_center_confidence": detector_result.confidence,
+            "axis_direction_confidence": axis_result.confidence,
+            "refined_detector_center": refine_result is not None,
+        },
+        extra={"stages": stage_manifests},
+    )
+
+
 def main() -> None:
     parser = _build_parser()
     args, config_metadata = parse_args_with_config(parser, required=("data", "out"))
@@ -262,58 +475,112 @@ def main() -> None:
     manifest_path = (
         Path(args.save_manifest) if args.save_manifest is not None else workdir / "manifest.json"
     )
-    det_v_status = (
-        "supplied"
-        if "det_v_px" in config_metadata["explicit_cli_keys"]
-        or "det_v_px" in config_metadata["config_file_values"]
-        else "frozen"
-    )
-    cfg = DetectorCenterCalibrationConfig(
-        initial_det_u_px=float(args.initial_det_u_px),
-        det_v_px=float(args.det_v_px),
-        det_v_status=det_v_status,
-        active_detector_dofs=tuple(args.active_detector_dofs),
-        outer_iters=int(args.outer_iters),
-        gn_damping=float(args.gn_damping),
-        gn_accept_tol=float(args.gn_accept_tol),
-        max_step_px=float(args.max_step_px),
-        heldout_stride=int(args.heldout_stride),
-        filter_name=str(args.filter),
-        views_per_batch=int(args.views_per_batch),
-        checkpoint_projector=bool(args.checkpoint_projector),
-        gather_dtype=str(args.gather_dtype),
-    )
-    result = calibrate_detector_center(
-        geometry_inputs,
-        grid=recon_grid,
-        detector=detector,
-        projections=meta.projections,
-        config=cfg,
-        workdir=workdir,
-    )
+    detector_cfg = _detector_center_config(args, config_metadata)
+    axis_cfg = _axis_direction_config(args)
 
-    save_meta = meta.copy_metadata()
-    save_meta.detector = result.calibrated_detector.to_dict()
-    save_meta.grid = recon_grid.to_dict()
-    save_meta.volume = result.final_volume
-    save_meta.frame = str(args.frame)
-    save_meta.volume_axes_order = str(args.volume_axes)
-    save_meta.geometry_calibration = result.manifest
-    save_nxtomo(
-        args.out,
-        projections=meta.projections,
-        metadata=save_meta,
-    )
-    save_manifest(manifest_path, result.manifest)
-    if args.quicklook is not None:
-        save_quicklook_png(args.quicklook, result.final_volume)
+    if args.mode == "detector-center":
+        result = calibrate_detector_center(
+            geometry_inputs,
+            grid=recon_grid,
+            detector=detector,
+            projections=meta.projections,
+            config=detector_cfg,
+            workdir=workdir,
+        )
+        final_detector = result.calibrated_detector
+        final_volume = result.final_volume
+        final_manifest = result.manifest
+        final_axis_unit_lab = None
+        logging.info(
+            "Estimated detector/ray-grid centre det_u_px=%.4f, det_v_px=%.4f, confidence=%s",
+            result.best_det_u_px,
+            result.det_v_px,
+            result.confidence.get("level"),
+        )
+    elif args.mode == "axis-direction":
+        axis_result = calibrate_axis_direction(
+            geometry_inputs,
+            grid=recon_grid,
+            detector=detector,
+            projections=meta.projections,
+            config=axis_cfg,
+            workdir=workdir,
+        )
+        final_detector = detector
+        final_volume = axis_result.final_volume
+        final_manifest = axis_result.manifest
+        final_axis_unit_lab = axis_result.axis_unit_lab
+        logging.info(
+            "Estimated rotation axis unit=(%.6f, %.6f, %.6f), confidence=%s",
+            float(axis_result.axis_unit_lab[0]),
+            float(axis_result.axis_unit_lab[1]),
+            float(axis_result.axis_unit_lab[2]),
+            axis_result.confidence.get("level"),
+        )
+    elif args.mode == "detector-center-axis":
+        detector_result = calibrate_detector_center(
+            geometry_inputs,
+            grid=recon_grid,
+            detector=detector,
+            projections=meta.projections,
+            config=detector_cfg,
+            workdir=workdir / "01_detector_center",
+        )
+        axis_inputs = _geometry_inputs_with_detector(
+            geometry_inputs, detector_result.calibrated_detector
+        )
+        axis_result = calibrate_axis_direction(
+            axis_inputs,
+            grid=recon_grid,
+            detector=detector_result.calibrated_detector,
+            projections=meta.projections,
+            config=axis_cfg,
+            workdir=workdir / "02_axis_direction",
+        )
+        refine_result = None
+        final_detector = detector_result.calibrated_detector
+        final_volume = axis_result.final_volume
+        if bool(args.refine_detector_center_after_axis):
+            refine_inputs = _geometry_inputs_with_detector(
+                _geometry_inputs_with_axis(axis_inputs, axis_result.axis_unit_lab),
+                detector_result.calibrated_detector,
+            )
+            refine_result = calibrate_detector_center(
+                refine_inputs,
+                grid=recon_grid,
+                detector=detector_result.calibrated_detector,
+                projections=meta.projections,
+                config=detector_cfg,
+                workdir=workdir / "03_detector_center_refine",
+            )
+            final_detector = refine_result.calibrated_detector
+            final_volume = refine_result.final_volume
+        final_manifest = _combine_stage_manifests(
+            detector_result=detector_result,
+            axis_result=axis_result,
+            refine_result=refine_result,
+        )
+        final_axis_unit_lab = axis_result.axis_unit_lab
+        logging.info(
+            "Estimated detector centre then axis: det_u_px=%.4f, axis=(%.6f, %.6f, %.6f)",
+            float(final_manifest["calibrated_geometry"]["detector"].get("det_u_px", 0.0)),
+            float(axis_result.axis_unit_lab[0]),
+            float(axis_result.axis_unit_lab[1]),
+            float(axis_result.axis_unit_lab[2]),
+        )
+    else:  # pragma: no cover - argparse choices keep this unreachable.
+        raise ValueError(f"unknown calibration mode: {args.mode}")
 
-    logging.info(
-        "Estimated detector/ray-grid centre det_u_px=%.4f, det_v_px=%.4f, confidence=%s",
-        result.best_det_u_px,
-        result.det_v_px,
-        result.confidence.get("level"),
+    _save_calibrated_dataset(
+        args=args,
+        meta=meta,
+        recon_grid=recon_grid,
+        detector=final_detector,
+        volume=final_volume,
+        manifest=final_manifest,
+        axis_unit_lab=final_axis_unit_lab,
     )
+    save_manifest(manifest_path, final_manifest)
     logging.info("Saved calibrated dataset to %s", args.out)
     logging.info("Saved calibration manifest to %s", manifest_path)
 

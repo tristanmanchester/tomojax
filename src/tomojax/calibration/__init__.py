@@ -13,6 +13,13 @@ from .center import (
     calibrate_detector_center,
     detector_with_center_offset,
 )
+from .axis import (
+    AxisDirectionCalibrationConfig,
+    AxisDirectionCalibrationResult,
+    AxisDirectionIteration,
+    calibrate_axis_direction,
+)
+from .axis_geometry import AXIS_DIRECTION_DOFS
 from .detector_grid import detector_grid_from_center_offset, offset_detector_grid
 from .detector_grid import zero_center_detector_grid
 from .gauge import GaugeConflict, GaugeValidationError, validate_calibration_gauges
@@ -23,6 +30,10 @@ from .units import DetectorPixelScale, DetectorPixelValue
 
 __all__ = [
     "CALIBRATION_MANIFEST_SCHEMA_VERSION",
+    "AXIS_DIRECTION_DOFS",
+    "AxisDirectionCalibrationConfig",
+    "AxisDirectionCalibrationResult",
+    "AxisDirectionIteration",
     "CalibrationState",
     "CalibrationVariable",
     "CandidateScore",
@@ -39,6 +50,7 @@ __all__ = [
     "MetricSpec",
     "ObjectiveCard",
     "build_calibration_manifest",
+    "calibrate_axis_direction",
     "calibrate_detector_center",
     "detector_grid_from_center_offset",
     "detector_with_center_offset",

@@ -7,7 +7,15 @@ from typing import Sequence, TypedDict
 
 import numpy as np
 
-from ..core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
+from ..core.geometry import (
+    Detector,
+    Geometry,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    RotationAxisGeometry,
+    normalize_axis_unit,
+)
 from ..core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
 
 
@@ -24,6 +32,7 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     geometry_type: str
     tilt_deg: float
     tilt_about: str
+    axis_unit_lab: Sequence[float]
     angle_offset_deg: np.ndarray
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray
@@ -212,6 +221,14 @@ def _base_geometry(
     detector: Detector,
     thetas_deg: Sequence[float],
 ) -> Geometry:
+    if meta.get("axis_unit_lab") is not None:
+        return RotationAxisGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas_deg,
+            axis_unit_lab=normalize_axis_unit(meta["axis_unit_lab"]),  # type: ignore[arg-type]
+        )
+
     gtype = _normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas_deg)

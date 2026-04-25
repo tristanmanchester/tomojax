@@ -14,6 +14,7 @@ from tomojax.data.geometry_meta import (
 from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.cli import recon as recon_cli
 from tomojax.core.geometry import Grid, ParallelGeometry
+from tomojax.core.geometry import RotationAxisGeometry
 from tomojax.utils.memory import ViewsPerBatchEstimate
 
 
@@ -120,6 +121,21 @@ def test_build_geometry_from_meta_skips_double_applying_saved_angle_offsets():
         np.asarray(expected.pose_for_view(1), dtype=np.float32),
         rtol=1e-6,
         atol=1e-6,
+    )
+
+
+def test_build_geometry_from_meta_uses_saved_axis_unit_lab():
+    meta = _parallel_meta(
+        axis_unit_lab=[0.0, 0.5, 0.8660254038],
+    )
+
+    _, _, geom = build_geometry_from_meta(meta)
+
+    assert isinstance(geom, RotationAxisGeometry)
+    np.testing.assert_allclose(
+        np.asarray(geom.axis_unit_lab),
+        np.asarray([0.0, 0.5, 0.8660254038]),
+        atol=1e-7,
     )
 
 

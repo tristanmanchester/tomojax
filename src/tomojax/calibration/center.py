@@ -38,7 +38,7 @@ class DetectorCenterCalibrationConfig:
     det_v_px: float = 0.0
     det_v_status: str = "frozen"
     active_detector_dofs: tuple[str, ...] = ("det_u_px",)
-    outer_iters: int = 6
+    outer_iters: int = 12
     gn_damping: float = 1e-3
     gn_accept_tol: float = 0.0
     max_step_px: float = 2.0
