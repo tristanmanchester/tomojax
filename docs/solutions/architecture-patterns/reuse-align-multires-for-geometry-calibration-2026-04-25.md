@@ -1,0 +1,253 @@
+---
+title: Reuse align_multires for geometry calibration blocks
+date: 2026-04-25
+category: architecture-patterns
+module: TomoJAX alignment geometry calibration
+problem_type: architecture_pattern
+component: tooling
+severity: high
+applies_when:
+  - Adding detector or instrument geometry optimization to TomoJAX alignment
+  - A new calibration feature starts duplicating reconstruction or multiresolution control flow
+  - A solver needs the same memory, checkpoint, preview, and CLI behavior as alignment
+tags: [tomojax, alignment, geometry-calibration, dry, multires, gn]
+---
+
+# Reuse align_multires for geometry calibration blocks
+
+## Context
+
+The first geometry-calibration implementation solved the right category of
+problem, but it solved it in the wrong place. Detector centre, detector roll,
+and axis direction were implemented as a standalone calibration command and
+separate solver modules instead of being staged inside the existing
+`align_multires` pipeline.
+
+That split created immediate friction:
+
+- The new path duplicated reconstruction and calibration orchestration already
+  present in `src/tomojax/align/pipeline.py`.
+- It introduced a separate CLI surface, `tomojax-calibrate-geometry`, even
+  though users naturally expected calibration to happen inside
+  `tomojax-align`.
+- It bypassed the normal multiresolution alignment pattern, especially the
+  `8 4 2 1` pyramid that keeps 128^3 alignment memory under control.
+- It encouraged special-purpose runner scripts and before/after generation
+  paths, which made OOM failures and inconsistent preview behavior more likely.
+- It risked semantic drift: pose alignment, detector-centre calibration,
+  detector roll, and axis tilt would each own slightly different ideas of
+  geometry, checkpointing, diagnostics, and metadata.
+
+The architectural correction was to keep calibration as a distinct parameter
+namespace, but not as a distinct solver product.
+
+## Guidance
+
+Geometry calibration should be implemented as staged geometry parameter blocks
+inside `align_multires`.
+
+The durable shape is:
+
+```text
+raw projections
+  -> align_multires level 8/4/2/1
+      -> detector/instrument geometry blocks
+      -> reconstruction with calibrated geometry
+      -> residual pose/motion blocks
+  -> final reconstruction
+```
+
+The boundary is parameter meaning, not execution machinery:
+
+- Instrument geometry parameters describe static scanner geometry:
+  `det_u_px`, `det_v_px`, `detector_roll_deg`, `axis_rot_x_deg`,
+  `axis_rot_y_deg`, and user-facing aliases such as `tilt_deg`.
+- Pose parameters describe residual per-view object motion:
+  `alpha`, `beta`, `phi`, `dx`, and `dz`.
+- Both groups should share the same multiresolution schedule, reconstruction
+  loop, checkpointing, metadata, logging, and CLI command.
+
+The implemented DRY structure is:
+
+```python
+GEOMETRY_BLOCKS = (
+    ("detector_center", ("det_u_px", "det_v_px")),
+    ("detector_roll", ("detector_roll_deg",)),
+    ("axis_direction", ("axis_rot_x_deg", "axis_rot_y_deg")),
+)
+```
+
+`src/tomojax/align/geometry_blocks.py` owns the reusable geometry-block
+abstractions:
+
+- `GeometryCalibrationState` stores native-resolution instrument state across
+  pyramid levels.
+- `normalize_geometry_dofs` gives the CLI and Python API one canonical parser
+  for geometry DOF names.
+- `level_detector_grid` applies detector-centre and detector-roll state through
+  detector-grid overrides rather than projection rewrites.
+- `geometry_with_axis_state` applies axis-direction state as instrument
+  geometry before residual pose alignment.
+- `optimize_geometry_blocks_for_level` runs the fixed-volume GN updates for the
+  active geometry block sequence.
+
+`src/tomojax/align/pipeline.py` owns orchestration:
+
+- `AlignConfig.geometry_dofs` activates geometry blocks.
+- `align_multires` runs geometry blocks before pose blocks at each level.
+- `align` accepts an optional `det_grid_override`, so detector-centre and
+  detector-roll calibration reuse the existing projector and reconstruction
+  code instead of forking it.
+- Multires checkpoints include `geometry_calibration_state`, so resumed runs
+  continue from the calibrated instrument state rather than silently resetting
+  to nominal geometry.
+
+The public surface is the existing alignment CLI:
+
+```bash
+tomojax-align --data data/scan.nxs \
+  --levels 8 4 2 1 \
+  --optimise-geometry det_u_px,detector_roll_deg \
+  --freeze-dofs alpha,beta,phi,dx,dz \
+  --out out/geometry_calibrated.nxs
+```
+
+The standalone path was removed:
+
+- Removed `tomojax-calibrate-geometry` from `pyproject.toml`.
+- Deleted `src/tomojax/cli/calibrate_geometry.py`.
+- Deleted standalone solver modules:
+  `src/tomojax/calibration/center.py`,
+  `src/tomojax/calibration/roll.py`, and
+  `src/tomojax/calibration/axis.py`.
+- Kept `src/tomojax/calibration/` for shared schema, gauge, detector-grid,
+  axis-geometry, objective-card, and manifest helpers.
+
+## Why This Matters
+
+The original implementation was not just extra code. It created a second
+alignment product with its own control flow. That made it easy to forget critical
+behavior that already existed in `align_multires`, especially:
+
+- pyramid scheduling,
+- low-memory reconstruction behavior,
+- checkpoint and resume semantics,
+- CLI configuration compatibility,
+- output metadata,
+- diagnostics and stats,
+- pose gauge handling.
+
+The DRY version makes the extension point explicit. Adding a geometry parameter
+now means adding a block and the state transformations it needs, not inventing a
+new command, solver loop, checkpoint format, and test family.
+
+This also preserves the mental model users actually need: "run alignment with
+instrument geometry blocks first, then residual pose blocks." Users do not have
+to choose between two competing commands that both reconstruct and both claim to
+fix geometry.
+
+## When to Apply
+
+- Use this pattern when adding a static scanner/instrument parameter that should
+  be optimized before residual pose motion.
+- Use it when a calibration feature needs the same multiresolution behavior as
+  pose alignment.
+- Use it when the proposed implementation starts copying reconstruction loops,
+  runner scripts, checkpoint writing, preview generation, or CLI metadata.
+- Do not use a standalone calibration command unless it is explicitly an
+  experimental diagnostic and does not become the supported product path.
+
+## Examples
+
+### Before: separate calibration product
+
+The first implementation added a standalone command and parallel solver modules:
+
+```text
+tomojax-calibrate-geometry
+src/tomojax/cli/calibrate_geometry.py
+src/tomojax/calibration/center.py
+src/tomojax/calibration/roll.py
+src/tomojax/calibration/axis.py
+```
+
+That looked modular, but the modules duplicated the alignment pipeline's real
+responsibilities. A calibration run could now diverge from `tomojax-align` in
+memory behavior, checkpointing, metadata, previews, and multires scheduling.
+
+### After: geometry blocks inside align_multires
+
+The corrected implementation keeps one product path:
+
+```text
+tomojax-align
+  -> align_multires
+      -> GeometryCalibrationState
+      -> GEOMETRY_BLOCKS
+      -> optimize_geometry_blocks_for_level
+      -> align pose blocks
+```
+
+The CLI expresses geometry calibration as an option on alignment:
+
+```bash
+tomojax-align --data data/scan.nxs \
+  --levels 8 4 2 1 \
+  --optimise-geometry det_u_px,axis_rot_x_deg,axis_rot_y_deg \
+  --out out/aligned.nxs
+```
+
+Geometry-only calibration is still available, but it uses the same pipeline:
+
+```bash
+tomojax-align --data data/scan.nxs \
+  --levels 8 4 2 1 \
+  --optimise-geometry det_u_px \
+  --freeze-dofs alpha,beta,phi,dx,dz \
+  --out out/detector_center_calibrated.nxs
+```
+
+### Test shape
+
+The key regression test is not a unit test of a standalone solver. It proves the
+integrated behavior:
+
+```python
+_, params5, info = align_multires(
+    geom_nom,
+    grid,
+    det_nom,
+    projs,
+    factors=[2, 1],
+    cfg=AlignConfig(
+        outer_iters=2,
+        recon_iters=2,
+        lambda_tv=0.0,
+        geometry_dofs=("det_u_px",),
+        freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
+        early_stop=False,
+        gather_dtype="fp32",
+        checkpoint_projector=False,
+        views_per_batch=1,
+        gn_damping=1e-3,
+    ),
+    checkpoint_callback=checkpoints.append,
+)
+```
+
+The assertions check the behavior that matters:
+
+- the hidden detector-centre offset is recovered,
+- all pose parameters stay zero when pose DOFs are frozen,
+- geometry block stats are emitted through normal alignment info,
+- checkpoint metadata carries `geometry_calibration_state`.
+
+## Related
+
+- `docs/brainstorms/geometry-calibration-solver-requirements.md` records the
+  product decision: calibration is conceptually distinct from pose alignment but
+  operationally staged inside `align_multires`.
+- `docs/cli/align.md` documents `--optimise-geometry` as part of the supported
+  `tomojax-align` interface.
+- The implementation was verified with `rtk uv run ruff check src tests` and
+  `rtk uv run pytest -q tests`, which passed with `497 passed, 1 skipped`.

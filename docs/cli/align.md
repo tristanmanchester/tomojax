@@ -128,6 +128,35 @@ large misalignments.
 - `--seed-translations` -- use phase correlation to initialise
   `dx,dz` at the coarsest level
 
+## Instrument Geometry Blocks
+
+`tomojax-align` can solve static instrument geometry before the
+per-view pose update at each pyramid level. This uses the same
+coarse-to-fine alignment loop and differentiable projector as pose
+alignment, rather than a separate calibration command.
+
+- `--optimise-geometry det_u_px` -- estimate the horizontal
+  detector/ray-grid centre offset in native detector pixels.
+- `--optimise-geometry detector_roll_deg` -- estimate static detector
+  roll in degrees.
+- `--optimise-geometry axis_rot_x_deg,axis_rot_y_deg` -- estimate the
+  lab-frame rotation-axis direction as small rotations in degrees.
+  `tilt_deg` is accepted as a laminography-friendly alias for the
+  axis component matching the scan's tilt direction.
+
+Geometry blocks are staged before pose blocks at each multiresolution
+level, so common runs should use the normal pyramid, for example
+`--levels 8 4 2 1`. To run geometry-only calibration, freeze all pose
+DOFs:
+
+```bash
+tomojax-align --data data/scan.nxs \
+  --levels 8 4 2 1 \
+  --optimise-geometry det_u_px,detector_roll_deg \
+  --freeze-dofs alpha,beta,phi,dx,dz \
+  --out out/geometry_calibrated.nxs
+```
+
 ## Loss selection
 
 The alignment step minimizes a similarity measure between simulated

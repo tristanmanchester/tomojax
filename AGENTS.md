@@ -10,6 +10,7 @@
 - CLI entry points live under `src/tomojax/cli/`:
   - `simulate`, `misalign`, `preprocess`, `recon`, `align`, `inspect`, `validate`, `convert`, `loss_bench`.
 - Tests live in `tests/` (CPU‑friendly sizes).
+- Documented solutions live in `docs/solutions/`, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`); relevant when implementing or debugging in documented areas.
 - Input data and generated artifacts belong in `data/` or `runs/`; these are git‑ignored.
 - Figures for docs live in `images/`.
 

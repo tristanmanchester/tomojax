@@ -20,18 +20,27 @@ rotation-axis direction, laminography tilt, angle schedule, and detector orienta
 are instrument/lab geometry parameters. They should be calibrated before residual
 sample pose alignment tries to explain the remaining error.
 
-The desired product direction is a staged geometry solver:
+The desired product direction is one staged multiresolution alignment solver with
+separate parameter namespaces:
 
 ```text
 raw projections
-  -> instrument/lab geometry calibration
-  -> reconstruction with calibrated geometry
-  -> residual pose/motion alignment
+  -> align_multires level 8/4/2/1
+      -> detector/instrument geometry blocks
+      -> reconstruction with calibrated geometry
+      -> residual pose/motion blocks
   -> final reconstruction
 ```
 
 This should make TomoJAX capable of solving real scanner geometry problems without
 pretending that every error is a per-view sample pose.
+
+The important boundary is parameter meaning, not solver machinery. Detector centre,
+detector roll, axis direction, laminography tilt, and residual object pose must not
+share names or gauges, but they should share the existing `align_multires`
+execution path, memory controls, checkpointing, previews, and reconstruction loop.
+Standalone calibration optimizers should remain experimental at most and must not
+become the primary product path.
 
 Oracle review of the initial plan agreed with this direction but flagged that
 detector-centre calibration is not narrow enough to implement safely without a
@@ -156,14 +165,15 @@ product shape without proper tests, gauges, metadata, and objective design.
     rather than a dataset-specific numeric fit.
   - **Covered by:** R6, R7, R8, R9, R10, R11, R29, R32.
 
-- F2. Instrument geometry calibration before pose alignment
+- F2. Instrument geometry blocks before pose blocks
   - **Trigger:** A scan has reconstruction artifacts that look like wrong scanner
     geometry rather than residual sample motion.
-  - **Actors:** TomoJAX user, calibration solver, reconstructor.
-  - **Steps:** The user runs a geometry calibration workflow; TomoJAX estimates
-    a small set of instrument/lab geometry variables; TomoJAX writes calibrated
-    geometry metadata and diagnostics; reconstruction uses the calibrated geometry;
-    residual pose alignment runs only after the instrument geometry is plausible.
+  - **Actors:** TomoJAX user, `align_multires`, geometry parameter blocks,
+    reconstructor.
+  - **Steps:** The user runs `tomojax-align` with active geometry blocks; each
+    multiresolution level estimates a small set of instrument/lab geometry
+    variables, reconstructs with calibrated geometry, then runs residual pose
+    alignment if requested.
   - **Outcome:** Pose alignment no longer has to compensate for a wrong coordinate
     system.
   - **Covered by:** R1, R2, R3, R4, R5, R12, R16, R18, R20.
@@ -195,7 +205,8 @@ product shape without proper tests, gauges, metadata, and objective design.
 **Conceptual model**
 
 - R1. TomoJAX must distinguish instrument/lab geometry calibration from residual
-  object/sample pose alignment.
+  object/sample pose alignment as parameter namespaces inside the same
+  multiresolution alignment engine.
 - R2. The current projector convention must remain stable:
   `pose_for_view(i)` returns `T_world_from_object`, rays are in world coordinates,
   and volumes are reconstructed in object/sample coordinates.
@@ -228,16 +239,16 @@ product shape without proper tests, gauges, metadata, and objective design.
 
 **Phase 1: detector/ray-grid centre calibration**
 
-- R12. Add a supported calibration path that estimates detector/ray-grid horizontal
-  centre offset, initially `det_u_px`; implement `det_v_px` in the state model but
-  freeze it by default.
+- R12. Add a supported `tomojax-align` geometry block that estimates
+  detector/ray-grid horizontal centre offset, initially `det_u_px`; implement
+  `det_v_px` in the state model but freeze it by default.
 - R13. Detector/ray-grid centre calibration output must write calibrated geometry
   metadata and a manifest, not only shifted projection arrays.
 - R14. Synthetic tests must prove recovery of hidden `det_u_px`, not just successful
   reconstruction when the known offset is supplied.
-- R15. The first implementation may use coarse-to-fine search rather than fully
-  differentiable joint optimization, provided it records objective curves, top-k
-  candidates, candidate previews, uncertainty, and validation diagnostics.
+- R15. Geometry blocks must use the existing differentiable projector and
+  multiresolution alignment machinery. Coarse grid-search scripts may exist as
+  exploratory diagnostics, but they are not the product path.
 - R16. The docs and manifests must state that `det_u_px` is the canonical
   detector/ray-grid representation of a static COR-like offset under a chosen
   gauge, not proof that detector centre and physical rotation-axis intercept are
@@ -256,7 +267,8 @@ product shape without proper tests, gauges, metadata, and objective design.
   user-facing tilt/azimuth pair; do not optimize redundant axis parameterizations
   together.
 - R19. Laminography tilt should be represented as instrument geometry, not as
-  residual sample pose.
+  residual sample pose. User-facing `tilt_deg` may be an alias, but the internal
+  canonical representation should be the rotation-axis direction block.
 - R20. Axis-direction calibration must be staged after detector/ray-grid centre
   calibration by default, with one optional detector-centre refinement pass after
   axis/tilt changes.
@@ -319,10 +331,10 @@ product shape without proper tests, gauges, metadata, and objective design.
 ## Acceptance Examples
 
 - AE1. **Covers R12, R14, R16, R32.** Given a synthetic parallel CT scan with
-  hidden `det_u_px = +5`, when the detector/ray-grid centre calibration workflow
-  runs, it recovers `det_u_px` within a defined tolerance, improves reconstruction
-  quality over naive FBP, and records `det_u_px` under estimated variables with
-  the detector-centre gauge.
+  hidden `det_u_px = +5`, when `tomojax-align --optimise-geometry det_u_px`
+  runs through the normal multiresolution pyramid, it recovers `det_u_px` within
+  a defined tolerance, improves reconstruction quality over naive FBP, and
+  records `det_u_px` under estimated variables with the detector-centre gauge.
 
 - AE2. **Covers R5, R11, R32.** Given a workflow that reconstructs using a known
   supplied detector centre, when the manifest is written, it records the value as
@@ -369,8 +381,8 @@ product shape without proper tests, gauges, metadata, and objective design.
   as calibrated geometry rather than a hand-picked correction.
 - Phase 0 decisions make every reported calibration value interpretable: frame,
   gauge, units, objective, convention, and provenance are explicit.
-- Geometry calibration and residual pose alignment are conceptually and
-  operationally separate in API, manifests, logs, and docs.
+- Geometry calibration and residual pose alignment are conceptually separate in
+  API, manifests, logs, and docs, while operationally sharing `align_multires`.
 - Downstream planning can implement Phase 0 and Phase 1 without inventing the
   product model, naming scheme, objective semantics, manifest schema, or safety
   constraints.
@@ -405,16 +417,17 @@ product shape without proper tests, gauges, metadata, and objective design.
 - Keep current pose residuals as object-frame right-multiplied deltas because they
   correctly model sample-frame motion and changing them would break existing
   behavior.
-- Add geometry calibration before adding more pose knobs because the real failure
-  was an instrument geometry problem, not residual sample motion.
+- Add geometry blocks before adding more pose knobs because the real failure was
+  an instrument geometry problem, not residual sample motion.
 - Add Phase 0 before `det_u_px` because units, gauges, objectives, and manifests
   define what a recovered geometry parameter means.
 - Start estimation with detector/ray-grid centre `det_u_px` because it is the
   smallest useful missing capability and directly matches the real laminography
   failure.
-- Use staged multiresolution block-coordinate optimization because it reduces
-  coupling, keeps gauges manageable, and avoids asking one optimizer to infer all
-  scanner semantics at once.
+- Use staged multiresolution block-coordinate optimization inside `align_multires`
+  because it reduces coupling, keeps gauges manageable, avoids asking one
+  optimizer to infer all scanner semantics at once, and preserves the existing
+  memory behavior.
 - Add lab-frame residuals later, explicitly namespaced, because they are useful
   but gauge-coupled with detector-centre calibration.
 
@@ -515,12 +528,11 @@ Implementation shape:
 
 ```text
 input projections + nominal geometry
-  -> search det_u over a range
-  -> reconstruct candidate slabs or volumes
-  -> score candidates with an objective card
-  -> record top-k candidates, uncertainty, and objective curves
-  -> write calibrated detector/ray-grid centre into metadata
-  -> run final reconstruction using calibrated geometry
+  -> run tomojax-align with staged geometry blocks inside align_multires
+  -> at each pyramid level, solve fixed-volume GN updates for det_u_px
+  -> continue with any enabled pose blocks using the calibrated detector grid
+  -> record estimated variables, objective traces, gauges, and calibrated geometry
+  -> write final reconstruction using calibrated geometry
 ```
 
 Why this first:

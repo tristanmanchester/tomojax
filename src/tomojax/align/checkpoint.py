@@ -129,6 +129,7 @@ def build_alignment_checkpoint_metadata(
     small_impr_streak: int = 0,
     elapsed_offset: float = 0.0,
     random_state: Mapping[str, Any] | None = None,
+    geometry_calibration_state: Mapping[str, Any] | None = None,
     level_complete: bool = False,
     run_complete: bool = False,
 ) -> dict[str, Any]:
@@ -158,6 +159,7 @@ def build_alignment_checkpoint_metadata(
         "config": normalize_json(config),
         "cli_options": normalize_json(cli_options or {}),
         "random_state": normalize_json(random_state or {"alignment": None}),
+        "geometry_calibration_state": normalize_json(geometry_calibration_state),
         "level_complete": bool(level_complete),
         "run_complete": bool(run_complete),
     }

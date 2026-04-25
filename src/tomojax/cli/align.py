@@ -32,6 +32,7 @@ from ..align.pipeline import (
     AlignResumeState,
     AlignMultiresResumeState,
 )
+from ..align.geometry_blocks import GEOMETRY_DOFS, normalize_geometry_dofs
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
@@ -142,6 +143,13 @@ def _parse_dof_args(
     except ValueError as exc:
         parser.error(str(exc))
     return optimise_dofs, freeze_dofs
+
+
+def _parse_geometry_dofs_arg(value: str) -> tuple[str, ...]:
+    try:
+        return normalize_geometry_dofs(str(value).split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _parse_bounds_arg(value: object) -> DofBounds:
@@ -310,6 +318,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DOF[,DOF]",
         help="Named alignment DOFs to keep fixed at initial values. Example: phi",
+    )
+    p.add_argument(
+        "--optimise-geometry",
+        nargs="+",
+        type=_parse_geometry_dofs_arg,
+        default=None,
+        metavar="GEOM_DOF[,GEOM_DOF]",
+        help=(
+            "Detector/instrument geometry DOFs to optimise inside the multires alignment "
+            f"pipeline: {','.join(GEOMETRY_DOFS)}. Example: det_u_px detector_roll_deg"
+        ),
     )
     p.add_argument(
         "--bounds",
@@ -554,7 +573,39 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
+        "geometry_dofs": _flatten_geometry_dofs(args.optimise_geometry),
     }
+
+
+def _flatten_geometry_dofs(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    names: list[str] = []
+    for group in raw:
+        for name in group:
+            if name not in names:
+                names.append(str(name))
+    return tuple(names)
+
+
+def _geometry_value(calibration_state: dict[str, object] | None, name: str) -> object | None:
+    if calibration_state is None:
+        return None
+    for section in (
+        "detector",
+        "scan",
+        "object_residual",
+        "world_residual",
+        "detector_plane_residual",
+        "angle_residual",
+    ):
+        values = calibration_state.get(section, [])
+        if not isinstance(values, list):
+            continue
+        for variable in values:
+            if isinstance(variable, dict) and variable.get("name") == name:
+                return variable.get("value")
+    return None
 
 
 def _checkpoint_metadata(
@@ -579,6 +630,7 @@ def _checkpoint_metadata(
     elapsed_offset: float,
     level_complete: bool,
     run_complete: bool,
+    geometry_calibration_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     geometry_meta = getattr(getattr(meta, "metadata", meta), "geometry_meta", None)
     geometry_type = getattr(meta, "geometry_type", "parallel")
@@ -609,6 +661,7 @@ def _checkpoint_metadata(
                 "deterministic_phase_correlation" if cfg.seed_translations else None
             ),
         },
+        geometry_calibration_state=geometry_calibration_state,
         level_complete=level_complete,
         run_complete=run_complete,
     )
@@ -646,6 +699,11 @@ def _resume_state_from_checkpoint(
             elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
             level_complete=bool(metadata.get("level_complete", False)),
             run_complete=bool(metadata.get("run_complete", False)),
+            geometry_calibration_state=(
+                dict(metadata["geometry_calibration_state"])
+                if isinstance(metadata.get("geometry_calibration_state"), dict)
+                else None
+            ),
         )
     return AlignResumeState(
         x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
@@ -692,6 +750,13 @@ def main() -> None:
         apply_saved_alignment=False,
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
+    try:
+        geometry_dofs = normalize_geometry_dofs(
+            _flatten_geometry_dofs(args.optimise_geometry),
+            geometry=geom,
+        )
+    except ValueError as exc:
+        p.error(str(exc))
 
     # Resolve default gather dtype lazily at runtime
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
@@ -727,6 +792,7 @@ def main() -> None:
         w_trans=float(args.w_trans),
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
+        geometry_dofs=geometry_dofs,
         bounds=args.bounds,
         pose_model=str(args.pose_model),
         knot_spacing=int(args.knot_spacing),
@@ -897,6 +963,7 @@ def main() -> None:
             elapsed_offset=float(state.elapsed_offset),
             level_complete=bool(state.level_complete),
             run_complete=bool(state.run_complete),
+            geometry_calibration_state=state.geometry_calibration_state,
         )
         save_alignment_checkpoint(
             checkpoint_path,
@@ -995,6 +1062,27 @@ def main() -> None:
     save_meta.volume = np.asarray(x)
     save_meta.align_params = params5_np
     save_meta.align_gauge = align_gauge_metadata
+    geometry_calibration_state = (
+        info.get("geometry_calibration_state") if isinstance(info, dict) else None
+    )
+    if isinstance(geometry_calibration_state, dict):
+        det_u = _geometry_value(geometry_calibration_state, "det_u_px")
+        det_v = _geometry_value(geometry_calibration_state, "det_v_px")
+        roll = _geometry_value(geometry_calibration_state, "detector_roll_deg")
+        axis_unit = _geometry_value(geometry_calibration_state, "axis_unit_lab")
+        det_center = list(detector.det_center)
+        if det_u is not None:
+            det_center[0] = float(detector.det_center[0]) + float(det_u) * float(detector.du)
+        if det_v is not None:
+            det_center[1] = float(detector.det_center[1]) + float(det_v) * float(detector.dv)
+        save_meta.detector = {**detector.to_dict(), "det_center": det_center}
+        geometry_meta_out = dict(save_meta.geometry_meta or {})
+        if roll is not None:
+            geometry_meta_out["detector_roll_deg"] = float(roll)
+        if isinstance(axis_unit, list):
+            geometry_meta_out["axis_unit_lab"] = [float(v) for v in axis_unit]
+        save_meta.geometry_meta = geometry_meta_out
+        save_meta.geometry_calibration = {"calibration_state": geometry_calibration_state}
     save_meta.frame = str(meta.frame or "sample")
     save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(
@@ -1065,6 +1153,8 @@ def main() -> None:
                 "loss_params": loss_params,
                 "loss_spec": loss_config,
                 "align_config": cfg,
+                "geometry_dofs": list(geometry_dofs),
+                "geometry_calibration_state": geometry_calibration_state,
                 "alignment_params_shape": list(params5_np.shape),
                 "alignment_gauge": align_gauge_metadata,
                 "volume_shape": list(np.asarray(x).shape),

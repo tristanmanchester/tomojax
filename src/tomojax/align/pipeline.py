@@ -57,6 +57,13 @@ from .gauge import (
     validate_alignment_gauge_feasible,
 )
 from .optimizers import PoseLbfgsConfig, run_pose_lbfgs
+from .geometry_blocks import (
+    GeometryCalibrationState,
+    geometry_with_axis_state,
+    level_detector_grid,
+    normalize_geometry_dofs,
+    optimize_geometry_blocks_for_level,
+)
 from ..utils.fov import cylindrical_mask_xy
 
 
@@ -64,6 +71,30 @@ ObserverAction = Literal["continue", "advance_level", "stop_run"]
 type OuterStatValue = float | int | bool | str | None
 type OuterStat = dict[str, OuterStatValue]
 ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverAction | bool]
+
+
+def _active_dof_mask_for_cfg(cfg: "AlignConfig") -> tuple[bool, bool, bool, bool, bool]:
+    try:
+        return active_dof_mask(
+            optimise_dofs=cfg.optimise_dofs,
+            freeze_dofs=cfg.freeze_dofs,
+        )
+    except ValueError:
+        if cfg.geometry_dofs:
+            return (False, False, False, False, False)
+        raise
+
+
+def _active_dofs_for_cfg(cfg: "AlignConfig") -> tuple[str, ...]:
+    try:
+        return active_dofs(
+            optimise_dofs=cfg.optimise_dofs,
+            freeze_dofs=cfg.freeze_dofs,
+        )
+    except ValueError:
+        if cfg.geometry_dofs:
+            return ()
+        raise
 
 
 class AlignInfo(TypedDict):
@@ -106,6 +137,8 @@ class AlignMultiresInfo(TypedDict):
     gauge_fix: str
     gauge_fix_dofs: list[str]
     gauge_fix_final: dict[str, float | str | list[str]] | None
+    geometry_dofs: list[str]
+    geometry_calibration_state: dict[str, object] | None
 
 
 class MultiresLevel(TypedDict):
@@ -145,6 +178,7 @@ class AlignMultiresResumeState:
     elapsed_offset: float = 0.0
     level_complete: bool = False
     run_complete: bool = False
+    geometry_calibration_state: dict[str, object] | None = None
 
 
 AlignCheckpointCallback = Callable[[AlignResumeState], None]
@@ -359,6 +393,7 @@ class AlignConfig:
     w_trans: float = 0.0
     optimise_dofs: tuple[str, ...] | None = None
     freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
+    geometry_dofs: tuple[str, ...] = field(default_factory=tuple)
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
     pose_model: Literal["per_view", "polynomial", "spline"] = "per_view"
     knot_spacing: int = 8
@@ -414,7 +449,11 @@ class AlignConfig:
                 option_name="optimise_dofs",
             )
         self.freeze_dofs = normalize_dofs(self.freeze_dofs, option_name="freeze_dofs")
-        active_dof_mask(optimise_dofs=self.optimise_dofs, freeze_dofs=self.freeze_dofs)
+        self.geometry_dofs = normalize_geometry_dofs(
+            self.geometry_dofs,
+            geometry=None,
+        )
+        _active_dof_mask_for_cfg(self)
         self.bounds = normalize_bounds(self.bounds, option_name="bounds")
         pose_model = str(self.pose_model).strip().lower().replace("-", "_")
         self.pose_model = pose_model  # type: ignore[assignment]
@@ -430,12 +469,10 @@ class AlignConfig:
         self.gauge_fix = normalize_gauge_fix(self.gauge_fix)
         if self.gauge_fix == "mean_translation":
             bounds_lower, bounds_upper = bounds_vectors(self.bounds)
+            active_mask_for_gauge = _active_dof_mask_for_cfg(self)
             validate_alignment_gauge_feasible(
                 mode=self.gauge_fix,
-                active_mask=active_dof_mask(
-                    optimise_dofs=self.optimise_dofs,
-                    freeze_dofs=self.freeze_dofs,
-                ),
+                active_mask=active_mask_for_gauge,
                 bounds_lower=bounds_lower,
                 bounds_upper=bounds_upper,
             )
@@ -453,6 +490,7 @@ def align(
     observer: ObserverCallback | None = None,
     resume_state: AlignResumeState | None = None,
     checkpoint_callback: AlignCheckpointCallback | None = None,
+    det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
     """Alternating reconstruction + per-view alignment (5-DOF) on small cases.
 
@@ -491,10 +529,7 @@ def align(
         else jnp.zeros((n_views, 5), dtype=jnp.float32)
     )
     frozen_params5 = params5
-    active_mask_tuple = active_dof_mask(
-        optimise_dofs=cfg.optimise_dofs,
-        freeze_dofs=cfg.freeze_dofs,
-    )
+    active_mask_tuple = _active_dof_mask_for_cfg(cfg)
     active_mask_bool = jnp.asarray(active_mask_tuple, dtype=bool)
     active_col_indices_np = np.asarray(
         [idx for idx, is_active in enumerate(active_mask_tuple) if is_active],
@@ -619,7 +654,7 @@ def align(
     validate_pose_stack(T_nom_all, n_views, context="align geometry")
 
     # Precompute detector grid once (device arrays) to avoid repeated transfers/logging
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid_override is None else det_grid_override
 
     # Vmapped projector across views (pose-aware). Closure captures unroll as a static constant.
     def _project_batch(T_batch, vol):
@@ -1408,6 +1443,7 @@ def align(
                 projections,
                 init_x=x,
                 config=fista_cfg,
+                det_grid=det_grid,
             )
 
         def _run_spdhg():
@@ -1431,6 +1467,7 @@ def align(
                 projections,
                 init_x=x,
                 config=spdhg_cfg,
+                det_grid=det_grid,
             )
 
         vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
@@ -1818,9 +1855,11 @@ def align_multires(
 
     if cfg is None:
         cfg = AlignConfig()
-    active_mask_tuple = active_dof_mask(
-        optimise_dofs=cfg.optimise_dofs,
-        freeze_dofs=cfg.freeze_dofs,
+    active_mask_tuple = _active_dof_mask_for_cfg(cfg)
+    geometry_state = GeometryCalibrationState.from_checkpoint(
+        resume_state.geometry_calibration_state if resume_state is not None else None,
+        geometry,
+        active_geometry_dofs=cfg.geometry_dofs,
     )
 
     validate_grid(grid, "align_multires grid")
@@ -1977,6 +2016,49 @@ def align_multires(
                 seed_params = seed_params.at[:, 4].set(dz)
             params0 = seed_params
 
+        geometry_stats: list[OuterStat] = []
+        geometry_for_align = geometry
+        detector_for_align = d
+        det_grid_for_align = None
+        if geometry_state.active_geometry_dofs:
+            x0, geometry_state, raw_geometry_stats = optimize_geometry_blocks_for_level(
+                geometry=geometry,
+                grid=g,
+                detector=d,
+                projections=y,
+                init_x=x0,
+                state=geometry_state,
+                factor=int(lvl["factor"]),
+                recon_iters=int(cfg.recon_iters),
+                lambda_tv=float(cfg.lambda_tv),
+                regulariser=str(cfg.regulariser),
+                huber_delta=float(cfg.huber_delta),
+                tv_prox_iters=int(cfg.tv_prox_iters),
+                views_per_batch=max(1, int(cfg.views_per_batch)),
+                projector_unroll=int(cfg.projector_unroll),
+                checkpoint_projector=bool(cfg.checkpoint_projector),
+                gather_dtype=str(cfg.gather_dtype),
+                gn_damping=float(cfg.gn_damping),
+                outer_iters=int(cfg.outer_iters),
+            )
+            geometry_stats = [
+                {
+                    **dict(stat),
+                    "level_factor": int(lvl["factor"]),
+                    "level_index": int(li),
+                    "loss_kind": "geometry_calibration",
+                }
+                for stat in raw_geometry_stats
+            ]
+            geometry_for_align = geometry_with_axis_state(geometry, g, d, geometry_state)
+            det_grid_for_align = level_detector_grid(
+                d,
+                state=geometry_state,
+                factor=int(lvl["factor"]),
+            )
+        else:
+            det_grid_for_align = None
+
         # Run alignment at this level
         # Re-estimate L at each level using a fresh (streamed) power-method for stability
         cfg_level = replace(cfg, recon_L=None, loss=active_loss_spec)
@@ -2036,6 +2118,7 @@ def align_multires(
                     elapsed_offset=float(global_elapsed_offset + state.elapsed_offset),
                     level_complete=bool(level_complete),
                     run_complete=False,
+                    geometry_calibration_state=geometry_state.to_calibration_state().to_dict(),
                 )
             )
 
@@ -2080,21 +2163,58 @@ def align_multires(
                 return "continue"
             return _normalize_observer_action(observer(x_obs, params_obs, enriched))
 
-        x_lvl, params5, info = align(
-            geometry,
-            g,
-            d,
-            y,
-            cfg=cfg_level,
-            init_x=x0,
-            init_params5=params0,
-            observer=_level_observer if observer is not None else None,
-            resume_state=align_resume_state,
-            checkpoint_callback=lambda state: _emit_multires_checkpoint(
-                state,
-                level_complete=False,
-            ),
-        )
+        align_kwargs = {}
+        if det_grid_for_align is not None:
+            align_kwargs["det_grid_override"] = det_grid_for_align
+        if any(active_mask_tuple):
+            x_lvl, params5, info = align(
+                geometry_for_align,
+                g,
+                detector_for_align,
+                y,
+                cfg=cfg_level,
+                init_x=x0,
+                init_params5=params0,
+                observer=_level_observer if observer is not None else None,
+                resume_state=align_resume_state,
+                checkpoint_callback=lambda state: _emit_multires_checkpoint(
+                    state,
+                    level_complete=False,
+                ),
+                **align_kwargs,
+            )
+        else:
+            x_lvl = (
+                x0
+                if x0 is not None
+                else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
+            )
+            params5 = (
+                params0
+                if params0 is not None
+                else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
+            )
+            info = {
+                "loss": [],
+                "loss_kind": active_loss_name,
+                "recon_algo": str(cfg.recon_algo),
+                "L": None,
+                "outer_stats": [],
+                "stopped_by_observer": False,
+                "observer_action": "continue",
+                "wall_time_total": 0.0,
+                "pose_model": str(cfg.pose_model),
+                "pose_model_variables": 0,
+                "per_view_variables": 0,
+                "pose_model_basis_shape": [],
+                "active_dofs": [],
+                "completed_outer_iters": 0,
+                "small_impr_streak": 0,
+                "motion_coeffs": None,
+                "gauge_fix": final_gauge_fix,
+                "gauge_fix_dofs": final_gauge_fix_dofs,
+                "gauge_fix_final": final_gauge_fix_stats or {},
+            }
         level_completed_after = int(
             info.get("completed_outer_iters", len(info.get("outer_stats", [])))
         )
@@ -2105,8 +2225,12 @@ def align_multires(
             or not bool(info.get("stopped_by_observer", False))
         )
         loss_hist = loss_before_level + list(info.get("loss", []))
-        global_outer_stats = stats_before_level + _enrich_level_stats(
+        global_outer_stats = (
+            stats_before_level
+            + geometry_stats
+            + _enrich_level_stats(
             [dict(stat) for stat in info.get("outer_stats", [])]
+            )
         )
         global_outer_idx = global_before_level + level_completed_after
         executed_outer_iters = int(global_outer_idx)
@@ -2141,6 +2265,7 @@ def align_multires(
                     elapsed_offset=float(global_elapsed_offset),
                     level_complete=bool(level_complete),
                     run_complete=False,
+                    geometry_calibration_state=geometry_state.to_calibration_state().to_dict(),
                 )
             )
         final_observer_action = level_action
@@ -2185,6 +2310,7 @@ def align_multires(
                 elapsed_offset=float(global_elapsed_offset),
                 level_complete=True,
                 run_complete=True,
+                geometry_calibration_state=geometry_state.to_calibration_state().to_dict(),
             )
         )
 
@@ -2206,13 +2332,16 @@ def align_multires(
             "per_view_variables": final_per_view_variables,
             "pose_model_basis_shape": final_pose_model_basis_shape,
             "active_dofs": list(
-                active_dofs(
-                    optimise_dofs=cfg.optimise_dofs,
-                    freeze_dofs=cfg.freeze_dofs,
-                )
+                _active_dofs_for_cfg(cfg)
             ),
             "gauge_fix": final_gauge_fix,
             "gauge_fix_dofs": final_gauge_fix_dofs,
             "gauge_fix_final": final_gauge_fix_stats,
+            "geometry_dofs": list(geometry_state.active_geometry_dofs),
+            "geometry_calibration_state": (
+                geometry_state.to_calibration_state().to_dict()
+                if geometry_state.active_geometry_dofs
+                else None
+            ),
         },
     )

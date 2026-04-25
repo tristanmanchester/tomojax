@@ -196,6 +196,72 @@ def test_align_multires_counts_executed_outer_iters_without_observer():
     assert info["total_outer_iters"] == 2
 
 
+def test_align_multires_geometry_block_estimates_detector_center_without_pose_dofs():
+    size = 8
+    n_views = 12
+    grid = Grid(nx=size, ny=size, nz=size, vx=1.0, vy=1.0, vz=1.0)
+    det_nom = Detector(nu=size, nv=size, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    det_true = Detector(nu=size, nv=size, du=1.0, dv=1.0, det_center=(1.0, 0.0))
+    thetas = np.linspace(0, 180, n_views, endpoint=False, dtype=np.float32)
+    geom_nom = ParallelGeometry(grid=grid, detector=det_nom, thetas_deg=thetas)
+    geom_true = ParallelGeometry(grid=grid, detector=det_true, thetas_deg=thetas)
+    vol = np.zeros((size, size, size), dtype=np.float32)
+    vol[2:5, 1:6, 2:4] = 1.0
+    vol[5:7, 2:4, 5:7] = 0.7
+    volume = jnp.asarray(vol)
+    projs = jnp.stack(
+        [
+            forward_project_view(
+                geom_true,
+                grid,
+                det_true,
+                volume,
+                i,
+                gather_dtype="fp32",
+            )
+            for i in range(n_views)
+        ],
+        axis=0,
+    )
+
+    checkpoints = []
+    _, params5, info = align_multires(
+        geom_nom,
+        grid,
+        det_nom,
+        projs,
+        factors=[2, 1],
+        cfg=AlignConfig(
+            outer_iters=2,
+            recon_iters=2,
+            lambda_tv=0.0,
+            geometry_dofs=("det_u_px",),
+            freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
+            early_stop=False,
+            gather_dtype="fp32",
+            checkpoint_projector=False,
+            views_per_batch=1,
+            gn_damping=1e-3,
+        ),
+        checkpoint_callback=checkpoints.append,
+    )
+
+    det_state = info["geometry_calibration_state"]["detector"]
+    det_u = next(v for v in det_state if v["name"] == "det_u_px")
+    assert det_u["status"] == "estimated"
+    assert float(det_u["value"]) == pytest.approx(1.0, abs=0.55)
+    assert checkpoints[-1].geometry_calibration_state is not None
+    checkpoint_det_u = next(
+        v
+        for v in checkpoints[-1].geometry_calibration_state["detector"]
+        if v["name"] == "det_u_px"
+    )
+    assert float(checkpoint_det_u["value"]) == pytest.approx(float(det_u["value"]))
+    assert np.asarray(params5).shape == (n_views, 5)
+    assert np.allclose(np.asarray(params5), 0.0)
+    assert any(stat.get("geometry_block") == "detector_center" for stat in info["outer_stats"])
+
+
 def test_align_multires_rejects_non_integral_factors_before_truncating():
     grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 3, 5)
 
