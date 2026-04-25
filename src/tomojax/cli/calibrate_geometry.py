@@ -5,9 +5,8 @@ from dataclasses import replace
 import logging
 from pathlib import Path
 
-import numpy as np
-
 from tomojax.calibration.center import (
+    DETECTOR_CENTER_DOFS,
     DetectorCenterCalibrationConfig,
     calibrate_detector_center,
 )
@@ -20,23 +19,6 @@ from tomojax.utils.logging import log_jax_env, setup_logging
 
 from .config import parse_args_with_config
 from .manifest import save_manifest
-
-
-def _parse_search_pass(value: str) -> tuple[float, float]:
-    text = str(value).strip()
-    if ":" not in text:
-        raise argparse.ArgumentTypeError("search pass must be RADIUS:STEP, e.g. 10:2")
-    radius_raw, step_raw = text.split(":", 1)
-    try:
-        radius = float(radius_raw)
-        step = float(step_raw)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("search pass radius and step must be numbers") from exc
-    if not np.isfinite(radius) or radius < 0.0:
-        raise argparse.ArgumentTypeError("search pass radius must be finite and >= 0")
-    if not np.isfinite(step) or step <= 0.0:
-        raise argparse.ArgumentTypeError("search pass step must be finite and > 0")
-    return radius, step
 
 
 def _positive_int(value: str) -> int:
@@ -54,6 +36,38 @@ def _heldout_stride(value: str) -> int:
     if parsed < 2:
         raise argparse.ArgumentTypeError("heldout stride must be >= 2")
     return parsed
+
+
+def _nonnegative_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a non-negative number") from exc
+    if parsed < 0.0:
+        raise argparse.ArgumentTypeError("value must be a non-negative number")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = _nonnegative_float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError("value must be a positive number")
+    return parsed
+
+
+def _parse_active_detector_dofs(value: str) -> tuple[str, ...]:
+    names = tuple(part.strip() for part in str(value).split(",") if part.strip())
+    if not names:
+        raise argparse.ArgumentTypeError("active detector DOFs must not be empty")
+    unknown = sorted(set(names) - set(DETECTOR_CENTER_DOFS))
+    if unknown:
+        allowed = ", ".join(DETECTOR_CENTER_DOFS)
+        raise argparse.ArgumentTypeError(
+            f"unknown detector DOF(s) {unknown}; expected one or more of: {allowed}"
+        )
+    if len(set(names)) != len(names):
+        raise argparse.ArgumentTypeError("active detector DOFs must not contain duplicates")
+    return names
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -82,15 +96,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Supplied frozen detector/ray-grid vertical centre offset in native detector pixels.",
     )
     p.add_argument(
-        "--search-pass",
-        action="append",
-        type=_parse_search_pass,
-        default=None,
-        metavar="RADIUS:STEP",
-        help=(
-            "Add a detector-centre search pass in native pixels. Repeatable. "
-            "Default: 10:2, 2:0.5, 0.5:0.1"
-        ),
+        "--active-detector-dofs",
+        type=_parse_active_detector_dofs,
+        default=("det_u_px",),
+        help="Comma-separated detector-centre DOFs to optimize with GN. Default: det_u_px.",
+    )
+    p.add_argument(
+        "--outer-iters",
+        type=_positive_int,
+        default=6,
+        help="Maximum detector-centre Gauss-Newton outer iterations.",
+    )
+    p.add_argument(
+        "--gn-damping",
+        type=_nonnegative_float,
+        default=1e-3,
+        help="Levenberg-Marquardt damping for detector-centre GN.",
+    )
+    p.add_argument(
+        "--gn-accept-tol",
+        type=_nonnegative_float,
+        default=0.0,
+        help="Relative loss improvement required to accept a detector-centre GN step.",
+    )
+    p.add_argument(
+        "--max-step-px",
+        type=_positive_float,
+        default=2.0,
+        help="Maximum detector-centre GN step length in native detector pixels.",
     )
     p.add_argument(
         "--heldout-stride",
@@ -98,7 +131,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=8,
         help="Use every Nth projection as held-out validation views.",
     )
-    p.add_argument("--top-k", type=_positive_int, default=5, help="Number of top candidates.")
     p.add_argument("--filter", default="ramp", help="FBP filter: ramp|shepp|hann")
     p.add_argument(
         "--views-per-batch",
@@ -236,18 +268,16 @@ def main() -> None:
         or "det_v_px" in config_metadata["config_file_values"]
         else "frozen"
     )
-    search_passes = (
-        tuple(args.search_pass)
-        if args.search_pass is not None
-        else DetectorCenterCalibrationConfig().search_passes
-    )
     cfg = DetectorCenterCalibrationConfig(
         initial_det_u_px=float(args.initial_det_u_px),
         det_v_px=float(args.det_v_px),
         det_v_status=det_v_status,
-        search_passes=search_passes,
+        active_detector_dofs=tuple(args.active_detector_dofs),
+        outer_iters=int(args.outer_iters),
+        gn_damping=float(args.gn_damping),
+        gn_accept_tol=float(args.gn_accept_tol),
+        max_step_px=float(args.max_step_px),
         heldout_stride=int(args.heldout_stride),
-        top_k=int(args.top_k),
         filter_name=str(args.filter),
         views_per_batch=int(args.views_per_batch),
         checkpoint_projector=bool(args.checkpoint_projector),

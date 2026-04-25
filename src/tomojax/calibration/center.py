@@ -8,6 +8,7 @@ import math
 from typing import Mapping, Sequence
 
 import imageio.v3 as iio
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -15,33 +16,33 @@ from tomojax.core.geometry import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.data.geometry_meta import build_geometry_from_meta
-from tomojax.recon.fbp import fbp
+from tomojax.recon.fbp import _default_fbp_scale, _run_fbp_fast_path, fbp
 from tomojax.recon.quicklook import extract_central_slice, scale_to_uint8
 
 from ._json import JsonValue, normalize_json
 from .detector_grid import offset_detector_grid
+from .gauge import validate_calibration_gauges
 from .manifest import build_calibration_manifest
-from .objectives import CandidateScore, MetricSpec, ObjectiveCard
+from .objectives import MetricSpec, ObjectiveCard
 from .state import CalibrationState, CalibrationVariable
 
 
-DEFAULT_SEARCH_PASSES: tuple[tuple[float, float], ...] = (
-    (10.0, 2.0),
-    (2.0, 0.5),
-    (0.5, 0.1),
-)
+DETECTOR_CENTER_DOFS: tuple[str, ...] = ("det_u_px", "det_v_px")
 
 
 @dataclass(frozen=True)
 class DetectorCenterCalibrationConfig:
-    """Configuration for one-dimensional detector/ray-grid centre calibration."""
+    """Configuration for detector/ray-grid centre Gauss-Newton calibration."""
 
     initial_det_u_px: float = 0.0
     det_v_px: float = 0.0
     det_v_status: str = "frozen"
-    search_passes: tuple[tuple[float, float], ...] = DEFAULT_SEARCH_PASSES
+    active_detector_dofs: tuple[str, ...] = ("det_u_px",)
+    outer_iters: int = 6
+    gn_damping: float = 1e-3
+    gn_accept_tol: float = 0.0
+    max_step_px: float = 2.0
     heldout_stride: int = 8
-    top_k: int = 5
     filter_name: str = "ramp"
     views_per_batch: int = 1
     projector_unroll: int = 1
@@ -51,30 +52,40 @@ class DetectorCenterCalibrationConfig:
     def __post_init__(self) -> None:
         if self.det_v_status not in {"frozen", "supplied"}:
             raise ValueError("det_v_status must be 'frozen' or 'supplied'")
+        active = tuple(str(name) for name in self.active_detector_dofs)
+        if not active:
+            raise ValueError("active_detector_dofs must not be empty")
+        unknown = sorted(set(active) - set(DETECTOR_CENTER_DOFS))
+        if unknown:
+            raise ValueError(f"Unknown detector-centre DOFs: {unknown}")
+        if len(set(active)) != len(active):
+            raise ValueError("active_detector_dofs must not contain duplicates")
+        object.__setattr__(self, "active_detector_dofs", active)
+
+        if int(self.outer_iters) < 1:
+            raise ValueError("outer_iters must be >= 1")
+        if not math.isfinite(float(self.gn_damping)) or float(self.gn_damping) < 0.0:
+            raise ValueError("gn_damping must be finite and >= 0")
+        if not math.isfinite(float(self.gn_accept_tol)) or float(self.gn_accept_tol) < 0.0:
+            raise ValueError("gn_accept_tol must be finite and >= 0")
+        if not math.isfinite(float(self.max_step_px)) or float(self.max_step_px) <= 0.0:
+            raise ValueError("max_step_px must be finite and > 0")
         if int(self.heldout_stride) < 2:
             raise ValueError("heldout_stride must be >= 2")
-        if int(self.top_k) < 1:
-            raise ValueError("top_k must be >= 1")
         if int(self.views_per_batch) < 1:
             raise ValueError("views_per_batch must be >= 1")
-        passes = tuple((float(radius), float(step)) for radius, step in self.search_passes)
-        if not passes:
-            raise ValueError("search_passes must not be empty")
-        for radius, step in passes:
-            if not math.isfinite(radius) or radius < 0.0:
-                raise ValueError(f"search pass radius must be finite and >= 0, got {radius!r}")
-            if not math.isfinite(step) or step <= 0.0:
-                raise ValueError(f"search pass step must be finite and > 0, got {step!r}")
-        object.__setattr__(self, "search_passes", passes)
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "initial_det_u_px": float(self.initial_det_u_px),
             "det_v_px": float(self.det_v_px),
             "det_v_status": str(self.det_v_status),
-            "search_passes": [[float(r), float(s)] for r, s in self.search_passes],
+            "active_detector_dofs": [str(name) for name in self.active_detector_dofs],
+            "outer_iters": int(self.outer_iters),
+            "gn_damping": float(self.gn_damping),
+            "gn_accept_tol": float(self.gn_accept_tol),
+            "max_step_px": float(self.max_step_px),
             "heldout_stride": int(self.heldout_stride),
-            "top_k": int(self.top_k),
             "filter_name": str(self.filter_name),
             "views_per_batch": int(self.views_per_batch),
             "projector_unroll": int(self.projector_unroll),
@@ -84,51 +95,35 @@ class DetectorCenterCalibrationConfig:
 
 
 @dataclass(frozen=True)
-class DetectorCenterCandidate:
+class DetectorCenterIteration:
+    iteration: int
     det_u_px: float
     det_v_px: float
-    pass_index: int
-    score: float
+    loss_before: float
+    loss_after: float
+    accepted: bool
+    raw_step_px: tuple[float, ...]
+    applied_step_px: tuple[float, ...]
+    step_scale: float
+    gradient_norm: float
+    curvature: tuple[tuple[float, ...], ...]
     validation_mode: str
-    detector_center: tuple[float, float]
-    rank: int | None = None
-    artifact_path: str | None = None
-
-    def ranked(self, rank: int) -> "DetectorCenterCandidate":
-        return replace(self, rank=int(rank))
-
-    def with_artifact(self, path: str) -> "DetectorCenterCandidate":
-        return replace(self, artifact_path=str(path))
 
     def to_dict(self) -> dict[str, JsonValue]:
-        payload: dict[str, JsonValue] = {
-            "rank": self.rank,
-            "pass_index": int(self.pass_index),
+        return {
+            "iteration": int(self.iteration),
             "det_u_px": float(self.det_u_px),
             "det_v_px": float(self.det_v_px),
-            "score": float(self.score),
+            "loss_before": float(self.loss_before),
+            "loss_after": float(self.loss_after),
+            "accepted": bool(self.accepted),
+            "raw_step_px": [float(v) for v in self.raw_step_px],
+            "applied_step_px": [float(v) for v in self.applied_step_px],
+            "step_scale": float(self.step_scale),
+            "gradient_norm": float(self.gradient_norm),
+            "curvature": [[float(v) for v in row] for row in self.curvature],
             "validation_mode": self.validation_mode,
-            "detector_center": [float(v) for v in self.detector_center],
         }
-        if self.artifact_path is not None:
-            payload["artifact_path"] = self.artifact_path
-        return payload
-
-    def to_candidate_score(self) -> CandidateScore:
-        return CandidateScore(
-            parameters={
-                "det_u_px": float(self.det_u_px),
-                "det_v_px": float(self.det_v_px),
-                "detector_center": [float(v) for v in self.detector_center],
-            },
-            score=float(self.score),
-            rank=self.rank,
-            artifacts=(
-                {"preview": self.artifact_path}
-                if self.artifact_path is not None
-                else None
-            ),
-        )
 
 
 @dataclass(frozen=True)
@@ -137,16 +132,12 @@ class DetectorCenterCalibrationResult:
     det_v_px: float
     calibrated_detector: Detector
     final_volume: np.ndarray
-    candidates: tuple[DetectorCenterCandidate, ...]
+    iterations: tuple[DetectorCenterIteration, ...]
     objective_card: ObjectiveCard
     calibration_state: CalibrationState
     manifest: dict[str, JsonValue]
     confidence: dict[str, JsonValue]
     artifact_paths: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def best_candidate(self) -> DetectorCenterCandidate:
-        return min(self.candidates, key=lambda candidate: candidate.score)
 
 
 def detector_with_center_offset(
@@ -163,21 +154,6 @@ def detector_with_center_offset(
             float(detector.det_center[1]) + float(det_v_px) * float(detector.dv),
         ),
     )
-
-
-def candidate_values(center: float, radius: float, step: float) -> tuple[float, ...]:
-    """Return sorted inclusive candidate values for one search pass."""
-    radius = float(radius)
-    step = float(step)
-    if radius == 0.0:
-        return (round(float(center), 10),)
-    count = int(math.floor((2.0 * radius) / step + 1e-9)) + 1
-    start = float(center) - radius
-    values = [start + idx * step for idx in range(count)]
-    end = float(center) + radius
-    if not values or abs(values[-1] - end) > step * 1e-6:
-        values.append(end)
-    return tuple(sorted({round(float(value), 10) for value in values}))
 
 
 def _geometry_from_inputs(
@@ -205,23 +181,56 @@ def _split_views(n_views: int, heldout_stride: int) -> tuple[np.ndarray, np.ndar
     return train, heldout, "heldout_projection_nmse"
 
 
-def _candidate_det_grid(
+def _det_grid_from_offsets(
     base_grid: tuple[jnp.ndarray, jnp.ndarray],
     detector: Detector,
     *,
-    det_u_px: float,
-    det_v_px: float,
+    det_u_px: object,
+    det_v_px: object,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     return offset_detector_grid(
         base_grid,
-        det_u_px=float(det_u_px),
-        det_v_px=float(det_v_px),
+        det_u_px=det_u_px,
+        det_v_px=det_v_px,
         native_du=float(detector.du),
         native_dv=float(detector.dv),
     )
 
 
-def _reconstruct_candidate(
+def _active_values_from_offsets(
+    *,
+    active_names: Sequence[str],
+    det_u_px: float,
+    det_v_px: float,
+) -> jnp.ndarray:
+    values = []
+    for name in active_names:
+        if name == "det_u_px":
+            values.append(float(det_u_px))
+        elif name == "det_v_px":
+            values.append(float(det_v_px))
+    return jnp.asarray(values, dtype=jnp.float32)
+
+
+def _det_u_v_from_active(
+    active_values: jnp.ndarray,
+    *,
+    active_names: Sequence[str],
+    fixed_det_u_px: float,
+    fixed_det_v_px: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    values = jnp.asarray(active_values, dtype=jnp.float32)
+    det_u = jnp.asarray(fixed_det_u_px, dtype=jnp.float32)
+    det_v = jnp.asarray(fixed_det_v_px, dtype=jnp.float32)
+    for idx, name in enumerate(active_names):
+        if name == "det_u_px":
+            det_u = values[idx]
+        elif name == "det_v_px":
+            det_v = values[idx]
+    return det_u, det_v
+
+
+def _reconstruct_with_detector_center(
     geometry_inputs: Mapping[str, object],
     *,
     grid: Grid,
@@ -239,42 +248,38 @@ def _reconstruct_candidate(
         detector=detector,
         thetas_deg=subset_thetas,
     )
-    return fbp(
-        geometry,
-        grid,
-        detector,
-        projections[view_indices],
+    subset_projections = jnp.asarray(projections[view_indices], dtype=jnp.float32)
+    n_views = int(subset_projections.shape[0])
+    batch_size = max(1, min(int(config.views_per_batch), n_views))
+    # Use the differentiable FBP core directly here. The public FBP wrapper blocks
+    # for runtime/progress diagnostics, which is invalid under JAX JVP/VJP tracing.
+    volume = _run_fbp_fast_path(
+        stack_view_poses(geometry, n_views),
+        subset_projections,
+        batch_size=batch_size,
+        grid=grid,
+        detector=detector,
         filter_name=str(config.filter_name),
-        views_per_batch=int(config.views_per_batch),
         projector_unroll=int(config.projector_unroll),
         checkpoint_projector=bool(config.checkpoint_projector),
         gather_dtype=str(config.gather_dtype),
         det_grid=det_grid,
     )
+    return volume * _default_fbp_scale(n_views)
 
 
-def _score_candidate(
+def _residual_vector(
     geometry_inputs: Mapping[str, object],
     *,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
     thetas_deg: np.ndarray,
-    train_indices: np.ndarray,
     score_indices: np.ndarray,
+    volume: jnp.ndarray,
     det_grid: tuple[jnp.ndarray, jnp.ndarray],
     config: DetectorCenterCalibrationConfig,
-) -> float:
-    volume = _reconstruct_candidate(
-        geometry_inputs,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        thetas_deg=thetas_deg,
-        view_indices=train_indices,
-        det_grid=det_grid,
-        config=config,
-    )
+) -> jnp.ndarray:
     score_geometry = _geometry_from_inputs(
         geometry_inputs,
         grid=grid,
@@ -297,97 +302,90 @@ def _score_candidate(
         axis=0,
     )
     measured = projections[score_indices]
-    denom = jnp.maximum(jnp.mean(measured.astype(jnp.float32) ** 2), jnp.float32(1e-6))
-    return float(jnp.mean((preds - measured) ** 2) / denom)
+    denom = jnp.sqrt(jnp.maximum(jnp.mean(measured.astype(jnp.float32) ** 2), jnp.float32(1e-6)))
+    return ((preds - measured) / denom).ravel()
 
 
-def _rank_candidates(
-    candidates: Sequence[DetectorCenterCandidate],
-) -> tuple[DetectorCenterCandidate, ...]:
-    ordered = sorted(candidates, key=lambda candidate: (candidate.score, candidate.det_u_px))
-    return tuple(candidate.ranked(idx + 1) for idx, candidate in enumerate(ordered))
+def _loss_from_residual(residual: jnp.ndarray) -> float:
+    return float(jnp.mean(jnp.square(residual)))
 
 
 def _confidence_diagnostics(
-    candidates: Sequence[DetectorCenterCandidate],
-    *,
-    final_pass_values: Sequence[float],
+    iterations: Sequence[DetectorCenterIteration],
 ) -> dict[str, JsonValue]:
-    ranked = _rank_candidates(candidates)
-    best = ranked[0]
-    second = ranked[1] if len(ranked) > 1 else None
-    margin = None
-    if second is not None:
-        margin = (float(second.score) - float(best.score)) / max(abs(float(best.score)), 1e-12)
-    values = tuple(float(v) for v in final_pass_values)
-    best_on_boundary = bool(values and best.det_u_px in {min(values), max(values)})
-
+    accepted = [it for it in iterations if it.accepted]
+    final = iterations[-1] if iterations else None
+    final_update_norm = None
+    final_gradient_norm = None
+    curvature_min_eig = None
+    loss_rel_drop = None
     level = "low"
-    if margin is not None and not best_on_boundary:
-        if margin >= 0.10:
+    if final is not None:
+        final_update_norm = float(np.linalg.norm(np.asarray(final.applied_step_px)))
+        final_gradient_norm = float(final.gradient_norm)
+        curvature = np.asarray(final.curvature, dtype=np.float64)
+        if curvature.size:
+            try:
+                curvature_min_eig = float(np.min(np.linalg.eigvalsh(curvature)))
+            except np.linalg.LinAlgError:
+                curvature_min_eig = None
+        first = float(iterations[0].loss_before)
+        last = float(final.loss_after)
+        loss_rel_drop = (first - last) / max(abs(first), 1e-12)
+        if (
+            accepted
+            and curvature_min_eig is not None
+            and curvature_min_eig > 0.0
+            and final_update_norm <= 0.05
+            and final_gradient_norm <= 1e-2
+        ):
             level = "high"
-        elif margin >= 0.03:
+        elif accepted and curvature_min_eig is not None and curvature_min_eig > 0.0:
             level = "medium"
-
-    curvature = None
-    by_value = {float(candidate.det_u_px): float(candidate.score) for candidate in candidates}
-    lower = sorted(v for v in by_value if v < best.det_u_px)
-    upper = sorted(v for v in by_value if v > best.det_u_px)
-    if lower and upper:
-        left = lower[-1]
-        right = upper[0]
-        step = (right - left) / 2.0
-        if step > 0:
-            curvature = (by_value[left] - 2.0 * best.score + by_value[right]) / (step * step)
-
     return {
         "level": level,
-        "score_margin_rel": margin,
-        "best_on_boundary": best_on_boundary,
-        "curvature": curvature,
+        "accepted_steps": int(len(accepted)),
+        "final_update_norm_px": final_update_norm,
+        "final_gradient_norm": final_gradient_norm,
+        "curvature_min_eig": curvature_min_eig,
+        "loss_rel_drop": loss_rel_drop,
     }
 
 
-def _write_candidates_csv(path: Path, candidates: Sequence[DetectorCenterCandidate]) -> None:
+def _write_iterations_csv(path: Path, iterations: Sequence[DetectorCenterIteration]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     keys = [
-        "rank",
-        "pass_index",
+        "iteration",
         "det_u_px",
         "det_v_px",
-        "score",
+        "loss_before",
+        "loss_after",
+        "accepted",
+        "raw_step_px",
+        "applied_step_px",
+        "step_scale",
+        "gradient_norm",
         "validation_mode",
-        "detector_center_u",
-        "detector_center_v",
-        "artifact_path",
     ]
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=keys)
         writer.writeheader()
-        for candidate in candidates:
-            writer.writerow(
-                {
-                    "rank": candidate.rank,
-                    "pass_index": candidate.pass_index,
-                    "det_u_px": candidate.det_u_px,
-                    "det_v_px": candidate.det_v_px,
-                    "score": candidate.score,
-                    "validation_mode": candidate.validation_mode,
-                    "detector_center_u": candidate.detector_center[0],
-                    "detector_center_v": candidate.detector_center[1],
-                    "artifact_path": candidate.artifact_path or "",
-                }
-            )
+        for iteration in iterations:
+            row = iteration.to_dict()
+            row["raw_step_px"] = json.dumps(row["raw_step_px"])
+            row["applied_step_px"] = json.dumps(row["applied_step_px"])
+            row.pop("curvature", None)
+            writer.writerow(row)
 
 
-def _write_candidates_json(path: Path, candidates: Sequence[DetectorCenterCandidate]) -> None:
+def _write_iterations_json(path: Path, iterations: Sequence[DetectorCenterIteration]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
-        json.dump([candidate.to_dict() for candidate in candidates], fh, indent=2, sort_keys=True)
+        json.dump([iteration.to_dict() for iteration in iterations], fh, indent=2, sort_keys=True)
         fh.write("\n")
 
 
-def _candidate_preview(
+def _volume_preview(
     geometry_inputs: Mapping[str, object],
     *,
     grid: Grid,
@@ -398,7 +396,7 @@ def _candidate_preview(
     config: DetectorCenterCalibrationConfig,
 ) -> np.ndarray:
     all_views = np.arange(len(thetas_deg), dtype=np.int32)
-    volume = _reconstruct_candidate(
+    volume = _reconstruct_with_detector_center(
         geometry_inputs,
         grid=grid,
         detector=detector,
@@ -439,72 +437,93 @@ def _write_artifacts(
     detector: Detector,
     projections: jnp.ndarray,
     thetas_deg: np.ndarray,
-    candidates: Sequence[DetectorCenterCandidate],
+    iterations: Sequence[DetectorCenterIteration],
+    final_det_u_px: float,
+    final_det_v_px: float,
     config: DetectorCenterCalibrationConfig,
-) -> tuple[tuple[DetectorCenterCandidate, ...], dict[str, str]]:
+) -> dict[str, str]:
     workdir.mkdir(parents=True, exist_ok=True)
-    ranked = _rank_candidates(candidates)
-    top = ranked[: int(config.top_k)]
     base_grid = get_detector_grid_device(detector)
-    preview_dir = workdir / "candidate_previews"
-    images = []
-    updated: list[DetectorCenterCandidate] = []
-
-    nominal_grid = _candidate_det_grid(
+    nominal_grid = _det_grid_from_offsets(
         base_grid,
         detector,
         det_u_px=0.0,
         det_v_px=float(config.det_v_px),
     )
-    images.append(
-        _candidate_preview(
-            geometry_inputs,
-            grid=grid,
-            detector=detector,
-            projections=projections,
-            thetas_deg=thetas_deg,
-            det_grid=nominal_grid,
-            config=config,
+    final_grid = _det_grid_from_offsets(
+        base_grid,
+        detector,
+        det_u_px=float(final_det_u_px),
+        det_v_px=float(final_det_v_px),
+    )
+    nominal_preview = _volume_preview(
+        geometry_inputs,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        thetas_deg=thetas_deg,
+        det_grid=nominal_grid,
+        config=config,
+    )
+    final_preview = _volume_preview(
+        geometry_inputs,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        thetas_deg=thetas_deg,
+        det_grid=final_grid,
+        config=config,
+    )
+    final_preview_path = workdir / "final_detector_center.png"
+    iio.imwrite(final_preview_path, final_preview)
+    contact_sheet = workdir / "detector_center_before_after.png"
+    _write_contact_sheet(contact_sheet, (nominal_preview, final_preview))
+    iterations_csv = workdir / "iterations.csv"
+    iterations_json = workdir / "iterations.json"
+    _write_iterations_csv(iterations_csv, iterations)
+    _write_iterations_json(iterations_json, iterations)
+    return {
+        "contact_sheet": str(contact_sheet),
+        "final_preview": str(final_preview_path),
+        "iterations_csv": str(iterations_csv),
+        "iterations_json": str(iterations_json),
+    }
+
+
+def _calibration_state_for_config(
+    cfg: DetectorCenterCalibrationConfig,
+    *,
+    det_u_px: float,
+    det_v_px: float,
+    confidence: Mapping[str, object] | None = None,
+) -> CalibrationState:
+    det_u_status = "estimated" if "det_u_px" in cfg.active_detector_dofs else "frozen"
+    det_v_status = "estimated" if "det_v_px" in cfg.active_detector_dofs else cfg.det_v_status
+    return CalibrationState(
+        detector=(
+            CalibrationVariable(
+                name="det_u_px",
+                value=float(det_u_px),
+                unit="native_detector_px",
+                status=det_u_status,  # type: ignore[arg-type]
+                frame="detector",
+                gauge="detector_ray_grid_center",
+                uncertainty=normalize_json(confidence),
+                description=(
+                    "Detector/ray-grid horizontal centre representation of a static "
+                    "COR-like offset under the detector-centre gauge."
+                ),
+            ),
+            CalibrationVariable(
+                name="det_v_px",
+                value=float(det_v_px),
+                unit="native_detector_px",
+                status=det_v_status,  # type: ignore[arg-type]
+                frame="detector",
+                gauge="detector_ray_grid_center",
+            ),
         )
     )
-
-    for candidate in ranked:
-        if candidate.rank is not None and candidate.rank <= int(config.top_k):
-            det_grid = _candidate_det_grid(
-                base_grid,
-                detector,
-                det_u_px=candidate.det_u_px,
-                det_v_px=candidate.det_v_px,
-            )
-            image = _candidate_preview(
-                geometry_inputs,
-                grid=grid,
-                detector=detector,
-                projections=projections,
-                thetas_deg=thetas_deg,
-                det_grid=det_grid,
-                config=config,
-            )
-            rel_path = preview_dir / f"rank_{candidate.rank:02d}_det_u_{candidate.det_u_px:+.3f}.png"
-            rel_path.parent.mkdir(parents=True, exist_ok=True)
-            iio.imwrite(rel_path, image)
-            images.append(image)
-            updated.append(candidate.with_artifact(str(rel_path)))
-        else:
-            updated.append(candidate)
-
-    contact_sheet = workdir / "top_candidates.png"
-    _write_contact_sheet(contact_sheet, images)
-    candidates_csv = workdir / "candidates.csv"
-    candidates_json = workdir / "candidates.json"
-    updated_ranked = _rank_candidates(updated)
-    _write_candidates_csv(candidates_csv, updated_ranked)
-    _write_candidates_json(candidates_json, updated_ranked)
-    return updated_ranked, {
-        "contact_sheet": str(contact_sheet),
-        "candidates_csv": str(candidates_csv),
-        "candidates_json": str(candidates_json),
-    }
 
 
 def calibrate_detector_center(
@@ -516,8 +535,10 @@ def calibrate_detector_center(
     config: DetectorCenterCalibrationConfig | None = None,
     workdir: str | Path | None = None,
 ) -> DetectorCenterCalibrationResult:
-    """Estimate static detector/ray-grid horizontal centre offset ``det_u_px``."""
+    """Estimate static detector/ray-grid centre offsets with damped Gauss-Newton."""
     cfg = config or DetectorCenterCalibrationConfig()
+    validate_calibration_gauges(_calibration_state_for_config(cfg, det_u_px=0.0, det_v_px=0.0))
+
     y = jnp.asarray(projections, dtype=jnp.float32)
     if y.ndim != 3:
         raise ValueError(f"projections must have shape (n_views, nv, nu), got {y.shape}")
@@ -536,73 +557,134 @@ def calibrate_detector_center(
         int(y.shape[0]),
         int(cfg.heldout_stride),
     )
+    active_names = tuple(cfg.active_detector_dofs)
+    fixed_det_u = float(cfg.initial_det_u_px)
+    fixed_det_v = float(cfg.det_v_px)
+    active_values = _active_values_from_offsets(
+        active_names=active_names,
+        det_u_px=fixed_det_u,
+        det_v_px=fixed_det_v,
+    )
     base_grid = get_detector_grid_device(detector)
-    candidates: list[DetectorCenterCandidate] = []
-    evaluated: set[float] = set()
-    center = float(cfg.initial_det_u_px)
-    final_pass_values: tuple[float, ...] = ()
+    iterations: list[DetectorCenterIteration] = []
 
-    for pass_index, (radius, step) in enumerate(cfg.search_passes, start=1):
-        values = candidate_values(center, radius, step)
-        final_pass_values = values
-        for det_u_px in values:
-            key = round(float(det_u_px), 10)
-            if key in evaluated:
-                continue
-            evaluated.add(key)
-            det_grid = _candidate_det_grid(
-                base_grid,
-                detector,
-                det_u_px=det_u_px,
-                det_v_px=float(cfg.det_v_px),
-            )
-            score = _score_candidate(
+    def det_grid_for_values(values: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        det_u, det_v = _det_u_v_from_active(
+            values,
+            active_names=active_names,
+            fixed_det_u_px=fixed_det_u,
+            fixed_det_v_px=fixed_det_v,
+        )
+        return _det_grid_from_offsets(base_grid, detector, det_u_px=det_u, det_v_px=det_v)
+
+    for iteration_idx in range(1, int(cfg.outer_iters) + 1):
+        def residual_for_values(values: jnp.ndarray) -> jnp.ndarray:
+            det_grid = det_grid_for_values(values)
+            # Detector-centre is an instrument geometry parameter, so the volume estimate
+            # depends on the candidate detector grid. Differentiating only the held-out
+            # reprojection with a fixed volume gives the wrong local direction.
+            volume = _reconstruct_with_detector_center(
                 geometry_inputs,
                 grid=grid,
                 detector=detector,
                 projections=y,
                 thetas_deg=thetas,
-                train_indices=train_indices,
-                score_indices=score_indices,
+                view_indices=train_indices,
                 det_grid=det_grid,
                 config=cfg,
             )
-            calibrated = detector_with_center_offset(
-                detector,
-                det_u_px=det_u_px,
-                det_v_px=float(cfg.det_v_px),
+            return _residual_vector(
+                geometry_inputs,
+                grid=grid,
+                detector=detector,
+                projections=y,
+                thetas_deg=thetas,
+                score_indices=score_indices,
+                volume=volume,
+                det_grid=det_grid,
+                config=cfg,
             )
-            candidates.append(
-                DetectorCenterCandidate(
-                    det_u_px=float(det_u_px),
-                    det_v_px=float(cfg.det_v_px),
-                    pass_index=pass_index,
-                    score=score,
-                    validation_mode=validation_mode,
-                    detector_center=tuple(float(v) for v in calibrated.det_center),
-                )
-            )
-        center = min(candidates, key=lambda candidate: candidate.score).det_u_px
 
-    ranked = _rank_candidates(candidates)
-    artifact_paths: dict[str, str] = {}
-    if workdir is not None:
-        ranked, artifact_paths = _write_artifacts(
-            Path(workdir),
-            geometry_inputs,
-            grid=grid,
-            detector=detector,
-            projections=y,
-            thetas_deg=thetas,
-            candidates=ranked,
-            config=cfg,
+        residual = residual_for_values(active_values)
+        loss_before = _loss_from_residual(residual)
+        _, pullback = jax.vjp(residual_for_values, active_values)
+        gradient = pullback(residual)[0] * jnp.float32(2.0 / max(int(residual.size), 1))
+        eye = jnp.eye(int(active_values.size), dtype=jnp.float32)
+
+        def jvp_col(direction: jnp.ndarray) -> jnp.ndarray:
+            return jax.jvp(residual_for_values, (active_values,), (direction,))[1]
+
+        jac_cols = jax.vmap(jvp_col)(eye)
+        curvature = (jac_cols @ jac_cols.T) * jnp.float32(2.0 / max(int(residual.size), 1))
+        system = curvature + jnp.eye(int(active_values.size), dtype=jnp.float32) * jnp.float32(
+            cfg.gn_damping
+        )
+        raw_step = jnp.linalg.solve(system, -gradient)
+        raw_norm = jnp.linalg.norm(raw_step)
+        max_step = jnp.asarray(float(cfg.max_step_px), dtype=jnp.float32)
+        clipped_step = jnp.where(
+            raw_norm > max_step,
+            raw_step * (max_step / jnp.maximum(raw_norm, jnp.float32(1e-6))),
+            raw_step,
         )
 
-    best = ranked[0]
+        best_values = active_values
+        best_loss = loss_before
+        best_step = jnp.zeros_like(active_values)
+        best_scale = 0.0
+        for scale in (1.0, 0.5, 0.25):
+            trial_step = clipped_step * jnp.float32(scale)
+            trial_values = active_values + trial_step
+            trial_loss = _loss_from_residual(residual_for_values(trial_values))
+            improvement = loss_before - trial_loss
+            threshold = float(cfg.gn_accept_tol) * max(abs(loss_before), 1e-12)
+            if math.isfinite(trial_loss) and improvement >= threshold and trial_loss < best_loss:
+                best_values = trial_values
+                best_loss = trial_loss
+                best_step = trial_step
+                best_scale = float(scale)
+                break
+
+        active_values = jnp.asarray(best_values, dtype=jnp.float32)
+        det_u, det_v = _det_u_v_from_active(
+            active_values,
+            active_names=active_names,
+            fixed_det_u_px=fixed_det_u,
+            fixed_det_v_px=fixed_det_v,
+        )
+        iterations.append(
+            DetectorCenterIteration(
+                iteration=iteration_idx,
+                det_u_px=float(det_u),
+                det_v_px=float(det_v),
+                loss_before=float(loss_before),
+                loss_after=float(best_loss),
+                accepted=bool(best_scale > 0.0),
+                raw_step_px=tuple(float(v) for v in np.asarray(raw_step)),
+                applied_step_px=tuple(float(v) for v in np.asarray(best_step)),
+                step_scale=float(best_scale),
+                gradient_norm=float(jnp.linalg.norm(gradient)),
+                curvature=tuple(
+                    tuple(float(v) for v in row) for row in np.asarray(curvature)
+                ),
+                validation_mode=validation_mode,
+            )
+        )
+        if float(jnp.linalg.norm(best_step)) <= 1e-4:
+            break
+
+    final_det_u, final_det_v = _det_u_v_from_active(
+        active_values,
+        active_names=active_names,
+        fixed_det_u_px=fixed_det_u,
+        fixed_det_v_px=fixed_det_v,
+    )
+    final_det_u_f = float(final_det_u)
+    final_det_v_f = float(final_det_v)
     calibrated_detector = detector_with_center_offset(
         detector,
-        det_u_px=best.det_u_px,
-        det_v_px=best.det_v_px,
+        det_u_px=final_det_u_f,
+        det_v_px=final_det_v_f,
     )
     final_geometry = _geometry_from_inputs(
         geometry_inputs,
@@ -623,7 +705,21 @@ def calibrate_detector_center(
             gather_dtype=str(cfg.gather_dtype),
         )
     )
-    confidence = _confidence_diagnostics(ranked, final_pass_values=final_pass_values)
+    confidence = _confidence_diagnostics(iterations)
+    artifact_paths: dict[str, str] = {}
+    if workdir is not None:
+        artifact_paths = _write_artifacts(
+            Path(workdir),
+            geometry_inputs,
+            grid=grid,
+            detector=detector,
+            projections=y,
+            thetas_deg=thetas,
+            iterations=iterations,
+            final_det_u_px=final_det_u_f,
+            final_det_v_px=final_det_v_f,
+            config=cfg,
+        )
     objective = ObjectiveCard(
         primary_metric=MetricSpec(
             name=validation_mode,
@@ -637,34 +733,14 @@ def calibrate_detector_center(
             "train_indices": train_indices.tolist(),
             "score_indices": score_indices.tolist(),
         },
-        top_candidates=tuple(candidate.to_candidate_score() for candidate in ranked[: cfg.top_k]),
-        curvature={"det_u_px": confidence.get("curvature")},
+        curvature={"detector_center": confidence.get("curvature_min_eig")},
         contact_sheet=artifact_paths.get("contact_sheet"),
     )
-    state = CalibrationState(
-        detector=(
-            CalibrationVariable(
-                name="det_u_px",
-                value=float(best.det_u_px),
-                unit="native_detector_px",
-                status="estimated",
-                frame="detector",
-                gauge="detector_ray_grid_center",
-                uncertainty=confidence,
-                description=(
-                    "Detector/ray-grid horizontal centre representation of a static "
-                    "COR-like offset under the detector-centre gauge."
-                ),
-            ),
-            CalibrationVariable(
-                name="det_v_px",
-                value=float(best.det_v_px),
-                unit="native_detector_px",
-                status=cfg.det_v_status,  # type: ignore[arg-type]
-                frame="detector",
-                gauge="detector_ray_grid_center",
-            ),
-        )
+    state = _calibration_state_for_config(
+        cfg,
+        det_u_px=final_det_u_f,
+        det_v_px=final_det_v_f,
+        confidence=confidence,
     )
     manifest = build_calibration_manifest(
         calibration_state=state,
@@ -682,7 +758,7 @@ def calibrate_detector_center(
         extra={
             "config": cfg.to_dict(),
             "confidence": confidence,
-            "candidates": [candidate.to_dict() for candidate in ranked],
+            "iterations": [iteration.to_dict() for iteration in iterations],
             "artifact_paths": artifact_paths,
             "wording": (
                 "det_u_px is the detector/ray-grid centre representation of a static "
@@ -691,11 +767,11 @@ def calibrate_detector_center(
         },
     )
     return DetectorCenterCalibrationResult(
-        best_det_u_px=float(best.det_u_px),
-        det_v_px=float(best.det_v_px),
+        best_det_u_px=final_det_u_f,
+        det_v_px=final_det_v_f,
         calibrated_detector=calibrated_detector,
         final_volume=final_volume,
-        candidates=tuple(ranked),
+        iterations=tuple(iterations),
         objective_card=objective,
         calibration_state=state,
         manifest=manifest,

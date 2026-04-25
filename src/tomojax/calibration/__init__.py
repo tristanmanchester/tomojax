@@ -6,12 +6,11 @@ helpers only. Estimation workflows live in later phases.
 
 from .conventions import ConventionAudit, ConventionEvidence
 from .center import (
-    DEFAULT_SEARCH_PASSES,
+    DETECTOR_CENTER_DOFS,
     DetectorCenterCalibrationConfig,
     DetectorCenterCalibrationResult,
-    DetectorCenterCandidate,
+    DetectorCenterIteration,
     calibrate_detector_center,
-    candidate_values,
     detector_with_center_offset,
 )
 from .detector_grid import detector_grid_from_center_offset, offset_detector_grid
@@ -29,10 +28,10 @@ __all__ = [
     "CandidateScore",
     "ConventionAudit",
     "ConventionEvidence",
-    "DEFAULT_SEARCH_PASSES",
+    "DETECTOR_CENTER_DOFS",
     "DetectorCenterCalibrationConfig",
     "DetectorCenterCalibrationResult",
-    "DetectorCenterCandidate",
+    "DetectorCenterIteration",
     "DetectorPixelScale",
     "DetectorPixelValue",
     "GaugeConflict",
@@ -41,7 +40,6 @@ __all__ = [
     "ObjectiveCard",
     "build_calibration_manifest",
     "calibrate_detector_center",
-    "candidate_values",
     "detector_grid_from_center_offset",
     "detector_with_center_offset",
     "offset_detector_grid",

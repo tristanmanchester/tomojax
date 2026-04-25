@@ -179,18 +179,32 @@ def test_calibrate_geometry_help_documents_detector_center(monkeypatch, capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "detector-center" in captured.out
-    assert "--search-pass" in captured.out
-    assert "RADIUS:STEP" in captured.out
+    assert "--active-detector-dofs" in captured.out
+    assert "--outer-iters" in captured.out
+    assert "--gn-damping" in captured.out
+    assert "--search-pass" not in captured.out
 
 
-def test_calibrate_geometry_search_pass_parser_rejects_malformed_values():
-    assert calibrate_geometry_cli._parse_search_pass("10:2") == (10.0, 2.0)
+def test_calibrate_geometry_gn_option_parsers_reject_malformed_values():
+    assert calibrate_geometry_cli._parse_active_detector_dofs("det_u_px") == ("det_u_px",)
+    assert calibrate_geometry_cli._parse_active_detector_dofs("det_u_px,det_v_px") == (
+        "det_u_px",
+        "det_v_px",
+    )
+    assert calibrate_geometry_cli._positive_float("1.5") == pytest.approx(1.5)
+    assert calibrate_geometry_cli._nonnegative_float("0") == pytest.approx(0.0)
 
     with pytest.raises(argparse.ArgumentTypeError):
-        calibrate_geometry_cli._parse_search_pass("10")
+        calibrate_geometry_cli._parse_active_detector_dofs("dx")
 
     with pytest.raises(argparse.ArgumentTypeError):
-        calibrate_geometry_cli._parse_search_pass("10:0")
+        calibrate_geometry_cli._parse_active_detector_dofs("")
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        calibrate_geometry_cli._positive_float("0")
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        calibrate_geometry_cli._nonnegative_float("-1")
 
 
 def test_calibrate_geometry_main_writes_calibrated_metadata_and_manifest(
@@ -280,8 +294,14 @@ def test_calibrate_geometry_main_writes_calibrated_metadata_and_manifest(
             str(out_path),
             "--roi",
             "off",
-            "--search-pass",
-            "5:1",
+            "--active-detector-dofs",
+            "det_u_px",
+            "--outer-iters",
+            "3",
+            "--gn-damping",
+            "0.2",
+            "--max-step-px",
+            "1.5",
             "--det-v-px",
             "0.5",
         ],
@@ -294,7 +314,10 @@ def test_calibrate_geometry_main_writes_calibrated_metadata_and_manifest(
     assert saved_meta.detector["det_center"] == [-4.0, 0.0]
     assert saved_meta.geometry_calibration == fake_manifest
     assert captured["manifest"] == fake_manifest
-    assert captured["config"].search_passes == ((5.0, 1.0),)
+    assert captured["config"].active_detector_dofs == ("det_u_px",)
+    assert captured["config"].outer_iters == 3
+    assert captured["config"].gn_damping == pytest.approx(0.2)
+    assert captured["config"].max_step_px == pytest.approx(1.5)
     assert captured["config"].det_v_status == "supplied"
 
 
