@@ -63,24 +63,6 @@ def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tm
     assert status["scenario_count"] == len(manifest["scenarios"])
 
 
-def test_geometry_block_taxonomy_records_estimated_supplied_and_gauge_metadata(tmp_path):
-    generator = _load_generator()
-    out = tmp_path / "taxonomy"
-
-    generator.main(["--out", str(out), "--dry-run", "--scenario", "known_det_u_control"])
-
-    manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
-    scenarios = manifest["scenarios"]
-
-    assert [scenario["slug"] for scenario in scenarios] == ["known_det_u_control"]
-    control = scenarios[0]
-    assert control["geometry_dofs"] == []
-    assert control["hidden_truth"]["det_u_px"] == -4.0
-    assert control["supplied_corrections"] == {"det_u_px": -4.0}
-    assert "detector/ray-grid centre offset" in manifest["gauge_notes"]["det_u_px"]
-    assert "not reported as estimated" in manifest["gauge_notes"]["supplied_controls"]
-
-
 def test_geometry_block_taxonomy_scenarios_cover_new_geometry_blocks():
     generator = _load_generator()
     scenarios = generator.scenario_catalog()

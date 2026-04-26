@@ -186,15 +186,6 @@ def _default_scenarios() -> list[Scenario]:
             hidden_axis_rot_x_deg=4.4,
             nominal_tilt_deg=30.0,
         ),
-        Scenario(
-            slug="known_det_u_control",
-            title="Control: supplied known detector centre",
-            description="The known -4 px detector-u correction is supplied, not estimated.",
-            geometry_type="parallel",
-            geometry_dofs=(),
-            hidden_det_u_px=-4.0,
-            supplied_det_u_px=-4.0,
-        ),
     ]
 
 
@@ -1231,7 +1222,6 @@ def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> di
                 "Canonical detector/ray-grid centre offset in native detector pixels under the "
                 "detector_ray_grid_center gauge; not a standalone physical COR proof."
             ),
-            "supplied_controls": "Supplied known corrections are controls and are not reported as estimated.",
         },
     }
 

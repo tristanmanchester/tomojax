@@ -35,8 +35,9 @@ CPU. Local work should stay limited to static checks and small CPU-friendly test
 **Completed validation:** commit `4e10886` passed the focused local checks and the Linux laptop
 smoke run in
 `runs/alignment-smoke-65-cor-4e10886/`. The 65^3 `parallel_det_u_m004` case used
-`heldout_reprojection` with `l2_otsu` and recovered `det_u_px=-4.0`; the supplied
-`known_det_u_control` also completed with the corrected TV reconstruction path.
+`heldout_reprojection` with `l2_otsu` and recovered `det_u_px=-4.0`. The supplied
+known-correction control was later removed from the evidence suite because it only proves normal
+reconstruction under already-correct geometry.
 
 ---
 
@@ -49,14 +50,12 @@ detector-centre/COR solve still has a deeper identifiability problem.
 
 The failing smoke run showed:
 
-- `known_det_u_control` works when `det_u_px=-4` is supplied, validating detector-grid sign,
-  units, and reconstruction under corrected geometry.
 - estimated `parallel_det_u_m004` and `parallel_det_u_p004` move in the correct sign direction but
   recover only roughly 20-30% of the hidden offset.
 - all geometry updates are accepted and use `l2_otsu`, so the failure is not a rejected-step issue
   or wrong loss selection.
-- `+4 px` and `-4 px` are mirrored duplicates for expensive evidence runs; one sign plus a
-  supplied-correction control is enough, with opposite-sign coverage kept in a cheap test.
+- `+4 px` and `-4 px` are mirrored duplicates for expensive evidence runs; one sign is enough,
+  with opposite-sign coverage kept in a cheap test.
 
 The root cause is that COR-like detector-centre errors are gauge-coupled with object/volume
 translation. A volume reconstructed under wrong geometry can absorb the error, so
@@ -108,8 +107,7 @@ AE3 staged masks, AE4 public demo path, AE5 gauge diagnostics, AE6 geometry-stat
 
 ## Scope Boundaries
 
-- Do not flip the sign of `det_u_px`; the supplied correction control and true-volume sweep already
-  validate sign/units.
+- Do not flip the sign of `det_u_px`; the true-volume sweep validates sign/units.
 - Do not change away from `l2_otsu` to compensate for this failure; the loss is informative when
   the volume is not contaminated by the wrong inverse problem.
 - Do not tune more outer iterations as the primary fix; more iterations only optimize the same
@@ -193,13 +191,13 @@ AE3 staged masks, AE4 public demo path, AE5 gauge diagnostics, AE6 geometry-stat
 
 ### Resolved During Planning
 
-- Is this a sign convention bug? No. Supplied correction and mirrored movement rule that out.
+- Is this a sign convention bug? No. The true-volume sweep and mirrored movement rule that out.
 - Is this a wrong-loss bug? No. The run used `l2_otsu`, and the true-volume sweep validates the
   loss minimum.
 - Should more iterations be the fix? No. More iterations continue optimizing a biased objective.
 - Should detector-centre use a standalone calibration command? No. Keep it inside `align_multires`.
-- Should `+4 px` and `-4 px` both remain in expensive evidence suites? No. Keep one sign and a
-  supplied-correction control.
+- Should `+4 px` and `-4 px` both remain in expensive evidence suites? No. Keep one sign in the
+  expensive suite and cover the opposite sign cheaply.
 - Should heavy numerical validation run locally? No. Run 65^3 and 128^3 validation on the Linux
   laptop.
 
@@ -535,10 +533,8 @@ duplicated sign cases or misleading reconstruction labels.
 
 **Approach:**
 - Remove one of `parallel_det_u_m004` / `parallel_det_u_p004` from expensive default/evidence
-  suites; keep one detector-centre sign and one supplied correction control.
+  suites; keep one detector-centre sign.
 - Keep cheap sign coverage in unit tests rather than laptop visual suites.
-- Change the supplied known-correction control so it uses the same final reconstruction algorithm
-  family as estimated cases, or label it explicitly if it is intentionally FBP-only.
 - Add manifest fields for detector-centre objective type, held-out split summary, candidate loss
   curve, projection-domain seed, optional polish step, and configured loss name.
 - Ensure `inspection_panel.png`, `loss_panel.png`, `diagnostics_panel.png`, `summary.csv`, and
@@ -549,12 +545,10 @@ duplicated sign cases or misleading reconstruction labels.
 - Existing dry-run manifest assertions in `tests/test_geometry_block_taxonomy_generator.py`
 
 **Test scenarios:**
-- Happy path: dry-run default taxonomy contains one expensive detector-centre sign plus
-  `known_det_u_control`, not both mirrored signs.
+- Happy path: dry-run default taxonomy contains one expensive detector-centre sign, not both
+  mirrored signs.
 - Happy path: detector-centre scenario manifest records `geometry_objective="heldout_reprojection"`
   and `loss_kind="l2_otsu"`.
-- Happy path: supplied known-correction control manifest distinguishes supplied geometry from
-  estimated geometry and records the reconstruction algorithm honestly.
 - Regression: visual-stress axis cases retain explicit 360-degree acquisition spans.
 - Naive-only mode still writes reduced rich panels without fake alignment stats.
 
@@ -584,7 +578,7 @@ Mac CPU.
 - Keep local validation to small CPU-friendly tests and static checks.
 - Use the Linux laptop for:
   - focused test suite validation after implementation;
-  - 65^3 detector-centre smoke with one hidden sign plus supplied correction control;
+  - 65^3 detector-centre smoke with one hidden sign;
   - 128^3 phantom #94 evidence only after 65^3 smoke passes.
 - Each remote run should record commit, profile, phantom metadata, active/frozen DOFs, objective
   type, loss kind, seed, held-out split, candidate losses, final estimate, and diagnostics.
@@ -598,7 +592,6 @@ Mac CPU.
 **Test scenarios:**
 - Remote smoke: 65^3 hidden detector-centre sign estimates near the hidden offset, improves
   calibrated/aligned reconstruction versus naive, and records `heldout_reprojection`.
-- Remote control: supplied correction remains a strong reconstruction control.
 - Remote regression: pose-only and existing geometry tests still pass on the laptop environment.
 - Remote evidence: 128^3 phantom #94 master sheet and per-scenario inspection panels are generated
   only after smoke success.
