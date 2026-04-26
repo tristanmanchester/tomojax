@@ -5,6 +5,9 @@ import json
 import sys
 from pathlib import Path
 
+import imageio.v3 as iio
+import numpy as np
+
 
 SCRIPT_PATH = Path("scripts/generate_alignment_before_after_128.py")
 
@@ -183,3 +186,109 @@ def test_master_panel_ignores_failed_rows_without_panel_paths(tmp_path):
     )
 
     assert not master.exists()
+
+
+def test_write_visuals_emits_rich_inspection_artifacts(tmp_path):
+    generator = _load_generator()
+    base = np.zeros((16, 16, 16), dtype=np.float32)
+    base[3:7, 4:8, 5:9] = 1.0
+    naive = base.copy()
+    naive[8:11, 8:11, 8:11] = 0.5
+    calibrated = base * 0.9
+    aligned = base * 0.98
+    scenario = generator.Scenario(
+        slug="visual_probe",
+        title="Visual probe",
+        description="Visual probe",
+        geometry_type="parallel",
+        geometry_dofs=("det_u_px",),
+        hidden_det_u_px=-3.0,
+    )
+    metrics = {
+        "naive_volume_nmse": generator._volume_nmse(naive, base),
+        "calibrated_volume_nmse": generator._volume_nmse(calibrated, base),
+        "aligned_tv_volume_nmse": generator._volume_nmse(aligned, base),
+    }
+    paths = generator._write_visuals(
+        scenario,
+        out_dir=tmp_path,
+        profile=generator.smoke_profile(),
+        theta_span=180.0,
+        truth=base,
+        naive_fbp=naive,
+        calibrated_fbp=calibrated,
+        aligned_tv=aligned,
+        estimates={
+            "det_u_px": -2.9,
+            "det_v_px": 0.0,
+            "detector_roll_deg": 0.0,
+            "axis_rot_x_deg": 0.0,
+            "axis_rot_y_deg": 0.0,
+        },
+        metrics=metrics,
+        diagnostics={"schema_version": 1, "overall_status": "converged", "blocks": []},
+        outer_stats=[
+            {
+                "loss_kind": "geometry_calibration",
+                "level_factor": 4,
+                "geometry_block": "detector_center",
+                "geometry_loss_before": 1.0,
+                "geometry_loss_after": 0.7,
+                "geometry_accepted": True,
+            },
+            {
+                "loss_kind": "geometry_calibration",
+                "level_factor": 4,
+                "geometry_block": "detector_center",
+                "geometry_loss_before": 0.7,
+                "geometry_loss_after": 0.5,
+                "geometry_accepted": False,
+            },
+        ],
+    )
+
+    expected = {
+        "inspection_panel",
+        "loss_panel",
+        "diagnostics_panel",
+        "difference_calibrated_truth_orthos",
+        "difference_aligned_truth_orthos",
+        "difference_aligned_naive_orthos",
+    }
+    assert expected <= set(paths)
+    assert paths["before_after_panel"] != ""
+    for key in expected | {"before_after_panel"}:
+        image = iio.imread(paths[key])
+        assert image.ndim == 3
+        assert image.shape[2] == 3
+    diff = iio.imread(paths["difference_aligned_naive_orthos"])
+    assert not np.array_equal(diff[..., 0], diff[..., 2])
+
+
+def test_write_naive_visuals_emits_reduced_rich_panel(tmp_path):
+    generator = _load_generator()
+    base = np.zeros((16, 16, 16), dtype=np.float32)
+    base[4:10, 5:9, 3:8] = 1.0
+    naive = np.roll(base, 1, axis=0)
+    scenario = generator.Scenario(
+        slug="naive_probe",
+        title="Naive probe",
+        description="Naive probe",
+        geometry_type="parallel",
+        geometry_dofs=(),
+    )
+
+    paths = generator._write_naive_visuals(
+        scenario,
+        out_dir=tmp_path,
+        truth=base,
+        naive_fbp=naive,
+    )
+
+    assert paths["inspection_panel"] == paths["before_after_panel"]
+    assert paths["diagnostics_panel"]
+    assert paths["difference_aligned_naive_orthos"]
+    for key in ("before_after_panel", "diagnostics_panel", "difference_aligned_naive_orthos"):
+        image = iio.imread(paths[key])
+        assert image.ndim == 3
+        assert image.shape[2] == 3

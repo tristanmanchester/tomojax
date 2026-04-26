@@ -6,7 +6,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import imageio.v3 as iio
 import jax
@@ -522,24 +522,70 @@ def _slice_yz(volume: np.ndarray) -> np.ndarray:
     return volume[volume.shape[0] // 2, :, :].T
 
 
+def _ortho_slices(volume: np.ndarray) -> dict[str, np.ndarray]:
+    return {
+        "XY": _slice_xy(volume),
+        "XZ": _slice_xz(volume),
+        "YZ": _slice_yz(volume),
+    }
+
+
 def _scale(image: np.ndarray) -> np.ndarray:
     return scale_to_uint8(image, lower_percentile=1.0, upper_percentile=99.7)
+
+
+def _to_rgb(image: np.ndarray) -> np.ndarray:
+    arr = np.asarray(image)
+    if arr.ndim == 2:
+        return np.repeat(arr[:, :, None], 3, axis=2).astype(np.uint8)
+    return arr.astype(np.uint8)
+
+
+def _scale_shared_gray(image: np.ndarray, lower: float, upper: float) -> np.ndarray:
+    if not np.isfinite(lower) or not np.isfinite(upper) or upper <= lower:
+        lower = float(np.nanmin(image))
+        upper = float(np.nanmax(image))
+    if upper <= lower:
+        return np.zeros((*image.shape, 3), dtype=np.uint8)
+    scaled = np.clip((np.asarray(image, dtype=np.float32) - lower) / (upper - lower), 0.0, 1.0)
+    gray = np.rint(scaled * 255.0).astype(np.uint8)
+    return _to_rgb(gray)
+
+
+def _scale_diverging(image: np.ndarray, clip: float) -> np.ndarray:
+    arr = np.asarray(image, dtype=np.float32)
+    if not np.isfinite(clip) or clip <= 1e-12:
+        clip = float(np.nanpercentile(np.abs(arr), 99.0))
+    if not np.isfinite(clip) or clip <= 1e-12:
+        return np.full((*arr.shape, 3), 245, dtype=np.uint8)
+    x = np.clip(arr / clip, -1.0, 1.0)
+    rgb = np.empty((*arr.shape, 3), dtype=np.float32)
+    pos = x >= 0
+    neg = ~pos
+    rgb[pos, 0] = 255.0
+    rgb[pos, 1] = 255.0 * (1.0 - x[pos])
+    rgb[pos, 2] = 255.0 * (1.0 - x[pos])
+    rgb[neg, 0] = 255.0 * (1.0 + x[neg])
+    rgb[neg, 1] = 255.0 * (1.0 + x[neg])
+    rgb[neg, 2] = 255.0
+    return np.rint(rgb).astype(np.uint8)
 
 
 def _label_bar(width: int, text: str, *, height: int = 28) -> np.ndarray:
     from PIL import Image, ImageDraw
 
-    img = Image.new("L", (width, height), 18)
+    img = Image.new("RGB", (width, height), (18, 18, 18))
     draw = ImageDraw.Draw(img)
-    draw.text((8, 7), text[:170], fill=238)
+    draw.text((8, 7), text[:170], fill=(238, 238, 238))
     return np.asarray(img, dtype=np.uint8)
 
 
 def _pad_to_height(image: np.ndarray, height: int) -> np.ndarray:
+    image = _to_rgb(image)
     if image.shape[0] == height:
         return image
-    out = np.full((height, image.shape[1]), 20, dtype=np.uint8)
-    out[: image.shape[0], : image.shape[1]] = image
+    out = np.full((height, image.shape[1], 3), 20, dtype=np.uint8)
+    out[: image.shape[0], : image.shape[1], :] = image
     return out
 
 
@@ -547,21 +593,22 @@ def _hstack(images: list[np.ndarray], *, pad: int = 6) -> np.ndarray:
     height = max(im.shape[0] for im in images)
     padded = [_pad_to_height(im, height) for im in images]
     width = sum(im.shape[1] for im in padded) + pad * (len(padded) - 1)
-    out = np.full((height, width), 20, dtype=np.uint8)
+    out = np.full((height, width, 3), 20, dtype=np.uint8)
     x = 0
     for image in padded:
-        out[:, x : x + image.shape[1]] = image
+        out[:, x : x + image.shape[1], :] = image
         x += image.shape[1] + pad
     return out
 
 
 def _vstack(images: list[np.ndarray], *, pad: int = 8) -> np.ndarray:
+    images = [_to_rgb(im) for im in images]
     width = max(im.shape[1] for im in images)
     height = sum(im.shape[0] for im in images) + pad * (len(images) - 1)
-    out = np.full((height, width), 20, dtype=np.uint8)
+    out = np.full((height, width, 3), 20, dtype=np.uint8)
     y = 0
     for image in images:
-        out[y : y + image.shape[0], : image.shape[1]] = image
+        out[y : y + image.shape[0], : image.shape[1], :] = image
         y += image.shape[0] + pad
     return out
 
@@ -571,65 +618,279 @@ def _volume_nmse(candidate: np.ndarray, truth: np.ndarray) -> float:
     return float(np.mean(np.square(candidate - truth)) / denom)
 
 
+def _text_panel(width: int, height: int, lines: Sequence[str], *, title: str = "") -> np.ndarray:
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (width, height), (24, 24, 24))
+    draw = ImageDraw.Draw(img)
+    y = 8
+    if title:
+        draw.text((10, y), title[:60], fill=(245, 245, 245))
+        y += 22
+    for line in lines:
+        if y > height - 18:
+            break
+        draw.text((10, y), str(line)[:72], fill=(220, 220, 220))
+        y += 18
+    return np.asarray(img, dtype=np.uint8)
+
+
+def _metric_text(value: Any) -> str:
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if not np.isfinite(val):
+        return "n/a"
+    return f"{val:.4g}"
+
+
+def _diagnostics_panel(
+    scenario: Scenario,
+    *,
+    profile: RunProfile,
+    theta_span: float,
+    estimates: dict[str, Any],
+    metrics: dict[str, float],
+    diagnostics: Any,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    status = _geometry_status_label(diagnostics)
+    hidden = _scenario_truth_payload(scenario)
+    lines = [
+        f"title: {scenario.title}",
+        f"dofs: {','.join(scenario.geometry_dofs) or 'none'}",
+        f"status: {status or 'control'}",
+        f"span/views: {theta_span:g} deg / {profile.views}",
+        f"levels: {' '.join(str(v) for v in profile.levels)}",
+        f"iters/early: {profile.outer_iters} / {profile.early_stop}",
+        "",
+        "hidden",
+        f"det_u={hidden['det_u_px']:.3g} det_v={hidden['det_v_px']:.3g}",
+        f"roll={hidden['detector_roll_deg']:.3g}",
+        f"axis=({hidden['axis_rot_x_deg']:.3g},{hidden['axis_rot_y_deg']:.3g})",
+        f"tilt true={hidden['true_tilt_deg']:.3g}",
+        "",
+        "estimated",
+        f"det_u={estimates.get('det_u_px', 0.0):.3g} det_v={estimates.get('det_v_px', 0.0):.3g}",
+        f"roll={estimates.get('detector_roll_deg', 0.0):.3g}",
+        f"axis=({estimates.get('axis_rot_x_deg', 0.0):.3g},{estimates.get('axis_rot_y_deg', 0.0):.3g})",
+        "",
+        "NMSE",
+        f"naive={_metric_text(metrics.get('naive_volume_nmse'))}",
+        f"calib={_metric_text(metrics.get('calibrated_volume_nmse'))}",
+        f"aligned={_metric_text(metrics.get('aligned_tv_volume_nmse'))}",
+    ]
+    return _text_panel(width, height, lines, title=scenario.slug)
+
+
+def _loss_panel(outer_stats: Sequence[Mapping[str, Any]], *, width: int = 360, height: int = 220) -> np.ndarray:
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (width, height), (245, 245, 245))
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 8), "geometry loss / initial loss by level", fill=(20, 20, 20))
+
+    stats = [
+        dict(stat)
+        for stat in outer_stats
+        if isinstance(stat, Mapping) and stat.get("loss_kind") == "geometry_calibration"
+    ]
+    if not stats:
+        draw.text((10, 42), "no geometry loss stats", fill=(80, 80, 80))
+        return np.asarray(img, dtype=np.uint8)
+
+    groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for stat in stats:
+        key = (int(stat.get("level_factor", 0)), str(stat.get("geometry_block", "geometry")))
+        groups.setdefault(key, []).append(stat)
+
+    left, top, right, bottom = 46, 34, width - 14, height - 34
+    draw.rectangle((left, top, right, bottom), outline=(180, 180, 180))
+    colors = [
+        (31, 119, 180),
+        (214, 39, 40),
+        (44, 160, 44),
+        (148, 103, 189),
+        (255, 127, 14),
+        (23, 190, 207),
+    ]
+    draw.text((10, top - 5), "1.0", fill=(80, 80, 80))
+    draw.text((12, bottom - 8), "0", fill=(80, 80, 80))
+    max_len = max(len(v) for v in groups.values())
+    legend_y = height - 28
+    for idx, ((level, block), items) in enumerate(sorted(groups.items(), reverse=True)):
+        color = colors[idx % len(colors)]
+        first = float(items[0].get("geometry_loss_before", items[0].get("geometry_loss_after", 1.0)))
+        if not np.isfinite(first) or abs(first) < 1e-12:
+            first = 1.0
+        points: list[tuple[int, int]] = []
+        for j, stat in enumerate(items):
+            loss = float(stat.get("geometry_loss_after", stat.get("geometry_loss_before", first)))
+            y_norm = np.clip(loss / first, 0.0, 1.2)
+            x = int(left + (right - left) * (j / max(1, max_len - 1)))
+            y = int(bottom - (bottom - top) * min(float(y_norm), 1.0))
+            points.append((x, y))
+            accepted = bool(stat.get("geometry_accepted", False))
+            r = 3
+            if accepted:
+                draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
+            else:
+                draw.line((x - r, y - r, x + r, y + r), fill=color)
+                draw.line((x - r, y + r, x + r, y - r), fill=color)
+        if len(points) > 1:
+            draw.line(points, fill=color, width=2)
+        label = f"L{level} {block}"[:22]
+        lx = 10 + (idx % 2) * 170
+        ly = legend_y + (idx // 2) * 14
+        if ly < height - 8:
+            draw.text((lx, ly), label, fill=color)
+    return np.asarray(img, dtype=np.uint8)
+
+
+def _shared_intensity_limits(volumes: Sequence[np.ndarray]) -> tuple[float, float]:
+    samples = np.concatenate([np.asarray(v, dtype=np.float32).reshape(-1) for v in volumes])
+    lower = float(np.nanpercentile(samples, 1.0))
+    upper = float(np.nanpercentile(samples, 99.7))
+    return lower, upper
+
+
+def _difference_clip(images: Sequence[np.ndarray]) -> float:
+    samples = np.concatenate([np.abs(np.asarray(v, dtype=np.float32)).reshape(-1) for v in images])
+    return float(np.nanpercentile(samples, 99.0))
+
+
+def _ortho_row(label: str, slices: dict[str, np.ndarray], *, lower: float, upper: float) -> np.ndarray:
+    cells = [_label_bar(110, label, height=slices["XY"].shape[0])]
+    cells.extend(_scale_shared_gray(slices[name], lower, upper) for name in ("XY", "XZ", "YZ"))
+    return _hstack(cells, pad=4)
+
+
+def _difference_row(label: str, slices: dict[str, np.ndarray], *, clip: float) -> np.ndarray:
+    cells = [_label_bar(110, label, height=slices["XY"].shape[0])]
+    cells.extend(_scale_diverging(slices[name], clip) for name in ("XY", "XZ", "YZ"))
+    return _hstack(cells, pad=4)
+
+
+def _header_row(slice_width: int) -> np.ndarray:
+    return _hstack(
+        [
+            _label_bar(110, ""),
+            _label_bar(slice_width, "XY"),
+            _label_bar(slice_width, "XZ"),
+            _label_bar(slice_width, "YZ"),
+        ],
+        pad=4,
+    )
+
+
 def _write_visuals(
     scenario: Scenario,
     *,
     out_dir: Path,
+    profile: RunProfile,
+    theta_span: float,
     truth: np.ndarray,
     naive_fbp: np.ndarray,
     calibrated_fbp: np.ndarray,
     aligned_tv: np.ndarray,
     estimates: dict[str, Any],
+    metrics: dict[str, float],
+    diagnostics: Any,
+    outer_stats: Sequence[Mapping[str, Any]],
 ) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    truth_xy = _scale(_slice_xy(truth))
-    naive_xy = _scale(_slice_xy(naive_fbp))
-    calibrated_xy = _scale(_slice_xy(calibrated_fbp))
-    tv_xy = _scale(_slice_xy(aligned_tv))
-    delta_xy = _scale(np.abs(_slice_xy(naive_fbp) - _slice_xy(calibrated_fbp)))
-    calibrated_orthos = _hstack(
-        [
-            _scale(_slice_xy(calibrated_fbp)),
-            _scale(_slice_xz(calibrated_fbp)),
-            _scale(_slice_yz(calibrated_fbp)),
-        ]
+    truth_s = _ortho_slices(truth)
+    naive_s = _ortho_slices(naive_fbp)
+    calibrated_s = _ortho_slices(calibrated_fbp)
+    aligned_s = _ortho_slices(aligned_tv)
+    diff_calib_truth = _ortho_slices(calibrated_fbp - truth)
+    diff_aligned_truth = _ortho_slices(aligned_tv - truth)
+    diff_aligned_naive = _ortho_slices(aligned_tv - naive_fbp)
+    lower, upper = _shared_intensity_limits([truth, naive_fbp, calibrated_fbp, aligned_tv])
+    diff_clip = _difference_clip(
+        list(diff_calib_truth.values())
+        + list(diff_aligned_truth.values())
+        + list(diff_aligned_naive.values())
     )
-    truth_orthos = _hstack([_scale(_slice_xy(truth)), _scale(_slice_xz(truth)), _scale(_slice_yz(truth))])
-    header = _hstack(
+    grid_panel = _vstack(
         [
-            _label_bar(truth_xy.shape[1], "truth"),
-            _label_bar(naive_xy.shape[1], "naive FBP"),
-            _label_bar(calibrated_xy.shape[1], "calibrated FBP"),
-            _label_bar(tv_xy.shape[1], "aligned TV"),
-            _label_bar(delta_xy.shape[1], "naive/calib delta"),
+            _header_row(truth_s["XY"].shape[1]),
+            _ortho_row("truth", truth_s, lower=lower, upper=upper),
+            _ortho_row("naive FBP", naive_s, lower=lower, upper=upper),
+            _ortho_row("calib FBP", calibrated_s, lower=lower, upper=upper),
+            _ortho_row("aligned TV", aligned_s, lower=lower, upper=upper),
+            _difference_row("calib-truth", diff_calib_truth, clip=diff_clip),
+            _difference_row("aligned-truth", diff_aligned_truth, clip=diff_clip),
+            _difference_row("aligned-naive", diff_aligned_naive, clip=diff_clip),
         ],
-        pad=6,
+        pad=3,
     )
-    body = _hstack([truth_xy, naive_xy, calibrated_xy, tv_xy, delta_xy])
+    loss_panel = _loss_panel(outer_stats, width=360, height=220)
+    diagnostics_panel = _diagnostics_panel(
+        scenario,
+        profile=profile,
+        theta_span=theta_span,
+        estimates=estimates,
+        metrics=metrics,
+        diagnostics=diagnostics,
+        width=360,
+        height=max(220, grid_panel.shape[0] - loss_panel.shape[0] - 6),
+    )
+    side_panel = _vstack([loss_panel, diagnostics_panel], pad=6)
     subtitle = (
         f"{scenario.slug} | {scenario.title} | dofs={','.join(scenario.geometry_dofs) or 'none'} | "
         f"est det_u={estimates.get('det_u_px', 0.0):.3g} roll={estimates.get('detector_roll_deg', 0.0):.3g} "
         f"axis=({estimates.get('axis_rot_x_deg', 0.0):.3g},{estimates.get('axis_rot_y_deg', 0.0):.3g})"
     )
-    panel = _vstack([_label_bar(body.shape[1], subtitle), header, body], pad=0)
+    body = _hstack([grid_panel, side_panel], pad=8)
+    panel = _vstack([_label_bar(body.shape[1], subtitle), body], pad=0)
+    truth_xy = _scale(_slice_xy(truth))
+    naive_xy = _scale(_slice_xy(naive_fbp))
+    calibrated_xy = _scale(_slice_xy(calibrated_fbp))
+    tv_xy = _scale(_slice_xy(aligned_tv))
+    truth_orthos = _hstack([_scale(truth_s[name]) for name in ("XY", "XZ", "YZ")])
+    calibrated_orthos = _hstack([_scale(calibrated_s[name]) for name in ("XY", "XZ", "YZ")])
+    diff_calib_truth_panel = _hstack(
+        [_scale_diverging(diff_calib_truth[name], diff_clip) for name in ("XY", "XZ", "YZ")]
+    )
+    diff_aligned_truth_panel = _hstack(
+        [_scale_diverging(diff_aligned_truth[name], diff_clip) for name in ("XY", "XZ", "YZ")]
+    )
+    diff_aligned_naive_panel = _hstack(
+        [_scale_diverging(diff_aligned_naive[name], diff_clip) for name in ("XY", "XZ", "YZ")]
+    )
     paths = {
         "truth_xy": str(out_dir / "truth_xy.png"),
         "naive_fbp_xy": str(out_dir / "naive_fbp_xy.png"),
         "calibrated_fbp_xy": str(out_dir / "calibrated_fbp_xy.png"),
         "aligned_tv_xy": str(out_dir / "aligned_tv_xy.png"),
         "before_after_panel": str(out_dir / "before_after_panel.png"),
+        "inspection_panel": str(out_dir / "inspection_panel.png"),
+        "loss_panel": str(out_dir / "loss_panel.png"),
+        "diagnostics_panel": str(out_dir / "diagnostics_panel.png"),
         "truth_orthos": str(out_dir / "truth_orthos.png"),
         "calibrated_orthos": str(out_dir / "calibrated_fbp_orthos.png"),
         "absolute_difference_xy": str(out_dir / "absolute_difference_xy.png"),
+        "difference_calibrated_truth_orthos": str(out_dir / "difference_calibrated_truth_orthos.png"),
+        "difference_aligned_truth_orthos": str(out_dir / "difference_aligned_truth_orthos.png"),
+        "difference_aligned_naive_orthos": str(out_dir / "difference_aligned_naive_orthos.png"),
     }
     iio.imwrite(paths["truth_xy"], truth_xy)
     iio.imwrite(paths["naive_fbp_xy"], naive_xy)
     iio.imwrite(paths["calibrated_fbp_xy"], calibrated_xy)
     iio.imwrite(paths["aligned_tv_xy"], tv_xy)
     iio.imwrite(paths["before_after_panel"], panel)
+    iio.imwrite(paths["inspection_panel"], panel)
+    iio.imwrite(paths["loss_panel"], loss_panel)
+    iio.imwrite(paths["diagnostics_panel"], diagnostics_panel)
     iio.imwrite(paths["truth_orthos"], truth_orthos)
     iio.imwrite(paths["calibrated_orthos"], calibrated_orthos)
-    iio.imwrite(paths["absolute_difference_xy"], delta_xy)
+    iio.imwrite(paths["absolute_difference_xy"], diff_calib_truth_panel)
+    iio.imwrite(paths["difference_calibrated_truth_orthos"], diff_calib_truth_panel)
+    iio.imwrite(paths["difference_aligned_truth_orthos"], diff_aligned_truth_panel)
+    iio.imwrite(paths["difference_aligned_naive_orthos"], diff_aligned_naive_panel)
     return paths
 
 
@@ -641,46 +902,68 @@ def _write_naive_visuals(
     naive_fbp: np.ndarray,
 ) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    truth_xy = _scale(_slice_xy(truth))
-    naive_xy = _scale(_slice_xy(naive_fbp))
-    diff_xy = _scale(np.abs(_slice_xy(truth) - _slice_xy(naive_fbp)))
-    truth_orthos = _hstack(
-        [_scale(_slice_xy(truth)), _scale(_slice_xz(truth)), _scale(_slice_yz(truth))]
-    )
-    naive_orthos = _hstack(
-        [_scale(_slice_xy(naive_fbp)), _scale(_slice_xz(naive_fbp)), _scale(_slice_yz(naive_fbp))]
-    )
-    header = _hstack(
+    truth_s = _ortho_slices(truth)
+    naive_s = _ortho_slices(naive_fbp)
+    diff_s = _ortho_slices(naive_fbp - truth)
+    lower, upper = _shared_intensity_limits([truth, naive_fbp])
+    diff_clip = _difference_clip(list(diff_s.values()))
+    grid_panel = _vstack(
         [
-            _label_bar(truth_xy.shape[1], "truth"),
-            _label_bar(naive_xy.shape[1], "naive FBP"),
-            _label_bar(diff_xy.shape[1], "abs truth/naive diff"),
+            _header_row(truth_s["XY"].shape[1]),
+            _ortho_row("truth", truth_s, lower=lower, upper=upper),
+            _ortho_row("naive FBP", naive_s, lower=lower, upper=upper),
+            _difference_row("naive-truth", diff_s, clip=diff_clip),
         ],
-        pad=6,
+        pad=3,
     )
-    body = _hstack([truth_xy, naive_xy, diff_xy])
+    diagnostics_panel = _text_panel(
+        360,
+        grid_panel.shape[0],
+        [
+            scenario.title,
+            f"dofs: {','.join(scenario.geometry_dofs) or 'none'}",
+            f"hidden det_u={scenario.hidden_det_u_px:g}",
+            f"hidden roll={scenario.hidden_detector_roll_deg:g}",
+            f"hidden axis=({scenario.hidden_axis_rot_x_deg:g},{scenario.hidden_axis_rot_y_deg:g})",
+        ],
+        title=scenario.slug,
+    )
+    body = _hstack([grid_panel, diagnostics_panel], pad=8)
     subtitle = (
         f"{scenario.slug} | {scenario.title} | hidden "
         f"det_u={scenario.hidden_det_u_px:g} roll={scenario.hidden_detector_roll_deg:g} "
         f"axis=({scenario.hidden_axis_rot_x_deg:g},{scenario.hidden_axis_rot_y_deg:g})"
     )
-    panel = _vstack([_label_bar(body.shape[1], subtitle), header, body], pad=0)
+    panel = _vstack([_label_bar(body.shape[1], subtitle), body], pad=0)
+    truth_xy = _scale(_slice_xy(truth))
+    naive_xy = _scale(_slice_xy(naive_fbp))
+    truth_orthos = _hstack([_scale(truth_s[name]) for name in ("XY", "XZ", "YZ")])
+    naive_orthos = _hstack([_scale(naive_s[name]) for name in ("XY", "XZ", "YZ")])
+    diff_panel = _hstack([_scale_diverging(diff_s[name], diff_clip) for name in ("XY", "XZ", "YZ")])
     paths = {
         "truth_xy": str(out_dir / "truth_xy.png"),
         "naive_fbp_xy": str(out_dir / "naive_fbp_xy.png"),
         "calibrated_fbp_xy": "",
         "aligned_tv_xy": "",
         "before_after_panel": str(out_dir / "truth_vs_naive_panel.png"),
+        "inspection_panel": str(out_dir / "truth_vs_naive_panel.png"),
+        "loss_panel": "",
+        "diagnostics_panel": str(out_dir / "diagnostics_panel.png"),
         "truth_orthos": str(out_dir / "truth_orthos.png"),
         "calibrated_orthos": str(out_dir / "naive_fbp_orthos.png"),
         "absolute_difference_xy": str(out_dir / "truth_naive_absolute_difference_xy.png"),
+        "difference_calibrated_truth_orthos": "",
+        "difference_aligned_truth_orthos": "",
+        "difference_aligned_naive_orthos": str(out_dir / "difference_naive_truth_orthos.png"),
     }
     iio.imwrite(paths["truth_xy"], truth_xy)
     iio.imwrite(paths["naive_fbp_xy"], naive_xy)
     iio.imwrite(paths["before_after_panel"], panel)
+    iio.imwrite(paths["diagnostics_panel"], diagnostics_panel)
     iio.imwrite(paths["truth_orthos"], truth_orthos)
     iio.imwrite(paths["calibrated_orthos"], naive_orthos)
-    iio.imwrite(paths["absolute_difference_xy"], diff_xy)
+    iio.imwrite(paths["absolute_difference_xy"], diff_panel)
+    iio.imwrite(paths["difference_aligned_naive_orthos"], diff_panel)
     return paths
 
 
@@ -921,6 +1204,7 @@ def _run_scenario(
         info["geometry_calibration_diagnostics"] = summarize_geometry_calibration_stats(
             info.get("outer_stats", [])
         )
+    diagnostics = info.get("geometry_calibration_diagnostics", {})
 
     calibrated_geometry = geometry_with_axis_state(nominal_geometry, grid, detector, state)
     calibrated_det_grid = level_detector_grid(detector, state=state, factor=1)
@@ -935,14 +1219,24 @@ def _run_scenario(
     )
 
     estimates = _state_values(state)
+    metrics = {
+        "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
+        "calibrated_volume_nmse": _volume_nmse(calibrated_fbp, truth),
+        "aligned_tv_volume_nmse": _volume_nmse(aligned_tv, truth),
+    }
     visual_paths = _write_visuals(
         scenario,
         out_dir=out_dir,
+        profile=profile,
+        theta_span=theta_span,
         truth=truth,
         naive_fbp=naive_fbp,
         calibrated_fbp=calibrated_fbp,
         aligned_tv=aligned_tv,
         estimates=estimates,
+        metrics=metrics,
+        diagnostics=diagnostics,
+        outer_stats=info.get("outer_stats", []),
     )
     elapsed = time.time() - start_time
     row: dict[str, Any] = {
@@ -957,14 +1251,12 @@ def _run_scenario(
         "supplied_corrections_json": json.dumps(supplied, sort_keys=True),
         "estimates_json": json.dumps(estimates, sort_keys=True),
         "geometry_diagnostics_json": json.dumps(
-            info.get("geometry_calibration_diagnostics", {}), sort_keys=True
+            diagnostics, sort_keys=True
         ),
-        "geometry_status": _geometry_status_label(
-            info.get("geometry_calibration_diagnostics", {})
-        ),
-        "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
-        "calibrated_volume_nmse": _volume_nmse(calibrated_fbp, truth),
-        "aligned_tv_volume_nmse": _volume_nmse(aligned_tv, truth),
+        "geometry_status": _geometry_status_label(diagnostics),
+        "naive_volume_nmse": metrics["naive_volume_nmse"],
+        "calibrated_volume_nmse": metrics["calibrated_volume_nmse"],
+        "aligned_tv_volume_nmse": metrics["aligned_tv_volume_nmse"],
         "total_outer_iters": int(info.get("total_outer_iters", 0)),
         "elapsed_sec": elapsed,
         "error": "",
@@ -991,13 +1283,9 @@ def _run_scenario(
         "final_calibrated_geometry": estimates,
         "parameter_provenance": provenance,
         "calibration_state": info.get("geometry_calibration_state"),
-        "geometry_calibration_diagnostics": info.get("geometry_calibration_diagnostics", {}),
+        "geometry_calibration_diagnostics": diagnostics,
         "outer_stats": info.get("outer_stats", []),
-        "metrics": {
-            "naive_volume_nmse": row["naive_volume_nmse"],
-            "calibrated_volume_nmse": row["calibrated_volume_nmse"],
-            "aligned_tv_volume_nmse": row["aligned_tv_volume_nmse"],
-        },
+        "metrics": metrics,
         "artifacts": visual_paths,
         "elapsed_sec": elapsed,
     }
@@ -1032,14 +1320,26 @@ def _write_summary(rows: list[dict[str, Any]], summary_path: Path) -> None:
 def _write_master_panel(rows: list[dict[str, Any]], master_path: Path) -> None:
     panels: list[np.ndarray] = []
     for row in rows:
-        panel_path = row.get("before_after_panel")
+        panel_path = row.get("inspection_panel") or row.get("before_after_panel")
         if not isinstance(panel_path, str) or not panel_path.strip():
             continue
         path = Path(panel_path)
         if path.is_file():
-            panels.append(iio.imread(path))
+            panels.append(_resize_for_master(iio.imread(path), width=1200))
     if panels:
         iio.imwrite(master_path, _vstack(panels, pad=10))
+
+
+def _resize_for_master(image: np.ndarray, *, width: int) -> np.ndarray:
+    from PIL import Image
+
+    arr = _to_rgb(image)
+    if arr.shape[1] <= width:
+        return arr
+    scale = float(width) / float(arr.shape[1])
+    height = max(1, int(round(arr.shape[0] * scale)))
+    pil = Image.fromarray(arr)
+    return np.asarray(pil.resize((int(width), height), Image.Resampling.LANCZOS), dtype=np.uint8)
 
 
 def run(args: argparse.Namespace) -> None:
