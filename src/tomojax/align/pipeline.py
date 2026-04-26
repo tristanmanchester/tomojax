@@ -1928,6 +1928,7 @@ def _optimize_setup_geometry_bilevel_for_level(
         checkpoint_projector=bool(cfg.checkpoint_projector),
         projector_unroll=int(cfg.projector_unroll),
         gather_dtype=str(cfg.gather_dtype),
+        views_per_batch=max(1, int(cfg.views_per_batch)),
     )
 
     def reconstruct_fold(
@@ -1960,16 +1961,34 @@ def _optimize_setup_geometry_bilevel_for_level(
         checkpoint_projector=bool(cfg.checkpoint_projector),
         projector_unroll=int(cfg.projector_unroll),
         gather_dtype=str(cfg.gather_dtype),
+        views_per_batch=max(1, int(cfg.views_per_batch)),
     )
 
     def objective_fn(candidate_state: AlignmentState) -> jnp.ndarray:
         return objective.evaluate(candidate_state).value
 
-    loss_before = float(objective_fn(alignment_state))
+    def objective_value_fn(z: jnp.ndarray) -> jnp.ndarray:
+        return objective.value_for_active_z(
+            frozen_state=alignment_state,
+            view=active_view,
+            z=z,
+        )
+
+    def objective_value_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        return objective.finite_difference_value_and_grad_for_active_z(
+            frozen_state=alignment_state,
+            view=active_view,
+            z=z,
+            eps=1e-2,
+        )
+
+    loss_before = float(objective_value_fn(active_view.pack(alignment_state)))
     opt_result = run_active_lbfgs(
         state=alignment_state,
         view=active_view,
         objective_fn=objective_fn,
+        objective_value_fn=objective_value_fn,
+        objective_value_and_grad_fn=objective_value_and_grad_fn,
         cfg=ActiveLbfgsConfig(
             maxiter=max(1, int(cfg.outer_iters)),
             ftol=float(cfg.lbfgs_ftol),
@@ -2019,6 +2038,14 @@ def _optimize_setup_geometry_bilevel_for_level(
             "geometry_outer_idx": 1,
             "objective_kind": "bilevel_cv",
             "objective_provenance": objective.provenance.to_dict(),
+            "views_per_batch": max(1, int(cfg.views_per_batch)),
+            "n_folds": int(folds.n_folds),
+            "fold_eval_mode": "sequential_finite_difference_value_and_grad",
+            "recon_differentiation_mode": str(recon_cfg.differentiation_mode),
+            "recon_projection_chunked": True,
+            "validation_projection_chunked": True,
+            "active_gradient_mode": "central_finite_difference",
+            "active_gradient_eps": 1e-2,
         }
     )
     return x_next, next_geometry_state, [stats]

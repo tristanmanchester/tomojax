@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align import recon_layer as recon_layer_module
 from tomojax.align.recon_layer import ReconLayer, ReconLayerConfig
 from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
@@ -66,6 +67,47 @@ def test_fista_core_arrays_matches_public_fista_for_small_fixed_l_case():
     np.testing.assert_allclose(np.asarray(core.x), np.asarray(public), atol=1e-5, rtol=1e-5)
 
 
+def test_fista_core_views_per_batch_preserves_reconstruction_values():
+    grid, detector, geometry, _volume, projections = _case(n_views=6)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    effective = apply_alignment_state(base, state)
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    streamed = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=FistaCoreConfig(
+            iters=2,
+            lambda_tv=0.0,
+            L=100.0,
+            checkpoint_projector=False,
+            views_per_batch=1,
+        ),
+    )
+    batched = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=FistaCoreConfig(
+            iters=2,
+            lambda_tv=0.0,
+            L=100.0,
+            checkpoint_projector=False,
+            views_per_batch=6,
+        ),
+    )
+
+    np.testing.assert_allclose(np.asarray(streamed.x), np.asarray(batched.x), atol=1e-5, rtol=1e-5)
+
+
 def test_recon_layer_unrolled_mode_returns_diagnostics():
     grid, detector, geometry, _volume, projections = _case()
     base = BaseGeometryArrays.from_geometry(geometry, detector)
@@ -89,6 +131,43 @@ def test_recon_layer_unrolled_mode_returns_diagnostics():
     assert result.info["differentiation_mode"] == "unrolled"
     assert result.info["inner_regulariser"] == "huber_tv"
     assert result.info["effective_iters"] == 3
+
+
+def test_recon_layer_passes_views_per_batch_to_core(monkeypatch):
+    grid, detector, geometry, _volume, projections = _case()
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    captured: dict[str, int] = {}
+
+    def fake_core(*, x0, T_all, det_grid, projections, grid, detector, cfg, view_weights=None):
+        del T_all, det_grid, projections, grid, detector, view_weights
+        captured["views_per_batch"] = int(cfg.views_per_batch)
+        return recon_layer_module.FistaCoreResult(
+            x=jnp.asarray(x0),
+            loss=jnp.zeros((int(cfg.iters),), dtype=jnp.float32),
+            data_loss=jnp.asarray(0.0, dtype=jnp.float32),
+            regulariser_value=jnp.asarray(0.0, dtype=jnp.float32),
+            effective_iters=jnp.asarray(int(cfg.iters), dtype=jnp.int32),
+            status="ok",
+        )
+
+    monkeypatch.setattr(recon_layer_module, "fista_tv_core_arrays", fake_core)
+    layer = ReconLayer(
+        base=base,
+        grid=grid,
+        detector=detector,
+        config=ReconLayerConfig(
+            iters=1,
+            lambda_tv=0.0,
+            L=100.0,
+            checkpoint_projector=False,
+            views_per_batch=3,
+        ),
+    )
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+
+    layer.reconstruct(state=state, projections=projections)
+
+    assert captured["views_per_batch"] == 3
 
 
 def test_recon_layer_is_differentiable_through_detector_center():

@@ -469,6 +469,9 @@ def run_active_lbfgs(
     state: AlignmentState,
     view: ActiveParameterView,
     objective_fn: Callable[[AlignmentState], jnp.ndarray],
+    objective_value_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    objective_value_and_grad_fn: Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
+    | None = None,
     cfg: ActiveLbfgsConfig = ActiveLbfgsConfig(),
 ) -> ActiveOptimizerResult:
     """Run Optax L-BFGS over a unified whitened active-state vector."""
@@ -482,10 +485,25 @@ def run_active_lbfgs(
         return view.unpack(state, z_candidate)
 
     def _objective(u_candidate: jnp.ndarray) -> jnp.ndarray:
-        value = objective_fn(_state_from_u(u_candidate))
+        z_candidate = bounds_transform.from_unconstrained(u_candidate)
+        value = (
+            objective_value_fn(z_candidate)
+            if objective_value_fn is not None
+            else objective_fn(view.unpack(state, z_candidate))
+        )
         return jnp.where(jnp.isfinite(value), value, jnp.asarray(1e30, dtype=jnp.float32))
 
-    value_and_grad = jax.value_and_grad(_objective)
+    def _value_and_grad(u_candidate: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        if objective_value_and_grad_fn is None:
+            return jax.value_and_grad(_objective)(u_candidate)
+        z_candidate, z_pullback = jax.vjp(bounds_transform.from_unconstrained, u_candidate)
+        value, grad_z = objective_value_and_grad_fn(z_candidate)
+        grad_u = z_pullback(grad_z)[0]
+        value = jnp.where(jnp.isfinite(value), value, jnp.asarray(1e30, dtype=jnp.float32))
+        grad_u = jnp.where(jnp.isfinite(grad_u), grad_u, jnp.zeros_like(grad_u))
+        return value, grad_u
+
+    value_and_grad = _value_and_grad
     initial_value, initial_grad = value_and_grad(u)
     initial_loss = float(initial_value)
     initial_grad_norm = float(jnp.linalg.norm(initial_grad))
@@ -554,7 +572,10 @@ def run_active_lbfgs(
     if not accepted:
         final_state = state
         final_loss = initial_loss
-    z_grad = jax.grad(lambda z: objective_fn(view.unpack(state, z)))(view.pack(state))
+    if objective_value_and_grad_fn is None:
+        z_grad = jax.grad(lambda z: objective_fn(view.unpack(state, z)))(view.pack(state))
+    else:
+        _, z_grad = objective_value_and_grad_fn(view.pack(state))
     stats = {
         "optimizer": "lbfgs",
         "optimizer_backend": "optax",

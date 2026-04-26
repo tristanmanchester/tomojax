@@ -10,7 +10,12 @@ import jax.scipy as jsp
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 from tomojax.recon._tv_ops import huber_tv_value, isotropic_tv_value
-from tomojax.recon.fista_tv_core import FistaCoreConfig, FistaCoreResult, fista_tv_core_arrays
+from tomojax.recon.fista_tv_core import (
+    FistaCoreConfig,
+    FistaCoreResult,
+    _projection_loss,
+    fista_tv_core_arrays,
+)
 
 from .geometry_applier import BaseGeometryArrays, apply_alignment_state
 from .state import AlignmentState
@@ -31,6 +36,7 @@ class ReconLayerConfig:
     checkpoint_projector: bool = True
     projector_unroll: int = 1
     gather_dtype: str = "fp32"
+    views_per_batch: int = 1
     implicit_cg_iters: int = 32
     implicit_cg_tol: float = 1e-3
     implicit_damping: float = 1e-4
@@ -79,6 +85,7 @@ class ReconLayer:
             checkpoint_projector=bool(self.config.checkpoint_projector),
             projector_unroll=int(self.config.projector_unroll),
             gather_dtype=str(self.config.gather_dtype),
+            views_per_batch=max(1, int(self.config.views_per_batch)),
         )
         y = jnp.asarray(projections, dtype=jnp.float32)
         if self.config.differentiation_mode == "implicit":
@@ -199,20 +206,19 @@ def _implicit_reconstruct_arrays(
         x_star, T, u, v, y = res
 
         def objective_x(x: jnp.ndarray, T_arg: jnp.ndarray, u_arg: jnp.ndarray, v_arg: jnp.ndarray):
-            pred = jax.vmap(
-                lambda pose: forward_project_view_T(
-                    pose,
-                    grid,
-                    detector,
-                    x,
-                    use_checkpoint=bool(cfg.checkpoint_projector),
-                    unroll=int(cfg.projector_unroll),
-                    gather_dtype=str(cfg.gather_dtype),
-                    det_grid=(u_arg, v_arg),
-                )
-            )(T_arg)
-            resid = (pred - y).astype(jnp.float32) * weights
-            data = jnp.float32(0.5) * jnp.vdot(resid, resid).real
+            data = _projection_loss(
+                T_all=T_arg,
+                grid=grid,
+                detector=detector,
+                volume=x,
+                det_grid=(u_arg, v_arg),
+                projections=y,
+                weights=weights,
+                checkpoint_projector=bool(cfg.checkpoint_projector),
+                projector_unroll=int(cfg.projector_unroll),
+                gather_dtype=str(cfg.gather_dtype),
+                views_per_batch=int(cfg.views_per_batch),
+            )
             if cfg.lambda_tv == 0.0:
                 return data
             reg = (
