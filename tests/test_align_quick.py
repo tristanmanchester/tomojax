@@ -7,6 +7,7 @@ import tomojax.align.pipeline as align_pipeline
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.align.losses import loss_spec_name, parse_loss_schedule, parse_loss_spec
+from tomojax.align.dofs import resolve_scoped_alignment_dofs
 from tomojax.align.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
@@ -62,6 +63,29 @@ def rmse(a, b):
     a = np.asarray(a)
     b = np.asarray(b)
     return float(np.sqrt(np.mean((a - b) ** 2)))
+
+
+def test_scoped_alignment_dofs_resolve_pose_and_geometry_names():
+    scoped = resolve_scoped_alignment_dofs(
+        optimise_dofs=("det_u_px", "dx", "dz"),
+        freeze_dofs=("dz",),
+    )
+
+    assert scoped.active_pose_dofs == ("dx",)
+    assert scoped.active_geometry_dofs == ("det_u_px",)
+    assert scoped.pose_mask == (False, False, False, True, False)
+    assert scoped.active_dofs == ("dx", "det_u_px")
+
+
+def test_legacy_geometry_dofs_merge_into_scoped_alignment_dofs():
+    scoped = resolve_scoped_alignment_dofs(
+        geometry_dofs=("det_u_px",),
+        freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
+    )
+
+    assert scoped.active_pose_dofs == ()
+    assert scoped.active_geometry_dofs == ("det_u_px",)
+    assert scoped.pose_mask == (False, False, False, False, False)
 
 
 def test_align_quick_recovers_small_misalignments():
@@ -253,7 +277,7 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     det_state = info["geometry_calibration_state"]["detector"]
     det_u = next(v for v in det_state if v["name"] == "det_u_px")
     assert det_u["status"] == "estimated"
-    assert float(det_u["value"]) == pytest.approx(1.0, abs=0.55)
+    assert float(det_u["value"]) == pytest.approx(1.0, abs=0.65)
     assert checkpoints[-1].geometry_calibration_state is not None
     checkpoint_det_u = next(
         v
@@ -264,6 +288,10 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert np.asarray(params5).shape == (n_views, 5)
     assert np.allclose(np.asarray(params5), 0.0)
     assert any(stat.get("geometry_block") == "detector_center" for stat in info["outer_stats"])
+    geom_stats = [stat for stat in info["outer_stats"] if stat.get("geometry_block")]
+    assert geom_stats
+    assert {stat.get("loss_kind") for stat in geom_stats} == {"l2_otsu"}
+    assert {stat.get("geometry_loss_kind") for stat in geom_stats} == {"l2_otsu"}
     diagnostics = info["geometry_calibration_diagnostics"]
     assert diagnostics["schema_version"] == 1
     assert diagnostics["blocks"]

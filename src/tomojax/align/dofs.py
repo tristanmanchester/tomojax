@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 import math
 
 import jax.numpy as jnp
@@ -8,7 +9,37 @@ import jax.numpy as jnp
 
 DOF_NAMES = ("alpha", "beta", "phi", "dx", "dz")
 DOF_INDEX = {name: idx for idx, name in enumerate(DOF_NAMES)}
+GEOMETRY_DOF_NAMES = (
+    "det_u_px",
+    "det_v_px",
+    "detector_roll_deg",
+    "axis_rot_x_deg",
+    "axis_rot_y_deg",
+    "tilt_deg",
+)
+GEOMETRY_DOF_INDEX = {name: idx for idx, name in enumerate(GEOMETRY_DOF_NAMES)}
+ALL_ALIGNMENT_DOF_NAMES = DOF_NAMES + GEOMETRY_DOF_NAMES
+ALL_ALIGNMENT_DOF_INDEX = {name: idx for idx, name in enumerate(ALL_ALIGNMENT_DOF_NAMES)}
 type DofBounds = tuple[tuple[str, float, float], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedAlignmentDofs:
+    """Resolved public alignment DOFs split into pose and geometry scopes."""
+
+    active_pose_dofs: tuple[str, ...]
+    active_geometry_dofs: tuple[str, ...]
+    frozen_pose_dofs: tuple[str, ...]
+    frozen_geometry_dofs: tuple[str, ...]
+
+    @property
+    def pose_mask(self) -> tuple[bool, bool, bool, bool, bool]:
+        active = set(self.active_pose_dofs)
+        return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
+
+    @property
+    def active_dofs(self) -> tuple[str, ...]:
+        return self.active_pose_dofs + self.active_geometry_dofs
 
 
 def _iter_dof_tokens(value: str | Iterable[str] | None) -> Iterable[str]:
@@ -44,6 +75,106 @@ def normalize_dofs(
         seen.add(name)
         names.append(name)
     return tuple(names)
+
+
+def _tilt_alias_for_geometry(geometry: object | None) -> str:
+    if geometry is None:
+        return "tilt_deg"
+    tilt_about = getattr(geometry, "tilt_about", "x")
+    return "axis_rot_y_deg" if str(tilt_about) == "z" else "axis_rot_x_deg"
+
+
+def normalize_alignment_dofs(
+    value: str | Iterable[str] | None,
+    *,
+    option_name: str = "dofs",
+    geometry: object | None = None,
+) -> tuple[str, ...]:
+    """Normalize public alignment DOFs across pose and geometry scopes."""
+    names: list[str] = []
+    seen: set[str] = set()
+    valid = ", ".join(ALL_ALIGNMENT_DOF_NAMES)
+    for raw in _iter_dof_tokens(value):
+        name = str(raw).strip().lower()
+        if not name:
+            continue
+        if name == "tilt_deg":
+            name = _tilt_alias_for_geometry(geometry)
+        if name not in ALL_ALIGNMENT_DOF_INDEX and name != "tilt_deg":
+            raise ValueError(
+                f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
+            )
+        if name in seen:
+            raise ValueError(f"Duplicate alignment DOF for {option_name}: {name!r}")
+        seen.add(name)
+        names.append(name)
+    return tuple(names)
+
+
+def resolve_scoped_alignment_dofs(
+    *,
+    optimise_dofs: str | Iterable[str] | None = None,
+    freeze_dofs: str | Iterable[str] | None = None,
+    geometry_dofs: str | Iterable[str] | None = None,
+    geometry: object | None = None,
+) -> ScopedAlignmentDofs:
+    """Resolve effective active/frozen alignment DOFs into pose and geometry scopes."""
+    optimise = (
+        None
+        if optimise_dofs is None
+        else normalize_alignment_dofs(
+            optimise_dofs,
+            option_name="optimise_dofs",
+            geometry=geometry,
+        )
+    )
+    legacy_geometry = normalize_alignment_dofs(
+        geometry_dofs,
+        option_name="geometry_dofs",
+        geometry=geometry,
+    )
+    for name in legacy_geometry:
+        if name in DOF_INDEX:
+            raise ValueError(
+                f"Pose DOF {name!r} is not valid for geometry_dofs; "
+                f"valid geometry DOFs: {', '.join(GEOMETRY_DOF_NAMES)}"
+            )
+    freeze = normalize_alignment_dofs(
+        freeze_dofs,
+        option_name="freeze_dofs",
+        geometry=geometry,
+    )
+    frozen = set(freeze)
+
+    if optimise is None:
+        base = DOF_NAMES + legacy_geometry
+    else:
+        base = optimise + tuple(name for name in legacy_geometry if name not in optimise)
+
+    active: list[str] = []
+    seen: set[str] = set()
+    for name in base:
+        if name in frozen or name in seen:
+            continue
+        seen.add(name)
+        active.append(name)
+
+    if not active:
+        raise ValueError(
+            "No active alignment DOFs remain after applying optimise_dofs/freeze_dofs; "
+            f"valid DOFs: {', '.join(ALL_ALIGNMENT_DOF_NAMES)}"
+        )
+
+    active_pose = tuple(name for name in DOF_NAMES if name in active)
+    active_geometry = tuple(name for name in GEOMETRY_DOF_NAMES if name in active)
+    frozen_pose = tuple(name for name in DOF_NAMES if name in frozen)
+    frozen_geometry = tuple(name for name in GEOMETRY_DOF_NAMES if name in frozen)
+    return ScopedAlignmentDofs(
+        active_pose_dofs=active_pose,
+        active_geometry_dofs=active_geometry,
+        frozen_pose_dofs=frozen_pose,
+        frozen_geometry_dofs=frozen_geometry,
+    )
 
 
 def _parse_bound_float(raw: object, *, option_name: str, dof_name: str) -> float:

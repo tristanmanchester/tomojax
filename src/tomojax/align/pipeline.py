@@ -27,11 +27,10 @@ from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
 from .dofs import (
     DofBounds,
-    active_dof_mask,
-    active_dofs,
     bounds_vectors,
+    normalize_alignment_dofs,
     normalize_bounds,
-    normalize_dofs,
+    resolve_scoped_alignment_dofs,
 )
 from .losses import (
     L2OtsuLossSpec,
@@ -76,27 +75,31 @@ ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverActio
 
 
 def _active_dof_mask_for_cfg(cfg: "AlignConfig") -> tuple[bool, bool, bool, bool, bool]:
-    try:
-        return active_dof_mask(
-            optimise_dofs=cfg.optimise_dofs,
-            freeze_dofs=cfg.freeze_dofs,
-        )
-    except ValueError:
-        if cfg.geometry_dofs:
-            return (False, False, False, False, False)
-        raise
+    return _scoped_dofs_for_cfg(cfg).pose_mask
 
 
 def _active_dofs_for_cfg(cfg: "AlignConfig") -> tuple[str, ...]:
-    try:
-        return active_dofs(
-            optimise_dofs=cfg.optimise_dofs,
-            freeze_dofs=cfg.freeze_dofs,
-        )
-    except ValueError:
-        if cfg.geometry_dofs:
-            return ()
-        raise
+    return _scoped_dofs_for_cfg(cfg).active_pose_dofs
+
+
+def _active_geometry_dofs_for_cfg(
+    cfg: "AlignConfig",
+    geometry: Geometry | None = None,
+) -> tuple[str, ...]:
+    return _scoped_dofs_for_cfg(cfg, geometry=geometry).active_geometry_dofs
+
+
+def _scoped_dofs_for_cfg(
+    cfg: "AlignConfig",
+    *,
+    geometry: Geometry | None = None,
+):
+    return resolve_scoped_alignment_dofs(
+        optimise_dofs=cfg.optimise_dofs,
+        freeze_dofs=cfg.freeze_dofs,
+        geometry_dofs=cfg.geometry_dofs,
+        geometry=geometry,
+    )
 
 
 class AlignInfo(TypedDict):
@@ -446,11 +449,11 @@ class AlignConfig:
         if float(self.lbfgs_gtol) < 0.0:
             raise ValueError("lbfgs_gtol must be >= 0")
         if self.optimise_dofs is not None:
-            self.optimise_dofs = normalize_dofs(
+            self.optimise_dofs = normalize_alignment_dofs(
                 self.optimise_dofs,
                 option_name="optimise_dofs",
             )
-        self.freeze_dofs = normalize_dofs(self.freeze_dofs, option_name="freeze_dofs")
+        self.freeze_dofs = normalize_alignment_dofs(self.freeze_dofs, option_name="freeze_dofs")
         self.geometry_dofs = normalize_geometry_dofs(
             self.geometry_dofs,
             geometry=None,
@@ -537,10 +540,7 @@ def align(
         [idx for idx, is_active in enumerate(active_mask_tuple) if is_active],
         dtype=np.int32,
     )
-    active_names = active_dofs(
-        optimise_dofs=cfg.optimise_dofs,
-        freeze_dofs=cfg.freeze_dofs,
-    )
+    active_names = _active_dofs_for_cfg(cfg)
     active_mask = active_mask_bool.astype(jnp.float32)
     bounds_lower, bounds_upper = bounds_vectors(cfg.bounds)
     gauge_fix = normalize_gauge_fix(cfg.gauge_fix)
@@ -1857,11 +1857,12 @@ def align_multires(
 
     if cfg is None:
         cfg = AlignConfig()
-    active_mask_tuple = _active_dof_mask_for_cfg(cfg)
+    scoped_dofs = _scoped_dofs_for_cfg(cfg, geometry=geometry)
+    active_mask_tuple = scoped_dofs.pose_mask
     geometry_state = GeometryCalibrationState.from_checkpoint(
         resume_state.geometry_calibration_state if resume_state is not None else None,
         geometry,
-        active_geometry_dofs=cfg.geometry_dofs,
+        active_geometry_dofs=scoped_dofs.active_geometry_dofs,
     )
 
     validate_grid(grid, "align_multires grid")
@@ -1942,6 +1943,7 @@ def align_multires(
         y = lvl["projections"]
         active_loss_spec = resolve_loss_for_level(cfg.loss, int(lvl["factor"]))
         active_loss_name = loss_spec_name(active_loss_spec)
+        loss_adapter = build_loss_adapter(active_loss_spec, y)
         final_loss_kind = active_loss_name
         logging.info(
             "Alignment level %d/%d factor=%d using loss=%s",
@@ -2022,33 +2024,52 @@ def align_multires(
         geometry_for_align = geometry
         detector_for_align = d
         det_grid_for_align = None
+        geometry_completed_outer_iters = 0
         if geometry_state.active_geometry_dofs:
-            x0, geometry_state, raw_geometry_stats = optimize_geometry_blocks_for_level(
-                geometry=geometry,
-                grid=g,
-                detector=d,
-                projections=y,
-                init_x=x0,
-                state=geometry_state,
-                factor=int(lvl["factor"]),
-                recon_iters=int(cfg.recon_iters),
-                lambda_tv=float(cfg.lambda_tv),
-                regulariser=str(cfg.regulariser),
-                huber_delta=float(cfg.huber_delta),
-                tv_prox_iters=int(cfg.tv_prox_iters),
-                views_per_batch=max(1, int(cfg.views_per_batch)),
-                projector_unroll=int(cfg.projector_unroll),
-                checkpoint_projector=bool(cfg.checkpoint_projector),
-                gather_dtype=str(cfg.gather_dtype),
-                gn_damping=float(cfg.gn_damping),
-                outer_iters=int(cfg.outer_iters),
+            geometry_outer_iters = 1 if any(active_mask_tuple) else int(cfg.outer_iters)
+            raw_geometry_stats = []
+            for geometry_outer_idx in range(1, int(geometry_outer_iters) + 1):
+                x0, geometry_state, step_stats = optimize_geometry_blocks_for_level(
+                    geometry=geometry,
+                    grid=g,
+                    detector=d,
+                    projections=y,
+                    init_x=x0,
+                    state=geometry_state,
+                    factor=int(lvl["factor"]),
+                    recon_iters=int(cfg.recon_iters),
+                    lambda_tv=float(cfg.lambda_tv),
+                    regulariser=str(cfg.regulariser),
+                    huber_delta=float(cfg.huber_delta),
+                    tv_prox_iters=int(cfg.tv_prox_iters),
+                    views_per_batch=max(1, int(cfg.views_per_batch)),
+                    projector_unroll=int(cfg.projector_unroll),
+                    checkpoint_projector=bool(cfg.checkpoint_projector),
+                    gather_dtype=str(cfg.gather_dtype),
+                    gn_damping=float(cfg.gn_damping),
+                    outer_iters=1,
+                    loss_adapter=loss_adapter,
+                )
+                for stat in step_stats:
+                    stat["geometry_outer_idx"] = int(geometry_outer_idx)
+                raw_geometry_stats.extend(step_stats)
+            geometry_completed_outer_iters = max(
+                (
+                    int(stat.get("geometry_outer_idx", 0))
+                    for stat in raw_geometry_stats
+                    if isinstance(stat, Mapping)
+                ),
+                default=0,
             )
             geometry_stats = [
                 {
                     **dict(stat),
                     "level_factor": int(lvl["factor"]),
                     "level_index": int(li),
-                    "loss_kind": "geometry_calibration",
+                    "global_outer_idx": int(
+                        global_outer_idx + int(stat.get("geometry_outer_idx", 0))
+                    ),
+                    "loss_kind": active_loss_name,
                 }
                 for stat in raw_geometry_stats
             ]
@@ -2075,7 +2096,7 @@ def align_multires(
             if resuming_this_level and level_completed_before > 0
             else list(loss_hist)
         )
-        global_before_level = len(stats_before_level)
+        global_before_level = int(executed_outer_iters)
 
         def _enrich_level_stats(local_stats: list[OuterStat]) -> list[OuterStat]:
             enriched_stats: list[OuterStat] = []
@@ -2217,6 +2238,13 @@ def align_multires(
                 "gauge_fix_dofs": final_gauge_fix_dofs,
                 "gauge_fix_final": final_gauge_fix_stats or {},
             }
+            if geometry_completed_outer_iters:
+                info["completed_outer_iters"] = int(geometry_completed_outer_iters)
+                info["loss"] = [
+                    float(stat["geometry_loss_after"])
+                    for stat in geometry_stats
+                    if stat.get("geometry_loss_after") is not None
+                ]
         level_completed_after = int(
             info.get("completed_outer_iters", len(info.get("outer_stats", [])))
         )
@@ -2340,8 +2368,10 @@ def align_multires(
             "per_view_variables": final_per_view_variables,
             "pose_model_basis_shape": final_pose_model_basis_shape,
             "active_dofs": list(
-                _active_dofs_for_cfg(cfg)
+                _scoped_dofs_for_cfg(cfg, geometry=geometry).active_dofs
             ),
+            "active_pose_dofs": list(_active_dofs_for_cfg(cfg)),
+            "active_geometry_dofs": list(geometry_state.active_geometry_dofs),
             "gauge_fix": final_gauge_fix,
             "gauge_fix_dofs": final_gauge_fix_dofs,
             "gauge_fix_final": final_gauge_fix_stats,

@@ -1,5 +1,5 @@
 ---
-title: Reuse align_multires for geometry calibration blocks
+title: Reuse the alignment loss path for geometry calibration blocks
 date: 2026-04-25
 last_updated: 2026-04-26
 category: architecture-patterns
@@ -15,7 +15,7 @@ applies_when:
 tags: [tomojax, alignment, geometry-calibration, dry, multires, gn, diagnostics, theta-span]
 ---
 
-# Reuse align_multires for geometry calibration blocks
+# Reuse the alignment loss path for geometry calibration blocks
 
 ## Context
 
@@ -43,20 +43,24 @@ That split created immediate friction:
   look like a solver regression when the real issue was a known weak
   acquisition setup.
 
-The architectural correction was to keep calibration as a distinct parameter
-namespace, but not as a distinct solver product.
+The first architectural correction was to keep calibration as a distinct
+parameter namespace, but not as a distinct solver product. The April 26 follow-up
+tightened that further: geometry calibration must also use the same configured
+alignment loss path as pose alignment. A geometry block is not allowed to quietly
+switch to a private normalized-L2 reprojection objective when the user requested
+`l2_otsu` or a loss schedule.
 
 ## Guidance
 
-Geometry calibration should be implemented as staged geometry parameter blocks
-inside `align_multires`.
+Geometry calibration should be implemented as scoped alignment DOFs inside
+`align_multires`.
 
 The durable shape is:
 
 ```text
 raw projections
   -> align_multires level 8/4/2/1
-      -> detector/instrument geometry blocks
+      -> detector/instrument geometry blocks using the configured LossAdapter
       -> reconstruction with calibrated geometry
       -> residual pose/motion blocks
   -> final reconstruction
@@ -70,7 +74,21 @@ The boundary is parameter meaning, not execution machinery:
 - Pose parameters describe residual per-view object motion:
   `alpha`, `beta`, `phi`, `dx`, and `dz`.
 - Both groups should share the same multiresolution schedule, reconstruction
-  loop, checkpointing, metadata, logging, and CLI command.
+  loop, checkpointing, metadata, logging, CLI command, and configured loss
+  adapter.
+
+The public DOF namespace is unified:
+
+- `--optimise-dofs det_u_px` is centre/ray-grid geometry calibration with pose
+  frozen by omission.
+- `--optimise-dofs dx,dz` is pose-only translation alignment.
+- `--optimise-dofs det_u_px,dx,dz` is an explicit staged geometry-plus-pose run.
+- `--optimise-geometry` remains a transitional compatibility alias that is
+  normalized into the same active geometry DOF set.
+
+Internally the scopes remain separate. Pose DOFs still update per-view
+object-frame residual parameters. Geometry DOFs update static detector/scan
+state carried by `GeometryCalibrationState`.
 
 The implemented DRY structure is:
 
@@ -87,14 +105,15 @@ abstractions:
 
 - `GeometryCalibrationState` stores native-resolution instrument state across
   pyramid levels.
-- `normalize_geometry_dofs` gives the CLI and Python API one canonical parser
-  for geometry DOF names.
+- `normalize_geometry_dofs` remains the geometry-specific compatibility parser.
+  The public alignment parser lives in `src/tomojax/align/dofs.py` and resolves
+  scoped pose/geometry active sets.
 - `level_detector_grid` applies detector-centre and detector-roll state through
   detector-grid overrides rather than projection rewrites.
 - `geometry_with_axis_state` applies axis-direction state as instrument
   geometry before residual pose alignment.
 - `optimize_geometry_blocks_for_level` runs the fixed-volume GN updates for the
-  active geometry block sequence.
+  active geometry block sequence using the current level's `LossAdapter`.
 - `summarize_geometry_calibration_stats` turns raw per-update GN stats into a
   compact diagnostic contract: accepted updates, total movement, final step,
   gradient norm, loss change, and a block status.
@@ -106,7 +125,9 @@ abstractions:
 
 `src/tomojax/align/pipeline.py` owns orchestration:
 
-- `AlignConfig.geometry_dofs` activates geometry blocks.
+- `AlignConfig.optimise_dofs` accepts both pose and geometry names.
+- `AlignConfig.geometry_dofs` is retained as a compatibility input and is merged
+  into the scoped active DOF set.
 - `align_multires` runs geometry blocks before pose blocks at each level.
 - `align` accepts an optional `det_grid_override`, so detector-centre and
   detector-roll calibration reuse the existing projector and reconstruction
@@ -123,9 +144,18 @@ The public surface is the existing alignment CLI:
 ```bash
 tomojax-align --data data/scan.nxs \
   --levels 8 4 2 1 \
-  --optimise-geometry det_u_px,detector_roll_deg \
-  --freeze-dofs alpha,beta,phi,dx,dz \
+  --optimise-dofs det_u_px,detector_roll_deg \
   --out out/geometry_calibrated.nxs
+```
+
+Geometry calibration uses the configured alignment loss:
+
+```bash
+tomojax-align --data data/scan.nxs \
+  --levels 8 4 2 1 \
+  --optimise-dofs det_u_px \
+  --loss l2_otsu \
+  --out out/detector_center_calibrated.nxs
 ```
 
 The standalone path was removed:
@@ -209,7 +239,7 @@ RunProfile(
     size=128,
     views=128,
     levels=(8, 4, 2, 1),
-    outer_iters=12,
+    outer_iters=16,
     recon_iters=20,
     tv_prox_iters=12,
     views_per_batch=1,
@@ -309,7 +339,7 @@ The CLI expresses geometry calibration as an option on alignment:
 ```bash
 tomojax-align --data data/scan.nxs \
   --levels 8 4 2 1 \
-  --optimise-geometry det_u_px,axis_rot_x_deg,axis_rot_y_deg \
+  --optimise-dofs det_u_px,axis_rot_x_deg,axis_rot_y_deg \
   --out out/aligned.nxs
 ```
 
@@ -318,8 +348,7 @@ Geometry-only calibration is still available, but it uses the same pipeline:
 ```bash
 tomojax-align --data data/scan.nxs \
   --levels 8 4 2 1 \
-  --optimise-geometry det_u_px \
-  --freeze-dofs alpha,beta,phi,dx,dz \
+  --optimise-dofs det_u_px \
   --out out/detector_center_calibrated.nxs
 ```
 
@@ -339,8 +368,8 @@ _, params5, info = align_multires(
         outer_iters=2,
         recon_iters=2,
         lambda_tv=0.0,
-        geometry_dofs=("det_u_px",),
-        freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
+        optimise_dofs=("det_u_px",),
+        loss=L2OtsuLossSpec(),
         early_stop=False,
         gather_dtype="fp32",
         checkpoint_projector=False,
@@ -358,14 +387,16 @@ The assertions check the behavior that matters:
 - geometry block stats are emitted through normal alignment info,
 - checkpoint metadata carries `geometry_calibration_state`,
 - geometry diagnostics are emitted through normal alignment info,
+- geometry stats report the configured loss name, such as `l2_otsu`, rather than
+  a private `geometry_calibration` objective,
 - axis-direction calibration below the current 270-degree diagnostic threshold
   is reported as ill-conditioned.
 
 The generator tests also lock down the evidence recipe:
 
-- canonical before/after demos use `tomojax.data.phantoms.lamino_disk`, not an
-  ad hoc Shepp-Logan phantom,
-- docs runs use 128 views, levels `8 4 2 1`, 12 outers, and early stopping,
+- canonical before/after demos use the selected random-shapes phantom path, not
+  an ad hoc Shepp-Logan phantom,
+- docs runs use 128 views, levels `8 4 2 1`, 16 outers, and early stopping,
 - visual-stress axis pitch/yaw scenarios record 360-degree acquisition span,
 - summary rows and manifests include acquisition span and geometry diagnostics.
 
@@ -385,8 +416,8 @@ Several earlier attempts were useful but incomplete (session history):
 - `docs/brainstorms/geometry-calibration-solver-requirements.md` records the
   product decision: calibration is conceptually distinct from pose alignment but
   operationally staged inside `align_multires`.
-- `docs/cli/align.md` documents `--optimise-geometry` as part of the supported
-  `tomojax-align` interface.
+- `docs/cli/align.md` documents geometry DOFs through `--optimise-dofs`, with
+  `--optimise-geometry` retained as a compatibility alias.
 - `scripts/generate_alignment_before_after_128.py` owns the current
   before/after taxonomy and visual-stress evidence path.
 - `tests/test_geometry_block_taxonomy_generator.py` protects the demo profile,

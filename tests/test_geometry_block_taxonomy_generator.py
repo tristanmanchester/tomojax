@@ -233,7 +233,7 @@ def test_write_visuals_emits_rich_inspection_artifacts(tmp_path):
         diagnostics={"schema_version": 1, "overall_status": "converged", "blocks": []},
         outer_stats=[
             {
-                "loss_kind": "geometry_calibration",
+                "loss_kind": "l2_otsu",
                 "level_factor": 4,
                 "geometry_block": "detector_center",
                 "geometry_loss_before": 1.0,
@@ -241,7 +241,7 @@ def test_write_visuals_emits_rich_inspection_artifacts(tmp_path):
                 "geometry_accepted": True,
             },
             {
-                "loss_kind": "geometry_calibration",
+                "loss_kind": "l2_otsu",
                 "level_factor": 4,
                 "geometry_block": "detector_center",
                 "geometry_loss_before": 0.7,

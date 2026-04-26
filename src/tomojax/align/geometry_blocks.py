@@ -23,16 +23,11 @@ from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.align.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
+from tomojax.align.losses import LossAdapter
 
 
-GEOMETRY_DOFS: tuple[str, ...] = (
-    "det_u_px",
-    "det_v_px",
-    "detector_roll_deg",
-    "axis_rot_x_deg",
-    "axis_rot_y_deg",
-    "tilt_deg",
-)
+GEOMETRY_DOFS: tuple[str, ...] = GEOMETRY_DOF_NAMES
 
 GEOMETRY_BLOCKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("detector_center", ("det_u_px", "det_v_px")),
@@ -49,20 +44,16 @@ def normalize_geometry_dofs(
     """Normalize detector/instrument geometry DOF names for staged alignment."""
     if values is None:
         return ()
-    names: list[str] = []
-    for raw in values:
-        for part in str(raw).split(","):
-            name = part.strip()
-            if not name:
-                continue
-            if name == "tilt_deg" and geometry is not None:
-                name = _tilt_alias_for_geometry(geometry)
-            if name not in GEOMETRY_DOFS and name not in {"axis_rot_x_deg", "axis_rot_y_deg"}:
-                allowed = ", ".join(GEOMETRY_DOFS)
-                raise ValueError(f"Unknown geometry DOF {name!r}; expected one of: {allowed}")
-            if name not in names:
-                names.append(name)
-    return tuple(names)
+    names = normalize_alignment_dofs(
+        values,
+        option_name="geometry_dofs",
+        geometry=geometry,
+    )
+    invalid = [name for name in names if name not in GEOMETRY_DOFS]
+    if invalid:
+        allowed = ", ".join(GEOMETRY_DOFS)
+        raise ValueError(f"Unknown geometry DOF {invalid[0]!r}; expected one of: {allowed}")
+    return names
 
 
 def _tilt_alias_for_geometry(geometry: Geometry | None) -> str:
@@ -510,6 +501,7 @@ def optimize_geometry_blocks_for_level(
     gather_dtype: str,
     gn_damping: float,
     outer_iters: int,
+    loss_adapter: LossAdapter,
     max_step_px: float = 2.0,
     max_step_deg: float = 2.0,
 ) -> tuple[jnp.ndarray, GeometryCalibrationState, list[dict[str, float | int | str | bool]]]:
@@ -542,6 +534,11 @@ def optimize_geometry_blocks_for_level(
             )
             return x, state, []
         return init_x, state, []
+    if not loss_adapter.supports_gauss_newton:
+        raise ValueError(
+            "Geometry DOF calibration requires a Gauss-Newton-compatible loss; "
+            f"got loss={loss_adapter.name!r}"
+        )
 
     x = init_x
     current = state
@@ -582,6 +579,7 @@ def optimize_geometry_blocks_for_level(
                 checkpoint_projector=checkpoint_projector,
                 gather_dtype=gather_dtype,
                 gn_damping=gn_damping,
+                loss_adapter=loss_adapter,
                 max_step_px=max_step_px,
                 max_step_deg=max_step_deg,
             )
@@ -665,6 +663,7 @@ def _optimize_one_block(
     checkpoint_projector: bool,
     gather_dtype: str,
     gn_damping: float,
+    loss_adapter: LossAdapter,
     max_step_px: float,
     max_step_deg: float,
 ) -> tuple[GeometryCalibrationState, dict[str, float | int | str | bool]]:
@@ -685,10 +684,23 @@ def _optimize_one_block(
         y_pad = y
         valid = jnp.ones((int(n_views),), dtype=jnp.float32)
     valid = valid.reshape((n_chunks, chunk_size, 1, 1))
-    denom = jnp.sqrt(jnp.maximum(jnp.mean(y.astype(jnp.float32) ** 2), jnp.float32(1e-6)))
+    view_indices = jnp.arange(int(n_views), dtype=jnp.int32)
+    if pad_views:
+        view_indices_pad = jnp.pad(view_indices, (0, pad_views), mode="edge")
+    else:
+        view_indices_pad = view_indices
+    view_index_chunks = view_indices_pad.reshape((n_chunks, chunk_size))
+    loss_mask = loss_adapter.state.mask
+    if loss_mask is not None:
+        loss_mask = jnp.asarray(loss_mask, dtype=jnp.float32)
+        if pad_views:
+            loss_mask = jnp.pad(loss_mask, ((0, pad_views), (0, 0), (0, 0)), mode="edge")
+        mask_chunks = loss_mask.reshape((n_chunks, chunk_size, nv, nu))
+    else:
+        mask_chunks = None
     initial_values = state.values_for(active_names)
 
-    def residual_chunk_for_values(values: jnp.ndarray, idx: jnp.ndarray) -> jnp.ndarray:
+    def _project_chunk_for_values(values: jnp.ndarray, idx: jnp.ndarray):
         candidate = _state_with_active_values(state, active_names, values)
         T_all = _pose_stack_for_state(geometry, candidate)
         if pad_views:
@@ -699,6 +711,8 @@ def _optimize_one_block(
 
         T_chunk = T_chunks[idx]
         y_chunk = y_chunks[idx]
+        view_idx_chunk = view_index_chunks[idx]
+        mask_chunk = None if mask_chunks is None else mask_chunks[idx]
         valid_chunk = valid[idx]
         pred = jax.vmap(
             lambda T: forward_project_view_T(
@@ -712,22 +726,36 @@ def _optimize_one_block(
                 det_grid=det_grid,
             )
         )(T_chunk)
-        return ((pred - y_chunk) * valid_chunk / denom).reshape(-1)
+        return pred, y_chunk, mask_chunk, view_idx_chunk, valid_chunk
+
+    def residual_chunk_for_values(values: jnp.ndarray, idx: jnp.ndarray) -> jnp.ndarray:
+        pred, y_chunk, mask_chunk, _, valid_chunk = _project_chunk_for_values(values, idx)
+        weights = loss_adapter.gauss_newton_weights(y_chunk, mask_chunk)
+        return ((pred - y_chunk) * weights * valid_chunk).reshape(-1)
 
     eye = jnp.eye(int(initial_values.size), dtype=jnp.float32)
-    residual_count = jnp.float32(max(int(n_views) * int(nv) * int(nu), 1))
 
     def loss_for_values(values: jnp.ndarray) -> jnp.ndarray:
         def body(loss_acc, idx):
-            residual = residual_chunk_for_values(values, idx)
-            return loss_acc + jnp.sum(jnp.square(residual)), None
+            pred, y_chunk, mask_chunk, view_idx_chunk, valid_chunk = _project_chunk_for_values(
+                values,
+                idx,
+            )
+            losses = loss_adapter.per_view_loss(
+                pred,
+                y_chunk,
+                mask_chunk,
+                view_indices=view_idx_chunk,
+            )
+            view_valid = valid_chunk[:, 0, 0]
+            return loss_acc + jnp.sum(losses * view_valid), None
 
         loss_sum, _ = jax.lax.scan(
             body,
             jnp.float32(0.0),
             jnp.arange(n_chunks, dtype=jnp.int32),
         )
-        return loss_sum / residual_count
+        return loss_sum
 
     def loss_gradient_curvature(values: jnp.ndarray):
         def body(carry, idx):
@@ -745,7 +773,17 @@ def _optimize_one_block(
 
             jac_cols = jax.vmap(jvp_col)(eye)
             curvature_chunk = (jac_cols @ jac_cols.T) * jnp.float32(2.0)
-            loss_acc = loss_acc + jnp.sum(jnp.square(residual))
+            pred, y_chunk, mask_chunk, view_idx_chunk, valid_chunk = _project_chunk_for_values(
+                values,
+                idx,
+            )
+            losses = loss_adapter.per_view_loss(
+                pred,
+                y_chunk,
+                mask_chunk,
+                view_indices=view_idx_chunk,
+            )
+            loss_acc = loss_acc + jnp.sum(losses * valid_chunk[:, 0, 0])
             grad_acc = grad_acc + grad_chunk
             curvature_acc = curvature_acc + curvature_chunk
             return (loss_acc, grad_acc, curvature_acc), None
@@ -761,9 +799,9 @@ def _optimize_one_block(
             jnp.arange(n_chunks, dtype=jnp.int32),
         )
         return (
-            loss_sum / residual_count,
-            gradient_sum / residual_count,
-            curvature_sum / residual_count,
+            loss_sum,
+            gradient_sum,
+            curvature_sum,
         )
 
     loss_gradient_curvature = jax.jit(loss_gradient_curvature)
@@ -802,6 +840,8 @@ def _optimize_one_block(
     return next_state, {
         "geometry_block": block_name,
         "geometry_active_dofs": ",".join(active_names),
+        "geometry_loss_kind": loss_adapter.name,
+        "loss_kind": loss_adapter.name,
         "geometry_loss_before": loss_before,
         "geometry_loss_after": float(best_loss),
         "geometry_accepted": bool(best_scale > 0.0),

@@ -10,7 +10,12 @@ import sys
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from ..align.dofs import DofBounds, active_dof_mask, normalize_bounds, normalize_dofs
+from ..align.dofs import (
+    DofBounds,
+    normalize_alignment_dofs,
+    normalize_bounds,
+    resolve_scoped_alignment_dofs,
+)
 from ..align.losses import (
     AlignmentLossConfig,
     parse_loss_schedule,
@@ -136,10 +141,9 @@ def _parse_dof_args(
         optimise_dofs = (
             None
             if args.optimise_dofs is None
-            else normalize_dofs(args.optimise_dofs, option_name="--optimise-dofs")
+            else normalize_alignment_dofs(args.optimise_dofs, option_name="--optimise-dofs")
         )
-        freeze_dofs = normalize_dofs(args.freeze_dofs, option_name="--freeze-dofs")
-        active_dof_mask(optimise_dofs=optimise_dofs, freeze_dofs=freeze_dofs)
+        freeze_dofs = normalize_alignment_dofs(args.freeze_dofs, option_name="--freeze-dofs")
     except ValueError as exc:
         parser.error(str(exc))
     return optimise_dofs, freeze_dofs
@@ -310,14 +314,18 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         metavar="DOF[,DOF]",
-        help="Named alignment DOFs to optimise: alpha,beta,phi,dx,dz. Example: dx,dz",
+        help=(
+            "Named alignment DOFs to optimise across pose and geometry: "
+            "alpha,beta,phi,dx,dz,det_u_px,det_v_px,detector_roll_deg,"
+            "axis_rot_x_deg,axis_rot_y_deg. Example: dx,dz or det_u_px"
+        ),
     )
     p.add_argument(
         "--freeze-dofs",
         nargs="+",
         default=None,
         metavar="DOF[,DOF]",
-        help="Named alignment DOFs to keep fixed at initial values. Example: phi",
+        help="Named alignment DOFs to keep fixed at initial values. Example: phi or det_u_px",
     )
     p.add_argument(
         "--optimise-geometry",
@@ -573,6 +581,8 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
+        "optimise_dofs": list(args.optimise_dofs or []),
+        "freeze_dofs": list(args.freeze_dofs or []),
         "geometry_dofs": _flatten_geometry_dofs(args.optimise_geometry),
     }
 
@@ -755,6 +765,12 @@ def main() -> None:
             _flatten_geometry_dofs(args.optimise_geometry),
             geometry=geom,
         )
+        geometry_dofs = resolve_scoped_alignment_dofs(
+            optimise_dofs=optimise_dofs,
+            freeze_dofs=freeze_dofs,
+            geometry_dofs=geometry_dofs,
+            geometry=geom,
+        ).active_geometry_dofs
     except ValueError as exc:
         p.error(str(exc))
 
@@ -1153,6 +1169,13 @@ def main() -> None:
                 "loss_params": loss_params,
                 "loss_spec": loss_config,
                 "align_config": cfg,
+                "active_dofs": list(info.get("active_dofs", [])) if isinstance(info, dict) else [],
+                "active_pose_dofs": (
+                    list(info.get("active_pose_dofs", [])) if isinstance(info, dict) else []
+                ),
+                "active_geometry_dofs": (
+                    list(info.get("active_geometry_dofs", [])) if isinstance(info, dict) else []
+                ),
                 "geometry_dofs": list(geometry_dofs),
                 "geometry_calibration_state": geometry_calibration_state,
                 "alignment_params_shape": list(params5_np.shape),
@@ -1163,6 +1186,7 @@ def main() -> None:
                 "run_info": {
                     "loss_count": len(loss_values),
                     "final_loss": loss_values[-1] if len(loss_values) else None,
+                    "loss_kind": info.get("loss_kind") if isinstance(info, dict) else None,
                     "stopped_by_observer": (
                         info.get("stopped_by_observer") if isinstance(info, dict) else None
                     ),

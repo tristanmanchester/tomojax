@@ -74,11 +74,14 @@ logs the reason and falls back to GD for that step.
 
 ## DOF selection and bounds
 
-By default, all five degrees of freedom are optimised: `alpha`,
-`beta`, `phi`, `dx`, `dz`. You can restrict or constrain them.
+By default, all five per-view pose degrees of freedom are optimised:
+`alpha`, `beta`, `phi`, `dx`, `dz`. You can restrict pose alignment or
+activate static instrument geometry DOFs through the same public DOF
+selection flag.
 
 - `--optimise-dofs` -- named DOFs to optimise (e.g., `dx,dz` for
-  translation-only alignment)
+  translation-only pose alignment, or `det_u_px` for detector centre
+  geometry calibration)
 - `--freeze-dofs` -- named DOFs to keep fixed at initial values
   (e.g., `phi` to freeze in-plane spin)
 - `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` -- finite
@@ -88,9 +91,10 @@ By default, all five degrees of freedom are optimised: `alpha`,
   bound is supplied.
 
 > [!NOTE]
-> DOF selection doesn't change the saved parameter format. Outputs
-> always use five columns in `[alpha, beta, phi, dx, dz]` order,
-> with inactive columns held at their initial values.
+> Pose DOF selection doesn't change the saved pose-parameter format.
+> Outputs always use five columns in `[alpha, beta, phi, dx, dz]`
+> order, with inactive columns held at their initial values. Geometry
+> DOFs are saved separately in geometry calibration metadata.
 
 ## Pose models
 
@@ -130,31 +134,44 @@ large misalignments.
 
 ## Instrument Geometry Blocks
 
-`tomojax-align` can solve static instrument geometry before the
-per-view pose update at each pyramid level. This uses the same
-coarse-to-fine alignment loop and differentiable projector as pose
-alignment, rather than a separate calibration command.
+`tomojax-align` can solve static instrument geometry inside the same
+alignment system as per-view pose updates. Geometry updates use the
+configured alignment loss, including the default `l2_otsu`; they do
+not switch to a private calibration loss.
 
-- `--optimise-geometry det_u_px` -- estimate the horizontal
-  detector/ray-grid centre offset in native detector pixels.
-- `--optimise-geometry detector_roll_deg` -- estimate static detector
-  roll in degrees.
-- `--optimise-geometry axis_rot_x_deg,axis_rot_y_deg` -- estimate the
-  lab-frame rotation-axis direction as small rotations in degrees.
-  `tilt_deg` is accepted as a laminography-friendly alias for the
-  axis component matching the scan's tilt direction.
+Geometry DOFs accepted by `--optimise-dofs`:
 
-Geometry blocks are staged before pose blocks at each multiresolution
-level, so common runs should use the normal pyramid, for example
-`--levels 8 4 2 1`. To run geometry-only calibration, freeze all pose
-DOFs:
+- `det_u_px` -- horizontal detector/ray-grid centre offset in native
+  detector pixels.
+- `det_v_px` -- vertical detector/ray-grid centre offset in native
+  detector pixels.
+- `detector_roll_deg` -- static detector roll in degrees.
+- `axis_rot_x_deg`, `axis_rot_y_deg` -- lab-frame rotation-axis
+  direction as small rotations in degrees.
+- `tilt_deg` -- laminography-friendly alias for the axis component
+  matching the scan's tilt direction.
+
+`--optimise-geometry` remains accepted as a compatibility alias, but
+new workflows should use `--optimise-dofs`.
+
+Geometry blocks are staged at each multiresolution level, so common
+runs should use the normal pyramid, for example `--levels 8 4 2 1`.
+Geometry-only calibration is just a geometry-only active DOF set:
 
 ```bash
 tomojax-align --data data/scan.nxs \
   --levels 8 4 2 1 \
-  --optimise-geometry det_u_px,detector_roll_deg \
-  --freeze-dofs alpha,beta,phi,dx,dz \
+  --optimise-dofs det_u_px,detector_roll_deg \
   --out out/geometry_calibrated.nxs
+```
+
+Combined geometry and residual pose alignment is explicit:
+
+```bash
+tomojax-align --data data/scan.nxs \
+  --levels 8 4 2 1 \
+  --optimise-dofs det_u_px,dx,dz \
+  --out out/geometry_plus_translation_aligned.nxs
 ```
 
 ## Loss selection

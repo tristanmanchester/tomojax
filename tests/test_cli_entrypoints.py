@@ -182,6 +182,19 @@ def test_align_geometry_dof_parser_accepts_detector_and_axis_aliases():
         align_cli._parse_geometry_dofs_arg("dx")
 
 
+def test_align_primary_dof_parser_accepts_geometry_dofs():
+    parser = argparse.ArgumentParser()
+    args = argparse.Namespace(
+        optimise_dofs=["det_u_px", "dx"],
+        freeze_dofs=["dx"],
+    )
+
+    optimise_dofs, freeze_dofs = align_cli._parse_dof_args(args, parser)
+
+    assert optimise_dofs == ("det_u_px", "dx")
+    assert freeze_dofs == ("dx",)
+
+
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
     assert recon_cli._parse_views_per_batch("auto") == "auto"
     assert recon_cli._parse_views_per_batch("AUTO") == "auto"

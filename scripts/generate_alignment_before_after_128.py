@@ -496,7 +496,7 @@ def _run_geometry_alignment(
             recon_iters=int(profile.recon_iters),
             lambda_tv=0.0015,
             tv_prox_iters=int(profile.tv_prox_iters),
-            geometry_dofs=geometry_dofs,
+            optimise_dofs=geometry_dofs,
             freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
             early_stop=bool(profile.early_stop),
             early_stop_rel_impr=float(profile.early_stop_rel_impr),
@@ -701,7 +701,7 @@ def _loss_panel(outer_stats: Sequence[Mapping[str, Any]], *, width: int = 360, h
     stats = [
         dict(stat)
         for stat in outer_stats
-        if isinstance(stat, Mapping) and stat.get("loss_kind") == "geometry_calibration"
+        if isinstance(stat, Mapping) and stat.get("geometry_block")
     ]
     if not stats:
         draw.text((10, 42), "no geometry loss stats", fill=(80, 80, 80))
@@ -1194,6 +1194,9 @@ def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> di
                 "description": s.description,
                 "geometry_type": s.geometry_type,
                 "geometry_dofs": list(s.geometry_dofs),
+                "active_dofs": list(s.geometry_dofs),
+                "active_pose_dofs": [],
+                "active_geometry_dofs": list(s.geometry_dofs),
                 "theta_span_deg": _theta_span_deg(s),
                 "n_views": int(profile.views),
                 "hidden_truth": _scenario_truth_payload(s),
@@ -1415,6 +1418,10 @@ def _run_scenario(
         "estimated_corrections": estimates if provenance == "estimated" else {},
         "final_calibrated_geometry": estimates,
         "parameter_provenance": provenance,
+        "active_dofs": info.get("active_dofs", list(scenario.geometry_dofs)),
+        "active_pose_dofs": info.get("active_pose_dofs", []),
+        "active_geometry_dofs": info.get("active_geometry_dofs", list(scenario.geometry_dofs)),
+        "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
         "outer_stats": info.get("outer_stats", []),
@@ -1429,6 +1436,12 @@ def _run_scenario(
         "title": scenario.title,
         "geometry_type": scenario.geometry_type,
         "geometry_dofs": ",".join(scenario.geometry_dofs),
+        "active_dofs": ",".join(str(v) for v in info.get("active_dofs", scenario.geometry_dofs)),
+        "active_pose_dofs": ",".join(str(v) for v in info.get("active_pose_dofs", [])),
+        "active_geometry_dofs": ",".join(
+            str(v) for v in info.get("active_geometry_dofs", scenario.geometry_dofs)
+        ),
+        "loss_kind": str(info.get("loss_kind", "")),
         "theta_span_deg": theta_span,
         "n_views": int(profile.views),
         "parameter_provenance": provenance,
@@ -1462,6 +1475,10 @@ def _run_scenario(
         "estimated_corrections": estimates if provenance == "estimated" else {},
         "final_calibrated_geometry": estimates,
         "parameter_provenance": provenance,
+        "active_dofs": info.get("active_dofs", list(scenario.geometry_dofs)),
+        "active_pose_dofs": info.get("active_pose_dofs", []),
+        "active_geometry_dofs": info.get("active_geometry_dofs", list(scenario.geometry_dofs)),
+        "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
         "outer_stats": info.get("outer_stats", []),
