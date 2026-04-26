@@ -292,13 +292,36 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert geom_stats
     assert {stat.get("loss_kind") for stat in geom_stats} == {"l2_otsu"}
     assert {stat.get("geometry_loss_kind") for stat in geom_stats} == {"l2_otsu"}
+    assert {stat.get("geometry_objective") for stat in geom_stats} == {"heldout_reprojection"}
+    assert info["wall_time_total"] > 0.0
     diagnostics = info["geometry_calibration_diagnostics"]
     assert diagnostics["schema_version"] == 1
     assert diagnostics["blocks"]
     center = diagnostics["blocks"][0]
     assert center["geometry_block"] == "detector_center"
+    assert center["geometry_objective"] == "heldout_reprojection"
     assert center["accepted_updates"] >= 1
     assert center["status"] in {"converged", "underconverged", "ill_conditioned"}
+
+
+def test_align_multires_rejects_detector_center_with_active_pose_translations():
+    grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 6, 11)
+
+    with pytest.raises(ValueError, match="Gauge-coupled alignment DOFs"):
+        align_multires(
+            geom,
+            grid,
+            det,
+            projs,
+            factors=[2],
+            cfg=AlignConfig(
+                outer_iters=1,
+                recon_iters=1,
+                optimise_dofs=("det_u_px", "dx"),
+                freeze_dofs=("alpha", "beta", "phi", "dz"),
+                early_stop=False,
+            ),
+        )
 
 
 def test_geometry_calibration_diagnostics_classify_underconverged_and_ill_conditioned():

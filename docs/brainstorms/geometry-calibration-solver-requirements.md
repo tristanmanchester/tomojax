@@ -14,11 +14,12 @@ pyramid, and uses the configured alignment loss, especially `l2_otsu`, which has
 been the best-performing loss in prior experiments.
 
 The current `feat/geometry-calibration-phase0` branch added useful geometry
-plumbing, but it took a wrong architectural turn: geometry calibration became a
-separate staged block optimizer inside `align_multires`, with a private normalized
-L2 reprojection objective. That means centre-of-rotation-like detector-centre
-alignment, detector roll, and axis direction are not actually using the same
-alignment objective as the main per-view pose path.
+plumbing, but it took two wrong turns that are now documented requirements:
+geometry calibration initially used a private normalized-L2 reprojection
+objective, and detector-centre discovery used a fixed-volume same-data objective
+that can become self-consistent at nominal geometry. Geometry calibration must
+use the configured loss system, and COR-like detector-centre discovery must use
+an identifiable objective such as held-out reprojection.
 
 The new direction is to treat geometry calibration as first-class alignment DOFs
 inside one unified alignment system:
@@ -74,8 +75,9 @@ Relevant current files:
     offset.
   - **Actors:** A1, A2
   - **Steps:** User activates `det_u_px`; all other geometry and pose DOFs remain
-    frozen; the multiresolution loop reconstructs, evaluates the configured
-    projection loss, updates `det_u_px`, and carries the calibrated state forward.
+    frozen; the multiresolution loop seeds from projection-domain evidence,
+    reconstructs deterministic train views, scores held-out projections with the
+    configured loss, updates `det_u_px`, and carries the calibrated state forward.
   - **Outcome:** The reported detector/ray-grid centre is estimated using the same
     alignment loss as pose alignment, normally `l2_otsu`.
   - **Covered by:** R1, R2, R3, R6, R7, R12, R19
@@ -150,6 +152,10 @@ Relevant current files:
   weighting/precompute path for geometry updates, including Otsu masks.
 - R13. Stats and manifests must record the actual configured loss name used for
   each update, not a generic label that hides objective differences.
+- R13a. Detector-centre/COR discovery must not rely on a fixed reconstructed
+  volume scored against the same projections that produced that volume. It must
+  use projection-domain seeding, held-out reprojection scoring, or a future
+  reconstruction-differentiated objective that breaks the self-consistency loop.
 
 **Solver loop and staging**
 
@@ -178,9 +184,9 @@ Relevant current files:
 - R22. Axis direction and laminography tilt must be represented as scan/instrument
   geometry, with `tilt_deg` acting as an alias where appropriate, not as residual
   sample pose.
-- R23. Gauge-coupled sets such as `det_u_px` plus static lab `world_dx`, `theta0`
-  plus mean object `phi`, or detector roll plus global object orientation must be
-  rejected, fixed by gauge, or clearly diagnosed.
+- R23. Gauge-coupled sets such as `det_u_px` plus active per-view `dx/dz`, static
+  lab `world_dx`, `theta0` plus mean object `phi`, or detector roll plus global
+  object orientation must be rejected, fixed by gauge, or clearly diagnosed.
 
 **Evidence, demos, and metadata**
 
@@ -214,7 +220,8 @@ Relevant current files:
 - AE1. **Covers R1, R3, R8, R9, R12, R13.** Given a synthetic parallel CT scan
   with hidden `det_u_px=-4`, when the user runs alignment with only `det_u_px`
   active, the solver uses `l2_otsu`, records that loss in stats and manifests,
-  estimates detector centre, and leaves per-view pose parameters unchanged.
+  records the `heldout_reprojection` objective, estimates detector centre, and
+  leaves per-view pose parameters unchanged.
 
 - AE2. **Covers R4, R8, R28.** Given an existing pose-only alignment workflow,
   when no geometry DOFs are active, the path behaves as it did on main: object-frame
@@ -231,8 +238,8 @@ Relevant current files:
   from the CLI.
 
 - AE5. **Covers R18, R20, R23.** Given a user tries to activate a gauge-coupled
-  set such as detector centre and an equivalent static lab translation, when the
-  config is validated, TomoJAX rejects it or records a clear gauge decision before
+  set such as detector centre and active per-view translations, when the config
+  is validated, TomoJAX rejects it or records a clear gauge decision before
   optimization starts.
 
 - AE6. **Covers R21, R22.** Given hidden detector roll or axis direction errors,
@@ -280,6 +287,8 @@ Relevant current files:
 - Use active/frozen DOF masks as the core workflow primitive.
 - Keep block-coordinate staging for stability, but make it share state, loss,
   multires loop semantics, checkpoints, and diagnostics.
+- Use held-out reprojection as the first detector-centre discovery objective;
+  keep fixed-volume GN as a local/other-block mechanism, not as COR discovery.
 - Make `l2_otsu` the default geometry calibration loss because it is already the
   main alignment default and has worked best in prior tests.
 - Keep calibration metadata and gauge work; fix the optimizer boundary rather than
@@ -331,10 +340,12 @@ Relevant current files:
 The first implementation plan should prioritize objective correctness before broad
 API cleanup:
 
-1. Make geometry updates consume the configured loss adapter and record the real
-   loss name.
-2. Add regression tests proving `det_u_px` geometry alignment uses `l2_otsu`.
-3. Unify active/frozen DOF selection across pose and geometry scopes.
-4. Collapse geometry and pose updates into one per-level outer-loop semantics.
-5. Re-run the phantom #94 128^3 evidence suite only after the solver path is
-   using the shared objective.
+1. Keep regression tests proving true-volume detector-centre loss is minimized
+   near the hidden offset while wrong-geometry fixed-volume loss can prefer
+   nominal geometry.
+2. Keep `det_u_px` geometry alignment on the configured `l2_otsu`
+   held-out-reprojection path.
+3. Continue staged active/frozen DOF workflows and reject ambiguous
+   detector-centre plus translation active sets.
+4. Re-run the phantom #94 128^3 evidence suite only after smoke validation on
+   the Linux laptop passes.

@@ -139,6 +139,13 @@ alignment system as per-view pose updates. Geometry updates use the
 configured alignment loss, including the default `l2_otsu`; they do
 not switch to a private calibration loss.
 
+Detector-centre/COR discovery uses a reduced held-out reprojection
+objective inside `align_multires`: train-view reconstructions are
+scored on held-out projections with the configured loss. This avoids
+the fixed-volume self-consistency failure where a reconstruction made
+under the wrong detector centre can incorrectly prefer nominal
+geometry.
+
 Geometry DOFs accepted by `--optimise-dofs`:
 
 - `det_u_px` -- horizontal detector/ray-grid centre offset in native
@@ -165,13 +172,20 @@ tomojax-align --data data/scan.nxs \
   --out out/geometry_calibrated.nxs
 ```
 
-Combined geometry and residual pose alignment is explicit:
+Gauge-coupled detector-centre plus residual translation is rejected.
+Run detector-centre calibration first, then run residual pose
+alignment using the calibrated output:
 
 ```bash
 tomojax-align --data data/scan.nxs \
   --levels 8 4 2 1 \
-  --optimise-dofs det_u_px,dx,dz \
-  --out out/geometry_plus_translation_aligned.nxs
+  --optimise-dofs det_u_px \
+  --out out/detector_center_calibrated.nxs
+
+tomojax-align --data out/detector_center_calibrated.nxs \
+  --levels 8 4 2 1 \
+  --optimise-dofs dx,dz \
+  --out out/geometry_then_translation_aligned.nxs
 ```
 
 ## Loss selection
@@ -226,6 +240,11 @@ parameters are easier to interpret as residual alignment motion.
   from active `dx,dz` after initialisation and pose updates
   (default)
 - `--gauge-fix none` -- preserve historical unconstrained traces
+
+Active detector-centre DOFs (`det_u_px`, `det_v_px`) cannot currently
+be estimated in the same solve as active per-view `dx`/`dz`
+translations. Those variables can explain overlapping projection
+shifts, so TomoJAX fails fast and asks for staged calibration.
 
 See [alignment-gauge-benchmark.md](../internal/alignment-gauge-benchmark.md)
 for a 64³ validation comparison.

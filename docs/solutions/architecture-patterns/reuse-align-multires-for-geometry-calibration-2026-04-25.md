@@ -77,12 +77,14 @@ The boundary is parameter meaning, not execution machinery:
   loop, checkpointing, metadata, logging, CLI command, and configured loss
   adapter.
 
-The public DOF namespace is unified:
+The public DOF namespace is unified, but not every active set is identifiable:
 
 - `--optimise-dofs det_u_px` is centre/ray-grid geometry calibration with pose
   frozen by omission.
 - `--optimise-dofs dx,dz` is pose-only translation alignment.
-- `--optimise-dofs det_u_px,dx,dz` is an explicit staged geometry-plus-pose run.
+- `--optimise-dofs det_u_px,dx,dz` is rejected today because detector-centre and
+  per-view detector-plane translation are gauge-coupled. Run detector-centre
+  calibration first, then residual pose alignment.
 - `--optimise-geometry` remains a transitional compatibility alias that is
   normalized into the same active geometry DOF set.
 
@@ -112,8 +114,10 @@ abstractions:
   detector-grid overrides rather than projection rewrites.
 - `geometry_with_axis_state` applies axis-direction state as instrument
   geometry before residual pose alignment.
-- `optimize_geometry_blocks_for_level` runs the fixed-volume GN updates for the
-  active geometry block sequence using the current level's `LossAdapter`.
+- `optimize_geometry_blocks_for_level` stages active geometry blocks using the
+  current level's `LossAdapter`. Detector-u centre discovery uses a
+  train/held-out reprojection objective; detector roll and axis-direction blocks
+  still use the fixed-volume GN path.
 - `summarize_geometry_calibration_stats` turns raw per-update GN stats into a
   compact diagnostic contract: accepted updates, total movement, final step,
   gradient norm, loss change, and a block status.
@@ -157,6 +161,13 @@ tomojax-align --data data/scan.nxs \
   --loss l2_otsu \
   --out out/detector_center_calibrated.nxs
 ```
+
+For `det_u_px`, the objective name in stats is `heldout_reprojection`. The block
+uses a projection-domain detector-u seed to choose a candidate window, rebuilds
+train-view TV reconstructions for candidate detector centres, and scores held-out
+projections with the configured loss adapter. This breaks the self-consistency
+failure where `loss(A(det_u_candidate) x_nominal_recon, y)` can prefer nominal
+geometry because `x_nominal_recon` already absorbed the detector-centre error.
 
 The standalone path was removed:
 
@@ -280,11 +291,19 @@ block as ill-conditioned and adds the warning
 180-degree arbitrary-axis stress cases should not be reported as ordinary
 successful or failed geometry calibration.
 
-This does not turn the solver into a grid search or hide the fixed-volume GN
-limitation. It makes the limitation inspectable: under some acquisition setups,
-the solver can appear self-consistent without recovering the intended global
-axis. That is a conditioning/solver-design fact the metadata should expose, not
-a reason to fork another calibration pipeline.
+Detector-centre calibration now has a separate diagnostic contract from
+fixed-volume GN: stats include `geometry_objective=heldout_reprojection`, the
+configured loss name, the projection-domain seed, train/held-out view counts, and
+candidate count. Fixed-volume GN stats are grouped by level and objective so
+diagnostics do not compare unrelated loss scales across pyramid levels.
+
+This does not turn the supported product into a standalone grid-search
+calibration command. It keeps detector-centre discovery inside `align_multires`
+and reuses the same state, detector-grid transforms, reconstruction code, and
+loss adapter. Under some acquisition setups, fixed-volume objectives can still
+appear self-consistent without recovering the intended global geometry. That is a
+conditioning/solver-design fact the metadata should expose, not a reason to fork
+another calibration pipeline.
 
 ## When to Apply
 
@@ -331,6 +350,8 @@ tomojax-align
       -> GeometryCalibrationState
       -> GEOMETRY_BLOCKS
       -> optimize_geometry_blocks_for_level
+          -> detector_center: held-out reprojection for det_u_px
+          -> other blocks: fixed-volume GN diagnostics
       -> align pose blocks
 ```
 
@@ -385,6 +406,7 @@ The assertions check the behavior that matters:
 - the hidden detector-centre offset is recovered,
 - all pose parameters stay zero when pose DOFs are frozen,
 - geometry block stats are emitted through normal alignment info,
+- detector-centre stats report `geometry_objective="heldout_reprojection"`,
 - checkpoint metadata carries `geometry_calibration_state`,
 - geometry diagnostics are emitted through normal alignment info,
 - geometry stats report the configured loss name, such as `l2_otsu`, rather than
@@ -404,6 +426,11 @@ The generator tests also lock down the evidence recipe:
 
 Several earlier attempts were useful but incomplete (session history):
 
+- Fixed-volume detector-centre GN used the right loss adapter after cleanup, but
+  still failed because a volume reconstructed under wrong detector centre can
+  absorb the error. True-volume `l2_otsu` loss minimizes near the hidden offset;
+  wrong-geometry fixed-volume loss can minimize at nominal. Detector-centre
+  discovery now uses held-out reprojection to break that loop.
 - The first geometry-block GN memory shape materialized too much detector-stack
   residual/JVP data and hit a 128^3 OOM. The correct memory discipline is
   chunked normal-equation accumulation.

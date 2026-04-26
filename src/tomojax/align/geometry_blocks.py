@@ -24,7 +24,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.align.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
-from tomojax.align.losses import LossAdapter
+from tomojax.align.losses import AlignmentLossSpec, LossAdapter
 
 
 GEOMETRY_DOFS: tuple[str, ...] = GEOMETRY_DOF_NAMES
@@ -319,17 +319,19 @@ def _block_names(active_geometry_dofs: Sequence[str]) -> list[tuple[str, tuple[s
 def summarize_geometry_calibration_stats(
     stats: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
-    """Summarize fixed-volume geometry GN updates for run metadata."""
-    grouped: dict[tuple[str, str], list[Mapping[str, object]]] = {}
+    """Summarize geometry calibration updates for run metadata."""
+    grouped: dict[tuple[str, str, str, str], list[Mapping[str, object]]] = {}
     for stat in stats:
         block = str(stat.get("geometry_block") or "")
         active = str(stat.get("geometry_active_dofs") or "")
+        level = str(stat.get("level_factor") or "")
+        objective = str(stat.get("geometry_objective") or "fixed_volume_gn")
         if not block:
             continue
-        grouped.setdefault((block, active), []).append(stat)
+        grouped.setdefault((block, active, level, objective), []).append(stat)
 
     blocks: list[dict[str, object]] = []
-    for (block, active), block_stats in grouped.items():
+    for (block, active, level, objective), block_stats in grouped.items():
         attempted = len(block_stats)
         accepted_stats = [s for s in block_stats if bool(s.get("geometry_accepted", False))]
         accepted = len(accepted_stats)
@@ -356,7 +358,8 @@ def summarize_geometry_calibration_stats(
             if loss_before is not None and loss_after is not None
             else None
         )
-        status = _geometry_block_status(
+        explicit_status = str(last.get("geometry_status") or "")
+        status = explicit_status or _geometry_block_status(
             attempted_updates=attempted,
             accepted_updates=accepted,
             total_step_norm=total_step,
@@ -370,6 +373,8 @@ def summarize_geometry_calibration_stats(
             {
                 "geometry_block": block,
                 "geometry_active_dofs": active,
+                "level_factor": int(level) if level else None,
+                "geometry_objective": objective,
                 "attempted_updates": attempted,
                 "accepted_updates": accepted,
                 "total_step_norm": total_step,
@@ -502,6 +507,7 @@ def optimize_geometry_blocks_for_level(
     gn_damping: float,
     outer_iters: int,
     loss_adapter: LossAdapter,
+    loss_spec: AlignmentLossSpec,
     max_step_px: float = 2.0,
     max_step_deg: float = 2.0,
 ) -> tuple[jnp.ndarray, GeometryCalibrationState, list[dict[str, float | int | str | bool]]]:
@@ -564,25 +570,89 @@ def optimize_geometry_blocks_for_level(
             gather_dtype=gather_dtype,
         )
         for block_name, active_names in _block_names(current.active_geometry_dofs):
-            current, block_stat = _optimize_one_block(
-                geometry=geometry,
-                grid=grid,
-                detector=detector,
-                projections=projections,
-                volume=x,
-                state=current,
-                active_names=active_names,
-                factor=factor,
-                block_name=block_name,
-                views_per_batch=views_per_batch,
-                projector_unroll=projector_unroll,
-                checkpoint_projector=checkpoint_projector,
-                gather_dtype=gather_dtype,
-                gn_damping=gn_damping,
-                loss_adapter=loss_adapter,
-                max_step_px=max_step_px,
-                max_step_deg=max_step_deg,
-            )
+            if block_name == "detector_center" and tuple(active_names) == ("det_u_px",):
+                from tomojax.align.detector_center import calibrate_detector_u_heldout
+
+                before = current.values_for(active_names)
+                result = calibrate_detector_u_heldout(
+                    geometry=geometry,
+                    grid=grid,
+                    detector=detector,
+                    projections=projections,
+                    state=current,
+                    factor=factor,
+                    recon_iters=recon_iters,
+                    lambda_tv=lambda_tv,
+                    regulariser=regulariser,
+                    huber_delta=huber_delta,
+                    tv_prox_iters=tv_prox_iters,
+                    views_per_batch=views_per_batch,
+                    projector_unroll=projector_unroll,
+                    checkpoint_projector=checkpoint_projector,
+                    gather_dtype=gather_dtype,
+                    loss_spec=loss_spec,
+                    loss_adapter=loss_adapter,
+                    candidate_radius_px=max(4.0, float(max_step_px) * 2.0),
+                    candidate_step_px=max(1.0, float(max(1, int(factor)))),
+                )
+                current = result.state
+                after = current.values_for(active_names)
+                step_norm = float(jnp.linalg.norm(after - before))
+                loss_before = _loss_at_current_or_none(
+                    result.candidate_values,
+                    result.candidate_losses,
+                    before[0],
+                )
+                block_stat = {
+                    "geometry_block": block_name,
+                    "geometry_active_dofs": ",".join(active_names),
+                    "geometry_objective": result.objective,
+                    "geometry_loss_kind": result.loss_kind,
+                    "loss_kind": result.loss_kind,
+                    "geometry_loss_before": loss_before,
+                    "geometry_loss_after": float(result.best_loss),
+                    "geometry_accepted": bool(
+                        step_norm > 0.0 and result.status != "ill_conditioned"
+                    ),
+                    "geometry_step_scale": 1.0 if step_norm > 0.0 else 0.0,
+                    "geometry_step_norm": step_norm,
+                    "geometry_gradient_norm": 0.0,
+                    "geometry_max_step": float(
+                        max(abs(v - float(before[0])) for v in result.candidate_values)
+                    ),
+                    "geometry_status": result.status,
+                    "geometry_seed_det_u_px": float(result.seed.det_u_px),
+                    "geometry_heldout_train_views": len(result.train_indices),
+                    "geometry_heldout_views": len(result.heldout_indices),
+                    "geometry_candidate_count": len(result.candidate_values),
+                    "geometry_warnings": ",".join(result.warnings),
+                    "geometry_candidate_values_json": ",".join(
+                        f"{v:.4g}" for v in result.candidate_values
+                    ),
+                    "geometry_candidate_losses_json": ",".join(
+                        f"{v:.6g}" for v in result.candidate_losses
+                    ),
+                }
+            else:
+                current, block_stat = _optimize_one_block(
+                    geometry=geometry,
+                    grid=grid,
+                    detector=detector,
+                    projections=projections,
+                    volume=x,
+                    state=current,
+                    active_names=active_names,
+                    factor=factor,
+                    block_name=block_name,
+                    views_per_batch=views_per_batch,
+                    projector_unroll=projector_unroll,
+                    checkpoint_projector=checkpoint_projector,
+                    gather_dtype=gather_dtype,
+                    gn_damping=gn_damping,
+                    loss_adapter=loss_adapter,
+                    max_step_px=max_step_px,
+                    max_step_deg=max_step_deg,
+                )
             block_stat["geometry_outer_idx"] = int(outer_idx)
             stats.append(block_stat)
     geom = geometry_with_axis_state(geometry, grid, detector, current)
@@ -605,6 +675,19 @@ def optimize_geometry_blocks_for_level(
         gather_dtype=gather_dtype,
     )
     return x, current, stats
+
+
+def _loss_at_current_or_none(
+    candidate_values: Sequence[float],
+    candidate_losses: Sequence[float],
+    current_value: jnp.ndarray,
+) -> float | None:
+    if not candidate_values or not candidate_losses:
+        return None
+    current = float(current_value)
+    idx = int(np.argmin(np.abs(np.asarray(candidate_values, dtype=np.float64) - current)))
+    value = float(candidate_losses[idx])
+    return value if math.isfinite(value) else None
 
 
 def _reconstruct(
@@ -834,12 +917,12 @@ def _optimize_one_block(
             best_loss = trial_loss
             best_scale = float(scale)
             best_step = trial_step
-            break
 
     next_state = state.replace_values(active_names, best_values)
     return next_state, {
         "geometry_block": block_name,
         "geometry_active_dofs": ",".join(active_names),
+        "geometry_objective": "fixed_volume_gn",
         "geometry_loss_kind": loss_adapter.name,
         "loss_kind": loss_adapter.name,
         "geometry_loss_before": loss_before,

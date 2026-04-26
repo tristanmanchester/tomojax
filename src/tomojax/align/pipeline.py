@@ -102,6 +102,23 @@ def _scoped_dofs_for_cfg(
     )
 
 
+def _validate_scoped_geometry_pose_gauges(scoped_dofs) -> None:
+    pose = set(scoped_dofs.active_pose_dofs)
+    geometry = set(scoped_dofs.active_geometry_dofs)
+    conflicts: list[str] = []
+    if "det_u_px" in geometry and ({"dx", "dz"} & pose):
+        conflicts.append("det_u_px cannot be estimated with active per-view dx/dz")
+    if "det_v_px" in geometry and ({"dx", "dz"} & pose):
+        conflicts.append("det_v_px cannot be estimated with active per-view dx/dz")
+    if conflicts:
+        raise ValueError(
+            "Gauge-coupled alignment DOFs are underdetermined: "
+            + "; ".join(conflicts)
+            + ". Freeze the pose translations for detector-centre calibration, "
+            "or supply a corrected detector centre before pose alignment."
+        )
+
+
 class AlignInfo(TypedDict):
     loss: list[float]
     loss_kind: str
@@ -1858,6 +1875,7 @@ def align_multires(
     if cfg is None:
         cfg = AlignConfig()
     scoped_dofs = _scoped_dofs_for_cfg(cfg, geometry=geometry)
+    _validate_scoped_geometry_pose_gauges(scoped_dofs)
     active_mask_tuple = scoped_dofs.pose_mask
     geometry_state = GeometryCalibrationState.from_checkpoint(
         resume_state.geometry_calibration_state if resume_state is not None else None,
@@ -2025,8 +2043,18 @@ def align_multires(
         detector_for_align = d
         det_grid_for_align = None
         geometry_completed_outer_iters = 0
+        geometry_wall_time = 0.0
         if geometry_state.active_geometry_dofs:
-            geometry_outer_iters = 1 if any(active_mask_tuple) else int(cfg.outer_iters)
+            geometry_start = time.perf_counter()
+            detector_u_heldout_only = (
+                tuple(geometry_state.active_geometry_dofs) == ("det_u_px",)
+                and not any(active_mask_tuple)
+            )
+            geometry_outer_iters = (
+                1
+                if any(active_mask_tuple) or detector_u_heldout_only
+                else int(cfg.outer_iters)
+            )
             raw_geometry_stats = []
             for geometry_outer_idx in range(1, int(geometry_outer_iters) + 1):
                 x0, geometry_state, step_stats = optimize_geometry_blocks_for_level(
@@ -2049,10 +2077,12 @@ def align_multires(
                     gn_damping=float(cfg.gn_damping),
                     outer_iters=1,
                     loss_adapter=loss_adapter,
+                    loss_spec=active_loss_spec,
                 )
                 for stat in step_stats:
                     stat["geometry_outer_idx"] = int(geometry_outer_idx)
                 raw_geometry_stats.extend(step_stats)
+            geometry_wall_time = time.perf_counter() - geometry_start
             geometry_completed_outer_iters = max(
                 (
                     int(stat.get("geometry_outer_idx", 0))
@@ -2245,6 +2275,7 @@ def align_multires(
                     for stat in geometry_stats
                     if stat.get("geometry_loss_after") is not None
                 ]
+                info["wall_time_total"] = float(geometry_wall_time)
         level_completed_after = int(
             info.get("completed_outer_iters", len(info.get("outer_stats", [])))
         )
@@ -2274,7 +2305,10 @@ def align_multires(
         prev_factor = lvl["factor"]
         last_level_index_processed = int(li)
         try:
-            global_elapsed_offset += float(info.get("wall_time_total") or 0.0)
+            elapsed_increment = float(info.get("wall_time_total") or 0.0)
+            if any(active_mask_tuple):
+                elapsed_increment += float(geometry_wall_time)
+            global_elapsed_offset += elapsed_increment
         except Exception:
             pass
         if checkpoint_callback is not None:

@@ -26,6 +26,7 @@ from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.recon.fbp import fbp
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.quicklook import scale_to_uint8
 
 
@@ -123,14 +124,6 @@ def _default_scenarios() -> list[Scenario]:
             geometry_type="parallel",
             geometry_dofs=("det_u_px",),
             hidden_det_u_px=-4.0,
-        ),
-        Scenario(
-            slug="parallel_det_u_p004",
-            title="Parallel CT: detector/ray-grid centre +4 px",
-            description="Opposite detector-u sign check for convention regressions.",
-            geometry_type="parallel",
-            geometry_dofs=("det_u_px",),
-            hidden_det_u_px=4.0,
         ),
         Scenario(
             slug="parallel_detector_roll_p2p5",
@@ -470,6 +463,35 @@ def _run_fbp(
         views_per_batch=max(1, int(views_per_batch)),
         gather_dtype=gather_dtype,
         checkpoint_projector=True,
+        det_grid=det_grid,
+    )
+    return np.asarray(x, dtype=np.float32)
+
+
+def _run_tv_recon(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    *,
+    profile: RunProfile,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+) -> np.ndarray:
+    x, _ = fista_tv(
+        geometry,
+        grid,
+        detector,
+        projections,
+        init_x=None,
+        config=FistaConfig(
+            iters=int(profile.recon_iters),
+            lambda_tv=0.0015,
+            tv_prox_iters=int(profile.tv_prox_iters),
+            views_per_batch=max(1, int(profile.views_per_batch)),
+            projector_unroll=1,
+            checkpoint_projector=True,
+            gather_dtype=str(profile.gather_dtype),
+        ),
         det_grid=det_grid,
     )
     return np.asarray(x, dtype=np.float32)
@@ -1338,13 +1360,12 @@ def _run_scenario(
         state = _supplied_state(scenario, nominal_geometry)
         calibrated_geometry_for_tv = geometry_with_axis_state(nominal_geometry, grid, detector, state)
         supplied_grid = level_detector_grid(detector, state=state, factor=1)
-        aligned_tv = _run_fbp(
+        aligned_tv = _run_tv_recon(
             calibrated_geometry_for_tv,
             grid,
             detector,
             projections,
-            views_per_batch=profile.views_per_batch,
-            gather_dtype=profile.gather_dtype,
+            profile=profile,
             det_grid=supplied_grid,
         )
         info = {
@@ -1370,6 +1391,18 @@ def _run_scenario(
             info.get("outer_stats", [])
         )
     diagnostics = info.get("geometry_calibration_diagnostics", {})
+    geometry_objectives = sorted(
+        {
+            str(stat.get("geometry_objective"))
+            for stat in info.get("outer_stats", [])
+            if isinstance(stat, Mapping) and stat.get("geometry_objective")
+        }
+    )
+    heldout_stats = [
+        stat
+        for stat in info.get("outer_stats", [])
+        if isinstance(stat, Mapping) and stat.get("geometry_objective") == "heldout_reprojection"
+    ]
 
     calibrated_geometry = geometry_with_axis_state(nominal_geometry, grid, detector, state)
     calibrated_det_grid = level_detector_grid(detector, state=state, factor=1)
@@ -1424,6 +1457,8 @@ def _run_scenario(
         "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
+        "geometry_objectives": geometry_objectives,
+        "heldout_detector_center_stats": heldout_stats,
         "outer_stats": info.get("outer_stats", []),
         "metrics": metrics,
         "alignment_info": info,
@@ -1442,6 +1477,14 @@ def _run_scenario(
             str(v) for v in info.get("active_geometry_dofs", scenario.geometry_dofs)
         ),
         "loss_kind": str(info.get("loss_kind", "")),
+        "geometry_objectives": ",".join(geometry_objectives),
+        "heldout_detector_center_candidate_count": max(
+            (int(stat.get("geometry_candidate_count", 0)) for stat in heldout_stats),
+            default=0,
+        ),
+        "heldout_detector_center_seed_det_u_px": (
+            float(heldout_stats[-1]["geometry_seed_det_u_px"]) if heldout_stats else np.nan
+        ),
         "theta_span_deg": theta_span,
         "n_views": int(profile.views),
         "parameter_provenance": provenance,
@@ -1481,6 +1524,8 @@ def _run_scenario(
         "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
+        "geometry_objectives": geometry_objectives,
+        "heldout_detector_center_stats": heldout_stats,
         "outer_stats": info.get("outer_stats", []),
         "metrics": metrics,
         "artifacts": visual_paths,
