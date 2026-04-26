@@ -1,7 +1,7 @@
 ---
 title: Fix COR Calibration With Held-Out Detector-Centre Objective
 type: fix
-status: active
+status: completed
 date: 2026-04-26
 origin: docs/brainstorms/geometry-calibration-solver-requirements.md
 ---
@@ -31,6 +31,12 @@ detector-centre strategy inside the same alignment system:
 
 Heavy numerical validation and visual evidence runs must run on the Linux laptop, not on this Mac
 CPU. Local work should stay limited to static checks and small CPU-friendly tests.
+
+**Completed validation:** commit `4e10886` passed the focused local checks and the Linux laptop
+smoke run in
+`runs/alignment-smoke-65-cor-4e10886/`. The 65^3 `parallel_det_u_m004` case used
+`heldout_reprojection` with `l2_otsu` and recovered `det_u_px=-4.0`; the supplied
+`known_det_u_control` also completed with the corrected TV reconstruction path.
 
 ---
 
