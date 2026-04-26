@@ -44,6 +44,10 @@ def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tm
     assert manifest["profile"]["size"] == 128
     assert manifest["profile"]["views"] == 128
     assert tuple(manifest["profile"]["levels"]) == (8, 4, 2, 1)
+    assert manifest["profile"]["outer_iters"] == 12
+    assert manifest["profile"]["early_stop"] is True
+    assert manifest["profile"]["early_stop_rel_impr"] == 1e-3
+    assert manifest["profile"]["early_stop_patience"] == 2
     assert manifest["profile"]["views_per_batch"] == 1
     assert status["state"] == "dry_run_completed"
     assert status["scenario_count"] == len(manifest["scenarios"])
@@ -80,6 +84,87 @@ def test_geometry_block_taxonomy_scenarios_cover_new_geometry_blocks():
     assert dof_sets["parallel_det_u_roll_combo"] == {"det_u_px", "detector_roll_deg"}
     assert dof_sets["parallel_det_u_axis_refine"] == {"det_u_px", "axis_rot_x_deg"}
     assert dof_sets["lamino_det_u_tilt_combo"] == {"det_u_px", "tilt_deg"}
+
+
+def test_visual_stress_scenarios_record_explicit_acquisition_span(tmp_path):
+    generator = _load_generator()
+    out = tmp_path / "taxonomy"
+
+    generator.main(
+        [
+            "--out",
+            str(out),
+            "--dry-run",
+            "--profile",
+            "docs",
+            "--scenario-set",
+            "visual_stress",
+        ]
+    )
+
+    manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
+    spans = {scenario["slug"]: scenario["theta_span_deg"] for scenario in manifest["scenarios"]}
+    titles = {scenario["slug"]: scenario["title"] for scenario in manifest["scenarios"]}
+
+    assert spans["stress_parallel_detector_roll_p10"] == 180.0
+    assert spans["stress_parallel_axis_pitch_p18"] == 360.0
+    assert spans["stress_parallel_axis_yaw_m18"] == 360.0
+    assert spans["stress_lamino_tilt_50"] == 360.0
+    assert "Parallel CT" not in titles["stress_parallel_axis_pitch_p18"]
+    assert "Parallel CT" not in titles["stress_parallel_axis_yaw_m18"]
+    assert all(scenario["n_views"] == 128 for scenario in manifest["scenarios"])
+
+
+def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monkeypatch):
+    generator = _load_generator()
+    grid = generator.Grid(4, 4, 4, 1.0, 1.0, 1.0)
+    detector = generator.Detector(4, 4, 1.0, 1.0)
+    geometry = generator.ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=[0.0, 90.0],
+    )
+    profile = generator.docs_profile()
+    captured = {}
+
+    def fake_align_multires(*args, **kwargs):
+        cfg = kwargs["cfg"]
+        captured["early_stop"] = cfg.early_stop
+        captured["early_stop_rel_impr"] = cfg.early_stop_rel_impr
+        captured["early_stop_patience"] = cfg.early_stop_patience
+        state = generator.GeometryCalibrationState.from_geometry(
+            geometry,
+            active_geometry_dofs=("det_u_px",),
+        )
+        info = {
+            "geometry_calibration_state": state.to_calibration_state().to_dict(),
+            "geometry_calibration_diagnostics": {"schema_version": 1, "blocks": []},
+            "outer_stats": [],
+        }
+        return generator.jnp.zeros((4, 4, 4), dtype=generator.jnp.float32), None, info
+
+    monkeypatch.setattr(generator, "align_multires", fake_align_multires)
+
+    generator._run_geometry_alignment(
+        generator.Scenario(
+            slug="probe",
+            title="probe",
+            description="probe",
+            geometry_type="parallel",
+            geometry_dofs=("det_u_px",),
+        ),
+        nominal_geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=generator.jnp.zeros((2, 4, 4), dtype=generator.jnp.float32),
+        profile=profile,
+    )
+
+    assert captured == {
+        "early_stop": True,
+        "early_stop_rel_impr": 1e-3,
+        "early_stop_patience": 2,
+    }
 
 
 def test_master_panel_ignores_failed_rows_without_panel_paths(tmp_path):

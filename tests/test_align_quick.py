@@ -7,6 +7,10 @@ import tomojax.align.pipeline as align_pipeline
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.align.losses import loss_spec_name, parse_loss_schedule, parse_loss_spec
+from tomojax.align.geometry_blocks import (
+    add_geometry_acquisition_diagnostics,
+    summarize_geometry_calibration_stats,
+)
 from tomojax.align.pipeline import align, align_multires, AlignConfig
 from tomojax.align.parametrizations import se3_from_5d
 
@@ -260,6 +264,92 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert np.asarray(params5).shape == (n_views, 5)
     assert np.allclose(np.asarray(params5), 0.0)
     assert any(stat.get("geometry_block") == "detector_center" for stat in info["outer_stats"])
+    diagnostics = info["geometry_calibration_diagnostics"]
+    assert diagnostics["schema_version"] == 1
+    assert diagnostics["blocks"]
+    center = diagnostics["blocks"][0]
+    assert center["geometry_block"] == "detector_center"
+    assert center["accepted_updates"] >= 1
+    assert center["status"] in {"converged", "underconverged", "ill_conditioned"}
+
+
+def test_geometry_calibration_diagnostics_classify_underconverged_and_ill_conditioned():
+    underconverged = summarize_geometry_calibration_stats(
+        [
+            {
+                "geometry_block": "detector_roll",
+                "geometry_active_dofs": "detector_roll_deg",
+                "geometry_loss_before": 1.0,
+                "geometry_loss_after": 0.8,
+                "geometry_accepted": True,
+                "geometry_step_norm": 0.2,
+                "geometry_gradient_norm": 0.01,
+                "geometry_max_step": 2.0,
+            },
+            {
+                "geometry_block": "detector_roll",
+                "geometry_active_dofs": "detector_roll_deg",
+                "geometry_loss_before": 0.8,
+                "geometry_loss_after": 0.7,
+                "geometry_accepted": True,
+                "geometry_step_norm": 0.12,
+                "geometry_gradient_norm": 0.008,
+                "geometry_max_step": 2.0,
+            },
+        ]
+    )
+    ill_conditioned = summarize_geometry_calibration_stats(
+        [
+            {
+                "geometry_block": "axis_direction",
+                "geometry_active_dofs": "axis_rot_x_deg",
+                "geometry_loss_before": 1.0,
+                "geometry_loss_after": 1.0,
+                "geometry_accepted": False,
+                "geometry_step_norm": 0.0,
+                "geometry_gradient_norm": 0.0,
+                "geometry_max_step": 2.0,
+            }
+        ]
+    )
+
+    assert underconverged["blocks"][0]["status"] == "underconverged"
+    assert underconverged["overall_status"] == "underconverged"
+    assert ill_conditioned["blocks"][0]["status"] == "ill_conditioned"
+    assert ill_conditioned["overall_status"] == "ill_conditioned"
+
+
+def test_axis_direction_diagnostics_mark_180_degree_acquisition_ill_conditioned():
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0)
+    geom = ParallelGeometry(
+        grid=grid,
+        detector=det,
+        thetas_deg=np.linspace(0.0, 180.0, 12, endpoint=False, dtype=np.float32),
+    )
+    diagnostics = {
+        "schema_version": 1,
+        "overall_status": "converged",
+        "blocks": [
+            {
+                "geometry_block": "axis_direction",
+                "geometry_active_dofs": "axis_rot_x_deg",
+                "status": "converged",
+            }
+        ],
+    }
+
+    annotated = add_geometry_acquisition_diagnostics(
+        diagnostics,
+        geom,
+        ("axis_rot_x_deg",),
+    )
+
+    block = annotated["blocks"][0]
+    assert annotated["overall_status"] == "ill_conditioned"
+    assert annotated["warnings"] == ["axis_direction_sub_full_rotation_acquisition"]
+    assert block["status"] == "ill_conditioned"
+    assert block["theta_span_deg"] == pytest.approx(180.0)
 
 
 def test_align_multires_rejects_non_integral_factors_before_truncating():

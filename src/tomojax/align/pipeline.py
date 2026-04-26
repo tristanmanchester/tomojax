@@ -59,10 +59,12 @@ from .gauge import (
 from .optimizers import PoseLbfgsConfig, run_pose_lbfgs
 from .geometry_blocks import (
     GeometryCalibrationState,
+    add_geometry_acquisition_diagnostics,
     geometry_with_axis_state,
     level_detector_grid,
     normalize_geometry_dofs,
     optimize_geometry_blocks_for_level,
+    summarize_geometry_calibration_stats,
 )
 from ..utils.fov import cylindrical_mask_xy
 
@@ -2314,6 +2316,12 @@ def align_multires(
             )
         )
 
+    geometry_calibration_diagnostics = add_geometry_acquisition_diagnostics(
+        summarize_geometry_calibration_stats(global_outer_stats),
+        geometry,
+        geometry_state.active_geometry_dofs,
+    )
+
     return (
         x_final,
         params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32),
@@ -2343,5 +2351,6 @@ def align_multires(
                 if geometry_state.active_geometry_dofs
                 else None
             ),
+            "geometry_calibration_diagnostics": geometry_calibration_diagnostics,
         },
     )

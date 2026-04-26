@@ -18,6 +18,7 @@ from tomojax.align.geometry_blocks import (
     geometry_with_axis_state,
     level_detector_grid,
     normalize_geometry_dofs,
+    summarize_geometry_calibration_stats,
 )
 from tomojax.align.pipeline import AlignConfig, align_multires
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
@@ -51,6 +52,7 @@ class Scenario:
     supplied_axis_rot_x_deg: float | None = None
     supplied_axis_rot_y_deg: float | None = None
     nominal_tilt_deg: float = 30.0
+    theta_span_deg: float | None = None
 
     @property
     def true_tilt_deg(self) -> float:
@@ -68,6 +70,9 @@ class RunProfile:
     tv_prox_iters: int
     views_per_batch: int
     gather_dtype: str
+    early_stop: bool
+    early_stop_rel_impr: float
+    early_stop_patience: int
 
 
 def docs_profile() -> RunProfile:
@@ -76,11 +81,14 @@ def docs_profile() -> RunProfile:
         size=128,
         views=128,
         levels=DEFAULT_LEVELS,
-        outer_iters=6,
+        outer_iters=12,
         recon_iters=20,
         tv_prox_iters=12,
         views_per_batch=1,
         gather_dtype="bf16",
+        early_stop=True,
+        early_stop_rel_impr=1e-3,
+        early_stop_patience=2,
     )
 
 
@@ -95,6 +103,9 @@ def smoke_profile() -> RunProfile:
         tv_prox_iters=4,
         views_per_batch=1,
         gather_dtype="fp32",
+        early_stop=False,
+        early_stop_rel_impr=1e-3,
+        early_stop_patience=2,
     )
 
 
@@ -203,22 +214,31 @@ def visual_stress_scenario_catalog() -> list[Scenario]:
             geometry_type="parallel",
             geometry_dofs=("detector_roll_deg",),
             hidden_detector_roll_deg=10.0,
+            theta_span_deg=180.0,
         ),
         Scenario(
             slug="stress_parallel_axis_pitch_p18",
-            title="Parallel CT: axis pitched +18 deg",
-            description="Large forward/backward lab-frame axis tilt for visual artifact screening.",
+            title="Full-rotation arbitrary axis: pitch +18 deg",
+            description=(
+                "Large forward/backward lab-frame axis tilt with full angular coverage for visual "
+                "artifact screening."
+            ),
             geometry_type="parallel",
             geometry_dofs=("axis_rot_x_deg",),
             hidden_axis_rot_x_deg=18.0,
+            theta_span_deg=360.0,
         ),
         Scenario(
             slug="stress_parallel_axis_yaw_m18",
-            title="Parallel CT: axis yawed -18 deg",
-            description="Large side-to-side lab-frame axis tilt for visual artifact screening.",
+            title="Full-rotation arbitrary axis: yaw -18 deg",
+            description=(
+                "Large side-to-side lab-frame axis tilt with full angular coverage for visual "
+                "artifact screening."
+            ),
             geometry_type="parallel",
             geometry_dofs=("axis_rot_y_deg",),
             hidden_axis_rot_y_deg=-18.0,
+            theta_span_deg=360.0,
         ),
         Scenario(
             slug="stress_lamino_tilt_50",
@@ -228,13 +248,16 @@ def visual_stress_scenario_catalog() -> list[Scenario]:
             geometry_dofs=("tilt_deg",),
             hidden_axis_rot_x_deg=20.0,
             nominal_tilt_deg=30.0,
+            theta_span_deg=360.0,
         ),
     ]
 
 
 def scenario_catalog_for_kind(kind: str) -> list[Scenario]:
     if kind == "visual_stress":
-        return visual_stress_scenario_catalog()
+        scenarios = visual_stress_scenario_catalog()
+        _validate_visual_stress_acquisition(scenarios)
+        return scenarios
     return scenario_catalog()
 
 
@@ -254,6 +277,17 @@ def profile_from_args(args: argparse.Namespace) -> RunProfile:
             args.views_per_batch if args.views_per_batch is not None else base.views_per_batch
         ),
         gather_dtype=str(args.gather_dtype or base.gather_dtype),
+        early_stop=bool(args.early_stop if args.early_stop is not None else base.early_stop),
+        early_stop_rel_impr=float(
+            args.early_stop_rel_impr
+            if args.early_stop_rel_impr is not None
+            else base.early_stop_rel_impr
+        ),
+        early_stop_patience=int(
+            args.early_stop_patience
+            if args.early_stop_patience is not None
+            else base.early_stop_patience
+        ),
     )
 
 
@@ -290,6 +324,30 @@ def _build_geometry(
             tilt_about="x",
         )
     return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
+
+
+def _theta_span_deg(scenario: Scenario) -> float:
+    if scenario.theta_span_deg is not None:
+        return float(scenario.theta_span_deg)
+    if scenario.geometry_type == "lamino":
+        return 360.0
+    return 180.0
+
+
+def _has_axis_direction_perturbation(scenario: Scenario) -> bool:
+    return (
+        abs(float(scenario.hidden_axis_rot_x_deg)) > 1e-7
+        or abs(float(scenario.hidden_axis_rot_y_deg)) > 1e-7
+    )
+
+
+def _validate_visual_stress_acquisition(scenarios: Sequence[Scenario]) -> None:
+    for scenario in scenarios:
+        if _has_axis_direction_perturbation(scenario) and scenario.theta_span_deg is None:
+            raise ValueError(
+                f"Visual-stress axis scenario {scenario.slug!r} must set theta_span_deg "
+                "explicitly so nominal geometry type does not silently choose acquisition span."
+            )
 
 
 def _state_from_values(
@@ -433,7 +491,9 @@ def _run_geometry_alignment(
             tv_prox_iters=int(profile.tv_prox_iters),
             geometry_dofs=geometry_dofs,
             freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
-            early_stop=False,
+            early_stop=bool(profile.early_stop),
+            early_stop_rel_impr=float(profile.early_stop_rel_impr),
+            early_stop_patience=int(profile.early_stop_patience),
             gather_dtype=profile.gather_dtype,
             checkpoint_projector=True,
             views_per_batch=max(1, int(profile.views_per_batch)),
@@ -650,6 +710,31 @@ def _scenario_supplied_payload(scenario: Scenario) -> dict[str, float]:
     return supplied
 
 
+def _geometry_status_label(diagnostics: Any) -> str:
+    if not isinstance(diagnostics, dict):
+        return ""
+    overall = diagnostics.get("overall_status")
+    if isinstance(overall, str) and overall:
+        return overall
+    blocks = diagnostics.get("blocks")
+    if not isinstance(blocks, list):
+        return ""
+    statuses = [
+        str(block.get("status"))
+        for block in blocks
+        if isinstance(block, dict) and block.get("status")
+    ]
+    if not statuses:
+        return ""
+    if "ill_conditioned" in statuses:
+        return "ill_conditioned"
+    if "underconverged" in statuses:
+        return "underconverged"
+    if all(status == "converged" for status in statuses):
+        return "converged"
+    return ",".join(statuses)
+
+
 def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -670,6 +755,8 @@ def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> di
                 "description": s.description,
                 "geometry_type": s.geometry_type,
                 "geometry_dofs": list(s.geometry_dofs),
+                "theta_span_deg": _theta_span_deg(s),
+                "n_views": int(profile.views),
                 "hidden_truth": _scenario_truth_payload(s),
                 "supplied_corrections": _scenario_supplied_payload(s),
             }
@@ -702,7 +789,7 @@ def _run_scenario(
 ) -> dict[str, Any]:
     start_time = time.time()
     volume = jnp.asarray(truth, dtype=jnp.float32)
-    theta_span = 360.0 if scenario.geometry_type == "lamino" else 180.0
+    theta_span = _theta_span_deg(scenario)
     thetas = np.linspace(0.0, theta_span, int(profile.views), endpoint=False, dtype=np.float32)
     nominal_geometry = _build_geometry(
         grid=grid,
@@ -744,10 +831,14 @@ def _run_scenario(
             "title": scenario.title,
             "geometry_type": scenario.geometry_type,
             "geometry_dofs": ",".join(scenario.geometry_dofs),
+            "theta_span_deg": theta_span,
+            "n_views": int(profile.views),
             "parameter_provenance": "naive_only",
             "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
             "supplied_corrections_json": "{}",
             "estimates_json": "{}",
+            "geometry_diagnostics_json": "{}",
+            "geometry_status": "",
             "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
             "calibrated_volume_nmse": np.nan,
             "aligned_tv_volume_nmse": np.nan,
@@ -768,6 +859,11 @@ def _run_scenario(
                     "source": "tomojax.data.phantoms.lamino_disk",
                 },
                 "profile": asdict(profile),
+                "acquisition": {
+                    "theta_span_deg": theta_span,
+                    "n_views": int(profile.views),
+                    "geometry_type": scenario.geometry_type,
+                },
                 "hidden_truth": _scenario_truth_payload(scenario),
                 "parameter_provenance": "naive_only",
                 "metrics": {"naive_volume_nmse": row["naive_volume_nmse"]},
@@ -804,6 +900,7 @@ def _run_scenario(
         )
         info = {
             "geometry_calibration_state": state.to_calibration_state().to_dict(),
+            "geometry_calibration_diagnostics": {},
             "outer_stats": [],
             "total_outer_iters": 0,
             "control": "supplied_known_correction",
@@ -819,6 +916,10 @@ def _run_scenario(
             profile=profile,
         )
         provenance = "frozen"
+    if "geometry_calibration_diagnostics" not in info:
+        info["geometry_calibration_diagnostics"] = summarize_geometry_calibration_stats(
+            info.get("outer_stats", [])
+        )
 
     calibrated_geometry = geometry_with_axis_state(nominal_geometry, grid, detector, state)
     calibrated_det_grid = level_detector_grid(detector, state=state, factor=1)
@@ -848,10 +949,18 @@ def _run_scenario(
         "title": scenario.title,
         "geometry_type": scenario.geometry_type,
         "geometry_dofs": ",".join(scenario.geometry_dofs),
+        "theta_span_deg": theta_span,
+        "n_views": int(profile.views),
         "parameter_provenance": provenance,
         "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
         "supplied_corrections_json": json.dumps(supplied, sort_keys=True),
         "estimates_json": json.dumps(estimates, sort_keys=True),
+        "geometry_diagnostics_json": json.dumps(
+            info.get("geometry_calibration_diagnostics", {}), sort_keys=True
+        ),
+        "geometry_status": _geometry_status_label(
+            info.get("geometry_calibration_diagnostics", {})
+        ),
         "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
         "calibrated_volume_nmse": _volume_nmse(calibrated_fbp, truth),
         "aligned_tv_volume_nmse": _volume_nmse(aligned_tv, truth),
@@ -870,12 +979,18 @@ def _run_scenario(
             "source": "tomojax.data.phantoms.lamino_disk",
         },
         "profile": asdict(profile),
+        "acquisition": {
+            "theta_span_deg": theta_span,
+            "n_views": int(profile.views),
+            "geometry_type": scenario.geometry_type,
+        },
         "hidden_truth": _scenario_truth_payload(scenario),
         "supplied_corrections": supplied,
         "estimated_corrections": estimates if provenance == "estimated" else {},
         "final_calibrated_geometry": estimates,
         "parameter_provenance": provenance,
         "calibration_state": info.get("geometry_calibration_state"),
+        "geometry_calibration_diagnostics": info.get("geometry_calibration_diagnostics", {}),
         "outer_stats": info.get("outer_stats", []),
         "metrics": {
             "naive_volume_nmse": row["naive_volume_nmse"],
@@ -988,12 +1103,16 @@ def run(args: argparse.Namespace) -> None:
                 "title": scenario.title,
                 "geometry_type": scenario.geometry_type,
                 "geometry_dofs": ",".join(scenario.geometry_dofs),
+                "theta_span_deg": _theta_span_deg(scenario),
+                "n_views": int(profile.views),
                 "parameter_provenance": "failed",
                 "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
                 "supplied_corrections_json": json.dumps(
                     _scenario_supplied_payload(scenario), sort_keys=True
                 ),
                 "estimates_json": "{}",
+                "geometry_diagnostics_json": "{}",
+                "geometry_status": "",
                 "naive_volume_nmse": np.nan,
                 "calibrated_volume_nmse": np.nan,
                 "aligned_tv_volume_nmse": np.nan,
@@ -1054,6 +1173,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--outer-iters", type=int, default=None)
     parser.add_argument("--recon-iters", type=int, default=None)
     parser.add_argument("--tv-prox-iters", type=int, default=None)
+    early_stop = parser.add_mutually_exclusive_group()
+    early_stop.add_argument("--early-stop", dest="early_stop", action="store_true", default=None)
+    early_stop.add_argument("--no-early-stop", dest="early_stop", action="store_false")
+    parser.add_argument("--early-stop-rel-impr", type=float, default=None)
+    parser.add_argument("--early-stop-patience", type=int, default=None)
     parser.add_argument("--gather-dtype", default=None, choices=["fp32", "bf16", "fp16"])
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--scenario", action="append", default=None)
