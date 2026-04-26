@@ -76,6 +76,23 @@ def test_axis_pose_stack_is_jax_differentiable():
     assert jnp.isfinite(tangent)
 
 
+def test_parallel_axis_pose_stack_has_local_sensitivity_at_nominal_axis():
+    nominal = jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)
+    thetas = jnp.asarray([0.0, 45.0, 90.0], dtype=jnp.float32)
+
+    def flattened_pose(values: jnp.ndarray) -> jnp.ndarray:
+        axis = axis_unit_from_rotations(
+            nominal,
+            axis_rot_x_deg=values[0],
+            axis_rot_y_deg=values[1],
+        )
+        return axis_pose_stack(thetas, axis).reshape(-1)
+
+    jacobian = jax.jacfwd(flattened_pose)(jnp.asarray([0.0, 0.0], dtype=jnp.float32))
+
+    assert float(jnp.linalg.norm(jacobian)) > 1e-4
+
+
 def test_rotation_axis_geometry_matches_lamino_for_nominal_axis():
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=8, nv=8, du=1.0, dv=1.0)

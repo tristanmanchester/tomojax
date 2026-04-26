@@ -128,28 +128,28 @@ def _skew(v: jnp.ndarray) -> jnp.ndarray:
 def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
     ez = jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)
     axis = axis_unit / jnp.maximum(jnp.linalg.norm(axis_unit), jnp.float32(1e-8))
-    cross = jnp.cross(ez, axis)
-    sin_theta = jnp.linalg.norm(cross)
     cos_theta = jnp.clip(jnp.dot(ez, axis), -1.0, 1.0)
 
     def aligned() -> jnp.ndarray:
-        k = cross / jnp.maximum(sin_theta, jnp.float32(1e-8))
-        K = _skew(k)
-        return (
-            jnp.eye(3, dtype=jnp.float32)
-            + sin_theta * K
-            + (jnp.float32(1.0) - cos_theta) * (K @ K)
+        # Rodrigues' formula using the unnormalised cross product avoids the
+        # zero-axis singularity at ez. This keeps the pose map differentiable
+        # at the nominal parallel-CT axis, where axis calibration starts.
+        cross = jnp.cross(ez, axis)
+        K = _skew(cross)
+        return jnp.eye(3, dtype=jnp.float32) + K + (K @ K) / jnp.maximum(
+            jnp.float32(1.0) + cos_theta,
+            jnp.float32(1e-8),
         )
 
     def near_parallel() -> jnp.ndarray:
-        return jax.lax.cond(
-            cos_theta > 0.0,
-            lambda _: jnp.eye(3, dtype=jnp.float32),
-            lambda _: jnp.diag(jnp.asarray([1.0, -1.0, -1.0], dtype=jnp.float32)),
-            operand=None,
-        )
+        return jnp.diag(jnp.asarray([1.0, -1.0, -1.0], dtype=jnp.float32))
 
-    return jax.lax.cond(sin_theta > jnp.float32(1e-6), lambda _: aligned(), lambda _: near_parallel(), operand=None)
+    return jax.lax.cond(
+        cos_theta > jnp.float32(-1.0 + 1e-6),
+        lambda _: aligned(),
+        lambda _: near_parallel(),
+        operand=None,
+    )
 
 
 def axis_pose_stack(
