@@ -93,6 +93,64 @@ def test_random_shapes_skips_oversized_objects_in_thin_volumes():
     assert np.isfinite(vol).all()
 
 
+def test_random_shapes_center_biased_sphere_is_deterministic_and_bounded():
+    vol1 = random_cubes_spheres(
+        64,
+        64,
+        64,
+        n_cubes=10,
+        n_spheres=10,
+        min_size=4,
+        max_size=12,
+        placement="center_biased_sphere",
+        radial_exponent=0.75,
+        seed=99,
+    )
+    vol2 = random_cubes_spheres(
+        64,
+        64,
+        64,
+        n_cubes=10,
+        n_spheres=10,
+        min_size=4,
+        max_size=12,
+        placement="center_biased_sphere",
+        radial_exponent=0.75,
+        seed=99,
+    )
+
+    assert np.array_equal(vol1, vol2)
+    assert vol1.shape == (64, 64, 64)
+    assert np.min(vol1) >= 0.0
+    assert np.max(vol1) <= 1.0
+    assert np.count_nonzero(vol1) > 0
+
+
+def test_random_shapes_center_biased_sphere_populates_central_slices():
+    vol = random_cubes_spheres(
+        128,
+        128,
+        128,
+        n_cubes=24,
+        n_spheres=24,
+        min_size=7,
+        max_size=24,
+        placement="center_biased_sphere",
+        radial_exponent=0.75,
+        seed=20260801,
+    )
+    center = vol.shape[0] // 2
+
+    assert np.count_nonzero(vol[:, :, center]) > 0
+    assert np.count_nonzero(vol[:, center, :]) > 0
+    assert np.count_nonzero(vol[center, :, :]) > 0
+
+
+def test_random_shapes_rejects_unknown_placement_mode():
+    with pytest.raises(ValueError, match="placement"):
+        random_cubes_spheres(32, 32, 32, placement="not-a-mode")
+
+
 @pytest.mark.skipif(
     not bool(int(os.environ.get("TOMOJAX_RUN_HEAVY_PHANTOM_TESTS", "0"))),
     reason="set TOMOJAX_RUN_HEAVY_PHANTOM_TESTS=1 to run heavy phantom regression checks",

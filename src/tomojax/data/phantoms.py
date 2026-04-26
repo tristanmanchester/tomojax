@@ -179,6 +179,8 @@ def _sample_random_sphere_params(
     min_value: float,
     max_value: float,
     use_inscribed_fov: bool,
+    placement: str,
+    radial_exponent: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
     """Sample sphere parameters while preserving the legacy RNG sequence."""
@@ -190,7 +192,19 @@ def _sample_random_sphere_params(
         radius = float(rng.uniform(min_size / 2.0, max_size / 2.0))
         if radius > nz / 2.0:
             continue
-        if use_inscribed_fov:
+        if placement == "center_biased_sphere":
+            center = _sample_center_biased_sphere(
+                nx,
+                ny,
+                nz,
+                margin=radius,
+                radial_exponent=radial_exponent,
+                rng=rng,
+            )
+            if center is None:
+                continue
+            cx, cy, cz = center
+        elif use_inscribed_fov:
             rmax = fov_r - radius
             if rmax <= 1:
                 continue
@@ -244,6 +258,33 @@ def _rasterize_spheres_python_roi(vol: np.ndarray, params: np.ndarray) -> None:
         sub[mask] = np.maximum(sub[mask], value)
 
 
+def _sample_center_biased_sphere(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    margin: float,
+    radial_exponent: float,
+    rng: np.random.Generator,
+) -> tuple[float, float, float] | None:
+    """Sample a center inside the inscribed 3D sphere, biased toward volume center."""
+    rmax = (min(nx, ny, nz) - 1) / 2.0 - float(margin)
+    if rmax <= 1:
+        return None
+
+    direction = rng.normal(size=3)
+    norm = float(np.linalg.norm(direction))
+    if norm <= 0:
+        return None
+    direction = direction / norm
+
+    exponent = max(float(radial_exponent), 1e-6)
+    radius = rmax * float(rng.uniform(0.0, 1.0) ** exponent)
+    center = np.array([(nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0], dtype=np.float64)
+    point = center + radius * direction
+    return float(point[0]), float(point[1]), float(point[2])
+
+
 def random_cubes_spheres(
     nx: int,
     ny: int,
@@ -257,12 +298,18 @@ def random_cubes_spheres(
     max_value: float = 1.0,
     max_rot_degrees: float = 180.0,
     use_inscribed_fov: bool = True,
+    placement: str = "legacy",
+    radial_exponent: float = 0.75,
     seed: int = 0,
 ) -> np.ndarray:
     """Random rotated cubes + spheres phantom (deterministic).
 
     Ensures objects fit within FOV if `use_inscribed_fov=True`.
     """
+    if placement not in {"legacy", "center_biased_sphere"}:
+        msg = "placement must be 'legacy' or 'center_biased_sphere'"
+        raise ValueError(msg)
+
     vol = np.zeros((nx, ny, nz), dtype=np.float32)
     rng = np.random.default_rng(seed)
 
@@ -274,7 +321,20 @@ def random_cubes_spheres(
         size = float(rng.uniform(min_size, max_size))
         if size > nz:
             continue
-        if use_inscribed_fov:
+        if placement == "center_biased_sphere":
+            margin = size * np.sqrt(3) / 2.0
+            center = _sample_center_biased_sphere(
+                nx,
+                ny,
+                nz,
+                margin=margin,
+                radial_exponent=radial_exponent,
+                rng=rng,
+            )
+            if center is None:
+                continue
+            cx, cy, cz = center
+        elif use_inscribed_fov:
             max_xy_extent = size * np.sqrt(3) / 2.0
             rmax = fov_r - max_xy_extent
             if rmax <= 1:
@@ -305,6 +365,8 @@ def random_cubes_spheres(
         min_value=min_value,
         max_value=max_value,
         use_inscribed_fov=use_inscribed_fov,
+        placement=placement,
+        radial_exponent=radial_exponent,
         rng=rng,
     )
     _rasterize_spheres_python_roi(vol, params)

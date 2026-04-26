@@ -29,9 +29,13 @@ from tomojax.recon.fbp import fbp
 from tomojax.recon.quicklook import scale_to_uint8
 
 
-PHANTOM_KIND = "random_shapes/full_volume_random_cubes_spheres"
+PHANTOM_KIND = "random_shapes/center_biased_sphere_cubes_spheres"
 PHANTOM_SOURCE = "tomojax.data.phantoms.random_cubes_spheres"
-PHANTOM_SEED = 20260458
+PHANTOM_SEED = 20260893
+PHANTOM_N_CUBES = 22
+PHANTOM_N_SPHERES = 22
+PHANTOM_PLACEMENT = "center_biased_sphere"
+PHANTOM_RADIAL_EXPONENT = 0.75
 DEFAULT_LEVELS = (8, 4, 2, 1)
 
 
@@ -297,14 +301,16 @@ def _phantom(size: int) -> np.ndarray:
         size,
         size,
         size,
-        n_cubes=4,
-        n_spheres=7,
+        n_cubes=PHANTOM_N_CUBES,
+        n_spheres=PHANTOM_N_SPHERES,
         min_size=max(5, size // 18),
-        max_size=max(9, size // 8),
+        max_size=int(round((size // 8) * 1.5)),
         min_value=0.45,
         max_value=1.0,
         seed=PHANTOM_SEED,
         use_inscribed_fov=True,
+        placement=PHANTOM_PLACEMENT,
+        radial_exponent=PHANTOM_RADIAL_EXPONENT,
     ).astype(np.float32)
 
 
@@ -761,28 +767,132 @@ def _difference_clip(images: Sequence[np.ndarray]) -> float:
     return float(np.nanpercentile(samples, 99.0))
 
 
-def _ortho_row(label: str, slices: dict[str, np.ndarray], *, lower: float, upper: float) -> np.ndarray:
-    cells = [_label_bar(110, label, height=slices["XY"].shape[0])]
-    cells.extend(_scale_shared_gray(slices[name], lower, upper) for name in ("XY", "XZ", "YZ"))
-    return _hstack(cells, pad=4)
+def _image_grid(
+    rows: Sequence[Sequence[np.ndarray]],
+    *,
+    title: str,
+    row_labels: Sequence[str],
+    col_labels: Sequence[str],
+    scale: int = 3,
+    pad: int = 8,
+) -> np.ndarray:
+    import matplotlib
 
+    matplotlib.use("Agg")
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
-def _difference_row(label: str, slices: dict[str, np.ndarray], *, clip: float) -> np.ndarray:
-    cells = [_label_bar(110, label, height=slices["XY"].shape[0])]
-    cells.extend(_scale_diverging(slices[name], clip) for name in ("XY", "XZ", "YZ"))
-    return _hstack(cells, pad=4)
+    image_rows = [[_to_rgb(image) for image in row] for row in rows]
 
+    if len(row_labels) != len(image_rows):
+        raise ValueError("row_labels must match image grid row count")
+    if len(col_labels) != max(len(row) for row in image_rows):
+        raise ValueError("col_labels must match image grid column count")
 
-def _header_row(slice_width: int) -> np.ndarray:
-    return _hstack(
-        [
-            _label_bar(110, ""),
-            _label_bar(slice_width, "XY"),
-            _label_bar(slice_width, "XZ"),
-            _label_bar(slice_width, "YZ"),
-        ],
-        pad=4,
+    nrows = len(image_rows)
+    ncols = len(col_labels)
+    cell_px = max(max(image.shape[:2]) for row in image_rows for image in row) * max(scale, 1)
+    title_font = max(10.0, min(18.0, cell_px * 0.044))
+    col_font = max(9.0, min(15.0, cell_px * 0.036))
+    row_font = max(8.5, min(13.0, cell_px * 0.032))
+    title_px = int(round(title_font * 2.2))
+    col_label_px = int(round(col_font * 2.1))
+    gutter_px = max(4, int(pad))
+    fig_w = ncols * cell_px + (ncols - 1) * gutter_px
+    fig_h = title_px + gutter_px + col_label_px + gutter_px + nrows * cell_px + (nrows - 1) * gutter_px
+    dpi = 100
+    fig = Figure(figsize=(fig_w / dpi, fig_h / dpi), dpi=dpi, facecolor=(0.045, 0.045, 0.045))
+    canvas = FigureCanvasAgg(fig)
+
+    fig.text(
+        0.0,
+        1.0 - 7 / fig_h,
+        title,
+        color=(0.9, 0.9, 0.9),
+        fontsize=title_font,
+        fontweight="semibold",
+        va="top",
+        ha="left",
     )
+
+    for col, label in enumerate(col_labels):
+        x0 = col * (cell_px + gutter_px)
+        fig.text(
+            (x0 + 2) / fig_w,
+            1.0 - (title_px + gutter_px + 5) / fig_h,
+            label,
+            color=(0.78, 0.78, 0.78),
+            fontsize=col_font,
+            fontweight="semibold",
+            va="top",
+            ha="left",
+        )
+
+    image_top = title_px + gutter_px + col_label_px + gutter_px
+    for row_idx, row in enumerate(image_rows):
+        y0 = image_top + row_idx * (cell_px + gutter_px)
+        for col_idx, image in enumerate(row):
+            x0 = col_idx * (cell_px + gutter_px)
+            ax = fig.add_axes(
+                [
+                    x0 / fig_w,
+                    1.0 - (y0 + cell_px) / fig_h,
+                    cell_px / fig_w,
+                    cell_px / fig_h,
+                ]
+            )
+            ax.imshow(image, interpolation="nearest")
+            ax.set_axis_off()
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_linewidth(0.35)
+                spine.set_edgecolor((0.19, 0.19, 0.19))
+            if col_idx == 0:
+                ax.text(
+                    0.02,
+                    0.96,
+                    row_labels[row_idx],
+                    color=(0.94, 0.94, 0.94),
+                    fontsize=row_font,
+                    fontweight="semibold",
+                    va="top",
+                    ha="left",
+                    transform=ax.transAxes,
+                    bbox={
+                        "boxstyle": "round,pad=0.22,rounding_size=0.06",
+                        "facecolor": (0.02, 0.02, 0.02, 0.50),
+                        "edgecolor": "none",
+                    },
+                )
+
+    canvas.draw()
+    rgba = np.asarray(canvas.buffer_rgba(), dtype=np.uint8)
+    return np.ascontiguousarray(rgba[:, :, :3])
+
+
+def _save_ortho_slices(
+    out_dir: Path,
+    prefix: str,
+    slices: Mapping[str, np.ndarray],
+    *,
+    lower: float | None = None,
+    upper: float | None = None,
+    diff_clip: float | None = None,
+) -> dict[str, str]:
+    paths: dict[str, str] = {}
+    for plane, image in slices.items():
+        key = f"{prefix}_{plane.lower()}"
+        path = out_dir / f"{key}.png"
+        if diff_clip is None:
+            if lower is None or upper is None:
+                panel = _scale(image)
+            else:
+                panel = _scale_shared_gray(image, lower, upper)
+        else:
+            panel = _scale_diverging(image, diff_clip)
+        iio.imwrite(path, panel)
+        paths[key] = str(path)
+    return paths
 
 
 def _write_visuals(
@@ -814,18 +924,22 @@ def _write_visuals(
         + list(diff_aligned_truth.values())
         + list(diff_aligned_naive.values())
     )
-    grid_panel = _vstack(
+    inspection_panel = _image_grid(
         [
-            _header_row(truth_s["XY"].shape[1]),
-            _ortho_row("truth", truth_s, lower=lower, upper=upper),
-            _ortho_row("naive FBP", naive_s, lower=lower, upper=upper),
-            _ortho_row("calib FBP", calibrated_s, lower=lower, upper=upper),
-            _ortho_row("aligned TV", aligned_s, lower=lower, upper=upper),
-            _difference_row("calib-truth", diff_calib_truth, clip=diff_clip),
-            _difference_row("aligned-truth", diff_aligned_truth, clip=diff_clip),
-            _difference_row("aligned-naive", diff_aligned_naive, clip=diff_clip),
+            [_scale_shared_gray(truth_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
+            [_scale_shared_gray(naive_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
+            [_scale_shared_gray(aligned_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
+            [_scale_diverging((naive_s[name] - truth_s[name]), diff_clip) for name in ("XY", "XZ", "YZ")],
+            [
+                _scale_diverging((aligned_s[name] - truth_s[name]), diff_clip)
+                for name in ("XY", "XZ", "YZ")
+            ],
         ],
-        pad=3,
+        title=f"{scenario.slug}: {scenario.title}",
+        row_labels=("GT", "naive", "aligned TV", "naive-GT", "aligned-GT"),
+        col_labels=("XY", "XZ", "YZ"),
+        scale=3,
+        pad=8,
     )
     loss_panel = _loss_panel(outer_stats, width=360, height=220)
     diagnostics_panel = _diagnostics_panel(
@@ -836,16 +950,8 @@ def _write_visuals(
         metrics=metrics,
         diagnostics=diagnostics,
         width=360,
-        height=max(220, grid_panel.shape[0] - loss_panel.shape[0] - 6),
+        height=420,
     )
-    side_panel = _vstack([loss_panel, diagnostics_panel], pad=6)
-    subtitle = (
-        f"{scenario.slug} | {scenario.title} | dofs={','.join(scenario.geometry_dofs) or 'none'} | "
-        f"est det_u={estimates.get('det_u_px', 0.0):.3g} roll={estimates.get('detector_roll_deg', 0.0):.3g} "
-        f"axis=({estimates.get('axis_rot_x_deg', 0.0):.3g},{estimates.get('axis_rot_y_deg', 0.0):.3g})"
-    )
-    body = _hstack([grid_panel, side_panel], pad=8)
-    panel = _vstack([_label_bar(body.shape[1], subtitle), body], pad=0)
     truth_xy = _scale(_slice_xy(truth))
     naive_xy = _scale(_slice_xy(naive_fbp))
     calibrated_xy = _scale(_slice_xy(calibrated_fbp))
@@ -877,12 +983,50 @@ def _write_visuals(
         "difference_aligned_truth_orthos": str(out_dir / "difference_aligned_truth_orthos.png"),
         "difference_aligned_naive_orthos": str(out_dir / "difference_aligned_naive_orthos.png"),
     }
+    paths.update(_save_ortho_slices(out_dir, "truth", truth_s, lower=lower, upper=upper))
+    paths.update(_save_ortho_slices(out_dir, "naive_fbp", naive_s, lower=lower, upper=upper))
+    paths.update(
+        _save_ortho_slices(out_dir, "calibrated_fbp", calibrated_s, lower=lower, upper=upper)
+    )
+    paths.update(_save_ortho_slices(out_dir, "aligned_tv", aligned_s, lower=lower, upper=upper))
+    paths.update(
+        _save_ortho_slices(
+            out_dir,
+            "difference_calibrated_truth",
+            diff_calib_truth,
+            diff_clip=diff_clip,
+        )
+    )
+    paths.update(
+        _save_ortho_slices(
+            out_dir,
+            "difference_aligned_truth",
+            diff_aligned_truth,
+            diff_clip=diff_clip,
+        )
+    )
+    paths.update(
+        _save_ortho_slices(
+            out_dir,
+            "difference_aligned_naive",
+            diff_aligned_naive,
+            diff_clip=diff_clip,
+        )
+    )
+    paths.update(
+        _save_ortho_slices(
+            out_dir,
+            "difference_naive_truth",
+            _ortho_slices(naive_fbp - truth),
+            diff_clip=diff_clip,
+        )
+    )
     iio.imwrite(paths["truth_xy"], truth_xy)
     iio.imwrite(paths["naive_fbp_xy"], naive_xy)
     iio.imwrite(paths["calibrated_fbp_xy"], calibrated_xy)
     iio.imwrite(paths["aligned_tv_xy"], tv_xy)
-    iio.imwrite(paths["before_after_panel"], panel)
-    iio.imwrite(paths["inspection_panel"], panel)
+    iio.imwrite(paths["before_after_panel"], inspection_panel)
+    iio.imwrite(paths["inspection_panel"], inspection_panel)
     iio.imwrite(paths["loss_panel"], loss_panel)
     iio.imwrite(paths["diagnostics_panel"], diagnostics_panel)
     iio.imwrite(paths["truth_orthos"], truth_orthos)
@@ -907,18 +1051,21 @@ def _write_naive_visuals(
     diff_s = _ortho_slices(naive_fbp - truth)
     lower, upper = _shared_intensity_limits([truth, naive_fbp])
     diff_clip = _difference_clip(list(diff_s.values()))
-    grid_panel = _vstack(
+    inspection_panel = _image_grid(
         [
-            _header_row(truth_s["XY"].shape[1]),
-            _ortho_row("truth", truth_s, lower=lower, upper=upper),
-            _ortho_row("naive FBP", naive_s, lower=lower, upper=upper),
-            _difference_row("naive-truth", diff_s, clip=diff_clip),
+            [_scale_shared_gray(truth_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
+            [_scale_shared_gray(naive_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
+            [_scale_diverging(diff_s[name], diff_clip) for name in ("XY", "XZ", "YZ")],
         ],
-        pad=3,
+        title=f"{scenario.slug}: {scenario.title}",
+        row_labels=("GT", "naive", "naive-GT"),
+        col_labels=("XY", "XZ", "YZ"),
+        scale=3,
+        pad=8,
     )
     diagnostics_panel = _text_panel(
         360,
-        grid_panel.shape[0],
+        220,
         [
             scenario.title,
             f"dofs: {','.join(scenario.geometry_dofs) or 'none'}",
@@ -928,13 +1075,6 @@ def _write_naive_visuals(
         ],
         title=scenario.slug,
     )
-    body = _hstack([grid_panel, diagnostics_panel], pad=8)
-    subtitle = (
-        f"{scenario.slug} | {scenario.title} | hidden "
-        f"det_u={scenario.hidden_det_u_px:g} roll={scenario.hidden_detector_roll_deg:g} "
-        f"axis=({scenario.hidden_axis_rot_x_deg:g},{scenario.hidden_axis_rot_y_deg:g})"
-    )
-    panel = _vstack([_label_bar(body.shape[1], subtitle), body], pad=0)
     truth_xy = _scale(_slice_xy(truth))
     naive_xy = _scale(_slice_xy(naive_fbp))
     truth_orthos = _hstack([_scale(truth_s[name]) for name in ("XY", "XZ", "YZ")])
@@ -956,9 +1096,15 @@ def _write_naive_visuals(
         "difference_aligned_truth_orthos": "",
         "difference_aligned_naive_orthos": str(out_dir / "difference_naive_truth_orthos.png"),
     }
+    paths.update(_save_ortho_slices(out_dir, "truth", truth_s, lower=lower, upper=upper))
+    paths.update(_save_ortho_slices(out_dir, "naive_fbp", naive_s, lower=lower, upper=upper))
+    paths.update(
+        _save_ortho_slices(out_dir, "difference_naive_truth", diff_s, diff_clip=diff_clip)
+    )
     iio.imwrite(paths["truth_xy"], truth_xy)
     iio.imwrite(paths["naive_fbp_xy"], naive_xy)
-    iio.imwrite(paths["before_after_panel"], panel)
+    iio.imwrite(paths["before_after_panel"], inspection_panel)
+    iio.imwrite(paths["inspection_panel"], inspection_panel)
     iio.imwrite(paths["diagnostics_panel"], diagnostics_panel)
     iio.imwrite(paths["truth_orthos"], truth_orthos)
     iio.imwrite(paths["calibrated_orthos"], naive_orthos)
@@ -1019,17 +1165,26 @@ def _geometry_status_label(diagnostics: Any) -> str:
     return ",".join(statuses)
 
 
+def _phantom_metadata() -> dict[str, Any]:
+    return {
+        "kind": PHANTOM_KIND,
+        "seed": PHANTOM_SEED,
+        "shared_across_cases": True,
+        "source": PHANTOM_SOURCE,
+        "n_cubes": PHANTOM_N_CUBES,
+        "n_spheres": PHANTOM_N_SPHERES,
+        "placement": PHANTOM_PLACEMENT,
+        "radial_exponent": PHANTOM_RADIAL_EXPONENT,
+        "selection": "phantom_picker_128_10x10_center_biased_sphere_slot_94",
+    }
+
+
 def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "generator": "scripts/generate_alignment_before_after_128.py",
         "purpose": "geometry_block_before_after_taxonomy",
-        "phantom": {
-            "kind": PHANTOM_KIND,
-            "seed": PHANTOM_SEED,
-            "shared_across_cases": True,
-            "source": PHANTOM_SOURCE,
-        },
+        "phantom": _phantom_metadata(),
         "profile": asdict(profile),
         "scenario_set": "default",
         "scenarios": [
@@ -1058,7 +1213,19 @@ def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> di
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def _run_scenario(
@@ -1136,12 +1303,7 @@ def _run_scenario(
             {
                 "schema_version": 1,
                 "scenario": asdict(scenario),
-                "phantom": {
-                    "kind": PHANTOM_KIND,
-                    "seed": PHANTOM_SEED,
-                    "shared_across_cases": True,
-                    "source": PHANTOM_SOURCE,
-                },
+                "phantom": _phantom_metadata(),
                 "profile": asdict(profile),
                 "acquisition": {
                     "theta_span_deg": theta_span,
@@ -1238,6 +1400,29 @@ def _run_scenario(
         diagnostics=diagnostics,
         outer_stats=info.get("outer_stats", []),
     )
+    alignment_metadata_path = out_dir / "alignment_metadata.json"
+    alignment_metadata = {
+        "schema_version": 1,
+        "scenario": asdict(scenario),
+        "profile": asdict(profile),
+        "acquisition": {
+            "theta_span_deg": theta_span,
+            "n_views": int(profile.views),
+            "geometry_type": scenario.geometry_type,
+        },
+        "hidden_truth": _scenario_truth_payload(scenario),
+        "supplied_corrections": supplied,
+        "estimated_corrections": estimates if provenance == "estimated" else {},
+        "final_calibrated_geometry": estimates,
+        "parameter_provenance": provenance,
+        "calibration_state": info.get("geometry_calibration_state"),
+        "geometry_calibration_diagnostics": diagnostics,
+        "outer_stats": info.get("outer_stats", []),
+        "metrics": metrics,
+        "alignment_info": info,
+    }
+    _write_json(alignment_metadata_path, alignment_metadata)
+    visual_paths["alignment_metadata_json"] = str(alignment_metadata_path)
     elapsed = time.time() - start_time
     row: dict[str, Any] = {
         "slug": scenario.slug,
@@ -1265,12 +1450,7 @@ def _run_scenario(
     manifest = {
         "schema_version": 1,
         "scenario": asdict(scenario),
-        "phantom": {
-            "kind": PHANTOM_KIND,
-            "seed": PHANTOM_SEED,
-            "shared_across_cases": True,
-            "source": PHANTOM_SOURCE,
-        },
+        "phantom": _phantom_metadata(),
         "profile": asdict(profile),
         "acquisition": {
             "theta_span_deg": theta_span,
@@ -1287,6 +1467,7 @@ def _run_scenario(
         "outer_stats": info.get("outer_stats", []),
         "metrics": metrics,
         "artifacts": visual_paths,
+        "alignment_metadata": alignment_metadata,
         "elapsed_sec": elapsed,
     }
     _write_json(out_dir / "case_manifest.json", manifest)

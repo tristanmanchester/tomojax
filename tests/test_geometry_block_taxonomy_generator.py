@@ -22,13 +22,14 @@ def _load_generator():
     return module
 
 
-def test_geometry_block_taxonomy_uses_rich_random_shapes_not_shepp_logan():
+def test_geometry_block_taxonomy_uses_selected_center_biased_random_shapes():
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "shepp_logan" not in source
     assert "random_cubes_spheres" in source
-    assert "n_cubes=4" in source
-    assert "n_spheres=7" in source
+    assert "PHANTOM_N_CUBES = 22" in source
+    assert "PHANTOM_N_SPHERES = 22" in source
+    assert 'PHANTOM_PLACEMENT = "center_biased_sphere"' in source
     assert "use_inscribed_fov=True" in source
 
 
@@ -41,12 +42,15 @@ def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tm
     manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
     status = json.loads((out / "artifacts" / "status.json").read_text(encoding="utf-8"))
 
-    assert manifest["phantom"] == {
-        "kind": "random_shapes/full_volume_random_cubes_spheres",
-        "seed": 20260458,
-        "shared_across_cases": True,
-        "source": "tomojax.data.phantoms.random_cubes_spheres",
-    }
+    assert manifest["phantom"]["kind"] == "random_shapes/center_biased_sphere_cubes_spheres"
+    assert manifest["phantom"]["seed"] == 20260893
+    assert manifest["phantom"]["n_cubes"] == 22
+    assert manifest["phantom"]["n_spheres"] == 22
+    assert manifest["phantom"]["placement"] == "center_biased_sphere"
+    assert manifest["phantom"]["radial_exponent"] == 0.75
+    assert manifest["phantom"]["selection"] == (
+        "phantom_picker_128_10x10_center_biased_sphere_slot_94"
+    )
     assert manifest["profile"]["size"] == 128
     assert manifest["profile"]["views"] == 128
     assert tuple(manifest["profile"]["levels"]) == (8, 4, 2, 1)
