@@ -1,6 +1,7 @@
 ---
 title: Reuse align_multires for geometry calibration blocks
 date: 2026-04-25
+last_updated: 2026-04-26
 category: architecture-patterns
 module: TomoJAX alignment geometry calibration
 problem_type: architecture_pattern
@@ -10,7 +11,8 @@ applies_when:
   - Adding detector or instrument geometry optimization to TomoJAX alignment
   - A new calibration feature starts duplicating reconstruction or multiresolution control flow
   - A solver needs the same memory, checkpoint, preview, and CLI behavior as alignment
-tags: [tomojax, alignment, geometry-calibration, dry, multires, gn]
+  - Geometry calibration demos need to distinguish solver convergence from acquisition conditioning
+tags: [tomojax, alignment, geometry-calibration, dry, multires, gn, diagnostics, theta-span]
 ---
 
 # Reuse align_multires for geometry calibration blocks
@@ -37,6 +39,9 @@ That split created immediate friction:
 - It risked semantic drift: pose alignment, detector-centre calibration,
   detector roll, and axis tilt would each own slightly different ideas of
   geometry, checkpointing, diagnostics, and metadata.
+- It made demo/test failures ambiguous: an axis-direction stress case could
+  look like a solver regression when the real issue was a known weak
+  acquisition setup.
 
 The architectural correction was to keep calibration as a distinct parameter
 namespace, but not as a distinct solver product.
@@ -90,6 +95,14 @@ abstractions:
   geometry before residual pose alignment.
 - `optimize_geometry_blocks_for_level` runs the fixed-volume GN updates for the
   active geometry block sequence.
+- `summarize_geometry_calibration_stats` turns raw per-update GN stats into a
+  compact diagnostic contract: accepted updates, total movement, final step,
+  gradient norm, loss change, and a block status.
+- `add_geometry_acquisition_diagnostics` annotates the diagnostic contract with
+  acquisition-conditioning context. In the current implementation, active
+  axis-direction solves below the diagnostic threshold of 270 degrees are
+  reported as ill-conditioned rather than silently treated as ordinary
+  convergence cases.
 
 `src/tomojax/align/pipeline.py` owns orchestration:
 
@@ -101,6 +114,9 @@ abstractions:
 - Multires checkpoints include `geometry_calibration_state`, so resumed runs
   continue from the calibrated instrument state rather than silently resetting
   to nominal geometry.
+- The returned `info` includes `geometry_calibration_diagnostics`, so callers
+  do not have to reverse-engineer convergence or conditioning from raw
+  `outer_stats`.
 
 The public surface is the existing alignment CLI:
 
@@ -135,6 +151,7 @@ behavior that already existed in `align_multires`, especially:
 - CLI configuration compatibility,
 - output metadata,
 - diagnostics and stats,
+- acquisition-conditioning diagnostics for global axis-direction blocks,
 - pose gauge handling.
 
 The DRY version makes the extension point explicit. Adding a geometry parameter
@@ -146,6 +163,99 @@ instrument geometry blocks first, then residual pose blocks." Users do not have
 to choose between two competing commands that both reconstruct and both claim to
 fix geometry.
 
+## Diagnostics and acquisition conditioning
+
+Keeping geometry calibration inside `align_multires` is necessary but not
+sufficient. The demos, manifests, and diagnostics also need to encode the
+conditions that make a geometry solve meaningful.
+
+The April 26 diagnostic hardening fixed a misleading failure mode in the
+geometry-block stress demos:
+
+- Visual-stress axis pitch/yaw scenarios were labelled as parallel CT and
+  inherited a 180-degree acquisition from `geometry_type="parallel"`.
+- Once a hidden axis pitch/yaw is introduced, the scan is no longer an ordinary
+  180-degree parallel CT case. The current visual-stress evidence path uses
+  360-degree coverage for these arbitrary-axis cases to avoid the known
+  180-degree conditioning failure.
+- The docs profile had drifted to `outer_iters=6` with `early_stop=False`,
+  even though the historical evidence path used 12 outers with early stopping.
+- Raw geometry-block stats existed, but generated artifacts did not summarize
+  whether a block had converged, was still improving, or was ill-conditioned.
+
+The corrected evidence path makes those assumptions explicit:
+
+```python
+@dataclass(frozen=True)
+class Scenario:
+    ...
+    geometry_type: str
+    geometry_dofs: tuple[str, ...]
+    theta_span_deg: float | None = None
+```
+
+The canonical visual-stress cases now separate nominal geometry family from
+acquisition span:
+
+- detector roll stress: 180 degrees,
+- arbitrary-axis pitch/yaw stress: 360 degrees,
+- laminography tilt stress: 360 degrees.
+
+The docs profile is again the quality profile, not a smoke test:
+
+```python
+RunProfile(
+    name="docs_128",
+    size=128,
+    views=128,
+    levels=(8, 4, 2, 1),
+    outer_iters=12,
+    recon_iters=20,
+    tv_prox_iters=12,
+    views_per_batch=1,
+    gather_dtype="bf16",
+    early_stop=True,
+    early_stop_rel_impr=1e-3,
+    early_stop_patience=2,
+)
+```
+
+`align_multires` now reports block-level diagnostics:
+
+```python
+{
+    "geometry_calibration_diagnostics": {
+        "schema_version": 1,
+        "overall_status": "underconverged",
+        "blocks": [
+            {
+                "geometry_block": "axis_direction",
+                "geometry_active_dofs": "axis_rot_x_deg",
+                "attempted_updates": 24,
+                "accepted_updates": 24,
+                "total_step_norm": 0.879,
+                "final_step_norm": 0.0014,
+                "final_gradient_norm": 0.000711,
+                "status": "underconverged",
+            }
+        ],
+    }
+}
+```
+
+When an axis-direction block is active and inferred coverage is below the
+diagnostic threshold, currently 270 degrees, the diagnostic layer marks the
+block as ill-conditioned and adds the warning
+`axis_direction_sub_full_rotation_acquisition`. That is a deliberate guardrail:
+180-degree arbitrary-axis stress cases should not be reported as ordinary
+successful or failed geometry calibration.
+
+This does not turn the solver into a grid search or hide the fixed-volume GN
+limitation. It makes the limitation inspectable: under some acquisition setups,
+the solver can appear self-consistent without recovering the intended global
+axis. That is a conditioning/solver-design fact the metadata should expose, not
+a reason to fork another calibration pipeline.
+
 ## When to Apply
 
 - Use this pattern when adding a static scanner/instrument parameter that should
@@ -154,6 +264,12 @@ fix geometry.
   pose alignment.
 - Use it when the proposed implementation starts copying reconstruction loops,
   runner scripts, checkpoint writing, preview generation, or CLI metadata.
+- Use explicit acquisition metadata whenever a synthetic or documentation
+  example changes the geometry conditioning story. Do not let `geometry_type`
+  silently choose the angular span for arbitrary-axis stress cases.
+- Treat 180-degree axis-direction calibration as a known weak setup unless
+  future solver work proves a stronger claim. The manifest should say that
+  directly.
 - Do not use a standalone calibration command unless it is explicitly an
   experimental diagnostic and does not become the supported product path.
 
@@ -240,7 +356,29 @@ The assertions check the behavior that matters:
 - the hidden detector-centre offset is recovered,
 - all pose parameters stay zero when pose DOFs are frozen,
 - geometry block stats are emitted through normal alignment info,
-- checkpoint metadata carries `geometry_calibration_state`.
+- checkpoint metadata carries `geometry_calibration_state`,
+- geometry diagnostics are emitted through normal alignment info,
+- axis-direction calibration below the current 270-degree diagnostic threshold
+  is reported as ill-conditioned.
+
+The generator tests also lock down the evidence recipe:
+
+- canonical before/after demos use `tomojax.data.phantoms.lamino_disk`, not an
+  ad hoc Shepp-Logan phantom,
+- docs runs use 128 views, levels `8 4 2 1`, 12 outers, and early stopping,
+- visual-stress axis pitch/yaw scenarios record 360-degree acquisition span,
+- summary rows and manifests include acquisition span and geometry diagnostics.
+
+### Failed approaches worth remembering
+
+Several earlier attempts were useful but incomplete (session history):
+
+- The first geometry-block GN memory shape materialized too much detector-stack
+  residual/JVP data and hit a 128^3 OOM. The correct memory discipline is
+  chunked normal-equation accumulation.
+- 180-degree arbitrary-axis stress cases under-recovered even after the
+  zero-Jacobian axis-pose bug was fixed. Full-rotation visual-stress acquisition
+  and explicit diagnostics are needed to interpret those examples correctly.
 
 ## Related
 
@@ -249,5 +387,11 @@ The assertions check the behavior that matters:
   operationally staged inside `align_multires`.
 - `docs/cli/align.md` documents `--optimise-geometry` as part of the supported
   `tomojax-align` interface.
-- The implementation was verified with `rtk uv run ruff check src tests` and
-  `rtk uv run pytest -q tests`, which passed with `497 passed, 1 skipped`.
+- `scripts/generate_alignment_before_after_128.py` owns the current
+  before/after taxonomy and visual-stress evidence path.
+- `tests/test_geometry_block_taxonomy_generator.py` protects the demo profile,
+  phantom choice, acquisition span, and manifest schema.
+- `tests/test_align_quick.py` protects the integrated geometry diagnostics.
+- Verify changes with the focused geometry-calibration tests and the repository
+  lint/test commands before using the generated visuals as documentation
+  evidence.

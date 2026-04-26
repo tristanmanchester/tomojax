@@ -1,9 +1,45 @@
 ---
 date: 2026-04-24
+last_updated: 2026-04-26
 topic: geometry-calibration-solver
 ---
 
 # Geometry Calibration Solver
+
+## Current Status
+
+This document started as the requirements and phase plan for geometry calibration.
+As of 2026-04-26 it is also the status roadmap for the work already landed on
+`feat/geometry-calibration-phase0`.
+
+The central architecture has landed: geometry calibration is implemented as staged
+geometry parameter blocks inside `align_multires`, not as a separate calibration
+pipeline. The active product path now supports:
+
+- detector/ray-grid centre via `det_u_px` and `det_v_px`
+- detector-plane roll via `detector_roll_deg`
+- rotation-axis direction via `axis_rot_x_deg` and `axis_rot_y_deg`
+- laminography tilt as an alias onto the axis-direction block
+- multiresolution levels `8 4 2 1`
+- the normal documentation/demo alignment profile: `outer_iters=12`,
+  `early_stop=True`, `early_stop_rel_impr=1e-3`, `early_stop_patience=2`
+- structured geometry diagnostics returned through `align_multires` and written
+  into generated demo manifests
+
+Recent evidence:
+
+- Unit and characterization tests cover dynamic detector grids, calibration state,
+  conventions/objectives, axis geometry, taxonomy generation, and quick
+  `align_multires` geometry-block workflows.
+- Visual-stress demo generation now uses the dedicated `lamino_disk` phantom path,
+  explicit acquisition spans, and the same `align_multires` geometry-block path
+  used by normal workflows.
+- Detector centre, detector roll, and full-rotation axis pitch/yaw have synthetic
+  evidence. The current 128^3 laptop stress run is validating the final visual
+  set after the acquisition-span and diagnostics fixes.
+
+The remaining work is product hardening and the next calibration family, not
+basic proof that differentiable geometry blocks can exist inside TomoJAX.
 
 ## Problem Frame
 
@@ -91,13 +127,16 @@ Relevant files:
 - `src/tomojax/align/parametrizations.py`
 - `src/tomojax/align/dofs.py`
 
-**Detector centre support exists but is static:**
+**Historical detector-centre baseline:**
 
 - `Detector.det_center` is part of the geometry and is used by the projector and
   reconstruction.
 - TomoJAX can reconstruct correctly when the right detector centre is supplied.
-- TomoJAX does not currently estimate detector centre as an alignment/calibration
-  variable.
+- At the time this plan was written, TomoJAX did not estimate detector centre as
+  an alignment/calibration variable.
+- Current status: `det_u_px` and `det_v_px` are now estimable geometry-block
+  variables inside `align_multires`; the remaining gap is product hardening,
+  metadata persistence, presets, and real-data validation.
 
 Relevant files:
 
@@ -326,6 +365,56 @@ product shape without proper tests, gauges, metadata, and objective design.
   frozen variables, gauges, objective values, uncertainty, native/physical units,
   and final calibrated geometry.
 
+### Requirement Status
+
+**Landed or mostly landed**
+
+- R1-R5: Geometry calibration and residual pose alignment are separated as
+  parameter namespaces while sharing the multiresolution engine.
+- R9: Dynamic detector-grid plumbing exists and is covered by equivalence tests.
+- R12: `det_u_px` and `det_v_px` are available as detector/ray-grid centre
+  geometry blocks.
+- R14: Synthetic recovery tests now prove estimation of hidden detector-centre
+  offsets instead of only applying supplied offsets.
+- R15: The product path uses the differentiable projector and `align_multires`.
+  The earlier grid-search-style calibration path is no longer the direction.
+- R18-R19: Axis direction and laminography tilt are represented through the
+  axis-direction geometry block, with tilt as a user-facing alias.
+- R21: Detector-plane roll is implemented as a geometry block using the same
+  staged machinery.
+
+**Partly landed; still needs hardening**
+
+- R6: Calibration-state objects exist for the implemented geometry classes, but
+  world-frame residuals, detector-plane residuals, and angle residuals are not yet
+  complete product namespaces.
+- R7: Native pixel scaling is handled for current blocks. Physical-unit reporting
+  and final user-facing unit summaries still need to be hardened.
+- R8: Convention helpers and audit scaffolding exist, but the user-facing
+  convention audit is not yet a complete workflow.
+- R10: Objective/diagnostic metadata exists for geometry blocks. Rich objective
+  cards, top-k review, and real-data confidence reporting are still incomplete.
+- R11, R13, R32: Generated demo manifests and `align_multires` info now carry
+  calibrated-state and diagnostics data. CLI/NXtomo output persistence still needs
+  product work.
+- R16-R17: The detector/ray-grid centre gauge is the implemented canonical
+  representation, but user-facing COR wording and physical-axis-intercept language
+  still need final documentation.
+- R20: Geometry blocks are staged in `align_multires`, currently in the order
+  detector centre, detector roll, then axis direction. The optional centre-refine
+  pass after axis/tilt changes remains a preset/design decision.
+- R29-R30: Some gauge and conditioning guardrails exist, but named safe presets
+  and the full hard-fail conflict list are not complete.
+- R31: Synthetic and demo validation is much stronger than before. Real-data
+  validation still needs held-out/cross-slab checks and sample-specific metrics.
+
+**Not started**
+
+- R22-R24: Angle-schedule calibration.
+- R25-R27: Lab/world-frame residuals and structured residual motion models.
+- R28: Advanced detector/ray geometry, arbitrary ray bundles, cone-beam support,
+  and detector pitch/yaw.
+
 ---
 
 ## Acceptance Examples
@@ -437,6 +526,12 @@ product shape without proper tests, gauges, metadata, and objective design.
 
 ### Phase 0: Conventions, Gauges, Calibration State, And Objectives
 
+Status: partly implemented. The calibration-state model, detector-grid plumbing,
+unit helpers, convention helpers, and objective/diagnostic scaffolding exist for
+the current geometry-block path. The remaining Phase 0 work is to make these
+decisions fully product-facing through CLI output, NXtomo metadata, presets,
+real-data diagnostics, and hard gauge-conflict checks.
+
 Goal: define what a calibration result means before any optimizer returns numbers.
 
 Decisions to make:
@@ -507,6 +602,10 @@ Definition of done:
 
 ### Phase 1: Detector/Ray-Grid Centre Calibration
 
+Status: implemented in the `align_multires` product path for `det_u_px` and
+`det_v_px`. Synthetic recovery exists. Remaining work is output hardening,
+real-data validation, and clearer user-facing COR/gauge wording.
+
 Goal: estimate centre-of-rotation / detector-centre offset instead of only applying
 a known offset, using detector/ray-grid centre as the canonical first gauge for a
 static COR-like shift.
@@ -552,6 +651,11 @@ Definition of done:
 
 ### Phase 1.5: COR / Rotation-Axis Intercept Gauge
 
+Status: conceptually decided for the implemented path: static COR-like offsets
+are represented as detector/ray-grid centre under the detector-centre gauge.
+Remaining work is documentation and stricter conflict handling for physically
+ambiguous parameter combinations.
+
 Goal: stop overloading "centre of rotation" and make the chosen gauge explicit.
 
 Conceptual variables to distinguish:
@@ -589,6 +693,11 @@ Definition of done:
 
 ### Phase 2: Rotation-Axis Direction / Laminography Tilt Calibration
 
+Status: implemented in the geometry-block path as `axis_rot_x_deg` and
+`axis_rot_y_deg`, with laminography tilt as an alias. Synthetic and visual-stress
+validation is active. The main remaining risk is conditioning: the solver now
+diagnoses weak or invalid acquisition setups instead of claiming success.
+
 Goal: solve cases where the rotation axis is not the nominal axis.
 
 Internal representation:
@@ -625,6 +734,10 @@ Definition of done:
 
 ### Phase 2b: Detector-Plane Roll Calibration
 
+Status: implemented as `detector_roll_deg`. Synthetic evidence is positive, but
+the current 128^3 stress demo still needs final review because detector roll can
+be marked `underconverged` even when it materially improves the reconstruction.
+
 Goal: handle detector-plane rotation without jumping to arbitrary ray geometry.
 
 Initial variable:
@@ -657,6 +770,8 @@ Definition of done:
 - Adjoint tests pass with nonzero detector centre and detector roll.
 
 ### Phase 3: Angle Schedule Calibration
+
+Status: not started.
 
 Goal: solve wrong or imperfect projection angles.
 
@@ -697,6 +812,8 @@ Definition of done:
 
 ### Phase 4: Lab-Frame, Detector-Plane, And Pose Residuals
 
+Status: not started.
+
 Goal: add residual motion models after instrument geometry is calibrated.
 
 Variables:
@@ -734,6 +851,8 @@ Definition of done:
 - Existing object-frame `params5` behavior remains backwards-compatible.
 
 ### Phase 5: Advanced Detector And Ray Geometry
+
+Status: deferred.
 
 Goal: generalize beyond detector-plane centre/roll once the staged calibration
 architecture has proven itself.
@@ -797,6 +916,11 @@ for level in [8, 4, 2, 1]:
     pass calibrated geometry and residual state to next finer level
 ```
 
+Current implementation note: the live `GEOMETRY_BLOCKS` order is detector centre,
+detector roll, then axis direction. It does not yet include an automatic
+detector-centre refinement pass after axis/tilt changes, and named presets are
+still pending.
+
 Not every block should run for every dataset. Presets should choose safe defaults.
 Coarser levels should generate proposals, not final authority: native-pixel values,
 physical values, objective curves, top-k candidates, and confidence should be
@@ -843,42 +967,59 @@ geometry model.
 
 ---
 
-## Outstanding Questions
+## Open Work
 
-### Resolve Before Planning
+### Resolved By The Current Implementation
 
-- [Affects R6, R11][Product/technical] Define the calibration state schema and
-  manifest vocabulary for detector calibration, scan calibration, residual models,
-  estimated variables, supplied variables, frozen variables, gauges, objectives,
-  and uncertainty.
-- [Affects R7, R15, R32][Technical] Define native detector pixel, binned-level
-  pixel, and physical-unit reporting rules for multiresolution calibration.
-- [Affects R8, R10, R31][Product/technical] Define the Phase 0 convention audit:
-  what is checked automatically, what is user-supplied, and what produces a low
-  confidence warning.
-- [Affects R10, R31][Product/technical] Define the objective card for Phase 1:
-  primary validation metric, secondary metrics, top-k candidate review, confidence,
-  and real-data safeguards.
-- [Affects R16, R17, R29][Product] Decide the exact wording and manifest gauge
-  for detector/ray-grid centre as the canonical representation of static COR-like
-  offsets.
-- [Affects R29][Technical] Define the initial hard-fail gauge conflict list.
+- Dynamic detector-grid offsets are threaded through projector/reconstruction
+  workflows without mutating cached detector geometry inside JAX-transformed
+  functions.
+- Detector centre, detector roll, and axis direction share the same staged
+  geometry-block machinery inside `align_multires`.
+- Axis direction is represented internally as a two-parameter lab-frame axis
+  perturbation, with laminography tilt exposed as an alias rather than a separate
+  competing parameterization.
+- The demo taxonomy now records acquisition span explicitly, so full-rotation
+  arbitrary-axis examples are not accidentally mislabeled as ordinary 180-degree
+  parallel CT.
+- The visual demo path uses the dedicated phantom-generation path and normal
+  multiresolution alignment profile.
 
-### Deferred to Planning
+### Still Open For Product Hardening
 
-- [Affects R9][Technical] How should dynamic detector-grid offsets be threaded
-  through projector and FBP code without mutating cached `Detector.det_center`
-  inside JAX-transformed functions?
-- [Affects R13, R32][Technical] What exact metadata container should store calibrated
-  detector centre in NXtomo outputs?
-- [Affects R18, R20][Technical] Should axis direction be represented internally
-  as a lab-frame unit vector tangent update while exposing tilt/azimuth at the CLI?
-- [Affects R25, R26][Technical] What naming scheme best preserves backwards
-  compatibility while making frame semantics clear?
-- [Affects R21][Technical] How should detector roll share detector-grid code with
-  detector centre while preserving adjointness?
-- [Affects R31][Needs research] Which held-out projection and sample-specific
-  feature metrics are robust enough for real laminography data?
+- Persist calibrated geometry, calibration state, and geometry diagnostics through
+  the public CLI and NXtomo/output metadata, not only through Python return info
+  and generated demo manifests.
+- Finish native-pixel, binned-pixel, and physical-unit summaries for every
+  geometry block in final manifests.
+- Promote convention audit scaffolding into a user-facing preflight: `flip_u`,
+  `flip_v`, detector transpose, `theta_sign`, and low-confidence warnings.
+- Define the exact user-facing COR wording: `det_u_px` is detector/ray-grid centre
+  under the detector-centre gauge, not proof that detector translation, physical
+  rotation-axis intercept, and static sample translation were separately
+  identified.
+- Finish the hard-fail or warning list for gauge-coupled variables, especially
+  `det_u` vs static `world_dx`, `det_v` vs static `world_dz`, `theta0` vs mean
+  object `phi`, detector roll vs global object orientation, and object mean
+  translation vs volume centre.
+- Add named presets that choose safe geometry-block order and gauges for common
+  scan types instead of expecting users to manually assemble every block.
+- Decide whether the default staged order needs a detector-centre refinement pass
+  after axis/tilt changes.
+- Integrate richer objective cards: loss traces, final gradient/step diagnostics,
+  top-k previews where relevant, projection-domain validation, and image-domain
+  proxy metrics.
+- Validate real laminography on more than one slab or neighbouring `z` window so
+  the solver does not overfit missing-wedge or sample-layer artefacts.
+
+### Deferred To Later Phases
+
+- Angle-schedule calibration: `theta_sign`, `theta0`, `theta_scale`, encoder
+  ripple, backlash, and low-dimensional per-view angle residuals.
+- Lab/world-frame residuals and detector-plane residual models with explicit
+  left-multiplied composition and namespacing.
+- Arbitrary ray geometry, detector pitch/yaw, detector pixel aspect, beam
+  direction changes, cone-beam support, and general ray bundles.
 
 ---
 
@@ -901,8 +1042,53 @@ this revision. The main changes were:
 
 ## Next Steps
 
--> Resolve or explicitly decide the Phase 0 items under "Resolve Before Planning".
+The next engineering phase should be product hardening for the geometry-block
+calibration path that now exists.
 
-Then:
+1. Finish the current 128^3 visual-stress laptop validation.
+   - Sync the final run output.
+   - Review all four scenarios: detector roll, full-rotation axis pitch,
+     full-rotation axis yaw, and laminography tilt.
+   - Decide whether detector roll needs more iterations, a centre-refine pass, or
+     only clearer `underconverged` diagnostics.
 
--> `/ce-plan` for Phase 0 plus Phase 1 detector/ray-grid centre calibration.
+2. Harden output and metadata.
+   - Persist `geometry_calibration_state` and
+     `geometry_calibration_diagnostics` through CLI/NXtomo outputs.
+   - Record estimated, supplied, frozen, and rejected variables in final outputs.
+   - Report native detector pixels, binned-level pixels, and physical units.
+   - Preserve acquisition span, active blocks, hidden synthetic perturbations
+     where applicable, and final calibrated geometry.
+
+3. Add safe user-facing presets.
+   - `parallel_ct_basic`: convention audit, detector centre, detector roll if
+     requested, optional angle schedule later, residual pose.
+   - `parallel_ct_arbitrary_axis`: full-rotation or explicitly warned acquisition,
+     detector centre, detector roll, axis direction, optional centre refine,
+     residual pose.
+   - `laminography_basic`: convention audit, detector centre, axis/tilt,
+     optional centre refine, detector roll if requested, residual pose.
+   - `known_geometry_pose_only`: existing residual-pose alignment behavior.
+
+4. Turn diagnostics into acceptance criteria.
+   - Blocks marked `underconverged` should be actionable: more iterations,
+     stronger damping policy, centre refine, or a clear note that quality improved
+     but the solve did not plateau.
+   - Blocks marked `ill_conditioned` should stop demos and product workflows from
+     claiming successful calibration.
+   - Weak acquisition setups, especially arbitrary-axis calibration from
+     180-degree data, should be diagnosed explicitly.
+
+5. Validate on real laminography.
+   - Re-run the k11-54014 slab workflow with detector centre plus axis/tilt
+     calibration.
+   - Compare against the manually tuned `34.4°`/COR explorations.
+   - Check agreement across neighbouring slabs or `z` windows.
+   - Use the result to decide whether the next phase should be angle schedule,
+     centre-refine/default staging, or deeper reconstruction-differentiated axis
+     solving.
+
+After this hardening phase, plan Phase 3 angle-schedule calibration. Do not start
+advanced ray geometry or broad lab-frame residuals until the current geometry
+blocks are reliable in CLI output, metadata, diagnostics, demos, and at least one
+real-data workflow.
