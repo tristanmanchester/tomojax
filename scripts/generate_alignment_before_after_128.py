@@ -1178,6 +1178,18 @@ def _geometry_status_label(diagnostics: Any) -> str:
     return ",".join(statuses)
 
 
+def _last_objective_provenance(outer_stats: Any) -> dict[str, Any]:
+    if not isinstance(outer_stats, Sequence):
+        return {}
+    for stat in reversed(list(outer_stats)):
+        if not isinstance(stat, Mapping):
+            continue
+        provenance = stat.get("objective_provenance")
+        if isinstance(provenance, Mapping):
+            return dict(provenance)
+    return {}
+
+
 def _phantom_metadata() -> dict[str, Any]:
     return {
         "kind": PHANTOM_KIND,
@@ -1388,12 +1400,6 @@ def _run_scenario(
             if isinstance(stat, Mapping) and stat.get("geometry_objective")
         }
     )
-    heldout_stats = [
-        stat
-        for stat in info.get("outer_stats", [])
-        if isinstance(stat, Mapping) and stat.get("geometry_objective") == "heldout_reprojection"
-    ]
-
     calibrated_geometry = geometry_with_axis_state(nominal_geometry, grid, detector, state)
     calibrated_det_grid = level_detector_grid(detector, state=state, factor=1)
     calibrated_fbp = _run_fbp(
@@ -1448,7 +1454,7 @@ def _run_scenario(
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
         "geometry_objectives": geometry_objectives,
-        "heldout_detector_center_stats": heldout_stats,
+        "objective_provenance": _last_objective_provenance(info.get("outer_stats", [])),
         "outer_stats": info.get("outer_stats", []),
         "metrics": metrics,
         "alignment_info": info,
@@ -1468,12 +1474,9 @@ def _run_scenario(
         ),
         "loss_kind": str(info.get("loss_kind", "")),
         "geometry_objectives": ",".join(geometry_objectives),
-        "heldout_detector_center_candidate_count": max(
-            (int(stat.get("geometry_candidate_count", 0)) for stat in heldout_stats),
-            default=0,
-        ),
-        "heldout_detector_center_seed_det_u_px": (
-            float(heldout_stats[-1]["geometry_seed_det_u_px"]) if heldout_stats else np.nan
+        "objective_provenance_json": json.dumps(
+            _last_objective_provenance(info.get("outer_stats", [])),
+            sort_keys=True,
         ),
         "theta_span_deg": theta_span,
         "n_views": int(profile.views),
@@ -1515,7 +1518,7 @@ def _run_scenario(
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
         "geometry_objectives": geometry_objectives,
-        "heldout_detector_center_stats": heldout_stats,
+        "objective_provenance": _last_objective_provenance(info.get("outer_stats", [])),
         "outer_stats": info.get("outer_stats", []),
         "metrics": metrics,
         "artifacts": visual_paths,

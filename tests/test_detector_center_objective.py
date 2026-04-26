@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import jax.numpy as jnp
 
-from tomojax.align.detector_center import (
+from tomojax.align.initializers import (
     projection_com_det_u_seed,
     train_heldout_view_indices,
 )

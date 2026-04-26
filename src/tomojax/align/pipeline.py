@@ -55,14 +55,18 @@ from .gauge import (
     normalize_gauge_fix,
     validate_alignment_gauge_feasible,
 )
-from .optimizers import PoseLbfgsConfig, run_pose_lbfgs
+from .optimizers import ActiveLbfgsConfig, PoseLbfgsConfig, run_active_lbfgs, run_pose_lbfgs
+from .dof_specs import ActiveParameterView
+from .geometry_applier import BaseGeometryArrays
+from .objectives import BilevelCVProjectionObjective, FoldSpec
+from .recon_layer import ReconLayer, ReconLayerConfig
+from .state import AlignmentState, PoseState, SetupGeometryState
 from .geometry_blocks import (
     GeometryCalibrationState,
     add_geometry_acquisition_diagnostics,
     geometry_with_axis_state,
     level_detector_grid,
     normalize_geometry_dofs,
-    optimize_geometry_blocks_for_level,
     summarize_geometry_calibration_stats,
 )
 from ..utils.fov import cylindrical_mask_xy
@@ -1848,6 +1852,178 @@ def align(
     return x, params5, info
 
 
+def _alignment_state_from_geometry_state(
+    geometry_state: GeometryCalibrationState,
+    base: BaseGeometryArrays,
+    *,
+    n_views: int,
+    params5: jnp.ndarray | None,
+    volume: jnp.ndarray | None = None,
+) -> AlignmentState:
+    return AlignmentState(
+        setup=SetupGeometryState.from_degrees(
+            det_u_px=geometry_state.det_u_px,
+            det_v_px=geometry_state.det_v_px,
+            detector_roll_deg=geometry_state.detector_roll_deg,
+            axis_rot_x_deg=geometry_state.axis_rot_x_deg,
+            axis_rot_y_deg=geometry_state.axis_rot_y_deg,
+            nominal_axis_unit=base.nominal_axis_unit,
+        ),
+        pose=PoseState(
+            jnp.zeros((int(n_views), 5), dtype=jnp.float32)
+            if params5 is None
+            else jnp.asarray(params5, dtype=jnp.float32)
+        ),
+        volume=volume,
+    )
+
+
+def _geometry_state_from_alignment_state(
+    geometry_state: GeometryCalibrationState,
+    state: AlignmentState,
+) -> GeometryCalibrationState:
+    return replace(
+        geometry_state,
+        det_u_px=float(state.setup.det_u_px),
+        det_v_px=float(state.setup.det_v_px),
+        detector_roll_deg=float(jnp.rad2deg(state.setup.detector_roll_rad)),
+        axis_rot_x_deg=float(jnp.rad2deg(state.setup.axis_rot_x_rad)),
+        axis_rot_y_deg=float(jnp.rad2deg(state.setup.axis_rot_y_rad)),
+    )
+
+
+def _optimize_setup_geometry_bilevel_for_level(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    init_x: jnp.ndarray | None,
+    init_params5: jnp.ndarray | None,
+    state: GeometryCalibrationState,
+    factor: int,
+    cfg: AlignConfig,
+    loss_spec,
+    loss_name: str,
+) -> tuple[jnp.ndarray, GeometryCalibrationState, list[OuterStat]]:
+    base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
+    active_view = ActiveParameterView.from_dofs(state.active_geometry_dofs, geometry=geometry)
+    alignment_state = _alignment_state_from_geometry_state(
+        state,
+        base,
+        n_views=int(projections.shape[0]),
+        params5=init_params5,
+        volume=init_x,
+    )
+    n_views = int(projections.shape[0])
+    n_folds = min(4, n_views)
+    folds = FoldSpec(n_folds=n_folds).build(n_views)
+    recon_cfg = ReconLayerConfig(
+        iters=max(1, int(cfg.recon_iters)),
+        lambda_tv=float(cfg.lambda_tv),
+        regulariser="huber_tv" if str(cfg.regulariser) != "huber_tv" else "huber_tv",
+        huber_delta=float(cfg.huber_delta),
+        L=float(cfg.recon_L if cfg.recon_L is not None else 1000.0),
+        positivity=bool(cfg.recon_positivity),
+        checkpoint_projector=bool(cfg.checkpoint_projector),
+        projector_unroll=int(cfg.projector_unroll),
+        gather_dtype=str(cfg.gather_dtype),
+    )
+
+    def reconstruct_fold(
+        candidate_state: AlignmentState,
+        train_idx: jnp.ndarray,
+        train_mask: jnp.ndarray,
+        train_base: BaseGeometryArrays,
+    ) -> jnp.ndarray:
+        train_state = candidate_state.replace(
+            pose=candidate_state.pose.replace(params5=candidate_state.pose.params5[train_idx])
+        )
+        layer = ReconLayer(base=train_base, grid=grid, detector=detector, config=recon_cfg)
+        return layer.reconstruct(
+            state=train_state,
+            projections=projections[train_idx],
+            view_weights=train_mask,
+        ).x
+
+    objective = BilevelCVProjectionObjective.from_loss_spec(
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_spec=loss_spec,
+        folds=folds,
+        reconstruct_fold=reconstruct_fold,
+        inner_regulariser=recon_cfg.regulariser,
+        differentiation_mode="unrolled",
+        initialization_policy="current_level_volume" if init_x is not None else "zeros",
+        checkpoint_projector=bool(cfg.checkpoint_projector),
+        projector_unroll=int(cfg.projector_unroll),
+        gather_dtype=str(cfg.gather_dtype),
+    )
+
+    def objective_fn(candidate_state: AlignmentState) -> jnp.ndarray:
+        return objective.evaluate(candidate_state).value
+
+    loss_before = float(objective_fn(alignment_state))
+    opt_result = run_active_lbfgs(
+        state=alignment_state,
+        view=active_view,
+        objective_fn=objective_fn,
+        cfg=ActiveLbfgsConfig(
+            maxiter=max(1, int(cfg.outer_iters)),
+            ftol=float(cfg.lbfgs_ftol),
+            gtol=float(cfg.lbfgs_gtol),
+            maxls=int(cfg.lbfgs_maxls),
+            memory_size=int(cfg.lbfgs_memory_size),
+        ),
+    )
+    next_geometry_state = _geometry_state_from_alignment_state(state, opt_result.state)
+    geom = geometry_with_axis_state(geometry, grid, detector, next_geometry_state)
+    det_grid = level_detector_grid(detector, state=next_geometry_state, factor=int(factor))
+    x_next, _ = fista_tv(
+        geom,
+        grid,
+        detector,
+        projections,
+        init_x=init_x,
+        config=FistaConfig(
+            iters=max(1, int(cfg.recon_iters)),
+            lambda_tv=float(cfg.lambda_tv),
+            regulariser=cfg.regulariser,
+            huber_delta=float(cfg.huber_delta),
+            tv_prox_iters=int(cfg.tv_prox_iters),
+            L=cfg.recon_L,
+            views_per_batch=max(1, int(cfg.views_per_batch)),
+            projector_unroll=int(cfg.projector_unroll),
+            checkpoint_projector=bool(cfg.checkpoint_projector),
+            gather_dtype=str(cfg.gather_dtype),
+            positivity=bool(cfg.recon_positivity),
+        ),
+        det_grid=det_grid,
+    )
+    stats = dict(opt_result.stats)
+    stats.update(
+        {
+            "geometry_block": "setup_bilevel",
+            "geometry_active_dofs": ",".join(active_view.dofs),
+            "geometry_objective": "bilevel_cv",
+            "geometry_loss_kind": loss_name,
+            "geometry_loss_before": loss_before,
+            "geometry_loss_after": float(opt_result.loss),
+            "geometry_accepted": bool(opt_result.accepted),
+            "geometry_step_norm": float(stats.get("step_norm_whitened", 0.0) or 0.0),
+            "geometry_gradient_norm": float(stats.get("grad_norm_whitened", 0.0) or 0.0),
+            "geometry_max_step": 1.0,
+            "geometry_status": "converged" if opt_result.accepted else "ill_conditioned",
+            "geometry_outer_idx": 1,
+            "objective_kind": "bilevel_cv",
+            "objective_provenance": objective.provenance.to_dict(),
+        }
+    )
+    return x_next, next_geometry_state, [stats]
+
+
 def align_multires(
     geometry: Geometry,
     grid: Grid,
@@ -1961,7 +2137,6 @@ def align_multires(
         y = lvl["projections"]
         active_loss_spec = resolve_loss_for_level(cfg.loss, int(lvl["factor"]))
         active_loss_name = loss_spec_name(active_loss_spec)
-        loss_adapter = build_loss_adapter(active_loss_spec, y)
         final_loss_kind = active_loss_name
         logging.info(
             "Alignment level %d/%d factor=%d using loss=%s",
@@ -2046,42 +2221,19 @@ def align_multires(
         geometry_wall_time = 0.0
         if geometry_state.active_geometry_dofs:
             geometry_start = time.perf_counter()
-            detector_u_heldout_only = (
-                tuple(geometry_state.active_geometry_dofs) == ("det_u_px",)
-                and not any(active_mask_tuple)
+            x0, geometry_state, raw_geometry_stats = _optimize_setup_geometry_bilevel_for_level(
+                geometry=geometry,
+                grid=g,
+                detector=d,
+                projections=y,
+                init_x=x0,
+                init_params5=params0,
+                state=geometry_state,
+                factor=int(lvl["factor"]),
+                cfg=cfg,
+                loss_spec=active_loss_spec,
+                loss_name=active_loss_name,
             )
-            geometry_outer_iters = (
-                1
-                if any(active_mask_tuple) or detector_u_heldout_only
-                else int(cfg.outer_iters)
-            )
-            raw_geometry_stats = []
-            for geometry_outer_idx in range(1, int(geometry_outer_iters) + 1):
-                x0, geometry_state, step_stats = optimize_geometry_blocks_for_level(
-                    geometry=geometry,
-                    grid=g,
-                    detector=d,
-                    projections=y,
-                    init_x=x0,
-                    state=geometry_state,
-                    factor=int(lvl["factor"]),
-                    recon_iters=int(cfg.recon_iters),
-                    lambda_tv=float(cfg.lambda_tv),
-                    regulariser=str(cfg.regulariser),
-                    huber_delta=float(cfg.huber_delta),
-                    tv_prox_iters=int(cfg.tv_prox_iters),
-                    views_per_batch=max(1, int(cfg.views_per_batch)),
-                    projector_unroll=int(cfg.projector_unroll),
-                    checkpoint_projector=bool(cfg.checkpoint_projector),
-                    gather_dtype=str(cfg.gather_dtype),
-                    gn_damping=float(cfg.gn_damping),
-                    outer_iters=1,
-                    loss_adapter=loss_adapter,
-                    loss_spec=active_loss_spec,
-                )
-                for stat in step_stats:
-                    stat["geometry_outer_idx"] = int(geometry_outer_idx)
-                raw_geometry_stats.extend(step_stats)
             geometry_wall_time = time.perf_counter() - geometry_start
             geometry_completed_outer_iters = max(
                 (
@@ -2383,6 +2535,20 @@ def align_multires(
         geometry,
         geometry_state.active_geometry_dofs,
     )
+    objective_kinds = [
+        str(stat.get("objective_kind") or stat.get("geometry_objective"))
+        for stat in global_outer_stats
+        if isinstance(stat, Mapping)
+        and (stat.get("objective_kind") is not None or stat.get("geometry_objective") is not None)
+    ]
+    objective_provenance = next(
+        (
+            dict(stat["objective_provenance"])
+            for stat in reversed(global_outer_stats)
+            if isinstance(stat, Mapping) and isinstance(stat.get("objective_provenance"), Mapping)
+        ),
+        None,
+    )
 
     return (
         x_final,
@@ -2397,6 +2563,9 @@ def align_multires(
             "total_outer_iters": int(executed_outer_iters),
             "wall_time_total": float(global_elapsed_offset),
             "outer_stats": global_outer_stats,
+            "objective_kind": objective_kinds[-1] if objective_kinds else None,
+            "objective_kinds": objective_kinds,
+            "objective_provenance": objective_provenance,
             "pose_model": str(cfg.pose_model),
             "pose_model_variables": final_pose_model_variables,
             "per_view_variables": final_per_view_variables,

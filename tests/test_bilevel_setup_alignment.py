@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import numpy as np
+import jax.numpy as jnp
+
+import tomojax.align.detector_center as detector_center
+import tomojax.align.geometry_blocks as geometry_blocks
+from tomojax.align.dof_specs import ActiveParameterView
+from tomojax.align.geometry_applier import BaseGeometryArrays
+from tomojax.align.objectives import BilevelCVProjectionObjective, FoldSpec, objective_value_and_grad
+from tomojax.align.schedules import schedule_preset
+from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.losses import L2OtsuLossSpec
+from tomojax.calibration.detector_grid import detector_grid_from_calibration
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
+from tomojax.core.projector import forward_project_view
+
+
+def _detector_grid_case(size: int = 6, n_views: int = 6, *, det_u_px: float = 0.0):
+    grid = Grid(nx=size, ny=size, nz=size, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=size, nv=size, du=1.0, dv=1.0)
+    geometry = ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=np.linspace(0.0, 180.0, n_views, endpoint=False, dtype=np.float32),
+    )
+    volume_np = np.zeros((size, size, size), dtype=np.float32)
+    volume_np[1:4, 2:5, 2:4] = 1.0
+    volume_np[4:5, 1:3, 4:5] = 0.6
+    volume = jnp.asarray(volume_np)
+    true_grid = detector_grid_from_calibration(detector, det_u_px=det_u_px)
+    projections = jnp.stack(
+        [
+            forward_project_view(
+                geometry,
+                grid,
+                detector,
+                volume,
+                i,
+                gather_dtype="fp32",
+                det_grid=true_grid,
+            )
+            for i in range(n_views)
+        ],
+        axis=0,
+    )
+    return grid, detector, geometry, volume, projections
+
+
+def _true_volume_bilevel_objective(grid, detector, geometry, volume, projections):
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    folds = FoldSpec(n_folds=3).build(projections.shape[0])
+
+    def reconstruct_fold(state, train_idx, train_mask, train_base):
+        del state, train_idx, train_mask, train_base
+        return volume
+
+    return BilevelCVProjectionObjective.from_loss_spec(
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_spec=L2OtsuLossSpec(),
+        folds=folds,
+        reconstruct_fold=reconstruct_fold,
+        checkpoint_projector=False,
+    )
+
+
+def test_product_path_has_no_detector_center_candidate_solver_symbols():
+    assert not hasattr(detector_center, "calibrate_detector_u_heldout")
+    assert not hasattr(geometry_blocks, "optimize_geometry_blocks_for_level")
+
+
+def test_default_setup_presets_use_bilevel_cv_not_all_data_or_fixed_volume_discovery():
+    for name in ("cor", "detector_roll", "axis_direction", "lamino_tilt", "setup_safe"):
+        schedule = schedule_preset(name)
+        setup_stages = [
+            stage
+            for stage in schedule.stages
+            if any(dof.endswith("_deg") or dof.endswith("_px") for dof in stage.active_dofs)
+        ]
+        assert setup_stages
+        assert all(stage.objective_kind == "bilevel_cv" for stage in setup_stages)
+
+
+def test_bilevel_cv_detector_center_objective_prefers_hidden_offset_without_candidates():
+    grid, detector, geometry, volume, projections = _detector_grid_case(det_u_px=1.5)
+    objective = _true_volume_bilevel_objective(grid, detector, geometry, volume, projections)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    corrected = state.replace(setup=state.setup.replace(det_u_px=jnp.asarray(1.5)))
+
+    assert float(objective.evaluate(corrected).value) < float(objective.evaluate(state).value)
+
+
+def test_bilevel_cv_setup_gradient_is_finite_for_detector_center_and_roll():
+    grid, detector, geometry, volume, projections = _detector_grid_case(det_u_px=0.75)
+    objective = _true_volume_bilevel_objective(grid, detector, geometry, volume, projections)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    view = ActiveParameterView.from_dofs(("det_u_px", "detector_roll_deg"))
+    value_and_grad = objective_value_and_grad(objective, view, state)
+
+    (value, aux), grad = value_and_grad(view.pack(state))
+
+    assert jnp.isfinite(value)
+    assert aux["objective_kind"] == "bilevel_cv"
+    assert aux["objective_provenance"]["outer_loss_kind"] == "l2_otsu"
+    assert grad.shape == (2,)
+    assert jnp.all(jnp.isfinite(grad))

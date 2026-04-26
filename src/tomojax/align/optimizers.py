@@ -15,6 +15,8 @@ from .motion_models import (
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
+from .dof_specs import ActiveParameterView, optimizer_step_stats
+from .state import AlignmentState
 
 
 type OptimizerStatValue = float | int | bool | str | None
@@ -443,3 +445,133 @@ def _stats_with_aliases(stats: OptimizerStats) -> OptimizerStats:
     out.setdefault("optimizer_final_loss", out.get("lbfgs_final_loss"))
     out.setdefault("optimizer_best_loss", out.get("lbfgs_best_loss"))
     return out
+
+
+@dataclass(frozen=True)
+class ActiveLbfgsConfig:
+    maxiter: int = 12
+    ftol: float = 1e-6
+    gtol: float = 1e-5
+    maxls: int = 20
+    memory_size: int = 10
+
+
+@dataclass(frozen=True)
+class ActiveOptimizerResult:
+    state: AlignmentState
+    loss: float
+    accepted: bool
+    stats: dict[str, object]
+
+
+def run_active_lbfgs(
+    *,
+    state: AlignmentState,
+    view: ActiveParameterView,
+    objective_fn: Callable[[AlignmentState], jnp.ndarray],
+    cfg: ActiveLbfgsConfig = ActiveLbfgsConfig(),
+) -> ActiveOptimizerResult:
+    """Run Optax L-BFGS over a unified whitened active-state vector."""
+    z0 = view.pack(state)
+    lower, upper = view.bounds_whitened(state)
+    bounds_transform = BoundTransform.from_bounds(lower, upper, value_shape=tuple(z0.shape))
+    u = bounds_transform.to_unconstrained(z0)
+
+    def _state_from_u(u_candidate: jnp.ndarray) -> AlignmentState:
+        z_candidate = bounds_transform.from_unconstrained(u_candidate)
+        return view.unpack(state, z_candidate)
+
+    def _objective(u_candidate: jnp.ndarray) -> jnp.ndarray:
+        value = objective_fn(_state_from_u(u_candidate))
+        return jnp.where(jnp.isfinite(value), value, jnp.asarray(1e30, dtype=jnp.float32))
+
+    value_and_grad = jax.value_and_grad(_objective)
+    initial_value, initial_grad = value_and_grad(u)
+    initial_loss = float(initial_value)
+    initial_grad_norm = float(jnp.linalg.norm(initial_grad))
+    if not math.isfinite(initial_loss) or not math.isfinite(initial_grad_norm):
+        return ActiveOptimizerResult(
+            state=state,
+            loss=initial_loss,
+            accepted=False,
+            stats={
+                "optimizer": "lbfgs",
+                "optimizer_backend": "optax",
+                "optimizer_accepted": False,
+                "optimizer_initial_loss": initial_loss if math.isfinite(initial_loss) else None,
+                "optimizer_final_loss": None,
+                "optimizer_failure_reason": "non-finite initial objective/gradient",
+            },
+        )
+
+    solver = optax.lbfgs(
+        memory_size=int(cfg.memory_size),
+        linesearch=optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=int(cfg.maxls),
+            approx_dec_rtol=float(cfg.ftol),
+        ),
+    )
+    opt_state = solver.init(u)
+    best_u = u
+    best_loss = initial_loss
+    last_grad_norm = initial_grad_norm
+    last_step_norm = 0.0
+    nit = 0
+    success = initial_grad_norm <= float(cfg.gtol)
+
+    for iteration in range(int(cfg.maxiter)):
+        if success:
+            break
+        value, grad = value_and_grad(u)
+        value_f = float(value)
+        grad_norm = float(jnp.linalg.norm(grad))
+        if math.isfinite(value_f) and value_f < best_loss:
+            best_loss = value_f
+            best_u = u
+        if grad_norm <= float(cfg.gtol):
+            success = True
+            last_grad_norm = grad_norm
+            break
+        updates, opt_state = solver.update(
+            grad,
+            opt_state,
+            u,
+            value=value,
+            grad=grad,
+            value_fn=_objective,
+        )
+        u_next = optax.apply_updates(u, updates)
+        if not bool(jnp.all(jnp.isfinite(u_next))):
+            break
+        last_step_norm = float(jnp.linalg.norm(u_next - u))
+        last_grad_norm = grad_norm
+        u = u_next
+        nit = iteration + 1
+
+    final_state = _state_from_u(best_u)
+    final_loss = float(_objective(best_u))
+    accepted = math.isfinite(final_loss) and final_loss <= initial_loss
+    if not accepted:
+        final_state = state
+        final_loss = initial_loss
+    z_grad = jax.grad(lambda z: objective_fn(view.unpack(state, z)))(view.pack(state))
+    stats = {
+        "optimizer": "lbfgs",
+        "optimizer_backend": "optax",
+        "optimizer_accepted": bool(accepted),
+        "optimizer_success": bool(success),
+        "optimizer_initial_loss": initial_loss,
+        "optimizer_final_loss": final_loss,
+        "optimizer_best_loss": best_loss,
+        "optimizer_nit": int(nit),
+        "optimizer_initial_grad_norm": initial_grad_norm,
+        "optimizer_final_grad_norm": last_grad_norm,
+        "optimizer_last_step_norm": last_step_norm,
+        **optimizer_step_stats(view=view, before=state, after=final_state, grad_whitened=z_grad),
+    }
+    return ActiveOptimizerResult(
+        state=final_state,
+        loss=final_loss,
+        accepted=bool(accepted),
+        stats=stats,
+    )

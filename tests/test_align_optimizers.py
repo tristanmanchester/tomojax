@@ -10,11 +10,15 @@ from tomojax.align.motion_models import (
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
+from tomojax.align.dof_specs import ActiveParameterView
 from tomojax.align.optimizers import (
+    ActiveLbfgsConfig,
     BoundTransform,
     PoseLbfgsConfig,
+    run_active_lbfgs,
     run_pose_lbfgs,
 )
+from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
 
 
 def _lbfgs_config(**kwargs) -> PoseLbfgsConfig:
@@ -215,3 +219,46 @@ def test_pose_lbfgs_rejects_non_improving_candidate():
     assert result.stats["optimizer_accepted"] is False
     assert result.loss == pytest.approx(0.5)
     np.testing.assert_array_equal(np.asarray(result.params5), np.asarray(params0))
+
+
+def test_active_lbfgs_updates_setup_state_without_pose_special_case():
+    state = AlignmentState(setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1))
+    view = ActiveParameterView.from_dofs(("det_u_px",))
+
+    def objective(candidate):
+        return (candidate.setup.det_u_px - 3.0) ** 2
+
+    result = run_active_lbfgs(
+        state=state,
+        view=view,
+        objective_fn=objective,
+        cfg=ActiveLbfgsConfig(maxiter=6, ftol=0.0, gtol=1e-6, maxls=10),
+    )
+
+    assert result.accepted is True
+    assert abs(float(result.state.setup.det_u_px) - 3.0) < 1e-3
+    assert result.stats["step_norm_whitened"] > 0.0
+    assert "det_u_px" in result.stats["step_by_dof_native_units"]
+
+
+def test_active_lbfgs_updates_pose_state_without_setup_special_case():
+    params = jnp.zeros((2, 5), dtype=jnp.float32)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState(params))
+    view = ActiveParameterView.from_dofs(("dx",))
+
+    def objective(candidate):
+        return jnp.sum((candidate.pose.params5[:, 3] - 0.25) ** 2)
+
+    result = run_active_lbfgs(
+        state=state,
+        view=view,
+        objective_fn=objective,
+        cfg=ActiveLbfgsConfig(maxiter=6, ftol=0.0, gtol=1e-6, maxls=10),
+    )
+
+    assert result.accepted is True
+    np.testing.assert_allclose(
+        np.asarray(result.state.pose.params5[:, 3]),
+        np.asarray([0.25, 0.25], dtype=np.float32),
+        atol=1e-3,
+    )

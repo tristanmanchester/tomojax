@@ -287,19 +287,19 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert float(checkpoint_det_u["value"]) == pytest.approx(float(det_u["value"]))
     assert np.asarray(params5).shape == (n_views, 5)
     assert np.allclose(np.asarray(params5), 0.0)
-    assert any(stat.get("geometry_block") == "detector_center" for stat in info["outer_stats"])
+    assert any(stat.get("geometry_block") == "setup_bilevel" for stat in info["outer_stats"])
     geom_stats = [stat for stat in info["outer_stats"] if stat.get("geometry_block")]
     assert geom_stats
     assert {stat.get("loss_kind") for stat in geom_stats} == {"l2_otsu"}
     assert {stat.get("geometry_loss_kind") for stat in geom_stats} == {"l2_otsu"}
-    assert {stat.get("geometry_objective") for stat in geom_stats} == {"heldout_reprojection"}
+    assert {stat.get("geometry_objective") for stat in geom_stats} == {"bilevel_cv"}
     assert info["wall_time_total"] > 0.0
     diagnostics = info["geometry_calibration_diagnostics"]
     assert diagnostics["schema_version"] == 1
     assert diagnostics["blocks"]
     center = diagnostics["blocks"][0]
-    assert center["geometry_block"] == "detector_center"
-    assert center["geometry_objective"] == "heldout_reprojection"
+    assert center["geometry_block"] == "setup_bilevel"
+    assert center["geometry_objective"] == "bilevel_cv"
     assert center["accepted_updates"] >= 1
     assert center["status"] in {"converged", "underconverged", "ill_conditioned"}
 

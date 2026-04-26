@@ -37,7 +37,7 @@ from ..align.pipeline import (
     AlignResumeState,
     AlignMultiresResumeState,
 )
-from ..align.geometry_blocks import GEOMETRY_DOFS, normalize_geometry_dofs
+from ..align.schedules import schedule_preset
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
@@ -147,13 +147,6 @@ def _parse_dof_args(
     except ValueError as exc:
         parser.error(str(exc))
     return optimise_dofs, freeze_dofs
-
-
-def _parse_geometry_dofs_arg(value: str) -> tuple[str, ...]:
-    try:
-        return normalize_geometry_dofs(str(value).split(","))
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _parse_bounds_arg(value: object) -> DofBounds:
@@ -328,14 +321,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Named alignment DOFs to keep fixed at initial values. Example: phi or det_u_px",
     )
     p.add_argument(
-        "--optimise-geometry",
-        nargs="+",
-        type=_parse_geometry_dofs_arg,
+        "--schedule",
+        choices=[
+            "pose_only",
+            "cor",
+            "detector_center_2d",
+            "detector_roll",
+            "axis_direction",
+            "lamino_tilt",
+            "setup_safe",
+        ],
         default=None,
-        metavar="GEOM_DOF[,GEOM_DOF]",
         help=(
-            "Detector/instrument geometry DOFs to optimise inside the multires alignment "
-            f"pipeline: {','.join(GEOMETRY_DOFS)}. Example: det_u_px detector_roll_deg"
+            "Alignment preset. Setup presets use bilevel-CV over active DOFs; "
+            "explicit --optimise-dofs is the lower-level surface."
         ),
     )
     p.add_argument(
@@ -583,19 +582,8 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "gauge_fix": str(args.gauge_fix),
         "optimise_dofs": list(args.optimise_dofs or []),
         "freeze_dofs": list(args.freeze_dofs or []),
-        "geometry_dofs": _flatten_geometry_dofs(args.optimise_geometry),
+        "schedule": args.schedule,
     }
-
-
-def _flatten_geometry_dofs(raw: object) -> tuple[str, ...]:
-    if raw is None:
-        return ()
-    names: list[str] = []
-    for group in raw:
-        for name in group:
-            if name not in names:
-                names.append(str(name))
-    return tuple(names)
 
 
 def _geometry_value(calibration_state: dict[str, object] | None, name: str) -> object | None:
@@ -760,15 +748,29 @@ def main() -> None:
         apply_saved_alignment=False,
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
+    schedule_metadata: dict[str, object] | None = None
     try:
-        geometry_dofs = normalize_geometry_dofs(
-            _flatten_geometry_dofs(args.optimise_geometry),
-            geometry=geom,
-        )
+        if args.schedule is not None:
+            if optimise_dofs is not None:
+                p.error("--schedule and --optimise-dofs are mutually exclusive")
+            schedule = schedule_preset(str(args.schedule))
+            optimise_dofs = schedule.active_dofs
+            schedule_metadata = {
+                "name": schedule.name,
+                "stages": [
+                    {
+                        "name": stage.name,
+                        "active_dofs": list(stage.active_dofs),
+                        "objective_kind": stage.objective_kind,
+                        "optimizer": stage.optimizer,
+                        "gauge_policy": stage.gauge_policy,
+                    }
+                    for stage in schedule.stages
+                ],
+            }
         geometry_dofs = resolve_scoped_alignment_dofs(
             optimise_dofs=optimise_dofs,
             freeze_dofs=freeze_dofs,
-            geometry_dofs=geometry_dofs,
             geometry=geom,
         ).active_geometry_dofs
     except ValueError as exc:
@@ -808,7 +810,7 @@ def main() -> None:
         w_trans=float(args.w_trans),
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
-        geometry_dofs=geometry_dofs,
+        geometry_dofs=(),
         bounds=args.bounds,
         pose_model=str(args.pose_model),
         knot_spacing=int(args.knot_spacing),
@@ -1162,6 +1164,7 @@ def main() -> None:
                 "checkpoint_projector": bool(args.checkpoint_projector),
                 "transfer_guard": str(args.transfer_guard),
                 "levels": args.levels,
+                "schedule": schedule_metadata,
                 "used_multires": bool(args.levels is not None and len(args.levels) > 0),
                 "checkpoint_path": args.checkpoint,
                 "checkpoint_every": args.checkpoint_every,

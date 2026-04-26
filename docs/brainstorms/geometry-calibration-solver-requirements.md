@@ -16,10 +16,12 @@ been the best-performing loss in prior experiments.
 The current `feat/geometry-calibration-phase0` branch added useful geometry
 plumbing, but it took two wrong turns that are now documented requirements:
 geometry calibration initially used a private normalized-L2 reprojection
-objective, and detector-centre discovery used a fixed-volume same-data objective
+objective, and detector-centre discovery used fixed-volume same-data objectives
 that can become self-consistent at nominal geometry. Geometry calibration must
-use the configured loss system, and COR-like detector-centre discovery must use
-an identifiable objective such as held-out reprojection.
+use the configured loss system, and setup-geometry discovery must use
+validation data not used to reconstruct the volume being scored. The default
+setup objective is now bilevel cross-validation, with the same `l2_otsu` loss
+adapter used by pose alignment.
 
 The new direction is to treat geometry calibration as first-class alignment DOFs
 inside one unified alignment system:
@@ -75,9 +77,9 @@ Relevant current files:
     offset.
   - **Actors:** A1, A2
   - **Steps:** User activates `det_u_px`; all other geometry and pose DOFs remain
-    frozen; the multiresolution loop seeds from projection-domain evidence,
-    reconstructs deterministic train views, scores held-out projections with the
-    configured loss, updates `det_u_px`, and carries the calibrated state forward.
+    frozen; the multiresolution loop reconstructs train folds, scores validation
+    folds with the configured loss, updates `det_u_px`, and carries the calibrated
+    state forward.
   - **Outcome:** The reported detector/ray-grid centre is estimated using the same
     alignment loss as pose alignment, normally `l2_otsu`.
   - **Covered by:** R1, R2, R3, R6, R7, R12, R19
@@ -132,9 +134,10 @@ Relevant current files:
   their current object-frame right-multiplied semantics.
 - R5. Expert full-coupled optimization must be possible by explicitly activating
   many DOFs, but it must not be the default workflow or the recommended docs path.
-- R6. `--optimise-dofs` should become the primary CLI/API way to choose both pose
-  and geometry DOFs; `--optimise-geometry` may remain only as a compatibility alias
-  during transition.
+- R6. `--optimise-dofs` is the primary CLI/API way to choose both pose and
+  geometry DOFs. `--schedule` provides named presets such as `cor`,
+  `detector_roll`, `axis_direction`, `lamino_tilt`, `setup_safe`, and
+  `pose_only`. `--optimise-geometry` is not part of the greenfield surface.
 - R7. `--freeze-dofs` must be able to freeze both pose and geometry DOFs.
 
 **Loss and objective semantics**
@@ -148,14 +151,15 @@ Relevant current files:
   through the normal loss system.
 - R11. Loss scheduling by multiresolution level must apply consistently to all
   active DOF scopes at that level.
-- R12. GN-compatible losses such as `l2_otsu` must use the existing loss-adapter
-  weighting/precompute path for geometry updates, including Otsu masks.
+- R12. Setup-geometry discovery must use fold-specific validation loss adapters
+  built from concrete validation targets, including Otsu masks for `l2_otsu`.
 - R13. Stats and manifests must record the actual configured loss name used for
   each update, not a generic label that hides objective differences.
 - R13a. Detector-centre/COR discovery must not rely on a fixed reconstructed
   volume scored against the same projections that produced that volume. It must
-  use projection-domain seeding, held-out reprojection scoring, or a future
-  reconstruction-differentiated objective that breaks the self-consistency loop.
+  use a reconstruction-differentiated bilevel objective with deterministic train
+  and validation folds. Projection-domain COM estimates are initializers or
+  diagnostics, not solvers.
 
 **Solver loop and staging**
 
@@ -220,8 +224,8 @@ Relevant current files:
 - AE1. **Covers R1, R3, R8, R9, R12, R13.** Given a synthetic parallel CT scan
   with hidden `det_u_px=-4`, when the user runs alignment with only `det_u_px`
   active, the solver uses `l2_otsu`, records that loss in stats and manifests,
-  records the `heldout_reprojection` objective, estimates detector centre, and
-  leaves per-view pose parameters unchanged.
+  records the `bilevel_cv` objective, estimates detector centre, and leaves
+  per-view pose parameters unchanged.
 
 - AE2. **Covers R4, R8, R28.** Given an existing pose-only alignment workflow,
   when no geometry DOFs are active, the path behaves as it did on main: object-frame
@@ -287,8 +291,9 @@ Relevant current files:
 - Use active/frozen DOF masks as the core workflow primitive.
 - Keep block-coordinate staging for stability, but make it share state, loss,
   multires loop semantics, checkpoints, and diagnostics.
-- Use held-out reprojection as the first detector-centre discovery objective;
-  keep fixed-volume GN as a local/other-block mechanism, not as COR discovery.
+- Use bilevel cross-validation as the setup-geometry discovery objective; keep
+  fixed-volume objectives for pose and optional local polish, not as setup
+  discovery.
 - Make `l2_otsu` the default geometry calibration loss because it is already the
   main alignment default and has worked best in prior tests.
 - Keep calibration metadata and gauge work; fix the optimizer boundary rather than
@@ -299,16 +304,17 @@ Relevant current files:
 
 ## Dependencies / Assumptions
 
-- The existing `LossAdapter` and `gauss_newton_weights` path can support geometry
-  updates for L2-like losses, including `l2_otsu`.
+- The existing `LossAdapter` path can support validation scoring for setup
+  geometry, including fold-specific `l2_otsu` Otsu masks.
 - Detector-centre and detector-roll effects can continue to be represented through
   dynamic detector grids.
 - Axis direction can continue to be represented through the current rotation-axis
   geometry helpers.
 - Some geometry-plus-pose combinations are genuinely ill-conditioned and need
   gauge policy rather than optimizer cleverness.
-- Full reconstruction-differentiated geometry optimization may be useful later,
-  but is not required to correct the current branch's objective mistake.
+- The first production path can use unrolled reconstruction differentiation;
+  implicit differentiation is the scale-up path and must preserve the same
+  objective contract.
 
 ---
 
@@ -320,16 +326,9 @@ Relevant current files:
 
 ### Deferred to Planning
 
-- [Affects R14, R15][Technical] Decide whether the first implementation should
-  keep a small geometry-update helper called from `align_multires`, or refactor
-  `align()` into a one-level unified alignment engine immediately.
-- [Affects R6, R7][Technical] Decide the cleanest compatibility path for
-  `--optimise-geometry` while moving users toward unified `--optimise-dofs`.
-- [Affects R12][Technical] Verify the geometry GN residual scaling should exactly
-  match pose GN weighting for `l2_otsu`, including whether any normalization is
-  still needed for numerical conditioning.
-- [Affects R16, R17][Technical] Define the first safe preset schedules after the
-  objective is corrected.
+- [Affects scale-up][Technical] Replace the unrolled reference bilevel gradient
+  with an implicit-gradient production path once the objective/state contract is
+  stable.
 
 ---
 
@@ -340,11 +339,11 @@ Relevant current files:
 The first implementation plan should prioritize objective correctness before broad
 API cleanup:
 
-1. Keep regression tests proving true-volume detector-centre loss is minimized
-   near the hidden offset while wrong-geometry fixed-volume loss can prefer
-   nominal geometry.
-2. Keep `det_u_px` geometry alignment on the configured `l2_otsu`
-   held-out-reprojection path.
+1. Keep characterization tests proving true-volume detector-centre loss is
+   minimized near the hidden offset while wrong-geometry fixed-volume loss can
+   prefer nominal geometry.
+2. Keep `det_u_px` geometry alignment on the configured `l2_otsu` bilevel-CV
+   path.
 3. Continue staged active/frozen DOF workflows and reject ambiguous
    detector-centre plus translation active sets.
 4. Re-run the phantom #94 128^3 evidence suite only after smoke validation on

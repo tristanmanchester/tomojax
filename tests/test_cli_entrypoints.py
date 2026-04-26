@@ -165,21 +165,13 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--checkpoint" in captured.out
     assert "--checkpoint-every" in captured.out
     assert "--resume" in captured.out
-    assert "--optimise-geometry" in captured.out
+    assert "--optimise-geometry" not in captured.out
+    assert "--schedule" in captured.out
+    assert "cor" in captured.out
     assert "det_u_px" in captured.out
-    assert "detector_roll_deg" in captured.out
+    assert "detector_roll" in captured.out
     assert "lbfgs" in captured.out
     assert "--lbfgs-memory-size" in captured.out
-
-
-def test_align_geometry_dof_parser_accepts_detector_and_axis_aliases():
-    assert align_cli._parse_geometry_dofs_arg("det_u_px,detector_roll_deg") == (
-        "det_u_px",
-        "detector_roll_deg",
-    )
-    assert align_cli._parse_geometry_dofs_arg("tilt_deg") == ("tilt_deg",)
-    with pytest.raises(argparse.ArgumentTypeError):
-        align_cli._parse_geometry_dofs_arg("dx")
 
 
 def test_align_primary_dof_parser_accepts_geometry_dofs():

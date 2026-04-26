@@ -132,16 +132,16 @@ large misalignments.
 - `--seed-translations` -- use phase correlation to initialise
   `dx,dz` at the coarsest level
 
-## Instrument Geometry Blocks
+## Instrument Geometry Alignment
 
 `tomojax-align` can solve static instrument geometry inside the same
 alignment system as per-view pose updates. Geometry updates use the
 configured alignment loss, including the default `l2_otsu`; they do
 not switch to a private calibration loss.
 
-Detector-centre/COR discovery uses a reduced held-out reprojection
-objective inside `align_multires`: train-view reconstructions are
-scored on held-out projections with the configured loss. This avoids
+Detector-centre/COR discovery uses the unified bilevel-CV setup
+objective inside `align_multires`: train-fold reconstructions are
+scored on validation projections with the configured loss. This avoids
 the fixed-volume self-consistency failure where a reconstruction made
 under the wrong detector centre can incorrectly prefer nominal
 geometry.
@@ -158,17 +158,19 @@ Geometry DOFs accepted by `--optimise-dofs`:
 - `tilt_deg` -- laminography-friendly alias for the axis component
   matching the scan's tilt direction.
 
-`--optimise-geometry` remains accepted as a compatibility alias, but
-new workflows should use `--optimise-dofs`.
+Preset schedules are available through `--schedule`, including
+`cor`, `detector_roll`, `axis_direction`, `lamino_tilt`,
+`setup_safe`, and `pose_only`. Use `--optimise-dofs` when you want
+explicit control.
 
-Geometry blocks are staged at each multiresolution level, so common
-runs should use the normal pyramid, for example `--levels 8 4 2 1`.
+Setup alignment runs at each multiresolution level, so common runs
+should use the normal pyramid, for example `--levels 8 4 2 1`.
 Geometry-only calibration is just a geometry-only active DOF set:
 
 ```bash
 tomojax-align --data data/scan.nxs \
   --levels 8 4 2 1 \
-  --optimise-dofs det_u_px,detector_roll_deg \
+  --schedule cor \
   --out out/geometry_calibrated.nxs
 ```
 
