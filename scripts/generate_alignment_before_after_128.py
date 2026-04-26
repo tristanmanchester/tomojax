@@ -24,12 +24,13 @@ from tomojax.align.pipeline import AlignConfig, align_multires
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.data.phantoms import lamino_disk
+from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.recon.fbp import fbp
 from tomojax.recon.quicklook import scale_to_uint8
 
 
-PHANTOM_KIND = "random_shapes/lamino_disk"
+PHANTOM_KIND = "random_shapes/full_volume_random_cubes_spheres"
+PHANTOM_SOURCE = "tomojax.data.phantoms.random_cubes_spheres"
 PHANTOM_SEED = 20260458
 DEFAULT_LEVELS = (8, 4, 2, 1)
 
@@ -292,18 +293,18 @@ def profile_from_args(args: argparse.Namespace) -> RunProfile:
 
 
 def _phantom(size: int) -> np.ndarray:
-    return lamino_disk(
+    return random_cubes_spheres(
         size,
         size,
         size,
-        thickness_ratio=0.2,
-        seed=PHANTOM_SEED,
-        n_cubes=8,
-        n_spheres=14,
-        min_size=max(4, size // 24),
-        max_size=max(8, size // 7),
-        min_value=0.25,
+        n_cubes=4,
+        n_spheres=7,
+        min_size=max(5, size // 18),
+        max_size=max(9, size // 8),
+        min_value=0.45,
         max_value=1.0,
+        seed=PHANTOM_SEED,
+        use_inscribed_fov=True,
     ).astype(np.float32)
 
 
@@ -744,7 +745,7 @@ def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> di
             "kind": PHANTOM_KIND,
             "seed": PHANTOM_SEED,
             "shared_across_cases": True,
-            "source": "tomojax.data.phantoms.lamino_disk",
+            "source": PHANTOM_SOURCE,
         },
         "profile": asdict(profile),
         "scenario_set": "default",
@@ -856,7 +857,7 @@ def _run_scenario(
                     "kind": PHANTOM_KIND,
                     "seed": PHANTOM_SEED,
                     "shared_across_cases": True,
-                    "source": "tomojax.data.phantoms.lamino_disk",
+                    "source": PHANTOM_SOURCE,
                 },
                 "profile": asdict(profile),
                 "acquisition": {
@@ -976,7 +977,7 @@ def _run_scenario(
             "kind": PHANTOM_KIND,
             "seed": PHANTOM_SEED,
             "shared_across_cases": True,
-            "source": "tomojax.data.phantoms.lamino_disk",
+            "source": PHANTOM_SOURCE,
         },
         "profile": asdict(profile),
         "acquisition": {

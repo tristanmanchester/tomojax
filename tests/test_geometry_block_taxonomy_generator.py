@@ -19,11 +19,14 @@ def _load_generator():
     return module
 
 
-def test_geometry_block_taxonomy_uses_lamino_disk_not_shepp_logan():
+def test_geometry_block_taxonomy_uses_rich_random_shapes_not_shepp_logan():
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "shepp_logan" not in source
-    assert "lamino_disk" in source
+    assert "random_cubes_spheres" in source
+    assert "n_cubes=4" in source
+    assert "n_spheres=7" in source
+    assert "use_inscribed_fov=True" in source
 
 
 def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tmp_path):
@@ -36,10 +39,10 @@ def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tm
     status = json.loads((out / "artifacts" / "status.json").read_text(encoding="utf-8"))
 
     assert manifest["phantom"] == {
-        "kind": "random_shapes/lamino_disk",
+        "kind": "random_shapes/full_volume_random_cubes_spheres",
         "seed": 20260458,
         "shared_across_cases": True,
-        "source": "tomojax.data.phantoms.lamino_disk",
+        "source": "tomojax.data.phantoms.random_cubes_spheres",
     }
     assert manifest["profile"]["size"] == 128
     assert manifest["profile"]["views"] == 128
