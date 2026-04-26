@@ -21,7 +21,7 @@ pipeline. The active product path now supports:
 - rotation-axis direction via `axis_rot_x_deg` and `axis_rot_y_deg`
 - laminography tilt as an alias onto the axis-direction block
 - multiresolution levels `8 4 2 1`
-- the normal documentation/demo alignment profile: `outer_iters=12`,
+- the normal documentation/demo alignment profile: `outer_iters=16`,
   `early_stop=True`, `early_stop_rel_impr=1e-3`, `early_stop_patience=2`
 - structured geometry diagnostics returned through `align_multires` and written
   into generated demo manifests

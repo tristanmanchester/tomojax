@@ -54,7 +54,7 @@ def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tm
     assert manifest["profile"]["size"] == 128
     assert manifest["profile"]["views"] == 128
     assert tuple(manifest["profile"]["levels"]) == (8, 4, 2, 1)
-    assert manifest["profile"]["outer_iters"] == 12
+    assert manifest["profile"]["outer_iters"] == 16
     assert manifest["profile"]["early_stop"] is True
     assert manifest["profile"]["early_stop_rel_impr"] == 1e-3
     assert manifest["profile"]["early_stop_patience"] == 2

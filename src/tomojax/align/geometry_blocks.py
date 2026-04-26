@@ -787,7 +787,7 @@ def _optimize_one_block(
     best_loss = loss_before
     best_scale = 0.0
     best_step = jnp.zeros_like(initial_values)
-    for scale in (1.0, 0.5, 0.25):
+    for scale in (2.0, 1.5, 1.0, 0.5, 0.25):
         trial_step = clipped_step * jnp.float32(scale)
         trial_values = initial_values + trial_step
         trial_loss = float(loss_for_values(trial_values))
@@ -805,6 +805,7 @@ def _optimize_one_block(
         "geometry_loss_before": loss_before,
         "geometry_loss_after": float(best_loss),
         "geometry_accepted": bool(best_scale > 0.0),
+        "geometry_step_scale": float(best_scale),
         "geometry_step_norm": float(jnp.linalg.norm(best_step)),
         "geometry_gradient_norm": float(jnp.linalg.norm(gradient)),
         "geometry_max_step": float(max_step),

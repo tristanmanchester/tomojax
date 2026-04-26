@@ -86,7 +86,7 @@ def docs_profile() -> RunProfile:
         size=128,
         views=128,
         levels=DEFAULT_LEVELS,
-        outer_iters=12,
+        outer_iters=16,
         recon_iters=20,
         tv_prox_iters=12,
         views_per_batch=1,
