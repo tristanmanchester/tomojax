@@ -428,7 +428,31 @@ def add_geometry_acquisition_diagnostics(
 
 
 def _overall_geometry_status(blocks: Sequence[Mapping[str, object]]) -> str:
-    statuses = [str(block.get("status")) for block in blocks if block.get("status")]
+    latest_blocks: dict[tuple[str, str, str], tuple[float, Mapping[str, object]]] = {}
+    fallback_blocks: list[Mapping[str, object]] = []
+    for index, block in enumerate(blocks):
+        status = block.get("status")
+        if not status:
+            continue
+        level_raw = block.get("level_factor")
+        try:
+            level = float(level_raw) if level_raw is not None else math.inf
+        except Exception:
+            level = math.inf
+        key = (
+            str(block.get("geometry_block") or ""),
+            str(block.get("geometry_active_dofs") or ""),
+            str(block.get("geometry_objective") or ""),
+        )
+        if not any(key):
+            fallback_blocks.append(block)
+            continue
+        existing = latest_blocks.get(key)
+        order = level if math.isfinite(level) else float(index)
+        if existing is None or order <= existing[0]:
+            latest_blocks[key] = (order, block)
+    selected = [item[1] for item in latest_blocks.values()] or fallback_blocks
+    statuses = [str(block.get("status")) for block in selected if block.get("status")]
     if not statuses:
         return "not_run"
     if "ill_conditioned" in statuses:
