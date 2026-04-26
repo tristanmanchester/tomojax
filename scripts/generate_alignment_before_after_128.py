@@ -193,6 +193,51 @@ def scenario_catalog() -> list[Scenario]:
     return _default_scenarios()
 
 
+def visual_stress_scenario_catalog() -> list[Scenario]:
+    """More aggressive perturbations used to find visually useful naive-FBP demos."""
+    return [
+        Scenario(
+            slug="stress_parallel_detector_roll_p10",
+            title="Parallel CT: detector roll +10 deg",
+            description="Large hidden detector-plane roll for visual naive-FBP artifact screening.",
+            geometry_type="parallel",
+            geometry_dofs=("detector_roll_deg",),
+            hidden_detector_roll_deg=10.0,
+        ),
+        Scenario(
+            slug="stress_parallel_axis_pitch_p18",
+            title="Parallel CT: axis pitched +18 deg",
+            description="Large forward/backward lab-frame axis tilt for visual artifact screening.",
+            geometry_type="parallel",
+            geometry_dofs=("axis_rot_x_deg",),
+            hidden_axis_rot_x_deg=18.0,
+        ),
+        Scenario(
+            slug="stress_parallel_axis_yaw_m18",
+            title="Parallel CT: axis yawed -18 deg",
+            description="Large side-to-side lab-frame axis tilt for visual artifact screening.",
+            geometry_type="parallel",
+            geometry_dofs=("axis_rot_y_deg",),
+            hidden_axis_rot_y_deg=-18.0,
+        ),
+        Scenario(
+            slug="stress_lamino_tilt_50",
+            title="Laminography: true tilt 50 deg",
+            description="Large hidden tilt delta from nominal 30 deg for visual artifact screening.",
+            geometry_type="lamino",
+            geometry_dofs=("tilt_deg",),
+            hidden_axis_rot_x_deg=20.0,
+            nominal_tilt_deg=30.0,
+        ),
+    ]
+
+
+def scenario_catalog_for_kind(kind: str) -> list[Scenario]:
+    if kind == "visual_stress":
+        return visual_stress_scenario_catalog()
+    return scenario_catalog()
+
+
 def profile_from_args(args: argparse.Namespace) -> RunProfile:
     base = docs_profile() if args.profile == "docs" else smoke_profile()
     return RunProfile(
@@ -527,6 +572,57 @@ def _write_visuals(
     return paths
 
 
+def _write_naive_visuals(
+    scenario: Scenario,
+    *,
+    out_dir: Path,
+    truth: np.ndarray,
+    naive_fbp: np.ndarray,
+) -> dict[str, str]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    truth_xy = _scale(_slice_xy(truth))
+    naive_xy = _scale(_slice_xy(naive_fbp))
+    diff_xy = _scale(np.abs(_slice_xy(truth) - _slice_xy(naive_fbp)))
+    truth_orthos = _hstack(
+        [_scale(_slice_xy(truth)), _scale(_slice_xz(truth)), _scale(_slice_yz(truth))]
+    )
+    naive_orthos = _hstack(
+        [_scale(_slice_xy(naive_fbp)), _scale(_slice_xz(naive_fbp)), _scale(_slice_yz(naive_fbp))]
+    )
+    header = _hstack(
+        [
+            _label_bar(truth_xy.shape[1], "truth"),
+            _label_bar(naive_xy.shape[1], "naive FBP"),
+            _label_bar(diff_xy.shape[1], "abs truth/naive diff"),
+        ],
+        pad=6,
+    )
+    body = _hstack([truth_xy, naive_xy, diff_xy])
+    subtitle = (
+        f"{scenario.slug} | {scenario.title} | hidden "
+        f"det_u={scenario.hidden_det_u_px:g} roll={scenario.hidden_detector_roll_deg:g} "
+        f"axis=({scenario.hidden_axis_rot_x_deg:g},{scenario.hidden_axis_rot_y_deg:g})"
+    )
+    panel = _vstack([_label_bar(body.shape[1], subtitle), header, body], pad=0)
+    paths = {
+        "truth_xy": str(out_dir / "truth_xy.png"),
+        "naive_fbp_xy": str(out_dir / "naive_fbp_xy.png"),
+        "calibrated_fbp_xy": "",
+        "aligned_tv_xy": "",
+        "before_after_panel": str(out_dir / "truth_vs_naive_panel.png"),
+        "truth_orthos": str(out_dir / "truth_orthos.png"),
+        "calibrated_orthos": str(out_dir / "naive_fbp_orthos.png"),
+        "absolute_difference_xy": str(out_dir / "truth_naive_absolute_difference_xy.png"),
+    }
+    iio.imwrite(paths["truth_xy"], truth_xy)
+    iio.imwrite(paths["naive_fbp_xy"], naive_xy)
+    iio.imwrite(paths["before_after_panel"], panel)
+    iio.imwrite(paths["truth_orthos"], truth_orthos)
+    iio.imwrite(paths["calibrated_orthos"], naive_orthos)
+    iio.imwrite(paths["absolute_difference_xy"], diff_xy)
+    return paths
+
+
 def _scenario_truth_payload(scenario: Scenario) -> dict[str, float]:
     return {
         "det_u_px": float(scenario.hidden_det_u_px),
@@ -566,6 +662,7 @@ def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> di
             "source": "tomojax.data.phantoms.lamino_disk",
         },
         "profile": asdict(profile),
+        "scenario_set": "default",
         "scenarios": [
             {
                 "slug": s.slug,
@@ -601,6 +698,7 @@ def _run_scenario(
     grid: Grid,
     detector: Detector,
     truth: np.ndarray,
+    naive_only: bool = False,
 ) -> dict[str, Any]:
     start_time = time.time()
     volume = jnp.asarray(truth, dtype=jnp.float32)
@@ -632,6 +730,53 @@ def _run_scenario(
         views_per_batch=profile.views_per_batch,
         gather_dtype=profile.gather_dtype,
     )
+
+    if naive_only:
+        visual_paths = _write_naive_visuals(
+            scenario,
+            out_dir=out_dir,
+            truth=truth,
+            naive_fbp=naive_fbp,
+        )
+        elapsed = time.time() - start_time
+        row: dict[str, Any] = {
+            "slug": scenario.slug,
+            "title": scenario.title,
+            "geometry_type": scenario.geometry_type,
+            "geometry_dofs": ",".join(scenario.geometry_dofs),
+            "parameter_provenance": "naive_only",
+            "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
+            "supplied_corrections_json": "{}",
+            "estimates_json": "{}",
+            "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
+            "calibrated_volume_nmse": np.nan,
+            "aligned_tv_volume_nmse": np.nan,
+            "total_outer_iters": 0,
+            "elapsed_sec": elapsed,
+            "error": "",
+            **visual_paths,
+        }
+        _write_json(
+            out_dir / "case_manifest.json",
+            {
+                "schema_version": 1,
+                "scenario": asdict(scenario),
+                "phantom": {
+                    "kind": PHANTOM_KIND,
+                    "seed": PHANTOM_SEED,
+                    "shared_across_cases": True,
+                    "source": "tomojax.data.phantoms.lamino_disk",
+                },
+                "profile": asdict(profile),
+                "hidden_truth": _scenario_truth_payload(scenario),
+                "parameter_provenance": "naive_only",
+                "metrics": {"naive_volume_nmse": row["naive_volume_nmse"]},
+                "artifacts": visual_paths,
+                "elapsed_sec": elapsed,
+            },
+        )
+        jax.clear_caches()
+        return row
 
     supplied = _scenario_supplied_payload(scenario)
     if scenario.geometry_dofs:
@@ -746,7 +891,7 @@ def _run_scenario(
 
 
 def _select_scenarios(args: argparse.Namespace) -> list[Scenario]:
-    scenarios = scenario_catalog()
+    scenarios = scenario_catalog_for_kind(str(args.scenario_set))
     if args.scenario:
         wanted = set(args.scenario)
         scenarios = [s for s in scenarios if s.slug in wanted]
@@ -788,6 +933,8 @@ def run(args: argparse.Namespace) -> None:
     profile = profile_from_args(args)
     scenarios = _select_scenarios(args)
     manifest = build_run_manifest(profile, scenarios)
+    manifest["scenario_set"] = str(args.scenario_set)
+    manifest["naive_only"] = bool(args.naive_only)
     _write_json(out_root / "run_manifest.json", manifest)
     _write_json(artifacts / "scenario_catalog.json", manifest["scenarios"])
 
@@ -832,6 +979,7 @@ def run(args: argparse.Namespace) -> None:
                 grid=grid,
                 detector=detector,
                 truth=truth,
+                naive_only=bool(args.naive_only),
             )
             row["status"] = "completed"
         except Exception as exc:
@@ -896,6 +1044,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
     parser.add_argument("--profile", choices=["docs", "smoke"], default="docs")
+    parser.add_argument("--scenario-set", choices=["default", "visual_stress"], default="default")
+    parser.add_argument("--naive-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--size", type=int, default=None)
     parser.add_argument("--views", type=int, default=None)
