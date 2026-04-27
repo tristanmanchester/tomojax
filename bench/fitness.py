@@ -740,7 +740,7 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         LaminographyGeometry,
     )
     from tomojax.data.simulate import SimConfig, simulate
-    from tomojax.align.objectives.losses import parse_loss_spec
+    from tomojax.align.objectives.loss_specs import parse_loss_spec
     from tomojax.recon.fbp import fbp
     from tomojax.recon.fista_tv import fista_tv
     from tomojax.align.pipeline import AlignConfig, align, align_multires

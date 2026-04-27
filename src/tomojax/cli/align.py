@@ -16,7 +16,7 @@ from ..align.model.dofs import (
     normalize_alignment_dofs,
     normalize_bounds,
 )
-from ..align.objectives.losses import (
+from ..align.objectives.loss_specs import (
     AlignmentLossConfig,
     parse_loss_schedule,
     parse_loss_spec,

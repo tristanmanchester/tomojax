@@ -3,7 +3,7 @@ import pytest
 import jax.numpy as jnp
 
 import tomojax.align._reconstruction_stage as reconstruction_stage
-from tomojax.align.objectives.losses import parse_loss_spec
+from tomojax.align.objectives.loss_specs import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry

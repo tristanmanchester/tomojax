@@ -6,7 +6,7 @@ import pytest
 
 import tomojax.cli.align as align_cli
 from tomojax.align.model.dofs import normalize_bounds
-from tomojax.align.objectives.losses import loss_spec_name, resolve_loss_for_level
+from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align.pipeline import AlignConfig
 from tomojax.cli.config import parse_args_with_config
 import tomojax.cli.recon as recon_cli

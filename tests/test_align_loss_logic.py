@@ -1,9 +1,9 @@
 import jax.numpy as jnp
 import pytest
 
-from tomojax.align.objectives.losses import (
-    LossState,
-    build_loss,
+from tomojax.align.objectives.loss_adapters import build_loss
+from tomojax.align.objectives.loss_state import LossState
+from tomojax.align.objectives.loss_specs import (
     loss_is_within_relative_tolerance,
     loss_spec_name,
     parse_loss_schedule,

@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.objectives.losses import build_loss_adapter, parse_loss_spec
+from tomojax.align.objectives.loss_adapters import build_loss_adapter
+from tomojax.align.objectives.loss_specs import parse_loss_spec
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 
 

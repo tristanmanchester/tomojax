@@ -12,8 +12,8 @@ from tomojax.align.objectives.fixed_volume import (
     project_stack,
 )
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.objectives.losses import L2OtsuLossSpec
-from tomojax.align.objectives.losses import build_loss_adapter
+from tomojax.align.objectives.loss_adapters import build_loss_adapter
+from tomojax.align.objectives.loss_specs import L2OtsuLossSpec
 from tomojax.align.objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
