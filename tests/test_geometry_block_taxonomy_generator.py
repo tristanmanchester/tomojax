@@ -278,3 +278,26 @@ def test_write_naive_visuals_emits_reduced_rich_panel(tmp_path):
         image = iio.imread(paths[key])
         assert image.ndim == 3
         assert image.shape[2] == 3
+
+
+def test_solver_metadata_summary_extracts_validation_lm_fields():
+    generator = _load_generator()
+
+    metadata = generator._last_solver_metadata(
+        [
+            {
+                "objective_kind": "bilevel_cv",
+                "optimizer_kind": "validation_lm",
+                "outer_loss_kind": "l2_otsu",
+                "recon_sensitivity": "stopped",
+                "fold_eval_mode": "stopped_train_recon_validation_lm",
+                "active_gradient_mode": "validation_residual_jvp",
+                "train_reconstruction_gradient": False,
+            }
+        ]
+    )
+
+    assert metadata["optimizer_kind"] == "validation_lm"
+    assert metadata["outer_loss_kind"] == "l2_otsu"
+    assert metadata["recon_sensitivity"] == "stopped"
+    assert metadata["train_reconstruction_gradient"] is False

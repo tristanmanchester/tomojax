@@ -18,7 +18,7 @@ def test_cor_schedule_activates_only_detector_u_and_bilevel_cv():
 
     assert stage.active_dofs == ("det_u_px",)
     assert stage.objective_kind == "bilevel_cv"
-    assert stage.optimizer == "lbfgs"
+    assert stage.optimizer == "validation_lm"
 
 
 def test_setup_safe_stages_setup_then_pose_polish():
@@ -32,10 +32,18 @@ def test_setup_safe_stages_setup_then_pose_polish():
     ]
     assert schedule.stages[-1].objective_kind == "fixed_volume"
     assert schedule.stages[-1].optimizer == "gn"
+    assert all(stage.optimizer == "validation_lm" for stage in schedule.stages[:-1])
+
+
+def test_lamino_tilt_schedule_uses_observable_axis_dof():
+    schedule = schedule_preset("lamino_tilt")
+
+    assert schedule.stages[0].active_dofs == ("axis_rot_x_deg",)
+    assert schedule.stages[0].optimizer == "validation_lm"
 
 
 def test_bilevel_cv_stages_do_not_default_to_gn():
-    with pytest.raises(ValueError, match="must use lbfgs or adam"):
+    with pytest.raises(ValueError, match="must use validation_lm"):
         AlignmentSchedule(
             name="bad",
             stages=(

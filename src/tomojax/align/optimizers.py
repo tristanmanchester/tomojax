@@ -464,6 +464,121 @@ class ActiveOptimizerResult:
     stats: dict[str, object]
 
 
+@dataclass(frozen=True)
+class ValidationLmConfig:
+    damping: float = 1e-3
+    min_damping: float = 1e-8
+    step_scales: tuple[float, ...] = (1.0, 0.5, 0.25, 0.0)
+
+
+def run_active_validation_lm(
+    *,
+    state: AlignmentState,
+    view: ActiveParameterView,
+    loss: float,
+    grad: jnp.ndarray,
+    hess: jnp.ndarray,
+    score_fn: Callable[[jnp.ndarray], float],
+    cfg: ValidationLmConfig = ValidationLmConfig(),
+) -> ActiveOptimizerResult:
+    """Run one damped validation-LM step over the active whitened state."""
+    z0 = jnp.asarray(view.pack(state), dtype=jnp.float32).reshape(-1)
+    lower, upper = view.bounds_whitened(state)
+    lower = jnp.asarray(lower, dtype=jnp.float32).reshape(z0.shape)
+    upper = jnp.asarray(upper, dtype=jnp.float32).reshape(z0.shape)
+    g = jnp.asarray(grad, dtype=jnp.float32).reshape(z0.shape)
+    H = jnp.asarray(hess, dtype=jnp.float32).reshape((int(z0.size), int(z0.size)))
+    H = jnp.float32(0.5) * (H + H.T)
+    damping = max(float(cfg.damping), float(cfg.min_damping))
+    diag = jnp.maximum(jnp.diag(H), jnp.asarray(1e-6, dtype=jnp.float32))
+    H_lm = H + jnp.asarray(damping, dtype=jnp.float32) * jnp.diag(diag)
+
+    try:
+        dz = -jnp.linalg.solve(H_lm, g)
+        solve_method = "solve"
+    except Exception:
+        dz = -(jnp.linalg.pinv(H_lm) @ g)
+        solve_method = "pinv"
+
+    try:
+        singular_values = jnp.linalg.svd(H, compute_uv=False)
+        sv_np = np.asarray(singular_values, dtype=np.float64)
+        finite_sv = sv_np[np.isfinite(sv_np)]
+        if finite_sv.size and float(np.min(np.abs(finite_sv))) > 0.0:
+            condition = float(np.max(np.abs(finite_sv)) / np.min(np.abs(finite_sv)))
+        else:
+            condition = math.inf
+        sv_list = [float(v) for v in sv_np]
+    except Exception:
+        condition = math.inf
+        sv_list = []
+
+    initial_loss = float(loss)
+    best_loss = initial_loss
+    best_z = z0
+    best_scale = 0.0
+    candidate_losses: list[float | None] = []
+    predicted_reductions: list[float] = []
+    for raw_scale in tuple(float(v) for v in cfg.step_scales):
+        scale = float(raw_scale)
+        candidate_z = jnp.clip(z0 + jnp.asarray(scale, dtype=jnp.float32) * dz, lower, upper)
+        step = candidate_z - z0
+        predicted = -float(jnp.vdot(g, step).real + 0.5 * jnp.vdot(step, H @ step).real)
+        predicted_reductions.append(predicted)
+        try:
+            candidate_loss = float(score_fn(candidate_z))
+        except Exception:
+            candidate_loss = math.inf
+        candidate_losses.append(candidate_loss if math.isfinite(candidate_loss) else None)
+        if math.isfinite(candidate_loss) and candidate_loss < best_loss:
+            best_loss = candidate_loss
+            best_z = candidate_z
+            best_scale = scale
+
+    accepted = math.isfinite(best_loss) and best_loss < initial_loss
+    final_state = view.unpack(state, best_z) if accepted else state
+    final_loss = best_loss if accepted else initial_loss
+    actual_reduction = initial_loss - final_loss
+    predicted_reduction = (
+        predicted_reductions[tuple(float(v) for v in cfg.step_scales).index(best_scale)]
+        if best_scale in tuple(float(v) for v in cfg.step_scales)
+        else 0.0
+    )
+    stats = {
+        "optimizer": "validation_lm",
+        "optimizer_backend": "streamed_normals",
+        "optimizer_accepted": bool(accepted),
+        "optimizer_success": bool(accepted),
+        "optimizer_initial_loss": initial_loss,
+        "optimizer_final_loss": float(final_loss),
+        "optimizer_best_loss": float(best_loss),
+        "optimizer_damping": float(damping),
+        "optimizer_solve_method": solve_method,
+        "optimizer_candidate_scales": [float(v) for v in cfg.step_scales],
+        "optimizer_candidate_losses": candidate_losses,
+        "optimizer_predicted_reductions": predicted_reductions,
+        "optimizer_selected_scale": float(best_scale),
+        "optimizer_actual_reduction": float(actual_reduction),
+        "optimizer_predicted_reduction": float(predicted_reduction),
+        "optimizer_lm_ratio": (
+            float(actual_reduction / predicted_reduction)
+            if abs(predicted_reduction) > 1e-12
+            else None
+        ),
+        "optimizer_condition_number": condition,
+        "optimizer_singular_values": sv_list,
+        **optimizer_step_stats(view=view, before=state, after=final_state, grad_whitened=g),
+    }
+    if not accepted:
+        stats["optimizer_failure_reason"] = "no candidate validation-LM step reduced loss"
+    return ActiveOptimizerResult(
+        state=final_state,
+        loss=float(final_loss),
+        accepted=bool(accepted),
+        stats=stats,
+    )
+
+
 def run_active_lbfgs(
     *,
     state: AlignmentState,

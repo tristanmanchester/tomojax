@@ -7,7 +7,7 @@ from .dof_specs import ActiveParameterView
 from .objectives import ObjectiveKind
 
 
-OptimizerKind = Literal["lbfgs", "adam", "gn"]
+OptimizerKind = Literal["lbfgs", "adam", "gn", "validation_lm"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 
 
@@ -45,8 +45,8 @@ class AlignmentSchedule:
                 and stage.optimizer == "gn"
             ):
                 raise ValueError(
-                    f"{stage.objective_kind} stages must use lbfgs or adam unless a residual "
-                    "contract is explicitly provided"
+                    f"{stage.objective_kind} stages must use validation_lm, lbfgs, or adam "
+                    "unless a residual contract is explicitly provided for gn"
                 )
         return self
 
@@ -87,7 +87,7 @@ def schedule_preset(
                     name="cor",
                     active_dofs=("det_u_px",),
                     objective_kind="bilevel_cv",
-                    optimizer="lbfgs",
+                    optimizer="validation_lm",
                 ),
             ),
         ).validate()
@@ -99,7 +99,7 @@ def schedule_preset(
                     name="detector_center_2d",
                     active_dofs=("det_u_px", "det_v_px"),
                     objective_kind="bilevel_cv",
-                    optimizer="lbfgs",
+                    optimizer="validation_lm",
                     gauge_policy="prior_required",
                 ),
             ),
@@ -112,7 +112,7 @@ def schedule_preset(
                     name="detector_roll",
                     active_dofs=("detector_roll_deg",),
                     objective_kind="bilevel_cv",
-                    optimizer="lbfgs",
+                    optimizer="validation_lm",
                 ),
             ),
         ).validate()
@@ -124,7 +124,7 @@ def schedule_preset(
                     name="axis_direction",
                     active_dofs=("axis_rot_x_deg", "axis_rot_y_deg"),
                     objective_kind="bilevel_cv",
-                    optimizer="lbfgs",
+                    optimizer="validation_lm",
                     gauge_policy="diagnose_only",
                 ),
             ),
@@ -135,9 +135,9 @@ def schedule_preset(
             stages=(
                 AlignmentStage(
                     name="lamino_tilt",
-                    active_dofs=("tilt_deg",),
+                    active_dofs=("axis_rot_x_deg",),
                     objective_kind="bilevel_cv",
-                    optimizer="lbfgs",
+                    optimizer="validation_lm",
                     gauge_policy="diagnose_only",
                 ),
             ),
@@ -146,13 +146,18 @@ def schedule_preset(
         return AlignmentSchedule(
             name=key,
             stages=(
-                AlignmentStage("cor", ("det_u_px",), "bilevel_cv", "lbfgs"),
-                AlignmentStage("detector_roll", ("detector_roll_deg",), "bilevel_cv", "lbfgs"),
+                AlignmentStage("cor", ("det_u_px",), "bilevel_cv", "validation_lm"),
+                AlignmentStage(
+                    "detector_roll",
+                    ("detector_roll_deg",),
+                    "bilevel_cv",
+                    "validation_lm",
+                ),
                 AlignmentStage(
                     "axis_direction",
                     ("axis_rot_x_deg", "axis_rot_y_deg"),
                     "bilevel_cv",
-                    "lbfgs",
+                    "validation_lm",
                     gauge_policy="diagnose_only",
                 ),
                 AlignmentStage(
@@ -175,7 +180,7 @@ def schedule_preset(
                     name="expert_coupled",
                     active_dofs=dofs,
                     objective_kind="bilevel_cv",
-                    optimizer="lbfgs",
+                    optimizer="validation_lm",
                     gauge_policy=gauge_policy or "prior_required",
                 ),
             ),

@@ -16,6 +16,11 @@ from tomojax.align.objectives import (
 )
 from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.losses import L2OtsuLossSpec
+from tomojax.align.losses import build_loss_adapter
+from tomojax.align.validation_residuals import (
+    accumulate_validation_normals,
+    score_validation_fixed_volume,
+)
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 
@@ -240,3 +245,83 @@ def test_objective_value_and_grad_operates_on_active_whitened_vector():
     assert jnp.isfinite(value)
     assert grad.shape == (1,)
     assert aux["objective_kind"] == "fixed_volume"
+
+
+def test_validation_normals_match_fixed_volume_finite_difference():
+    grid, detector, geometry, volume, projections = _case(n_views=6, hidden_det_u_px=1.0)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    folds = FoldSpec(n_folds=2).build(projections.shape[0])
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    view = ActiveParameterView.from_dofs(("det_u_px",))
+    adapter = build_loss_adapter(L2OtsuLossSpec(), projections)
+    # Avoid testing exactly at the nominal detector-grid origin: the ray sampler
+    # has legitimate piecewise-linear kinks there, so finite differences measure
+    # a symmetric secant rather than the implementation's local JVP.
+    z = view.pack(state) + jnp.asarray([0.23], dtype=jnp.float32)
+    val_idx = folds.val_idx[0]
+    val_mask = folds.val_mask[0]
+
+    normals = accumulate_validation_normals(
+        frozen_state=state,
+        active_view=view,
+        z=z,
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_adapter=adapter,
+        fold_volume=volume,
+        val_idx=val_idx,
+        val_mask=val_mask,
+        views_per_batch=1,
+        projector_unroll=1,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+    )
+
+    eps = jnp.asarray([1e-2], dtype=jnp.float32)
+    plus = score_validation_fixed_volume(
+        frozen_state=state,
+        active_view=view,
+        z=z + eps,
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_adapter=adapter,
+        fold_volume=volume,
+        val_idx=val_idx,
+        val_mask=val_mask,
+        views_per_batch=1,
+        projector_unroll=1,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+    )
+    minus = score_validation_fixed_volume(
+        frozen_state=state,
+        active_view=view,
+        z=z - eps,
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_adapter=adapter,
+        fold_volume=volume,
+        val_idx=val_idx,
+        val_mask=val_mask,
+        views_per_batch=1,
+        projector_unroll=1,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+    )
+    fd_grad = (plus - minus) / (2.0 * eps[0])
+
+    assert jnp.isfinite(normals.loss)
+    assert normals.grad.shape == (1,)
+    assert normals.hess.shape == (1, 1)
+    np.testing.assert_allclose(
+        np.asarray(normals.grad[0]),
+        np.asarray(fd_grad),
+        rtol=2e-2,
+        atol=2e-2,
+    )

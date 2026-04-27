@@ -15,7 +15,9 @@ from tomojax.align.optimizers import (
     ActiveLbfgsConfig,
     BoundTransform,
     PoseLbfgsConfig,
+    ValidationLmConfig,
     run_active_lbfgs,
+    run_active_validation_lm,
     run_pose_lbfgs,
 )
 from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
@@ -238,6 +240,31 @@ def test_active_lbfgs_updates_setup_state_without_pose_special_case():
     assert result.accepted is True
     assert abs(float(result.state.setup.det_u_px) - 3.0) < 1e-3
     assert result.stats["step_norm_whitened"] > 0.0
+
+
+def test_active_validation_lm_updates_setup_state_from_normal_equation():
+    state = AlignmentState(setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1))
+    view = ActiveParameterView.from_dofs(("det_u_px",))
+    grad = jnp.asarray([-4.0], dtype=jnp.float32)
+    hess = jnp.asarray([[2.0]], dtype=jnp.float32)
+
+    def score(z):
+        return float((z[0] - 2.0) ** 2)
+
+    result = run_active_validation_lm(
+        state=state,
+        view=view,
+        loss=4.0,
+        grad=grad,
+        hess=hess,
+        score_fn=score,
+        cfg=ValidationLmConfig(damping=1e-6),
+    )
+
+    assert result.accepted is True
+    assert result.stats["optimizer"] == "validation_lm"
+    assert result.stats["optimizer_backend"] == "streamed_normals"
+    assert abs(float(result.state.setup.det_u_px) - 2.0) < 1e-4
     assert "det_u_px" in result.stats["step_by_dof_native_units"]
 
 

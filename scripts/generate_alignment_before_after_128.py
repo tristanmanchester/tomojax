@@ -1190,6 +1190,31 @@ def _last_objective_provenance(outer_stats: Any) -> dict[str, Any]:
     return {}
 
 
+def _last_solver_metadata(outer_stats: Any) -> dict[str, Any]:
+    if not isinstance(outer_stats, Sequence):
+        return {}
+    keys = (
+        "objective_kind",
+        "optimizer_kind",
+        "outer_loss_kind",
+        "recon_sensitivity",
+        "fold_eval_mode",
+        "active_gradient_mode",
+        "views_per_batch",
+        "n_folds",
+        "validation_projection_chunked",
+        "recon_projection_chunked",
+        "train_reconstruction_gradient",
+    )
+    for stat in reversed(list(outer_stats)):
+        if not isinstance(stat, Mapping):
+            continue
+        payload = {key: stat.get(key) for key in keys if key in stat}
+        if payload:
+            return payload
+    return {}
+
+
 def _phantom_metadata() -> dict[str, Any]:
     return {
         "kind": PHANTOM_KIND,
@@ -1433,6 +1458,7 @@ def _run_scenario(
         outer_stats=info.get("outer_stats", []),
     )
     alignment_metadata_path = out_dir / "alignment_metadata.json"
+    solver_metadata = _last_solver_metadata(info.get("outer_stats", []))
     alignment_metadata = {
         "schema_version": 1,
         "scenario": asdict(scenario),
@@ -1455,6 +1481,7 @@ def _run_scenario(
         "geometry_calibration_diagnostics": diagnostics,
         "geometry_objectives": geometry_objectives,
         "objective_provenance": _last_objective_provenance(info.get("outer_stats", [])),
+        "solver_metadata": solver_metadata,
         "outer_stats": info.get("outer_stats", []),
         "metrics": metrics,
         "alignment_info": info,
@@ -1478,6 +1505,13 @@ def _run_scenario(
             _last_objective_provenance(info.get("outer_stats", [])),
             sort_keys=True,
         ),
+        "solver_metadata_json": json.dumps(solver_metadata, sort_keys=True),
+        "objective_kind": str(solver_metadata.get("objective_kind", "")),
+        "optimizer_kind": str(solver_metadata.get("optimizer_kind", "")),
+        "outer_loss_kind": str(solver_metadata.get("outer_loss_kind", "")),
+        "recon_sensitivity": str(solver_metadata.get("recon_sensitivity", "")),
+        "fold_eval_mode": str(solver_metadata.get("fold_eval_mode", "")),
+        "active_gradient_mode": str(solver_metadata.get("active_gradient_mode", "")),
         "theta_span_deg": theta_span,
         "n_views": int(profile.views),
         "parameter_provenance": provenance,

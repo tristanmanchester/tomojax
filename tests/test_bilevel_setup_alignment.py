@@ -5,12 +5,14 @@ import jax.numpy as jnp
 
 import tomojax.align.detector_center as detector_center
 import tomojax.align.geometry_blocks as geometry_blocks
+import tomojax.align.pipeline as pipeline
 from tomojax.align.dof_specs import ActiveParameterView
 from tomojax.align.geometry_applier import BaseGeometryArrays
 from tomojax.align.objectives import BilevelCVProjectionObjective, FoldSpec, objective_value_and_grad
 from tomojax.align.schedules import schedule_preset
 from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.losses import L2OtsuLossSpec
+from tomojax.align.pipeline import AlignConfig, align_multires
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
@@ -107,3 +109,40 @@ def test_bilevel_cv_setup_gradient_is_finite_for_detector_center_and_roll():
     assert aux["objective_provenance"]["outer_loss_kind"] == "l2_otsu"
     assert grad.shape == (2,)
     assert jnp.all(jnp.isfinite(grad))
+
+
+def test_product_setup_path_uses_validation_lm_not_active_lbfgs(monkeypatch):
+    grid, detector, geometry, _volume, projections = _detector_grid_case(
+        size=5,
+        n_views=4,
+        det_u_px=0.5,
+    )
+
+    def fail_active_lbfgs(*args, **kwargs):
+        raise AssertionError("setup product path must not call active L-BFGS")
+
+    monkeypatch.setattr(pipeline, "run_active_lbfgs", fail_active_lbfgs)
+    _x, _params, info = align_multires(
+        geometry,
+        grid,
+        detector,
+        projections,
+        factors=(1,),
+        cfg=AlignConfig(
+            outer_iters=1,
+            recon_iters=1,
+            tv_prox_iters=1,
+            optimise_dofs=("det_u_px",),
+            views_per_batch=1,
+            checkpoint_projector=False,
+            gather_dtype="fp32",
+            recon_positivity=False,
+            early_stop=False,
+        ),
+    )
+
+    setup_stats = [
+        stat for stat in info["outer_stats"] if stat.get("optimizer_kind") == "validation_lm"
+    ]
+    assert setup_stats
+    assert setup_stats[0]["active_gradient_mode"] == "validation_residual_jvp"
