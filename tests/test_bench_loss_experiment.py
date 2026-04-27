@@ -4,9 +4,12 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from tomojax.bench.loss_experiment import (
     make_misaligned_dataset,
+    metrics_abs,
+    metrics_relative,
     project_gt_with_estimated_poses,
 )
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
@@ -93,3 +96,16 @@ def test_project_gt_with_estimated_poses_returns_projection_stack_shape_and_dtyp
 
     assert projections.shape == (4, 4, 4)
     assert projections.dtype == jnp.float32
+
+
+@pytest.mark.parametrize("metric_fn", [metrics_abs, metrics_relative])
+def test_metric_helpers_reject_mismatched_pose_parameter_shapes(metric_fn) -> None:
+    params_true = np.zeros((4, 5), dtype=np.float32)
+    params_est = np.zeros((3, 5), dtype=np.float32)
+
+    with pytest.raises(ValueError) as excinfo:
+        metric_fn(params_true, params_est, 1.0, 1.0)
+
+    message = str(excinfo.value)
+    assert "params_true.shape=(4, 5)" in message
+    assert "params_est.shape=(3, 5)" in message
