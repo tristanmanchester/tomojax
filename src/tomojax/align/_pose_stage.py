@@ -874,6 +874,130 @@ def align(
             )
         )
 
+    def _recon_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
+        parts: list[str] = []
+        digits = 2 if compact else 3
+        recon_time = stat.get("recon_time")
+        if recon_time is not None:
+            prefix = "" if compact else "time "
+            parts.append(f"{prefix}{format_duration(recon_time)}")
+        if stat.get("recon_retry"):
+            parts.append("retry" if compact else "fallback retry")
+        l_meas = stat.get("L_meas")
+        l_next = stat.get("L_next")
+        if (l_meas is not None) and (l_next is not None):
+            parts.append(f"L {float(l_meas):.{digits}e}->{float(l_next):.{digits}e}")
+        f_first = stat.get("recon_loss_first")
+        f_last = stat.get("recon_loss_last")
+        f_min = stat.get("recon_loss_min")
+        if (f_first is not None) and (f_last is not None):
+            loss = f"loss {float(f_first):.{digits}e}->{float(f_last):.{digits}e}"
+            if f_min is not None:
+                loss += f" (min {float(f_min):.{digits}e})"
+            parts.append(loss)
+        return parts
+
+    def _gauge_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
+        if stat.get("gauge_fix") == "none":
+            return ["gauge none"]
+        if stat.get("gauge_fix") != "mean_translation":
+            return []
+        dxm = stat.get("dx_mean_before_gauge")
+        dzm = stat.get("dz_mean_before_gauge")
+        if compact:
+            if dxm is not None and dzm is not None:
+                return [f"gauge mean dx,dz {float(dxm):+.2e},{float(dzm):+.2e}->0"]
+            return []
+        dxa = stat.get("dx_mean_after_gauge")
+        dza = stat.get("dz_mean_after_gauge")
+        if dxm is not None and dzm is not None and dxa is not None and dza is not None:
+            return [
+                "gauge mean dx,dz "
+                f"{float(dxm):+.3e},{float(dzm):+.3e}->"
+                f"{float(dxa):+.3e},{float(dza):+.3e}"
+            ]
+        return []
+
+    def _align_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
+        parts: list[str] = []
+        digits = 2 if compact else 3
+        align_time = stat.get("align_time")
+        if align_time is not None:
+            prefix = "" if compact else "time "
+            parts.append(f"{prefix}{format_duration(align_time)}")
+        step_kind = stat.get("step_kind")
+        if step_kind == "gn":
+            rot_mean = stat.get("rot_mean")
+            trans_mean = stat.get("trans_mean")
+            if rot_mean is not None:
+                label = "|drot|" if compact else "|drot|_mean"
+                suffix = "" if compact else " rad"
+                parts.append(f"{label} {float(rot_mean):.{digits}e}{suffix}")
+            if trans_mean is not None:
+                label = "|dtrans|" if compact else "|dtrans|_mean"
+                parts.append(f"{label} {float(trans_mean):.{digits}e}")
+        elif step_kind == "lbfgs":
+            status = "accepted" if stat.get("lbfgs_accepted") else "rejected"
+            if stat.get("lbfgs_fallback_to_gd"):
+                status = "fallback->gd" if compact else "fallback to GD"
+            parts.append(status if compact else f"L-BFGS {status}")
+            if compact:
+                best = stat.get("lbfgs_best_loss")
+                if best is not None:
+                    parts.append(f"best {float(best):.2e}")
+            else:
+                for src, label in (
+                    ("lbfgs_initial_loss", "initial"),
+                    ("lbfgs_final_loss", "final"),
+                    ("lbfgs_best_loss", "best"),
+                ):
+                    value = stat.get(src)
+                    if value is not None:
+                        parts.append(f"{label} {float(value):.3e}")
+            nit = stat.get("lbfgs_nit")
+            nfev = stat.get("lbfgs_nfev")
+            if nit is not None:
+                parts.append(f"nit {int(nit)}")
+            if nfev is not None:
+                parts.append(f"nfev {int(nfev)}")
+            if not compact:
+                message = stat.get("lbfgs_message")
+                if message:
+                    parts.append(str(message))
+            for src, label in (("rot_mean", "|drot|"), ("trans_mean", "|dtrans|")):
+                value = stat.get(src)
+                if value is not None:
+                    parts.append(f"{label} {float(value):.2e}") if compact else None
+        elif step_kind == "gd":
+            if stat.get("lbfgs_fallback_to_gd"):
+                message = stat.get("lbfgs_message")
+                parts.append(
+                    "lbfgs fallback"
+                    if compact
+                    else "L-BFGS fallback to GD" + (f": {message}" if message else "")
+                )
+            rot_rms = stat.get("rot_rms")
+            trans_rms = stat.get("trans_rms")
+            if rot_rms is not None:
+                label = "rotRMS" if compact else "rot RMS"
+                parts.append(f"{label} {float(rot_rms):.{digits}e}")
+            if trans_rms is not None:
+                label = "transRMS" if compact else "trans RMS"
+                parts.append(f"{label} {float(trans_rms):.{digits}e}")
+        loss_before = stat.get("loss_before")
+        loss_after = stat.get("loss_after")
+        loss_delta = stat.get("loss_delta")
+        rel_pct = stat.get("loss_rel_pct")
+        if (loss_before is not None) and (loss_after is not None):
+            sep = " " if compact else ", "
+            rel = f"{sep}{float(rel_pct):+.2f}%" if rel_pct is not None else ""
+            parts.append(
+                f"loss {float(loss_before):.{digits}e}->{float(loss_after):.{digits}e} "
+                f"(Δ {float(loss_delta):+.{digits}e}{rel})"
+            )
+        parts.extend(_gauge_summary_parts(stat, compact=compact))
+        return parts
+
     def _log_outer_summary(stat: OuterStat) -> None:
         outer_idx = int(stat.get("outer_idx", 0))
         total_iters = int(cfg.outer_iters)
@@ -881,87 +1005,13 @@ def align(
         elapsed = format_duration(stat.get("cumulative_time"))
         solver_label = str(stat.get("recon_algo") or recon_algo).upper()
         if cfg.log_compact:
-            # Build compact one-liner with key fields
             parts: list[str] = [f"Outer {outer_idx}/{total_iters}"]
-            # Recon summary
-            rbits: list[str] = []
-            rt = stat.get("recon_time")
-            if rt is not None:
-                rbits.append(f"{format_duration(rt)}")
-            if stat.get("recon_retry"):
-                rbits.append("retry")
-            lm = stat.get("L_meas")
-            ln = stat.get("L_next")
-            if (lm is not None) and (ln is not None):
-                rbits.append(f"L {lm:.2e}->{ln:.2e}")
-            ff = stat.get("recon_loss_first")
-            fl = stat.get("recon_loss_last")
-            fm = stat.get("recon_loss_min")
-            if (ff is not None) and (fl is not None):
-                if fm is not None:
-                    rbits.append(f"loss {ff:.2e}->{fl:.2e} (min {fm:.2e})")
-                else:
-                    rbits.append(f"loss {ff:.2e}->{fl:.2e}")
-            if rbits:
-                parts.append("recon " + solver_label.lower() + " " + " ".join(rbits))
-            # Align summary
-            abits: list[str] = []
-            at = stat.get("align_time")
-            if at is not None:
-                abits.append(f"{format_duration(at)}")
-            sk = stat.get("step_kind")
-            if sk == "gn":
-                rm = stat.get("rot_mean")
-                tm = stat.get("trans_mean")
-                if rm is not None:
-                    abits.append(f"|drot| {rm:.2e}")
-                if tm is not None:
-                    abits.append(f"|dtrans| {tm:.2e}")
-            elif sk == "lbfgs":
-                status = "accepted" if stat.get("lbfgs_accepted") else "rejected"
-                if stat.get("lbfgs_fallback_to_gd"):
-                    status = "fallback->gd"
-                abits.append(status)
-                nit = stat.get("lbfgs_nit")
-                nfev = stat.get("lbfgs_nfev")
-                if nit is not None:
-                    abits.append(f"nit {int(nit)}")
-                if nfev is not None:
-                    abits.append(f"nfev {int(nfev)}")
-                best = stat.get("lbfgs_best_loss")
-                if best is not None:
-                    abits.append(f"best {best:.2e}")
-                rm = stat.get("rot_mean")
-                tm = stat.get("trans_mean")
-                if rm is not None:
-                    abits.append(f"|drot| {rm:.2e}")
-                if tm is not None:
-                    abits.append(f"|dtrans| {tm:.2e}")
-            elif sk == "gd":
-                if stat.get("lbfgs_fallback_to_gd"):
-                    abits.append("lbfgs fallback")
-                rr = stat.get("rot_rms")
-                tr = stat.get("trans_rms")
-                if rr is not None:
-                    abits.append(f"rotRMS {rr:.2e}")
-                if tr is not None:
-                    abits.append(f"transRMS {tr:.2e}")
-            lb = stat.get("loss_before")
-            la = stat.get("loss_after")
-            ld = stat.get("loss_delta")
-            rp = stat.get("loss_rel_pct")
-            if (lb is not None) and (la is not None):
-                rel = f" {rp:+.2f}%" if rp is not None else ""
-                abits.append(f"loss {lb:.2e}->{la:.2e} (Δ {ld:+.2e}{rel})")
-            if stat.get("gauge_fix") == "mean_translation":
-                dxm = stat.get("dx_mean_before_gauge")
-                dzm = stat.get("dz_mean_before_gauge")
-                if dxm is not None and dzm is not None:
-                    abits.append(f"gauge mean dx,dz {dxm:+.2e},{dzm:+.2e}->0")
-            elif stat.get("gauge_fix") == "none":
-                abits.append("gauge none")
-            if abits:
-                parts.append("align " + " ".join(abits))
+            recon_parts = _recon_summary_parts(stat, compact=True)
+            align_parts = _align_summary_parts(stat, compact=True)
+            if recon_parts:
+                parts.append(f"recon {solver_label.lower()} " + " ".join(recon_parts))
+            if align_parts:
+                parts.append("align " + " ".join(align_parts))
             parts.append(f"elapsed {elapsed}")
             logging.info(" | ".join(parts))
             return
@@ -972,95 +1022,13 @@ def align(
             total_time,
             elapsed,
         )
-
-        recon_parts: list[str] = []
-        recon_time = stat.get("recon_time")
-        if recon_time is not None:
-            recon_parts.append(f"time {format_duration(recon_time)}")
-        if stat.get("recon_retry"):
-            recon_parts.append("fallback retry")
-        l_meas = stat.get("L_meas")
-        l_next = stat.get("L_next")
-        if (l_meas is not None) and (l_next is not None):
-            recon_parts.append(f"L {l_meas:.3e}->{l_next:.3e}")
-        f_first = stat.get("recon_loss_first")
-        f_last = stat.get("recon_loss_last")
-        f_min = stat.get("recon_loss_min")
-        if (f_first is not None) and (f_last is not None):
-            if f_min is not None:
-                recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e} (min {f_min:.3e})")
-            else:
-                recon_parts.append(f"loss {f_first:.3e}->{f_last:.3e}")
+        recon_parts = _recon_summary_parts(stat, compact=False)
         logging.info(
             "  Recon (%s) | %s",
             solver_label,
             " | ".join(recon_parts) if recon_parts else "-",
         )
-
-        align_parts: list[str] = []
-        align_time = stat.get("align_time")
-        if align_time is not None:
-            align_parts.append(f"time {format_duration(align_time)}")
-        step_kind = stat.get("step_kind")
-        if step_kind == "gn":
-            rot_mean = stat.get("rot_mean")
-            trans_mean = stat.get("trans_mean")
-            if rot_mean is not None:
-                align_parts.append(f"|drot|_mean {rot_mean:.3e} rad")
-            if trans_mean is not None:
-                align_parts.append(f"|dtrans|_mean {trans_mean:.3e}")
-        elif step_kind == "lbfgs":
-            status = "accepted" if stat.get("lbfgs_accepted") else "rejected"
-            if stat.get("lbfgs_fallback_to_gd"):
-                status = "fallback to GD"
-            align_parts.append(f"L-BFGS {status}")
-            for src, label in (
-                ("lbfgs_initial_loss", "initial"),
-                ("lbfgs_final_loss", "final"),
-                ("lbfgs_best_loss", "best"),
-            ):
-                value = stat.get(src)
-                if value is not None:
-                    align_parts.append(f"{label} {value:.3e}")
-            nit = stat.get("lbfgs_nit")
-            nfev = stat.get("lbfgs_nfev")
-            if nit is not None:
-                align_parts.append(f"nit {int(nit)}")
-            if nfev is not None:
-                align_parts.append(f"nfev {int(nfev)}")
-            message = stat.get("lbfgs_message")
-            if message:
-                align_parts.append(str(message))
-        elif step_kind == "gd":
-            if stat.get("lbfgs_fallback_to_gd"):
-                message = stat.get("lbfgs_message")
-                align_parts.append("L-BFGS fallback to GD" + (f": {message}" if message else ""))
-            rot_rms = stat.get("rot_rms")
-            trans_rms = stat.get("trans_rms")
-            if rot_rms is not None:
-                align_parts.append(f"rot RMS {rot_rms:.3e}")
-            if trans_rms is not None:
-                align_parts.append(f"trans RMS {trans_rms:.3e}")
-        loss_before = stat.get("loss_before")
-        loss_after = stat.get("loss_after")
-        loss_delta = stat.get("loss_delta")
-        rel_pct = stat.get("loss_rel_pct")
-        if (loss_before is not None) and (loss_after is not None):
-            rel_str = f", {rel_pct:+.2f}%" if rel_pct is not None else ""
-            align_parts.append(
-                f"loss {loss_before:.3e}->{loss_after:.3e} (Δ {loss_delta:+.3e}{rel_str})"
-            )
-        if stat.get("gauge_fix") == "mean_translation":
-            dxm = stat.get("dx_mean_before_gauge")
-            dzm = stat.get("dz_mean_before_gauge")
-            dxa = stat.get("dx_mean_after_gauge")
-            dza = stat.get("dz_mean_after_gauge")
-            if dxm is not None and dzm is not None and dxa is not None and dza is not None:
-                align_parts.append(
-                    f"gauge mean dx,dz {dxm:+.3e},{dzm:+.3e}->{dxa:+.3e},{dza:+.3e}"
-                )
-        elif stat.get("gauge_fix") == "none":
-            align_parts.append("gauge none")
+        align_parts = _align_summary_parts(stat, compact=False)
         logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
 
     def _select_gd_step_candidate(
