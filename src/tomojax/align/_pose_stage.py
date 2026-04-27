@@ -49,7 +49,7 @@ from .model.motion_models import (
     fit_motion_coefficients,
     scan_coordinate_from_geometry,
 )
-from .objectives import ObjectiveProvenance, project_and_score_stack
+from .objectives.fixed_volume import ObjectiveProvenance, project_and_score_stack
 from .optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
 from .geometry.parametrizations import se3_from_5d
 

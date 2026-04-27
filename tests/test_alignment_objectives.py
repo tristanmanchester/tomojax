@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from tomojax.align.dof_specs import ActiveParameterView
 from tomojax.align.folds import FoldSpec
 from tomojax.align.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align.objectives import (
+from tomojax.align.objectives.fixed_volume import (
     FixedVolumeProjectionObjective,
     project_stack,
 )
