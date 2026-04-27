@@ -277,6 +277,412 @@ class AlignmentRuntimeContext:
     empty_loss_mask_chunk: jnp.ndarray
 
 
+@dataclass(frozen=True)
+class PoseObjectiveBundle:
+    align_loss: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    loss_and_grad_manual: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
+    gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+
+
+def _build_pose_objective_bundle(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    n_views: int,
+    active_mask: jnp.ndarray,
+    runtime: AlignmentRuntimeContext,
+) -> PoseObjectiveBundle:
+    T_nom_all = runtime.pose_stack
+    det_grid = runtime.det_grid
+    W_weights = runtime.smoothness_weights
+    vol_mask = runtime.volume_mask
+    loss_adapter = runtime.loss_adapter
+    per_view_loss_fn = runtime.loss_adapter.per_view_loss
+    nv = runtime.nv
+    nu = runtime.nu
+    chunk_size = runtime.chunk_size
+    num_chunks = runtime.num_chunks
+    loss_mask = runtime.loss_mask
+    has_loss_mask = runtime.has_loss_mask
+    empty_loss_mask_chunk = runtime.empty_loss_mask_chunk
+
+    def _chunk_schedule(i: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        i = jnp.asarray(i, dtype=jnp.int32)
+        start = i * jnp.int32(chunk_size)
+        remaining = jnp.maximum(0, jnp.int32(n_views) - start)
+        valid = jnp.minimum(jnp.int32(chunk_size), remaining)
+        shift = jnp.int32(chunk_size) - valid
+        start_shifted = jnp.maximum(0, start - shift)
+        idx = jnp.arange(chunk_size, dtype=jnp.int32)
+        vmask = (idx >= (jnp.int32(chunk_size) - valid)).astype(jnp.float32)
+        return start_shifted, vmask, start_shifted + idx
+
+    def _apply_vol_mask(vol: jnp.ndarray) -> jnp.ndarray:
+        return vol * vol_mask if vol_mask is not None else vol
+
+    def align_loss(params5: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
+        T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)
+        loss_tot = project_and_score_stack(
+            pose_stack=T_aug,
+            grid=grid,
+            detector=detector,
+            volume=_apply_vol_mask(vol),
+            det_grid=det_grid,
+            targets=projections,
+            loss_adapter=loss_adapter,
+            views_per_batch=chunk_size,
+            projector_unroll=int(cfg.projector_unroll),
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            view_indices=jnp.arange(n_views, dtype=jnp.int32),
+        )
+        loss = loss_tot
+        if int(params5.shape[0]) >= 3:
+            d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+            loss = loss + jnp.sum((d2 * W_weights) ** 2)
+        return loss
+
+    align_loss_jit = jax.jit(align_loss)
+
+    def _loss_mask_chunk(start_shifted: jnp.ndarray) -> jnp.ndarray:
+        if has_loss_mask:
+            return jax.lax.dynamic_slice(
+                loss_mask,
+                (start_shifted, 0, 0),
+                (chunk_size, nv, nu),
+            )
+        return empty_loss_mask_chunk
+
+    def _loss_mask_arg(mask_i: jnp.ndarray) -> jnp.ndarray | None:
+        return mask_i[None, ...] if has_loss_mask else None
+
+    def _one_view_loss(p5_i, T_nom_i, y_i, masked_vol, mask_i, view_idx):
+        T_i = T_nom_i @ se3_from_5d(p5_i)
+        pred_i = forward_project_view_T(
+            T_i,
+            grid,
+            detector,
+            masked_vol,
+            use_checkpoint=cfg.checkpoint_projector,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
+        )
+        view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
+        lvec = per_view_loss_fn(
+            pred_i[None, ...],
+            y_i[None, ...],
+            _loss_mask_arg(mask_i),
+            view_indices=view_indices,
+        )
+        return lvec[0]
+
+    one_view_val_and_grad_batch = jax.jit(
+        jax.vmap(
+            jax.value_and_grad(_one_view_loss),
+            in_axes=(0, 0, 0, None, 0, 0),
+        )
+    )
+
+    def _apply_smoothness_gradient(
+        params5_in: jnp.ndarray,
+        total: jnp.ndarray,
+        grad: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        if int(params5_in.shape[0]) < 3:
+            return total, grad
+        d2 = params5_in[:-2] - 2.0 * params5_in[1:-1] + params5_in[2:]
+        total = total + jnp.sum((d2 * W_weights) ** 2)
+        ww = (W_weights**2) * 2.0
+        grad = grad.at[1:-1].add(-2.0 * d2 * ww)
+        grad = grad.at[0:-2].add(1.0 * d2 * ww)
+        grad = grad.at[2:].add(1.0 * d2 * ww)
+        return total, grad
+
+    def loss_and_grad_manual(params5: jnp.ndarray, vol: jnp.ndarray):
+        masked_vol = _apply_vol_mask(vol)
+
+        def body(carry, i):
+            total, g = carry
+            start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
+            params_chunk = jax.lax.dynamic_slice(
+                params5,
+                (start_shifted, 0),
+                (chunk_size, params5.shape[1]),
+            )
+            T_nom_chunk = jax.lax.dynamic_slice(
+                T_nom_all,
+                (start_shifted, 0, 0),
+                (chunk_size, 4, 4),
+            )
+            y_chunk = jax.lax.dynamic_slice(
+                projections,
+                (start_shifted, 0, 0),
+                (chunk_size, nv, nu),
+            )
+            lvec, g_chunk = one_view_val_and_grad_batch(
+                params_chunk,
+                T_nom_chunk,
+                y_chunk,
+                masked_vol,
+                _loss_mask_chunk(start_shifted),
+                view_idx_chunk,
+            )
+            total = total + jnp.sum(lvec * vmask)
+            g = g.at[view_idx_chunk].add(g_chunk * vmask[:, None])
+            return (total, g), None
+
+        init = (jnp.float32(0.0), jnp.zeros_like(params5))
+        (total, g), _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
+        return _apply_smoothness_gradient(params5, total, g)
+
+    loss_and_grad_manual_jit = jax.jit(loss_and_grad_manual)
+
+    def _pred_flat(T_i, masked_vol):
+        return forward_project_view_T(
+            T_i,
+            grid,
+            detector,
+            masked_vol,
+            use_checkpoint=cfg.checkpoint_projector,
+            unroll=int(cfg.projector_unroll),
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
+        ).ravel()
+
+    def _gn_update_one(p5_i, T_nom_i, y_i, vol, w_i):
+        def f(p5):
+            T_i = T_nom_i @ se3_from_5d(p5)
+            r = _pred_flat(T_i, vol) - y_i.ravel()
+            return w_i.ravel() * r
+
+        r = f(p5_i)
+        _, vjp = jax.vjp(f, p5_i)
+        g = vjp(r)[0]
+        eye5 = jnp.eye(5, dtype=jnp.float32)
+
+        def jvp_col(v):
+            return jax.jvp(f, (p5_i,), (v,))[1]
+
+        cols = jax.vmap(jvp_col)(eye5)
+        H = cols @ cols.T
+        lam = jnp.float32(cfg.gn_damping)
+        active = active_mask.astype(H.dtype)
+        inactive = jnp.float32(1.0) - active
+        H_active = H * active[:, None] * active[None, :]
+        system = H_active + lam * jnp.diag(active) + jnp.diag(inactive)
+        rhs = -g * active
+        dp = jnp.linalg.solve(system, rhs)
+        return dp * active
+
+    gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
+
+    def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
+        return loss_adapter.gauss_newton_weights(y_chunk, mask_chunk if has_loss_mask else None)
+
+    def gn_update_all(params5: jnp.ndarray, vol: jnp.ndarray):
+        masked_vol = _apply_vol_mask(vol)
+
+        def body(dp_acc, i):
+            start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
+            params_chunk = jax.lax.dynamic_slice(
+                params5,
+                (start_shifted, 0),
+                (chunk_size, params5.shape[1]),
+            )
+            T_chunk = jax.lax.dynamic_slice(
+                T_nom_all,
+                (start_shifted, 0, 0),
+                (chunk_size, 4, 4),
+            )
+            y_chunk = jax.lax.dynamic_slice(
+                projections,
+                (start_shifted, 0, 0),
+                (chunk_size, nv, nu),
+            )
+            dp_chunk = gn_update_batch(
+                params_chunk,
+                T_chunk,
+                y_chunk,
+                masked_vol,
+                _ls_weight_chunk(y_chunk, _loss_mask_chunk(start_shifted)),
+            )
+            dp_acc = dp_acc.at[view_idx_chunk].add(dp_chunk * vmask[:, None])
+            return dp_acc, None
+
+        dp0 = jnp.zeros_like(params5)
+        dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
+        return dp_all
+
+    return PoseObjectiveBundle(
+        align_loss=align_loss,
+        align_loss_jit=align_loss_jit,
+        loss_and_grad_manual=loss_and_grad_manual_jit,
+        gn_update_all=jax.jit(gn_update_all),
+    )
+
+
+def _recon_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
+    parts: list[str] = []
+    digits = 2 if compact else 3
+    recon_time = stat.get("recon_time")
+    if recon_time is not None:
+        prefix = "" if compact else "time "
+        parts.append(f"{prefix}{format_duration(recon_time)}")
+    if stat.get("recon_retry"):
+        parts.append("retry" if compact else "fallback retry")
+    l_meas = stat.get("L_meas")
+    l_next = stat.get("L_next")
+    if (l_meas is not None) and (l_next is not None):
+        parts.append(f"L {float(l_meas):.{digits}e}->{float(l_next):.{digits}e}")
+    f_first = stat.get("recon_loss_first")
+    f_last = stat.get("recon_loss_last")
+    f_min = stat.get("recon_loss_min")
+    if (f_first is not None) and (f_last is not None):
+        loss = f"loss {float(f_first):.{digits}e}->{float(f_last):.{digits}e}"
+        if f_min is not None:
+            loss += f" (min {float(f_min):.{digits}e})"
+        parts.append(loss)
+    return parts
+
+
+def _gauge_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
+    if stat.get("gauge_fix") == "none":
+        return ["gauge none"]
+    if stat.get("gauge_fix") != "mean_translation":
+        return []
+    dxm = stat.get("dx_mean_before_gauge")
+    dzm = stat.get("dz_mean_before_gauge")
+    if compact:
+        if dxm is not None and dzm is not None:
+            return [f"gauge mean dx,dz {float(dxm):+.2e},{float(dzm):+.2e}->0"]
+        return []
+    dxa = stat.get("dx_mean_after_gauge")
+    dza = stat.get("dz_mean_after_gauge")
+    if dxm is not None and dzm is not None and dxa is not None and dza is not None:
+        return [
+            "gauge mean dx,dz "
+            f"{float(dxm):+.3e},{float(dzm):+.3e}->"
+            f"{float(dxa):+.3e},{float(dza):+.3e}"
+        ]
+    return []
+
+
+def _align_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
+    parts: list[str] = []
+    digits = 2 if compact else 3
+    align_time = stat.get("align_time")
+    if align_time is not None:
+        prefix = "" if compact else "time "
+        parts.append(f"{prefix}{format_duration(align_time)}")
+    step_kind = stat.get("step_kind")
+    if step_kind == "gn":
+        rot_mean = stat.get("rot_mean")
+        trans_mean = stat.get("trans_mean")
+        if rot_mean is not None:
+            label = "|drot|" if compact else "|drot|_mean"
+            suffix = "" if compact else " rad"
+            parts.append(f"{label} {float(rot_mean):.{digits}e}{suffix}")
+        if trans_mean is not None:
+            label = "|dtrans|" if compact else "|dtrans|_mean"
+            parts.append(f"{label} {float(trans_mean):.{digits}e}")
+    elif step_kind == "lbfgs":
+        status = "accepted" if stat.get("lbfgs_accepted") else "rejected"
+        if stat.get("lbfgs_fallback_to_gd"):
+            status = "fallback->gd" if compact else "fallback to GD"
+        parts.append(status if compact else f"L-BFGS {status}")
+        if compact:
+            best = stat.get("lbfgs_best_loss")
+            if best is not None:
+                parts.append(f"best {float(best):.2e}")
+        else:
+            for src, label in (
+                ("lbfgs_initial_loss", "initial"),
+                ("lbfgs_final_loss", "final"),
+                ("lbfgs_best_loss", "best"),
+            ):
+                value = stat.get(src)
+                if value is not None:
+                    parts.append(f"{label} {float(value):.3e}")
+        nit = stat.get("lbfgs_nit")
+        nfev = stat.get("lbfgs_nfev")
+        if nit is not None:
+            parts.append(f"nit {int(nit)}")
+        if nfev is not None:
+            parts.append(f"nfev {int(nfev)}")
+        if not compact:
+            message = stat.get("lbfgs_message")
+            if message:
+                parts.append(str(message))
+        for src, label in (("rot_mean", "|drot|"), ("trans_mean", "|dtrans|")):
+            value = stat.get(src)
+            if value is not None and compact:
+                parts.append(f"{label} {float(value):.2e}")
+    elif step_kind == "gd":
+        if stat.get("lbfgs_fallback_to_gd"):
+            message = stat.get("lbfgs_message")
+            parts.append(
+                "lbfgs fallback"
+                if compact
+                else "L-BFGS fallback to GD" + (f": {message}" if message else "")
+            )
+        rot_rms = stat.get("rot_rms")
+        trans_rms = stat.get("trans_rms")
+        if rot_rms is not None:
+            label = "rotRMS" if compact else "rot RMS"
+            parts.append(f"{label} {float(rot_rms):.{digits}e}")
+        if trans_rms is not None:
+            label = "transRMS" if compact else "trans RMS"
+            parts.append(f"{label} {float(trans_rms):.{digits}e}")
+    loss_before = stat.get("loss_before")
+    loss_after = stat.get("loss_after")
+    loss_delta = stat.get("loss_delta")
+    rel_pct = stat.get("loss_rel_pct")
+    if (loss_before is not None) and (loss_after is not None):
+        sep = " " if compact else ", "
+        rel = f"{sep}{float(rel_pct):+.2f}%" if rel_pct is not None else ""
+        parts.append(
+            f"loss {float(loss_before):.{digits}e}->{float(loss_after):.{digits}e} "
+            f"(Δ {float(loss_delta):+.{digits}e}{rel})"
+        )
+    parts.extend(_gauge_summary_parts(stat, compact=compact))
+    return parts
+
+
+def _format_outer_summary_lines(
+    stat: OuterStat,
+    *,
+    cfg: AlignConfig,
+    recon_algo: str,
+) -> list[str]:
+    outer_idx = int(stat.get("outer_idx", 0))
+    total_iters = int(cfg.outer_iters)
+    total_time = format_duration(stat.get("outer_time"))
+    elapsed = format_duration(stat.get("cumulative_time"))
+    solver_label = str(stat.get("recon_algo") or recon_algo).upper()
+    if cfg.log_compact:
+        parts: list[str] = [f"Outer {outer_idx}/{total_iters}"]
+        recon_parts = _recon_summary_parts(stat, compact=True)
+        align_parts = _align_summary_parts(stat, compact=True)
+        if recon_parts:
+            parts.append(f"recon {solver_label.lower()} " + " ".join(recon_parts))
+        if align_parts:
+            parts.append("align " + " ".join(align_parts))
+        parts.append(f"elapsed {elapsed}")
+        return [" | ".join(parts)]
+    recon_parts = _recon_summary_parts(stat, compact=False)
+    align_parts = _align_summary_parts(stat, compact=False)
+    return [
+        f"Outer {outer_idx}/{total_iters} | total {total_time} | elapsed {elapsed}",
+        f"  Recon ({solver_label}) | {' | '.join(recon_parts) if recon_parts else '-'}",
+        f"  Align | {' | '.join(align_parts) if align_parts else '-'}",
+    ]
+
+
 def _prepare_align_setup(
     geometry: Geometry,
     grid: Grid,
@@ -587,71 +993,30 @@ def align(
         active_mask=active_mask,
         det_grid_override=det_grid_override,
     )
-    T_nom_all = runtime.pose_stack
     det_grid = runtime.det_grid
-    W_weights = runtime.smoothness_weights
     smoothness_gram = runtime.smoothness_gram
     smoothness_weights_sq = runtime.smoothness_weights_sq
     medium_smoothness_weights_sq = runtime.medium_smoothness_weights_sq
     trans_only_smoothness_weights_sq = runtime.trans_only_smoothness_weights_sq
     light_smoothness_weights_sq = runtime.light_smoothness_weights_sq
-    vol_mask = runtime.volume_mask
     active_loss_name = runtime.active_loss_name
-    loss_adapter = runtime.loss_adapter
-    per_view_loss_fn = runtime.loss_adapter.per_view_loss
     active_objective_provenance = runtime.objective_provenance
-    nv = runtime.nv
-    nu = runtime.nu
-    chunk_size = runtime.chunk_size
-    num_chunks = runtime.num_chunks
-    loss_mask = runtime.loss_mask
-    has_loss_mask = runtime.has_loss_mask
     ls_like = runtime.supports_gauss_newton
 
-    def _chunk_schedule(i: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        i = jnp.asarray(i, dtype=jnp.int32)
-        start = i * jnp.int32(chunk_size)
-        remaining = jnp.maximum(0, jnp.int32(n_views) - start)
-        valid = jnp.minimum(jnp.int32(chunk_size), remaining)
-        shift = jnp.int32(chunk_size) - valid
-        start_shifted = jnp.maximum(0, start - shift)
-        idx = jnp.arange(chunk_size, dtype=jnp.int32)
-        vmask = (idx >= (jnp.int32(chunk_size) - valid)).astype(jnp.float32)
-        return start_shifted, vmask, start_shifted + idx
-
-    def _apply_vol_mask(vol: jnp.ndarray) -> jnp.ndarray:
-        return vol * vol_mask if vol_mask is not None else vol
-
-    def align_loss(params5, vol):
-        # Compose augmented poses
-        # Current convention: per-view misalignment parameters act in the object
-        # frame and are post-multiplied: T_world_from_obj_aug = T_nom @ T_delta.
-        # This is consistent across parallel CT and laminography sample-frame.
-        T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)  # (n_views, 4, 4)
-        loss_tot = project_and_score_stack(
-            pose_stack=T_aug,
-            grid=grid,
-            detector=detector,
-            volume=_apply_vol_mask(vol),
-            det_grid=det_grid,
-            targets=projections,
-            loss_adapter=loss_adapter,
-            views_per_batch=chunk_size,
-            projector_unroll=int(cfg.projector_unroll),
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            view_indices=jnp.arange(n_views, dtype=jnp.int32),
-        )
-
-        # Smoothness prior across views (2nd difference)
-        loss = loss_tot
-        if int(params5.shape[0]) >= 3:
-            d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
-            loss = loss + jnp.sum((d2 * W_weights) ** 2)
-        return loss
-
-    # Value function for whole batch (forward only) kept for logging and line search
-    align_loss_jit = jax.jit(align_loss)
+    objective = _build_pose_objective_bundle(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        cfg=cfg,
+        n_views=n_views,
+        active_mask=active_mask,
+        runtime=runtime,
+    )
+    align_loss = objective.align_loss
+    align_loss_jit = objective.align_loss_jit
+    loss_and_grad_manual = objective.loss_and_grad_manual
+    _gn_update_all = objective.gn_update_all
 
     if use_smooth_pose_model:
 
@@ -661,190 +1026,6 @@ def align(
         motion_loss_and_grad = jax.jit(jax.value_and_grad(motion_align_loss))
     else:
         motion_loss_and_grad = None
-
-    empty_loss_mask_chunk = runtime.empty_loss_mask_chunk
-
-    def _loss_mask_chunk(start_shifted: jnp.ndarray) -> jnp.ndarray:
-        if has_loss_mask:
-            return jax.lax.dynamic_slice(
-                loss_mask,
-                (start_shifted, 0, 0),
-                (chunk_size, nv, nu),
-            )
-        return empty_loss_mask_chunk
-
-    def _loss_mask_arg(mask_i: jnp.ndarray) -> jnp.ndarray | None:
-        return mask_i[None, ...] if has_loss_mask else None
-
-    def _one_view_loss(p5_i, T_nom_i, y_i, masked_vol, mask_i, view_idx):
-        T_i = T_nom_i @ se3_from_5d(p5_i)
-        pred_i = forward_project_view_T(
-            T_i,
-            grid,
-            detector,
-            masked_vol,
-            use_checkpoint=cfg.checkpoint_projector,
-            unroll=int(cfg.projector_unroll),
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
-        )
-        view_indices = jnp.expand_dims(jnp.asarray(view_idx, dtype=jnp.int32), axis=0)
-        lvec = per_view_loss_fn(
-            pred_i[None, ...],
-            y_i[None, ...],
-            _loss_mask_arg(mask_i),
-            view_indices=view_indices,
-        )
-        return lvec[0]
-
-    one_view_val_and_grad_batch = jax.jit(
-        jax.vmap(
-            jax.value_and_grad(_one_view_loss),
-            in_axes=(0, 0, 0, None, 0, 0),
-        )
-    )
-
-    def _apply_smoothness_gradient(
-        params5_in: jnp.ndarray,
-        total: jnp.ndarray,
-        grad: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        if int(params5_in.shape[0]) < 3:
-            return total, grad
-        d2 = params5_in[:-2] - 2.0 * params5_in[1:-1] + params5_in[2:]
-        w = (
-            jnp.array(
-                [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
-                jnp.float32,
-            )
-            * active_mask
-        )
-        total = total + jnp.sum((d2 * w) ** 2)
-        ww = (w**2) * 2.0
-        grad = grad.at[1:-1].add(-2.0 * d2 * ww)
-        grad = grad.at[0:-2].add(1.0 * d2 * ww)
-        grad = grad.at[2:].add(1.0 * d2 * ww)
-        return total, grad
-
-    def loss_and_grad_manual(params5, vol):
-        masked_vol = _apply_vol_mask(vol)
-
-        def body(carry, i):
-            total, g = carry
-            start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
-            params_chunk = jax.lax.dynamic_slice(
-                params5,
-                (start_shifted, 0),
-                (chunk_size, params5.shape[1]),
-            )
-            T_nom_chunk = jax.lax.dynamic_slice(
-                T_nom_all,
-                (start_shifted, 0, 0),
-                (chunk_size, 4, 4),
-            )
-            y_chunk = jax.lax.dynamic_slice(
-                projections,
-                (start_shifted, 0, 0),
-                (chunk_size, nv, nu),
-            )
-            lvec, g_chunk = one_view_val_and_grad_batch(
-                params_chunk,
-                T_nom_chunk,
-                y_chunk,
-                masked_vol,
-                _loss_mask_chunk(start_shifted),
-                view_idx_chunk,
-            )
-            total = total + jnp.sum(lvec * vmask)
-            g = g.at[view_idx_chunk].add(g_chunk * vmask[:, None])
-            return (total, g), None
-
-        init = (jnp.float32(0.0), jnp.zeros_like(params5))
-        (total, g), _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
-        return _apply_smoothness_gradient(params5, total, g)
-
-    loss_and_grad_manual = jax.jit(loss_and_grad_manual)
-
-    # Gauss–Newton (Levenberg–Marquardt) single-view update
-    def _pred_flat(T_i, masked_vol):
-        return forward_project_view_T(
-            T_i,
-            grid,
-            detector,
-            masked_vol,
-            use_checkpoint=cfg.checkpoint_projector,
-            unroll=int(cfg.projector_unroll),
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
-        ).ravel()
-
-    def _gn_update_one(p5_i, T_nom_i, y_i, vol, w_i):
-        def f(p5):
-            T_i = T_nom_i @ se3_from_5d(p5)
-            r = _pred_flat(T_i, vol) - y_i.ravel()
-            return w_i.ravel() * r
-
-        # J^T r
-        r = f(p5_i)
-        _, vjp = jax.vjp(f, p5_i)
-        g = vjp(r)[0]
-        # J^T J via 5 JVPs
-        eye5 = jnp.eye(5, dtype=jnp.float32)
-
-        def jvp_col(v):
-            return jax.jvp(f, (p5_i,), (v,))[1]
-
-        cols = jax.vmap(jvp_col)(eye5)
-        H = cols @ cols.T
-        lam = jnp.float32(cfg.gn_damping)
-        active = active_mask.astype(H.dtype)
-        inactive = jnp.float32(1.0) - active
-        H_active = H * active[:, None] * active[None, :]
-        system = H_active + lam * jnp.diag(active) + jnp.diag(inactive)
-        rhs = -g * active
-        dp = jnp.linalg.solve(system, rhs)
-        return dp * active
-
-    _gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
-
-    def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
-        return loss_adapter.gauss_newton_weights(y_chunk, mask_chunk if has_loss_mask else None)
-
-    def _gn_update_all(params5, vol):
-        masked_vol = _apply_vol_mask(vol)
-
-        def body(dp_acc, i):
-            start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
-            params_chunk = jax.lax.dynamic_slice(
-                params5,
-                (start_shifted, 0),
-                (chunk_size, params5.shape[1]),
-            )
-            T_chunk = jax.lax.dynamic_slice(
-                T_nom_all,
-                (start_shifted, 0, 0),
-                (chunk_size, 4, 4),
-            )
-            y_chunk = jax.lax.dynamic_slice(
-                projections,
-                (start_shifted, 0, 0),
-                (chunk_size, nv, nu),
-            )
-            dp_chunk = _gn_update_batch(
-                params_chunk,
-                T_chunk,
-                y_chunk,
-                masked_vol,
-                _ls_weight_chunk(y_chunk, _loss_mask_chunk(start_shifted)),
-            )
-            dp_acc = dp_acc.at[view_idx_chunk].add(dp_chunk * vmask[:, None])
-            return dp_acc, None
-
-        dp0 = jnp.zeros_like(params5)
-        dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
-        return dp_all
-
-    _gn_update_all = jax.jit(_gn_update_all)
 
     # Reuse measured Lipschitz across outer iterations to avoid repeated power-method
     L_prev = resume_state.L if resume_state is not None else cfg.recon_L
@@ -874,162 +1055,9 @@ def align(
             )
         )
 
-    def _recon_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
-        parts: list[str] = []
-        digits = 2 if compact else 3
-        recon_time = stat.get("recon_time")
-        if recon_time is not None:
-            prefix = "" if compact else "time "
-            parts.append(f"{prefix}{format_duration(recon_time)}")
-        if stat.get("recon_retry"):
-            parts.append("retry" if compact else "fallback retry")
-        l_meas = stat.get("L_meas")
-        l_next = stat.get("L_next")
-        if (l_meas is not None) and (l_next is not None):
-            parts.append(f"L {float(l_meas):.{digits}e}->{float(l_next):.{digits}e}")
-        f_first = stat.get("recon_loss_first")
-        f_last = stat.get("recon_loss_last")
-        f_min = stat.get("recon_loss_min")
-        if (f_first is not None) and (f_last is not None):
-            loss = f"loss {float(f_first):.{digits}e}->{float(f_last):.{digits}e}"
-            if f_min is not None:
-                loss += f" (min {float(f_min):.{digits}e})"
-            parts.append(loss)
-        return parts
-
-    def _gauge_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
-        if stat.get("gauge_fix") == "none":
-            return ["gauge none"]
-        if stat.get("gauge_fix") != "mean_translation":
-            return []
-        dxm = stat.get("dx_mean_before_gauge")
-        dzm = stat.get("dz_mean_before_gauge")
-        if compact:
-            if dxm is not None and dzm is not None:
-                return [f"gauge mean dx,dz {float(dxm):+.2e},{float(dzm):+.2e}->0"]
-            return []
-        dxa = stat.get("dx_mean_after_gauge")
-        dza = stat.get("dz_mean_after_gauge")
-        if dxm is not None and dzm is not None and dxa is not None and dza is not None:
-            return [
-                "gauge mean dx,dz "
-                f"{float(dxm):+.3e},{float(dzm):+.3e}->"
-                f"{float(dxa):+.3e},{float(dza):+.3e}"
-            ]
-        return []
-
-    def _align_summary_parts(stat: OuterStat, *, compact: bool) -> list[str]:
-        parts: list[str] = []
-        digits = 2 if compact else 3
-        align_time = stat.get("align_time")
-        if align_time is not None:
-            prefix = "" if compact else "time "
-            parts.append(f"{prefix}{format_duration(align_time)}")
-        step_kind = stat.get("step_kind")
-        if step_kind == "gn":
-            rot_mean = stat.get("rot_mean")
-            trans_mean = stat.get("trans_mean")
-            if rot_mean is not None:
-                label = "|drot|" if compact else "|drot|_mean"
-                suffix = "" if compact else " rad"
-                parts.append(f"{label} {float(rot_mean):.{digits}e}{suffix}")
-            if trans_mean is not None:
-                label = "|dtrans|" if compact else "|dtrans|_mean"
-                parts.append(f"{label} {float(trans_mean):.{digits}e}")
-        elif step_kind == "lbfgs":
-            status = "accepted" if stat.get("lbfgs_accepted") else "rejected"
-            if stat.get("lbfgs_fallback_to_gd"):
-                status = "fallback->gd" if compact else "fallback to GD"
-            parts.append(status if compact else f"L-BFGS {status}")
-            if compact:
-                best = stat.get("lbfgs_best_loss")
-                if best is not None:
-                    parts.append(f"best {float(best):.2e}")
-            else:
-                for src, label in (
-                    ("lbfgs_initial_loss", "initial"),
-                    ("lbfgs_final_loss", "final"),
-                    ("lbfgs_best_loss", "best"),
-                ):
-                    value = stat.get(src)
-                    if value is not None:
-                        parts.append(f"{label} {float(value):.3e}")
-            nit = stat.get("lbfgs_nit")
-            nfev = stat.get("lbfgs_nfev")
-            if nit is not None:
-                parts.append(f"nit {int(nit)}")
-            if nfev is not None:
-                parts.append(f"nfev {int(nfev)}")
-            if not compact:
-                message = stat.get("lbfgs_message")
-                if message:
-                    parts.append(str(message))
-            for src, label in (("rot_mean", "|drot|"), ("trans_mean", "|dtrans|")):
-                value = stat.get(src)
-                if value is not None:
-                    parts.append(f"{label} {float(value):.2e}") if compact else None
-        elif step_kind == "gd":
-            if stat.get("lbfgs_fallback_to_gd"):
-                message = stat.get("lbfgs_message")
-                parts.append(
-                    "lbfgs fallback"
-                    if compact
-                    else "L-BFGS fallback to GD" + (f": {message}" if message else "")
-                )
-            rot_rms = stat.get("rot_rms")
-            trans_rms = stat.get("trans_rms")
-            if rot_rms is not None:
-                label = "rotRMS" if compact else "rot RMS"
-                parts.append(f"{label} {float(rot_rms):.{digits}e}")
-            if trans_rms is not None:
-                label = "transRMS" if compact else "trans RMS"
-                parts.append(f"{label} {float(trans_rms):.{digits}e}")
-        loss_before = stat.get("loss_before")
-        loss_after = stat.get("loss_after")
-        loss_delta = stat.get("loss_delta")
-        rel_pct = stat.get("loss_rel_pct")
-        if (loss_before is not None) and (loss_after is not None):
-            sep = " " if compact else ", "
-            rel = f"{sep}{float(rel_pct):+.2f}%" if rel_pct is not None else ""
-            parts.append(
-                f"loss {float(loss_before):.{digits}e}->{float(loss_after):.{digits}e} "
-                f"(Δ {float(loss_delta):+.{digits}e}{rel})"
-            )
-        parts.extend(_gauge_summary_parts(stat, compact=compact))
-        return parts
-
     def _log_outer_summary(stat: OuterStat) -> None:
-        outer_idx = int(stat.get("outer_idx", 0))
-        total_iters = int(cfg.outer_iters)
-        total_time = format_duration(stat.get("outer_time"))
-        elapsed = format_duration(stat.get("cumulative_time"))
-        solver_label = str(stat.get("recon_algo") or recon_algo).upper()
-        if cfg.log_compact:
-            parts: list[str] = [f"Outer {outer_idx}/{total_iters}"]
-            recon_parts = _recon_summary_parts(stat, compact=True)
-            align_parts = _align_summary_parts(stat, compact=True)
-            if recon_parts:
-                parts.append(f"recon {solver_label.lower()} " + " ".join(recon_parts))
-            if align_parts:
-                parts.append("align " + " ".join(align_parts))
-            parts.append(f"elapsed {elapsed}")
-            logging.info(" | ".join(parts))
-            return
-        logging.info(
-            "Outer %d/%d | total %s | elapsed %s",
-            outer_idx,
-            total_iters,
-            total_time,
-            elapsed,
-        )
-        recon_parts = _recon_summary_parts(stat, compact=False)
-        logging.info(
-            "  Recon (%s) | %s",
-            solver_label,
-            " | ".join(recon_parts) if recon_parts else "-",
-        )
-        align_parts = _align_summary_parts(stat, compact=False)
-        logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
+        for line in _format_outer_summary_lines(stat, cfg=cfg, recon_algo=recon_algo):
+            logging.info(line)
 
     def _select_gd_step_candidate(
         *,
