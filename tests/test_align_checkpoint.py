@@ -12,6 +12,7 @@ from tomojax.align.checkpoint import (
     AlignmentCheckpointProgress,
     AlignmentProjectionIdentity,
     CheckpointError,
+    CheckpointMetadata,
     build_alignment_checkpoint_metadata,
     build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
@@ -52,7 +53,7 @@ def _metadata(
     run_complete: bool = False,
     schedule_metadata: dict[str, object] | None = None,
     schedule_state: dict[str, object] | None = None,
-) -> dict[str, object]:
+) -> CheckpointMetadata:
     return build_alignment_checkpoint_metadata_from_input(
         AlignmentCheckpointMetadataInput(
             projection=AlignmentProjectionIdentity(
@@ -98,7 +99,10 @@ def _metadata(
     )
 
 
-def _resume_single_from_checkpoint(path, expected_metadata) -> AlignResumeState:
+def _resume_single_from_checkpoint(
+    path,
+    expected_metadata: CheckpointMetadata,
+) -> AlignResumeState:
     checkpoint = load_alignment_checkpoint(path)
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     meta = checkpoint.metadata
@@ -119,7 +123,10 @@ def _resume_single_from_checkpoint(path, expected_metadata) -> AlignResumeState:
     )
 
 
-def _resume_multires_from_checkpoint(path, expected_metadata) -> AlignMultiresResumeState:
+def _resume_multires_from_checkpoint(
+    path,
+    expected_metadata: CheckpointMetadata,
+) -> AlignMultiresResumeState:
     checkpoint = load_alignment_checkpoint(path)
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     meta = checkpoint.metadata

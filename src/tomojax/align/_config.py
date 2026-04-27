@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Mapping
+from typing import Literal, Mapping, TypeAlias, cast
 
 from ..core.geometry.base import Geometry
 from ..recon._tv_ops import Regulariser
@@ -17,6 +17,27 @@ from .model.dofs import (
 from .model.gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
 from .geometry.geometry_blocks import normalize_geometry_dofs
 from .model.schedules import AlignmentSchedule, ResolvedAlignmentSchedule, resolve_alignment_schedule
+
+ReconAlgo: TypeAlias = Literal["fista", "spdhg"]
+ReconAlgoInput: TypeAlias = Literal[
+    "fista",
+    "spdhg",
+    "fista_tv",
+    "spdhg_tv",
+    "fista-tv",
+    "spdhg-tv",
+]
+GaugePolicyInput: TypeAlias = GaugePolicy | Literal[
+    "anchor-mean",
+    "prior-required",
+    "diagnose-only",
+]
+PoseModelInput: TypeAlias = Literal[
+    "per_view",
+    "per-view",
+    "polynomial",
+    "spline",
+]
 
 
 def _active_dof_mask_for_cfg(cfg: "AlignConfig") -> tuple[bool, bool, bool, bool, bool]:
@@ -87,7 +108,7 @@ class AlignConfig:
     regulariser: Regulariser = "tv"
     huber_delta: float = 1e-2
     tv_prox_iters: int = 10
-    recon_algo: Literal["fista", "spdhg"] = "fista"
+    recon_algo: ReconAlgoInput = "fista"
     recon_positivity: bool = True
     spdhg_seed: int = 0
     # Reconstruction stopping criteria
@@ -116,9 +137,9 @@ class AlignConfig:
     freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
     geometry_dofs: tuple[str, ...] = field(default_factory=tuple)
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
-    gauge_policy: GaugePolicy = "reject"
+    gauge_policy: GaugePolicyInput = "reject"
     gauge_priors: Mapping[str, object] | None = None
-    pose_model: Literal["per_view", "polynomial", "spline"] = "per_view"
+    pose_model: PoseModelInput = "per_view"
     knot_spacing: int = 8
     degree: int = 3
     gauge_fix: GaugeFixMode = "mean_translation"
@@ -147,7 +168,7 @@ class AlignConfig:
             recon_algo = "fista"
         elif recon_algo in {"spdhg_tv"}:
             recon_algo = "spdhg"
-        self.recon_algo = recon_algo  # type: ignore[assignment]
+        self.recon_algo = cast(ReconAlgoInput, recon_algo)
         if self.recon_algo not in {"fista", "spdhg"}:
             raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
         opt_method = str(self.opt_method).strip().lower().replace("-", "_")
@@ -182,7 +203,10 @@ class AlignConfig:
             self.geometry_dofs,
             geometry=None,
         )
-        self.gauge_policy = str(self.gauge_policy).strip().lower().replace("-", "_")  # type: ignore[assignment]
+        self.gauge_policy = cast(
+            GaugePolicyInput,
+            str(self.gauge_policy).strip().lower().replace("-", "_"),
+        )
         if self.gauge_policy not in {"reject", "anchor_mean", "prior_required", "diagnose_only"}:
             raise ValueError(
                 "gauge_policy must be one of 'reject', 'anchor_mean', "
@@ -191,7 +215,7 @@ class AlignConfig:
         _active_dof_mask_for_cfg(self)
         self.bounds = normalize_bounds(self.bounds, option_name="bounds")
         pose_model = str(self.pose_model).strip().lower().replace("-", "_")
-        self.pose_model = pose_model  # type: ignore[assignment]
+        self.pose_model = cast(PoseModelInput, pose_model)
         if self.pose_model not in {"per_view", "polynomial", "spline"}:
             raise ValueError("pose_model must be one of 'per_view', 'polynomial', or 'spline'")
         if self.pose_model == "polynomial" and int(self.degree) < 0:

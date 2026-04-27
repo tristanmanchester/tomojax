@@ -30,6 +30,7 @@ from ..align.io.checkpoint import (
     AlignmentCheckpointProgress,
     AlignmentProjectionIdentity,
     CheckpointError,
+    CheckpointMetadata,
     build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
     save_alignment_checkpoint,
@@ -635,7 +636,7 @@ def _checkpoint_metadata(
     schedule_metadata: dict[str, object] | None = None,
     geometry_calibration_state: dict[str, object] | None = None,
     schedule_state: dict[str, object] | None = None,
-) -> dict[str, object]:
+) -> CheckpointMetadata:
     geometry_meta = getattr(getattr(meta, "metadata", meta), "geometry_meta", None)
     geometry_type = getattr(meta, "geometry_type", "parallel")
     return build_alignment_checkpoint_metadata_from_input(
@@ -684,7 +685,7 @@ def _checkpoint_metadata(
 def _resume_state_from_checkpoint(
     checkpoint_path: str,
     *,
-    expected_metadata: dict[str, object],
+    expected_metadata: CheckpointMetadata,
     used_multires: bool,
 ) -> AlignResumeState | AlignMultiresResumeState:
     checkpoint = load_alignment_checkpoint(checkpoint_path)
