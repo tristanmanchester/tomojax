@@ -21,7 +21,7 @@ from tomojax.align.objectives.loss_kernels import (
     _loss_tversky,
     _loss_welsch,
 )
-from tomojax.align.pipeline import _should_prefer_gn_candidate
+from tomojax.align._pose_stage import _should_prefer_gn_candidate
 
 
 def test_loss_is_within_relative_tolerance_allows_small_increase():

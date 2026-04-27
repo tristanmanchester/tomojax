@@ -4,23 +4,24 @@ import pytest
 import jax.numpy as jnp
 
 import tomojax.align.pipeline as align_pipeline
+import tomojax.align._pose_stage as pose_stage
+import tomojax.align._stage_loop as stage_loop
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.align.objectives.losses import loss_spec_name, parse_loss_schedule, parse_loss_spec
+from tomojax.align._observer import _normalize_observer_action, adapt_legacy_observer
 from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
-from tomojax.align.geometry_blocks import (
+from tomojax.align.geometry.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
 )
 from tomojax.align.pipeline import (
-    _normalize_observer_action,
-    adapt_legacy_observer,
     align,
     align_multires,
     AlignConfig,
 )
 from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
-from tomojax.align.schedules import AlignmentSchedule, AlignmentStage
+from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
 
 
 if sys.version_info < (3, 8):
@@ -509,7 +510,7 @@ def test_align_multires_uses_scheduled_loss_by_level(monkeypatch):
         }
         return x, params, info
 
-    monkeypatch.setattr(align_pipeline, "align", fake_align)
+    monkeypatch.setattr(stage_loop, "align", fake_align)
     cfg = AlignConfig(
         outer_iters=1,
         recon_iters=1,
@@ -642,7 +643,7 @@ def test_align_multires_resume_uses_checkpointed_stage_counter(monkeypatch):
             "gauge_fix_final": {},
         }
 
-    monkeypatch.setattr(align_pipeline, "align", fake_align)
+    monkeypatch.setattr(stage_loop, "align", fake_align)
 
     _, _, info = align_pipeline.align_multires(
         geom,
@@ -681,7 +682,7 @@ def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):
         lr_trans=1e-1,
         early_stop=False,
     )
-    original = align_pipeline._evaluate_align_loss
+    original = pose_stage._evaluate_align_loss
     injected = {"done": False}
 
     def flaky_align_loss_eval(eval_loss, *, fallback, context):
@@ -694,7 +695,7 @@ def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):
             return original(raise_expected_failure, fallback=fallback, context=context)
         return original(eval_loss, fallback=fallback, context=context)
 
-    monkeypatch.setattr(align_pipeline, "_evaluate_align_loss", flaky_align_loss_eval)
+    monkeypatch.setattr(pose_stage, "_evaluate_align_loss", flaky_align_loss_eval)
 
     _, _, info = align_multires(geom, grid, det, projs, factors=[2, 1], cfg=cfg)
 

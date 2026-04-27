@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import jax.numpy as jnp
 
-import tomojax.align.pipeline as align_pipeline
+import tomojax.align._reconstruction_stage as reconstruction_stage
 from tomojax.align.objectives.losses import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
@@ -41,7 +41,7 @@ def _freeze_reconstruction(monkeypatch):
         assert init_x is not None
         return jnp.asarray(init_x, dtype=jnp.float32), {"loss": [0.0, 0.0]}
 
-    monkeypatch.setattr(align_pipeline, "fista_tv", fake_fista_tv)
+    monkeypatch.setattr(reconstruction_stage, "fista_tv", fake_fista_tv)
 
 
 def _run_fixed_volume_alignment(

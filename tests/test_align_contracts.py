@@ -25,13 +25,16 @@ def test_alignment_public_facade_stays_narrow() -> None:
         "AlignConfig",
         "AlignResumeState",
         "AlignMultiresResumeState",
+        "AlignCheckpointCallback",
+        "AlignMultiresCheckpointCallback",
         "align",
         "align_multires",
-        "_normalize_observer_action",
         "adapt_legacy_observer",
-        "_should_prefer_gn_candidate",
-        "_select_gn_candidate",
-        "_is_expected_align_eval_failure",
+        "ObserverAction",
+        "ObserverCallback",
+        "OuterStat",
+        "OuterStatValue",
+        "MultiresLevel",
     ],
 )
 def test_pipeline_compatibility_symbols_remain_importable(symbol: str) -> None:
@@ -113,7 +116,6 @@ def test_setup_stage_rejects_unsupported_loss_before_fold_reconstruction(monkeyp
     def fail_fold_recon(*args, **kwargs):
         raise AssertionError("setup loss validation must run before fold reconstruction")
 
-    monkeypatch.setattr(pipeline, "reconstruct_train_fold_nograd", fail_fold_recon, raising=False)
     monkeypatch.setattr(setup_stage, "reconstruct_train_fold_nograd", fail_fold_recon)
 
     grid = Grid(nx=3, ny=3, nz=3, vx=1.0, vy=1.0, vz=1.0)

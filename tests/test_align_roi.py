@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-import tomojax.align.pipeline as align_pipeline
+import tomojax.align._pose_stage as pose_stage
 import tomojax.cli.align as align_cli
 import tomojax.cli.recon as recon_cli
 from tomojax.cli.align import _resolve_recon_grid_and_mask
@@ -143,9 +143,9 @@ def test_alignment_requested_mask_failure_is_error(monkeypatch: pytest.MonkeyPat
     def fail_mask(*args: object, **kwargs: object) -> object:
         raise RuntimeError("mask failed")
 
-    monkeypatch.setattr(align_pipeline, "cylindrical_mask_xy", fail_mask)
+    monkeypatch.setattr(pose_stage, "cylindrical_mask_xy", fail_mask)
 
     with pytest.raises(ValueError, match="mask_vol='cyl'") as excinfo:
-        align_pipeline._build_alignment_volume_mask(grid, detector, mask_vol="cyl")
+        pose_stage._build_alignment_volume_mask(grid, detector, mask_vol="cyl")
 
     assert isinstance(excinfo.value.__cause__, RuntimeError)

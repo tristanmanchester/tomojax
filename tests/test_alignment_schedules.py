@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tomojax.align.schedules import (
+from tomojax.align.model.schedules import (
     AlignmentSchedule,
     AlignmentStage,
     resolve_alignment_schedule,
