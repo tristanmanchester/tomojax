@@ -11,16 +11,43 @@ import argparse
 import json
 import os
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Dict, Any
 import sys
 
 import numpy as np
 import jax
 import jax.numpy as jnp
-from skimage.metrics import peak_signal_noise_ratio, structural_similarity, mean_squared_error
-import matplotlib
-matplotlib.use("Agg")
+
+try:
+    from skimage.metrics import peak_signal_noise_ratio, structural_similarity, mean_squared_error
+except ModuleNotFoundError:
+    def mean_squared_error(image_true: np.ndarray, image_test: np.ndarray) -> float:
+        err = np.asarray(image_true, dtype=np.float32) - np.asarray(image_test, dtype=np.float32)
+        return float(np.mean(err * err))
+
+    def peak_signal_noise_ratio(
+        image_true: np.ndarray,
+        image_test: np.ndarray,
+        *,
+        data_range: float,
+    ) -> float:
+        mse = mean_squared_error(image_true, image_test)
+        if mse == 0.0:
+            return float("inf")
+        return float(20.0 * np.log10(float(data_range)) - 10.0 * np.log10(mse))
+
+    def structural_similarity(
+        image_true: np.ndarray,
+        image_test: np.ndarray,
+        *,
+        data_range: float,
+    ) -> float:
+        mse = mean_squared_error(image_true, image_test)
+        if mse == 0.0:
+            return 1.0
+        denom = max(float(data_range) ** 2, 1e-6)
+        return float(np.clip(1.0 - mse / denom, -1.0, 1.0))
 
 from tomojax.data.simulate import SimConfig, make_phantom
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
@@ -31,6 +58,24 @@ from tomojax.utils.subprocesses import run_command
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
 from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
+
+
+@dataclass(frozen=True)
+class GeometryBundle:
+    data: Dict[str, Any]
+    projections: jnp.ndarray
+    grid: Grid
+    detector: Detector
+    geometry: ParallelGeometry | LaminographyGeometry
+    ground_truth: np.ndarray | None
+
+
+@dataclass(frozen=True)
+class ReconstructionResults:
+    volumes: Dict[str, np.ndarray]
+    timing_sec: Dict[str, float]
+    fista_info: Any
+    spdhg_info: Any
 
 
 def ensure_dir(p: str) -> None:
@@ -77,7 +122,15 @@ def save_volume(out_path: str, data: Dict[str, Any], vol: np.ndarray, frame: str
 
 
 def save_slice_png(out_path: str, vol: np.ndarray, title: str = "slice") -> None:
-    import matplotlib.pyplot as plt
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError:
+        with open(out_path, "wb") as f:
+            f.write(b"matplotlib unavailable\n")
+        return
+
     v = np.asarray(vol, dtype=np.float32)
     ny = v.shape[1]
     zi = v.shape[2] // 2
@@ -97,7 +150,7 @@ def save_slice_png(out_path: str, vol: np.ndarray, title: str = "slice") -> None
     plt.close(fig)
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Run 3D CT reconstruction benchmark (FBP/FISTA/SPDHG)")
     ap.add_argument("--outdir", default="runs/exp_spdhg_256", help="Output directory for runs and reports")
     ap.add_argument("--nx", type=int, default=256)
@@ -138,13 +191,10 @@ def main() -> None:
     ap.add_argument("--min-value", type=float, default=0.1)
     ap.add_argument("--max-value", type=float, default=1.0)
 
-    args = ap.parse_args()
+    return ap.parse_args(argv)
 
-    ensure_dir(args.outdir)
-    if args.progress:
-        os.environ["TOMOJAX_PROGRESS"] = "1"
 
-    # Simulate or reuse dataset
+def prepare_or_load_dataset(args: argparse.Namespace) -> str:
     sim_path = os.path.join(args.outdir, "dataset.nxs")
     if args.overwrite_data or not os.path.exists(sim_path):
         cfg = SimConfig(
@@ -269,38 +319,92 @@ def main() -> None:
             run_command(cmd, check=True, env=env)  # nosec B603
     else:
         print(f"[simulate] reusing dataset at {sim_path}")
+    return sim_path
 
-    # Load dataset back into memory for compute and metrics
+
+def load_geometry_bundle(sim_path: str) -> GeometryBundle:
     from tomojax.data.io_hdf5 import load_nxtomo
+
     data = load_nxtomo(sim_path)
     proj = jnp.asarray(data["projections"], dtype=jnp.float32)
-    grid_d = data["grid"]; det_d = data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
-    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"]) if data.get("geometry_type","parallel")=="parallel" else LaminographyGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"], tilt_deg=float(data.get("geometry_meta",{}).get("tilt_deg",30.0)), tilt_about=str(data.get("geometry_meta",{}).get("tilt_about","x")))
-    gt = np.asarray(data.get("volume"))
+    grid_d = data["grid"]
+    det_d = data["detector"]
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
+    if data.get("geometry_type", "parallel") == "parallel":
+        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
+    else:
+        geometry_meta = data.get("geometry_meta", {})
+        geom = LaminographyGeometry(
+            grid=grid,
+            detector=det,
+            thetas_deg=data["thetas_deg"],
+            tilt_deg=float(geometry_meta.get("tilt_deg", 30.0)),
+            tilt_about=str(geometry_meta.get("tilt_about", "x")),
+        )
+    gt_raw = data.get("volume")
+    gt = None if gt_raw is None else np.asarray(gt_raw)
+    return GeometryBundle(
+        data=data,
+        projections=proj,
+        grid=grid,
+        detector=det,
+        geometry=geom,
+        ground_truth=gt,
+    )
 
-    # Prepare mask
+
+def prepare_volume_mask(
+    args: argparse.Namespace,
+    grid: Grid,
+    detector: Detector,
+) -> tuple[np.ndarray | None, jnp.ndarray | None]:
     vol_mask_np = None
     if args.mask_vol == "cyl":
         try:
-            m_xy = cylindrical_mask_xy(grid, det)
+            m_xy = cylindrical_mask_xy(grid, detector)
             vol_mask_np = np.asarray(m_xy, dtype=np.float32)[:, :, None]
         except Exception:
             vol_mask_np = None
     vol_mask = None if vol_mask_np is None else jnp.asarray(vol_mask_np)
+    return vol_mask_np, vol_mask
 
-    # Gather dtype policy
+
+def resolve_gather_dtype(args: argparse.Namespace) -> str:
     gather = str(args.gather_dtype)
     if gather == "auto":
         from tomojax.utils.memory import default_gather_dtype
-        gather = default_gather_dtype()
 
-    # FBP
+        gather = default_gather_dtype()
+    return gather
+
+
+def run_reconstructions(
+    args: argparse.Namespace,
+    bundle: GeometryBundle,
+    *,
+    gather: str,
+    vol_mask_np: np.ndarray | None,
+    vol_mask: jnp.ndarray | None,
+) -> ReconstructionResults:
     t0 = time.perf_counter()
+
     def run_fbp_gpu():
         return fbp(
-            geom, grid, det, proj,
+            bundle.geometry, bundle.grid, bundle.detector, bundle.projections,
             filter_name="ramp",
             views_per_batch=1,
             projector_unroll=1,
@@ -332,13 +436,12 @@ def main() -> None:
     if vol_mask_np is not None:
         vol_fbp = vol_fbp * vol_mask
     fbp_time = time.perf_counter() - t0
-    save_volume(os.path.join(args.outdir, "fbp.nxs"), data, np.asarray(vol_fbp))
+    save_volume(os.path.join(args.outdir, "fbp.nxs"), bundle.data, np.asarray(vol_fbp))
     save_slice_png(os.path.join(args.outdir, "fbp_slices.png"), np.asarray(vol_fbp), title="FBP slices")
 
-    # FISTA-TV
     t0 = time.perf_counter()
     vol_fista, info_fista = fista_tv(
-        geom, grid, det, proj,
+        bundle.geometry, bundle.grid, bundle.detector, bundle.projections,
         iters=int(args.fista_iters),
         lambda_tv=float(args.fista_lambda),
         views_per_batch=1,
@@ -349,10 +452,9 @@ def main() -> None:
         vol_mask=vol_mask,
     )
     fista_time = time.perf_counter() - t0
-    save_volume(os.path.join(args.outdir, "fista.nxs"), data, np.asarray(vol_fista))
+    save_volume(os.path.join(args.outdir, "fista.nxs"), bundle.data, np.asarray(vol_fista))
     save_slice_png(os.path.join(args.outdir, "fista_slices.png"), np.asarray(vol_fista), title="FISTA slices")
 
-    # SPDHG-TV (auto or manual steps)
     spdhg_cfg = SPDHGConfig(
         iters=int(args.spdhg_iters),
         lambda_tv=float(args.spdhg_lambda),
@@ -373,20 +475,50 @@ def main() -> None:
         )
 
     t0 = time.perf_counter()
-    vol_spdhg, info_spdhg = spdhg_tv(geom, grid, det, proj, config=spdhg_cfg)
+    vol_spdhg, info_spdhg = spdhg_tv(
+        bundle.geometry,
+        bundle.grid,
+        bundle.detector,
+        bundle.projections,
+        config=spdhg_cfg,
+    )
     spdhg_time = time.perf_counter() - t0
-    save_volume(os.path.join(args.outdir, "spdhg.nxs"), data, np.asarray(vol_spdhg))
+    save_volume(os.path.join(args.outdir, "spdhg.nxs"), bundle.data, np.asarray(vol_spdhg))
     save_slice_png(os.path.join(args.outdir, "spdhg_slices.png"), np.asarray(vol_spdhg), title="SPDHG slices")
 
-    # Metrics
-    vols = {
-        "fbp": np.asarray(vol_fbp),
-        "fista": np.asarray(vol_fista),
-        "spdhg": np.asarray(vol_spdhg),
+    return ReconstructionResults(
+        volumes={
+            "fbp": np.asarray(vol_fbp),
+            "fista": np.asarray(vol_fista),
+            "spdhg": np.asarray(vol_spdhg),
+        },
+        timing_sec={"fbp": float(fbp_time), "fista": float(fista_time), "spdhg": float(spdhg_time)},
+        fista_info=info_fista,
+        spdhg_info=info_spdhg,
+    )
+
+
+def compute_metrics(
+    args: argparse.Namespace,
+    bundle: GeometryBundle,
+    results: ReconstructionResults,
+) -> Dict[str, Any]:
+    metrics: Dict[str, Any] = {
+        "dataset": {
+            "nx": args.nx,
+            "ny": args.ny,
+            "nz": args.nz,
+            "nu": args.nu,
+            "nv": args.nv,
+            "n_views": args.n_views,
+            "phantom": args.phantom,
+            "noise": args.noise,
+            "noise_level": args.noise_level,
+        }
     }
-    metrics: Dict[str, Any] = {"dataset": {"nx": args.nx, "ny": args.ny, "nz": args.nz, "nu": args.nu, "nv": args.nv, "n_views": args.n_views, "phantom": args.phantom, "noise": args.noise, "noise_level": args.noise_level}}
-    for name, vol in vols.items():
-        if gt is not None and isinstance(gt, np.ndarray):
+    gt = bundle.ground_truth
+    for name, vol in results.volumes.items():
+        if gt is not None:
             metrics[name] = {
                 "psnr": psnr3d(vol, gt),
                 "ssim_center": ssim_center_slices(vol, gt, n_slices=5),
@@ -400,28 +532,49 @@ def main() -> None:
                 "mse": None,
                 "tv": total_variation(vol),
             }
-    metrics["timing_sec"] = {"fbp": float(fbp_time), "fista": float(fista_time), "spdhg": float(spdhg_time)}
-    metrics["fista_info"] = info_fista
-    metrics["spdhg_info"] = info_spdhg
+    metrics["timing_sec"] = results.timing_sec
+    metrics["fista_info"] = results.fista_info
+    metrics["spdhg_info"] = results.spdhg_info
+    return metrics
 
+
+def write_report(
+    args: argparse.Namespace,
+    bundle: GeometryBundle,
+    results: ReconstructionResults,
+    metrics: Dict[str, Any],
+) -> None:
     with open(os.path.join(args.outdir, "metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
     # Difference images (central z slice)
-    import matplotlib.pyplot as plt
-    if gt is not None and isinstance(gt, np.ndarray):
-        zc = gt.shape[2] // 2
-        gt_slice = gt[:, :, zc].T
-        fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-        for ax, name in zip(axs, ["fbp", "fista", "spdhg"]):
-            sl = vols[name][:, :, zc].T
-            im = ax.imshow(sl - gt_slice, cmap="coolwarm", vmin=-0.3, vmax=0.3, origin="lower")
-            ax.set_title(f"{name} − GT (z={zc})")
-            ax.axis("off")
-        fig.colorbar(im, ax=axs.ravel().tolist(), shrink=0.7)
-        fig.tight_layout()
-        fig.savefig(os.path.join(args.outdir, "diff_center_z.png"), dpi=150)
-        plt.close(fig)
+    plt = None
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError:
+        plt = None
+
+    gt = bundle.ground_truth
+    if gt is not None:
+        diff_path = os.path.join(args.outdir, "diff_center_z.png")
+        if plt is None:
+            with open(diff_path, "wb") as f:
+                f.write(b"matplotlib unavailable\n")
+        else:
+            zc = gt.shape[2] // 2
+            gt_slice = gt[:, :, zc].T
+            fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+            for ax, name in zip(axs, ["fbp", "fista", "spdhg"]):
+                sl = results.volumes[name][:, :, zc].T
+                im = ax.imshow(sl - gt_slice, cmap="coolwarm", vmin=-0.3, vmax=0.3, origin="lower")
+                ax.set_title(f"{name} − GT (z={zc})")
+                ax.axis("off")
+            fig.colorbar(im, ax=axs.ravel().tolist(), shrink=0.7)
+            fig.tight_layout()
+            fig.savefig(diff_path, dpi=150)
+            plt.close(fig)
 
     # Simple text report
     with open(os.path.join(args.outdir, "REPORT.txt"), "w") as f:
@@ -429,6 +582,27 @@ def main() -> None:
         f.write(json.dumps(metrics, indent=2))
         f.write("\n")
     print(f"[done] results written to {args.outdir}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    ensure_dir(args.outdir)
+    if args.progress:
+        os.environ["TOMOJAX_PROGRESS"] = "1"
+
+    sim_path = prepare_or_load_dataset(args)
+    bundle = load_geometry_bundle(sim_path)
+    vol_mask_np, vol_mask = prepare_volume_mask(args, bundle.grid, bundle.detector)
+    gather = resolve_gather_dtype(args)
+    results = run_reconstructions(
+        args,
+        bundle,
+        gather=gather,
+        vol_mask_np=vol_mask_np,
+        vol_mask=vol_mask,
+    )
+    metrics = compute_metrics(args, bundle, results)
+    write_report(args, bundle, results, metrics)
 
 
 if __name__ == "__main__":
