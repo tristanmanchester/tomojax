@@ -46,6 +46,7 @@ from ._results import (
     AlignMultiresCheckpointCallback,
     AlignMultiresResumeState,
     AlignResumeState,
+    _record_stat_conversion_error,
     enrich_multires_stage_stat as _enrich_multires_stage_stat,
 )
 from ._pose_stage import align
@@ -198,6 +199,23 @@ def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
         return int(stat["schedule_stage_index"])
     except Exception:
         return None
+
+
+def _accumulate_stage_wall_time(
+    level_wall_time: float,
+    info: dict[str, object],
+) -> float:
+    raw_wall_time = info.get("wall_time_total")
+    try:
+        return level_wall_time + float(raw_wall_time or 0.0)
+    except (TypeError, ValueError, OverflowError) as exc:
+        _record_stat_conversion_error(
+            info,  # type: ignore[arg-type]
+            "wall_time_total",
+            exc,
+            errors_key="level_stats_errors",
+        )
+        return level_wall_time
 
 
 def _build_level_run_state(
@@ -812,10 +830,7 @@ def align_multires(
                 )
                 level_stats.extend(enriched)
                 level_losses.extend(float(v) for v in info.get("loss", []))
-                try:
-                    level_wall_time += float(info.get("wall_time_total") or 0.0)
-                except Exception:
-                    pass
+                level_wall_time = _accumulate_stage_wall_time(level_wall_time, info)
                 level_action = _normalize_observer_action(info.get("observer_action"))
                 final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
                 final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))

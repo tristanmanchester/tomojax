@@ -123,6 +123,17 @@ def test_multires_elapsed_stat_conversion_records_errors() -> None:
     assert "TypeError:" in stat["level_stats_errors"][0]["error"]
 
 
+def test_multires_wall_time_conversion_records_errors() -> None:
+    stage_loop = importlib.import_module("tomojax.align._stage_loop")
+    info: dict[str, object] = {"wall_time_total": object()}
+
+    level_wall_time = stage_loop._accumulate_stage_wall_time(2.5, info)
+
+    assert level_wall_time == 2.5
+    assert info["level_stats_errors"][0]["key"] == "wall_time_total"
+    assert "TypeError:" in info["level_stats_errors"][0]["error"]
+
+
 def test_setup_stage_rejects_unsupported_loss_before_fold_reconstruction(monkeypatch) -> None:
     pipeline = importlib.import_module("tomojax.align.pipeline")
     setup_stage = importlib.import_module("tomojax.align._setup_stage")
