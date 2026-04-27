@@ -28,19 +28,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tomojax.align.geometry_blocks import (
+from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
     geometry_with_axis_state,
     level_detector_grid,
 )
+from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
 from tomojax.align.pipeline import (
     AlignConfig,
-    _optimize_setup_geometry_bilevel_for_level,
     align,
 )
-from tomojax.align.parametrizations import se3_from_5d
-from tomojax.align.schedules import AlignmentSchedule, AlignmentStage
-from tomojax.align.losses import loss_spec_name, resolve_loss_for_level
+from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -245,6 +246,43 @@ def _apply_setup_bounds(
         updates[name] = after
         clipped[name] = {"before": before, "after": after, "lo": lo, "hi": hi, "clipped": before != after}
     return replace(state, **updates), clipped
+
+
+def _alignment_state_from_geometry_state(
+    state: GeometryCalibrationState,
+    *,
+    params5: np.ndarray,
+    volume: jnp.ndarray | None,
+) -> AlignmentState:
+    return AlignmentState(
+        setup=SetupGeometryState.from_degrees(
+            det_u_px=state.det_u_px,
+            det_v_px=state.det_v_px,
+            detector_roll_deg=state.detector_roll_deg,
+            axis_rot_x_deg=state.axis_rot_x_deg,
+            axis_rot_y_deg=state.axis_rot_y_deg,
+            nominal_axis_unit=state.nominal_axis_unit,
+        ),
+        pose=PoseState(jnp.asarray(params5, dtype=jnp.float32)),
+        volume=volume,
+    )
+
+
+def _geometry_state_from_alignment_state(
+    state: AlignmentState,
+    *,
+    active_geometry_dofs: tuple[str, ...],
+) -> GeometryCalibrationState:
+    degrees = state.setup.degrees_dict()
+    return GeometryCalibrationState(
+        det_u_px=float(state.setup.det_u_px),
+        det_v_px=float(state.setup.det_v_px),
+        detector_roll_deg=float(degrees["detector_roll_deg"]),
+        axis_rot_x_deg=float(degrees["axis_rot_x_deg"]),
+        axis_rot_y_deg=float(degrees["axis_rot_y_deg"]),
+        nominal_axis_unit=tuple(float(v) for v in np.asarray(state.setup.nominal_axis_unit)),
+        active_geometry_dofs=active_geometry_dofs,
+    )
 
 
 def _load_input(path: Path, *, flip_u: bool, flip_v: bool, transpose_detector: bool) -> tuple[np.ndarray, np.ndarray]:
@@ -609,23 +647,37 @@ def run_setup_stage(
             loss_spec = resolve_loss_for_level(cfg_base.loss, int(factor))
             loss_name = loss_spec_name(loss_spec)
             t0 = time.perf_counter()
-            x_level, setup_state, raw_stats = _optimize_setup_geometry_bilevel_for_level(
+            setup_result = _optimize_setup_geometry_bilevel_for_level(
                 geometry=geometry,
                 grid=g,
                 detector=d,
                 projections=y,
                 init_x=x_level,
                 init_params5=jnp.asarray(params5, dtype=jnp.float32),
-                state=setup_state,
+                state=_alignment_state_from_geometry_state(
+                    setup_state,
+                    params5=params5,
+                    volume=x_level,
+                ),
+                active_geometry_dofs=active_setup,
                 factor=int(factor),
                 cfg=cfg_base,
                 loss_spec=loss_spec,
                 loss_name=loss_name,
             )
+            x_level = setup_result.x
+            setup_state = _geometry_state_from_alignment_state(
+                setup_result.state,
+                active_geometry_dofs=active_setup,
+            )
             setup_state, clipped = _apply_setup_bounds(setup_state, bounds)
             elapsed = time.perf_counter() - t0
             x_np = np.asarray(x_level, dtype=np.float32)
-            stat = dict(raw_stats[-1] if raw_stats else {})
+            stat = dict(
+                setup_result.checkpoint_outer_stats[-1]
+                if setup_result.checkpoint_outer_stats
+                else {}
+            )
             stat.update(
                 {
                     "stage": stage_name,
