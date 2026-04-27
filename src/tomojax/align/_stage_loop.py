@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
 import time
 from typing import Iterable, Mapping, TypedDict
@@ -67,11 +67,226 @@ class MultiresLevel(TypedDict):
     projections: jnp.ndarray
 
 
+@dataclass(frozen=True)
+class LevelRunState:
+    resuming: bool
+    level_completed_before: int
+    stats_before_level: list[OuterStat]
+    loss_before_level: list[float]
+    global_before_level: int
+    resume_stage_index: int
+    resume_stage_completed: bool
+    resume_stage_iters: int
+    preserved_level_stats: list[OuterStat]
+    resume_stage_stats: list[OuterStat]
+    preserved_level_losses: list[float]
+    resume_stage_losses: list[float]
+
+
+@dataclass(frozen=True)
+class StageRuntime:
+    level_index: int
+    level_factor: int
+    global_before_level: int
+    global_elapsed_offset: float
+    active_loss_name: str
+    schedule_name: str
+    stats_before_level: list[OuterStat]
+    loss_before_level: list[float]
+    level_stats: list[OuterStat]
+    level_losses: list[float]
+    prev_factor: int | None
+    observer_fn: ObserverCallback | None
+    checkpoint_callback: AlignMultiresCheckpointCallback | None
+
+    def enrich_stats(
+        self,
+        local_stats: list[OuterStat],
+        *,
+        stage: ResolvedAlignmentStage | None = None,
+        global_start: int | None = None,
+    ) -> list[OuterStat]:
+        enriched_stats: list[OuterStat] = []
+        start = self.global_before_level if global_start is None else int(global_start)
+        for idx, stat in enumerate(local_stats, start=1):
+            enriched_stats.append(
+                _enrich_multires_stage_stat(
+                    stat,
+                    level_factor=self.level_factor,
+                    level_index=self.level_index,
+                    global_outer_idx=int(start + idx),
+                    elapsed_offset=float(self.global_elapsed_offset),
+                    loss_name=self.active_loss_name,
+                    schedule_name=self.schedule_name,
+                    stage=stage,
+                )
+            )
+        return enriched_stats
+
+    def observer_for_stage(
+        self,
+        stage: ResolvedAlignmentStage,
+        global_start: int,
+    ) -> ObserverCallback | None:
+        if self.observer_fn is None:
+            return None
+
+        def stage_observer(x_obs, params_obs, stat_obs):
+            enriched = _enrich_multires_stage_stat(
+                stat_obs,
+                level_factor=self.level_factor,
+                level_index=self.level_index,
+                global_outer_idx=int(global_start + int(stat_obs["outer_idx"])),
+                elapsed_offset=float(self.global_elapsed_offset),
+                loss_name=self.active_loss_name,
+                schedule_name=self.schedule_name,
+                stage=stage,
+            )
+            return self.observer_fn(x_obs, params_obs, enriched)
+
+        return stage_observer
+
+    def checkpoint_for_stage(
+        self,
+        *,
+        stage: ResolvedAlignmentStage,
+        global_start: int,
+        setup_alignment_state: object,
+        active_geometry_dofs: tuple[str, ...],
+    ):
+        if self.checkpoint_callback is None:
+            return None
+
+        def emit_multires_checkpoint(state: AlignResumeState) -> None:
+            enriched_stats = self.enrich_stats(
+                [dict(stat) for stat in state.outer_stats],
+                stage=stage,
+                global_start=global_start,
+            )
+            self.checkpoint_callback(
+                _build_multires_checkpoint_state(
+                    x=state.x,
+                    params5=state.params5,
+                    motion_coeffs=state.motion_coeffs,
+                    level_index=self.level_index,
+                    level_factor=self.level_factor,
+                    completed_outer_iters_in_level=(len(self.level_stats) + state.start_outer_iter),
+                    global_outer_iters_completed=(
+                        self.global_before_level + len(self.level_stats) + state.start_outer_iter
+                    ),
+                    prev_factor=self.prev_factor,
+                    loss=self.loss_before_level + self.level_losses + list(state.loss),
+                    outer_stats=self.stats_before_level + self.level_stats + enriched_stats,
+                    L=state.L,
+                    small_impr_streak=int(state.small_impr_streak),
+                    elapsed_offset=float(self.global_elapsed_offset + state.elapsed_offset),
+                    level_complete=False,
+                    run_complete=False,
+                    setup_alignment_state=setup_alignment_state,
+                    active_geometry_dofs=active_geometry_dofs,
+                    stage=stage,
+                    stage_completed=int(state.start_outer_iter) >= int(stage.maxiter),
+                    completed_outer_iters_in_stage=int(state.start_outer_iter),
+                )
+            )
+
+        return emit_multires_checkpoint
+
+
 def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
     try:
         return int(stat["schedule_stage_index"])
     except Exception:
         return None
+
+
+def _build_level_run_state(
+    *,
+    resume_state: AlignMultiresResumeState | None,
+    level_index: int,
+    loss_hist: list[float],
+    global_outer_stats: list[OuterStat],
+    executed_outer_iters: int,
+) -> LevelRunState:
+    resuming = (
+        resume_state is not None
+        and not resume_state.level_complete
+        and int(resume_state.level_index) == int(level_index)
+    )
+    level_completed_before = int(resume_state.completed_outer_iters_in_level) if resuming else 0
+    current_level_stats = [
+        dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(level_index)
+    ]
+    stats_before_level = [
+        dict(stat) for stat in global_outer_stats if stat.get("level_index") != int(level_index)
+    ]
+    loss_before_level = (
+        list(loss_hist[:-level_completed_before])
+        if resuming and level_completed_before > 0
+        else list(loss_hist)
+    )
+    global_before_level = (
+        int(executed_outer_iters) - level_completed_before
+        if resuming
+        else int(executed_outer_iters)
+    )
+    resume_stage_index = int(resume_state.stage_index) if resuming else 0
+    resume_stage_completed = bool(resume_state.stage_completed) if resuming else False
+    resume_stage_iters = int(resume_state.completed_outer_iters_in_stage) if resuming else 0
+
+    if not resuming:
+        return LevelRunState(
+            resuming=False,
+            level_completed_before=0,
+            stats_before_level=stats_before_level,
+            loss_before_level=loss_before_level,
+            global_before_level=global_before_level,
+            resume_stage_index=0,
+            resume_stage_completed=False,
+            resume_stage_iters=0,
+            preserved_level_stats=[],
+            resume_stage_stats=[],
+            preserved_level_losses=[],
+            resume_stage_losses=[],
+        )
+
+    preserved_level_stats = [
+        dict(stat)
+        for stat in current_level_stats
+        if (
+            (stage_idx := _stage_index_or_none(stat)) is not None
+            and (
+                stage_idx < resume_stage_index
+                or (stage_idx == resume_stage_index and resume_stage_completed)
+            )
+        )
+    ]
+    resume_stage_stats = [
+        dict(stat)
+        for stat in current_level_stats
+        if _stage_index_or_none(stat) == resume_stage_index and not resume_stage_completed
+    ]
+    level_history = list(loss_hist[-level_completed_before:]) if level_completed_before > 0 else []
+    preserved_loss_count = min(len(preserved_level_stats), len(level_history))
+    preserved_level_losses = level_history[:preserved_loss_count]
+    resume_stage_losses = level_history[preserved_loss_count:]
+    if len(resume_stage_losses) > resume_stage_iters:
+        resume_stage_losses = resume_stage_losses[-resume_stage_iters:]
+
+    return LevelRunState(
+        resuming=True,
+        level_completed_before=level_completed_before,
+        stats_before_level=stats_before_level,
+        loss_before_level=loss_before_level,
+        global_before_level=global_before_level,
+        resume_stage_index=resume_stage_index,
+        resume_stage_completed=resume_stage_completed,
+        resume_stage_iters=resume_stage_iters,
+        preserved_level_stats=preserved_level_stats,
+        resume_stage_stats=resume_stage_stats,
+        preserved_level_losses=[float(value) for value in preserved_level_losses],
+        resume_stage_losses=[float(value) for value in resume_stage_losses],
+    )
 
 
 def _build_multires_checkpoint_state(
@@ -400,65 +615,21 @@ def align_multires(
                 seed_params = seed_params.at[:, 4].set(dz)
             params0 = seed_params
 
-        level_completed_before = (
-            int(resume_state.completed_outer_iters_in_level) if resuming_this_level else 0
+        level_run = _build_level_run_state(
+            resume_state=resume_state,
+            level_index=int(li),
+            loss_hist=loss_hist,
+            global_outer_stats=global_outer_stats,
+            executed_outer_iters=executed_outer_iters,
         )
-        current_level_stats = [
-            dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(li)
-        ]
-        stats_before_level = [
-            dict(stat) for stat in global_outer_stats if stat.get("level_index") != int(li)
-        ]
-        loss_before_level = (
-            list(loss_hist[:-level_completed_before])
-            if resuming_this_level and level_completed_before > 0
-            else list(loss_hist)
-        )
-        global_before_level = (
-            int(executed_outer_iters) - level_completed_before
-            if resuming_this_level
-            else int(executed_outer_iters)
-        )
-        resume_stage_index = int(resume_state.stage_index) if resuming_this_level else 0
-        resume_stage_completed = (
-            bool(resume_state.stage_completed) if resuming_this_level else False
-        )
-        resume_stage_iters = (
-            int(resume_state.completed_outer_iters_in_stage) if resuming_this_level else 0
-        )
-
-        if resuming_this_level:
-            preserved_level_stats = [
-                dict(stat)
-                for stat in current_level_stats
-                if (
-                    (stage_idx := _stage_index_or_none(stat)) is not None
-                    and (
-                        stage_idx < resume_stage_index
-                        or (stage_idx == resume_stage_index and resume_stage_completed)
-                    )
-                )
-            ]
-            resume_stage_stats = [
-                dict(stat)
-                for stat in current_level_stats
-                if _stage_index_or_none(stat) == resume_stage_index and not resume_stage_completed
-            ]
-            level_history = (
-                list(loss_hist[-level_completed_before:]) if level_completed_before > 0 else []
-            )
-            preserved_loss_count = min(len(preserved_level_stats), len(level_history))
-            preserved_level_losses = level_history[:preserved_loss_count]
-            resume_stage_losses = level_history[preserved_loss_count:]
-            if len(resume_stage_losses) > resume_stage_iters:
-                resume_stage_losses = resume_stage_losses[-resume_stage_iters:]
-        else:
-            preserved_level_stats = []
-            resume_stage_stats = []
-            preserved_level_losses = []
-            resume_stage_losses = []
-        level_stats: list[OuterStat] = [dict(stat) for stat in preserved_level_stats]
-        level_losses: list[float] = [float(value) for value in preserved_level_losses]
+        stats_before_level = level_run.stats_before_level
+        loss_before_level = level_run.loss_before_level
+        global_before_level = level_run.global_before_level
+        resume_stage_index = level_run.resume_stage_index
+        resume_stage_completed = level_run.resume_stage_completed
+        resume_stage_iters = level_run.resume_stage_iters
+        level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
+        level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
         level_wall_time = 0.0
         level_action: ObserverAction = "continue"
         x_lvl = x0 if x0 is not None else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
@@ -484,94 +655,21 @@ def align_multires(
             "gauge_fix_dofs": final_gauge_fix_dofs,
             "gauge_fix_final": final_gauge_fix_stats or {},
         }
-
-        def _enrich_level_stats(
-            local_stats: list[OuterStat],
-            *,
-            stage: ResolvedAlignmentStage | None = None,
-            global_start: int | None = None,
-        ) -> list[OuterStat]:
-            enriched_stats: list[OuterStat] = []
-            for idx, stat in enumerate(local_stats, start=1):
-                enriched = _enrich_multires_stage_stat(
-                    stat,
-                    level_factor=int(lvl["factor"]),
-                    level_index=int(li),
-                    global_outer_idx=int(
-                        (global_before_level if global_start is None else global_start) + idx
-                    ),
-                    elapsed_offset=float(global_elapsed_offset),
-                    loss_name=active_loss_name,
-                    schedule_name=resolved_schedule.name,
-                    stage=stage,
-                )
-                enriched_stats.append(enriched)
-            return enriched_stats
-
-        def _emit_multires_checkpoint(
-            state: AlignResumeState,
-            *,
-            level_complete: bool,
-            stage: ResolvedAlignmentStage,
-            global_start: int,
-        ) -> None:
-            if checkpoint_callback is None:
-                return
-            enriched_stats = _enrich_level_stats(
-                [dict(stat) for stat in state.outer_stats],
-                stage=stage,
-                global_start=global_start,
-            )
-            checkpoint_callback(
-                _build_multires_checkpoint_state(
-                    x=state.x,
-                    params5=state.params5,
-                    motion_coeffs=state.motion_coeffs,
-                    level_index=int(li),
-                    level_factor=int(lvl["factor"]),
-                    completed_outer_iters_in_level=len(level_stats) + state.start_outer_iter,
-                    global_outer_iters_completed=(
-                        global_before_level + len(level_stats) + state.start_outer_iter
-                    ),
-                    prev_factor=prev_factor,
-                    loss=loss_before_level + level_losses + list(state.loss),
-                    outer_stats=stats_before_level + level_stats + enriched_stats,
-                    L=state.L,
-                    small_impr_streak=int(state.small_impr_streak),
-                    elapsed_offset=float(global_elapsed_offset + state.elapsed_offset),
-                    level_complete=level_complete,
-                    run_complete=False,
-                    setup_alignment_state=setup_alignment_state,
-                    active_geometry_dofs=active_geometry_dofs,
-                    stage=stage,
-                    stage_completed=(
-                        level_complete or int(state.start_outer_iter) >= int(stage.maxiter)
-                    ),
-                    completed_outer_iters_in_stage=int(state.start_outer_iter),
-                )
-            )
-
-        def _stage_observer(
-            stage: ResolvedAlignmentStage,
-            global_start: int,
-            x_obs,
-            params_obs,
-            stat_obs,
-        ):
-            nonlocal stopped_by_observer
-            enriched = _enrich_multires_stage_stat(
-                stat_obs,
-                level_factor=int(lvl["factor"]),
-                level_index=int(li),
-                global_outer_idx=int(global_start + int(stat_obs["outer_idx"])),
-                elapsed_offset=float(global_elapsed_offset),
-                loss_name=active_loss_name,
-                schedule_name=resolved_schedule.name,
-                stage=stage,
-            )
-            if observer_fn is None:
-                return "continue"
-            return observer_fn(x_obs, params_obs, enriched)
+        stage_runtime = StageRuntime(
+            level_index=int(li),
+            level_factor=int(lvl["factor"]),
+            global_before_level=global_before_level,
+            global_elapsed_offset=global_elapsed_offset,
+            active_loss_name=active_loss_name,
+            schedule_name=resolved_schedule.name,
+            stats_before_level=stats_before_level,
+            loss_before_level=loss_before_level,
+            level_stats=level_stats,
+            level_losses=level_losses,
+            prev_factor=prev_factor,
+            observer_fn=observer_fn,
+            checkpoint_callback=checkpoint_callback,
+        )
 
         stage_resume_consumed = False
         for stage in resolved_schedule.stages:
@@ -611,7 +709,7 @@ def align_multires(
                 )
                 stage_wall = time.perf_counter() - geometry_start
                 level_wall_time += stage_wall
-                enriched = _enrich_level_stats(
+                enriched = stage_runtime.enrich_stats(
                     [dict(stat) for stat in raw_geometry_stats],
                     stage=stage,
                     global_start=stage_global_start,
@@ -675,8 +773,8 @@ def align_multires(
                         params5=resume_state.params5,
                         motion_coeffs=resume_state.motion_coeffs,
                         start_outer_iter=resume_stage_iters,
-                        loss=list(resume_stage_losses),
-                        outer_stats=[dict(stat) for stat in resume_stage_stats],
+                        loss=list(level_run.resume_stage_losses),
+                        outer_stats=[dict(stat) for stat in level_run.resume_stage_stats],
                         L=resume_state.L,
                         small_impr_streak=int(resume_state.small_impr_streak),
                         elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
@@ -690,33 +788,13 @@ def align_multires(
                     cfg=cfg_stage,
                     init_x=x_lvl,
                     init_params5=params5,
-                    observer=(
-                        (
-                            lambda x_obs,
-                            params_obs,
-                            stat_obs,
-                            _stage=stage,
-                            _start=stage_global_start: _stage_observer(
-                                _stage, _start, x_obs, params_obs, stat_obs
-                            )
-                        )
-                        if observer_fn is not None
-                        else None
-                    ),
+                    observer=stage_runtime.observer_for_stage(stage, stage_global_start),
                     resume_state=align_resume_state,
-                    checkpoint_callback=(
-                        (
-                            lambda state,
-                            _stage=stage,
-                            _start=stage_global_start: _emit_multires_checkpoint(
-                                state,
-                                level_complete=False,
-                                stage=_stage,
-                                global_start=_start,
-                            )
-                        )
-                        if checkpoint_callback is not None
-                        else None
+                    checkpoint_callback=stage_runtime.checkpoint_for_stage(
+                        stage=stage,
+                        global_start=stage_global_start,
+                        setup_alignment_state=setup_alignment_state,
+                        active_geometry_dofs=active_geometry_dofs,
                     ),
                     **align_kwargs,
                 )
@@ -727,7 +805,7 @@ def align_multires(
                     ),
                     volume=x_lvl,
                 )
-                enriched = _enrich_level_stats(
+                enriched = stage_runtime.enrich_stats(
                     [dict(stat) for stat in info.get("outer_stats", [])],
                     stage=stage,
                     global_start=stage_global_start,
