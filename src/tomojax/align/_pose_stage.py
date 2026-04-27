@@ -1063,6 +1063,39 @@ def align(
             align_parts.append("gauge none")
         logging.info("  Align | %s", " | ".join(align_parts) if align_parts else "-")
 
+    def _select_gd_step_candidate(
+        *,
+        base_params: jnp.ndarray,
+        doubled_params: jnp.ndarray,
+        previous_params: jnp.ndarray,
+        loss_before_value: float | None,
+        vol: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, float | None]:
+        base_loss = _evaluate_align_loss(
+            lambda: align_loss_jit(base_params, vol),
+            fallback=math.inf,
+            context="Treating GD base candidate as rejected during alignment loss evaluation",
+        )
+        doubled_loss = _evaluate_align_loss(
+            lambda: align_loss_jit(doubled_params, vol),
+            fallback=math.inf,
+            context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
+        )
+        base_loss_f = float(base_loss) if base_loss is not None else math.inf
+        doubled_loss_f = float(doubled_loss) if doubled_loss is not None else math.inf
+        if not math.isfinite(base_loss_f) and not math.isfinite(doubled_loss_f):
+            return previous_params, loss_before_value
+        if doubled_loss_f < base_loss_f:
+            chosen_params = doubled_params
+            chosen_loss = doubled_loss_f
+        else:
+            chosen_params = base_params
+            chosen_loss = base_loss_f
+        return (
+            chosen_params,
+            float(chosen_loss) if math.isfinite(chosen_loss) else loss_before_value,
+        )
+
     def _run_gd_alignment_step(
         params5_in: jnp.ndarray,
         motion_coeffs_in: jnp.ndarray | None,
@@ -1083,29 +1116,15 @@ def align(
             eff_scales = active_scales / rms_active
             best_coeffs = coeffs_in - g_coeffs * eff_scales[None, :]
             best_params = _coeffs_to_constrained_params(best_coeffs)
-            best_loss = _evaluate_align_loss(
-                lambda: align_loss_jit(best_params, vol),
-                fallback=math.inf,
-                context="Treating GD base candidate as rejected during alignment loss evaluation",
-            )
             cand_coeffs = coeffs_in - 2.0 * g_coeffs * eff_scales[None, :]
             cand_params = _coeffs_to_constrained_params(cand_coeffs)
-            cand_loss = _evaluate_align_loss(
-                lambda: align_loss_jit(cand_params, vol),
-                fallback=math.inf,
-                context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
+            params5_out, loss_after_value = _select_gd_step_candidate(
+                base_params=best_params,
+                doubled_params=cand_params,
+                previous_params=_coeffs_to_constrained_params(coeffs_in),
+                loss_before_value=loss_before_value,
+                vol=vol,
             )
-            best_loss_f = float(best_loss) if best_loss is not None else math.inf
-            cand_loss_f = float(cand_loss) if cand_loss is not None else math.inf
-            if not math.isfinite(best_loss_f) and not math.isfinite(cand_loss_f):
-                params5_out = _coeffs_to_constrained_params(coeffs_in)
-                loss_after_value = loss_before_value
-            else:
-                params5_out = cand_params if cand_loss_f < best_loss_f else best_params
-                chosen_loss = min(best_loss_f, cand_loss_f)
-                loss_after_value = (
-                    float(chosen_loss) if math.isfinite(chosen_loss) else loss_before_value
-                )
             motion_coeffs_out = fit_motion_coefficients(motion_model, params5_out)
             params5_out = _coeffs_to_constrained_params(motion_coeffs_out)
             rms = jnp.zeros((5,), dtype=jnp.float32).at[active_coeff_indices].set(rms_active)
@@ -1117,28 +1136,14 @@ def align(
         rms = jnp.sqrt(jnp.mean(jnp.square(g_params), axis=0)) + 1e-6
         eff_scales = scales / rms
         best_params = _apply_full_constraints(p5_in - g_params * eff_scales)
-        best_loss = _evaluate_align_loss(
-            lambda: align_loss_jit(best_params, vol),
-            fallback=math.inf,
-            context="Treating GD base candidate as rejected during alignment loss evaluation",
-        )
         cand_params = _apply_full_constraints(p5_in - 2.0 * g_params * eff_scales)
-        cand_loss = _evaluate_align_loss(
-            lambda: align_loss_jit(cand_params, vol),
-            fallback=math.inf,
-            context="Treating GD doubled-step candidate as rejected during alignment loss evaluation",
+        params5_out, loss_after_value = _select_gd_step_candidate(
+            base_params=best_params,
+            doubled_params=cand_params,
+            previous_params=p5_in,
+            loss_before_value=loss_before_value,
+            vol=vol,
         )
-        best_loss_f = float(best_loss) if best_loss is not None else math.inf
-        cand_loss_f = float(cand_loss) if cand_loss is not None else math.inf
-        if not math.isfinite(best_loss_f) and not math.isfinite(cand_loss_f):
-            params5_out = p5_in
-            loss_after_value = loss_before_value
-        else:
-            params5_out = cand_params if cand_loss_f < best_loss_f else best_params
-            chosen_loss = min(best_loss_f, cand_loss_f)
-            loss_after_value = (
-                float(chosen_loss) if math.isfinite(chosen_loss) else loss_before_value
-            )
         return params5_out, motion_coeffs_in, loss_after_value, rms
 
     def _run_lbfgs_alignment_step(

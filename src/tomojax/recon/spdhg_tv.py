@@ -286,7 +286,7 @@ def spdhg_tv(
     rng = np.random.default_rng(config.seed)
     epochs = (config.iters + m - 1) // m
     block_ids = []
-    for e in range(epochs):
+    for _ in range(epochs):
         perm = rng.permutation(m)
         block_ids.extend(list(perm))
     block_ids = jnp.asarray(block_ids[: config.iters], dtype=jnp.int32)

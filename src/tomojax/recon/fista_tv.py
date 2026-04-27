@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Callable, Literal, Tuple, Optional
+from typing import Literal, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +18,6 @@ from ..core.projector import (
 from ..core.validation import (
     validate_grid,
     validate_optional_broadcastable_shape,
-    validate_optional_same_shape,
     validate_pose_stack,
     validate_projection_shape,
     validate_projection_stack,
@@ -37,6 +36,33 @@ from ._tv_ops import (
 
 
 GradMode = Literal["auto", "batched", "stream"]
+
+
+def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
+    requested = (
+        int(views_per_batch)
+        if (views_per_batch is not None and int(views_per_batch) > 0)
+        else int(n_views)
+    )
+    return max(1, min(requested, int(n_views)))
+
+
+def _view_chunk_schedule(
+    i: jnp.ndarray,
+    *,
+    n_views: int,
+    chunk_size: int,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    i = jnp.asarray(i, dtype=jnp.int32)
+    b = jnp.int32(chunk_size)
+    start = i * b
+    remaining = jnp.maximum(0, jnp.int32(n_views) - start)
+    valid = jnp.minimum(b, remaining)
+    shift = b - valid
+    start_shifted = jnp.maximum(0, start - shift)
+    idx = jnp.arange(chunk_size, dtype=jnp.int32)
+    valid_mask = idx >= (b - valid)
+    return start_shifted, valid_mask, start_shifted + idx
 
 
 @dataclass
@@ -145,27 +171,20 @@ def grad_data_term(
         n = int(T_all.shape[0])
         nv = int(projections.shape[1])
         nu = int(projections.shape[2])
-        b = (
-            int(views_per_batch)
-            if (views_per_batch is not None and int(views_per_batch) > 0)
-            else n
-        )
-        b = min(b, n)
+        b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
         def body(carry, i):
             loss_acc, grad_acc = carry
-            i = jnp.int32(i)
-            start = i * jnp.int32(b)
-            remaining = jnp.maximum(0, jnp.int32(n) - start)
-            valid = jnp.minimum(jnp.int32(b), remaining)
-            shift = jnp.int32(b) - valid
-            start_shifted = jnp.maximum(0, start - shift)
+            start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
+                i,
+                n_views=n,
+                chunk_size=b,
+            )
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = vm_project(T_chunk, masked_vol)
-            idx = jnp.arange(b)
-            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
+            mask = valid_mask[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
             grad_batch = sum_backproject_views_T(
@@ -283,26 +302,19 @@ def data_term_value(
             in_axes=(0, None),
         )
         n = int(T_all.shape[0])
-        b = (
-            int(views_per_batch)
-            if (views_per_batch is not None and int(views_per_batch) > 0)
-            else n
-        )
-        b = min(b, n)
+        b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
         def body(loss_acc, i):
-            i = jnp.int32(i)
-            start = i * jnp.int32(b)
-            remaining = jnp.maximum(0, jnp.int32(n) - start)
-            valid = jnp.minimum(jnp.int32(b), remaining)
-            shift = jnp.int32(b) - valid
-            start_shifted = jnp.maximum(0, start - shift)
+            start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
+                i,
+                n_views=n,
+                chunk_size=b,
+            )
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = vm_project(T_chunk, masked_vol)
-            idx = jnp.arange(b)
-            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
+            mask = valid_mask[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
             return (loss_acc + loss_batch, None)
