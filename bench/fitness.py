@@ -1632,6 +1632,319 @@ def _alignment_baseline_volume(
     return np.asarray(mods.jax.device_get(baseline), dtype=np.float32)
 
 
+@dataclass(frozen=True)
+class AlignmentQualitySection:
+    metrics: dict[str, Any]
+    final_volume: np.ndarray
+    final_info: dict[str, Any]
+
+
+def _alignment_timing_section(
+    *,
+    profile: dict[str, Any],
+    align_cfg: AlignProfileConfig,
+    warmup: RunResult | None,
+    warmup_convergence: ConvergenceRunSummary | None,
+    warmup_incomplete: bool,
+    primer: RunResult | None,
+    primer_convergence: ConvergenceRunSummary | None,
+    first: RunResult,
+    warms: list[RunResult],
+    representative_run_index: int,
+) -> dict[str, Any]:
+    warm_seconds = [run.seconds for run in warms]
+    return {
+        "profile": profile["name"],
+        "task": "align",
+        "loss_kind": align_cfg.loss_kind,
+        "success": True,
+        "warmup_seconds": (warmup.seconds if warmup is not None else None),
+        "warmup_incomplete": warmup_incomplete,
+        "primer_ran": primer is not None,
+        "primer_seconds": (primer.seconds if primer is not None else None),
+        "primer_reached_finest_level": (
+            primer_convergence.reached_finest_level if primer_convergence is not None else None
+        ),
+        "first_run_seconds": first.seconds,
+        "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
+        "warm_run_seconds_std": float(
+            statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
+        ),
+        "time_budget_seconds": align_cfg.time_budget_seconds,
+        "summary_image_path": None,
+        "summary_image_error": None,
+        "representative_run_index": representative_run_index,
+        "warmup_reached_finest_level": (
+            warmup_convergence.reached_finest_level if warmup_convergence is not None else None
+        ),
+        "warmup_stop_reason": (
+            warmup_convergence.final_stop_reason if warmup_convergence is not None else None
+        ),
+    }
+
+
+def _alignment_quality_section(
+    *,
+    bundle: FixtureBundle,
+    grid: Any,
+    detector: Any,
+    geometry: Any,
+    projections: Any,
+    warms: list[RunResult],
+    representative_run: RunResult,
+    align_cfg: AlignProfileConfig,
+    mods: ImportedModules,
+) -> AlignmentQualitySection:
+    jnp = mods.jnp
+    warm_params = np.asarray(
+        mods.jax.device_get(representative_run.output["params"]), dtype=np.float32
+    )
+    final_volume = np.asarray(
+        mods.jax.device_get(representative_run.output["volume"]), dtype=np.float32
+    )
+    final_info = representative_run.output.get("info") or {}
+    gt_params = np.asarray(bundle.align_params, dtype=np.float32)
+    warm_gt_mse_values: list[float] = []
+    warm_trans_rmse_values: list[float | None] = []
+    gt_volume = jnp.asarray(bundle.volume, dtype=jnp.float32)
+
+    for run in warms:
+        run_params = np.asarray(mods.jax.device_get(run.output["params"]), dtype=np.float32)
+        run_abs_metrics = mods.loss_metrics_abs(
+            gt_params,
+            run_params,
+            du=float(detector.du),
+            dv=float(detector.dv),
+        )
+        run_y_hat = mods.gt_projection_helper(
+            gt_volume,
+            grid,
+            detector,
+            geometry,
+            run_params,
+        )
+        warm_gt_mse_values.append(float(jnp.mean((run_y_hat - projections) ** 2).item()))
+        warm_trans_rmse_values.append(_float_or_none(run_abs_metrics.get("trans_rmse_px")))
+
+    abs_metrics = mods.loss_metrics_abs(
+        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
+    )
+    rel_metrics = mods.loss_metrics_relative(
+        gt_params,
+        warm_params,
+        du=float(detector.du),
+        dv=float(detector.dv),
+        k_step=align_cfg.k_step,
+    )
+    gf_metrics = mods.loss_metrics_gf(
+        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
+    )
+    y_hat = mods.gt_projection_helper(
+        gt_volume,
+        grid,
+        detector,
+        geometry,
+        warm_params,
+    )
+    gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
+
+    return AlignmentQualitySection(
+        final_volume=final_volume,
+        final_info=final_info,
+        metrics={
+            "quality": {
+                **abs_metrics,
+                **rel_metrics,
+                **gf_metrics,
+                "gt_mse": gt_mse,
+            },
+            "warm_gt_mse_mean": _mean_or_none(warm_gt_mse_values),
+            "warm_gt_mse_median": _median_or_none(warm_gt_mse_values),
+            "warm_gt_mse_std": (
+                float(statistics.pstdev(warm_gt_mse_values)) if len(warm_gt_mse_values) > 1 else 0.0
+            ),
+            "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
+            "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
+        },
+    )
+
+
+def _alignment_convergence_section(
+    *,
+    first_convergence: ConvergenceRunSummary | None,
+    warm_convergences: list[ConvergenceRunSummary],
+    convergence: ConvergenceConfig,
+) -> tuple[dict[str, Any], bool | None]:
+    if first_convergence is None and not warm_convergences:
+        return {}, None
+
+    warm_aggregate = _aggregate_warm_convergence_runs(
+        warm_convergences,
+        required_successes=convergence.required_warm_successes,
+    )
+    metrics = {
+        "quality_threshold_metric": convergence.metric,
+        "quality_threshold_value": convergence.threshold,
+        "quality_threshold_scope": convergence.threshold_scope,
+        "quality_threshold_met": (
+            bool(warm_aggregate["quality_threshold_met"])
+            if convergence.threshold is not None
+            else None
+        ),
+        "required_warm_successes": int(convergence.required_warm_successes),
+        "warm_threshold_hit_count": (
+            warm_aggregate["warm_threshold_hit_count"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "warm_threshold_total_runs": (
+            warm_aggregate["warm_threshold_total_runs"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "warm_threshold_success_rate": (
+            warm_aggregate["warm_threshold_success_rate"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
+        "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
+        "stopped_on_budget": warm_aggregate["stopped_on_budget"],
+        "reached_finest_level": warm_aggregate["reached_finest_level"],
+        "finest_level_first_elapsed_seconds": warm_aggregate["finest_level_first_elapsed_seconds"],
+        "finest_level_first_outer_idx": warm_aggregate["finest_level_first_outer_idx"],
+        "warm_reached_finest_level_count": warm_aggregate["warm_reached_finest_level_count"],
+        "benchmark_valid": warm_aggregate["benchmark_valid"],
+        "invalid_reason": warm_aggregate["invalid_reason"],
+        "warm_level_summaries": warm_aggregate["warm_level_summaries"],
+        "warm_stopped_on_threshold_count": warm_aggregate["warm_stopped_on_threshold_count"],
+        "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
+        "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
+        "final_stop_reason": warm_aggregate["final_stop_reason"],
+        "final_stop_level_factor": warm_aggregate["final_stop_level_factor"],
+        "first_threshold_crossing_level_factor": (
+            warm_aggregate["first_threshold_crossing_level_factor"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "cold_seconds_to_quality_threshold": (
+            first_convergence.seconds_to_threshold
+            if first_convergence is not None and convergence.threshold is not None
+            else None
+        ),
+        "warm_seconds_to_quality_threshold": (
+            warm_aggregate["warm_seconds_to_quality_threshold"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "cold_outer_iters_to_quality_threshold": (
+            first_convergence.outer_iters_to_threshold
+            if first_convergence is not None and convergence.threshold is not None
+            else None
+        ),
+        "warm_outer_iters_to_quality_threshold": (
+            warm_aggregate["warm_outer_iters_to_quality_threshold"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "cold_best_quality_value": (
+            first_convergence.best_quality_value if first_convergence is not None else None
+        ),
+        "warm_best_quality_value": warm_aggregate["warm_best_quality_value"],
+        "best_quality_value": (
+            warm_aggregate["best_quality_value"]
+            if warm_aggregate["best_quality_value"] is not None
+            else (first_convergence.best_quality_value if first_convergence is not None else None)
+        ),
+        "best_quality_elapsed_seconds": (
+            warm_aggregate["best_quality_elapsed_seconds"]
+            if warm_aggregate["best_quality_elapsed_seconds"] is not None
+            else (
+                first_convergence.best_quality_elapsed_seconds
+                if first_convergence is not None
+                else None
+            )
+        ),
+        "cold_total_outer_iters_executed": (
+            first_convergence.total_outer_iters_executed if first_convergence is not None else None
+        ),
+        "warm_total_outer_iters_executed": warm_aggregate["warm_total_outer_iters_executed"],
+        "total_outer_iters_executed": (
+            warm_aggregate["total_outer_iters_executed"]
+            if warm_aggregate["total_outer_iters_executed"] is not None
+            else (
+                first_convergence.total_outer_iters_executed
+                if first_convergence is not None
+                else None
+            )
+        ),
+        "cold_convergence_trace": first_convergence.trace if first_convergence is not None else [],
+        "warm_convergence_trace": warm_aggregate["warm_convergence_trace"],
+        "warm_convergence_traces": warm_aggregate["warm_convergence_traces"],
+    }
+    return metrics, bool(warm_aggregate["benchmark_valid"])
+
+
+def _alignment_objective_policy_section(
+    metrics: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+    first_convergence: ConvergenceRunSummary | None,
+) -> dict[str, Any]:
+    objective_policy_metrics = _apply_time_memguard_objective(metrics, profile)
+    if objective_policy_metrics and first_convergence is not None:
+        quality_contract = _profile_block(profile, "quality_contract")
+        cold_contract = _quality_contract_crossing(
+            list(first_convergence.trace or []),
+            finest_only=bool(quality_contract.get("finest_only", True)),
+            gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
+            trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
+        )
+        objective_policy_metrics["cold_seconds_to_quality_contract"] = cold_contract.get(
+            "elapsed_seconds"
+        )
+        objective_policy_metrics["cold_outer_iters_to_quality_contract"] = cold_contract.get(
+            "outer_idx"
+        )
+    return objective_policy_metrics
+
+
+def _add_alignment_summary_artifact(
+    metrics: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+    out_path: Path,
+    bundle: FixtureBundle,
+    align_cfg: AlignProfileConfig,
+    final_volume: np.ndarray,
+    final_info: dict[str, Any],
+    mods: ImportedModules,
+) -> None:
+    if not _should_render_alignment_summary(profile):
+        return
+    summary_path = _alignment_summary_path(out_path)
+    try:
+        baseline_volume = _alignment_baseline_volume(bundle, align_cfg, mods)
+        save_alignment_summary(
+            out_path=summary_path,
+            profile_name=str(profile["name"]),
+            gt_volume=np.asarray(bundle.volume, dtype=np.float32),
+            baseline_volume=baseline_volume,
+            final_volume=final_volume,
+            loss_history=[float(v) for v in list(final_info.get("loss") or [])],
+            convergence_trace=metrics.get("warm_convergence_trace"),
+            convergence_metric_name=metrics.get("quality_threshold_metric"),
+            quality_threshold_value=metrics.get("quality_threshold_value"),
+            metrics=metrics,
+            quality=dict(metrics["quality"]),
+            fixture=bundle.shape_summary,
+            representative_run_index=metrics.get("representative_run_index"),
+        )
+        metrics["summary_image_path"] = str(summary_path)
+    except Exception as exc:
+        metrics["summary_image_error"] = str(exc)
+
+
 def _make_align_task(
     *,
     bundle: FixtureBundle,
@@ -2126,60 +2439,10 @@ def _run_align_profile(
     first = warms[0]
     representative_run_index = len(warms) - 1
     representative_run = warms[representative_run_index]
-    warm_seconds = [run.seconds for run in warms]
-    warm_params = np.asarray(
-        mods.jax.device_get(representative_run.output["params"]), dtype=np.float32
-    )
-    final_volume = np.asarray(
-        mods.jax.device_get(representative_run.output["volume"]), dtype=np.float32
-    )
-    final_info = representative_run.output.get("info") or {}
     first_convergence = first.output.get("convergence")
     warm_convergences = [
         run.output.get("convergence") for run in warms if run.output.get("convergence") is not None
     ]
-    gt_params = np.asarray(bundle.align_params, dtype=np.float32)
-    warm_gt_mse_values: list[float] = []
-    warm_trans_rmse_values: list[float | None] = []
-    gt_volume = jnp.asarray(bundle.volume, dtype=jnp.float32)
-    for run in warms:
-        run_params = np.asarray(mods.jax.device_get(run.output["params"]), dtype=np.float32)
-        run_abs_metrics = mods.loss_metrics_abs(
-            gt_params,
-            run_params,
-            du=float(detector.du),
-            dv=float(detector.dv),
-        )
-        run_y_hat = mods.gt_projection_helper(
-            gt_volume,
-            grid,
-            detector,
-            geometry,
-            run_params,
-        )
-        warm_gt_mse_values.append(float(jnp.mean((run_y_hat - projections) ** 2).item()))
-        warm_trans_rmse_values.append(_float_or_none(run_abs_metrics.get("trans_rmse_px")))
-    abs_metrics = mods.loss_metrics_abs(
-        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
-    )
-    rel_metrics = mods.loss_metrics_relative(
-        gt_params,
-        warm_params,
-        du=float(detector.du),
-        dv=float(detector.dv),
-        k_step=align_cfg.k_step,
-    )
-    gf_metrics = mods.loss_metrics_gf(
-        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
-    )
-    y_hat = mods.gt_projection_helper(
-        gt_volume,
-        grid,
-        detector,
-        geometry,
-        warm_params,
-    )
-    gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
 
     jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
         mods, measurement_cfg, out_path
@@ -2194,212 +2457,60 @@ def _run_align_profile(
         include_cold_in_peak=True,
     )
 
-    metrics = {
-        "profile": profile["name"],
-        "task": "align",
-        "loss_kind": align_cfg.loss_kind,
-        "success": True,
-        "warmup_seconds": (warmup.seconds if warmup is not None else None),
-        "warmup_incomplete": warmup_incomplete,
-        "primer_ran": primer is not None,
-        "primer_seconds": (primer.seconds if primer is not None else None),
-        "primer_reached_finest_level": (
-            primer_convergence.reached_finest_level if primer_convergence is not None else None
-        ),
-        "first_run_seconds": first.seconds,
-        "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
-        "warm_run_seconds_std": float(
-            statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
-        ),
-        **memory_metrics,
-        "quality": {
-            **abs_metrics,
-            **rel_metrics,
-            **gf_metrics,
-            "gt_mse": gt_mse,
-        },
-        "time_budget_seconds": time_budget_seconds,
-        "quality_threshold_scope": convergence.threshold_scope,
-        "warm_gt_mse_mean": _mean_or_none(warm_gt_mse_values),
-        "warm_gt_mse_median": _median_or_none(warm_gt_mse_values),
-        "warm_gt_mse_std": (
-            float(statistics.pstdev(warm_gt_mse_values)) if len(warm_gt_mse_values) > 1 else 0.0
-        ),
-        "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
-        "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
-        "summary_image_path": None,
-        "summary_image_error": None,
-        "representative_run_index": representative_run_index,
-        "warmup_reached_finest_level": (
-            warmup_convergence.reached_finest_level if warmup_convergence is not None else None
-        ),
-        "warmup_stop_reason": (
-            warmup_convergence.final_stop_reason if warmup_convergence is not None else None
-        ),
-    }
-    if first_convergence is not None or warm_convergences:
-        warm_aggregate = _aggregate_warm_convergence_runs(
-            warm_convergences,
-            required_successes=convergence.required_warm_successes,
+    quality_section = _alignment_quality_section(
+        bundle=bundle,
+        grid=grid,
+        detector=detector,
+        geometry=geometry,
+        projections=projections,
+        warms=warms,
+        representative_run=representative_run,
+        align_cfg=align_cfg,
+        mods=mods,
+    )
+
+    metrics = _alignment_timing_section(
+        profile=profile,
+        align_cfg=align_cfg,
+        warmup=warmup,
+        warmup_convergence=warmup_convergence,
+        warmup_incomplete=warmup_incomplete,
+        primer=primer,
+        primer_convergence=primer_convergence,
+        first=first,
+        warms=warms,
+        representative_run_index=representative_run_index,
+    )
+    metrics.update(memory_metrics)
+    metrics.update(quality_section.metrics)
+    metrics["quality_threshold_scope"] = convergence.threshold_scope
+
+    convergence_metrics, convergence_success = _alignment_convergence_section(
+        first_convergence=first_convergence,
+        warm_convergences=warm_convergences,
+        convergence=convergence,
+    )
+    metrics.update(convergence_metrics)
+    if convergence_success is not None:
+        metrics["success"] = convergence_success
+
+    metrics.update(
+        _alignment_objective_policy_section(
+            metrics,
+            profile=profile,
+            first_convergence=first_convergence,
         )
-        metrics.update(
-            {
-                "quality_threshold_metric": convergence.metric,
-                "quality_threshold_value": convergence.threshold,
-                "quality_threshold_scope": convergence.threshold_scope,
-                "quality_threshold_met": (
-                    bool(warm_aggregate["quality_threshold_met"])
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "required_warm_successes": int(convergence.required_warm_successes),
-                "warm_threshold_hit_count": (
-                    warm_aggregate["warm_threshold_hit_count"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "warm_threshold_total_runs": (
-                    warm_aggregate["warm_threshold_total_runs"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "warm_threshold_success_rate": (
-                    warm_aggregate["warm_threshold_success_rate"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
-                "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
-                "stopped_on_budget": warm_aggregate["stopped_on_budget"],
-                "reached_finest_level": warm_aggregate["reached_finest_level"],
-                "finest_level_first_elapsed_seconds": warm_aggregate[
-                    "finest_level_first_elapsed_seconds"
-                ],
-                "finest_level_first_outer_idx": warm_aggregate["finest_level_first_outer_idx"],
-                "warm_reached_finest_level_count": warm_aggregate[
-                    "warm_reached_finest_level_count"
-                ],
-                "benchmark_valid": warm_aggregate["benchmark_valid"],
-                "invalid_reason": warm_aggregate["invalid_reason"],
-                "warm_level_summaries": warm_aggregate["warm_level_summaries"],
-                "warm_stopped_on_threshold_count": warm_aggregate[
-                    "warm_stopped_on_threshold_count"
-                ],
-                "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
-                "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
-                "final_stop_reason": warm_aggregate["final_stop_reason"],
-                "final_stop_level_factor": warm_aggregate["final_stop_level_factor"],
-                "first_threshold_crossing_level_factor": (
-                    warm_aggregate["first_threshold_crossing_level_factor"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "cold_seconds_to_quality_threshold": (
-                    first_convergence.seconds_to_threshold
-                    if first_convergence is not None and convergence.threshold is not None
-                    else None
-                ),
-                "warm_seconds_to_quality_threshold": (
-                    warm_aggregate["warm_seconds_to_quality_threshold"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "cold_outer_iters_to_quality_threshold": (
-                    first_convergence.outer_iters_to_threshold
-                    if first_convergence is not None and convergence.threshold is not None
-                    else None
-                ),
-                "warm_outer_iters_to_quality_threshold": (
-                    warm_aggregate["warm_outer_iters_to_quality_threshold"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "cold_best_quality_value": (
-                    first_convergence.best_quality_value if first_convergence is not None else None
-                ),
-                "warm_best_quality_value": warm_aggregate["warm_best_quality_value"],
-                "best_quality_value": (
-                    warm_aggregate["best_quality_value"]
-                    if warm_aggregate["best_quality_value"] is not None
-                    else (
-                        first_convergence.best_quality_value
-                        if first_convergence is not None
-                        else None
-                    )
-                ),
-                "best_quality_elapsed_seconds": (
-                    warm_aggregate["best_quality_elapsed_seconds"]
-                    if warm_aggregate["best_quality_elapsed_seconds"] is not None
-                    else (
-                        first_convergence.best_quality_elapsed_seconds
-                        if first_convergence is not None
-                        else None
-                    )
-                ),
-                "cold_total_outer_iters_executed": (
-                    first_convergence.total_outer_iters_executed
-                    if first_convergence is not None
-                    else None
-                ),
-                "warm_total_outer_iters_executed": warm_aggregate[
-                    "warm_total_outer_iters_executed"
-                ],
-                "total_outer_iters_executed": (
-                    warm_aggregate["total_outer_iters_executed"]
-                    if warm_aggregate["total_outer_iters_executed"] is not None
-                    else (
-                        first_convergence.total_outer_iters_executed
-                        if first_convergence is not None
-                        else None
-                    )
-                ),
-                "cold_convergence_trace": (
-                    first_convergence.trace if first_convergence is not None else []
-                ),
-                "warm_convergence_trace": warm_aggregate["warm_convergence_trace"],
-                "warm_convergence_traces": warm_aggregate["warm_convergence_traces"],
-            }
-        )
-        metrics["success"] = bool(warm_aggregate["benchmark_valid"])
-    objective_policy_metrics = _apply_time_memguard_objective(metrics, profile)
-    if objective_policy_metrics:
-        if first_convergence is not None:
-            quality_contract = _profile_block(profile, "quality_contract")
-            cold_contract = _quality_contract_crossing(
-                list(first_convergence.trace or []),
-                finest_only=bool(quality_contract.get("finest_only", True)),
-                gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
-                trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
-            )
-            objective_policy_metrics["cold_seconds_to_quality_contract"] = cold_contract.get(
-                "elapsed_seconds"
-            )
-            objective_policy_metrics["cold_outer_iters_to_quality_contract"] = cold_contract.get(
-                "outer_idx"
-            )
-        metrics.update(objective_policy_metrics)
-    if _should_render_alignment_summary(profile):
-        summary_path = _alignment_summary_path(out_path)
-        try:
-            baseline_volume = _alignment_baseline_volume(bundle, align_cfg, mods)
-            save_alignment_summary(
-                out_path=summary_path,
-                profile_name=str(profile["name"]),
-                gt_volume=np.asarray(bundle.volume, dtype=np.float32),
-                baseline_volume=baseline_volume,
-                final_volume=final_volume,
-                loss_history=[float(v) for v in list(final_info.get("loss") or [])],
-                convergence_trace=metrics.get("warm_convergence_trace"),
-                convergence_metric_name=metrics.get("quality_threshold_metric"),
-                quality_threshold_value=metrics.get("quality_threshold_value"),
-                metrics=metrics,
-                quality=dict(metrics["quality"]),
-                fixture=bundle.shape_summary,
-                representative_run_index=metrics.get("representative_run_index"),
-            )
-            metrics["summary_image_path"] = str(summary_path)
-        except Exception as exc:
-            metrics["summary_image_error"] = str(exc)
+    )
+    _add_alignment_summary_artifact(
+        metrics,
+        profile=profile,
+        out_path=out_path,
+        bundle=bundle,
+        align_cfg=align_cfg,
+        final_volume=quality_section.final_volume,
+        final_info=quality_section.final_info,
+        mods=mods,
+    )
     return metrics
 
 
