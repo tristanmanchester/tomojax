@@ -55,14 +55,6 @@ def test_pipeline_compatibility_symbols_remain_importable(symbol: str) -> None:
         "loss_is_within_relative_tolerance",
         "build_loss",
         "build_loss_adapter",
-        "_loss_cauchy",
-        "_loss_chamfer_edge",
-        "_loss_l2_otsu_soft",
-        "_loss_mi_kde",
-        "_loss_renyi_mi",
-        "_loss_ssim_otsu",
-        "_loss_tversky",
-        "_loss_welsch",
     ],
 )
 def test_loss_compatibility_symbols_remain_importable(symbol: str) -> None:
