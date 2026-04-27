@@ -67,9 +67,141 @@ class MultiresLevel(TypedDict):
     projections: jnp.ndarray
 
 
+def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
+    try:
+        return int(stat["schedule_stage_index"])
+    except Exception:
+        return None
 
 
+def _build_multires_checkpoint_state(
+    *,
+    x: jnp.ndarray,
+    params5: jnp.ndarray,
+    motion_coeffs: object,
+    level_index: int,
+    level_factor: int,
+    completed_outer_iters_in_level: int,
+    global_outer_iters_completed: int,
+    prev_factor: int | None,
+    loss: list[float],
+    outer_stats: list[OuterStat],
+    L: object,
+    small_impr_streak: int,
+    elapsed_offset: float,
+    level_complete: bool,
+    run_complete: bool,
+    setup_alignment_state: object,
+    active_geometry_dofs: tuple[str, ...],
+    stage: ResolvedAlignmentStage,
+    stage_completed: bool,
+    completed_outer_iters_in_stage: int,
+) -> AlignMultiresResumeState:
+    return AlignMultiresResumeState(
+        x=x,
+        params5=params5,
+        motion_coeffs=motion_coeffs,
+        level_index=int(level_index),
+        level_factor=int(level_factor),
+        completed_outer_iters_in_level=int(completed_outer_iters_in_level),
+        global_outer_iters_completed=int(global_outer_iters_completed),
+        prev_factor=prev_factor,
+        loss=list(loss),
+        outer_stats=[dict(stat) for stat in outer_stats],
+        L=L,
+        small_impr_streak=int(small_impr_streak),
+        elapsed_offset=float(elapsed_offset),
+        level_complete=bool(level_complete),
+        run_complete=bool(run_complete),
+        geometry_calibration_state=_geometry_calibration_payload(
+            setup_alignment_state,
+            active_geometry_dofs,
+        ),
+        stage_index=int(stage.index),
+        stage_name=stage.name,
+        stage_completed=bool(stage_completed),
+        completed_outer_iters_in_stage=int(completed_outer_iters_in_stage),
+    )
 
+
+def _final_align_multires_info(
+    *,
+    loss_hist: list[float],
+    factors_list: list[int],
+    final_loss_kind: str | None,
+    cfg: AlignConfig,
+    stopped_by_observer: bool,
+    final_observer_action: ObserverAction,
+    executed_outer_iters: int,
+    global_elapsed_offset: float,
+    global_outer_stats: list[OuterStat],
+    resolved_schedule: object,
+    geometry: Geometry,
+    final_pose_model_variables: int | None,
+    final_per_view_variables: int | None,
+    final_pose_model_basis_shape: list[int] | None,
+    active_geometry_dofs: tuple[str, ...],
+    final_gauge_fix: str,
+    final_gauge_fix_dofs: list[str],
+    final_gauge_fix_stats: dict[str, float | str | list[str]] | None,
+    setup_alignment_state: object,
+) -> AlignMultiresInfo:
+    geometry_calibration_diagnostics = add_geometry_acquisition_diagnostics(
+        summarize_geometry_calibration_stats(global_outer_stats),
+        geometry,
+        active_geometry_dofs,
+    )
+    objective_kinds = [
+        str(stat.get("objective_kind") or stat.get("geometry_objective"))
+        for stat in global_outer_stats
+        if isinstance(stat, Mapping)
+        and (stat.get("objective_kind") is not None or stat.get("geometry_objective") is not None)
+    ]
+    objective_provenance = next(
+        (
+            dict(stat["objective_provenance"])
+            for stat in reversed(global_outer_stats)
+            if isinstance(stat, Mapping) and isinstance(stat.get("objective_provenance"), Mapping)
+        ),
+        None,
+    )
+
+    return {
+        "loss": loss_hist,
+        "factors": factors_list,
+        "loss_kind": final_loss_kind,
+        "recon_algo": str(cfg.recon_algo),
+        "stopped_by_observer": stopped_by_observer,
+        "observer_action": final_observer_action,
+        "total_outer_iters": int(executed_outer_iters),
+        "wall_time_total": float(global_elapsed_offset),
+        "outer_stats": global_outer_stats,
+        "schedule": resolved_schedule.to_dict(),
+        "schedule_name": resolved_schedule.name,
+        "schedule_stages": [stage.to_dict() for stage in resolved_schedule.stages],
+        "gauge_policy": cfg.gauge_policy,
+        "gauge_decision": resolved_schedule.gauge_decision.to_dict(),
+        "objective_kind": objective_kinds[-1] if objective_kinds else None,
+        "objective_kinds": objective_kinds,
+        "objective_provenance": objective_provenance,
+        "pose_model": str(cfg.pose_model),
+        "pose_model_variables": final_pose_model_variables,
+        "per_view_variables": final_per_view_variables,
+        "pose_model_basis_shape": final_pose_model_basis_shape,
+        "active_dofs": list(resolved_schedule.active_dofs),
+        "active_pose_dofs": list(resolved_schedule.active_pose_dofs),
+        "active_geometry_dofs": list(active_geometry_dofs),
+        "gauge_fix": final_gauge_fix,
+        "gauge_fix_dofs": final_gauge_fix_dofs,
+        "gauge_fix_final": final_gauge_fix_stats,
+        "geometry_dofs": list(active_geometry_dofs),
+        "geometry_calibration_state": (
+            _geometry_calibration_payload(setup_alignment_state, active_geometry_dofs)
+            if active_geometry_dofs
+            else None
+        ),
+        "geometry_calibration_diagnostics": geometry_calibration_diagnostics,
+    }
 
 
 def align_multires(
@@ -295,18 +427,12 @@ def align_multires(
             int(resume_state.completed_outer_iters_in_stage) if resuming_this_level else 0
         )
 
-        def _stat_stage_index(stat: Mapping[str, object]) -> int | None:
-            try:
-                return int(stat["schedule_stage_index"])
-            except Exception:
-                return None
-
         if resuming_this_level:
             preserved_level_stats = [
                 dict(stat)
                 for stat in current_level_stats
                 if (
-                    (stage_idx := _stat_stage_index(stat)) is not None
+                    (stage_idx := _stage_index_or_none(stat)) is not None
                     and (
                         stage_idx < resume_stage_index
                         or (stage_idx == resume_stage_index and resume_stage_completed)
@@ -316,12 +442,10 @@ def align_multires(
             resume_stage_stats = [
                 dict(stat)
                 for stat in current_level_stats
-                if _stat_stage_index(stat) == resume_stage_index and not resume_stage_completed
+                if _stage_index_or_none(stat) == resume_stage_index and not resume_stage_completed
             ]
             level_history = (
-                list(loss_hist[-level_completed_before:])
-                if level_completed_before > 0
-                else []
+                list(loss_hist[-level_completed_before:]) if level_completed_before > 0 else []
             )
             preserved_loss_count = min(len(preserved_level_stats), len(level_history))
             preserved_level_losses = level_history[:preserved_loss_count]
@@ -338,11 +462,7 @@ def align_multires(
         level_wall_time = 0.0
         level_action: ObserverAction = "continue"
         x_lvl = x0 if x0 is not None else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
-        params5 = (
-            params0
-            if params0 is not None
-            else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
-        )
+        params5 = params0 if params0 is not None else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
         info: dict[str, object] = {
             "loss": [],
             "loss_kind": active_loss_name,
@@ -403,16 +523,14 @@ def align_multires(
                 global_start=global_start,
             )
             checkpoint_callback(
-                AlignMultiresResumeState(
+                _build_multires_checkpoint_state(
                     x=state.x,
                     params5=state.params5,
                     motion_coeffs=state.motion_coeffs,
                     level_index=int(li),
                     level_factor=int(lvl["factor"]),
-                    completed_outer_iters_in_level=int(
-                        len(level_stats) + state.start_outer_iter
-                    ),
-                    global_outer_iters_completed=int(
+                    completed_outer_iters_in_level=len(level_stats) + state.start_outer_iter,
+                    global_outer_iters_completed=(
                         global_before_level + len(level_stats) + state.start_outer_iter
                     ),
                     prev_factor=prev_factor,
@@ -421,15 +539,12 @@ def align_multires(
                     L=state.L,
                     small_impr_streak=int(state.small_impr_streak),
                     elapsed_offset=float(global_elapsed_offset + state.elapsed_offset),
-                    level_complete=bool(level_complete),
+                    level_complete=level_complete,
                     run_complete=False,
-                    geometry_calibration_state=_geometry_calibration_payload(
-                        setup_alignment_state,
-                        active_geometry_dofs,
-                    ),
-                    stage_index=int(stage.index),
-                    stage_name=stage.name,
-                    stage_completed=bool(
+                    setup_alignment_state=setup_alignment_state,
+                    active_geometry_dofs=active_geometry_dofs,
+                    stage=stage,
+                    stage_completed=(
                         level_complete or int(state.start_outer_iter) >= int(stage.maxiter)
                     ),
                     completed_outer_iters_in_stage=int(state.start_outer_iter),
@@ -518,9 +633,7 @@ def align_multires(
                     else cfg.opt_method
                 )
                 pose_gauge_fix = (
-                    "mean_translation"
-                    if stage.gauge_policy == "anchor_mean"
-                    else cfg.gauge_fix
+                    "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
                 )
                 cfg_stage = replace(
                     cfg,
@@ -566,9 +679,7 @@ def align_multires(
                         outer_stats=[dict(stat) for stat in resume_stage_stats],
                         L=resume_state.L,
                         small_impr_streak=int(resume_state.small_impr_streak),
-                        elapsed_offset=float(
-                            resume_state.elapsed_offset - global_elapsed_offset
-                        ),
+                        elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
                     )
                     stage_resume_consumed = True
                 x_lvl, params5, info = align(
@@ -580,14 +691,24 @@ def align_multires(
                     init_x=x_lvl,
                     init_params5=params5,
                     observer=(
-                        (lambda x_obs, params_obs, stat_obs, _stage=stage, _start=stage_global_start: _stage_observer(_stage, _start, x_obs, params_obs, stat_obs))
+                        (
+                            lambda x_obs,
+                            params_obs,
+                            stat_obs,
+                            _stage=stage,
+                            _start=stage_global_start: _stage_observer(
+                                _stage, _start, x_obs, params_obs, stat_obs
+                            )
+                        )
                         if observer_fn is not None
                         else None
                     ),
                     resume_state=align_resume_state,
                     checkpoint_callback=(
                         (
-                            lambda state, _stage=stage, _start=stage_global_start: _emit_multires_checkpoint(
+                            lambda state,
+                            _stage=stage,
+                            _start=stage_global_start: _emit_multires_checkpoint(
                                 state,
                                 level_complete=False,
                                 stage=_stage,
@@ -661,7 +782,7 @@ def align_multires(
                 if stat.get("schedule_stage_index") == int(last_stage.index)
             )
             checkpoint_callback(
-                AlignMultiresResumeState(
+                _build_multires_checkpoint_state(
                     x=x_lvl,
                     params5=params5,
                     motion_coeffs=info.get("motion_coeffs"),
@@ -675,15 +796,12 @@ def align_multires(
                     L=info.get("L"),
                     small_impr_streak=int(info.get("small_impr_streak", 0)),
                     elapsed_offset=float(global_elapsed_offset),
-                    level_complete=bool(level_complete),
+                    level_complete=level_complete,
                     run_complete=False,
-                    geometry_calibration_state=_geometry_calibration_payload(
-                        setup_alignment_state,
-                        active_geometry_dofs,
-                    ),
-                    stage_index=int(last_stage.index),
-                    stage_name=last_stage.name,
-                    stage_completed=bool(level_complete),
+                    setup_alignment_state=setup_alignment_state,
+                    active_geometry_dofs=active_geometry_dofs,
+                    stage=last_stage,
+                    stage_completed=level_complete,
                     completed_outer_iters_in_stage=last_stage_iters,
                 )
             )
@@ -712,8 +830,9 @@ def align_multires(
         )
     )
     if checkpoint_callback is not None and params5 is not None and run_complete:
+        final_stage = resolved_schedule.stages[-1]
         checkpoint_callback(
-            AlignMultiresResumeState(
+            _build_multires_checkpoint_state(
                 x=x_final,
                 params5=params5,
                 motion_coeffs=None,
@@ -729,74 +848,36 @@ def align_multires(
                 elapsed_offset=float(global_elapsed_offset),
                 level_complete=True,
                 run_complete=True,
-                geometry_calibration_state=_geometry_calibration_payload(
-                    setup_alignment_state,
-                    active_geometry_dofs,
-                ),
-                stage_index=int(resolved_schedule.stages[-1].index),
-                stage_name=resolved_schedule.stages[-1].name,
+                setup_alignment_state=setup_alignment_state,
+                active_geometry_dofs=active_geometry_dofs,
+                stage=final_stage,
                 stage_completed=True,
                 completed_outer_iters_in_stage=0,
             )
         )
 
-    geometry_calibration_diagnostics = add_geometry_acquisition_diagnostics(
-        summarize_geometry_calibration_stats(global_outer_stats),
-        geometry,
-        active_geometry_dofs,
-    )
-    objective_kinds = [
-        str(stat.get("objective_kind") or stat.get("geometry_objective"))
-        for stat in global_outer_stats
-        if isinstance(stat, Mapping)
-        and (stat.get("objective_kind") is not None or stat.get("geometry_objective") is not None)
-    ]
-    objective_provenance = next(
-        (
-            dict(stat["objective_provenance"])
-            for stat in reversed(global_outer_stats)
-            if isinstance(stat, Mapping) and isinstance(stat.get("objective_provenance"), Mapping)
-        ),
-        None,
-    )
-
     return (
         x_final,
         params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32),
-        {
-            "loss": loss_hist,
-            "factors": factors_list,
-            "loss_kind": final_loss_kind,
-            "recon_algo": str(cfg.recon_algo),
-            "stopped_by_observer": stopped_by_observer,
-            "observer_action": final_observer_action,
-            "total_outer_iters": int(executed_outer_iters),
-            "wall_time_total": float(global_elapsed_offset),
-            "outer_stats": global_outer_stats,
-            "schedule": resolved_schedule.to_dict(),
-            "schedule_name": resolved_schedule.name,
-            "schedule_stages": [stage.to_dict() for stage in resolved_schedule.stages],
-            "gauge_policy": cfg.gauge_policy,
-            "gauge_decision": resolved_schedule.gauge_decision.to_dict(),
-            "objective_kind": objective_kinds[-1] if objective_kinds else None,
-            "objective_kinds": objective_kinds,
-            "objective_provenance": objective_provenance,
-            "pose_model": str(cfg.pose_model),
-            "pose_model_variables": final_pose_model_variables,
-            "per_view_variables": final_per_view_variables,
-            "pose_model_basis_shape": final_pose_model_basis_shape,
-            "active_dofs": list(resolved_schedule.active_dofs),
-            "active_pose_dofs": list(resolved_schedule.active_pose_dofs),
-            "active_geometry_dofs": list(active_geometry_dofs),
-            "gauge_fix": final_gauge_fix,
-            "gauge_fix_dofs": final_gauge_fix_dofs,
-            "gauge_fix_final": final_gauge_fix_stats,
-            "geometry_dofs": list(active_geometry_dofs),
-            "geometry_calibration_state": (
-                _geometry_calibration_payload(setup_alignment_state, active_geometry_dofs)
-                if active_geometry_dofs
-                else None
-            ),
-            "geometry_calibration_diagnostics": geometry_calibration_diagnostics,
-        },
+        _final_align_multires_info(
+            loss_hist=loss_hist,
+            factors_list=factors_list,
+            final_loss_kind=final_loss_kind,
+            cfg=cfg,
+            stopped_by_observer=stopped_by_observer,
+            final_observer_action=final_observer_action,
+            executed_outer_iters=executed_outer_iters,
+            global_elapsed_offset=global_elapsed_offset,
+            global_outer_stats=global_outer_stats,
+            resolved_schedule=resolved_schedule,
+            geometry=geometry,
+            final_pose_model_variables=final_pose_model_variables,
+            final_per_view_variables=final_per_view_variables,
+            final_pose_model_basis_shape=final_pose_model_basis_shape,
+            active_geometry_dofs=active_geometry_dofs,
+            final_gauge_fix=final_gauge_fix,
+            final_gauge_fix_dofs=final_gauge_fix_dofs,
+            final_gauge_fix_stats=final_gauge_fix_stats,
+            setup_alignment_state=setup_alignment_state,
+        ),
     )
