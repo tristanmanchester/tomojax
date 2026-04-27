@@ -21,6 +21,7 @@ from tomojax.align.geometry_blocks import (
     summarize_geometry_calibration_stats,
 )
 from tomojax.align.pipeline import AlignConfig, align_multires
+from tomojax.align.schedules import schedule_preset
 from tomojax.bench.alignment_scenarios import (
     AlignmentScenario,
     phantom_spec,
@@ -449,6 +450,19 @@ def _run_geometry_alignment(
 ) -> tuple[np.ndarray, GeometryCalibrationState, dict[str, Any]]:
     geometry_dofs = normalize_geometry_dofs(scenario.geometry_dofs, geometry=nominal_geometry)
     active_dofs = tuple(scenario.active_dofs or geometry_dofs)
+    if scenario.schedule == "expert_coupled":
+        schedule: object | None = schedule_preset(
+            "expert_coupled",
+            active_dofs=active_dofs,
+            gauge_policy="prior_required",
+        )
+        optimise_dofs: tuple[str, ...] | None = None
+    elif scenario.schedule:
+        schedule = scenario.schedule
+        optimise_dofs = None
+    else:
+        schedule = None
+        optimise_dofs = active_dofs
     x_aligned, _, info = align_multires(
         nominal_geometry,
         grid,
@@ -460,7 +474,8 @@ def _run_geometry_alignment(
             recon_iters=int(profile.recon_iters),
             lambda_tv=0.0015,
             tv_prox_iters=int(profile.tv_prox_iters),
-            optimise_dofs=active_dofs,
+            schedule=schedule,
+            optimise_dofs=optimise_dofs,
             freeze_dofs=(),
             early_stop=bool(profile.early_stop),
             early_stop_rel_impr=float(profile.early_stop_rel_impr),
@@ -1177,6 +1192,12 @@ def _last_solver_metadata(outer_stats: Any) -> dict[str, Any]:
         "validation_projection_chunked",
         "recon_projection_chunked",
         "train_reconstruction_gradient",
+        "schedule_name",
+        "schedule_stage_index",
+        "schedule_stage_name",
+        "schedule_stage_active_dofs",
+        "gauge_policy",
+        "gauge_status",
     )
     for stat in reversed(list(outer_stats)):
         if not isinstance(stat, Mapping):
@@ -1453,6 +1474,8 @@ def _run_scenario(
     )
     alignment_metadata_path = out_dir / "alignment_metadata.json"
     solver_metadata = _last_solver_metadata(info.get("outer_stats", []))
+    schedule_metadata = info.get("schedule", {})
+    executed_stages = info.get("schedule_stages", [])
     alignment_metadata = {
         "schema_version": 1,
         "scenario": asdict(scenario),
@@ -1471,6 +1494,9 @@ def _run_scenario(
         "active_dofs": info.get("active_dofs", list(scenario.geometry_dofs)),
         "active_pose_dofs": info.get("active_pose_dofs", []),
         "active_geometry_dofs": info.get("active_geometry_dofs", list(scenario.geometry_dofs)),
+        "schedule_metadata": schedule_metadata,
+        "executed_stages": executed_stages,
+        "gauge_decision": info.get("gauge_decision"),
         "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,
@@ -1493,6 +1519,16 @@ def _run_scenario(
         "headline_eligible": bool(scenario.headline_eligible),
         "phantom_key": scenario.phantom_key,
         "schedule": scenario.schedule,
+        "schedule_name": str(info.get("schedule_name", "")),
+        "schedule_stages_json": json.dumps(executed_stages, sort_keys=True),
+        "last_schedule_stage_name": str(
+            (executed_stages[-1].get("stage_name", "") if executed_stages else "")
+        ),
+        "gauge_status": str(
+            (info.get("gauge_decision") or {}).get("status", "")
+            if isinstance(info.get("gauge_decision"), Mapping)
+            else ""
+        ),
         "expected_objective": scenario.expected_objective,
         "expected_optimizer": scenario.expected_optimizer,
         "expected_loss": scenario.expected_loss,
@@ -1553,6 +1589,9 @@ def _run_scenario(
         "active_dofs": info.get("active_dofs", list(scenario.geometry_dofs)),
         "active_pose_dofs": info.get("active_pose_dofs", []),
         "active_geometry_dofs": info.get("active_geometry_dofs", list(scenario.geometry_dofs)),
+        "schedule_metadata": schedule_metadata,
+        "executed_stages": executed_stages,
+        "gauge_decision": info.get("gauge_decision"),
         "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
         "geometry_calibration_diagnostics": diagnostics,

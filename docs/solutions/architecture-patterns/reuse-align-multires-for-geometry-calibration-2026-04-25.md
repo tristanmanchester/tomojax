@@ -95,8 +95,8 @@ workflow instead of adding a standalone calibration product. This produced real
 infrastructure:
 
 - setup geometry state and metadata,
-- active geometry blocks,
-- staged geometry updates inside `align_multires`,
+- active setup-geometry DOFs,
+- executable setup-geometry stages inside `align_multires`,
 - before/after demo artifacts,
 - per-case manifests,
 - acquisition-span metadata,
@@ -375,11 +375,11 @@ jacobian:    [n_folds, n_validation_views, detector_v, detector_u, n_active]
 helpers. Chunking is not an optional speed tweak; it is part of the solver
 contract.
 
-### Keep full reconstruction-differentiated bilevel as reference only
+### Defer reconstruction-differentiated bilevel hypergradients
 
 Unrolled or implicit differentiation through reconstruction may become useful
-for future research-grade objectives, but it should not block or define the
-product setup solver.
+for future research-grade objectives, but it is not part of the production
+setup solver.
 
 Use this split:
 

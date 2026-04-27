@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import jax
 import jax.numpy as jnp
 
 from tomojax.align.dof_specs import ActiveParameterView
+from tomojax.align.folds import FoldSpec
 from tomojax.align.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align.objectives import (
-    BilevelCVProjectionObjective,
     FixedVolumeProjectionObjective,
-    FoldSpec,
-    objective_value_and_grad,
     project_stack,
 )
 from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
@@ -118,133 +115,51 @@ def test_project_stack_honors_views_per_batch_without_changing_values():
     np.testing.assert_allclose(np.asarray(streamed), np.asarray(batched), atol=1e-5, rtol=1e-5)
 
 
-def test_bilevel_cv_objective_uses_validation_loss_without_candidate_enumeration():
+def test_stopped_validation_score_prefers_hidden_offset_without_candidate_enumeration():
     grid, detector, geometry, true_volume, projections = _case(hidden_det_u_px=2.0)
     base = BaseGeometryArrays.from_geometry(geometry, detector)
     folds = FoldSpec(n_folds=4).build(projections.shape[0])
-
-    def true_reconstruction(state, train_idx, train_mask, train_base):
-        del state, train_idx, train_mask, train_base
-        return true_volume
-
-    objective = BilevelCVProjectionObjective.from_loss_spec(
-        base=base,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        loss_spec=L2OtsuLossSpec(),
-        folds=folds,
-        reconstruct_fold=true_reconstruction,
-        checkpoint_projector=False,
-    )
+    adapter = build_loss_adapter(L2OtsuLossSpec(), projections)
     nominal = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
     corrected = nominal.replace(setup=nominal.setup.replace(det_u_px=jnp.asarray(2.0)))
+    view = ActiveParameterView.from_dofs(("det_u_px",))
 
-    nominal_value = objective.evaluate(nominal).value
-    corrected_value = objective.evaluate(corrected).value
+    nominal_value = score_validation_fixed_volume(
+        frozen_state=nominal,
+        active_view=view,
+        z=view.pack(nominal),
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_adapter=adapter,
+        fold_volume=true_volume,
+        val_idx=folds.val_idx[0],
+        val_mask=folds.val_mask[0],
+        views_per_batch=1,
+        projector_unroll=1,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+    )
+    corrected_value = score_validation_fixed_volume(
+        frozen_state=nominal,
+        active_view=view,
+        z=view.pack(corrected),
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        loss_adapter=adapter,
+        fold_volume=true_volume,
+        val_idx=folds.val_idx[0],
+        val_mask=folds.val_mask[0],
+        views_per_batch=1,
+        projector_unroll=1,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+    )
 
     assert float(corrected_value) < float(nominal_value)
-    aux = objective.evaluate(corrected).aux
-    assert aux["objective_kind"] == "bilevel_cv"
-    assert aux["objective_provenance"]["outer_loss_kind"] == "l2_otsu"
-    assert aux["objective_provenance"]["validation_split"] == "interleaved_kfold"
-    assert aux["fold_eval_mode"] == "python_loop"
-    assert aux["views_per_batch"] == 1
-
-
-def test_bilevel_fold_safe_value_and_grad_matches_all_fold_reference():
-    grid, detector, geometry, true_volume, projections = _case(n_views=6, hidden_det_u_px=2.0)
-    base = BaseGeometryArrays.from_geometry(geometry, detector)
-    folds = FoldSpec(n_folds=3).build(projections.shape[0])
-
-    def true_reconstruction(state, train_idx, train_mask, train_base):
-        del state, train_idx, train_mask, train_base
-        return true_volume
-
-    objective = BilevelCVProjectionObjective.from_loss_spec(
-        base=base,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        loss_spec=L2OtsuLossSpec(),
-        folds=folds,
-        reconstruct_fold=true_reconstruction,
-        checkpoint_projector=False,
-        views_per_batch=1,
-    )
-    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
-    view = ActiveParameterView.from_dofs(("det_u_px",))
-    z = view.pack(state)
-
-    seq_value, seq_grad = objective.value_and_grad_for_active_z(
-        frozen_state=state,
-        view=view,
-        z=z,
-    )
-    ref_value, ref_grad = jax.value_and_grad(
-        lambda zz: objective.evaluate(view.unpack(state, zz)).value
-    )(z)
-
-    np.testing.assert_allclose(np.asarray(seq_value), np.asarray(ref_value), atol=1e-5, rtol=1e-5)
-    np.testing.assert_allclose(np.asarray(seq_grad), np.asarray(ref_grad), atol=1e-5, rtol=1e-5)
-
-
-def test_bilevel_finite_difference_value_and_grad_is_finite():
-    grid, detector, geometry, true_volume, projections = _case(n_views=6, hidden_det_u_px=2.0)
-    base = BaseGeometryArrays.from_geometry(geometry, detector)
-    folds = FoldSpec(n_folds=3).build(projections.shape[0])
-
-    def true_reconstruction(state, train_idx, train_mask, train_base):
-        del state, train_idx, train_mask, train_base
-        return true_volume
-
-    objective = BilevelCVProjectionObjective.from_loss_spec(
-        base=base,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        loss_spec=L2OtsuLossSpec(),
-        folds=folds,
-        reconstruct_fold=true_reconstruction,
-        checkpoint_projector=False,
-        views_per_batch=1,
-    )
-    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
-    view = ActiveParameterView.from_dofs(("det_u_px",))
-
-    value, grad = objective.finite_difference_value_and_grad_for_active_z(
-        frozen_state=state,
-        view=view,
-        z=view.pack(state),
-        eps=1e-2,
-    )
-
-    assert jnp.isfinite(value)
-    assert grad.shape == (1,)
-    assert jnp.isfinite(grad[0])
-
-
-def test_objective_value_and_grad_operates_on_active_whitened_vector():
-    grid, detector, geometry, volume, projections = _case(hidden_det_u_px=0.0)
-    base = BaseGeometryArrays.from_geometry(geometry, detector)
-    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
-    objective = FixedVolumeProjectionObjective.from_loss_spec(
-        base=base,
-        grid=grid,
-        detector=detector,
-        projections=projections,
-        volume=volume,
-        loss_spec=L2OtsuLossSpec(),
-        checkpoint_projector=False,
-    )
-    view = ActiveParameterView.from_dofs(("det_u_px",))
-    value_and_grad = objective_value_and_grad(objective, view, state)
-
-    (value, aux), grad = value_and_grad(view.pack(state))
-
-    assert jnp.isfinite(value)
-    assert grad.shape == (1,)
-    assert aux["objective_kind"] == "fixed_volume"
 
 
 def test_validation_normals_match_fixed_volume_finite_difference():

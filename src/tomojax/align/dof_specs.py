@@ -6,7 +6,13 @@ from typing import Iterable, Literal, Sequence
 
 import jax.numpy as jnp
 
-from .dofs import ALL_ALIGNMENT_DOF_NAMES, DOF_INDEX, DOF_NAMES, normalize_alignment_dofs
+from .dofs import (
+    ALL_ALIGNMENT_DOF_NAMES,
+    DOF_INDEX,
+    DOF_NAMES,
+    DofBounds,
+    normalize_alignment_dofs,
+)
 from .state import AlignmentState
 
 
@@ -233,13 +239,19 @@ class ActiveParameterView:
         pose = state.pose.replace(params5=params5)
         return state.replace(setup=setup, pose=pose)
 
-    def bounds_whitened(self, state: AlignmentState) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def bounds_whitened(
+        self,
+        state: AlignmentState,
+        bounds: DofBounds | None = None,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        overrides = {} if bounds is None else {name: (lo, hi) for name, lo, hi in bounds}
         lower_parts: list[jnp.ndarray] = []
         upper_parts: list[jnp.ndarray] = []
         for spec in self.specs:
             size = _value_size_for_spec(state, spec)
-            lower = jnp.full((size,), spec.lower, dtype=jnp.float32)
-            upper = jnp.full((size,), spec.upper, dtype=jnp.float32)
+            lower_value, upper_value = overrides.get(spec.name, (spec.lower, spec.upper))
+            lower = jnp.full((size,), lower_value, dtype=jnp.float32)
+            upper = jnp.full((size,), upper_value, dtype=jnp.float32)
             lower_parts.append(spec.scale.to_whitened(lower))
             upper_parts.append(spec.scale.to_whitened(upper))
         return jnp.concatenate(lower_parts), jnp.concatenate(upper_parts)

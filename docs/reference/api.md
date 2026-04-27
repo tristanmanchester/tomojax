@@ -291,10 +291,38 @@ volume, params5, info = align(geom, grid, det, projections, cfg=cfg)
 | `early_stop` | `bool` | `True` | Stop on plateau |
 | `early_stop_rel_impr` | `float` | `1e-3` | Minimum relative improvement |
 | `early_stop_patience` | `int` | `2` | Patience iterations |
+| `schedule` | `str \| AlignmentSchedule \| None` | `None` | Executable preset such as `"cor"`, `"setup_safe"`, or `"pose_only"` |
 | `optimise_dofs` | `tuple \| None` | `None` | Active DOFs (all if None) |
 | `freeze_dofs` | `tuple` | `()` | DOFs to freeze |
+| `gauge_policy` | `str` | `"reject"` | Policy for gauge-coupled direct/expert DOF sets |
 | `checkpoint_projector` | `bool` | `True` | Gradient checkpointing |
 | `gather_dtype` | `str` | `"fp32"` | Mixed-precision gather |
+
+Use `align_multires` for setup-geometry schedules:
+
+```python
+from tomojax.align.pipeline import align_multires, AlignConfig
+
+cfg = AlignConfig(
+    schedule="setup_safe",
+    outer_iters=12,
+    recon_iters=30,
+)
+volume, params5, info = align_multires(
+    geom,
+    grid,
+    det,
+    projections,
+    factors=(8, 4, 2, 1),
+    cfg=cfg,
+)
+print(info["schedule"]["stages"])
+print(info["geometry_calibration_state"])
+```
+
+`schedule` and explicit `optimise_dofs` are mutually exclusive for ordinary
+calls. Direct mixed setup+pose DOF sets reject under the default gauge policy;
+use a public staged schedule or supply an explicit expert gauge policy.
 
 See [Alignment concepts](../concepts/alignment.md) for algorithm
 background and [align CLI](../cli/align.md) for the full list of

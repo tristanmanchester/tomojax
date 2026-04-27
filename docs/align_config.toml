@@ -46,9 +46,13 @@ gn_damping = 0.001
 #   5-DOF full alignment: omit both keys, or set all names explicitly.
 # optimise_dofs = ["dx", "dz"]
 # freeze_dofs = ["phi"]
-# Optional finite parameter bounds by DOF. Rotations are radians; translations
-# are world units. Omitted DOFs are unconstrained.
-# bounds = { dx = [-20, 20], dz = [-20, 20], alpha = [-0.05, 0.05] }
+# Executable schedules are mutually exclusive with optimise_dofs and run as
+# staged plans. Setup stages use validation-LM; pose stages use fixed-volume GN.
+# schedule = "setup_safe"
+# Optional finite parameter bounds by DOF. Pose rotations are radians;
+# translations are world units; setup *_deg DOFs are degrees; det_*_px DOFs are
+# native detector pixels. Omitted DOFs are unconstrained.
+# bounds = { dx = [-20, 20], dz = [-20, 20], detector_roll_deg = [-5, 5] }
 # Optional smooth motion model for drift-like or mechanically smooth alignment.
 # The default per_view model optimises one independent 5-DOF vector per view.
 # Use spline or polynomial on noisy data when per-view fitting overfits view-local noise.

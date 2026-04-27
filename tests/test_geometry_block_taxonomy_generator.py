@@ -177,6 +177,8 @@ def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monke
         captured["early_stop"] = cfg.early_stop
         captured["early_stop_rel_impr"] = cfg.early_stop_rel_impr
         captured["early_stop_patience"] = cfg.early_stop_patience
+        captured["schedule"] = cfg.schedule
+        captured["optimise_dofs"] = cfg.optimise_dofs
         state = generator.GeometryCalibrationState.from_geometry(
             geometry,
             active_geometry_dofs=("det_u_px",),
@@ -197,6 +199,7 @@ def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monke
             description="probe",
             geometry_type="parallel",
             geometry_dofs=("det_u_px",),
+            schedule="cor",
         ),
         nominal_geometry=geometry,
         grid=grid,
@@ -209,6 +212,8 @@ def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monke
         "early_stop": True,
         "early_stop_rel_impr": 1e-3,
         "early_stop_patience": 2,
+        "schedule": "cor",
+        "optimise_dofs": None,
     }
 
 
@@ -346,6 +351,10 @@ def test_solver_metadata_summary_extracts_validation_lm_fields():
                 "fold_eval_mode": "stopped_train_recon_validation_lm",
                 "active_gradient_mode": "validation_residual_jvp",
                 "train_reconstruction_gradient": False,
+                "schedule_name": "cor",
+                "schedule_stage_name": "cor",
+                "gauge_policy": "reject",
+                "gauge_status": "ok",
             }
         ]
     )
@@ -354,3 +363,5 @@ def test_solver_metadata_summary_extracts_validation_lm_fields():
     assert metadata["outer_loss_kind"] == "l2_otsu"
     assert metadata["recon_sensitivity"] == "stopped"
     assert metadata["train_reconstruction_gradient"] is False
+    assert metadata["schedule_stage_name"] == "cor"
+    assert metadata["gauge_status"] == "ok"

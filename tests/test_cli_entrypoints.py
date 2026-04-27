@@ -156,7 +156,7 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "--bounds" in captured.out
-    assert "dx=-20:20,dz=-20:20,alpha=-0.05:0.05" in captured.out
+    assert "det_u_px=-8:8,detector_roll_deg=-5:5" in captured.out
     assert "--pose-model" in captured.out
     assert "--recon-algo" in captured.out
     assert "--views-per-batch" in captured.out

@@ -1,6 +1,6 @@
 ---
 date: 2026-04-24
-last_updated: 2026-04-26
+last_updated: 2026-04-27
 topic: unified-alignment-state-geometry-calibration
 ---
 
@@ -19,9 +19,12 @@ geometry calibration initially used a private normalized-L2 reprojection
 objective, and detector-centre discovery used fixed-volume same-data objectives
 that can become self-consistent at nominal geometry. Geometry calibration must
 use the configured loss system, and setup-geometry discovery must use
-validation data not used to reconstruct the volume being scored. The default
-setup objective is now bilevel cross-validation, with the same `l2_otsu` loss
-adapter used by pose alignment.
+validation data not used to reconstruct the volume being scored. The production
+setup solver is now cross-validated stopped-reconstruction validation-LM: train
+folds reconstruct volumes with stopped sensitivity, validation folds are scored
+through the configured `LossAdapter` such as `l2_otsu`, and small damped LM
+updates are solved from streamed residual/JVP normal equations in whitened setup
+DOFs.
 
 The new direction is to treat geometry calibration as first-class alignment DOFs
 inside one unified alignment system:
@@ -76,10 +79,11 @@ Relevant current files:
   - **Trigger:** A user suspects a detector/ray-grid centre or centre-of-rotation
     offset.
   - **Actors:** A1, A2
-  - **Steps:** User activates `det_u_px`; all other geometry and pose DOFs remain
-    frozen; the multiresolution loop reconstructs train folds, scores validation
-    folds with the configured loss, updates `det_u_px`, and carries the calibrated
-    state forward.
+  - **Steps:** User activates `det_u_px` or selects `--schedule cor`; all other
+    geometry and pose DOFs remain frozen; the multiresolution loop reconstructs
+    train folds, streams validation residual/JVP normal equations with the
+    configured loss, applies a small validation-LM update, and carries the
+    calibrated state forward.
   - **Outcome:** The reported detector/ray-grid centre is estimated using the same
     alignment loss as pose alignment, normally `l2_otsu`.
   - **Covered by:** R1, R2, R3, R6, R7, R12, R19
@@ -98,9 +102,10 @@ Relevant current files:
   - **Trigger:** A scan likely has both instrument geometry error and residual
     sample motion.
   - **Actors:** A1, A2
-  - **Steps:** A preset or explicit schedule activates small compatible DOF groups
-    in sequence, such as detector centre, detector roll, axis direction, centre
-    refinement, then residual pose.
+  - **Steps:** A preset or explicit schedule activates small compatible DOF
+    groups in sequence, such as detector centre, detector roll, axis direction,
+    then residual pose polish. `AlignmentSchedule.stages` are executable runtime
+    stages, not flattened metadata.
   - **Outcome:** The solver avoids asking a highly coupled 10-DOF system to solve
     everything at once while still using one alignment state and one objective
     system.
@@ -157,18 +162,20 @@ Relevant current files:
   each update, not a generic label that hides objective differences.
 - R13a. Detector-centre/COR discovery must not rely on a fixed reconstructed
   volume scored against the same projections that produced that volume. It must
-  use a reconstruction-differentiated bilevel objective with deterministic train
-  and validation folds. Projection-domain COM estimates are initializers or
-  diagnostics, not solvers.
+  use deterministic train/validation folds and stopped-reconstruction
+  validation-LM: train-fold volumes are reconstructed without reconstruction
+  hypergradients, validation residual/JVP normals drive the setup update, and
+  projection-domain COM estimates remain initializers or diagnostics rather
+  than solvers.
 
 **Solver loop and staging**
 
 - R14. Geometry and pose updates must share the same multiresolution execution
   semantics: reconstruction cadence, configured projection loss, early stopping,
   checkpointing, and diagnostics.
-- R15. Block-coordinate updates are allowed and preferred for conditioning, but
-  they must be blocks inside one alignment-state loop, not separate solvers with
-  separate objectives.
+- R15. Staged updates are allowed and preferred for conditioning, but they must
+  be stages inside one alignment-state loop, not separate solvers with separate
+  objectives.
 - R16. Safe presets should be schedules of active/frozen DOF masks, not separate
   command paths or standalone calibration pipelines.
 - R17. Staged defaults should optimize small compatible groups before coupled
@@ -178,8 +185,9 @@ Relevant current files:
 
 **Geometry semantics and gauges**
 
-- R19. `det_u_px` and `det_v_px` are the canonical detector/ray-grid centre
-  variables in native detector pixels under the detector-centre gauge.
+- R19. `det_u_px` and `det_v_px` are low-level detector/ray-grid centre variables
+  in native detector pixels under the detector-centre gauge. Static `det_v_px`
+  shifts are supported as a DOF but are not a public capability benchmark.
 - R20. User-facing COR wording must state that `det_u_px` is a detector/ray-grid
   representation of a static COR-like offset, not proof that detector translation,
   rotation-axis intercept, and static sample translation were physically separated.
@@ -216,6 +224,27 @@ Relevant current files:
   removed or rewritten to consume the shared loss adapter.
 - R31. Requirements and solution docs must be updated so future planning does not
   repeat the separate-objective geometry-block design.
+
+## Implementation State As Of 2026-04-27
+
+The branch now has the production shape described above:
+
+- `AlignConfig.schedule` and CLI `--schedule` resolve through one schedule
+  resolver.
+- `align_multires` executes resolved stages in order, carrying setup geometry,
+  pose parameters, loss history, diagnostics, and checkpoints across stages and
+  pyramid levels.
+- Setup stages use `objective_kind="bilevel_cv"`,
+  `optimizer_kind="validation_lm"`, `recon_sensitivity="stopped"`,
+  `fold_eval_mode="stopped_train_recon_validation_lm"`, and
+  `active_gradient_mode="validation_residual_jvp"`.
+- Direct mixed setup+pose active DOF sets reject by default unless an explicit
+  expert gauge policy is supplied.
+- CLI, API, checkpoint metadata, and the canonical evidence generator record the
+  same resolved schedule, stage, objective, loss, gauge, and setup calibration
+  provenance.
+- The old reconstruction-heavy `BilevelCVProjectionObjective` and generic setup
+  scalar-objective value/gradient tests have been removed from the product path.
 
 ---
 

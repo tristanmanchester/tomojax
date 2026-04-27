@@ -45,6 +45,8 @@ def _metadata(
     elapsed_offset: float = 0.0,
     level_complete: bool = False,
     run_complete: bool = False,
+    schedule_metadata: dict[str, object] | None = None,
+    schedule_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return build_alignment_checkpoint_metadata(
         projections_shape=tuple(int(v) for v in projections.shape),
@@ -76,6 +78,8 @@ def _metadata(
         small_impr_streak=small_impr_streak,
         elapsed_offset=elapsed_offset,
         random_state={"alignment": None},
+        schedule_metadata=schedule_metadata,
+        schedule_state=schedule_state,
         level_complete=level_complete,
         run_complete=run_complete,
     )
@@ -165,6 +169,61 @@ def test_alignment_checkpoint_round_trips_arrays_and_metadata(tmp_path):
     assert checkpoint.loss_history == [3.0, 2.0]
     assert checkpoint.outer_stats[0]["outer_idx"] == 1
     assert checkpoint.metadata["completed_outer_iters_in_level"] == 1
+
+
+def test_alignment_checkpoint_records_optional_schedule_metadata(tmp_path):
+    grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)
+    projections = jnp.zeros((4, 2, 3), dtype=jnp.float32)
+    cfg = AlignConfig(schedule="cor", outer_iters=2, recon_iters=1, early_stop=False)
+    schedule_metadata = {
+        "name": "cor",
+        "stages": [{"stage_name": "cor", "active_dofs": ["det_u_px"]}],
+    }
+    schedule_state = {
+        "stage_index": 0,
+        "stage_name": "cor",
+        "stage_completed": False,
+        "completed_outer_iters_in_stage": 1,
+    }
+    metadata = _metadata(
+        cfg=cfg,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        levels=[1],
+        schedule_metadata=schedule_metadata,
+        schedule_state=schedule_state,
+    )
+
+    path = tmp_path / "schedule_checkpoint.npz"
+    save_alignment_checkpoint(
+        path,
+        x=np.ones((3, 3, 2), dtype=np.float32),
+        params5=np.zeros((4, 5), dtype=np.float32),
+        loss_history=[2.0],
+        outer_stats=[],
+        metadata=metadata,
+    )
+
+    checkpoint = load_alignment_checkpoint(path)
+    validate_alignment_checkpoint(checkpoint, metadata)
+    assert checkpoint.metadata["schedule_metadata"]["name"] == "cor"
+    assert checkpoint.metadata["schedule_state"]["stage_name"] == "cor"
+
+    legacy_metadata = dict(checkpoint.metadata)
+    legacy_metadata.pop("schedule_metadata")
+    legacy_metadata.pop("schedule_state")
+    save_alignment_checkpoint(
+        path,
+        x=checkpoint.x,
+        params5=checkpoint.params5,
+        loss_history=checkpoint.loss_history,
+        outer_stats=checkpoint.outer_stats,
+        metadata=legacy_metadata,
+    )
+    legacy_checkpoint = load_alignment_checkpoint(path)
+    validate_alignment_checkpoint(legacy_checkpoint, metadata)
 
 
 def test_alignment_checkpoint_accepts_missing_recon_solver_defaults(tmp_path):

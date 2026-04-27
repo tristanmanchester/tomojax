@@ -14,7 +14,6 @@ from ..align.dofs import (
     DofBounds,
     normalize_alignment_dofs,
     normalize_bounds,
-    resolve_scoped_alignment_dofs,
 )
 from ..align.losses import (
     AlignmentLossConfig,
@@ -37,7 +36,7 @@ from ..align.pipeline import (
     AlignResumeState,
     AlignMultiresResumeState,
 )
-from ..align.schedules import schedule_preset
+from ..align.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
@@ -322,21 +321,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--schedule",
-        choices=[
-            "pose_only",
-            "pose_phi_only",
-            "pose_dx_dz_after_phi",
-            "cor",
-            "detector_center_2d",
-            "detector_roll",
-            "axis_direction",
-            "lamino_tilt",
-            "setup_safe",
-        ],
+        choices=list(PUBLIC_SCHEDULE_PRESETS),
         default=None,
         help=(
-            "Alignment preset. Setup presets use bilevel-CV over active DOFs; "
-            "explicit --optimise-dofs is the lower-level surface."
+            "Executable alignment preset. Setup presets use validation-LM stages; "
+            "explicit --optimise-dofs is the lower-level direct surface."
         ),
     )
     p.add_argument(
@@ -345,8 +334,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DOF=LOWER:UPPER[,DOF=LOWER:UPPER]",
         help=(
-            "Finite per-DOF parameter bounds. Rotations are radians; translations are "
-            "world units. Example: dx=-20:20,dz=-20:20,alpha=-0.05:0.05"
+            "Finite per-DOF parameter bounds. Pose rotations use radians, translations "
+            "use world units, setup *_deg DOFs use degrees, and det_*_px uses native "
+            "detector pixels. Example: det_u_px=-8:8,detector_roll_deg=-5:5"
+        ),
+    )
+    p.add_argument(
+        "--gauge-policy",
+        choices=["reject", "anchor_mean", "prior_required", "diagnose_only"],
+        default="reject",
+        help=(
+            "Policy for gauge-coupled direct/expert DOF sets. Public presets carry "
+            "their own stage policies; direct mixed setup+pose defaults to reject."
         ),
     )
     p.add_argument(
@@ -582,6 +581,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
+        "gauge_policy": str(args.gauge_policy),
         "optimise_dofs": list(args.optimise_dofs or []),
         "freeze_dofs": list(args.freeze_dofs or []),
         "schedule": args.schedule,
@@ -630,7 +630,9 @@ def _checkpoint_metadata(
     elapsed_offset: float,
     level_complete: bool,
     run_complete: bool,
+    schedule_metadata: dict[str, object] | None = None,
     geometry_calibration_state: dict[str, object] | None = None,
+    schedule_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     geometry_meta = getattr(getattr(meta, "metadata", meta), "geometry_meta", None)
     geometry_type = getattr(meta, "geometry_type", "parallel")
@@ -661,6 +663,8 @@ def _checkpoint_metadata(
                 "deterministic_phase_correlation" if cfg.seed_translations else None
             ),
         },
+        schedule_metadata=schedule_metadata,
+        schedule_state=schedule_state,
         geometry_calibration_state=geometry_calibration_state,
         level_complete=level_complete,
         run_complete=run_complete,
@@ -677,6 +681,9 @@ def _resume_state_from_checkpoint(
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     metadata = checkpoint.metadata
     if used_multires:
+        schedule_state = metadata.get("schedule_state")
+        if not isinstance(schedule_state, dict):
+            schedule_state = {}
         return AlignMultiresResumeState(
             x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
             params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
@@ -703,6 +710,16 @@ def _resume_state_from_checkpoint(
                 dict(metadata["geometry_calibration_state"])
                 if isinstance(metadata.get("geometry_calibration_state"), dict)
                 else None
+            ),
+            stage_index=int(schedule_state.get("stage_index", 0)),
+            stage_name=(
+                str(schedule_state["stage_name"])
+                if schedule_state.get("stage_name") is not None
+                else None
+            ),
+            stage_completed=bool(schedule_state.get("stage_completed", False)),
+            completed_outer_iters_in_stage=int(
+                schedule_state.get("completed_outer_iters_in_stage", 0)
             ),
         )
     return AlignResumeState(
@@ -750,31 +767,20 @@ def main() -> None:
         apply_saved_alignment=False,
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
-    schedule_metadata: dict[str, object] | None = None
     try:
-        if args.schedule is not None:
-            if optimise_dofs is not None:
-                p.error("--schedule and --optimise-dofs are mutually exclusive")
-            schedule = schedule_preset(str(args.schedule))
-            optimise_dofs = schedule.active_dofs
-            schedule_metadata = {
-                "name": schedule.name,
-                "stages": [
-                    {
-                        "name": stage.name,
-                        "active_dofs": list(stage.active_dofs),
-                        "objective_kind": stage.objective_kind,
-                        "optimizer": stage.optimizer,
-                        "gauge_policy": stage.gauge_policy,
-                    }
-                    for stage in schedule.stages
-                ],
-            }
-        geometry_dofs = resolve_scoped_alignment_dofs(
+        resolved_schedule = resolve_alignment_schedule(
+            schedule=args.schedule,
             optimise_dofs=optimise_dofs,
             freeze_dofs=freeze_dofs,
+            geometry_dofs=(),
             geometry=geom,
-        ).active_geometry_dofs
+            gauge_policy=str(args.gauge_policy),
+            opt_method=str(args.opt_method),
+            outer_iters=int(args.outer_iters),
+            early_stop=bool(args.early_stop),
+        )
+        geometry_dofs = resolved_schedule.active_geometry_dofs
+        schedule_metadata: dict[str, object] | None = resolved_schedule.to_dict()
     except ValueError as exc:
         p.error(str(exc))
 
@@ -810,10 +816,12 @@ def main() -> None:
         lbfgs_memory_size=int(args.lbfgs_memory_size),
         w_rot=float(args.w_rot),
         w_trans=float(args.w_trans),
+        schedule=args.schedule,
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
         geometry_dofs=(),
         bounds=args.bounds,
+        gauge_policy=str(args.gauge_policy),
         pose_model=str(args.pose_model),
         knot_spacing=int(args.knot_spacing),
         degree=int(args.degree),
@@ -857,6 +865,9 @@ def main() -> None:
         checkpoint_every = 1
     if checkpoint_every is not None and int(checkpoint_every) < 1:
         p.error("--checkpoint-every must be an integer >= 1")
+    run_levels = levels
+    if run_levels is None and (args.schedule is not None or bool(geometry_dofs)):
+        run_levels = [1]
 
     expected_checkpoint_metadata = _checkpoint_metadata(
         meta=meta,
@@ -868,7 +879,7 @@ def main() -> None:
         state_grid=recon_grid,
         state_detector=detector,
         gather_dtype=_gather,
-        levels=levels,
+        levels=run_levels,
         level_index=0,
         level_factor=1,
         completed_outer_iters_in_level=0,
@@ -879,6 +890,7 @@ def main() -> None:
         elapsed_offset=0.0,
         level_complete=False,
         run_complete=False,
+        schedule_metadata=schedule_metadata,
     )
     resume_state = None
     if args.resume is not None:
@@ -886,7 +898,7 @@ def main() -> None:
             resume_state = _resume_state_from_checkpoint(
                 args.resume,
                 expected_metadata=expected_checkpoint_metadata,
-                used_multires=levels is not None,
+                used_multires=run_levels is not None,
             )
         except CheckpointError as exc:
             raise SystemExit(f"tomojax-align: {exc}") from exc
@@ -897,7 +909,7 @@ def main() -> None:
         *,
         run_complete: bool,
     ) -> tuple[Grid, Detector]:
-        if levels is None or run_complete:
+        if run_levels is None or run_complete:
             return recon_grid, detector
         from ..recon.multires import scale_detector, scale_grid
 
@@ -936,6 +948,7 @@ def main() -> None:
             elapsed_offset=float(state.elapsed_offset),
             level_complete=run_complete or completed >= int(cfg.outer_iters),
             run_complete=run_complete,
+            schedule_metadata=schedule_metadata,
         )
         save_alignment_checkpoint(
             checkpoint_path,
@@ -972,7 +985,7 @@ def main() -> None:
             state_grid=state_grid,
             state_detector=state_detector,
             gather_dtype=_gather,
-            levels=levels,
+            levels=run_levels,
             level_index=int(state.level_index),
             level_factor=int(state.level_factor),
             completed_outer_iters_in_level=int(state.completed_outer_iters_in_level),
@@ -983,6 +996,13 @@ def main() -> None:
             elapsed_offset=float(state.elapsed_offset),
             level_complete=bool(state.level_complete),
             run_complete=bool(state.run_complete),
+            schedule_metadata=schedule_metadata,
+            schedule_state={
+                "stage_index": int(state.stage_index),
+                "stage_name": state.stage_name,
+                "stage_completed": bool(state.stage_completed),
+                "completed_outer_iters_in_stage": int(state.completed_outer_iters_in_stage),
+            },
             geometry_calibration_state=state.geometry_calibration_state,
         )
         save_alignment_checkpoint(
@@ -996,7 +1016,7 @@ def main() -> None:
         )
         logging.info("Saved alignment checkpoint to %s", checkpoint_path)
 
-    if args.levels is not None and len(args.levels) > 0:
+    if run_levels is not None and len(run_levels) > 0:
         from ..align.pipeline import align_multires
 
         with transfer_guard_context(args.transfer_guard):
@@ -1005,7 +1025,7 @@ def main() -> None:
                 recon_grid,
                 detector,
                 proj,
-                factors=args.levels,
+                factors=run_levels,
                 cfg=cfg,
                 resume_state=(
                     resume_state if isinstance(resume_state, AlignMultiresResumeState) else None
@@ -1165,15 +1185,28 @@ def main() -> None:
                 "projector_unroll": 1,
                 "checkpoint_projector": bool(args.checkpoint_projector),
                 "transfer_guard": str(args.transfer_guard),
-                "levels": args.levels,
-                "schedule": schedule_metadata,
-                "used_multires": bool(args.levels is not None and len(args.levels) > 0),
+                "levels": run_levels,
+                "schedule": info.get("schedule", schedule_metadata)
+                if isinstance(info, dict)
+                else schedule_metadata,
+                "used_multires": bool(run_levels is not None and len(run_levels) > 0),
                 "checkpoint_path": args.checkpoint,
                 "checkpoint_every": args.checkpoint_every,
                 "resume_path": args.resume,
                 "loss_params": loss_params,
                 "loss_spec": loss_config,
                 "align_config": cfg,
+                "objective_kind": info.get("objective_kind") if isinstance(info, dict) else None,
+                "objective_kinds": (
+                    list(info.get("objective_kinds", [])) if isinstance(info, dict) else []
+                ),
+                "objective_provenance": (
+                    info.get("objective_provenance") if isinstance(info, dict) else None
+                ),
+                "gauge_policy": str(args.gauge_policy),
+                "gauge_decision": (
+                    info.get("gauge_decision") if isinstance(info, dict) else None
+                ),
                 "active_dofs": list(info.get("active_dofs", [])) if isinstance(info, dict) else [],
                 "active_pose_dofs": (
                     list(info.get("active_pose_dofs", [])) if isinstance(info, dict) else []

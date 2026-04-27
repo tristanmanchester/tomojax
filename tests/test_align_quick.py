@@ -88,6 +88,16 @@ def test_legacy_geometry_dofs_merge_into_scoped_alignment_dofs():
     assert scoped.pose_mask == (False, False, False, False, False)
 
 
+def test_legacy_geometry_dofs_do_not_activate_default_pose_dofs():
+    scoped = resolve_scoped_alignment_dofs(
+        geometry_dofs=("det_u_px",),
+    )
+
+    assert scoped.active_pose_dofs == ()
+    assert scoped.active_geometry_dofs == ("det_u_px",)
+    assert scoped.pose_mask == (False, False, False, False, False)
+
+
 def test_align_quick_recovers_small_misalignments():
     grid, det, geom, vol, projs, true_params = make_misaligned_case(12, 12, 12, 8, 1)
     x, est_params, info = align(geom, grid, det, projs, cfg=AlignConfig(outer_iters=1, recon_iters=3, lambda_tv=0.001, lr_rot=5e-3, lr_trans=1e-1))
@@ -287,7 +297,10 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert float(checkpoint_det_u["value"]) == pytest.approx(float(det_u["value"]))
     assert np.asarray(params5).shape == (n_views, 5)
     assert np.allclose(np.asarray(params5), 0.0)
-    assert any(stat.get("geometry_block") == "setup_bilevel" for stat in info["outer_stats"])
+    assert any(
+        stat.get("geometry_block") == "setup_validation_lm"
+        for stat in info["outer_stats"]
+    )
     geom_stats = [stat for stat in info["outer_stats"] if stat.get("geometry_block")]
     assert geom_stats
     assert {stat.get("loss_kind") for stat in geom_stats} == {"l2_otsu"}
@@ -298,7 +311,7 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert diagnostics["schema_version"] == 1
     assert diagnostics["blocks"]
     center = diagnostics["blocks"][0]
-    assert center["geometry_block"] == "setup_bilevel"
+    assert center["geometry_block"] == "setup_validation_lm"
     assert center["geometry_objective"] == "bilevel_cv"
     assert center["accepted_updates"] >= 1
     assert center["status"] in {"converged", "underconverged", "ill_conditioned"}
@@ -307,7 +320,7 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
 def test_align_multires_rejects_detector_center_with_active_pose_translations():
     grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 6, 11)
 
-    with pytest.raises(ValueError, match="Gauge-coupled alignment DOFs"):
+    with pytest.raises(ValueError, match="expert gauge_policy"):
         align_multires(
             geom,
             grid,

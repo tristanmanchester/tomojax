@@ -16,6 +16,7 @@ from .motion_models import (
     fit_motion_coefficients,
 )
 from .dof_specs import ActiveParameterView, optimizer_step_stats
+from .dofs import DofBounds
 from .state import AlignmentState
 
 
@@ -479,11 +480,12 @@ def run_active_validation_lm(
     grad: jnp.ndarray,
     hess: jnp.ndarray,
     score_fn: Callable[[jnp.ndarray], float],
+    bounds: DofBounds | None = None,
     cfg: ValidationLmConfig = ValidationLmConfig(),
 ) -> ActiveOptimizerResult:
     """Run one damped validation-LM step over the active whitened state."""
     z0 = jnp.asarray(view.pack(state), dtype=jnp.float32).reshape(-1)
-    lower, upper = view.bounds_whitened(state)
+    lower, upper = view.bounds_whitened(state, bounds=bounds)
     lower = jnp.asarray(lower, dtype=jnp.float32).reshape(z0.shape)
     upper = jnp.asarray(upper, dtype=jnp.float32).reshape(z0.shape)
     g = jnp.asarray(grad, dtype=jnp.float32).reshape(z0.shape)

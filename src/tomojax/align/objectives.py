@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
-from .dof_specs import ActiveParameterView
-from .geometry_applier import BaseGeometryArrays, apply_alignment_state, subset_base_geometry
+from .geometry_applier import BaseGeometryArrays, apply_alignment_state
 from .losses import AlignmentLossSpec, LossAdapter, build_loss_adapter
 from .state import AlignmentState
 
@@ -47,80 +45,6 @@ class ObjectiveProvenance:
 class ObjectiveResult:
     value: jnp.ndarray
     aux: dict[str, object]
-
-
-@dataclass(frozen=True, slots=True)
-class FoldArrays:
-    train_idx: jnp.ndarray
-    train_mask: jnp.ndarray
-    val_idx: jnp.ndarray
-    val_mask: jnp.ndarray
-
-    @property
-    def n_folds(self) -> int:
-        return int(self.train_idx.shape[0])
-
-    def to_metadata(self) -> dict[str, object]:
-        return {
-            "n_folds": int(self.train_idx.shape[0]),
-            "max_train": int(self.train_idx.shape[1]),
-            "max_val": int(self.val_idx.shape[1]),
-            "train_counts": [int(v) for v in np.asarray(jnp.sum(self.train_mask, axis=1))],
-            "val_counts": [int(v) for v in np.asarray(jnp.sum(self.val_mask, axis=1))],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class FoldSpec:
-    n_folds: int = 4
-    mode: Literal["interleaved"] = "interleaved"
-
-    def build(self, n_views: int) -> FoldArrays:
-        n = int(n_views)
-        k = int(self.n_folds)
-        if k < 2:
-            raise ValueError("bilevel CV requires at least two folds")
-        if n < k:
-            raise ValueError(
-                f"bilevel CV requires at least {k} views for {k} folds; got {n}"
-            )
-        indices = np.arange(n, dtype=np.int32)
-        val_parts = [indices[(indices % k) == fold] for fold in range(k)]
-        if any(part.size == 0 for part in val_parts):
-            raise ValueError("bilevel CV split produced an empty validation fold")
-        train_parts = [np.setdiff1d(indices, val, assume_unique=True) for val in val_parts]
-        max_train = max(int(part.size) for part in train_parts)
-        max_val = max(int(part.size) for part in val_parts)
-
-        def pad(parts: list[np.ndarray], width: int) -> tuple[jnp.ndarray, jnp.ndarray]:
-            idx = np.zeros((k, width), dtype=np.int32)
-            mask = np.zeros((k, width), dtype=np.float32)
-            for row, part in enumerate(parts):
-                idx[row, : part.size] = part
-                mask[row, : part.size] = 1.0
-            return jnp.asarray(idx, dtype=jnp.int32), jnp.asarray(mask, dtype=jnp.float32)
-
-        train_idx, train_mask = pad(train_parts, max_train)
-        val_idx, val_mask = pad(val_parts, max_val)
-        return FoldArrays(
-            train_idx=train_idx,
-            train_mask=train_mask,
-            val_idx=val_idx,
-            val_mask=val_mask,
-        )
-
-
-def objective_value_and_grad(
-    objective: "AlignmentObjective",
-    view: ActiveParameterView,
-    frozen_state: AlignmentState,
-) -> Callable[[jnp.ndarray], tuple[tuple[jnp.ndarray, dict[str, object]], jnp.ndarray]]:
-    def value_fn(active_values: jnp.ndarray) -> tuple[jnp.ndarray, dict[str, object]]:
-        state = view.unpack(frozen_state, active_values)
-        result = objective.evaluate(state)
-        return result.value, result.aux
-
-    return jax.value_and_grad(value_fn, has_aux=True)
 
 
 class AlignmentObjective:
@@ -201,180 +125,6 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
                 "objective_provenance": self.provenance.to_dict(),
             },
         )
-
-
-ReconFoldFn = Callable[[AlignmentState, jnp.ndarray, jnp.ndarray, BaseGeometryArrays], jnp.ndarray]
-
-
-@dataclass(frozen=True, slots=True)
-class BilevelCVProjectionObjective(AlignmentObjective):
-    base: BaseGeometryArrays
-    grid: Grid
-    detector: Detector
-    projections: jnp.ndarray
-    loss_spec: AlignmentLossSpec
-    folds: FoldArrays
-    fold_metadata: dict[str, object]
-    val_loss_adapters: tuple[LossAdapter, ...]
-    reconstruct_fold: ReconFoldFn
-    provenance: ObjectiveProvenance
-    views_per_batch: int = 1
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    kind: ObjectiveKind = "bilevel_cv"
-
-    @classmethod
-    def from_loss_spec(
-        cls,
-        *,
-        base: BaseGeometryArrays,
-        grid: Grid,
-        detector: Detector,
-        projections: jnp.ndarray,
-        loss_spec: AlignmentLossSpec,
-        folds: FoldArrays,
-        reconstruct_fold: ReconFoldFn,
-        inner_regulariser: str = "huber_tv",
-        differentiation_mode: DifferentiationMode = "unrolled",
-        initialization_policy: InnerInitPolicy = "zeros",
-        **kwargs,
-    ) -> "BilevelCVProjectionObjective":
-        projections_arr = jnp.asarray(projections, dtype=jnp.float32)
-        adapter = build_loss_adapter(loss_spec, projections_arr)
-        val_loss_adapters = tuple(
-            build_loss_adapter(loss_spec, projections_arr[folds.val_idx[fold]])
-            for fold in range(folds.n_folds)
-        )
-        return cls(
-            base=base,
-            grid=grid,
-            detector=detector,
-            projections=projections_arr,
-            loss_spec=loss_spec,
-            folds=folds,
-            fold_metadata=folds.to_metadata(),
-            val_loss_adapters=val_loss_adapters,
-            reconstruct_fold=reconstruct_fold,
-            provenance=ObjectiveProvenance(
-                outer_loss_source="AlignmentLossSpec",
-                outer_loss_kind=adapter.name,
-                inner_data_term="l2_projection",
-                inner_regulariser=inner_regulariser,
-                validation_split="interleaved_kfold",
-                differentiation_mode=differentiation_mode,
-                initialization_policy=initialization_policy,
-            ),
-            **kwargs,
-        )
-
-    def evaluate_fold(self, state: AlignmentState, fold: int) -> jnp.ndarray:
-        fold_i = int(fold)
-        train_idx = self.folds.train_idx[fold_i]
-        train_mask = self.folds.train_mask[fold_i]
-        val_idx = self.folds.val_idx[fold_i]
-        val_mask = self.folds.val_mask[fold_i]
-        train_base = subset_base_geometry(self.base, train_idx)
-        volume = self.reconstruct_fold(state, train_idx, train_mask, train_base)
-        val_base = subset_base_geometry(self.base, val_idx)
-        val_state = state.replace(
-            pose=state.pose.replace(params5=state.pose.params5[val_idx])
-        )
-        effective = apply_alignment_state(val_base, val_state)
-        targets = self.projections[val_idx]
-        val_adapter = self.val_loss_adapters[fold_i]
-        return project_and_score_stack(
-            pose_stack=effective.pose_stack,
-            grid=self.grid,
-            detector=self.detector,
-            volume=volume,
-            det_grid=effective.det_grid,
-            targets=targets,
-            loss_adapter=val_adapter,
-            views_per_batch=self.views_per_batch,
-            projector_unroll=self.projector_unroll,
-            checkpoint_projector=self.checkpoint_projector,
-            gather_dtype=self.gather_dtype,
-            view_mask=val_mask,
-            view_indices=jnp.arange(int(targets.shape[0]), dtype=jnp.int32),
-        )
-
-    def evaluate(self, state: AlignmentState) -> ObjectiveResult:
-        fold_values: list[jnp.ndarray] = []
-        for fold in range(self.folds.n_folds):
-            fold_values.append(self.evaluate_fold(state, fold))
-        value = jnp.sum(jnp.stack(fold_values))
-        return ObjectiveResult(
-            value=value,
-            aux={
-                "objective_kind": self.kind,
-                "loss_kind": self.provenance.outer_loss_kind,
-                "objective_provenance": self.provenance.to_dict(),
-                "folds": self.fold_metadata,
-                "fold_eval_mode": "python_loop",
-                "views_per_batch": int(self.views_per_batch),
-            },
-        )
-
-    def value_for_active_z(
-        self,
-        *,
-        frozen_state: AlignmentState,
-        view: ActiveParameterView,
-        z: jnp.ndarray,
-    ) -> jnp.ndarray:
-        state = view.unpack(frozen_state, z)
-        total = jnp.asarray(0.0, dtype=jnp.float32)
-        for fold in range(self.folds.n_folds):
-            total = total + self.evaluate_fold(state, fold)
-        return total
-
-    def value_and_grad_for_active_z(
-        self,
-        *,
-        frozen_state: AlignmentState,
-        view: ActiveParameterView,
-        z: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        total_value = jnp.asarray(0.0, dtype=jnp.float32)
-        total_grad = jnp.zeros_like(z)
-        for fold in range(self.folds.n_folds):
-
-            def fold_objective(z_candidate: jnp.ndarray) -> jnp.ndarray:
-                return self.evaluate_fold(view.unpack(frozen_state, z_candidate), fold)
-
-            value, grad = jax.value_and_grad(fold_objective)(z)
-            total_value = total_value + value
-            total_grad = total_grad + grad
-        return total_value, total_grad
-
-    def finite_difference_value_and_grad_for_active_z(
-        self,
-        *,
-        frozen_state: AlignmentState,
-        view: ActiveParameterView,
-        z: jnp.ndarray,
-        eps: float = 1e-2,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        value = self.value_for_active_z(frozen_state=frozen_state, view=view, z=z)
-        z_flat = jnp.asarray(z, dtype=jnp.float32).reshape(-1)
-        eps_arr = jnp.asarray(float(eps), dtype=jnp.float32)
-        grad_values: list[jnp.ndarray] = []
-        for idx in range(int(z_flat.size)):
-            basis = jnp.zeros_like(z_flat).at[idx].set(eps_arr).reshape(z.shape)
-            plus = self.value_for_active_z(
-                frozen_state=frozen_state,
-                view=view,
-                z=z + basis,
-            )
-            minus = self.value_for_active_z(
-                frozen_state=frozen_state,
-                view=view,
-                z=z - basis,
-            )
-            grad_values.append((plus - minus) / (jnp.float32(2.0) * eps_arr))
-        grad = jnp.stack(grad_values).reshape(z.shape) if grad_values else jnp.zeros_like(z)
-        return value, grad
 
 
 def project_stack(

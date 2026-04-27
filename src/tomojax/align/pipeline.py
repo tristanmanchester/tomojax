@@ -27,11 +27,12 @@ from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
 from .dofs import (
     DofBounds,
+    ScopedAlignmentDofs,
     bounds_vectors,
     normalize_alignment_dofs,
     normalize_bounds,
-    resolve_scoped_alignment_dofs,
 )
+from .diagnostics import GaugePolicy, validate_active_gauge_policy
 from .losses import (
     L2OtsuLossSpec,
     AlignmentLossConfig,
@@ -56,18 +57,21 @@ from .gauge import (
     validate_alignment_gauge_feasible,
 )
 from .fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
+from .folds import FoldSpec
 from .optimizers import (
-    ActiveLbfgsConfig,
     PoseLbfgsConfig,
     ValidationLmConfig,
-    run_active_lbfgs,
     run_active_validation_lm,
     run_pose_lbfgs,
 )
 from .dof_specs import ActiveParameterView
 from .geometry_applier import BaseGeometryArrays
-from .objectives import BilevelCVProjectionObjective, FoldSpec
-from .recon_layer import ReconLayer, ReconLayerConfig
+from .schedules import (
+    AlignmentSchedule,
+    ResolvedAlignmentSchedule,
+    ResolvedAlignmentStage,
+    resolve_alignment_schedule,
+)
 from .state import AlignmentState, PoseState, SetupGeometryState
 from .validation_residuals import accumulate_validation_normals, score_validation_fixed_volume
 from .geometry_blocks import (
@@ -106,30 +110,45 @@ def _scoped_dofs_for_cfg(
     cfg: "AlignConfig",
     *,
     geometry: Geometry | None = None,
-):
-    return resolve_scoped_alignment_dofs(
+) -> ScopedAlignmentDofs:
+    resolved = _resolved_schedule_for_cfg(cfg, geometry=geometry)
+    return ScopedAlignmentDofs(
+        active_pose_dofs=resolved.active_pose_dofs,
+        active_geometry_dofs=resolved.active_geometry_dofs,
+        frozen_pose_dofs=tuple(name for name in cfg.freeze_dofs if name in {"alpha", "beta", "phi", "dx", "dz"}),
+        frozen_geometry_dofs=tuple(
+            name
+            for name in cfg.freeze_dofs
+            if name
+            in {
+                "det_u_px",
+                "det_v_px",
+                "detector_roll_deg",
+                "axis_rot_x_deg",
+                "axis_rot_y_deg",
+                "tilt_deg",
+            }
+        ),
+    )
+
+
+def _resolved_schedule_for_cfg(
+    cfg: "AlignConfig",
+    *,
+    geometry: Geometry | None = None,
+) -> ResolvedAlignmentSchedule:
+    return resolve_alignment_schedule(
+        schedule=cfg.schedule,
         optimise_dofs=cfg.optimise_dofs,
         freeze_dofs=cfg.freeze_dofs,
         geometry_dofs=cfg.geometry_dofs,
         geometry=geometry,
+        gauge_policy=cfg.gauge_policy,
+        gauge_priors=cfg.gauge_priors,
+        opt_method=cfg.opt_method,
+        outer_iters=int(cfg.outer_iters),
+        early_stop=bool(cfg.early_stop),
     )
-
-
-def _validate_scoped_geometry_pose_gauges(scoped_dofs) -> None:
-    pose = set(scoped_dofs.active_pose_dofs)
-    geometry = set(scoped_dofs.active_geometry_dofs)
-    conflicts: list[str] = []
-    if "det_u_px" in geometry and ({"dx", "dz"} & pose):
-        conflicts.append("det_u_px cannot be estimated with active per-view dx/dz")
-    if "det_v_px" in geometry and ({"dx", "dz"} & pose):
-        conflicts.append("det_v_px cannot be estimated with active per-view dx/dz")
-    if conflicts:
-        raise ValueError(
-            "Gauge-coupled alignment DOFs are underdetermined: "
-            + "; ".join(conflicts)
-            + ". Freeze the pose translations for detector-centre calibration, "
-            "or supply a corrected detector centre before pose alignment."
-        )
 
 
 class AlignInfo(TypedDict):
@@ -214,6 +233,10 @@ class AlignMultiresResumeState:
     level_complete: bool = False
     run_complete: bool = False
     geometry_calibration_state: dict[str, object] | None = None
+    stage_index: int = 0
+    stage_name: str | None = None
+    stage_completed: bool = False
+    completed_outer_iters_in_stage: int = 0
 
 
 AlignCheckpointCallback = Callable[[AlignResumeState], None]
@@ -426,10 +449,13 @@ class AlignConfig:
     lbfgs_memory_size: int = 10
     w_rot: float = 0.0
     w_trans: float = 0.0
+    schedule: str | AlignmentSchedule | None = None
     optimise_dofs: tuple[str, ...] | None = None
     freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
     geometry_dofs: tuple[str, ...] = field(default_factory=tuple)
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
+    gauge_policy: GaugePolicy = "reject"
+    gauge_priors: Mapping[str, object] | None = None
     pose_model: Literal["per_view", "polynomial", "spline"] = "per_view"
     knot_spacing: int = 8
     degree: int = 3
@@ -478,6 +504,12 @@ class AlignConfig:
             raise ValueError("lbfgs_ftol must be >= 0")
         if float(self.lbfgs_gtol) < 0.0:
             raise ValueError("lbfgs_gtol must be >= 0")
+        if self.schedule is not None and self.optimise_dofs is not None:
+            raise ValueError("schedule and optimise_dofs are mutually exclusive")
+        if isinstance(self.schedule, str):
+            self.schedule = self.schedule.strip().lower().replace("-", "_")
+            if not self.schedule:
+                self.schedule = None
         if self.optimise_dofs is not None:
             self.optimise_dofs = normalize_alignment_dofs(
                 self.optimise_dofs,
@@ -488,6 +520,12 @@ class AlignConfig:
             self.geometry_dofs,
             geometry=None,
         )
+        self.gauge_policy = str(self.gauge_policy).strip().lower().replace("-", "_")  # type: ignore[assignment]
+        if self.gauge_policy not in {"reject", "anchor_mean", "prior_required", "diagnose_only"}:
+            raise ValueError(
+                "gauge_policy must be one of 'reject', 'anchor_mean', "
+                "'prior_required', or 'diagnose_only'"
+            )
         _active_dof_mask_for_cfg(self)
         self.bounds = normalize_bounds(self.bounds, option_name="bounds")
         pose_model = str(self.pose_model).strip().lower().replace("-", "_")
@@ -1439,6 +1477,17 @@ def align(
             "outer_idx": outer_idx,
             "loss_kind": active_loss_name,
             "recon_algo": recon_algo,
+            "objective_kind": "fixed_volume",
+            "objective_provenance": {
+                "outer_loss_source": "AlignmentLossSpec",
+                "outer_loss_kind": active_loss_name,
+                "inner_data_term": "current_reconstruction",
+                "inner_regulariser": "none",
+                "validation_split": "none",
+                "differentiation_mode": "none",
+                "initialization_policy": "current_level_volume",
+            },
+            "outer_loss_kind": active_loss_name,
         }
         outer_start = time.perf_counter()
 
@@ -1702,6 +1751,7 @@ def align(
             except Exception:
                 pass
         stat["step_kind"] = step_kind
+        stat["optimizer_kind"] = step_kind
         stat["loss_after_step"] = loss_after
         params5, final_gauge_stats = _apply_full_constraints_with_stats(params5)
         if use_smooth_pose_model:
@@ -1851,6 +1901,18 @@ def align(
             int(motion_model.basis.shape[1]),
         ],
         "active_dofs": list(motion_model.active_names),
+        "active_pose_dofs": list(motion_model.active_names),
+        "active_geometry_dofs": [],
+        "objective_kind": "fixed_volume",
+        "objective_kinds": ["fixed_volume"] if outer_stats else [],
+        "objective_provenance": (
+            dict(outer_stats[-1].get("objective_provenance", {}))
+            if outer_stats and isinstance(outer_stats[-1].get("objective_provenance"), Mapping)
+            else None
+        ),
+        "optimizer_kind": str(outer_stats[-1].get("optimizer_kind"))
+        if outer_stats and outer_stats[-1].get("optimizer_kind") is not None
+        else str(cfg.opt_method),
         "completed_outer_iters": len(outer_stats),
         "small_impr_streak": int(small_impr_streak),
         "motion_coeffs": motion_coeffs,
@@ -1914,6 +1976,8 @@ def _optimize_setup_geometry_bilevel_for_level(
     cfg: AlignConfig,
     loss_spec,
     loss_name: str,
+    schedule_name: str | None = None,
+    stage: ResolvedAlignmentStage | None = None,
 ) -> tuple[jnp.ndarray, GeometryCalibrationState, list[OuterStat]]:
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
     active_view = ActiveParameterView.from_dofs(state.active_geometry_dofs, geometry=geometry)
@@ -1949,7 +2013,8 @@ def _optimize_setup_geometry_bilevel_for_level(
     setup_state = alignment_state
     setup_stats: list[OuterStat] = []
     last_loss = math.inf
-    for outer_idx in range(1, max(1, int(cfg.outer_iters)) + 1):
+    outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iters))
+    for outer_idx in range(1, outer_limit + 1):
         z_current = active_view.pack(setup_state)
         total_loss = jnp.asarray(0.0, dtype=jnp.float32)
         total_grad = jnp.zeros_like(z_current)
@@ -2025,6 +2090,7 @@ def _optimize_setup_geometry_bilevel_for_level(
             grad=total_grad,
             hess=total_hess,
             score_fn=score_candidate,
+            bounds=cfg.bounds,
             cfg=ValidationLmConfig(damping=max(float(cfg.gn_damping), 1e-6)),
         )
         setup_state = opt_result.state
@@ -2045,6 +2111,33 @@ def _optimize_setup_geometry_bilevel_for_level(
                 "geometry_max_step": 1.0,
                 "geometry_status": "converged" if opt_result.accepted else "underconverged",
                 "geometry_outer_idx": int(outer_idx),
+                "schedule_name": schedule_name,
+                "schedule_stage_index": (
+                    int(stage.index) if stage is not None else None
+                ),
+                "schedule_stage_name": stage.name if stage is not None else None,
+                "schedule_stage_active_dofs": (
+                    ",".join(stage.active_dofs) if stage is not None else ",".join(active_view.dofs)
+                ),
+                "gauge_policy": stage.gauge_policy if stage is not None else cfg.gauge_policy,
+                "gauge_status": (
+                    stage.gauge_decision.status
+                    if stage is not None
+                    else validate_active_gauge_policy(
+                        active_view.dofs,
+                        policy=cfg.gauge_policy,
+                        priors=cfg.gauge_priors,
+                    ).status
+                ),
+                "gauge_decision": (
+                    stage.gauge_decision.to_dict()
+                    if stage is not None
+                    else validate_active_gauge_policy(
+                        active_view.dofs,
+                        policy=cfg.gauge_policy,
+                        priors=cfg.gauge_priors,
+                    ).to_dict()
+                ),
                 "objective_kind": "bilevel_cv",
                 "objective_provenance": {
                     "outer_loss_source": "AlignmentLossSpec",
@@ -2130,13 +2223,12 @@ def align_multires(
 
     if cfg is None:
         cfg = AlignConfig()
-    scoped_dofs = _scoped_dofs_for_cfg(cfg, geometry=geometry)
-    _validate_scoped_geometry_pose_gauges(scoped_dofs)
-    active_mask_tuple = scoped_dofs.pose_mask
+    resolved_schedule = _resolved_schedule_for_cfg(cfg, geometry=geometry)
+    active_mask_tuple = resolved_schedule.pose_mask
     geometry_state = GeometryCalibrationState.from_checkpoint(
         resume_state.geometry_calibration_state if resume_state is not None else None,
         geometry,
-        active_geometry_dofs=scoped_dofs.active_geometry_dofs,
+        active_geometry_dofs=resolved_schedule.active_geometry_dofs,
     )
 
     validate_grid(grid, "align_multires grid")
@@ -2293,60 +2385,6 @@ def align_multires(
                 seed_params = seed_params.at[:, 4].set(dz)
             params0 = seed_params
 
-        geometry_stats: list[OuterStat] = []
-        geometry_for_align = geometry
-        detector_for_align = d
-        det_grid_for_align = None
-        geometry_completed_outer_iters = 0
-        geometry_wall_time = 0.0
-        if geometry_state.active_geometry_dofs:
-            geometry_start = time.perf_counter()
-            x0, geometry_state, raw_geometry_stats = _optimize_setup_geometry_bilevel_for_level(
-                geometry=geometry,
-                grid=g,
-                detector=d,
-                projections=y,
-                init_x=x0,
-                init_params5=params0,
-                state=geometry_state,
-                factor=int(lvl["factor"]),
-                cfg=cfg,
-                loss_spec=active_loss_spec,
-                loss_name=active_loss_name,
-            )
-            geometry_wall_time = time.perf_counter() - geometry_start
-            geometry_completed_outer_iters = max(
-                (
-                    int(stat.get("geometry_outer_idx", 0))
-                    for stat in raw_geometry_stats
-                    if isinstance(stat, Mapping)
-                ),
-                default=0,
-            )
-            geometry_stats = [
-                {
-                    **dict(stat),
-                    "level_factor": int(lvl["factor"]),
-                    "level_index": int(li),
-                    "global_outer_idx": int(
-                        global_outer_idx + int(stat.get("geometry_outer_idx", 0))
-                    ),
-                    "loss_kind": active_loss_name,
-                }
-                for stat in raw_geometry_stats
-            ]
-            geometry_for_align = geometry_with_axis_state(geometry, g, d, geometry_state)
-            det_grid_for_align = level_detector_grid(
-                d,
-                state=geometry_state,
-                factor=int(lvl["factor"]),
-            )
-        else:
-            det_grid_for_align = None
-
-        # Run alignment at this level
-        # Re-estimate L at each level using a fresh (streamed) power-method for stability
-        cfg_level = replace(cfg, recon_L=None, loss=active_loss_spec)
         level_completed_before = (
             int(resume_state.completed_outer_iters_in_level) if resuming_this_level else 0
         )
@@ -2359,15 +2397,64 @@ def align_multires(
             else list(loss_hist)
         )
         global_before_level = int(executed_outer_iters)
+        level_stats: list[OuterStat] = []
+        level_losses: list[float] = []
+        level_wall_time = 0.0
+        level_action: ObserverAction = "continue"
+        x_lvl = x0 if x0 is not None else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
+        params5 = (
+            params0
+            if params0 is not None
+            else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
+        )
+        info: dict[str, object] = {
+            "loss": [],
+            "loss_kind": active_loss_name,
+            "recon_algo": str(cfg.recon_algo),
+            "L": None,
+            "outer_stats": [],
+            "stopped_by_observer": False,
+            "observer_action": "continue",
+            "wall_time_total": 0.0,
+            "pose_model": str(cfg.pose_model),
+            "pose_model_variables": 0,
+            "per_view_variables": 0,
+            "pose_model_basis_shape": [],
+            "active_dofs": [],
+            "completed_outer_iters": 0,
+            "small_impr_streak": 0,
+            "motion_coeffs": None,
+            "gauge_fix": final_gauge_fix,
+            "gauge_fix_dofs": final_gauge_fix_dofs,
+            "gauge_fix_final": final_gauge_fix_stats or {},
+        }
 
-        def _enrich_level_stats(local_stats: list[OuterStat]) -> list[OuterStat]:
+        def _enrich_level_stats(
+            local_stats: list[OuterStat],
+            *,
+            stage: ResolvedAlignmentStage | None = None,
+            global_start: int | None = None,
+        ) -> list[OuterStat]:
             enriched_stats: list[OuterStat] = []
             for idx, stat in enumerate(local_stats, start=1):
                 enriched = dict(stat)
                 enriched["level_factor"] = int(lvl["factor"])
                 enriched["level_index"] = int(li)
-                enriched["global_outer_idx"] = int(global_before_level + idx)
+                enriched["global_outer_idx"] = int(
+                    (global_before_level if global_start is None else global_start) + idx
+                )
                 enriched["loss_kind"] = str(enriched.get("loss_kind") or active_loss_name)
+                if stage is not None:
+                    enriched.setdefault("schedule_name", resolved_schedule.name)
+                    enriched.setdefault("schedule_stage_index", int(stage.index))
+                    enriched.setdefault("schedule_stage_name", stage.name)
+                    enriched.setdefault(
+                        "schedule_stage_active_dofs",
+                        ",".join(stage.active_dofs),
+                    )
+                    enriched.setdefault("gauge_policy", stage.gauge_policy)
+                    enriched.setdefault("gauge_status", stage.gauge_decision.status)
+                    enriched.setdefault("gauge_decision", stage.gauge_decision.to_dict())
                 level_elapsed = stat.get("cumulative_time")
                 try:
                     level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
@@ -2382,10 +2469,20 @@ def align_multires(
                 enriched_stats.append(enriched)
             return enriched_stats
 
-        def _emit_multires_checkpoint(state: AlignResumeState, *, level_complete: bool) -> None:
+        def _emit_multires_checkpoint(
+            state: AlignResumeState,
+            *,
+            level_complete: bool,
+            stage: ResolvedAlignmentStage,
+            global_start: int,
+        ) -> None:
             if checkpoint_callback is None:
                 return
-            enriched_stats = _enrich_level_stats([dict(stat) for stat in state.outer_stats])
+            enriched_stats = _enrich_level_stats(
+                [dict(stat) for stat in state.outer_stats],
+                stage=stage,
+                global_start=global_start,
+            )
             checkpoint_callback(
                 AlignMultiresResumeState(
                     x=state.x,
@@ -2404,35 +2501,33 @@ def align_multires(
                     level_complete=bool(level_complete),
                     run_complete=False,
                     geometry_calibration_state=geometry_state.to_calibration_state().to_dict(),
+                    stage_index=int(stage.index),
+                    stage_name=stage.name,
+                    stage_completed=bool(level_complete),
+                    completed_outer_iters_in_stage=int(state.start_outer_iter),
                 )
             )
 
-        current_level_stats = [
-            dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(li)
-        ]
-        align_resume_state = None
-        if resuming_this_level:
-            align_resume_state = AlignResumeState(
-                x=resume_state.x,
-                params5=resume_state.params5,
-                motion_coeffs=resume_state.motion_coeffs,
-                start_outer_iter=level_completed_before,
-                loss=list(loss_hist[-level_completed_before:])
-                if level_completed_before > 0
-                else [],
-                outer_stats=current_level_stats,
-                L=resume_state.L,
-                small_impr_streak=int(resume_state.small_impr_streak),
-                elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
-            )
-
-        def _level_observer(x_obs, params_obs, stat_obs):
+        def _stage_observer(
+            stage: ResolvedAlignmentStage,
+            global_start: int,
+            x_obs,
+            params_obs,
+            stat_obs,
+        ):
             nonlocal stopped_by_observer
             enriched = dict(stat_obs)
             enriched["level_factor"] = int(lvl["factor"])
             enriched["level_index"] = int(li)
-            enriched["global_outer_idx"] = int(global_before_level + int(stat_obs["outer_idx"]))
+            enriched["global_outer_idx"] = int(global_start + int(stat_obs["outer_idx"]))
             enriched["loss_kind"] = str(enriched.get("loss_kind") or active_loss_name)
+            enriched["schedule_name"] = resolved_schedule.name
+            enriched["schedule_stage_index"] = int(stage.index)
+            enriched["schedule_stage_name"] = stage.name
+            enriched["schedule_stage_active_dofs"] = ",".join(stage.active_dofs)
+            enriched["gauge_policy"] = stage.gauge_policy
+            enriched["gauge_status"] = stage.gauge_decision.status
+            enriched["gauge_decision"] = stage.gauge_decision.to_dict()
             level_elapsed = stat_obs.get("cumulative_time")
             try:
                 level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
@@ -2448,101 +2543,191 @@ def align_multires(
                 return "continue"
             return _normalize_observer_action(observer(x_obs, params_obs, enriched))
 
-        align_kwargs = {}
-        if det_grid_for_align is not None:
-            align_kwargs["det_grid_override"] = det_grid_for_align
-        if any(active_mask_tuple):
-            x_lvl, params5, info = align(
-                geometry_for_align,
-                g,
-                detector_for_align,
-                y,
-                cfg=cfg_level,
-                init_x=x0,
-                init_params5=params0,
-                observer=_level_observer if observer is not None else None,
-                resume_state=align_resume_state,
-                checkpoint_callback=lambda state: _emit_multires_checkpoint(
-                    state,
-                    level_complete=False,
-                ),
-                **align_kwargs,
-            )
-        else:
-            x_lvl = (
-                x0
-                if x0 is not None
-                else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
-            )
-            params5 = (
-                params0
-                if params0 is not None
-                else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
-            )
-            info = {
-                "loss": [],
-                "loss_kind": active_loss_name,
-                "recon_algo": str(cfg.recon_algo),
-                "L": None,
-                "outer_stats": [],
-                "stopped_by_observer": False,
-                "observer_action": "continue",
-                "wall_time_total": 0.0,
-                "pose_model": str(cfg.pose_model),
-                "pose_model_variables": 0,
-                "per_view_variables": 0,
-                "pose_model_basis_shape": [],
-                "active_dofs": [],
-                "completed_outer_iters": 0,
-                "small_impr_streak": 0,
-                "motion_coeffs": None,
-                "gauge_fix": final_gauge_fix,
-                "gauge_fix_dofs": final_gauge_fix_dofs,
-                "gauge_fix_final": final_gauge_fix_stats or {},
-            }
-            if geometry_completed_outer_iters:
-                info["completed_outer_iters"] = int(geometry_completed_outer_iters)
-                info["loss"] = [
+        current_level_stats = [
+            dict(stat) for stat in global_outer_stats if stat.get("level_index") == int(li)
+        ]
+        stage_resume_consumed = False
+        for stage in resolved_schedule.stages:
+            stage_global_start = global_before_level + len(level_stats)
+            if stage.active_geometry_dofs:
+                stage_state = replace(
+                    geometry_state,
+                    active_geometry_dofs=stage.active_geometry_dofs,
+                )
+                cfg_stage = replace(
+                    cfg,
+                    schedule=None,
+                    optimise_dofs=stage.active_geometry_dofs,
+                    geometry_dofs=(),
+                    outer_iters=int(stage.maxiter),
+                    early_stop=bool(stage.early_stop),
+                )
+                geometry_start = time.perf_counter()
+                x_lvl, geometry_state, raw_geometry_stats = (
+                    _optimize_setup_geometry_bilevel_for_level(
+                        geometry=geometry,
+                        grid=g,
+                        detector=d,
+                        projections=y,
+                        init_x=x_lvl,
+                        init_params5=params5,
+                        state=stage_state,
+                        factor=int(lvl["factor"]),
+                        cfg=cfg_stage,
+                        loss_spec=active_loss_spec,
+                        loss_name=active_loss_name,
+                        schedule_name=resolved_schedule.name,
+                        stage=stage,
+                    )
+                )
+                geometry_state = replace(
+                    geometry_state,
+                    active_geometry_dofs=resolved_schedule.active_geometry_dofs,
+                )
+                stage_wall = time.perf_counter() - geometry_start
+                level_wall_time += stage_wall
+                enriched = _enrich_level_stats(
+                    [dict(stat) for stat in raw_geometry_stats],
+                    stage=stage,
+                    global_start=stage_global_start,
+                )
+                level_stats.extend(enriched)
+                level_losses.extend(
                     float(stat["geometry_loss_after"])
-                    for stat in geometry_stats
+                    for stat in enriched
                     if stat.get("geometry_loss_after") is not None
-                ]
-                info["wall_time_total"] = float(geometry_wall_time)
-        level_completed_after = int(
-            info.get("completed_outer_iters", len(info.get("outer_stats", [])))
-        )
-        level_action = _normalize_observer_action(info.get("observer_action"))
+                )
+                info["wall_time_total"] = float(level_wall_time)
+                info["completed_outer_iters"] = len(level_stats)
+                continue
+
+            if stage.active_pose_dofs:
+                pose_optimizer = (
+                    stage.optimizer_kind
+                    if stage.optimizer_kind in {"gd", "gn", "lbfgs"}
+                    else cfg.opt_method
+                )
+                pose_gauge_fix = (
+                    "mean_translation"
+                    if stage.gauge_policy == "anchor_mean"
+                    else cfg.gauge_fix
+                )
+                cfg_stage = replace(
+                    cfg,
+                    schedule=None,
+                    optimise_dofs=stage.active_pose_dofs,
+                    geometry_dofs=(),
+                    opt_method=str(pose_optimizer),
+                    outer_iters=int(stage.maxiter),
+                    early_stop=bool(stage.early_stop),
+                    recon_L=None,
+                    loss=active_loss_spec,
+                    gauge_fix=pose_gauge_fix,
+                )
+                align_kwargs = {}
+                if resolved_schedule.active_geometry_dofs:
+                    geometry_for_align = geometry_with_axis_state(geometry, g, d, geometry_state)
+                    det_grid_for_align = level_detector_grid(
+                        d,
+                        state=geometry_state,
+                        factor=int(lvl["factor"]),
+                    )
+                    align_kwargs["det_grid_override"] = det_grid_for_align
+                else:
+                    geometry_for_align = geometry
+                align_resume_state = None
+                if resuming_this_level and not stage_resume_consumed:
+                    align_resume_state = AlignResumeState(
+                        x=resume_state.x,
+                        params5=resume_state.params5,
+                        motion_coeffs=resume_state.motion_coeffs,
+                        start_outer_iter=level_completed_before,
+                        loss=list(loss_hist[-level_completed_before:])
+                        if level_completed_before > 0
+                        else [],
+                        outer_stats=current_level_stats,
+                        L=resume_state.L,
+                        small_impr_streak=int(resume_state.small_impr_streak),
+                        elapsed_offset=float(
+                            resume_state.elapsed_offset - global_elapsed_offset
+                        ),
+                    )
+                    stage_resume_consumed = True
+                x_lvl, params5, info = align(
+                    geometry_for_align,
+                    g,
+                    d,
+                    y,
+                    cfg=cfg_stage,
+                    init_x=x_lvl,
+                    init_params5=params5,
+                    observer=(
+                        (lambda x_obs, params_obs, stat_obs, _stage=stage, _start=stage_global_start: _stage_observer(_stage, _start, x_obs, params_obs, stat_obs))
+                        if observer is not None
+                        else None
+                    ),
+                    resume_state=align_resume_state,
+                    checkpoint_callback=(
+                        (
+                            lambda state, _stage=stage, _start=stage_global_start: _emit_multires_checkpoint(
+                                state,
+                                level_complete=False,
+                                stage=_stage,
+                                global_start=_start,
+                            )
+                        )
+                        if checkpoint_callback is not None
+                        else None
+                    ),
+                    **align_kwargs,
+                )
+                enriched = _enrich_level_stats(
+                    [dict(stat) for stat in info.get("outer_stats", [])],
+                    stage=stage,
+                    global_start=stage_global_start,
+                )
+                level_stats.extend(enriched)
+                level_losses.extend(float(v) for v in info.get("loss", []))
+                try:
+                    level_wall_time += float(info.get("wall_time_total") or 0.0)
+                except Exception:
+                    pass
+                level_action = _normalize_observer_action(info.get("observer_action"))
+                final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
+                final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))
+                final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
+                if level_action != "continue":
+                    break
+
+        info["loss"] = level_losses
+        info["outer_stats"] = [
+            dict(stat)
+            for stat in level_stats
+            if not str(stat.get("geometry_block") or "").startswith("setup_")
+        ]
+        info["completed_outer_iters"] = len(level_stats)
+        info["wall_time_total"] = float(level_wall_time)
+        info["observer_action"] = level_action
+        level_completed_after = len(level_stats)
         level_complete = (
-            level_completed_after >= int(cfg.outer_iters)
+            level_completed_after >= sum(int(stage.maxiter) for stage in resolved_schedule.stages)
             or level_action == "advance_level"
             or not bool(info.get("stopped_by_observer", False))
         )
-        loss_hist = loss_before_level + list(info.get("loss", []))
-        global_outer_stats = (
-            stats_before_level
-            + geometry_stats
-            + _enrich_level_stats(
-            [dict(stat) for stat in info.get("outer_stats", [])]
-            )
-        )
+        loss_hist = loss_before_level + level_losses
+        global_outer_stats = stats_before_level + level_stats
         global_outer_idx = global_before_level + level_completed_after
         executed_outer_iters = int(global_outer_idx)
-        final_pose_model_variables = int(info["pose_model_variables"])
-        final_per_view_variables = int(info["per_view_variables"])
-        final_pose_model_basis_shape = list(info["pose_model_basis_shape"])
+        final_pose_model_variables = int(info.get("pose_model_variables") or 0)
+        final_per_view_variables = int(info.get("per_view_variables") or 0)
+        final_pose_model_basis_shape = list(info.get("pose_model_basis_shape") or [])
         final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
         final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))
         final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
         x_init = x_lvl
         prev_factor = lvl["factor"]
         last_level_index_processed = int(li)
-        try:
-            elapsed_increment = float(info.get("wall_time_total") or 0.0)
-            if any(active_mask_tuple):
-                elapsed_increment += float(geometry_wall_time)
-            global_elapsed_offset += elapsed_increment
-        except Exception:
-            pass
+        global_elapsed_offset += float(level_wall_time)
         if checkpoint_callback is not None:
             checkpoint_callback(
                 AlignMultiresResumeState(
@@ -2562,6 +2747,10 @@ def align_multires(
                     level_complete=bool(level_complete),
                     run_complete=False,
                     geometry_calibration_state=geometry_state.to_calibration_state().to_dict(),
+                    stage_index=int(resolved_schedule.stages[-1].index),
+                    stage_name=resolved_schedule.stages[-1].name,
+                    stage_completed=bool(level_complete),
+                    completed_outer_iters_in_stage=level_completed_after,
                 )
             )
         final_observer_action = level_action
@@ -2607,6 +2796,10 @@ def align_multires(
                 level_complete=True,
                 run_complete=True,
                 geometry_calibration_state=geometry_state.to_calibration_state().to_dict(),
+                stage_index=int(resolved_schedule.stages[-1].index),
+                stage_name=resolved_schedule.stages[-1].name,
+                stage_completed=True,
+                completed_outer_iters_in_stage=0,
             )
         )
 
@@ -2643,6 +2836,11 @@ def align_multires(
             "total_outer_iters": int(executed_outer_iters),
             "wall_time_total": float(global_elapsed_offset),
             "outer_stats": global_outer_stats,
+            "schedule": resolved_schedule.to_dict(),
+            "schedule_name": resolved_schedule.name,
+            "schedule_stages": [stage.to_dict() for stage in resolved_schedule.stages],
+            "gauge_policy": cfg.gauge_policy,
+            "gauge_decision": resolved_schedule.gauge_decision.to_dict(),
             "objective_kind": objective_kinds[-1] if objective_kinds else None,
             "objective_kinds": objective_kinds,
             "objective_provenance": objective_provenance,
@@ -2650,10 +2848,8 @@ def align_multires(
             "pose_model_variables": final_pose_model_variables,
             "per_view_variables": final_per_view_variables,
             "pose_model_basis_shape": final_pose_model_basis_shape,
-            "active_dofs": list(
-                _scoped_dofs_for_cfg(cfg, geometry=geometry).active_dofs
-            ),
-            "active_pose_dofs": list(_active_dofs_for_cfg(cfg)),
+            "active_dofs": list(resolved_schedule.active_dofs),
+            "active_pose_dofs": list(resolved_schedule.active_pose_dofs),
             "active_geometry_dofs": list(geometry_state.active_geometry_dofs),
             "gauge_fix": final_gauge_fix,
             "gauge_fix_dofs": final_gauge_fix_dofs,

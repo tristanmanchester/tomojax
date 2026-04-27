@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from tomojax.align.schedules import AlignmentSchedule, AlignmentStage, schedule_preset
+from tomojax.align.schedules import (
+    AlignmentSchedule,
+    AlignmentStage,
+    resolve_alignment_schedule,
+    schedule_preset,
+)
 
 
 def test_pose_only_schedule_uses_fixed_volume_pose_stage():
@@ -48,11 +53,49 @@ def test_setup_safe_stages_setup_then_pose_polish():
     assert all(stage.optimizer == "validation_lm" for stage in schedule.stages[:-1])
 
 
+def test_resolved_setup_safe_executes_as_separate_stages():
+    resolved = resolve_alignment_schedule(schedule="setup_safe", outer_iters=3)
+
+    assert [stage.name for stage in resolved.stages] == [
+        "cor",
+        "detector_roll",
+        "axis_direction",
+        "pose_polish",
+    ]
+    assert resolved.stages[0].active_geometry_dofs == ("det_u_px",)
+    assert resolved.stages[1].active_geometry_dofs == ("detector_roll_deg",)
+    assert resolved.stages[2].active_geometry_dofs == (
+        "axis_rot_x_deg",
+        "axis_rot_y_deg",
+    )
+    assert resolved.stages[3].active_pose_dofs == ("alpha", "beta", "phi", "dx", "dz")
+    assert all(stage.maxiter == 3 for stage in resolved.stages)
+    assert resolved.to_dict()["stages"][0]["gauge_decision"]["status"] == "ok"
+
+
 def test_lamino_tilt_schedule_uses_observable_axis_dof():
     schedule = schedule_preset("lamino_tilt")
 
     assert schedule.stages[0].active_dofs == ("axis_rot_x_deg",)
     assert schedule.stages[0].optimizer == "validation_lm"
+
+
+def test_detector_center_2d_is_not_public_schedule_preset():
+    with pytest.raises(ValueError, match="detector_center_2d"):
+        schedule_preset("detector_center_2d")
+
+
+def test_direct_mixed_setup_pose_requires_expert_gauge_policy():
+    with pytest.raises(ValueError, match="expert gauge_policy"):
+        resolve_alignment_schedule(optimise_dofs=("det_u_px", "dx"))
+
+    resolved = resolve_alignment_schedule(
+        optimise_dofs=("det_u_px", "dx"),
+        gauge_policy="anchor_mean",
+    )
+
+    assert [stage.name for stage in resolved.stages] == ["direct_setup", "direct_pose"]
+    assert resolved.gauge_decision.status == "allowed_with_gauge_policy"
 
 
 def test_bilevel_cv_stages_do_not_default_to_gn():

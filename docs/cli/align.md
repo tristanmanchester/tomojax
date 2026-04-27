@@ -1,9 +1,10 @@
 # align
 
-The `tomojax-align` command performs joint per-view alignment and
-reconstruction using alternating TV reconstruction and pose
-optimization. It supports single-level or multi-resolution
-coarse-to-fine alignment with multiple optimizer choices.
+The `tomojax-align` command performs joint setup-geometry, per-view
+pose alignment, and reconstruction. Pose-only alignment alternates TV
+reconstruction with fixed-volume pose updates. Setup-geometry alignment
+uses executable validation-LM stages inside the same multiresolution
+workflow.
 
 ```
 tomojax-align [--config <config.toml>] --data <in.nxs> \
@@ -39,10 +40,12 @@ chosen loss. You control this alternation with these flags.
 
 ## Optimizer selection
 
-The alignment step minimizes a similarity loss between the current
-reconstruction's forward projections and the measured data. Three
-optimizers are available. See [alignment concepts](../concepts/alignment.md)
-for background on each approach.
+Pose alignment minimizes a similarity loss between the current
+reconstruction's forward projections and the measured data. Three pose
+optimizers are available. Setup-geometry stages use validation-LM
+regardless of `--opt-method`: train-fold reconstructions are held fixed
+while validation residual/JVP normal equations update the active setup
+DOFs.
 
 **Gradient descent** (`--opt-method gd`):
 
@@ -84,9 +87,11 @@ selection flag.
   geometry calibration)
 - `--freeze-dofs` -- named DOFs to keep fixed at initial values
   (e.g., `phi` to freeze in-plane spin)
-- `--bounds dx=-20:20,dz=-20:20,alpha=-0.05:0.05` -- finite
-  per-DOF parameter bounds. Rotations (`alpha`, `beta`, `phi`) are
-  in radians; translations (`dx`, `dz`) are in world units.
+- `--bounds det_u_px=-8:8,detector_roll_deg=-5:5` -- finite
+  per-DOF parameter bounds. Pose rotations (`alpha`, `beta`, `phi`) are
+  in radians; translations (`dx`, `dz`) are in world units; setup
+  `*_deg` DOFs are in degrees; `det_u_px`/`det_v_px` are native detector
+  pixels.
   Omitted DOFs are unconstrained. Frozen DOFs stay fixed even if a
   bound is supplied.
 
@@ -139,19 +144,21 @@ alignment system as per-view pose updates. Geometry updates use the
 configured alignment loss, including the default `l2_otsu`; they do
 not switch to a private calibration loss.
 
-Detector-centre/COR discovery uses the unified bilevel-CV setup
-objective inside `align_multires`: train-fold reconstructions are
-scored on validation projections with the configured loss. This avoids
-the fixed-volume self-consistency failure where a reconstruction made
-under the wrong detector centre can incorrectly prefer nominal
-geometry.
+Detector-centre/COR discovery uses validation-LM inside `align_multires`:
+train-fold reconstructions are built with stopped reconstruction
+sensitivity, validation projections are scored with the configured loss,
+and streamed residual/JVP normal equations drive small damped setup
+updates. This avoids the fixed-volume self-consistency failure where a
+reconstruction made under the wrong detector centre can incorrectly
+prefer nominal geometry.
 
 Geometry DOFs accepted by `--optimise-dofs`:
 
 - `det_u_px` -- horizontal detector/ray-grid centre offset in native
   detector pixels.
-- `det_v_px` -- vertical detector/ray-grid centre offset in native
-  detector pixels.
+- `det_v_px` -- low-level vertical detector/ray-grid centre offset in
+  native detector pixels. It remains available for expert use but is not
+  a headline capability benchmark for static scans.
 - `detector_roll_deg` -- static detector roll in degrees.
 - `axis_rot_x_deg`, `axis_rot_y_deg` -- lab-frame rotation-axis
   direction as small rotations in degrees.
@@ -160,8 +167,11 @@ Geometry DOFs accepted by `--optimise-dofs`:
 
 Preset schedules are available through `--schedule`, including
 `cor`, `detector_roll`, `axis_direction`, `lamino_tilt`,
-`setup_safe`, and `pose_only`. Use `--optimise-dofs` when you want
-explicit control.
+`setup_safe`, and `pose_only`. Schedules execute their stages in order;
+`setup_safe` runs COR, detector roll, axis direction, then pose polish
+rather than flattening those DOFs into one coupled solve. `--schedule`
+and explicit `--optimise-dofs` are mutually exclusive; use
+`--optimise-dofs` when you want direct low-level control.
 
 Setup alignment runs at each multiresolution level, so common runs
 should use the normal pyramid, for example `--levels 8 4 2 1`.
@@ -175,6 +185,8 @@ tomojax-align --data data/scan.nxs \
 ```
 
 Gauge-coupled detector-centre plus residual translation is rejected.
+The default `--gauge-policy reject` applies to direct/expert active DOF
+sets. Public schedules carry their own stage policies.
 Run detector-centre calibration first, then run residual pose
 alignment using the calibrated output:
 

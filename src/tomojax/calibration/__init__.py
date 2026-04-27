@@ -1,7 +1,8 @@
 """Internal geometry-calibration foundations.
 
 This package intentionally contains schema, unit, gauge, convention, and detector-grid
-helpers only. Estimation workflows are staged geometry blocks in tomojax.align.
+helpers only. Estimation workflows are executable setup-alignment stages in
+tomojax.align.
 """
 
 from .conventions import ConventionAudit, ConventionEvidence

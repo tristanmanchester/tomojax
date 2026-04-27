@@ -22,6 +22,13 @@ ALL_ALIGNMENT_DOF_NAMES = DOF_NAMES + GEOMETRY_DOF_NAMES
 ALL_ALIGNMENT_DOF_INDEX = {name: idx for idx, name in enumerate(ALL_ALIGNMENT_DOF_NAMES)}
 type DofBounds = tuple[tuple[str, float, float], ...]
 
+_ANGULAR_SETUP_DOF_NAMES = {
+    "detector_roll_deg",
+    "axis_rot_x_deg",
+    "axis_rot_y_deg",
+    "tilt_deg",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ScopedAlignmentDofs:
@@ -147,7 +154,10 @@ def resolve_scoped_alignment_dofs(
     frozen = set(freeze)
 
     if optimise is None:
-        base = DOF_NAMES + legacy_geometry
+        # ``geometry_dofs`` is a legacy setup-calibration surface.  When it is
+        # present without explicit pose DOFs it should not silently activate the
+        # default pose-only alignment mask.
+        base = legacy_geometry if legacy_geometry else DOF_NAMES
     else:
         base = optimise + tuple(name for name in legacy_geometry if name not in optimise)
 
@@ -195,14 +205,37 @@ def _parse_bound_float(raw: object, *, option_name: str, dof_name: str) -> float
 
 def _validate_bound_name(raw_name: object, *, option_name: str) -> str:
     name = str(raw_name).strip().lower()
-    valid = ", ".join(DOF_NAMES)
+    valid = ", ".join(ALL_ALIGNMENT_DOF_NAMES)
     if not name:
         raise ValueError(f"Missing alignment DOF name for {option_name}; valid DOFs: {valid}")
-    if name not in DOF_INDEX:
+    if name == "tilt_deg":
+        # Bounds are resolved before a concrete geometry may be available; the
+        # default laminography tilt alias follows the same x-axis convention as
+        # normalize_alignment_dofs(..., geometry=None).
+        name = "axis_rot_x_deg"
+    if name not in ALL_ALIGNMENT_DOF_INDEX:
         raise ValueError(
             f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
         )
     return name
+
+
+def _bound_unit_label(dof_name: str) -> str:
+    if dof_name in _ANGULAR_SETUP_DOF_NAMES:
+        return "degrees"
+    if dof_name in {"det_u_px", "det_v_px"}:
+        return "native detector pixels"
+    if dof_name in {"alpha", "beta", "phi"}:
+        return "radians"
+    if dof_name in {"dx", "dz"}:
+        return "world units"
+    return "native units"
+
+
+def _public_bound_to_internal(dof_name: str, value: float) -> float:
+    if dof_name in _ANGULAR_SETUP_DOF_NAMES:
+        return math.radians(float(value))
+    return float(value)
 
 
 def _parse_bound_pair(raw_pair: object, *, option_name: str, dof_name: str) -> tuple[float, float]:
@@ -232,9 +265,13 @@ def _parse_bound_pair(raw_pair: object, *, option_name: str, dof_name: str) -> t
     if lower >= upper:
         raise ValueError(
             f"Invalid alignment bounds for {option_name} {dof_name!r}: "
-            f"lower bound {lower:g} must be less than upper bound {upper:g}"
+            f"lower bound {lower:g} must be less than upper bound {upper:g} "
+            f"({ _bound_unit_label(dof_name) })"
         )
-    return lower, upper
+    return _public_bound_to_internal(dof_name, lower), _public_bound_to_internal(
+        dof_name,
+        upper,
+    )
 
 
 def _iter_bound_items(value: object, *, option_name: str) -> Iterable[tuple[object, object]]:
@@ -273,14 +310,18 @@ def _iter_bound_items(value: object, *, option_name: str) -> Iterable[tuple[obje
 
 
 def normalize_bounds(value: object, *, option_name: str = "bounds") -> DofBounds:
-    """Normalize finite per-DOF alignment bounds from CLI/config/Python inputs."""
+    """Normalize finite per-DOF bounds from CLI/config/Python inputs.
+
+    Returned angular setup bounds are stored in internal radians even though the
+    public setup DOF names use `_deg` and accept degree values.
+    """
     parsed: dict[str, tuple[float, float]] = {}
     for raw_name, raw_pair in _iter_bound_items(value, option_name=option_name):
         name = _validate_bound_name(raw_name, option_name=option_name)
         if name in parsed:
             raise ValueError(f"Duplicate alignment bounds for {option_name}: {name!r}")
         parsed[name] = _parse_bound_pair(raw_pair, option_name=option_name, dof_name=name)
-    return tuple((name, *parsed[name]) for name in DOF_NAMES if name in parsed)
+    return tuple((name, *parsed[name]) for name in ALL_ALIGNMENT_DOF_NAMES if name in parsed)
 
 
 def bounds_vectors(bounds: DofBounds) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -288,6 +329,8 @@ def bounds_vectors(bounds: DofBounds) -> tuple[jnp.ndarray, jnp.ndarray]:
     lower = jnp.full((len(DOF_NAMES),), -jnp.inf, dtype=jnp.float32)
     upper = jnp.full((len(DOF_NAMES),), jnp.inf, dtype=jnp.float32)
     for name, lo, hi in bounds:
+        if name not in DOF_INDEX:
+            continue
         idx = DOF_INDEX[name]
         lower = lower.at[idx].set(jnp.float32(lo))
         upper = upper.at[idx].set(jnp.float32(hi))

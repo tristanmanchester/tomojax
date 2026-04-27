@@ -23,12 +23,19 @@ _ALIGN_CONFIG_COMPAT_DEFAULTS = {
     "lbfgs_maxls": 20,
     "lbfgs_memory_size": 10,
     "gauge_fix": "mean_translation",
+    "schedule": None,
+    "gauge_policy": "reject",
+    "gauge_priors": None,
 }
 _ALIGN_CLI_COMPAT_DEFAULTS = {
     "recon_algo": "fista",
     "spdhg_seed": 0,
     "recon_positivity": True,
     "gauge_fix": "mean_translation",
+    "schedule": None,
+    "gauge_policy": "reject",
+    "optimise_dofs": [],
+    "freeze_dofs": [],
 }
 
 
@@ -129,6 +136,8 @@ def build_alignment_checkpoint_metadata(
     small_impr_streak: int = 0,
     elapsed_offset: float = 0.0,
     random_state: Mapping[str, Any] | None = None,
+    schedule_metadata: Mapping[str, Any] | None = None,
+    schedule_state: Mapping[str, Any] | None = None,
     geometry_calibration_state: Mapping[str, Any] | None = None,
     level_complete: bool = False,
     run_complete: bool = False,
@@ -158,6 +167,8 @@ def build_alignment_checkpoint_metadata(
         "elapsed_offset": float(elapsed_offset),
         "config": normalize_json(config),
         "cli_options": normalize_json(cli_options or {}),
+        "schedule_metadata": normalize_json(schedule_metadata),
+        "schedule_state": normalize_json(schedule_state),
         "random_state": normalize_json(random_state or {"alignment": None}),
         "geometry_calibration_state": normalize_json(geometry_calibration_state),
         "level_complete": bool(level_complete),
@@ -329,6 +340,14 @@ def validate_alignment_checkpoint(
             raise CheckpointError(
                 f"incompatible checkpoint: {key.replace('_', ' ')} "
                 f"{actual_value!r} does not match current {expected_value!r}"
+            )
+
+    expected_schedule = expected.get("schedule_metadata")
+    actual_schedule = metadata.get("schedule_metadata")
+    if actual_schedule is not None and expected_schedule is not None:
+        if normalize_json(actual_schedule) != normalize_json(expected_schedule):
+            raise CheckpointError(
+                "incompatible checkpoint: schedule metadata does not match current request"
             )
 
     state_grid = metadata.get("state_grid")
