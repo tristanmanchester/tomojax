@@ -39,6 +39,16 @@ class SetupValidationObjectiveResult:
     fold_cache: list[FoldEvaluation]
 
 
+@dataclass(frozen=True)
+class SetupStageResult:
+    x: jnp.ndarray
+    state: AlignmentState
+    losses: list[float]
+    public_outer_stats: list[OuterStat]
+    checkpoint_outer_stats: list[OuterStat]
+    diagnostics: dict[str, object]
+
+
 def _geometry_with_setup_state(
     geometry: Geometry,
     grid: Grid,
@@ -274,6 +284,27 @@ def _refresh_setup_reconstruction(
     return x_next
 
 
+def _build_setup_stage_result(
+    *,
+    x: jnp.ndarray,
+    state: AlignmentState,
+    setup_stats: list[OuterStat],
+) -> SetupStageResult:
+    losses = [
+        float(stat["geometry_loss_after"])
+        for stat in setup_stats
+        if stat.get("geometry_loss_after") is not None
+    ]
+    return SetupStageResult(
+        x=x,
+        state=state.replace(volume=x),
+        losses=losses,
+        public_outer_stats=[dict(stat) for stat in setup_stats],
+        checkpoint_outer_stats=[dict(stat) for stat in setup_stats],
+        diagnostics={},
+    )
+
+
 def _optimize_setup_geometry_bilevel_for_level(
     *,
     geometry: Geometry,
@@ -290,7 +321,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     loss_name: str,
     schedule_name: str | None = None,
     stage: ResolvedAlignmentStage | None = None,
-) -> tuple[jnp.ndarray, AlignmentState, list[OuterStat]]:
+) -> SetupStageResult:
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
     active_view = ActiveParameterView.from_dofs(active_geometry_dofs, geometry=geometry)
     alignment_state = state.replace(
@@ -378,4 +409,4 @@ def _optimize_setup_geometry_bilevel_for_level(
         factor=factor,
         cfg=cfg,
     )
-    return x_next, setup_state.replace(volume=x_next), setup_stats
+    return _build_setup_stage_result(x=x_next, state=setup_state, setup_stats=setup_stats)

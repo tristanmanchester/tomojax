@@ -302,36 +302,32 @@ def _run_multires_level_stages(
                 early_stop=bool(stage.early_stop),
             )
             geometry_start = time.perf_counter()
-            x_lvl, setup_alignment_state, raw_geometry_stats = (
-                _optimize_setup_geometry_bilevel_for_level(
-                    geometry=geometry,
-                    grid=grid,
-                    detector=detector,
-                    projections=projections,
-                    init_x=x_lvl,
-                    init_params5=params5,
-                    state=setup_alignment_state,
-                    active_geometry_dofs=stage.active_geometry_dofs,
-                    factor=int(level_factor),
-                    cfg=cfg_stage,
-                    loss_spec=active_loss_spec,
-                    loss_name=active_loss_name,
-                    schedule_name=resolved_schedule.name,
-                    stage=stage,
-                )
+            setup_result = _optimize_setup_geometry_bilevel_for_level(
+                geometry=geometry,
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                init_x=x_lvl,
+                init_params5=params5,
+                state=setup_alignment_state,
+                active_geometry_dofs=stage.active_geometry_dofs,
+                factor=int(level_factor),
+                cfg=cfg_stage,
+                loss_spec=active_loss_spec,
+                loss_name=active_loss_name,
+                schedule_name=resolved_schedule.name,
+                stage=stage,
             )
+            x_lvl = setup_result.x
+            setup_alignment_state = setup_result.state
             level_wall_time += time.perf_counter() - geometry_start
             enriched = stage_runtime.enrich_stats(
-                [dict(stat) for stat in raw_geometry_stats],
+                [dict(stat) for stat in setup_result.checkpoint_outer_stats],
                 stage=stage,
                 global_start=stage_global_start,
             )
             level_stats.extend(enriched)
-            level_losses.extend(
-                float(stat["geometry_loss_after"])
-                for stat in enriched
-                if stat.get("geometry_loss_after") is not None
-            )
+            level_losses.extend(setup_result.losses)
             info["wall_time_total"] = float(level_wall_time)
             info["completed_outer_iters"] = len(level_stats)
             continue
