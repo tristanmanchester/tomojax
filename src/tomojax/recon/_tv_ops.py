@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, cast
+from typing import cast
 
 import jax.numpy as jnp
 
-
-Regulariser = Literal["tv", "huber_tv"]
+from .types import Regulariser
 
 
 def grad3(u: jnp.ndarray):

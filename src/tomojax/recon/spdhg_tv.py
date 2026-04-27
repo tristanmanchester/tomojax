@@ -24,7 +24,6 @@ from ..core.validation import (
 )
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
-    Regulariser,
     div3,
     grad3,
     huber_tv_value,
@@ -32,6 +31,7 @@ from ._tv_ops import (
     prox_huber_tv_conj,
     validate_regulariser,
 )
+from .types import Regulariser
 
 
 # --------- config ----------

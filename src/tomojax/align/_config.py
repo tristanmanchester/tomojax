@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Mapping, TypeAlias, cast
 
 from ..core.geometry.base import Geometry
-from ..recon._tv_ops import Regulariser
+from ..recon.types import Regulariser
 from .objectives.loss_specs import AlignmentLossConfig, L2OtsuLossSpec
 from .model.diagnostics import GaugePolicy
 from .model.dofs import (

@@ -25,7 +25,6 @@ from ..core.validation import (
 )
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
-    Regulariser,
     div3,
     grad3,
     huber_tv_grad,
@@ -33,6 +32,7 @@ from ._tv_ops import (
     isotropic_tv_value,
     validate_regulariser,
 )
+from .types import Regulariser
 
 
 GradMode = Literal["auto", "batched", "stream"]

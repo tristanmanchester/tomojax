@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -9,16 +8,14 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
-
-
-CoreRegulariser = Literal["tv", "huber_tv"]
+from tomojax.recon.types import Regulariser
 
 
 @dataclass(frozen=True, slots=True)
 class FistaCoreConfig:
     iters: int = 10
     lambda_tv: float = 0.005
-    regulariser: CoreRegulariser = "huber_tv"
+    regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
     L: float = 100.0
     positivity: bool = False
