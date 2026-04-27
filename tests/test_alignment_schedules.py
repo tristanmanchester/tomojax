@@ -9,7 +9,20 @@ def test_pose_only_schedule_uses_fixed_volume_pose_stage():
     schedule = schedule_preset("pose_only")
 
     assert schedule.stages[0].objective_kind == "fixed_volume"
+    assert schedule.stages[0].optimizer == "gn"
     assert schedule.stages[0].active_dofs == ("alpha", "beta", "phi", "dx", "dz")
+
+
+def test_pose_parity_stage_presets_use_fixed_volume_gn():
+    phi_schedule = schedule_preset("pose_phi_only")
+    dx_dz_schedule = schedule_preset("pose_dx_dz_after_phi")
+
+    assert phi_schedule.stages[0].active_dofs == ("phi",)
+    assert phi_schedule.stages[0].objective_kind == "fixed_volume"
+    assert phi_schedule.stages[0].optimizer == "gn"
+    assert dx_dz_schedule.stages[0].active_dofs == ("dx", "dz")
+    assert dx_dz_schedule.stages[0].objective_kind == "fixed_volume"
+    assert dx_dz_schedule.stages[0].optimizer == "gn"
 
 
 def test_cor_schedule_activates_only_detector_u_and_bilevel_cv():

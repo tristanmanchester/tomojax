@@ -75,7 +75,33 @@ def schedule_preset(
                     name="pose_only",
                     active_dofs=("alpha", "beta", "phi", "dx", "dz"),
                     objective_kind="fixed_volume",
-                    optimizer="lbfgs",
+                    optimizer="gn",
+                ),
+            ),
+        ).validate()
+    if key == "pose_phi_only":
+        return AlignmentSchedule(
+            name=key,
+            stages=(
+                AlignmentStage(
+                    name="pose_phi_only",
+                    active_dofs=("phi",),
+                    objective_kind="fixed_volume",
+                    optimizer="gn",
+                    gauge_policy="anchor_mean",
+                ),
+            ),
+        ).validate()
+    if key == "pose_dx_dz_after_phi":
+        return AlignmentSchedule(
+            name=key,
+            stages=(
+                AlignmentStage(
+                    name="pose_dx_dz_after_phi",
+                    active_dofs=("dx", "dz"),
+                    objective_kind="fixed_volume",
+                    optimizer="gn",
+                    gauge_policy="anchor_mean",
                 ),
             ),
         ).validate()

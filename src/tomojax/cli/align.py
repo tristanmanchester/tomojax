@@ -324,6 +324,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--schedule",
         choices=[
             "pose_only",
+            "pose_phi_only",
+            "pose_dx_dz_after_phi",
             "cor",
             "detector_center_2d",
             "detector_roll",

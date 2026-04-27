@@ -23,14 +23,15 @@ def _load_generator():
 
 
 def test_geometry_block_taxonomy_uses_selected_center_biased_random_shapes():
-    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    generator = _load_generator()
+    phantom = generator._phantom_metadata()
 
-    assert "shepp_logan" not in source
-    assert "random_cubes_spheres" in source
-    assert "PHANTOM_N_CUBES = 22" in source
-    assert "PHANTOM_N_SPHERES = 22" in source
-    assert 'PHANTOM_PLACEMENT = "center_biased_sphere"' in source
-    assert "use_inscribed_fov=True" in source
+    assert phantom["kind"] == "random_shapes/center_biased_sphere_cubes_spheres"
+    assert phantom["seed"] == 20260893
+    assert phantom["n_cubes"] == 22
+    assert phantom["n_spheres"] == 22
+    assert phantom["placement"] == "center_biased_sphere"
+    assert phantom["radial_exponent"] == 0.75
 
 
 def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tmp_path):
@@ -68,14 +69,14 @@ def test_geometry_block_taxonomy_scenarios_cover_new_geometry_blocks():
     scenarios = generator.scenario_catalog()
     dof_sets = {scenario.slug: set(scenario.geometry_dofs) for scenario in scenarios}
 
-    assert dof_sets["parallel_det_u_m004"] == {"det_u_px"}
+    assert dof_sets["parallel_cor_u_m004"] == {"det_u_px"}
+    assert dof_sets["parallel_detector_center_uv"] == {"det_u_px", "det_v_px"}
     assert dof_sets["parallel_detector_roll_p2p5"] == {"detector_roll_deg"}
-    assert dof_sets["parallel_axis_pitch_p2p0"] == {"axis_rot_x_deg"}
-    assert dof_sets["parallel_axis_yaw_m2p0"] == {"axis_rot_y_deg"}
+    assert dof_sets["parallel_axis_pitch_full360_p2p0"] == {"axis_rot_x_deg"}
+    assert dof_sets["parallel_axis_yaw_full360_m2p0"] == {"axis_rot_y_deg"}
     assert dof_sets["lamino_tilt_34p4"] == {"tilt_deg"}
-    assert dof_sets["parallel_det_u_roll_combo"] == {"det_u_px", "detector_roll_deg"}
-    assert dof_sets["parallel_det_u_axis_refine"] == {"det_u_px", "axis_rot_x_deg"}
-    assert dof_sets["lamino_det_u_tilt_combo"] == {"det_u_px", "tilt_deg"}
+    assert dof_sets["parallel_cor_roll_combo"] == {"det_u_px", "detector_roll_deg"}
+    assert dof_sets["lamino_cor_tilt_combo"] == {"det_u_px", "tilt_deg"}
 
 
 def test_visual_stress_scenarios_record_explicit_acquisition_span(tmp_path):
@@ -98,13 +99,66 @@ def test_visual_stress_scenarios_record_explicit_acquisition_span(tmp_path):
     spans = {scenario["slug"]: scenario["theta_span_deg"] for scenario in manifest["scenarios"]}
     titles = {scenario["slug"]: scenario["title"] for scenario in manifest["scenarios"]}
 
+    assert spans["stress_parallel_cor_u_m008"] == 180.0
     assert spans["stress_parallel_detector_roll_p10"] == 180.0
-    assert spans["stress_parallel_axis_pitch_p18"] == 360.0
-    assert spans["stress_parallel_axis_yaw_m18"] == 360.0
+    assert spans["stress_parallel_axis_pitch_full360_p18"] == 360.0
+    assert spans["stress_parallel_axis_yaw_full360_m18"] == 360.0
     assert spans["stress_lamino_tilt_50"] == 360.0
-    assert "Parallel CT" not in titles["stress_parallel_axis_pitch_p18"]
-    assert "Parallel CT" not in titles["stress_parallel_axis_yaw_m18"]
+    assert "Parallel CT" not in titles["stress_parallel_axis_pitch_full360_p18"]
+    assert "Parallel CT" not in titles["stress_parallel_axis_yaw_full360_m18"]
     assert all(scenario["n_views"] == 128 for scenario in manifest["scenarios"])
+
+
+def test_dry_run_catalog_metadata_includes_suite_category_and_expectation(tmp_path):
+    generator = _load_generator()
+    out = tmp_path / "catalog"
+
+    generator.main(["--out", str(out), "--dry-run", "--profile", "docs", "--scenario-set", "capability"])
+
+    scenarios = json.loads((out / "artifacts" / "scenario_catalog.json").read_text())
+    first = scenarios[0]
+
+    assert first["suite_name"] == "capability"
+    assert first["scenario_category"] == "capability"
+    assert first["scenario_family"]
+    assert first["expectation"] == "success"
+    assert first["headline_eligible"] is True
+    assert first["phantom_key"] == "phantom94"
+
+
+def test_comprehensive_dry_run_marks_diagnostics_non_headline(tmp_path):
+    generator = _load_generator()
+    out = tmp_path / "comprehensive"
+
+    generator.main(
+        [
+            "--out",
+            str(out),
+            "--dry-run",
+            "--profile",
+            "docs",
+            "--scenario-set",
+            "comprehensive_128",
+        ]
+    )
+
+    scenarios = json.loads((out / "artifacts" / "scenario_catalog.json").read_text())
+    diagnostics = [scenario for scenario in scenarios if scenario["scenario_category"] == "diagnostic"]
+
+    assert diagnostics
+    assert all(scenario["headline_eligible"] is False for scenario in diagnostics)
+
+
+def test_stress_dry_run_writes_only_stress_scenarios(tmp_path):
+    generator = _load_generator()
+    out = tmp_path / "stress"
+
+    generator.main(["--out", str(out), "--dry-run", "--profile", "docs", "--scenario-set", "stress"])
+
+    scenarios = json.loads((out / "artifacts" / "scenario_catalog.json").read_text())
+
+    assert scenarios
+    assert {scenario["scenario_category"] for scenario in scenarios} == {"stress"}
 
 
 def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monkeypatch):

@@ -21,6 +21,11 @@ from tomojax.align.geometry_blocks import (
     summarize_geometry_calibration_stats,
 )
 from tomojax.align.pipeline import AlignConfig, align_multires
+from tomojax.bench.alignment_scenarios import (
+    AlignmentScenario,
+    phantom_spec,
+    scenario_suite,
+)
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
@@ -30,13 +35,7 @@ from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.quicklook import scale_to_uint8
 
 
-PHANTOM_KIND = "random_shapes/center_biased_sphere_cubes_spheres"
-PHANTOM_SOURCE = "tomojax.data.phantoms.random_cubes_spheres"
-PHANTOM_SEED = 20260893
-PHANTOM_N_CUBES = 22
-PHANTOM_N_SPHERES = 22
-PHANTOM_PLACEMENT = "center_biased_sphere"
-PHANTOM_RADIAL_EXPONENT = 0.75
+PHANTOM = phantom_spec("phantom94")
 DEFAULT_LEVELS = (8, 4, 2, 1)
 
 
@@ -47,6 +46,17 @@ class Scenario:
     description: str
     geometry_type: str
     geometry_dofs: tuple[str, ...]
+    active_dofs: tuple[str, ...] = ()
+    schedule: str = ""
+    scenario_category: str = "capability"
+    scenario_family: str = "parallel_ct"
+    expectation: str = "success"
+    expected_status: tuple[str, ...] = ()
+    headline_eligible: bool = True
+    phantom_key: str = "phantom94"
+    expected_objective: str = "bilevel_cv"
+    expected_optimizer: str = "validation_lm"
+    expected_loss: str = "l2_otsu"
     hidden_det_u_px: float = 0.0
     hidden_det_v_px: float = 0.0
     hidden_detector_roll_deg: float = 0.0
@@ -115,139 +125,79 @@ def smoke_profile() -> RunProfile:
     )
 
 
-def _default_scenarios() -> list[Scenario]:
-    return [
-        Scenario(
-            slug="parallel_det_u_m004",
-            title="Parallel CT: detector/ray-grid centre -4 px",
-            description="Hidden detector-u centre offset. Estimated with the det_u_px block.",
-            geometry_type="parallel",
-            geometry_dofs=("det_u_px",),
-            hidden_det_u_px=-4.0,
-        ),
-        Scenario(
-            slug="parallel_detector_roll_p2p5",
-            title="Parallel CT: detector roll +2.5 deg",
-            description="Hidden detector-plane roll. Estimated with the detector_roll_deg block.",
-            geometry_type="parallel",
-            geometry_dofs=("detector_roll_deg",),
-            hidden_detector_roll_deg=2.5,
-        ),
-        Scenario(
-            slug="parallel_axis_pitch_p2p0",
-            title="Parallel CT: axis pitched +2 deg",
-            description="Rotation axis is tipped forward/backward in the lab frame.",
-            geometry_type="parallel",
-            geometry_dofs=("axis_rot_x_deg",),
-            hidden_axis_rot_x_deg=2.0,
-        ),
-        Scenario(
-            slug="parallel_axis_yaw_m2p0",
-            title="Parallel CT: axis yawed -2 deg",
-            description="Rotation axis has a side-to-side lab-frame component.",
-            geometry_type="parallel",
-            geometry_dofs=("axis_rot_y_deg",),
-            hidden_axis_rot_y_deg=-2.0,
-        ),
-        Scenario(
-            slug="parallel_det_u_roll_combo",
-            title="Parallel CT: centre then roll",
-            description="Combined detector-u centre offset and detector roll.",
-            geometry_type="parallel",
-            geometry_dofs=("det_u_px", "detector_roll_deg"),
-            hidden_det_u_px=-3.0,
-            hidden_detector_roll_deg=2.0,
-        ),
-        Scenario(
-            slug="parallel_det_u_axis_refine",
-            title="Parallel CT: centre plus axis direction",
-            description="Combined centre offset and axis pitch, exercising staged blocks.",
-            geometry_type="parallel",
-            geometry_dofs=("det_u_px", "axis_rot_x_deg"),
-            hidden_det_u_px=-3.0,
-            hidden_axis_rot_x_deg=1.8,
-        ),
-        Scenario(
-            slug="lamino_tilt_34p4",
-            title="Laminography: true tilt 34.4 deg",
-            description="Nominal tilt is 30 deg; the hidden instrument tilt delta is +4.4 deg.",
-            geometry_type="lamino",
-            geometry_dofs=("tilt_deg",),
-            hidden_axis_rot_x_deg=4.4,
-            nominal_tilt_deg=30.0,
-        ),
-        Scenario(
-            slug="lamino_det_u_tilt_combo",
-            title="Laminography: detector centre plus tilt",
-            description="Combined -3 px detector-u offset and +4.4 deg tilt error.",
-            geometry_type="lamino",
-            geometry_dofs=("det_u_px", "tilt_deg"),
-            hidden_det_u_px=-3.0,
-            hidden_axis_rot_x_deg=4.4,
-            nominal_tilt_deg=30.0,
-        ),
-    ]
+def _setup_value(source: Mapping[str, float], name: str, default: float = 0.0) -> float:
+    return float(source.get(name, default))
+
+
+def _scenario_from_catalog(scenario: AlignmentScenario) -> Scenario:
+    hidden = dict(scenario.hidden_setup)
+    supplied = dict(scenario.supplied_setup)
+    setup_dofs = tuple(
+        dof
+        for dof in scenario.active_dofs
+        if dof
+        in {
+            "det_u_px",
+            "det_v_px",
+            "detector_roll_deg",
+            "axis_rot_x_deg",
+            "axis_rot_y_deg",
+            "tilt_deg",
+        }
+    )
+    hidden_axis_rot_x = _setup_value(hidden, "axis_rot_x_deg")
+    if "tilt_deg" in hidden and "axis_rot_x_deg" not in hidden:
+        hidden_axis_rot_x = _setup_value(hidden, "tilt_deg") - scenario.nominal_tilt_deg
+    supplied_axis_rot_x = supplied.get("axis_rot_x_deg")
+    if "tilt_deg" in supplied and supplied_axis_rot_x is None:
+        supplied_axis_rot_x = float(supplied["tilt_deg"]) - scenario.nominal_tilt_deg
+    return Scenario(
+        slug=scenario.slug,
+        title=scenario.title,
+        description=scenario.description,
+        geometry_type=scenario.geometry_type,
+        geometry_dofs=setup_dofs,
+        active_dofs=tuple(scenario.active_dofs),
+        schedule=scenario.schedule,
+        scenario_category=scenario.category,
+        scenario_family=scenario.family,
+        expectation=scenario.expectation.kind,
+        expected_status=tuple(scenario.expectation.expected_status),
+        headline_eligible=scenario.headline_eligible,
+        phantom_key=scenario.phantom_key,
+        expected_objective=scenario.expected_objective,
+        expected_optimizer=scenario.expected_optimizer,
+        expected_loss=scenario.expected_loss,
+        hidden_det_u_px=_setup_value(hidden, "det_u_px"),
+        hidden_det_v_px=_setup_value(hidden, "det_v_px"),
+        hidden_detector_roll_deg=_setup_value(hidden, "detector_roll_deg"),
+        hidden_axis_rot_x_deg=hidden_axis_rot_x,
+        hidden_axis_rot_y_deg=_setup_value(hidden, "axis_rot_y_deg"),
+        supplied_det_u_px=supplied.get("det_u_px"),
+        supplied_det_v_px=supplied.get("det_v_px"),
+        supplied_detector_roll_deg=supplied.get("detector_roll_deg"),
+        supplied_axis_rot_x_deg=supplied_axis_rot_x,
+        supplied_axis_rot_y_deg=supplied.get("axis_rot_y_deg"),
+        nominal_tilt_deg=scenario.nominal_tilt_deg,
+        theta_span_deg=scenario.acquisition_span_deg,
+    )
 
 
 def scenario_catalog() -> list[Scenario]:
-    return _default_scenarios()
+    return scenario_catalog_for_kind("default")
 
 
 def visual_stress_scenario_catalog() -> list[Scenario]:
     """More aggressive perturbations used to find visually useful naive-FBP demos."""
-    return [
-        Scenario(
-            slug="stress_parallel_detector_roll_p10",
-            title="Parallel CT: detector roll +10 deg",
-            description="Large hidden detector-plane roll for visual naive-FBP artifact screening.",
-            geometry_type="parallel",
-            geometry_dofs=("detector_roll_deg",),
-            hidden_detector_roll_deg=10.0,
-            theta_span_deg=180.0,
-        ),
-        Scenario(
-            slug="stress_parallel_axis_pitch_p18",
-            title="Full-rotation arbitrary axis: pitch +18 deg",
-            description=(
-                "Large forward/backward lab-frame axis tilt with full angular coverage for visual "
-                "artifact screening."
-            ),
-            geometry_type="parallel",
-            geometry_dofs=("axis_rot_x_deg",),
-            hidden_axis_rot_x_deg=18.0,
-            theta_span_deg=360.0,
-        ),
-        Scenario(
-            slug="stress_parallel_axis_yaw_m18",
-            title="Full-rotation arbitrary axis: yaw -18 deg",
-            description=(
-                "Large side-to-side lab-frame axis tilt with full angular coverage for visual "
-                "artifact screening."
-            ),
-            geometry_type="parallel",
-            geometry_dofs=("axis_rot_y_deg",),
-            hidden_axis_rot_y_deg=-18.0,
-            theta_span_deg=360.0,
-        ),
-        Scenario(
-            slug="stress_lamino_tilt_50",
-            title="Laminography: true tilt 50 deg",
-            description="Large hidden tilt delta from nominal 30 deg for visual artifact screening.",
-            geometry_type="lamino",
-            geometry_dofs=("tilt_deg",),
-            hidden_axis_rot_x_deg=20.0,
-            nominal_tilt_deg=30.0,
-            theta_span_deg=360.0,
-        ),
-    ]
+    return scenario_catalog_for_kind("visual_stress")
 
 
 def scenario_catalog_for_kind(kind: str) -> list[Scenario]:
-    if kind == "visual_stress":
-        scenarios = visual_stress_scenario_catalog()
+    suite = scenario_suite(kind)
+    scenarios = [_scenario_from_catalog(scenario) for scenario in suite.scenarios()]
+    if kind in {"visual_stress", "stress", "stress_128"}:
         _validate_visual_stress_acquisition(scenarios)
-        return scenarios
-    return scenario_catalog()
+    return scenarios
 
 
 def profile_from_args(args: argparse.Namespace) -> RunProfile:
@@ -285,16 +235,16 @@ def _phantom(size: int) -> np.ndarray:
         size,
         size,
         size,
-        n_cubes=PHANTOM_N_CUBES,
-        n_spheres=PHANTOM_N_SPHERES,
+        n_cubes=PHANTOM.n_cubes,
+        n_spheres=PHANTOM.n_spheres,
         min_size=max(5, size // 18),
         max_size=int(round((size // 8) * 1.5)),
         min_value=0.45,
         max_value=1.0,
-        seed=PHANTOM_SEED,
+        seed=PHANTOM.seed,
         use_inscribed_fov=True,
-        placement=PHANTOM_PLACEMENT,
-        radial_exponent=PHANTOM_RADIAL_EXPONENT,
+        placement=PHANTOM.placement,
+        radial_exponent=PHANTOM.radial_exponent,
     ).astype(np.float32)
 
 
@@ -498,6 +448,7 @@ def _run_geometry_alignment(
     profile: RunProfile,
 ) -> tuple[np.ndarray, GeometryCalibrationState, dict[str, Any]]:
     geometry_dofs = normalize_geometry_dofs(scenario.geometry_dofs, geometry=nominal_geometry)
+    active_dofs = tuple(scenario.active_dofs or geometry_dofs)
     x_aligned, _, info = align_multires(
         nominal_geometry,
         grid,
@@ -509,8 +460,8 @@ def _run_geometry_alignment(
             recon_iters=int(profile.recon_iters),
             lambda_tv=0.0015,
             tv_prox_iters=int(profile.tv_prox_iters),
-            optimise_dofs=geometry_dofs,
-            freeze_dofs=("alpha", "beta", "phi", "dx", "dz"),
+            optimise_dofs=active_dofs,
+            freeze_dofs=(),
             early_stop=bool(profile.early_stop),
             early_stop_rel_impr=float(profile.early_stop_rel_impr),
             early_stop_patience=int(profile.early_stop_patience),
@@ -1153,6 +1104,27 @@ def _scenario_supplied_payload(scenario: Scenario) -> dict[str, float]:
     return supplied
 
 
+def _scenario_catalog_payload(scenario: Scenario) -> dict[str, Any]:
+    active_dofs = tuple(scenario.active_dofs or scenario.geometry_dofs)
+    return {
+        "scenario_category": scenario.scenario_category,
+        "scenario_family": scenario.scenario_family,
+        "expectation": scenario.expectation,
+        "expected_status": list(scenario.expected_status),
+        "headline_eligible": bool(scenario.headline_eligible),
+        "phantom_key": scenario.phantom_key,
+        "schedule": scenario.schedule,
+        "expected_objective": scenario.expected_objective,
+        "expected_optimizer": scenario.expected_optimizer,
+        "expected_loss": scenario.expected_loss,
+        "active_dofs": list(active_dofs),
+        "active_pose_dofs": [
+            dof for dof in active_dofs if dof in {"alpha", "beta", "phi", "dx", "dz"}
+        ],
+        "active_geometry_dofs": list(scenario.geometry_dofs),
+    }
+
+
 def _geometry_status_label(diagnostics: Any) -> str:
     if not isinstance(diagnostics, dict):
         return ""
@@ -1216,36 +1188,47 @@ def _last_solver_metadata(outer_stats: Any) -> dict[str, Any]:
 
 
 def _phantom_metadata() -> dict[str, Any]:
-    return {
-        "kind": PHANTOM_KIND,
-        "seed": PHANTOM_SEED,
-        "shared_across_cases": True,
-        "source": PHANTOM_SOURCE,
-        "n_cubes": PHANTOM_N_CUBES,
-        "n_spheres": PHANTOM_N_SPHERES,
-        "placement": PHANTOM_PLACEMENT,
-        "radial_exponent": PHANTOM_RADIAL_EXPONENT,
-        "selection": "phantom_picker_128_10x10_center_biased_sphere_slot_94",
-    }
+    return PHANTOM.to_manifest()
 
 
-def build_run_manifest(profile: RunProfile, scenarios: Sequence[Scenario]) -> dict[str, Any]:
+def build_run_manifest(
+    profile: RunProfile,
+    scenarios: Sequence[Scenario],
+    *,
+    suite_name: str = "default",
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "generator": "scripts/generate_alignment_before_after_128.py",
         "purpose": "geometry_block_before_after_taxonomy",
         "phantom": _phantom_metadata(),
         "profile": asdict(profile),
-        "scenario_set": "default",
+        "scenario_set": suite_name,
+        "suite_name": suite_name,
         "scenarios": [
             {
                 "slug": s.slug,
                 "title": s.title,
                 "description": s.description,
+                "scenario_category": s.scenario_category,
+                "scenario_family": s.scenario_family,
+                "suite_name": suite_name,
+                "expectation": s.expectation,
+                "expected_status": list(s.expected_status),
+                "headline_eligible": bool(s.headline_eligible),
+                "phantom_key": s.phantom_key,
+                "schedule": s.schedule,
+                "expected_objective": s.expected_objective,
+                "expected_optimizer": s.expected_optimizer,
+                "expected_loss": s.expected_loss,
                 "geometry_type": s.geometry_type,
                 "geometry_dofs": list(s.geometry_dofs),
-                "active_dofs": list(s.geometry_dofs),
-                "active_pose_dofs": [],
+                "active_dofs": list(s.active_dofs or s.geometry_dofs),
+                "active_pose_dofs": [
+                    dof
+                    for dof in (s.active_dofs or ())
+                    if dof in {"alpha", "beta", "phi", "dx", "dz"}
+                ],
                 "active_geometry_dofs": list(s.geometry_dofs),
                 "theta_span_deg": _theta_span_deg(s),
                 "n_views": int(profile.views),
@@ -1332,8 +1315,18 @@ def _run_scenario(
         row: dict[str, Any] = {
             "slug": scenario.slug,
             "title": scenario.title,
+            "scenario_category": scenario.scenario_category,
+            "scenario_family": scenario.scenario_family,
+            "expectation": scenario.expectation,
+            "headline_eligible": bool(scenario.headline_eligible),
+            "phantom_key": scenario.phantom_key,
+            "schedule": scenario.schedule,
+            "expected_objective": scenario.expected_objective,
+            "expected_optimizer": scenario.expected_optimizer,
+            "expected_loss": scenario.expected_loss,
             "geometry_type": scenario.geometry_type,
             "geometry_dofs": ",".join(scenario.geometry_dofs),
+            "active_dofs": ",".join(scenario.active_dofs or scenario.geometry_dofs),
             "theta_span_deg": theta_span,
             "n_views": int(profile.views),
             "parameter_provenance": "naive_only",
@@ -1355,6 +1348,7 @@ def _run_scenario(
             {
                 "schema_version": 1,
                 "scenario": asdict(scenario),
+                "scenario_catalog": _scenario_catalog_payload(scenario),
                 "phantom": _phantom_metadata(),
                 "profile": asdict(profile),
                 "acquisition": {
@@ -1373,7 +1367,7 @@ def _run_scenario(
         return row
 
     supplied = _scenario_supplied_payload(scenario)
-    if scenario.geometry_dofs:
+    if scenario.active_dofs or scenario.geometry_dofs:
         aligned_tv, state, info = _run_geometry_alignment(
             scenario,
             nominal_geometry=nominal_geometry,
@@ -1462,6 +1456,7 @@ def _run_scenario(
     alignment_metadata = {
         "schema_version": 1,
         "scenario": asdict(scenario),
+        "scenario_catalog": _scenario_catalog_payload(scenario),
         "profile": asdict(profile),
         "acquisition": {
             "theta_span_deg": theta_span,
@@ -1492,6 +1487,15 @@ def _run_scenario(
     row: dict[str, Any] = {
         "slug": scenario.slug,
         "title": scenario.title,
+        "scenario_category": scenario.scenario_category,
+        "scenario_family": scenario.scenario_family,
+        "expectation": scenario.expectation,
+        "headline_eligible": bool(scenario.headline_eligible),
+        "phantom_key": scenario.phantom_key,
+        "schedule": scenario.schedule,
+        "expected_objective": scenario.expected_objective,
+        "expected_optimizer": scenario.expected_optimizer,
+        "expected_loss": scenario.expected_loss,
         "geometry_type": scenario.geometry_type,
         "geometry_dofs": ",".join(scenario.geometry_dofs),
         "active_dofs": ",".join(str(v) for v in info.get("active_dofs", scenario.geometry_dofs)),
@@ -1533,6 +1537,7 @@ def _run_scenario(
     manifest = {
         "schema_version": 1,
         "scenario": asdict(scenario),
+        "scenario_catalog": _scenario_catalog_payload(scenario),
         "phantom": _phantom_metadata(),
         "profile": asdict(profile),
         "acquisition": {
@@ -1618,8 +1623,7 @@ def run(args: argparse.Namespace) -> None:
     artifacts.mkdir(parents=True, exist_ok=True)
     profile = profile_from_args(args)
     scenarios = _select_scenarios(args)
-    manifest = build_run_manifest(profile, scenarios)
-    manifest["scenario_set"] = str(args.scenario_set)
+    manifest = build_run_manifest(profile, scenarios, suite_name=str(args.scenario_set))
     manifest["naive_only"] = bool(args.naive_only)
     _write_json(out_root / "run_manifest.json", manifest)
     _write_json(artifacts / "scenario_catalog.json", manifest["scenarios"])
@@ -1672,8 +1676,18 @@ def run(args: argparse.Namespace) -> None:
             row = {
                 "slug": scenario.slug,
                 "title": scenario.title,
+                "scenario_category": scenario.scenario_category,
+                "scenario_family": scenario.scenario_family,
+                "expectation": scenario.expectation,
+                "headline_eligible": bool(scenario.headline_eligible),
+                "phantom_key": scenario.phantom_key,
+                "schedule": scenario.schedule,
+                "expected_objective": scenario.expected_objective,
+                "expected_optimizer": scenario.expected_optimizer,
+                "expected_loss": scenario.expected_loss,
                 "geometry_type": scenario.geometry_type,
                 "geometry_dofs": ",".join(scenario.geometry_dofs),
+                "active_dofs": ",".join(scenario.active_dofs or scenario.geometry_dofs),
                 "theta_span_deg": _theta_span_deg(scenario),
                 "n_views": int(profile.views),
                 "parameter_provenance": "failed",
@@ -1705,6 +1719,7 @@ def run(args: argparse.Namespace) -> None:
                 {
                     "schema_version": 1,
                     "scenario": asdict(scenario),
+                    "scenario_catalog": _scenario_catalog_payload(scenario),
                     "profile": asdict(profile),
                     "status": "failed",
                     "error": repr(exc),
@@ -1734,7 +1749,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
     parser.add_argument("--profile", choices=["docs", "smoke"], default="docs")
-    parser.add_argument("--scenario-set", choices=["default", "visual_stress"], default="default")
+    parser.add_argument(
+        "--scenario-set",
+        choices=[
+            "default",
+            "visual_stress",
+            "capability",
+            "capability_128",
+            "stress",
+            "stress_128",
+            "diagnostic",
+            "diagnostic_128",
+            "pose_parity",
+            "pose_parity_128",
+            "comprehensive_128",
+            "smoke_64",
+        ],
+        default="default",
+    )
     parser.add_argument("--naive-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--size", type=int, default=None)
