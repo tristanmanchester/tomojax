@@ -24,7 +24,11 @@ from ..utils.fov import cylindrical_mask_xy
 from ..utils.logging import format_duration, progress_iter
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
 from .objectives.loss_adapters import LossAdapter, build_loss_adapter
-from .objectives.loss_specs import loss_is_within_relative_tolerance, loss_spec_name, resolve_loss_for_level
+from .objectives.loss_specs import (
+    loss_is_within_relative_tolerance,
+    loss_spec_name,
+    resolve_loss_for_level,
+)
 from ._observer import (
     ObserverAction,
     ObserverCallback,
@@ -232,8 +236,6 @@ def _build_alignment_volume_mask(
         raise ValueError(f"Failed to apply requested mask_vol={mask_mode!r}") from exc
 
 
-
-
 @dataclass(frozen=True)
 class _AlignSetupState:
     cfg: AlignConfig
@@ -251,6 +253,162 @@ class _AlignSetupState:
     bounds_upper: jnp.ndarray
     gauge_fix: GaugeFixMode
     gauge_dofs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PoseConstraintContext:
+    active_mask_tuple: tuple[bool, bool, bool, bool, bool]
+    active_mask_bool: jnp.ndarray
+    frozen_params5: jnp.ndarray
+    bounds_lower: jnp.ndarray
+    bounds_upper: jnp.ndarray
+    gauge_fix: GaugeFixMode
+    gauge_dofs: tuple[str, ...]
+
+    @classmethod
+    def from_setup(cls, setup: _AlignSetupState) -> "PoseConstraintContext":
+        return cls(
+            active_mask_tuple=setup.active_mask_tuple,
+            active_mask_bool=setup.active_mask_bool,
+            frozen_params5=setup.frozen_params5,
+            bounds_lower=setup.bounds_lower,
+            bounds_upper=setup.bounds_upper,
+            gauge_fix=setup.gauge_fix,
+            gauge_dofs=setup.gauge_dofs,
+        )
+
+    def apply_param_constraints(self, candidate: jnp.ndarray) -> jnp.ndarray:
+        clipped = jnp.clip(candidate, self.bounds_lower, self.bounds_upper)
+        return jnp.where(self.active_mask_bool, clipped, self.frozen_params5)
+
+    def apply_full_constraints(self, candidate: jnp.ndarray) -> jnp.ndarray:
+        constrained = self.apply_param_constraints(candidate)
+        gauged, _ = apply_alignment_gauge(
+            constrained,
+            mode=self.gauge_fix,
+            active_mask=self.active_mask_tuple,
+            bounds_lower=self.bounds_lower,
+            bounds_upper=self.bounds_upper,
+        )
+        return self.apply_param_constraints(gauged)
+
+    def apply_full_constraints_with_stats(
+        self,
+        candidate: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, dict[str, float | str | list[str]]]:
+        constrained = self.apply_param_constraints(candidate)
+        gauged, stats = apply_alignment_gauge(
+            constrained,
+            mode=self.gauge_fix,
+            active_mask=self.active_mask_tuple,
+            bounds_lower=self.bounds_lower,
+            bounds_upper=self.bounds_upper,
+        )
+        gauged = self.apply_param_constraints(gauged)
+        final_gauged, final_stats = apply_alignment_gauge(
+            gauged,
+            mode=self.gauge_fix,
+            active_mask=self.active_mask_tuple,
+            bounds_lower=self.bounds_lower,
+            bounds_upper=self.bounds_upper,
+        )
+        final_gauged = self.apply_param_constraints(final_gauged)
+        stats_py = gauge_stats_to_python(stats)
+        final_py = gauge_stats_to_python(final_stats)
+        stats_py["dx_mean_after"] = final_py["dx_mean_after"]
+        stats_py["dz_mean_after"] = final_py["dz_mean_after"]
+        return final_gauged, stats_py
+
+    def description(self) -> str:
+        if self.gauge_fix == "none":
+            return "none"
+        gauge_dofs_label = ",".join(self.gauge_dofs) if self.gauge_dofs else "no translation DOFs"
+        return f"{self.gauge_fix} over active {gauge_dofs_label}"
+
+
+@dataclass(frozen=True)
+class PoseMotionContext:
+    motion_model: Any
+    use_smooth_pose_model: bool
+    active_coeff_indices: jnp.ndarray
+    params5: jnp.ndarray
+    motion_coeffs: jnp.ndarray | None
+    constraint_ctx: PoseConstraintContext
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        geometry: Geometry,
+        cfg: AlignConfig,
+        n_views: int,
+        active_names: tuple[str, ...],
+        params5: jnp.ndarray,
+        resume_state: AlignResumeState | None,
+        constraint_ctx: PoseConstraintContext,
+    ) -> "PoseMotionContext":
+        scan_coordinate = scan_coordinate_from_geometry(geometry, n_views)
+        motion_model = build_pose_motion_model(
+            pose_model=str(cfg.pose_model),
+            n_views=n_views,
+            active_dofs=active_names,
+            frozen_params5=constraint_ctx.frozen_params5,
+            scan_coordinate=scan_coordinate,
+            knot_spacing=int(cfg.knot_spacing),
+            degree=int(cfg.degree),
+        )
+        use_smooth_pose_model = motion_model.name != "per_view"
+        active_coeff_indices = jnp.asarray(motion_model.active_indices, dtype=jnp.int32)
+        motion_coeffs = None
+        constrained_params = params5
+        if use_smooth_pose_model:
+            motion_coeffs = fit_motion_coefficients(motion_model, constrained_params)
+            constrained_params = constraint_ctx.apply_full_constraints(
+                expand_motion_coefficients(motion_model, motion_coeffs)
+            )
+            motion_coeffs = fit_motion_coefficients(motion_model, constrained_params)
+            if resume_state is not None and resume_state.motion_coeffs is not None:
+                resume_coeffs = jnp.asarray(resume_state.motion_coeffs, dtype=jnp.float32)
+                if tuple(resume_coeffs.shape) != tuple(motion_coeffs.shape):
+                    raise ValueError(
+                        "align resume_state motion_coeffs shape mismatch: "
+                        f"expected {tuple(motion_coeffs.shape)}, got {tuple(resume_coeffs.shape)}"
+                    )
+                motion_coeffs = resume_coeffs
+                constrained_params = constraint_ctx.apply_full_constraints(
+                    expand_motion_coefficients(motion_model, motion_coeffs)
+                )
+
+        return cls(
+            motion_model=motion_model,
+            use_smooth_pose_model=use_smooth_pose_model,
+            active_coeff_indices=active_coeff_indices,
+            params5=constrained_params,
+            motion_coeffs=motion_coeffs,
+            constraint_ctx=constraint_ctx,
+        )
+
+    def coeffs_to_constrained_params(self, coeffs: jnp.ndarray) -> jnp.ndarray:
+        return self.constraint_ctx.apply_full_constraints(
+            expand_motion_coefficients(self.motion_model, coeffs)
+        )
+
+    def project_params_to_smooth(self, candidate: jnp.ndarray) -> jnp.ndarray:
+        constrained = self.constraint_ctx.apply_full_constraints(candidate)
+        coeffs = fit_motion_coefficients(self.motion_model, constrained)
+        return self.coeffs_to_constrained_params(coeffs)
+
+    def loss_and_grad_for(
+        self,
+        align_loss: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
+    ) -> Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None:
+        if not self.use_smooth_pose_model:
+            return None
+
+        def motion_align_loss(coeffs, vol):
+            return align_loss(self.coeffs_to_constrained_params(coeffs), vol)
+
+        return jax.jit(jax.value_and_grad(motion_align_loss))
 
 
 @dataclass(frozen=True)
@@ -707,7 +865,9 @@ class AlignmentStepContext:
     project_params_to_smooth: Callable[[jnp.ndarray], jnp.ndarray]
     coeffs_to_constrained_params: Callable[[jnp.ndarray], jnp.ndarray]
     use_smooth_pose_model: bool
-    motion_loss_and_grad: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
+    motion_loss_and_grad: (
+        Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]] | None
+    )
     motion_model: Any
     smoothness_gram: jnp.ndarray
     light_smoothness_weights_sq: jnp.ndarray
@@ -1127,7 +1287,9 @@ def _build_alignment_runtime_context(
 ) -> AlignmentRuntimeContext:
     pose_stack = stack_view_poses(geometry, n_views)
     validate_pose_stack(pose_stack, n_views, context="align geometry")
-    det_grid = get_detector_grid_device(detector) if det_grid_override is None else det_grid_override
+    det_grid = (
+        get_detector_grid_device(detector) if det_grid_override is None else det_grid_override
+    )
 
     smoothness_weights = (
         jnp.array(
@@ -1187,8 +1349,6 @@ def _build_alignment_runtime_context(
     )
 
 
-
-
 def align(
     geometry: Geometry,
     grid: Grid,
@@ -1224,103 +1384,29 @@ def align(
     x = setup.x
     params5 = setup.params5
     frozen_params5 = setup.frozen_params5
-    active_mask_tuple = setup.active_mask_tuple
-    active_mask_bool = setup.active_mask_bool
     active_col_indices_np = setup.active_col_indices_np
     active_names = setup.active_names
     active_mask = setup.active_mask
-    bounds_lower = setup.bounds_lower
-    bounds_upper = setup.bounds_upper
-    gauge_fix = setup.gauge_fix
-    gauge_dofs = setup.gauge_dofs
+    constraint_ctx = PoseConstraintContext.from_setup(setup)
 
-    def _apply_param_constraints(candidate: jnp.ndarray) -> jnp.ndarray:
-        clipped = jnp.clip(candidate, bounds_lower, bounds_upper)
-        return jnp.where(active_mask_bool, clipped, frozen_params5)
-
-    def _apply_full_constraints(candidate: jnp.ndarray) -> jnp.ndarray:
-        constrained = _apply_param_constraints(candidate)
-        gauged, _ = apply_alignment_gauge(
-            constrained,
-            mode=gauge_fix,
-            active_mask=active_mask_tuple,
-            bounds_lower=bounds_lower,
-            bounds_upper=bounds_upper,
-        )
-        return _apply_param_constraints(gauged)
-
-    def _apply_full_constraints_with_stats(
-        candidate: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, dict[str, float | str | list[str]]]:
-        constrained = _apply_param_constraints(candidate)
-        gauged, stats = apply_alignment_gauge(
-            constrained,
-            mode=gauge_fix,
-            active_mask=active_mask_tuple,
-            bounds_lower=bounds_lower,
-            bounds_upper=bounds_upper,
-        )
-        gauged = _apply_param_constraints(gauged)
-        final_gauged, final_stats = apply_alignment_gauge(
-            gauged,
-            mode=gauge_fix,
-            active_mask=active_mask_tuple,
-            bounds_lower=bounds_lower,
-            bounds_upper=bounds_upper,
-        )
-        final_gauged = _apply_param_constraints(final_gauged)
-        stats_py = gauge_stats_to_python(stats)
-        final_py = gauge_stats_to_python(final_stats)
-        stats_py["dx_mean_after"] = final_py["dx_mean_after"]
-        stats_py["dz_mean_after"] = final_py["dz_mean_after"]
-        return final_gauged, stats_py
-
-    params5, initial_gauge_stats = _apply_full_constraints_with_stats(params5)
-    gauge_dofs_label = ",".join(gauge_dofs) if gauge_dofs else "no translation DOFs"
-    gauge_desc = (
-        "none"
-        if gauge_fix == "none"
-        else f"{gauge_fix} over active {gauge_dofs_label}"
-    )
-    logging.info("Alignment gauge fix: %s", gauge_desc)
+    params5, initial_gauge_stats = constraint_ctx.apply_full_constraints_with_stats(params5)
+    logging.info("Alignment gauge fix: %s", constraint_ctx.description())
     final_gauge_stats = dict(initial_gauge_stats)
 
-    scan_coordinate = scan_coordinate_from_geometry(geometry, n_views)
-    motion_model = build_pose_motion_model(
-        pose_model=str(cfg.pose_model),
+    motion_ctx = PoseMotionContext.build(
+        geometry=geometry,
+        cfg=cfg,
         n_views=n_views,
-        active_dofs=active_names,
-        frozen_params5=frozen_params5,
-        scan_coordinate=scan_coordinate,
-        knot_spacing=int(cfg.knot_spacing),
-        degree=int(cfg.degree),
+        active_names=active_names,
+        params5=params5,
+        resume_state=resume_state,
+        constraint_ctx=constraint_ctx,
     )
-    use_smooth_pose_model = motion_model.name != "per_view"
-    motion_coeffs = None
-    active_coeff_indices = jnp.asarray(motion_model.active_indices, dtype=jnp.int32)
-
-    def _coeffs_to_constrained_params(coeffs: jnp.ndarray) -> jnp.ndarray:
-        return _apply_full_constraints(expand_motion_coefficients(motion_model, coeffs))
-
-    def _project_params_to_smooth(candidate: jnp.ndarray) -> jnp.ndarray:
-        constrained = _apply_full_constraints(candidate)
-        coeffs = fit_motion_coefficients(motion_model, constrained)
-        return _coeffs_to_constrained_params(coeffs)
-
-    if use_smooth_pose_model:
-        motion_coeffs = fit_motion_coefficients(motion_model, params5)
-        params5 = _coeffs_to_constrained_params(motion_coeffs)
-        motion_coeffs = fit_motion_coefficients(motion_model, params5)
-        if resume_state is not None and resume_state.motion_coeffs is not None:
-            resume_coeffs = jnp.asarray(resume_state.motion_coeffs, dtype=jnp.float32)
-            if tuple(resume_coeffs.shape) != tuple(motion_coeffs.shape):
-                raise ValueError(
-                    "align resume_state motion_coeffs shape mismatch: "
-                    f"expected {tuple(motion_coeffs.shape)}, got {tuple(resume_coeffs.shape)}"
-                )
-            motion_coeffs = resume_coeffs
-            params5 = _coeffs_to_constrained_params(motion_coeffs)
-        _, initial_gauge_stats = _apply_full_constraints_with_stats(params5)
+    motion_model = motion_ctx.motion_model
+    params5 = motion_ctx.params5
+    motion_coeffs = motion_ctx.motion_coeffs
+    if motion_ctx.use_smooth_pose_model:
+        _, initial_gauge_stats = constraint_ctx.apply_full_constraints_with_stats(params5)
         final_gauge_stats = dict(initial_gauge_stats)
 
     start_outer_iter = int(resume_state.start_outer_iter) if resume_state is not None else 0
@@ -1368,14 +1454,7 @@ def align(
     loss_and_grad_manual = objective.loss_and_grad_manual
     _gn_update_all = objective.gn_update_all
 
-    if use_smooth_pose_model:
-
-        def motion_align_loss(coeffs, vol):
-            return align_loss(_coeffs_to_constrained_params(coeffs), vol)
-
-        motion_loss_and_grad = jax.jit(jax.value_and_grad(motion_align_loss))
-    else:
-        motion_loss_and_grad = None
+    motion_loss_and_grad = motion_ctx.loss_and_grad_for(align_loss)
 
     # Reuse measured Lipschitz across outer iterations to avoid repeated power-method
     L_prev = resume_state.L if resume_state is not None else cfg.recon_L
@@ -1419,16 +1498,16 @@ def align(
         loss_and_grad_manual=loss_and_grad_manual,
         gn_update_all=_gn_update_all,
         active_mask=active_mask,
-        active_coeff_indices=active_coeff_indices,
+        active_coeff_indices=motion_ctx.active_coeff_indices,
         active_col_indices_np=active_col_indices_np,
         frozen_params5=frozen_params5,
-        bounds_lower=bounds_lower,
-        bounds_upper=bounds_upper,
-        apply_full_constraints=_apply_full_constraints,
-        apply_full_constraints_with_stats=_apply_full_constraints_with_stats,
-        project_params_to_smooth=_project_params_to_smooth,
-        coeffs_to_constrained_params=_coeffs_to_constrained_params,
-        use_smooth_pose_model=use_smooth_pose_model,
+        bounds_lower=constraint_ctx.bounds_lower,
+        bounds_upper=constraint_ctx.bounds_upper,
+        apply_full_constraints=constraint_ctx.apply_full_constraints,
+        apply_full_constraints_with_stats=constraint_ctx.apply_full_constraints_with_stats,
+        project_params_to_smooth=motion_ctx.project_params_to_smooth,
+        coeffs_to_constrained_params=motion_ctx.coeffs_to_constrained_params,
+        use_smooth_pose_model=motion_ctx.use_smooth_pose_model,
         motion_loss_and_grad=motion_loss_and_grad,
         motion_model=motion_model,
         smoothness_gram=smoothness_gram,
@@ -1436,8 +1515,8 @@ def align(
         medium_smoothness_weights_sq=medium_smoothness_weights_sq,
         smoothness_weights_sq=smoothness_weights_sq,
         trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
-        gauge_fix=gauge_fix,
-        gauge_dofs=tuple(gauge_dofs),
+        gauge_fix=constraint_ctx.gauge_fix,
+        gauge_dofs=tuple(constraint_ctx.gauge_dofs),
     )
 
     iter_range = range(start_outer_iter, int(cfg.outer_iters))
@@ -1591,14 +1670,11 @@ def align(
         "completed_outer_iters": len(outer_stats),
         "small_impr_streak": int(small_impr_streak),
         "motion_coeffs": motion_coeffs,
-        "gauge_fix": gauge_fix,
-        "gauge_fix_dofs": list(gauge_dofs),
+        "gauge_fix": constraint_ctx.gauge_fix,
+        "gauge_fix_dofs": list(constraint_ctx.gauge_dofs),
         "gauge_fix_final": dict(final_gauge_stats),
     }
     return x, params5, info
-
-
-
 
 
 __all__ = [
