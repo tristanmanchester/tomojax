@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import LaminographyGeometry, ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..align.geometry.parametrizations import se3_from_5d

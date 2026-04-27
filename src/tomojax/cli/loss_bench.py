@@ -26,7 +26,7 @@ from ..bench.loss_experiment import (
     project_gt_with_estimated_poses as _project_gt_with_estimated_poses,
 )
 from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..align.objectives.losses import parse_loss_spec
 from ..align.pipeline import align, AlignConfig
 from ..utils.logging import setup_logging, log_jax_env

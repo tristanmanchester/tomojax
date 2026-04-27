@@ -23,8 +23,8 @@ from ..core.validation import (
 from ..utils.fov import cylindrical_mask_xy
 from ..utils.logging import format_duration, progress_iter
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
-from ._loss_adapters import LossAdapter, build_loss_adapter
-from ._loss_specs import loss_is_within_relative_tolerance, loss_spec_name, resolve_loss_for_level
+from .objectives.loss_adapters import LossAdapter, build_loss_adapter
+from .objectives.loss_specs import loss_is_within_relative_tolerance, loss_spec_name, resolve_loss_for_level
 from ._observer import (
     ObserverAction,
     ObserverCallback,

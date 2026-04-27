@@ -5,7 +5,7 @@ from typing import Literal, Mapping
 
 from ..core.geometry.base import Geometry
 from ..recon._tv_ops import Regulariser
-from ._loss_specs import AlignmentLossConfig, L2OtsuLossSpec
+from .objectives.loss_specs import AlignmentLossConfig, L2OtsuLossSpec
 from .model.diagnostics import GaugePolicy
 from .model.dofs import (
     DofBounds,

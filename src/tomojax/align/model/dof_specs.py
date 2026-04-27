@@ -9,7 +9,6 @@ import jax.numpy as jnp
 from .dofs import (
     ALL_ALIGNMENT_DOF_NAMES,
     DOF_INDEX,
-    DOF_NAMES,
     DofBounds,
     normalize_alignment_dofs,
 )

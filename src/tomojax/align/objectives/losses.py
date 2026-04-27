@@ -3,12 +3,12 @@ from __future__ import annotations
 """Compatibility facade for alignment loss specs, kernels, and adapters.
 
 This module exists for historical ``tomojax.align.losses`` imports. New code
-should import typed loss specs from ``align._loss_specs`` and adapters from
-``align._loss_adapters`` or this package's owner modules instead of treating the
-compatibility facade as an extension point.
+should import typed loss specs from ``align.objectives.loss_specs`` and adapters
+from ``align.objectives.loss_adapters`` instead of treating the compatibility
+facade as an extension point.
 """
 
-from .._loss_adapters import (
+from .loss_adapters import (
     GaussNewtonWeightFn,
     LossAdapter,
     LossBuilderFn,
@@ -17,7 +17,7 @@ from .._loss_adapters import (
     build_loss_adapter,
     loss_supports_setup_validation_lm,
 )
-from .._loss_kernels import (
+from .loss_kernels import (
     _compute_otsu_threshold,
     _loss_barron,
     _loss_cauchy,
@@ -50,7 +50,7 @@ from .._loss_kernels import (
     _sobel,
     _validated_renyi_alpha,
 )
-from .._loss_specs import (
+from .loss_specs import (
     AlignmentLossConfig,
     AlignmentLossSchedule,
     AlignmentLossSpec,
@@ -77,7 +77,7 @@ from .._loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from .._loss_state import LossState
+from .loss_state import LossState
 
 __all__ = [
     "AlignmentLossConfig",

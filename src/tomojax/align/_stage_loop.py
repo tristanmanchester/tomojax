@@ -16,7 +16,7 @@ from ..core.validation import (
     validate_projection_stack,
 )
 from ..recon.fista_tv import FistaConfig, fista_tv
-from ._loss_specs import (
+from .objectives.loss_specs import (
     loss_spec_name,
     resolve_loss_for_level,
     validate_loss_schedule_levels,

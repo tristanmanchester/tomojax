@@ -17,7 +17,7 @@ from .geometry.geometry_applier import (
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
 )
-from ._loss_adapters import build_loss_adapter
+from .objectives.loss_adapters import build_loss_adapter
 from .optimizers import ValidationLmConfig, run_active_validation_lm
 from .model.schedules import ResolvedAlignmentStage
 from .model.state import AlignmentState, PoseState, SetupGeometryState

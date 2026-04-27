@@ -9,7 +9,6 @@ import numpy as np
 
 from tomojax.calibration.axis_geometry import (
     axis_unit_from_rotations,
-    default_active_axis_dofs,
     nominal_axis_unit_from_inputs,
 )
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
