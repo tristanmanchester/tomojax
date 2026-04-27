@@ -1,7 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Literal, Mapping, TypeAlias
+from typing import Dict, Iterable, Literal, Mapping, TypeAlias, cast
+
+
+RobustLossKind: TypeAlias = Literal[
+    "charbonnier",
+    "huber",
+    "cauchy",
+    "welsch",
+    "student_t",
+    "barron",
+    "correntropy",
+]
+CorrelationLossKind: TypeAlias = Literal["zncc", "phasecorr", "fft_mag"]
+GradientLossKind: TypeAlias = Literal["grad_l1", "ngf", "grad_orient", "chamfer_edge"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,15 +40,7 @@ class EdgeL2LossSpec:
 
 @dataclass(frozen=True, slots=True)
 class RobustLossSpec:
-    kind: Literal[
-        "charbonnier",
-        "huber",
-        "cauchy",
-        "welsch",
-        "student_t",
-        "barron",
-        "correntropy",
-    ]
+    kind: RobustLossKind
     eps: float = 1e-3
     delta: float = 1.0
     c: float = 1.0
@@ -46,7 +51,7 @@ class RobustLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class CorrelationLossSpec:
-    kind: Literal["zncc", "phasecorr", "fft_mag"]
+    kind: CorrelationLossKind
     eps: float = 1e-5
     beta: float = 10.0
 
@@ -71,7 +76,7 @@ class TverskyLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class GradientLossSpec:
-    kind: Literal["grad_l1", "ngf", "grad_orient", "chamfer_edge"]
+    kind: GradientLossKind
     eps: float = 1e-3
 
 
@@ -289,7 +294,7 @@ def parse_loss_spec(
     if canonical in {"charbonnier", "huber", "cauchy", "welsch", "student_t", "barron", "correntropy"}:
         _reject_extra_params({"eps", "delta", "c", "nu", "sigma", "alpha"})
         return RobustLossSpec(
-            kind=canonical,  # type: ignore[arg-type]
+            kind=cast(RobustLossKind, canonical),
             eps=float(raw.get("eps", 1e-3)),
             delta=float(raw.get("delta", 1.0)),
             c=float(raw.get("c", 1.0)),
@@ -300,7 +305,7 @@ def parse_loss_spec(
     if canonical in {"zncc", "phasecorr", "fft_mag"}:
         _reject_extra_params({"eps", "beta"})
         return CorrelationLossSpec(
-            kind=canonical,  # type: ignore[arg-type]
+            kind=cast(CorrelationLossKind, canonical),
             eps=float(raw.get("eps", 1e-5)),
             beta=float(raw.get("beta", 10.0)),
         )
@@ -339,7 +344,7 @@ def parse_loss_spec(
     if canonical in {"grad_l1", "ngf", "grad_orient", "chamfer_edge"}:
         _reject_extra_params({"eps"})
         return GradientLossSpec(
-            kind=canonical,  # type: ignore[arg-type]
+            kind=cast(GradientLossKind, canonical),
             eps=float(raw.get("eps", 1e-3)),
         )
     if canonical in {"mi", "nmi", "renyi_mi"}:

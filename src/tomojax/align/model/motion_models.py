@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal, Sequence, cast
 
 import numpy as np
 import jax.numpy as jnp
@@ -163,7 +163,7 @@ def _normalize_pose_model(raw: str) -> PoseModelName:
         raise ValueError(
             "pose_model must be one of 'per_view', 'polynomial', or 'spline'"
         )
-    return value  # type: ignore[return-value]
+    return cast(PoseModelName, value)
 
 
 def _normalize_coordinate(coord: np.ndarray) -> np.ndarray:

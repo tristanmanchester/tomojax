@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Mapping
+from typing import Iterable, Literal, Mapping, cast
 
 from .dof_specs import ActiveParameterView
 from .diagnostics import GaugeDecision, GaugePolicyError, validate_active_gauge_policy
@@ -477,4 +477,4 @@ def _normalize_pose_optimizer(value: str) -> OptimizerKind:
         key = "lbfgs"
     if key not in {"gd", "gn", "lbfgs"}:
         raise ValueError("pose optimizer must be one of 'gd', 'gn', or 'lbfgs'")
-    return key  # type: ignore[return-value]
+    return cast(OptimizerKind, key)

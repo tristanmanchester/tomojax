@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Mapping, Sequence, TypedDict
+from typing import Literal, Mapping, Sequence, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +33,7 @@ def normalize_gauge_fix(raw: object) -> GaugeFixMode:
     if value not in _VALID_GAUGE_FIXES:
         valid = ", ".join(sorted(_VALID_GAUGE_FIXES))
         raise ValueError(f"gauge_fix must be one of {valid}; got {raw!r}")
-    return value  # type: ignore[return-value]
+    return cast(GaugeFixMode, value)
 
 
 def active_gauge_dofs(*, mode: GaugeFixMode, active_mask: Sequence[bool]) -> tuple[str, ...]:
