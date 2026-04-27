@@ -4,19 +4,19 @@ import math
 from typing import Iterable
 
 import jax.numpy as jnp
-import numpy as np
 
-from ..core.geometry.axis import RotationAxisGeometry
 from ..core.geometry.base import Detector, Geometry, Grid
-from ..core.geometry.lamino import LaminographyGeometry
-from ..core.geometry.parallel import ParallelGeometry
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ._observer import OuterStat
 from .model.diagnostics import validate_active_gauge_policy
 from .model.dof_specs import ActiveParameterView
 from .objectives.fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
 from .objectives.folds import FoldSpec
-from .geometry.geometry_applier import BaseGeometryArrays, apply_setup_to_detector_grid, setup_axis_unit
+from .geometry.geometry_applier import (
+    BaseGeometryArrays,
+    apply_setup_to_detector_grid,
+    materialize_setup_geometry,
+)
 from ._loss_adapters import build_loss_adapter
 from .optimizers import ValidationLmConfig, run_active_validation_lm
 from .model.schedules import ResolvedAlignmentStage
@@ -30,29 +30,7 @@ def _geometry_with_setup_state(
     detector: Detector,
     setup: SetupGeometryState,
 ) -> Geometry:
-    thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)
-    axis = tuple(float(v) for v in np.asarray(setup_axis_unit(setup), dtype=np.float32))
-    axis_active = (
-        abs(float(setup.axis_rot_x_rad)) > 1e-7
-        or abs(float(setup.axis_rot_y_rad)) > 1e-7
-        or isinstance(geometry, RotationAxisGeometry)
-    )
-    if axis_active:
-        return RotationAxisGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            axis_unit_lab=axis,
-        )
-    if isinstance(geometry, LaminographyGeometry):
-        return LaminographyGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            tilt_deg=float(geometry.tilt_deg),
-            tilt_about=str(geometry.tilt_about),
-        )
-    return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
+    return materialize_setup_geometry(geometry, grid, detector, setup)
 
 
 def _geometry_calibration_payload(

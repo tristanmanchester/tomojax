@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry import Detector, Geometry, Grid, RotationAxisGeometry
-from tomojax.core.geometry.lamino import LaminographyGeometry
-from tomojax.core.geometry.parallel import ParallelGeometry
+from tomojax.core.geometry import Detector, Geometry, Grid
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
-from ..geometry.geometry_applier import apply_setup_to_detector_grid, setup_axis_unit
+from ..geometry.geometry_applier import apply_setup_to_detector_grid, materialize_setup_geometry
 from ..model.state import AlignmentState
 
 
@@ -50,7 +47,13 @@ def reconstruct_train_fold_nograd(
     if valid_idx.size == 0:
         raise ValueError("train fold must contain at least one active view")
 
-    fold_geometry = _geometry_for_setup_subset(geometry, grid, detector, state, valid_idx)
+    fold_geometry = materialize_setup_geometry(
+        geometry,
+        grid,
+        detector,
+        state.setup,
+        indices=valid_idx,
+    )
     det_grid = apply_setup_to_detector_grid(
         detector,
         state.setup,
@@ -90,35 +93,3 @@ def reconstruct_train_fold_nograd(
         "info": info,
     }
     return x, metadata
-
-
-def _geometry_for_setup_subset(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    state: AlignmentState,
-    indices: Sequence[int],
-) -> Geometry:
-    idx = np.asarray(indices, dtype=np.int32)
-    thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)[idx]
-    axis = tuple(float(v) for v in np.asarray(setup_axis_unit(state.setup), dtype=np.float32))
-    axis_changed = (
-        np.linalg.norm(np.asarray(axis, dtype=np.float32) - np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
-        > 1e-7
-    )
-    if isinstance(geometry, RotationAxisGeometry) or axis_changed:
-        return RotationAxisGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            axis_unit_lab=axis,
-        )
-    if isinstance(geometry, LaminographyGeometry):
-        return LaminographyGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            tilt_deg=float(geometry.tilt_deg),
-            tilt_about=str(geometry.tilt_about),
-        )
-    return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)

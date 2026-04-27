@@ -9,9 +9,10 @@ import numpy as np
 
 from tomojax.calibration.axis_geometry import axis_pose_stack, axis_unit_from_rotations
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
-from tomojax.core.geometry import Detector, Geometry
+from tomojax.core.geometry import Detector, Geometry, Grid
 from tomojax.core.geometry.axis import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
+from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 
 from .parametrizations import se3_from_5d
@@ -85,6 +86,41 @@ def setup_axis_unit(setup: SetupGeometryState) -> jnp.ndarray:
         axis_rot_x_deg=jnp.rad2deg(setup.axis_rot_x_rad),
         axis_rot_y_deg=jnp.rad2deg(setup.axis_rot_y_rad),
     )
+
+
+def materialize_setup_geometry(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    setup: SetupGeometryState,
+    *,
+    indices: Sequence[int] | None = None,
+) -> Geometry:
+    """Build a Python geometry object for setup-state projection/reconstruction calls."""
+    thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)
+    if indices is not None:
+        thetas = thetas[np.asarray(indices, dtype=np.int32)]
+    axis = tuple(float(v) for v in np.asarray(setup_axis_unit(setup), dtype=np.float32))
+    setup_rotated_axis = (
+        abs(float(setup.axis_rot_x_rad)) > 1e-7
+        or abs(float(setup.axis_rot_y_rad)) > 1e-7
+    )
+    if isinstance(geometry, RotationAxisGeometry) or setup_rotated_axis:
+        return RotationAxisGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas,
+            axis_unit_lab=axis,
+        )
+    if isinstance(geometry, LaminographyGeometry):
+        return LaminographyGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas,
+            tilt_deg=float(geometry.tilt_deg),
+            tilt_about=str(geometry.tilt_about),
+        )
+    return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
 
 
 def apply_alignment_state(
