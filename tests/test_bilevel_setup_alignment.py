@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import jax.numpy as jnp
 
-import tomojax.align.detector_center as detector_center
+import tomojax.align.geometry.detector_center as detector_center
 import tomojax.align.geometry.geometry_blocks as geometry_blocks
 import tomojax.align.pipeline as pipeline
 from tomojax.align.model.dof_specs import ActiveParameterView
