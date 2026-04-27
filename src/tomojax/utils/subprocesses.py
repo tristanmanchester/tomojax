@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Sequence
+from typing import Any, Sequence
 
 
 def _normalize_command(cmd: Sequence[str]) -> list[str]:
@@ -21,11 +21,11 @@ def _normalize_command(cmd: Sequence[str]) -> list[str]:
     return args
 
 
-def run_command(cmd: Sequence[str], **kwargs):
+def run_command(cmd: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
     normalized = _normalize_command(cmd)
     return subprocess.run(normalized, shell=False, **kwargs)  # nosec B603
 
 
-def check_output_command(cmd: Sequence[str], **kwargs):
+def check_output_command(cmd: Sequence[str], **kwargs: Any) -> bytes | str:
     normalized = _normalize_command(cmd)
     return subprocess.check_output(normalized, shell=False, **kwargs)  # nosec B603
