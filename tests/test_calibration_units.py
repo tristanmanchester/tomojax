@@ -4,7 +4,7 @@ import pytest
 
 from tomojax.calibration import DetectorPixelScale, DetectorPixelValue
 from tomojax.core.geometry import Detector
-from tomojax.recon.multires import scale_detector
+from tomojax.core.multires import scale_detector
 
 
 def test_detector_pixel_scale_reports_native_level_and_physical_units():

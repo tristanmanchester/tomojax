@@ -15,6 +15,7 @@ from tomojax.align.optimizers import (
     ActiveLbfgsConfig,
     BoundTransform,
     PoseLbfgsConfig,
+    PoseOptimizationContext,
     ValidationLmConfig,
     run_active_lbfgs,
     run_active_validation_lm,
@@ -33,6 +34,25 @@ def _lbfgs_config(**kwargs) -> PoseLbfgsConfig:
     }
     values.update(kwargs)
     return PoseLbfgsConfig(**values)
+
+
+def _pose_context(
+    *,
+    frozen_params5: jnp.ndarray,
+    active_cols: np.ndarray,
+    bounds_lower: jnp.ndarray,
+    bounds_upper: jnp.ndarray,
+    apply_param_constraints,
+    motion_model: PoseMotionModel | None = None,
+) -> PoseOptimizationContext:
+    return PoseOptimizationContext(
+        active_cols=active_cols,
+        frozen_params5=frozen_params5,
+        bounds_lower=bounds_lower,
+        bounds_upper=bounds_upper,
+        apply_param_constraints=apply_param_constraints,
+        motion_model=motion_model,
+    )
 
 
 def test_bound_transform_round_trips_mixed_bounds():
@@ -94,16 +114,18 @@ def test_pose_lbfgs_active_packing_excludes_frozen_dofs():
     result = run_pose_lbfgs(
         params5_in=frozen,
         motion_coeffs_in=None,
-        frozen_params5=frozen,
-        active_cols=active_cols,
-        bounds_lower=bounds_lower,
-        bounds_upper=bounds_upper,
         loss_before_value=float(objective(frozen)),
         objective_fn=objective,
         eval_loss_fn=lambda params, _label: float(objective(params)),
-        apply_param_constraints=lambda params: jnp.clip(params, bounds_lower, bounds_upper),
         is_expected_failure=lambda _exc: False,
         cfg=_lbfgs_config(maxiter=3),
+        context=_pose_context(
+            frozen_params5=frozen,
+            active_cols=active_cols,
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+            apply_param_constraints=lambda params: jnp.clip(params, bounds_lower, bounds_upper),
+        ),
     )
 
     np.testing.assert_array_equal(np.asarray(result.params5[:, :3]), np.asarray(frozen[:, :3]))
@@ -140,17 +162,19 @@ def test_pose_lbfgs_smooth_unbounded_refines_constraints_like_active_path():
     result = run_pose_lbfgs(
         params5_in=params0,
         motion_coeffs_in=coeffs0,
-        frozen_params5=params0,
-        active_cols=np.asarray([3], dtype=np.int32),
-        bounds_lower=bounds_lower,
-        bounds_upper=bounds_upper,
         loss_before_value=10.0,
         objective_fn=lambda params: jnp.sum(params[:, 3] ** 2),
         eval_loss_fn=lambda _params, _label: 0.0,
-        apply_param_constraints=zero_mean_dx,
         is_expected_failure=lambda _exc: False,
         cfg=_lbfgs_config(maxiter=0),
-        motion_model=model,
+        context=_pose_context(
+            frozen_params5=params0,
+            active_cols=np.asarray([3], dtype=np.int32),
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+            apply_param_constraints=zero_mean_dx,
+            motion_model=model,
+        ),
     )
 
     assert result.accepted is True
@@ -176,16 +200,18 @@ def test_pose_lbfgs_selects_best_candidate_when_last_is_worse():
     result = run_pose_lbfgs(
         params5_in=params0,
         motion_coeffs_in=None,
-        frozen_params5=params0,
-        active_cols=np.asarray([3], dtype=np.int32),
-        bounds_lower=bounds_lower,
-        bounds_upper=bounds_upper,
         loss_before_value=5.0,
         objective_fn=lambda params: jnp.sum(params[:, 3] ** 2),
         eval_loss_fn=lambda _params, label: 10.0 if label == "last" else 1.0,
-        apply_param_constraints=lambda params: params,
         is_expected_failure=lambda _exc: False,
         cfg=_lbfgs_config(),
+        context=_pose_context(
+            frozen_params5=params0,
+            active_cols=np.asarray([3], dtype=np.int32),
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+            apply_param_constraints=lambda params: params,
+        ),
     )
 
     assert result.accepted is True
@@ -203,16 +229,18 @@ def test_pose_lbfgs_rejects_non_improving_candidate():
     result = run_pose_lbfgs(
         params5_in=params0,
         motion_coeffs_in=None,
-        frozen_params5=params0,
-        active_cols=np.asarray([3], dtype=np.int32),
-        bounds_lower=bounds_lower,
-        bounds_upper=bounds_upper,
         loss_before_value=0.5,
         objective_fn=lambda params: jnp.sum(params[:, 3] ** 2),
         eval_loss_fn=lambda _params, _label: 1.0,
-        apply_param_constraints=lambda params: params,
         is_expected_failure=lambda _exc: False,
         cfg=_lbfgs_config(),
+        context=_pose_context(
+            frozen_params5=params0,
+            active_cols=np.asarray([3], dtype=np.int32),
+            bounds_lower=bounds_lower,
+            bounds_upper=bounds_upper,
+            apply_param_constraints=lambda params: params,
+        ),
     )
 
     assert result.accepted is False

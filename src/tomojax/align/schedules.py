@@ -187,6 +187,93 @@ class ResolvedAlignmentSchedule:
         }
 
 
+_PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
+    "pose_only": (
+        AlignmentStage(
+            name="pose_only",
+            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+            objective_kind="fixed_volume",
+            optimizer="gn",
+        ),
+    ),
+    "pose_phi_only": (
+        AlignmentStage(
+            name="pose_phi_only",
+            active_dofs=("phi",),
+            objective_kind="fixed_volume",
+            optimizer="gn",
+            gauge_policy="anchor_mean",
+        ),
+    ),
+    "pose_dx_dz_after_phi": (
+        AlignmentStage(
+            name="pose_dx_dz_after_phi",
+            active_dofs=("dx", "dz"),
+            objective_kind="fixed_volume",
+            optimizer="gn",
+            gauge_policy="anchor_mean",
+        ),
+    ),
+    "cor": (
+        AlignmentStage(
+            name="cor",
+            active_dofs=("det_u_px",),
+            objective_kind="bilevel_cv",
+            optimizer="validation_lm",
+        ),
+    ),
+    "detector_roll": (
+        AlignmentStage(
+            name="detector_roll",
+            active_dofs=("detector_roll_deg",),
+            objective_kind="bilevel_cv",
+            optimizer="validation_lm",
+        ),
+    ),
+    "axis_direction": (
+        AlignmentStage(
+            name="axis_direction",
+            active_dofs=("axis_rot_x_deg", "axis_rot_y_deg"),
+            objective_kind="bilevel_cv",
+            optimizer="validation_lm",
+            gauge_policy="diagnose_only",
+        ),
+    ),
+    "lamino_tilt": (
+        AlignmentStage(
+            name="lamino_tilt",
+            active_dofs=("axis_rot_x_deg",),
+            objective_kind="bilevel_cv",
+            optimizer="validation_lm",
+            gauge_policy="diagnose_only",
+        ),
+    ),
+    "setup_safe": (
+        AlignmentStage("cor", ("det_u_px",), "bilevel_cv", "validation_lm"),
+        AlignmentStage(
+            "detector_roll",
+            ("detector_roll_deg",),
+            "bilevel_cv",
+            "validation_lm",
+        ),
+        AlignmentStage(
+            "axis_direction",
+            ("axis_rot_x_deg", "axis_rot_y_deg"),
+            "bilevel_cv",
+            "validation_lm",
+            gauge_policy="diagnose_only",
+        ),
+        AlignmentStage(
+            "pose_polish",
+            ("alpha", "beta", "phi", "dx", "dz"),
+            "fixed_volume",
+            "gn",
+            gauge_policy="anchor_mean",
+        ),
+    ),
+}
+
+
 def schedule_preset(
     name: str,
     *,
@@ -194,126 +281,11 @@ def schedule_preset(
     gauge_policy: GaugePolicy | None = None,
 ) -> AlignmentSchedule:
     key = str(name).strip().lower().replace("-", "_")
-    if key == "pose_only":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="pose_only",
-                    active_dofs=("alpha", "beta", "phi", "dx", "dz"),
-                    objective_kind="fixed_volume",
-                    optimizer="gn",
-                ),
-            ),
-        ).validate()
-    if key == "pose_phi_only":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="pose_phi_only",
-                    active_dofs=("phi",),
-                    objective_kind="fixed_volume",
-                    optimizer="gn",
-                    gauge_policy="anchor_mean",
-                ),
-            ),
-        ).validate()
-    if key == "pose_dx_dz_after_phi":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="pose_dx_dz_after_phi",
-                    active_dofs=("dx", "dz"),
-                    objective_kind="fixed_volume",
-                    optimizer="gn",
-                    gauge_policy="anchor_mean",
-                ),
-            ),
-        ).validate()
-    if key == "cor":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="cor",
-                    active_dofs=("det_u_px",),
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                ),
-            ),
-        ).validate()
     if key == "detector_center_2d":
         raise ValueError(
             "Unknown alignment schedule preset 'detector_center_2d'. "
             "Use low-level optimise_dofs=('det_u_px', 'det_v_px') only for expert diagnostics."
         )
-    if key == "detector_roll":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="detector_roll",
-                    active_dofs=("detector_roll_deg",),
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                ),
-            ),
-        ).validate()
-    if key == "axis_direction":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="axis_direction",
-                    active_dofs=("axis_rot_x_deg", "axis_rot_y_deg"),
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy="diagnose_only",
-                ),
-            ),
-        ).validate()
-    if key == "lamino_tilt":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage(
-                    name="lamino_tilt",
-                    active_dofs=("axis_rot_x_deg",),
-                    objective_kind="bilevel_cv",
-                    optimizer="validation_lm",
-                    gauge_policy="diagnose_only",
-                ),
-            ),
-        ).validate()
-    if key == "setup_safe":
-        return AlignmentSchedule(
-            name=key,
-            stages=(
-                AlignmentStage("cor", ("det_u_px",), "bilevel_cv", "validation_lm"),
-                AlignmentStage(
-                    "detector_roll",
-                    ("detector_roll_deg",),
-                    "bilevel_cv",
-                    "validation_lm",
-                ),
-                AlignmentStage(
-                    "axis_direction",
-                    ("axis_rot_x_deg", "axis_rot_y_deg"),
-                    "bilevel_cv",
-                    "validation_lm",
-                    gauge_policy="diagnose_only",
-                ),
-                AlignmentStage(
-                    "pose_polish",
-                    ("alpha", "beta", "phi", "dx", "dz"),
-                    "fixed_volume",
-                    "gn",
-                    gauge_policy="anchor_mean",
-                ),
-            ),
-        ).validate()
     if key == "expert_coupled":
         dofs = tuple(active_dofs or ())
         if not dofs:
@@ -330,6 +302,9 @@ def schedule_preset(
                 ),
             ),
         ).validate()
+    stages = _PUBLIC_PRESET_STAGES.get(key)
+    if stages is not None:
+        return AlignmentSchedule(name=key, stages=stages).validate()
     raise ValueError(f"Unknown alignment schedule preset {name!r}")
 
 

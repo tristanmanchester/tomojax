@@ -37,6 +37,7 @@ from ..align.pipeline import (
     AlignMultiresResumeState,
 )
 from ..align.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
+from ..calibration.manifest import build_calibrated_geometry_metadata_patch
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
@@ -97,31 +98,47 @@ def _resolve_recon_grid_and_mask(
     roi_mode: str,
     grid_override: tuple[int, int, int] | list[int] | None,
 ) -> tuple[Grid, bool]:
-    try:
-        roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
-        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
-        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-        det_smaller = (
-            (roi.r_u + 1e-6) < full_half_x
-            or (is_parallel and (roi.r_u + 1e-6) < full_half_y)
-            or (roi.r_v + 1e-6) < full_half_z
-        )
-    except Exception:
-        det_smaller = False
-
     recon_grid = grid
     apply_cyl_mask = False
-    if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
-        if roi_mode == "auto" and not is_parallel:
-            recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
-        else:
-            recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
-    elif roi_mode == "bbox":
-        recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
-    elif roi_mode == "cyl":
-        recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
-        apply_cyl_mask = True
+
+    if roi_mode != "off":
+        try:
+            roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
+            full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+            full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
+            full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+            det_smaller = (
+                (roi.r_u + 1e-6) < full_half_x
+                or (is_parallel and (roi.r_u + 1e-6) < full_half_y)
+                or (roi.r_v + 1e-6) < full_half_z
+            )
+            if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
+                if roi_mode == "auto" and not is_parallel:
+                    recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
+                else:
+                    recon_grid = grid_from_detector_fov_slices(
+                        grid,
+                        detector,
+                        crop_y_to_u=is_parallel,
+                    )
+            elif roi_mode == "bbox":
+                recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
+            elif roi_mode == "cyl":
+                recon_grid = grid_from_detector_fov_slices(
+                    grid,
+                    detector,
+                    crop_y_to_u=is_parallel,
+                )
+                apply_cyl_mask = True
+        except Exception as exc:
+            if roi_mode == "auto":
+                logging.warning(
+                    "--roi=auto could not be applied; continuing without ROI crop: %s",
+                    exc,
+                    exc_info=True,
+                )
+            else:
+                raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
 
     # Explicit grid overrides take full precedence over ROI-derived masking.
     if grid_override is not None:
@@ -588,26 +605,6 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
     }
 
 
-def _geometry_value(calibration_state: dict[str, object] | None, name: str) -> object | None:
-    if calibration_state is None:
-        return None
-    for section in (
-        "detector",
-        "scan",
-        "object_residual",
-        "world_residual",
-        "detector_plane_residual",
-        "angle_residual",
-    ):
-        values = calibration_state.get(section, [])
-        if not isinstance(values, list):
-            continue
-        for variable in values:
-            if isinstance(variable, dict) and variable.get("name") == name:
-                return variable.get("value")
-    return None
-
-
 def _checkpoint_metadata(
     *,
     meta: object,
@@ -911,7 +908,7 @@ def main() -> None:
     ) -> tuple[Grid, Detector]:
         if run_levels is None or run_complete:
             return recon_grid, detector
-        from ..recon.multires import scale_detector, scale_grid
+        from ..core.multires import scale_detector, scale_grid
 
         return scale_grid(recon_grid, int(level_factor)), scale_detector(
             detector, int(level_factor)
@@ -1106,23 +1103,14 @@ def main() -> None:
         info.get("geometry_calibration_state") if isinstance(info, dict) else None
     )
     if isinstance(geometry_calibration_state, dict):
-        det_u = _geometry_value(geometry_calibration_state, "det_u_px")
-        det_v = _geometry_value(geometry_calibration_state, "det_v_px")
-        roll = _geometry_value(geometry_calibration_state, "detector_roll_deg")
-        axis_unit = _geometry_value(geometry_calibration_state, "axis_unit_lab")
-        det_center = list(detector.det_center)
-        if det_u is not None:
-            det_center[0] = float(detector.det_center[0]) + float(det_u) * float(detector.du)
-        if det_v is not None:
-            det_center[1] = float(detector.det_center[1]) + float(det_v) * float(detector.dv)
-        save_meta.detector = {**detector.to_dict(), "det_center": det_center}
-        geometry_meta_out = dict(save_meta.geometry_meta or {})
-        if roll is not None:
-            geometry_meta_out["detector_roll_deg"] = float(roll)
-        if isinstance(axis_unit, list):
-            geometry_meta_out["axis_unit_lab"] = [float(v) for v in axis_unit]
-        save_meta.geometry_meta = geometry_meta_out
-        save_meta.geometry_calibration = {"calibration_state": geometry_calibration_state}
+        calibration_patch = build_calibrated_geometry_metadata_patch(
+            calibration_state=geometry_calibration_state,
+            detector=detector.to_dict(),
+            geometry_meta=save_meta.geometry_meta or {},
+        )
+        save_meta.detector = calibration_patch["detector"]  # type: ignore[assignment]
+        save_meta.geometry_meta = calibration_patch["geometry_meta"]  # type: ignore[assignment]
+        save_meta.geometry_calibration = calibration_patch["geometry_calibration"]  # type: ignore[assignment]
     save_meta.frame = str(meta.frame or "sample")
     save_meta.volume_axes_order = str(args.volume_axes)
     save_nxtomo(

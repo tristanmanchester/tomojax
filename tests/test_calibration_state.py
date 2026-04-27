@@ -12,6 +12,7 @@ from tomojax.calibration import (
     ConventionEvidence,
     MetricSpec,
     ObjectiveCard,
+    build_calibrated_geometry_metadata_patch,
     build_calibration_manifest,
 )
 
@@ -129,3 +130,58 @@ def test_calibration_manifest_contains_schema_objective_conventions_and_units():
     assert manifest["objective_card"]["primary_metric"]["name"] == "heldout_projection_mse"
     assert manifest["convention_audit"]["flip_u"] is True
     assert manifest["convention_audit"]["ambiguous"] is False
+
+
+def test_calibrated_geometry_metadata_patch_uses_calibration_state_boundary():
+    state = CalibrationState(
+        detector=(
+            CalibrationVariable(
+                name="det_u_px",
+                value=2.0,
+                unit="native_detector_px",
+                status="estimated",
+                frame="detector",
+            ),
+            CalibrationVariable(
+                name="det_v_px",
+                value=-3.0,
+                unit="native_detector_px",
+                status="estimated",
+                frame="detector",
+            ),
+            CalibrationVariable(
+                name="detector_roll_deg",
+                value=1.5,
+                unit="deg",
+                status="estimated",
+                frame="detector_plane",
+            ),
+        ),
+        scan=(
+            CalibrationVariable(
+                name="axis_unit_lab",
+                value=[0.0, 0.5, 0.8660254],
+                unit="unit_vector",
+                status="estimated",
+                frame="scan",
+            ),
+        ),
+    )
+
+    patch = build_calibrated_geometry_metadata_patch(
+        calibration_state=state.to_dict(),
+        detector={
+            "nu": 64,
+            "nv": 32,
+            "du": 0.5,
+            "dv": 2.0,
+            "det_center": [10.0, -4.0],
+        },
+        geometry_meta={"existing": True},
+    )
+
+    assert patch["detector"]["det_center"] == [11.0, -10.0]
+    assert patch["geometry_meta"]["existing"] is True
+    assert patch["geometry_meta"]["detector_roll_deg"] == pytest.approx(1.5)
+    assert patch["geometry_meta"]["axis_unit_lab"] == pytest.approx([0.0, 0.5, 0.8660254])
+    assert patch["geometry_calibration"]["calibration_state"] == state.to_dict()

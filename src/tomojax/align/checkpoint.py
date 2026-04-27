@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass
 import json
-import math
 import os
 from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
 
 import numpy as np
+
+from tomojax.utils.json import normalize_json as _normalize_json
 
 
 CHECKPOINT_KIND = "tomojax.align.checkpoint"
@@ -69,33 +70,7 @@ def _tomojax_version() -> str | None:
 
 def normalize_json(value: Any) -> Any:
     """Convert common runtime objects into deterministic JSON-compatible values."""
-    if value is None or isinstance(value, bool | int | str):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else str(value)
-    if isinstance(value, Path):
-        return str(value)
-    if is_dataclass(value) and not isinstance(value, type):
-        return normalize_json(asdict(value))
-    if isinstance(value, Mapping):
-        return {
-            str(k): normalize_json(v)
-            for k, v in sorted(value.items(), key=lambda item: str(item[0]))
-        }
-    if isinstance(value, tuple | list | set | frozenset):
-        return [normalize_json(v) for v in value]
-    if isinstance(value, np.generic):
-        return normalize_json(value.item())
-    if isinstance(value, np.ndarray):
-        return normalize_json(value.tolist())
-
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        try:
-            return normalize_json(to_dict())
-        except Exception:
-            pass
-    return str(value)
+    return _normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
 
 
 def _normalize_checkpoint_compare_value(key: str, value: Any) -> Any:

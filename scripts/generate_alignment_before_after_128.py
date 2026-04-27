@@ -92,6 +92,37 @@ class RunProfile:
     early_stop_patience: int
 
 
+@dataclass(frozen=True)
+class ScenarioComputationResult:
+    theta_span: float
+    naive_fbp: np.ndarray
+    calibrated_fbp: np.ndarray | None
+    aligned_tv: np.ndarray | None
+    provenance: str
+    supplied: dict[str, float]
+    estimates: dict[str, Any]
+    metrics: dict[str, float]
+    info: Mapping[str, Any]
+    diagnostics: Any
+    geometry_objectives: list[str]
+    schedule_metadata: Any
+    executed_stages: Any
+    solver_metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ScenarioRunArtifacts:
+    visual_paths: dict[str, str]
+    alignment_metadata_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioRunResult:
+    row: dict[str, Any]
+    case_manifest: dict[str, Any]
+    alignment_metadata: dict[str, Any] | None = None
+
+
 def docs_profile() -> RunProfile:
     return RunProfile(
         name="docs_128",
@@ -1284,17 +1315,15 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _run_scenario(
+def _execute_scenario_computation(
     scenario: Scenario,
     *,
-    out_dir: Path,
     profile: RunProfile,
     grid: Grid,
     detector: Detector,
     truth: np.ndarray,
-    naive_only: bool = False,
-) -> dict[str, Any]:
-    start_time = time.time()
+    naive_only: bool,
+) -> ScenarioComputationResult:
     volume = jnp.asarray(truth, dtype=jnp.float32)
     theta_span = _theta_span_deg(scenario)
     thetas = np.linspace(0.0, theta_span, int(profile.views), endpoint=False, dtype=np.float32)
@@ -1315,7 +1344,6 @@ def _run_scenario(
         gather_dtype=profile.gather_dtype,
     )
     projections.block_until_ready()
-
     naive_fbp = _run_fbp(
         nominal_geometry,
         grid,
@@ -1324,68 +1352,23 @@ def _run_scenario(
         views_per_batch=profile.views_per_batch,
         gather_dtype=profile.gather_dtype,
     )
-
     if naive_only:
-        visual_paths = _write_naive_visuals(
-            scenario,
-            out_dir=out_dir,
-            truth=truth,
+        return ScenarioComputationResult(
+            theta_span=theta_span,
             naive_fbp=naive_fbp,
+            calibrated_fbp=None,
+            aligned_tv=None,
+            provenance="naive_only",
+            supplied={},
+            estimates={},
+            metrics={"naive_volume_nmse": _volume_nmse(naive_fbp, truth)},
+            info={},
+            diagnostics={},
+            geometry_objectives=[],
+            schedule_metadata={},
+            executed_stages=[],
+            solver_metadata={},
         )
-        elapsed = time.time() - start_time
-        row: dict[str, Any] = {
-            "slug": scenario.slug,
-            "title": scenario.title,
-            "scenario_category": scenario.scenario_category,
-            "scenario_family": scenario.scenario_family,
-            "expectation": scenario.expectation,
-            "headline_eligible": bool(scenario.headline_eligible),
-            "phantom_key": scenario.phantom_key,
-            "schedule": scenario.schedule,
-            "expected_objective": scenario.expected_objective,
-            "expected_optimizer": scenario.expected_optimizer,
-            "expected_loss": scenario.expected_loss,
-            "geometry_type": scenario.geometry_type,
-            "geometry_dofs": ",".join(scenario.geometry_dofs),
-            "active_dofs": ",".join(scenario.active_dofs or scenario.geometry_dofs),
-            "theta_span_deg": theta_span,
-            "n_views": int(profile.views),
-            "parameter_provenance": "naive_only",
-            "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
-            "supplied_corrections_json": "{}",
-            "estimates_json": "{}",
-            "geometry_diagnostics_json": "{}",
-            "geometry_status": "",
-            "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
-            "calibrated_volume_nmse": np.nan,
-            "aligned_tv_volume_nmse": np.nan,
-            "total_outer_iters": 0,
-            "elapsed_sec": elapsed,
-            "error": "",
-            **visual_paths,
-        }
-        _write_json(
-            out_dir / "case_manifest.json",
-            {
-                "schema_version": 1,
-                "scenario": asdict(scenario),
-                "scenario_catalog": _scenario_catalog_payload(scenario),
-                "phantom": _phantom_metadata(),
-                "profile": asdict(profile),
-                "acquisition": {
-                    "theta_span_deg": theta_span,
-                    "n_views": int(profile.views),
-                    "geometry_type": scenario.geometry_type,
-                },
-                "hidden_truth": _scenario_truth_payload(scenario),
-                "parameter_provenance": "naive_only",
-                "metrics": {"naive_volume_nmse": row["naive_volume_nmse"]},
-                "artifacts": visual_paths,
-                "elapsed_sec": elapsed,
-            },
-        )
-        jax.clear_caches()
-        return row
 
     supplied = _scenario_supplied_payload(scenario)
     if scenario.active_dofs or scenario.geometry_dofs:
@@ -1428,6 +1411,7 @@ def _run_scenario(
             profile=profile,
         )
         provenance = "frozen"
+
     if "geometry_calibration_diagnostics" not in info:
         info["geometry_calibration_diagnostics"] = summarize_geometry_calibration_stats(
             info.get("outer_stats", [])
@@ -1451,65 +1435,185 @@ def _run_scenario(
         gather_dtype=profile.gather_dtype,
         det_grid=calibrated_det_grid,
     )
-
     estimates = _state_values(state)
     metrics = {
         "naive_volume_nmse": _volume_nmse(naive_fbp, truth),
         "calibrated_volume_nmse": _volume_nmse(calibrated_fbp, truth),
         "aligned_tv_volume_nmse": _volume_nmse(aligned_tv, truth),
     }
+    return ScenarioComputationResult(
+        theta_span=theta_span,
+        naive_fbp=naive_fbp,
+        calibrated_fbp=calibrated_fbp,
+        aligned_tv=aligned_tv,
+        provenance=provenance,
+        supplied=supplied,
+        estimates=estimates,
+        metrics=metrics,
+        info=info,
+        diagnostics=diagnostics,
+        geometry_objectives=geometry_objectives,
+        schedule_metadata=info.get("schedule", {}),
+        executed_stages=info.get("schedule_stages", []),
+        solver_metadata=_last_solver_metadata(info.get("outer_stats", [])),
+    )
+
+
+def _write_scenario_artifacts(
+    scenario: Scenario,
+    *,
+    out_dir: Path,
+    profile: RunProfile,
+    truth: np.ndarray,
+    result: ScenarioComputationResult,
+    alignment_metadata: dict[str, Any] | None,
+) -> ScenarioRunArtifacts:
+    if result.provenance == "naive_only":
+        return ScenarioRunArtifacts(
+            visual_paths=_write_naive_visuals(
+                scenario,
+                out_dir=out_dir,
+                truth=truth,
+                naive_fbp=result.naive_fbp,
+            )
+        )
+    if result.calibrated_fbp is None or result.aligned_tv is None:
+        raise ValueError("full scenario artifacts require calibrated and aligned volumes")
     visual_paths = _write_visuals(
         scenario,
         out_dir=out_dir,
         profile=profile,
-        theta_span=theta_span,
+        theta_span=result.theta_span,
         truth=truth,
-        naive_fbp=naive_fbp,
-        calibrated_fbp=calibrated_fbp,
-        aligned_tv=aligned_tv,
-        estimates=estimates,
-        metrics=metrics,
-        diagnostics=diagnostics,
-        outer_stats=info.get("outer_stats", []),
+        naive_fbp=result.naive_fbp,
+        calibrated_fbp=result.calibrated_fbp,
+        aligned_tv=result.aligned_tv,
+        estimates=result.estimates,
+        metrics=result.metrics,
+        diagnostics=result.diagnostics,
+        outer_stats=result.info.get("outer_stats", []),
     )
     alignment_metadata_path = out_dir / "alignment_metadata.json"
-    solver_metadata = _last_solver_metadata(info.get("outer_stats", []))
-    schedule_metadata = info.get("schedule", {})
-    executed_stages = info.get("schedule_stages", [])
-    alignment_metadata = {
+    if alignment_metadata is not None:
+        _write_json(alignment_metadata_path, alignment_metadata)
+        visual_paths["alignment_metadata_json"] = str(alignment_metadata_path)
+    return ScenarioRunArtifacts(
+        visual_paths=visual_paths,
+        alignment_metadata_path=alignment_metadata_path,
+    )
+
+
+def _build_alignment_metadata(
+    scenario: Scenario,
+    *,
+    profile: RunProfile,
+    result: ScenarioComputationResult,
+) -> dict[str, Any] | None:
+    if result.provenance == "naive_only":
+        return None
+    info = result.info
+    return {
         "schema_version": 1,
         "scenario": asdict(scenario),
         "scenario_catalog": _scenario_catalog_payload(scenario),
         "profile": asdict(profile),
         "acquisition": {
-            "theta_span_deg": theta_span,
+            "theta_span_deg": result.theta_span,
             "n_views": int(profile.views),
             "geometry_type": scenario.geometry_type,
         },
         "hidden_truth": _scenario_truth_payload(scenario),
-        "supplied_corrections": supplied,
-        "estimated_corrections": estimates if provenance == "estimated" else {},
-        "final_calibrated_geometry": estimates,
-        "parameter_provenance": provenance,
+        "supplied_corrections": result.supplied,
+        "estimated_corrections": result.estimates if result.provenance == "estimated" else {},
+        "final_calibrated_geometry": result.estimates,
+        "parameter_provenance": result.provenance,
         "active_dofs": info.get("active_dofs", list(scenario.geometry_dofs)),
         "active_pose_dofs": info.get("active_pose_dofs", []),
         "active_geometry_dofs": info.get("active_geometry_dofs", list(scenario.geometry_dofs)),
-        "schedule_metadata": schedule_metadata,
-        "executed_stages": executed_stages,
+        "schedule_metadata": result.schedule_metadata,
+        "executed_stages": result.executed_stages,
         "gauge_decision": info.get("gauge_decision"),
         "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
-        "geometry_calibration_diagnostics": diagnostics,
-        "geometry_objectives": geometry_objectives,
+        "geometry_calibration_diagnostics": result.diagnostics,
+        "geometry_objectives": result.geometry_objectives,
         "objective_provenance": _last_objective_provenance(info.get("outer_stats", [])),
-        "solver_metadata": solver_metadata,
+        "solver_metadata": result.solver_metadata,
         "outer_stats": info.get("outer_stats", []),
-        "metrics": metrics,
+        "metrics": result.metrics,
         "alignment_info": info,
     }
-    _write_json(alignment_metadata_path, alignment_metadata)
-    visual_paths["alignment_metadata_json"] = str(alignment_metadata_path)
-    elapsed = time.time() - start_time
+
+
+def _build_naive_run_result(
+    scenario: Scenario,
+    *,
+    profile: RunProfile,
+    result: ScenarioComputationResult,
+    artifacts: ScenarioRunArtifacts,
+    elapsed: float,
+) -> ScenarioRunResult:
+    row: dict[str, Any] = {
+        "slug": scenario.slug,
+        "title": scenario.title,
+        "scenario_category": scenario.scenario_category,
+        "scenario_family": scenario.scenario_family,
+        "expectation": scenario.expectation,
+        "headline_eligible": bool(scenario.headline_eligible),
+        "phantom_key": scenario.phantom_key,
+        "schedule": scenario.schedule,
+        "expected_objective": scenario.expected_objective,
+        "expected_optimizer": scenario.expected_optimizer,
+        "expected_loss": scenario.expected_loss,
+        "geometry_type": scenario.geometry_type,
+        "geometry_dofs": ",".join(scenario.geometry_dofs),
+        "active_dofs": ",".join(scenario.active_dofs or scenario.geometry_dofs),
+        "theta_span_deg": result.theta_span,
+        "n_views": int(profile.views),
+        "parameter_provenance": "naive_only",
+        "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
+        "supplied_corrections_json": "{}",
+        "estimates_json": "{}",
+        "geometry_diagnostics_json": "{}",
+        "geometry_status": "",
+        "naive_volume_nmse": result.metrics["naive_volume_nmse"],
+        "calibrated_volume_nmse": np.nan,
+        "aligned_tv_volume_nmse": np.nan,
+        "total_outer_iters": 0,
+        "elapsed_sec": elapsed,
+        "error": "",
+        **artifacts.visual_paths,
+    }
+    manifest = {
+        "schema_version": 1,
+        "scenario": asdict(scenario),
+        "scenario_catalog": _scenario_catalog_payload(scenario),
+        "phantom": _phantom_metadata(),
+        "profile": asdict(profile),
+        "acquisition": {
+            "theta_span_deg": result.theta_span,
+            "n_views": int(profile.views),
+            "geometry_type": scenario.geometry_type,
+        },
+        "hidden_truth": _scenario_truth_payload(scenario),
+        "parameter_provenance": "naive_only",
+        "metrics": {"naive_volume_nmse": row["naive_volume_nmse"]},
+        "artifacts": artifacts.visual_paths,
+        "elapsed_sec": elapsed,
+    }
+    return ScenarioRunResult(row=row, case_manifest=manifest)
+
+
+def _build_full_run_result(
+    scenario: Scenario,
+    *,
+    profile: RunProfile,
+    result: ScenarioComputationResult,
+    artifacts: ScenarioRunArtifacts,
+    alignment_metadata: dict[str, Any],
+    elapsed: float,
+) -> ScenarioRunResult:
+    info = result.info
     row: dict[str, Any] = {
         "slug": scenario.slug,
         "title": scenario.title,
@@ -1520,9 +1624,9 @@ def _run_scenario(
         "phantom_key": scenario.phantom_key,
         "schedule": scenario.schedule,
         "schedule_name": str(info.get("schedule_name", "")),
-        "schedule_stages_json": json.dumps(executed_stages, sort_keys=True),
+        "schedule_stages_json": json.dumps(result.executed_stages, sort_keys=True),
         "last_schedule_stage_name": str(
-            (executed_stages[-1].get("stage_name", "") if executed_stages else "")
+            (result.executed_stages[-1].get("stage_name", "") if result.executed_stages else "")
         ),
         "gauge_status": str(
             (info.get("gauge_decision") or {}).get("status", "")
@@ -1540,35 +1644,33 @@ def _run_scenario(
             str(v) for v in info.get("active_geometry_dofs", scenario.geometry_dofs)
         ),
         "loss_kind": str(info.get("loss_kind", "")),
-        "geometry_objectives": ",".join(geometry_objectives),
+        "geometry_objectives": ",".join(result.geometry_objectives),
         "objective_provenance_json": json.dumps(
             _last_objective_provenance(info.get("outer_stats", [])),
             sort_keys=True,
         ),
-        "solver_metadata_json": json.dumps(solver_metadata, sort_keys=True),
-        "objective_kind": str(solver_metadata.get("objective_kind", "")),
-        "optimizer_kind": str(solver_metadata.get("optimizer_kind", "")),
-        "outer_loss_kind": str(solver_metadata.get("outer_loss_kind", "")),
-        "recon_sensitivity": str(solver_metadata.get("recon_sensitivity", "")),
-        "fold_eval_mode": str(solver_metadata.get("fold_eval_mode", "")),
-        "active_gradient_mode": str(solver_metadata.get("active_gradient_mode", "")),
-        "theta_span_deg": theta_span,
+        "solver_metadata_json": json.dumps(result.solver_metadata, sort_keys=True),
+        "objective_kind": str(result.solver_metadata.get("objective_kind", "")),
+        "optimizer_kind": str(result.solver_metadata.get("optimizer_kind", "")),
+        "outer_loss_kind": str(result.solver_metadata.get("outer_loss_kind", "")),
+        "recon_sensitivity": str(result.solver_metadata.get("recon_sensitivity", "")),
+        "fold_eval_mode": str(result.solver_metadata.get("fold_eval_mode", "")),
+        "active_gradient_mode": str(result.solver_metadata.get("active_gradient_mode", "")),
+        "theta_span_deg": result.theta_span,
         "n_views": int(profile.views),
-        "parameter_provenance": provenance,
+        "parameter_provenance": result.provenance,
         "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
-        "supplied_corrections_json": json.dumps(supplied, sort_keys=True),
-        "estimates_json": json.dumps(estimates, sort_keys=True),
-        "geometry_diagnostics_json": json.dumps(
-            diagnostics, sort_keys=True
-        ),
-        "geometry_status": _geometry_status_label(diagnostics),
-        "naive_volume_nmse": metrics["naive_volume_nmse"],
-        "calibrated_volume_nmse": metrics["calibrated_volume_nmse"],
-        "aligned_tv_volume_nmse": metrics["aligned_tv_volume_nmse"],
+        "supplied_corrections_json": json.dumps(result.supplied, sort_keys=True),
+        "estimates_json": json.dumps(result.estimates, sort_keys=True),
+        "geometry_diagnostics_json": json.dumps(result.diagnostics, sort_keys=True),
+        "geometry_status": _geometry_status_label(result.diagnostics),
+        "naive_volume_nmse": result.metrics["naive_volume_nmse"],
+        "calibrated_volume_nmse": result.metrics["calibrated_volume_nmse"],
+        "aligned_tv_volume_nmse": result.metrics["aligned_tv_volume_nmse"],
         "total_outer_iters": int(info.get("total_outer_iters", 0)),
         "elapsed_sec": elapsed,
         "error": "",
-        **visual_paths,
+        **artifacts.visual_paths,
     }
     manifest = {
         "schema_version": 1,
@@ -1577,36 +1679,112 @@ def _run_scenario(
         "phantom": _phantom_metadata(),
         "profile": asdict(profile),
         "acquisition": {
-            "theta_span_deg": theta_span,
+            "theta_span_deg": result.theta_span,
             "n_views": int(profile.views),
             "geometry_type": scenario.geometry_type,
         },
         "hidden_truth": _scenario_truth_payload(scenario),
-        "supplied_corrections": supplied,
-        "estimated_corrections": estimates if provenance == "estimated" else {},
-        "final_calibrated_geometry": estimates,
-        "parameter_provenance": provenance,
+        "supplied_corrections": result.supplied,
+        "estimated_corrections": result.estimates if result.provenance == "estimated" else {},
+        "final_calibrated_geometry": result.estimates,
+        "parameter_provenance": result.provenance,
         "active_dofs": info.get("active_dofs", list(scenario.geometry_dofs)),
         "active_pose_dofs": info.get("active_pose_dofs", []),
         "active_geometry_dofs": info.get("active_geometry_dofs", list(scenario.geometry_dofs)),
-        "schedule_metadata": schedule_metadata,
-        "executed_stages": executed_stages,
+        "schedule_metadata": result.schedule_metadata,
+        "executed_stages": result.executed_stages,
         "gauge_decision": info.get("gauge_decision"),
         "loss_kind": info.get("loss_kind"),
         "calibration_state": info.get("geometry_calibration_state"),
-        "geometry_calibration_diagnostics": diagnostics,
-        "geometry_objectives": geometry_objectives,
+        "geometry_calibration_diagnostics": result.diagnostics,
+        "geometry_objectives": result.geometry_objectives,
         "objective_provenance": _last_objective_provenance(info.get("outer_stats", [])),
         "outer_stats": info.get("outer_stats", []),
-        "metrics": metrics,
-        "artifacts": visual_paths,
+        "metrics": result.metrics,
+        "artifacts": artifacts.visual_paths,
         "alignment_metadata": alignment_metadata,
         "elapsed_sec": elapsed,
     }
-    _write_json(out_dir / "case_manifest.json", manifest)
-    jax.clear_caches()
-    return row
+    return ScenarioRunResult(
+        row=row,
+        case_manifest=manifest,
+        alignment_metadata=alignment_metadata,
+    )
 
+
+def _build_scenario_run_result(
+    scenario: Scenario,
+    *,
+    profile: RunProfile,
+    result: ScenarioComputationResult,
+    artifacts: ScenarioRunArtifacts,
+    alignment_metadata: dict[str, Any] | None,
+    elapsed: float,
+) -> ScenarioRunResult:
+    if result.provenance == "naive_only":
+        return _build_naive_run_result(
+            scenario,
+            profile=profile,
+            result=result,
+            artifacts=artifacts,
+            elapsed=elapsed,
+        )
+    if alignment_metadata is None:
+        raise ValueError("full scenario result requires alignment metadata")
+    return _build_full_run_result(
+        scenario,
+        profile=profile,
+        result=result,
+        artifacts=artifacts,
+        alignment_metadata=alignment_metadata,
+        elapsed=elapsed,
+    )
+
+
+def _run_scenario(
+    scenario: Scenario,
+    *,
+    out_dir: Path,
+    profile: RunProfile,
+    grid: Grid,
+    detector: Detector,
+    truth: np.ndarray,
+    naive_only: bool = False,
+) -> dict[str, Any]:
+    start_time = time.time()
+    computation = _execute_scenario_computation(
+        scenario,
+        profile=profile,
+        grid=grid,
+        detector=detector,
+        truth=truth,
+        naive_only=naive_only,
+    )
+    alignment_metadata = _build_alignment_metadata(
+        scenario,
+        profile=profile,
+        result=computation,
+    )
+    artifacts = _write_scenario_artifacts(
+        scenario,
+        out_dir=out_dir,
+        profile=profile,
+        truth=truth,
+        result=computation,
+        alignment_metadata=alignment_metadata,
+    )
+    elapsed = time.time() - start_time
+    run_result = _build_scenario_run_result(
+        scenario,
+        profile=profile,
+        result=computation,
+        artifacts=artifacts,
+        alignment_metadata=alignment_metadata,
+        elapsed=elapsed,
+    )
+    _write_json(out_dir / "case_manifest.json", run_result.case_manifest)
+    jax.clear_caches()
+    return run_result.row
 
 def _select_scenarios(args: argparse.Namespace) -> list[Scenario]:
     scenarios = scenario_catalog_for_kind(str(args.scenario_set))

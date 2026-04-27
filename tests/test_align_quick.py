@@ -12,8 +12,15 @@ from tomojax.align.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
 )
-from tomojax.align.pipeline import align, align_multires, AlignConfig
-from tomojax.align.parametrizations import se3_from_5d
+from tomojax.align.pipeline import (
+    _normalize_observer_action,
+    adapt_legacy_observer,
+    align,
+    align_multires,
+    AlignConfig,
+)
+from tomojax.align.recon_layer import PoseAdjustedGeometry
+from tomojax.align.schedules import AlignmentSchedule, AlignmentStage
 
 
 if sys.version_info < (3, 8):
@@ -41,18 +48,13 @@ def make_misaligned_case(nx=12, ny=12, nz=12, n_views=8, seed=0):
     true_params[:, 4] = rng.normal(scale=0.3, size=n_views)  # dz
 
     # Generate projections using augmented pose
+    aligned_geometry = PoseAdjustedGeometry(
+        geometry=geom_nom,
+        params5=jnp.asarray(true_params, dtype=jnp.float32),
+    )
     projs = []
     for i in range(n_views):
-        class _G:
-            def pose_for_view(self, _):
-                T_nom = jnp.asarray(geom_nom.pose_for_view(i), dtype=jnp.float32)
-                T_al = se3_from_5d(jnp.asarray(true_params[i]))
-                return tuple(map(tuple, T_nom @ T_al))
-
-            def rays_for_view(self, _):
-                return geom_nom.rays_for_view(i)
-
-        p = forward_project_view(_G(), grid, det, vol, view_index=0)
+        p = forward_project_view(aligned_geometry, grid, det, vol, view_index=i)
         projs.append(p)
     projs = jnp.stack(projs, axis=0)
 
@@ -96,6 +98,25 @@ def test_legacy_geometry_dofs_do_not_activate_default_pose_dofs():
     assert scoped.active_pose_dofs == ()
     assert scoped.active_geometry_dofs == ("det_u_px",)
     assert scoped.pose_mask == (False, False, False, False, False)
+
+
+def test_observer_action_contract_uses_none_for_continue():
+    assert _normalize_observer_action(None) == "continue"
+    assert _normalize_observer_action("advance_level") == "advance_level"
+
+    with pytest.raises(ValueError, match="Unsupported observer action"):
+        _normalize_observer_action(True)
+
+
+def test_adapt_legacy_observer_preserves_bool_callbacks():
+    def legacy_observer(_x, _params, stat):
+        return bool(stat["stop"])
+
+    observer = adapt_legacy_observer(legacy_observer)
+
+    assert observer is not None
+    assert observer(jnp.zeros((1,)), jnp.zeros((1, 5)), {"stop": False}) is None
+    assert observer(jnp.zeros((1,)), jnp.zeros((1, 5)), {"stop": True}) == "stop_run"
 
 
 def test_align_quick_recovers_small_misalignments():
@@ -514,6 +535,140 @@ def test_align_multires_uses_scheduled_loss_by_level(monkeypatch):
         "ssim",
         "l2_otsu",
     ]
+
+
+def test_align_multires_resume_uses_checkpointed_stage_counter(monkeypatch):
+    grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 4, 3)
+    schedule = AlignmentSchedule(
+        name="two_pose_stages",
+        stages=(
+            AlignmentStage("stage_phi", ("phi",), "fixed_volume", "gd", maxiter=2),
+            AlignmentStage("stage_dx", ("dx",), "fixed_volume", "gd", maxiter=2),
+        ),
+    )
+    cfg = AlignConfig(schedule=schedule, outer_iters=2, recon_iters=1, early_stop=False)
+    x_resume = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    params_resume = jnp.zeros((projs.shape[0], 5), dtype=jnp.float32)
+    outer_stats = [
+        {
+            "outer_idx": 1,
+            "level_index": 0,
+            "schedule_stage_index": 0,
+            "schedule_stage_name": "stage_phi",
+            "global_outer_idx": 1,
+            "loss_after": 10.0,
+        },
+        {
+            "outer_idx": 2,
+            "level_index": 0,
+            "schedule_stage_index": 0,
+            "schedule_stage_name": "stage_phi",
+            "global_outer_idx": 2,
+            "loss_after": 9.0,
+        },
+        {
+            "outer_idx": 1,
+            "level_index": 0,
+            "schedule_stage_index": 1,
+            "schedule_stage_name": "stage_dx",
+            "global_outer_idx": 3,
+            "loss_after": 8.0,
+        },
+    ]
+    resume_state = align_pipeline.AlignMultiresResumeState(
+        x=x_resume,
+        params5=params_resume,
+        level_index=0,
+        level_factor=1,
+        completed_outer_iters_in_level=3,
+        global_outer_iters_completed=3,
+        loss=[10.0, 9.0, 8.0],
+        outer_stats=outer_stats,
+        stage_index=1,
+        stage_name="stage_dx",
+        stage_completed=False,
+        completed_outer_iters_in_stage=1,
+    )
+    calls = []
+
+    def fake_align(
+        geometry,
+        level_grid,
+        level_detector,
+        level_projections,
+        *,
+        cfg,
+        init_x=None,
+        init_params5=None,
+        observer=None,
+        resume_state=None,
+        checkpoint_callback=None,
+    ):
+        del geometry, level_grid, level_detector, observer, checkpoint_callback
+        assert resume_state is not None
+        calls.append(
+            {
+                "active_dofs": cfg.optimise_dofs,
+                "start_outer_iter": resume_state.start_outer_iter,
+                "loss": list(resume_state.loss),
+                "outer_stats": [dict(stat) for stat in resume_state.outer_stats],
+            }
+        )
+        x = x_resume if init_x is None else init_x
+        params = (
+            jnp.zeros((level_projections.shape[0], 5), dtype=jnp.float32)
+            if init_params5 is None
+            else init_params5
+        )
+        return x, params, {
+            "loss": list(resume_state.loss) + [7.0],
+            "loss_kind": "l2",
+            "outer_stats": list(resume_state.outer_stats)
+            + [{"outer_idx": 2, "loss_after": 7.0}],
+            "stopped_by_observer": False,
+            "observer_action": "continue",
+            "wall_time_total": 0.0,
+            "pose_model": "per_view",
+            "pose_model_variables": int(level_projections.shape[0] * 5),
+            "per_view_variables": 5,
+            "pose_model_basis_shape": [int(level_projections.shape[0]), 1],
+            "active_dofs": list(cfg.optimise_dofs or ()),
+            "completed_outer_iters": 2,
+            "small_impr_streak": 0,
+            "motion_coeffs": None,
+            "L": None,
+            "gauge_fix": "mean_translation",
+            "gauge_fix_dofs": ["dx"],
+            "gauge_fix_final": {},
+        }
+
+    monkeypatch.setattr(align_pipeline, "align", fake_align)
+
+    _, _, info = align_pipeline.align_multires(
+        geom,
+        grid,
+        det,
+        projs,
+        factors=[1],
+        cfg=cfg,
+        resume_state=resume_state,
+    )
+
+    assert calls == [
+        {
+            "active_dofs": ("dx",),
+            "start_outer_iter": 1,
+            "loss": [8.0],
+            "outer_stats": [outer_stats[2]],
+        }
+    ]
+    assert [stat["schedule_stage_name"] for stat in info["outer_stats"]] == [
+        "stage_phi",
+        "stage_phi",
+        "stage_dx",
+        "stage_dx",
+    ]
+    assert [stat["global_outer_idx"] for stat in info["outer_stats"]] == [1, 2, 3, 4]
 
 
 def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):

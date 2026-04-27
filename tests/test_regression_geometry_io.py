@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from tomojax.core.geometry.base import Detector, Grid
-from tomojax.data.io_hdf5 import NXTomoMetadata, convert, load_nxtomo, load_npz, save_npz
+from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, convert, load_nxtomo, load_npz, save_npz
 from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.utils import axes as axes_mod
 from tomojax.utils.axes import infer_disk_axes
@@ -93,6 +93,7 @@ def test_load_npz_unwraps_dict_metadata_and_convert_roundtrips_to_nxs(tmp_path):
     )
 
     loaded = load_npz(npz_path)
+    assert isinstance(loaded, LoadedNXTomo)
     assert isinstance(loaded["grid"], dict)
     assert isinstance(loaded["detector"], dict)
     assert isinstance(loaded["geometry_meta"], dict)
@@ -105,6 +106,39 @@ def test_load_npz_unwraps_dict_metadata_and_convert_roundtrips_to_nxs(tmp_path):
     assert meta["detector"] == detector
     assert meta["geometry_meta"] == geometry_meta
     assert meta["misalign_spec"] == misalign_spec
+
+
+def test_npz_persistence_uses_typed_metadata_contract(tmp_path):
+    npz_path = tmp_path / "typed_sample.npz"
+    projections = np.zeros((2, 3, 4), dtype=np.float32)
+    metadata = NXTomoMetadata(
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+        grid={"nx": 4, "ny": 4, "nz": 3, "vx": 1.0, "vy": 1.0, "vz": 1.0},
+        detector={"nu": 4, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]},
+        geometry_meta={"tilt_deg": 12.0},
+    )
+
+    save_npz(npz_path, projections=projections, metadata=metadata)
+
+    loaded = load_npz(npz_path)
+    assert isinstance(loaded, LoadedNXTomo)
+    np.testing.assert_allclose(loaded.projections, projections)
+    np.testing.assert_allclose(loaded.thetas_deg, metadata.thetas_deg)
+    assert loaded.grid == metadata.grid
+    assert loaded.detector == metadata.detector
+    assert loaded.geometry_meta == metadata.geometry_meta
+
+
+def test_loaded_nxtomo_get_honors_default_for_absent_metadata_fields():
+    loaded = LoadedNXTomo(
+        projections=np.zeros((1, 1, 1), dtype=np.float32),
+        metadata=NXTomoMetadata(grid=None, geometry_meta={"tilt_deg": 12.0}),
+    )
+
+    assert "grid" not in loaded
+    assert loaded.get("grid", "missing") == "missing"
+    assert loaded.get("tilt_deg", 0.0) == 12.0
+    assert loaded.get("unknown", "fallback") == "fallback"
 
 
 def test_nxtomo_roundtrips_alignment_gauge_metadata(tmp_path):

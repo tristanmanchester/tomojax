@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
+import pytest
 import warnings
 
 from tomojax.core.geometry.base import Grid, Detector
@@ -51,6 +52,17 @@ def test_empty_filter_name_defaults_to_ramp_consistently() -> None:
     np.testing.assert_allclose(empty_np, ramp_np)
     np.testing.assert_allclose(spaced_np, ramp_np)
     np.testing.assert_allclose(empty_jax, ramp_np)
+
+
+def test_filter_cache_does_not_expose_mutable_state() -> None:
+    _FILTER_CACHE.clear()
+    ramp_np = get_filter_np("ramp", 64, 1.0)
+
+    assert not ramp_np.flags.writeable
+    with pytest.raises(ValueError, match="read-only"):
+        ramp_np[1] = 99.0
+
+    np.testing.assert_allclose(get_filter_np("ramp", 64, 1.0), ramp_np)
 
 
 def test_compute_roi_and_bbox_crop_limit_y_axis() -> None:

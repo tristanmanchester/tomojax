@@ -14,7 +14,7 @@ from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.recon.multires import scale_detector
+from tomojax.core.multires import scale_detector
 
 
 def test_zero_state_matches_nominal_parallel_pose_and_detector_grid():

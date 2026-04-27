@@ -2,8 +2,11 @@
 
 The Python API exposes the same algorithms as the CLI tools. Use it
 when you need to integrate TomoJAX into scripts, notebooks, or custom
-pipelines. All functions are JIT-compatible and support automatic
-differentiation via JAX.
+pipelines. Array-level projector, objective, and reconstruction kernels
+are designed for JAX `jit` and automatic differentiation. Higher-level
+workflow functions such as `align` and `align_multires` are Python
+orchestration APIs: they validate inputs, manage schedules/checkpoints,
+and call JAX kernels internally.
 
 ## Core geometry
 
@@ -170,7 +173,7 @@ det_grid = get_detector_grid_device(det)
 Filtered backprojection:
 
 ```python
-from tomojax.recon.fbp import fbp
+from tomojax.recon import fbp
 
 volume = fbp(geom, grid, det, projections, filter_name="ramp")
 # volume shape: (nx, ny, nz)
@@ -190,7 +193,7 @@ volume = fbp(geom, grid, det, projections, filter_name="ramp")
 FISTA with TV regularization:
 
 ```python
-from tomojax.recon.fista_tv import fista_tv, FistaConfig
+from tomojax.recon import fista_tv, FistaConfig
 
 config = FistaConfig(iters=50, lambda_tv=0.005)
 volume, info = fista_tv(geom, grid, det, projections, config=config)
@@ -224,7 +227,7 @@ volume, info = fista_tv(geom, grid, det, projections, config=config)
 Stochastic Primal-Dual Hybrid Gradient:
 
 ```python
-from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
+from tomojax.recon import spdhg_tv, SPDHGConfig
 
 config = SPDHGConfig(iters=400, lambda_tv=0.005, views_per_batch=16)
 volume, info = spdhg_tv(geom, grid, det, projections, config=config)
@@ -245,12 +248,18 @@ volume, info = spdhg_tv(geom, grid, det, projections, config=config)
 
 ## Alignment
 
+`align` and `align_multires` are workflow-level orchestration APIs.
+Call them from Python directly; do not treat the entire function as a
+single `jax.jit`-compatible primitive. Their inner projector, loss,
+gradient, and reconstruction kernels are compiled or differentiated at
+the appropriate internal boundaries.
+
 ### `align`
 
 Joint per-view alignment and reconstruction:
 
 ```python
-from tomojax.align.pipeline import align, AlignConfig
+from tomojax.align import align, AlignConfig
 
 cfg = AlignConfig(
     outer_iters=4,
@@ -301,7 +310,7 @@ volume, params5, info = align(geom, grid, det, projections, cfg=cfg)
 Use `align_multires` for setup-geometry schedules:
 
 ```python
-from tomojax.align.pipeline import align_multires, AlignConfig
+from tomojax.align import align_multires, AlignConfig
 
 cfg = AlignConfig(
     schedule="setup_safe",
@@ -330,14 +339,14 @@ fields.
 
 ## Data I/O
 
-HDF5 NXtomo read/write functions live in `tomojax.data.io_hdf5`.
+HDF5 NXtomo read/write functions are available from `tomojax.data`.
 
 ### `load_nxtomo`
 
 Load an NXtomo dataset:
 
 ```python
-from tomojax.data.io_hdf5 import load_nxtomo
+from tomojax.data import load_nxtomo
 
 result = load_nxtomo("data/scan.nxs")
 projections = result.projections  # (n_views, nv, nu)
@@ -357,7 +366,7 @@ regardless of on-disk layout.
 Write a dataset to HDF5:
 
 ```python
-from tomojax.data.io_hdf5 import save_nxtomo, NXTomoMetadata
+from tomojax.data import save_nxtomo, NXTomoMetadata
 
 metadata = NXTomoMetadata(
     thetas_deg=thetas,
@@ -381,7 +390,7 @@ save_nxtomo("out/result.nxs", projections, metadata=metadata)
 Run lightweight schema checks:
 
 ```python
-from tomojax.data.io_hdf5 import validate_nxtomo
+from tomojax.data import validate_nxtomo
 
 report = validate_nxtomo("data/scan.nxs")
 if report["issues"]:
@@ -397,7 +406,7 @@ if report["issues"]:
 Generate synthetic CT data:
 
 ```python
-from tomojax.data.simulate import simulate, SimConfig
+from tomojax.data import simulate, SimConfig
 
 cfg = SimConfig(
     nx=128, ny=128, nz=128,
@@ -419,7 +428,7 @@ volume = data["volume"]
 All phantoms return `np.ndarray` of shape `(nx, ny, nz)` as float32:
 
 ```python
-from tomojax.data.phantoms import (
+from tomojax.data import (
     sphere,
     cube,
     rotated_centered_cube,

@@ -21,7 +21,7 @@ from tomojax.align.pipeline import (
     align_multires,
 )
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon.multires import scale_detector, scale_grid
+from tomojax.core.multires import scale_detector, scale_grid
 
 from test_align_quick import make_misaligned_case
 

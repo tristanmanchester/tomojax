@@ -71,9 +71,8 @@ and the [CLI reference](docs/cli/index.md) for all commands.
 import jax.numpy as jnp
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view, forward_project_view_T
-from tomojax.recon.fbp import fbp
-from tomojax.recon.fista_tv import fista_tv
-from tomojax.align.pipeline import align, AlignConfig
+from tomojax.recon import fbp, fista_tv
+from tomojax.align import align, AlignConfig
 
 # Define grid, detector, geometry
 grid = Grid(nx=128, ny=128, nz=128, vx=1.0, vy=1.0, vz=1.0)

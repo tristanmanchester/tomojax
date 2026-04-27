@@ -12,7 +12,7 @@ from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.align.pipeline import align, AlignConfig
-from tomojax.align.parametrizations import se3_from_5d
+from tomojax.align.recon_layer import PoseAdjustedGeometry
 
 
 if sys.version_info < (3, 8):
@@ -118,16 +118,20 @@ def test_integration_align_parallel_improves_rmse():
     true_params[:, :3] = np.deg2rad(rng.normal(scale=0.2, size=(cfg.n_views, 3)))
     true_params[:, 3:] = rng.normal(scale=0.3, size=(cfg.n_views, 2))
 
-    projs = []
-    for i in range(cfg.n_views):
-        class _G:
-            def pose_for_view(self, _):
-                T_nom = jnp.asarray(geom_nom.pose_for_view(i), dtype=jnp.float32)
-                T_al = se3_from_5d(jnp.asarray(true_params[i]))
-                return tuple(map(tuple, T_nom @ T_al))
-            def rays_for_view(self, _):
-                return geom_nom.rays_for_view(i)
-        projs.append(forward_project_view(_G(), grid, det, jnp.asarray(data["volume"]), view_index=0))
+    aligned_geometry = PoseAdjustedGeometry(
+        geometry=geom_nom,
+        params5=jnp.asarray(true_params, dtype=jnp.float32),
+    )
+    projs = [
+        forward_project_view(
+            aligned_geometry,
+            grid,
+            det,
+            jnp.asarray(data["volume"]),
+            view_index=i,
+        )
+        for i in range(cfg.n_views)
+    ]
     projs = jnp.stack(projs, axis=0)
 
     # Run quick alignment

@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
-from tomojax.core.geometry import Detector, Grid
+from tomojax.core.geometry import Detector, Geometry, Grid
 from tomojax.core.projector import forward_project_view_T
 from tomojax.recon._tv_ops import huber_tv_value, isotropic_tv_value
 from tomojax.recon.fista_tv_core import (
@@ -18,10 +18,27 @@ from tomojax.recon.fista_tv_core import (
 )
 
 from .geometry_applier import BaseGeometryArrays, apply_alignment_state
+from .parametrizations import se3_from_5d
 from .state import AlignmentState
 
 
 ReconDifferentiationMode = Literal["unrolled", "implicit"]
+
+
+@dataclass(frozen=True, slots=True)
+class PoseAdjustedGeometry:
+    """Geometry adapter that applies per-view pose offsets during reconstruction."""
+
+    geometry: Geometry
+    params5: jnp.ndarray
+
+    def pose_for_view(self, i: int):
+        T_nom = jnp.asarray(self.geometry.pose_for_view(i), dtype=jnp.float32)
+        T_aligned = se3_from_5d(self.params5[i])
+        return tuple(map(tuple, T_nom @ T_aligned))
+
+    def rays_for_view(self, i: int):
+        return self.geometry.rays_for_view(i)
 
 
 @dataclass(frozen=True, slots=True)

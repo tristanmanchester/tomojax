@@ -1371,6 +1371,107 @@ class RunResult:
     gpu_sampler_error: str | None
 
 
+def _max_run_metric(runs: list[RunResult], field_name: str) -> float | None:
+    return _max_or_none([getattr(run, field_name) for run in runs])
+
+
+def _run_sampler_error(runs: list[RunResult]) -> str | None:
+    return next((run.gpu_sampler_error for run in runs if run.gpu_sampler_error), None)
+
+
+def _run_memory_report(
+    *,
+    first: RunResult,
+    warms: list[RunResult],
+    jax_profile_path: str | None,
+    jax_profile_error: str | None,
+    warmup: RunResult | None = None,
+    primer: RunResult | None = None,
+    include_cold_in_peak: bool,
+) -> dict[str, Any]:
+    setup_runs = [run for run in (warmup, primer) if run is not None]
+    peak_runs = [*setup_runs, *warms]
+    if include_cold_in_peak:
+        peak_runs.append(first)
+
+    warm_peak_gpu = _max_run_metric(warms, "peak_gpu_memory_mb")
+    warm_peak_gpu_process = _max_run_metric(warms, "peak_gpu_memory_process_mb")
+    warm_peak_gpu_device = _max_run_metric(warms, "peak_gpu_memory_device_mb")
+    warm_peak_host = _max_run_metric(warms, "peak_host_rss_mb")
+
+    peak_gpu = _max_run_metric(peak_runs, "peak_gpu_memory_mb")
+    peak_gpu_process = _max_run_metric(peak_runs, "peak_gpu_memory_process_mb")
+    peak_gpu_device = _max_run_metric(peak_runs, "peak_gpu_memory_device_mb")
+    peak_host = _max_run_metric(peak_runs, "peak_host_rss_mb")
+
+    if not include_cold_in_peak:
+        peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first.peak_gpu_memory_mb
+        peak_gpu_process = (
+            warm_peak_gpu_process
+            if warm_peak_gpu_process is not None
+            else first.peak_gpu_memory_process_mb
+        )
+        peak_gpu_device = (
+            warm_peak_gpu_device
+            if warm_peak_gpu_device is not None
+            else first.peak_gpu_memory_device_mb
+        )
+        peak_host = warm_peak_host if warm_peak_host is not None else first.peak_host_rss_mb
+
+    process_samples = [
+        getattr(run, "peak_gpu_memory_process_mb")
+        for run in [*setup_runs, first, *warms]
+        if getattr(run, "peak_gpu_memory_process_mb") is not None
+    ]
+    sample_count = int(sum(run.gpu_memory_sample_count for run in [*setup_runs, first, *warms]))
+    observed_gpu_count = max(
+        [run.gpu_memory_observed_gpu_count for run in [*setup_runs, first, *warms]],
+        default=0,
+    )
+    return {
+        "warmup_peak_gpu_memory_mb": warmup.peak_gpu_memory_mb if warmup is not None else None,
+        "primer_peak_gpu_memory_mb": primer.peak_gpu_memory_mb if primer is not None else None,
+        "first_run_peak_gpu_memory_mb": first.peak_gpu_memory_mb,
+        "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
+        "peak_gpu_memory_mb": peak_gpu,
+        "warmup_peak_gpu_memory_process_mb": (
+            warmup.peak_gpu_memory_process_mb if warmup is not None else None
+        ),
+        "primer_peak_gpu_memory_process_mb": (
+            primer.peak_gpu_memory_process_mb if primer is not None else None
+        ),
+        "first_run_peak_gpu_memory_process_mb": first.peak_gpu_memory_process_mb,
+        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
+        "peak_gpu_memory_process_mb": peak_gpu_process,
+        "warmup_peak_gpu_memory_device_mb": (
+            warmup.peak_gpu_memory_device_mb if warmup is not None else None
+        ),
+        "primer_peak_gpu_memory_device_mb": (
+            primer.peak_gpu_memory_device_mb if primer is not None else None
+        ),
+        "first_run_peak_gpu_memory_device_mb": first.peak_gpu_memory_device_mb,
+        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
+        "peak_gpu_memory_device_mb": peak_gpu_device,
+        "warmup_peak_host_rss_mb": warmup.peak_host_rss_mb if warmup is not None else None,
+        "primer_peak_host_rss_mb": primer.peak_host_rss_mb if primer is not None else None,
+        "first_run_peak_host_rss_mb": first.peak_host_rss_mb,
+        "warm_run_peak_host_rss_mb_max": warm_peak_host,
+        "peak_host_rss_mb": peak_host,
+        "gpu_memory_backend": first.gpu_memory_backend,
+        "gpu_memory_scope": "process" if process_samples else first.gpu_memory_scope,
+        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
+        "gpu_memory_sample_count": sample_count,
+        "gpu_memory_observed_gpu_count": observed_gpu_count,
+        "gpu_memory_process_source": first.gpu_memory_process_source,
+        "gpu_memory_process_supported": bool(
+            any(run.gpu_memory_process_supported for run in [*setup_runs, first, *warms])
+        ),
+        "jax_device_memory_profile_path": jax_profile_path,
+        "jax_device_memory_profile_error": jax_profile_error,
+        "gpu_sampler_error": _run_sampler_error([*setup_runs, first, *warms]),
+    }
+
+
 def _max_or_none(values: list[float | None]) -> float | None:
     finite = [float(v) for v in values if v is not None and math.isfinite(float(v))]
     if not finite:
@@ -1863,30 +1964,16 @@ def _run_recon_profile(
     warm_volume = warms[-1].output["volume"]
     recon_mse = float(jnp.mean((warm_volume - volume_gt) ** 2).item())
 
-    warm_peak_gpu = max(
-        (v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None
-    )
-    warm_peak_gpu_process = max(
-        (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_gpu_device = max(
-        (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_host = max(
-        (v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None
-    )
-    first_peak_gpu = first.peak_gpu_memory_mb
-    first_peak_gpu_process = first.peak_gpu_memory_process_mb
-    first_peak_gpu_device = first.peak_gpu_memory_device_mb
-    first_peak_host = first.peak_host_rss_mb
     jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
         mods, measurement_cfg, out_path
     )
-
-    peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first_peak_gpu
-    peak_host = warm_peak_host if warm_peak_host is not None else first_peak_host
+    memory_metrics = _run_memory_report(
+        first=first,
+        warms=warms,
+        jax_profile_path=jax_profile_path,
+        jax_profile_error=jax_profile_error,
+        include_cold_in_peak=False,
+    )
 
     metrics = {
         "profile": profile["name"],
@@ -1897,46 +1984,10 @@ def _run_recon_profile(
         "warm_run_seconds_std": float(
             statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
         ),
-        "first_run_peak_gpu_memory_mb": first_peak_gpu,
-        "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
-        "peak_gpu_memory_mb": peak_gpu,
-        "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
-        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
-        "peak_gpu_memory_process_mb": (
-            warm_peak_gpu_process if warm_peak_gpu_process is not None else first_peak_gpu_process
-        ),
-        "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
-        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
-        "peak_gpu_memory_device_mb": (
-            warm_peak_gpu_device if warm_peak_gpu_device is not None else first_peak_gpu_device
-        ),
-        "first_run_peak_host_rss_mb": first_peak_host,
-        "warm_run_peak_host_rss_mb_max": warm_peak_host,
-        "peak_host_rss_mb": peak_host,
-        "gpu_memory_backend": first.gpu_memory_backend,
-        "gpu_memory_scope": (
-            "process"
-            if (warm_peak_gpu_process is not None or first_peak_gpu_process is not None)
-            else first.gpu_memory_scope
-        ),
-        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
-        "gpu_memory_sample_count": int(
-            first.gpu_memory_sample_count + sum(w.gpu_memory_sample_count for w in warms)
-        ),
-        "gpu_memory_observed_gpu_count": max(
-            [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
-        ),
-        "gpu_memory_process_source": first.gpu_memory_process_source,
-        "gpu_memory_process_supported": bool(
-            first.gpu_memory_process_supported or any(w.gpu_memory_process_supported for w in warms)
-        ),
-        "jax_device_memory_profile_path": jax_profile_path,
-        "jax_device_memory_profile_error": jax_profile_error,
+        **memory_metrics,
         "quality": {
             "recon_mse": recon_mse,
         },
-        "gpu_sampler_error": first.gpu_sampler_error
-        or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
     }
     return metrics
 
@@ -2130,47 +2181,18 @@ def _run_align_profile(
     )
     gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
 
-    warm_peak_gpu = max(
-        (v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None
-    )
-    warm_peak_gpu_process = max(
-        (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_gpu_device = max(
-        (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_host = max(
-        (v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None
-    )
-    warmup_peak_gpu = warmup.peak_gpu_memory_mb if warmup is not None else None
-    warmup_peak_gpu_process = warmup.peak_gpu_memory_process_mb if warmup is not None else None
-    warmup_peak_gpu_device = warmup.peak_gpu_memory_device_mb if warmup is not None else None
-    warmup_peak_host = warmup.peak_host_rss_mb if warmup is not None else None
-    primer_peak_gpu = primer.peak_gpu_memory_mb if primer is not None else None
-    primer_peak_gpu_process = primer.peak_gpu_memory_process_mb if primer is not None else None
-    primer_peak_gpu_device = primer.peak_gpu_memory_device_mb if primer is not None else None
-    primer_peak_host = primer.peak_host_rss_mb if primer is not None else None
-    first_peak_gpu = first.peak_gpu_memory_mb
-    first_peak_gpu_process = first.peak_gpu_memory_process_mb
-    first_peak_gpu_device = first.peak_gpu_memory_device_mb
-    first_peak_host = first.peak_host_rss_mb
     jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
         mods, measurement_cfg, out_path
     )
-    peak_gpu_candidates = [
-        v
-        for v in (warmup_peak_gpu, primer_peak_gpu, first_peak_gpu, warm_peak_gpu)
-        if v is not None
-    ]
-    peak_host_candidates = [
-        v
-        for v in (warmup_peak_host, primer_peak_host, first_peak_host, warm_peak_host)
-        if v is not None
-    ]
-    peak_gpu = max(peak_gpu_candidates) if peak_gpu_candidates else None
-    peak_host = max(peak_host_candidates) if peak_host_candidates else None
+    memory_metrics = _run_memory_report(
+        first=first,
+        warms=warms,
+        warmup=warmup,
+        primer=primer,
+        jax_profile_path=jax_profile_path,
+        jax_profile_error=jax_profile_error,
+        include_cold_in_peak=True,
+    )
 
     metrics = {
         "profile": profile["name"],
@@ -2179,82 +2201,17 @@ def _run_align_profile(
         "success": True,
         "warmup_seconds": (warmup.seconds if warmup is not None else None),
         "warmup_incomplete": warmup_incomplete,
-        "warmup_peak_gpu_memory_mb": warmup_peak_gpu,
         "primer_ran": primer is not None,
         "primer_seconds": (primer.seconds if primer is not None else None),
         "primer_reached_finest_level": (
             primer_convergence.reached_finest_level if primer_convergence is not None else None
         ),
-        "primer_peak_gpu_memory_mb": primer_peak_gpu,
         "first_run_seconds": first.seconds,
         "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
         "warm_run_seconds_std": float(
             statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
         ),
-        "warmup_peak_gpu_memory_process_mb": warmup_peak_gpu_process,
-        "primer_peak_gpu_memory_process_mb": primer_peak_gpu_process,
-        "first_run_peak_gpu_memory_mb": first_peak_gpu,
-        "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
-        "peak_gpu_memory_mb": peak_gpu,
-        "warmup_peak_gpu_memory_device_mb": warmup_peak_gpu_device,
-        "primer_peak_gpu_memory_device_mb": primer_peak_gpu_device,
-        "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
-        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
-        "peak_gpu_memory_process_mb": _max_or_none(
-            [
-                warmup_peak_gpu_process,
-                primer_peak_gpu_process,
-                first_peak_gpu_process,
-                warm_peak_gpu_process,
-            ]
-        ),
-        "warmup_peak_host_rss_mb": warmup_peak_host,
-        "primer_peak_host_rss_mb": primer_peak_host,
-        "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
-        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
-        "peak_gpu_memory_device_mb": _max_or_none(
-            [
-                warmup_peak_gpu_device,
-                primer_peak_gpu_device,
-                first_peak_gpu_device,
-                warm_peak_gpu_device,
-            ]
-        ),
-        "first_run_peak_host_rss_mb": first_peak_host,
-        "warm_run_peak_host_rss_mb_max": warm_peak_host,
-        "peak_host_rss_mb": peak_host,
-        "gpu_memory_backend": first.gpu_memory_backend,
-        "gpu_memory_scope": (
-            "process"
-            if (
-                warmup_peak_gpu_process is not None
-                or primer_peak_gpu_process is not None
-                or warm_peak_gpu_process is not None
-                or first_peak_gpu_process is not None
-            )
-            else first.gpu_memory_scope
-        ),
-        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
-        "gpu_memory_sample_count": int(
-            (warmup.gpu_memory_sample_count if warmup is not None else 0)
-            + (primer.gpu_memory_sample_count if primer is not None else 0)
-            + sum(w.gpu_memory_sample_count for w in warms)
-        ),
-        "gpu_memory_observed_gpu_count": max(
-            [
-                *([warmup.gpu_memory_observed_gpu_count] if warmup is not None else []),
-                *([primer.gpu_memory_observed_gpu_count] if primer is not None else []),
-                *[w.gpu_memory_observed_gpu_count for w in warms],
-            ]
-        ),
-        "gpu_memory_process_source": first.gpu_memory_process_source,
-        "gpu_memory_process_supported": bool(
-            (warmup.gpu_memory_process_supported if warmup is not None else False)
-            or (primer.gpu_memory_process_supported if primer is not None else False)
-            or any(w.gpu_memory_process_supported for w in warms)
-        ),
-        "jax_device_memory_profile_path": jax_profile_path,
-        "jax_device_memory_profile_error": jax_profile_error,
+        **memory_metrics,
         "quality": {
             **abs_metrics,
             **rel_metrics,
@@ -2270,12 +2227,6 @@ def _run_align_profile(
         ),
         "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
         "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
-        "gpu_sampler_error": (
-            (warmup.gpu_sampler_error if warmup is not None else None)
-            or (primer.gpu_sampler_error if primer is not None else None)
-            or first.gpu_sampler_error
-            or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None)
-        ),
         "summary_image_path": None,
         "summary_image_error": None,
         "representative_run_index": representative_run_index,
@@ -2478,31 +2429,13 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def execute_profile(
+def _initial_benchmark_metrics(
     *,
-    profile_arg: str,
-    out_path: Path,
-    profile_root: str = str(PROFILES_DIR),
-    progress_callback: ProgressCallback | None = None,
+    profile: Mapping[str, Any],
+    profile_path: Path,
+    env_updates: Mapping[str, Any],
 ) -> dict[str, Any]:
-    out_path = out_path.resolve()
-    _ensure_dir(out_path.parent)
-    _ensure_dir(_bench_data_root())
-    _ensure_dir(OUT_DIR)
-
-    profile_path = _resolve_profile_path(profile_arg, profile_root)
-    profile = _load_profile(profile_path)
-    env_updates = _configure_environment(profile)
-    _emit_progress(
-        progress_callback,
-        stage_kind="profile_loading",
-        phase="profile_loading",
-        task=str(profile.get("task", "recon")),
-        message=f"Loaded benchmark profile {profile['name']}.",
-        detail=f"profile_path={profile_path.name}",
-    )
-
-    metrics: dict[str, Any] = {
+    return {
         "profile": profile.get("name", profile_path.stem),
         "success": False,
         "objective_name": str(profile.get("objective_name", "warm_run_seconds_mean")),
@@ -2601,8 +2534,112 @@ def execute_profile(
         "oom": False,
         "error": None,
         "profile_path": str(profile_path),
-        "env": env_updates,
+        "env": dict(env_updates),
     }
+
+
+@dataclass
+class BenchmarkReportBuilder:
+    profile: dict[str, Any]
+    profile_path: Path
+    env_updates: dict[str, Any]
+    metrics: dict[str, Any] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.metrics = _initial_benchmark_metrics(
+            profile=self.profile,
+            profile_path=self.profile_path,
+            env_updates=self.env_updates,
+        )
+
+    def record_run(
+        self,
+        *,
+        run_metrics: dict[str, Any],
+        fixture: FixtureBundle,
+        fixture_path: Path,
+        fixture_generated: bool,
+        mods: ImportedModules,
+    ) -> None:
+        self.metrics.update(run_metrics)
+        objective_name, objective_direction, objective_value = _resolve_objective(
+            self.metrics,
+            self.profile,
+        )
+        self.metrics["objective_name"] = objective_name
+        self.metrics["objective_direction"] = objective_direction
+        self.metrics["objective_value"] = (
+            _float_or_none(objective_value)
+            if isinstance(objective_value, (float, int, np.floating, np.integer))
+            else objective_value
+        )
+        self.metrics["device"] = _device_info(mods)
+        self.metrics["fixture"] = {
+            "path": str(fixture_path),
+            "generated_in_process": fixture_generated,
+            **fixture.shape_summary,
+        }
+        self.metrics["success"] = bool(
+            run_metrics.get(
+                "success",
+                self.metrics.get("objective_value") is not None
+                or objective_name == "warm_run_seconds_mean",
+            )
+        )
+
+    def record_error(self, exc: Exception) -> None:
+        message = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+        self.metrics["error"] = message
+        msg_lower = message.lower()
+        self.metrics["oom"] = ("resource exhausted" in msg_lower) or ("out of memory" in msg_lower)
+        self.metrics["success"] = False
+        if not self.metrics.get("device"):
+            try:
+                import jax
+
+                self.metrics["device"] = {
+                    "jax_backend": str(jax.default_backend()),
+                    "jax_devices": [str(getattr(d, "device_kind", d)) for d in jax.devices()],
+                    "gpu_name": None,
+                }
+            except Exception:
+                pass
+
+    def write(self, out_path: Path) -> None:
+        with out_path.open("w", encoding="utf-8") as handle:
+            json.dump(_json_safe(self.metrics), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+
+def execute_profile(
+    *,
+    profile_arg: str,
+    out_path: Path,
+    profile_root: str = str(PROFILES_DIR),
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    out_path = out_path.resolve()
+    _ensure_dir(out_path.parent)
+    _ensure_dir(_bench_data_root())
+    _ensure_dir(OUT_DIR)
+
+    profile_path = _resolve_profile_path(profile_arg, profile_root)
+    profile = _load_profile(profile_path)
+    env_updates = _configure_environment(profile)
+    _emit_progress(
+        progress_callback,
+        stage_kind="profile_loading",
+        phase="profile_loading",
+        task=str(profile.get("task", "recon")),
+        message=f"Loaded benchmark profile {profile['name']}.",
+        detail=f"profile_path={profile_path.name}",
+    )
+
+    report = BenchmarkReportBuilder(
+        profile=profile,
+        profile_path=profile_path,
+        env_updates=env_updates,
+    )
 
     try:
         mods = _import_modules(profile)
@@ -2628,50 +2665,18 @@ def execute_profile(
                 progress_callback=progress_callback,
             )
 
-        metrics.update(run_metrics)
-        objective_name, objective_direction, objective_value = _resolve_objective(metrics, profile)
-        metrics["objective_name"] = objective_name
-        metrics["objective_direction"] = objective_direction
-        metrics["objective_value"] = (
-            _float_or_none(objective_value)
-            if isinstance(objective_value, (float, int, np.floating, np.integer))
-            else objective_value
-        )
-        metrics["device"] = _device_info(mods)
-        metrics["fixture"] = {
-            "path": str(fixture_path),
-            "generated_in_process": fixture_generated,
-            **fixture.shape_summary,
-        }
-        metrics["success"] = bool(
-            run_metrics.get(
-                "success",
-                metrics.get("objective_value") is not None
-                or objective_name == "warm_run_seconds_mean",
-            )
+        report.record_run(
+            run_metrics=run_metrics,
+            fixture=fixture,
+            fixture_path=fixture_path,
+            fixture_generated=fixture_generated,
+            mods=mods,
         )
     except Exception as exc:  # pragma: no cover - exercised in error conditions
-        message = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-        metrics["error"] = message
-        msg_lower = message.lower()
-        metrics["oom"] = ("resource exhausted" in msg_lower) or ("out of memory" in msg_lower)
-        metrics["success"] = False
-        if not metrics.get("device"):
-            try:
-                import jax
+        report.record_error(exc)
 
-                metrics["device"] = {
-                    "jax_backend": str(jax.default_backend()),
-                    "jax_devices": [str(getattr(d, "device_kind", d)) for d in jax.devices()],
-                    "gpu_name": None,
-                }
-            except Exception:
-                pass
-
-    with out_path.open("w", encoding="utf-8") as handle:
-        json.dump(_json_safe(metrics), handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    return metrics
+    report.write(out_path)
+    return report.metrics
 
 
 def main() -> int:

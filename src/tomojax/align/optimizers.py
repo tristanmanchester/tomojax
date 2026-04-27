@@ -34,6 +34,33 @@ class PoseLbfgsConfig:
 
 
 @dataclass(frozen=True)
+class PoseOptimizationContext:
+    """Static transform and bounds context for pose L-BFGS variables."""
+
+    active_cols: np.ndarray
+    frozen_params5: jnp.ndarray
+    bounds_lower: jnp.ndarray
+    bounds_upper: jnp.ndarray
+    apply_param_constraints: Callable[[jnp.ndarray], jnp.ndarray]
+    motion_model: PoseMotionModel | None = None
+
+    @property
+    def active_cols_np(self) -> np.ndarray:
+        return np.asarray(self.active_cols, dtype=np.int32)
+
+    def active_bound_transform(self, n_views: int) -> tuple[jnp.ndarray, BoundTransform]:
+        active_cols_jnp = jnp.asarray(self.active_cols_np, dtype=jnp.int32)
+        active_shape = (int(n_views), int(active_cols_jnp.size))
+        lower_active = jnp.tile(self.bounds_lower[active_cols_jnp], (active_shape[0], 1)).reshape(-1)
+        upper_active = jnp.tile(self.bounds_upper[active_cols_jnp], (active_shape[0], 1)).reshape(-1)
+        return active_cols_jnp, BoundTransform.from_bounds(
+            lower_active,
+            upper_active,
+            value_shape=active_shape,
+        )
+
+
+@dataclass(frozen=True)
 class PoseLbfgsResult:
     params5: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
@@ -141,17 +168,12 @@ def run_pose_lbfgs(
     *,
     params5_in: jnp.ndarray,
     motion_coeffs_in: jnp.ndarray | None,
-    frozen_params5: jnp.ndarray,
-    active_cols: np.ndarray,
-    bounds_lower: jnp.ndarray,
-    bounds_upper: jnp.ndarray,
     loss_before_value: float | None,
     objective_fn: Callable[[jnp.ndarray], jnp.ndarray],
     eval_loss_fn: Callable[[jnp.ndarray, str], float | None],
-    apply_param_constraints: Callable[[jnp.ndarray], jnp.ndarray],
     is_expected_failure: Callable[[Exception], bool],
     cfg: PoseLbfgsConfig,
-    motion_model: PoseMotionModel | None = None,
+    context: PoseOptimizationContext,
 ) -> PoseLbfgsResult:
     """Run Optax L-BFGS on active alignment variables only."""
 
@@ -160,7 +182,7 @@ def run_pose_lbfgs(
     eval_count = 0
     total_line_search_steps = 0
 
-    active_cols = np.asarray(active_cols, dtype=np.int32)
+    active_cols = context.active_cols_np
     if active_cols.size == 0:
         message = "L-BFGS has no active alignment DOFs"
         return PoseLbfgsResult(
@@ -183,15 +205,8 @@ def run_pose_lbfgs(
             ),
         )
 
-    active_cols_jnp = jnp.asarray(active_cols, dtype=jnp.int32)
-    active_shape = (int(params5_in.shape[0]), int(active_cols.size))
-    lower_active = jnp.tile(bounds_lower[active_cols_jnp], (active_shape[0], 1)).reshape(-1)
-    upper_active = jnp.tile(bounds_upper[active_cols_jnp], (active_shape[0], 1)).reshape(-1)
-    bounds_transform = BoundTransform.from_bounds(
-        lower_active,
-        upper_active,
-        value_shape=active_shape,
-    )
+    active_cols_jnp, bounds_transform = context.active_bound_transform(int(params5_in.shape[0]))
+    motion_model = context.motion_model
     smooth_unbounded_coefficients = motion_model is not None and not bounds_transform.has_finite_bounds
 
     def _record_value(value: float, z: jnp.ndarray) -> None:
@@ -231,11 +246,17 @@ def run_pose_lbfgs(
 
         def _params_from_z(z_candidate: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray | None]:
             coeffs = jnp.asarray(z_candidate, dtype=jnp.float32)
-            params = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+            params = context.apply_param_constraints(
+                expand_motion_coefficients(motion_model, coeffs)
+            )
             coeffs = fit_motion_coefficients(motion_model, params)
-            params = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+            params = context.apply_param_constraints(
+                expand_motion_coefficients(motion_model, coeffs)
+            )
             coeffs = fit_motion_coefficients(motion_model, params)
-            params = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+            params = context.apply_param_constraints(
+                expand_motion_coefficients(motion_model, coeffs)
+            )
             return params, coeffs
 
     else:
@@ -244,17 +265,21 @@ def run_pose_lbfgs(
         def _params_from_z(z_candidate: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray | None]:
             active_values = bounds_transform.from_unconstrained(z_candidate)
             candidate = (
-                jnp.asarray(frozen_params5, dtype=jnp.float32)
+                jnp.asarray(context.frozen_params5, dtype=jnp.float32)
                 .at[:, active_cols_jnp]
                 .set(active_values)
             )
-            candidate = apply_param_constraints(candidate)
+            candidate = context.apply_param_constraints(candidate)
             if motion_model is None:
                 return candidate, motion_coeffs_in
             coeffs = fit_motion_coefficients(motion_model, candidate)
-            candidate = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+            candidate = context.apply_param_constraints(
+                expand_motion_coefficients(motion_model, coeffs)
+            )
             coeffs = fit_motion_coefficients(motion_model, candidate)
-            candidate = apply_param_constraints(expand_motion_coefficients(motion_model, coeffs))
+            candidate = context.apply_param_constraints(
+                expand_motion_coefficients(motion_model, coeffs)
+            )
             return candidate, coeffs
 
     def _objective(z_candidate: jnp.ndarray) -> jnp.ndarray:

@@ -182,7 +182,8 @@ class LoadedNXTomo:
         if key == "volume_axes_source":
             return self.volume_axes_source
         if key in _NXTOMO_METADATA_FIELDS:
-            return getattr(self.metadata, key)
+            value = getattr(self.metadata, key)
+            return default if value is None else value
         geom_meta = self.metadata.geometry_meta or {}
         return geom_meta.get(key, default)
 
@@ -894,12 +895,33 @@ def validate_nxtomo(path: str) -> ValidationReport:
     return report
 
 
-def save_npz(path: str, projections: np.ndarray, **meta: DatasetValue) -> None:
-    """Simple NPZ saver for tiny tests or interop."""
-    np.savez_compressed(path, projections=projections, **meta)
+def save_npz(
+    path: str,
+    projections: np.ndarray,
+    *,
+    metadata: NXTomoMetadata | None = None,
+    **meta: DatasetValue,
+) -> None:
+    """Write a typed TomoJAX payload to compressed NPZ.
+
+    ``metadata`` is the preferred contract and mirrors ``save_nxtomo``. Extra
+    keyword metadata is retained as a compatibility path for older callers and
+    overrides fields derived from ``metadata`` when both are supplied.
+    """
+    payload: LoadedDataset = {}
+    if metadata is not None:
+        payload.update(
+            LoadedNXTomo(
+                projections=np.asarray(projections),
+                metadata=metadata,
+            ).to_dataset_dict()
+        )
+    payload.update(meta)
+    payload["projections"] = np.asarray(projections)
+    np.savez_compressed(path, **payload)
 
 
-def load_npz(path: str) -> LoadedDataset:
+def _load_npz_dataset(path: str) -> LoadedDataset:
     with np.load(path, allow_pickle=True) as z:
         out: LoadedDataset = {}
         for k in z.files:
@@ -911,14 +933,19 @@ def load_npz(path: str) -> LoadedDataset:
         return out
 
 
+def load_npz(path: str) -> LoadedNXTomo:
+    """Load a compressed NPZ payload using the same typed shape as NXtomo."""
+    return LoadedNXTomo.from_dataset(_load_npz_dataset(path))
+
+
 def convert(in_path: str, out_path: str) -> None:
     """Convert between .npz and .nxs based on file extension."""
     if in_path.endswith(".npz") and out_path.endswith((".nxs", ".h5", ".hdf5")):
         data = load_npz(in_path)
         save_nxtomo(
             out_path,
-            np.asarray(data["projections"]),
-            metadata=NXTomoMetadata.from_dataset(data),
+            data.projections,
+            metadata=data.copy_metadata(),
         )
     elif in_path.endswith((".nxs", ".h5", ".hdf5")) and out_path.endswith(".npz"):
         data = load_nxtomo(in_path)

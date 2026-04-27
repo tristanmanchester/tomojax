@@ -17,7 +17,11 @@ from .detector_grid import (
 )
 from .detector_grid import zero_center_detector_grid
 from .gauge import GaugeConflict, GaugeValidationError, validate_calibration_gauges
-from .manifest import CALIBRATION_MANIFEST_SCHEMA_VERSION, build_calibration_manifest
+from .manifest import (
+    CALIBRATION_MANIFEST_SCHEMA_VERSION,
+    build_calibrated_geometry_metadata_patch,
+    build_calibration_manifest,
+)
 from .objectives import CandidateScore, MetricSpec, ObjectiveCard
 from .state import CalibrationState, CalibrationVariable
 from .units import DetectorPixelScale, DetectorPixelValue
@@ -37,6 +41,7 @@ __all__ = [
     "MetricSpec",
     "ObjectiveCard",
     "build_calibration_manifest",
+    "build_calibrated_geometry_metadata_patch",
     "detector_grid_from_calibration",
     "detector_grid_from_center_offset",
     "detector_grid_from_detector_roll",

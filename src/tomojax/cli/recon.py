@@ -93,6 +93,64 @@ def _resolve_views_per_batch(
     return max(1, int(requested)), "explicit"
 
 
+def _resolve_recon_grid_for_cli(
+    grid: Grid,
+    detector: Detector,
+    *,
+    is_parallel: bool,
+    roi_mode: str,
+) -> Grid:
+    if roi_mode == "off":
+        return grid
+
+    try:
+        info = compute_roi(grid, detector, crop_y_to_u=is_parallel)
+        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
+        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+        det_smaller = (
+            (info.r_u + 1e-6) < full_half_x
+            or (is_parallel and (info.r_u + 1e-6) < full_half_y)
+            or (info.r_v + 1e-6) < full_half_z
+        )
+        if roi_mode == "auto" and det_smaller:
+            if is_parallel:
+                return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
+            return grid_from_detector_fov(grid, detector, crop_y_to_u=False)
+        if roi_mode == "cube":
+            from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
+
+            return _grid_cube(grid, detector, crop_y_to_u=is_parallel)
+        if roi_mode == "bbox":
+            return grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
+        return grid
+    except Exception as exc:
+        if roi_mode == "auto":
+            logging.warning(
+                "--roi=auto could not be applied; continuing without ROI crop: %s",
+                exc,
+                exc_info=True,
+            )
+            return grid
+        raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
+
+
+def _resolve_volume_mask_for_cli(
+    grid: Grid,
+    detector: Detector,
+    *,
+    mask_vol: str,
+) -> jnp.ndarray | None:
+    mask_mode = str(mask_vol).lower()
+    if mask_mode not in ("cyl", "cylindrical"):
+        return None
+    try:
+        m_xy = cylindrical_mask_xy(grid, detector)
+        return jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
+    except Exception as exc:
+        raise ValueError(f"Failed to apply requested --mask-vol={mask_mode!r}") from exc
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Reconstruct volume from dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
@@ -321,36 +379,14 @@ def main() -> None:
         _gather = _default_gather_dtype()
 
     # Optional ROI selection
-    recon_grid = grid
     roi_mode = str(args.roi).lower()
     is_parallel = meta.geometry_type == "parallel"
-    if roi_mode != "off":
-        try:
-            info = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-            # Only crop when detector FOV is smaller than current grid (auto)
-            full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
-            full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
-            full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-            det_smaller = (
-                (info.r_u + 1e-6) < full_half_x
-                or (is_parallel and (info.r_u + 1e-6) < full_half_y)
-                or (info.r_v + 1e-6) < full_half_z
-            )
-            if roi_mode == "auto" and det_smaller:
-                if is_parallel:
-                    recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
-                else:
-                    recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
-            elif roi_mode == "cube":
-                # Same as align default policy for cubic volumes
-                from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
-
-                recon_grid = _grid_cube(grid, detector, crop_y_to_u=is_parallel)
-            elif roi_mode == "bbox":
-                recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
-        except Exception:
-            # Fall back silently if FOV computation fails
-            recon_grid = grid
+    recon_grid = _resolve_recon_grid_for_cli(
+        grid,
+        detector,
+        is_parallel=is_parallel,
+        roi_mode=roi_mode,
+    )
 
     # Rebuild geometry if grid changed
     if args.grid is not None:
@@ -367,13 +403,11 @@ def main() -> None:
         )
 
     # Prepare optional volume mask
-    vol_mask = None
-    try:
-        if str(args.mask_vol).lower() in ("cyl", "cylindrical"):
-            m_xy = cylindrical_mask_xy(recon_grid, detector)
-            vol_mask = jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
-    except Exception:
-        vol_mask = None
+    vol_mask = _resolve_volume_mask_for_cli(
+        recon_grid,
+        detector,
+        mask_vol=str(args.mask_vol),
+    )
 
     resolved_vpb, vpb_mode = _resolve_views_per_batch(
         args.views_per_batch,

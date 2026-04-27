@@ -166,6 +166,10 @@ PerViewLossFn: TypeAlias = Callable[
     jnp.ndarray,
 ]
 GaussNewtonWeightFn: TypeAlias = Callable[[jnp.ndarray, Optional[jnp.ndarray]], jnp.ndarray]
+LossBuilderFn: TypeAlias = Callable[
+    [LossState, jnp.ndarray],
+    Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray],
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +194,7 @@ _LOSS_ALIASES: dict[str, str] = {
     "phase_corr_soft": "phasecorr",
     "fftmag": "fft_mag",
     "chamfer": "chamfer_edge",
+    "gdl": "grad_l1",
     "poisson_nll": "poisson",
     "student-t": "student_t",
     "robust_general": "barron",
@@ -315,25 +320,25 @@ def parse_loss_spec(
     canonical = canonicalize_loss_kind(kind)
     raw = {} if params is None else {str(k): float(v) for k, v in params.items()}
 
-    def _unused(consumed: set[str]) -> None:
+    def _reject_extra_params(consumed: set[str]) -> None:
         extras = sorted(set(raw) - consumed)
         if extras:
             raise ValueError(f"Unsupported parameters for {canonical}: {', '.join(extras)}")
 
     if canonical == "l2":
-        _unused(set())
+        _reject_extra_params(set())
         return L2LossSpec()
     if canonical == "l2_otsu":
-        _unused({"temp"})
+        _reject_extra_params({"temp"})
         return L2OtsuLossSpec(temp=float(raw.get("temp", 0.5)))
     if canonical == "pwls":
-        _unused({"a", "b"})
+        _reject_extra_params({"a", "b"})
         return PWLSLossSpec(a=float(raw.get("a", 1.0)), b=float(raw.get("b", 0.0)))
     if canonical == "edge_l2":
-        _unused(set())
+        _reject_extra_params(set())
         return EdgeL2LossSpec()
     if canonical in {"charbonnier", "huber", "cauchy", "welsch", "student_t", "barron", "correntropy"}:
-        _unused({"eps", "delta", "c", "nu", "sigma", "alpha"})
+        _reject_extra_params({"eps", "delta", "c", "nu", "sigma", "alpha"})
         return RobustLossSpec(
             kind=canonical,  # type: ignore[arg-type]
             eps=float(raw.get("eps", 1e-3)),
@@ -344,21 +349,21 @@ def parse_loss_spec(
             alpha=float(raw.get("alpha", 1.0)),
         )
     if canonical in {"zncc", "phasecorr", "fft_mag"}:
-        _unused({"eps", "beta"})
+        _reject_extra_params({"eps", "beta"})
         return CorrelationLossSpec(
             kind=canonical,  # type: ignore[arg-type]
             eps=float(raw.get("eps", 1e-5)),
             beta=float(raw.get("beta", 10.0)),
         )
     if canonical == "ssim":
-        _unused({"K1", "K2", "window"})
+        _reject_extra_params({"K1", "K2", "window"})
         return SSIMLossSpec(
             K1=float(raw.get("K1", 0.01)),
             K2=float(raw.get("K2", 0.03)),
             window=int(raw.get("window", 7)),
         )
     if canonical == "ms_ssim":
-        _unused({"K1", "K2", "window", "levels"})
+        _reject_extra_params({"K1", "K2", "window", "levels"})
         return SSIMLossSpec(
             multiscale=True,
             K1=float(raw.get("K1", 0.01)),
@@ -367,7 +372,7 @@ def parse_loss_spec(
             levels=int(raw.get("levels", 3)),
         )
     if canonical == "ssim_otsu":
-        _unused({"K1", "K2", "window"})
+        _reject_extra_params({"K1", "K2", "window"})
         return SSIMLossSpec(
             otsu_mask=True,
             K1=float(raw.get("K1", 0.01)),
@@ -375,7 +380,7 @@ def parse_loss_spec(
             window=int(raw.get("window", 7)),
         )
     if canonical == "tversky":
-        _unused({"temp", "alpha", "beta", "gamma"})
+        _reject_extra_params({"temp", "alpha", "beta", "gamma"})
         return TverskyLossSpec(
             temp=float(raw.get("temp", 0.5)),
             alpha=float(raw.get("alpha", 0.7)),
@@ -383,13 +388,13 @@ def parse_loss_spec(
             gamma=float(raw.get("gamma", 1.0)),
         )
     if canonical in {"grad_l1", "ngf", "grad_orient", "chamfer_edge"}:
-        _unused({"eps"})
+        _reject_extra_params({"eps"})
         return GradientLossSpec(
             kind=canonical,  # type: ignore[arg-type]
             eps=float(raw.get("eps", 1e-3)),
         )
     if canonical in {"mi", "nmi", "renyi_mi"}:
-        _unused({"bins", "bw_x", "bw_y", "alpha"})
+        _reject_extra_params({"bins", "bw_x", "bw_y", "alpha"})
         return InformationLossSpec(
             normalized=(canonical == "nmi"),
             renyi_alpha=(float(raw.get("alpha", 1.5)) if canonical == "renyi_mi" else None),
@@ -398,16 +403,16 @@ def parse_loss_spec(
             bw_y=raw.get("bw_y"),
         )
     if canonical == "swd":
-        _unused({"n_samples", "p"})
+        _reject_extra_params({"n_samples", "p"})
         return SWDLossSpec(
             n_samples=int(raw.get("n_samples", -1)),
             p=int(raw.get("p", 1)),
         )
     if canonical == "mind":
-        _unused(set())
+        _reject_extra_params(set())
         return MindLossSpec()
     if canonical == "poisson":
-        _unused(set())
+        _reject_extra_params(set())
         return PoissonLossSpec()
     raise ValueError(f"Unknown loss kind: {kind}")
 
@@ -883,112 +888,129 @@ def _loss_mind(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarra
     return 0.5 * jnp.sum((fp - ft) ** 2)
 
 
+def _plain_loss_builder(
+    loss_fn: Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray],
+) -> LossBuilderFn:
+    def _builder(state: LossState, targets: jnp.ndarray):
+        del targets
+        return loss_fn
+
+    return _builder
+
+
+def _precompute_kde_state(state: LossState, targets: jnp.ndarray) -> None:
+    bins = int(state.params.get("bins", 32))
+    lo = float(np.min(targets))
+    hi = float(np.max(targets))
+    hi = hi if hi > lo else (lo + 1.0)
+    state.bins_x = jnp.linspace(lo, hi, bins)
+    state.bins_y = jnp.linspace(lo, hi, bins)
+    state.bw_x = float(state.params.get("bw_x", (hi - lo) / max(8.0, bins)))
+    state.bw_y = float(state.params.get("bw_y", (hi - lo) / max(8.0, bins)))
+
+
+def _otsu_thresholds(targets: jnp.ndarray) -> np.ndarray:
+    Ys = np.asarray(targets)
+    return np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
+
+
+def _build_chamfer_edge_loss(state: LossState, targets: jnp.ndarray):
+    if distance_transform_edt is None:
+        raise ValueError("scipy.ndimage is required for chamfer_edge loss")
+    Ys = np.asarray(targets, np.float32)
+    dts = []
+    for i in range(Ys.shape[0]):
+        gy, gx = np.gradient(Ys[i])
+        mag = np.sqrt(gx * gx + gy * gy)
+        edges = mag > (0.5 * max(1e-6, float(np.mean(mag))))
+        dts.append(distance_transform_edt(~edges).astype(np.float32))
+    state.dt_edge = jax.device_put(jnp.asarray(np.stack(dts, axis=0)))
+    return _loss_chamfer_edge
+
+
+def _build_mi_kde_loss(state: LossState, targets: jnp.ndarray):
+    _precompute_kde_state(state, targets)
+    return _loss_mi_kde
+
+
+def _build_nmi_kde_loss(state: LossState, targets: jnp.ndarray):
+    _precompute_kde_state(state, targets)
+    state.params["nmi"] = 1.0
+    return _loss_mi_kde
+
+
+def _build_renyi_mi_loss(state: LossState, targets: jnp.ndarray):
+    _validated_renyi_alpha(state.params)
+    _precompute_kde_state(state, targets)
+    return _loss_renyi_mi
+
+
+def _build_l2_otsu_loss(state: LossState, targets: jnp.ndarray):
+    temp = _safe_epsilon(state.params, "temp", 0.5)
+    thr = _otsu_thresholds(targets)
+    state.mask = jax.device_put(
+        jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp)
+    )
+    return _loss_l2_otsu_soft
+
+
+def _build_ssim_otsu_loss(state: LossState, targets: jnp.ndarray):
+    Ys = np.asarray(targets)
+    thr = _otsu_thresholds(targets)
+    mask = (Ys >= thr[:, None, None]).astype(np.float32)
+    state.mask = jax.device_put(jnp.asarray(mask))
+    return _loss_ssim_otsu
+
+
+def _build_tversky_loss(state: LossState, targets: jnp.ndarray):
+    state.thr = jax.device_put(jnp.asarray(_otsu_thresholds(targets))[:, None, None])
+    return _loss_tversky
+
+
+_LOSS_BUILDERS: dict[str, LossBuilderFn] = {
+    "l2": _plain_loss_builder(_loss_l2),
+    "charbonnier": _plain_loss_builder(_loss_charbonnier),
+    "huber": _plain_loss_builder(_loss_huber),
+    "cauchy": _plain_loss_builder(_loss_cauchy),
+    "welsch": _plain_loss_builder(_loss_welsch),
+    "zncc": _plain_loss_builder(_loss_zncc),
+    "ssim": _plain_loss_builder(_loss_ssim),
+    "ms_ssim": _plain_loss_builder(_loss_ms_ssim),
+    "grad_l1": _plain_loss_builder(_loss_grad_l1),
+    "edge_l2": _plain_loss_builder(_loss_edge_aware_l2),
+    "ngf": _plain_loss_builder(_loss_ngf),
+    "grad_orient": _plain_loss_builder(_loss_grad_orient),
+    "phasecorr": _plain_loss_builder(_loss_phase_corr_soft),
+    "fft_mag": _plain_loss_builder(_loss_fft_mag),
+    "chamfer_edge": _build_chamfer_edge_loss,
+    "poisson": _plain_loss_builder(_loss_poisson_nll),
+    "pwls": _plain_loss_builder(_loss_pwls),
+    "student_t": _plain_loss_builder(_loss_student_t),
+    "barron": _plain_loss_builder(_loss_barron),
+    "correntropy": _plain_loss_builder(_loss_correntropy),
+    "mi": _build_mi_kde_loss,
+    "nmi": _build_nmi_kde_loss,
+    "renyi_mi": _build_renyi_mi_loss,
+    "l2_otsu": _build_l2_otsu_loss,
+    "ssim_otsu": _build_ssim_otsu_loss,
+    "tversky": _build_tversky_loss,
+    "swd": _plain_loss_builder(_loss_swd),
+    "mind": _plain_loss_builder(_loss_mind),
+}
+
+
 def _build_loss_from_kind(
     kind: str,
     params: Optional[Dict[str, float]],
     targets: jnp.ndarray,
 ) -> Tuple[PerViewLossFn, LossState]:
-    k = str(kind).lower()
+    k = canonicalize_loss_kind(kind)
     p = {} if params is None else {str(a): float(b) for a, b in params.items()}
     state = LossState(kind=k, params=p)
-
-    if k == "l2":
-        f = _loss_l2
-    elif k in ("charbonnier", "charb"):
-        f = _loss_charbonnier
-    elif k == "huber":
-        f = _loss_huber
-    elif k in ("cauchy", "lorentzian"):
-        f = _loss_cauchy
-    elif k in ("welsch", "leclerc"):
-        f = _loss_welsch
-    elif k in ("zncc", "ncc"):
-        f = _loss_zncc
-    elif k == "ssim":
-        f = _loss_ssim
-    elif k in ("ms-ssim", "msssim", "ms_ssim"):
-        f = _loss_ms_ssim
-    elif k in ("grad_l1", "gdl"):
-        f = _loss_grad_l1
-    elif k in ("edge_l2", "edge_aware_l2"):
-        f = _loss_edge_aware_l2
-    elif k == "ngf":
-        f = _loss_ngf
-    elif k in ("go", "grad_orient"):
-        f = _loss_grad_orient
-    elif k in ("phasecorr", "phase_corr_soft"):
-        f = _loss_phase_corr_soft
-    elif k in ("fft_mag", "fftmag"):
-        f = _loss_fft_mag
-    elif k in ("chamfer_edge", "chamfer"):
-        if distance_transform_edt is None:
-            raise ValueError("scipy.ndimage is required for chamfer_edge loss")
-        Ys = np.asarray(targets, np.float32)
-        dts = []
-        for i in range(Ys.shape[0]):
-            gy, gx = np.gradient(Ys[i])
-            mag = np.sqrt(gx * gx + gy * gy)
-            edges = mag > (0.5 * max(1e-6, float(np.mean(mag))))
-            dts.append(distance_transform_edt(~edges).astype(np.float32))
-        state.dt_edge = jax.device_put(jnp.asarray(np.stack(dts, axis=0)))
-        f = _loss_chamfer_edge
-    elif k in ("poisson", "poisson_nll"):
-        f = _loss_poisson_nll
-    elif k in ("pwls",):
-        f = _loss_pwls
-    elif k in ("student_t", "student-t"):
-        f = _loss_student_t
-    elif k in ("barron", "robust_general"):
-        f = _loss_barron
-    elif k in ("correntropy", "mcc"):
-        f = _loss_correntropy
-    elif k in ("mi", "mi_kde"):
-        bins = int(p.get("bins", 32))
-        lo = float(np.min(targets)); hi = float(np.max(targets)); hi = hi if hi > lo else (lo + 1.0)
-        state.bins_x = jnp.linspace(lo, hi, bins); state.bins_y = jnp.linspace(lo, hi, bins)
-        state.bw_x = float(p.get("bw_x", (hi - lo) / max(8.0, bins)))
-        state.bw_y = float(p.get("bw_y", (hi - lo) / max(8.0, bins)))
-        f = _loss_mi_kde
-    elif k in ("nmi", "nmi_kde"):
-        bins = int(p.get("bins", 32))
-        lo = float(np.min(targets)); hi = float(np.max(targets)); hi = hi if hi > lo else (lo + 1.0)
-        state.bins_x = jnp.linspace(lo, hi, bins); state.bins_y = jnp.linspace(lo, hi, bins)
-        state.bw_x = float(p.get("bw_x", (hi - lo) / max(8.0, bins)))
-        state.bw_y = float(p.get("bw_y", (hi - lo) / max(8.0, bins)))
-        state.params["nmi"] = 1.0
-        f = _loss_mi_kde
-    elif k in ("renyi_mi", "tsallis_mi"):
-        _validated_renyi_alpha(state.params)
-        bins = int(p.get("bins", 32))
-        lo = float(np.min(targets)); hi = float(np.max(targets)); hi = hi if hi > lo else (lo + 1.0)
-        state.bins_x = jnp.linspace(lo, hi, bins); state.bins_y = jnp.linspace(lo, hi, bins)
-        state.bw_x = float(p.get("bw_x", (hi - lo) / max(8.0, bins)))
-        state.bw_y = float(p.get("bw_y", (hi - lo) / max(8.0, bins)))
-        f = _loss_renyi_mi
-    elif k in ("l2_otsu", "l2-otsu", "otsu-l2"):
-        temp = _safe_epsilon(p, "temp", 0.5)
-        Ys = np.asarray(targets)
-        thr = np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
-        base = jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp))
-        state.mask = base
-        f = _loss_l2_otsu_soft
-    elif k == "ssim_otsu":
-        Ys = np.asarray(targets)
-        thr = np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
-        mask = (Ys >= thr[:, None, None]).astype(np.float32)
-        state.mask = jax.device_put(jnp.asarray(mask))
-        f = _loss_ssim_otsu
-    elif k in ("tversky", "focal_tversky"):
-        Ys = np.asarray(targets)
-        thr = np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
-        state.thr = jax.device_put(jnp.asarray(thr)[:, None, None])
-        f = _loss_tversky
-    elif k in ("swd", "sliced_wasserstein"):
-        f = _loss_swd
-    elif k in ("mind",):
-        f = _loss_mind
-    else:
+    builder = _LOSS_BUILDERS.get(k)
+    if builder is None:
         raise ValueError(f"Unknown loss kind: {kind}")
+    f = builder(state, targets)
 
     def per_view_fn(
         pred_chunk: jnp.ndarray,
