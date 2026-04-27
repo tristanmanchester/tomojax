@@ -54,6 +54,51 @@ class AlignmentCheckpoint:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class AlignmentProjectionIdentity:
+    shape: tuple[int, ...] | list[int]
+    dtype: str
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentCheckpointGeometrySnapshot:
+    geometry_type: str
+    geometry_meta: Mapping[str, Any] | None
+    reconstruction_grid: Mapping[str, Any]
+    detector: Mapping[str, Any]
+    state_grid: Mapping[str, Any]
+    state_detector: Mapping[str, Any]
+    geometry_calibration_state: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentCheckpointProgress:
+    levels: list[int] | None
+    level_index: int
+    level_factor: int
+    completed_outer_iters_in_level: int
+    global_outer_iters_completed: int
+    prev_factor: int | None = None
+    current_inner_iteration: int = 0
+    L_prev: float | None = None
+    small_impr_streak: int = 0
+    elapsed_offset: float = 0.0
+    level_complete: bool = False
+    run_complete: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentCheckpointMetadataInput:
+    projection: AlignmentProjectionIdentity
+    geometry: AlignmentCheckpointGeometrySnapshot
+    progress: AlignmentCheckpointProgress
+    config: Any
+    cli_options: Mapping[str, Any] | None = None
+    random_state: Mapping[str, Any] | None = None
+    schedule_metadata: Mapping[str, Any] | None = None
+    schedule_state: Mapping[str, Any] | None = None
+
+
 def _tomojax_version() -> str | None:
     try:
         from importlib import metadata
@@ -88,6 +133,49 @@ def _normalize_checkpoint_compare_value(key: str, value: Any) -> Any:
     return normalized
 
 
+def build_alignment_checkpoint_metadata_from_input(
+    metadata_input: AlignmentCheckpointMetadataInput,
+) -> dict[str, Any]:
+    """Build normalized checkpoint metadata shared by CLI and tests."""
+    projection = metadata_input.projection
+    geometry = metadata_input.geometry
+    progress = metadata_input.progress
+    metadata = {
+        "checkpoint_kind": CHECKPOINT_KIND,
+        "schema_version": SCHEMA_VERSION,
+        "tomojax_version": _tomojax_version(),
+        "projection_shape": [int(v) for v in projection.shape],
+        "projection_dtype": str(projection.dtype),
+        "geometry_type": str(geometry.geometry_type),
+        "geometry_meta": normalize_json(geometry.geometry_meta or {}),
+        "reconstruction_grid": normalize_json(geometry.reconstruction_grid),
+        "detector": normalize_json(geometry.detector),
+        "state_grid": normalize_json(geometry.state_grid),
+        "state_detector": normalize_json(geometry.state_detector),
+        "levels": None if progress.levels is None else [int(v) for v in progress.levels],
+        "level_index": int(progress.level_index),
+        "level_factor": int(progress.level_factor),
+        "completed_outer_iters_in_level": int(progress.completed_outer_iters_in_level),
+        "global_outer_iters_completed": int(progress.global_outer_iters_completed),
+        "current_inner_iteration": int(progress.current_inner_iteration),
+        "prev_factor": None if progress.prev_factor is None else int(progress.prev_factor),
+        "L_prev": None if progress.L_prev is None else float(progress.L_prev),
+        "small_impr_streak": int(progress.small_impr_streak),
+        "elapsed_offset": float(progress.elapsed_offset),
+        "config": normalize_json(metadata_input.config),
+        "cli_options": normalize_json(metadata_input.cli_options or {}),
+        "schedule_metadata": normalize_json(metadata_input.schedule_metadata),
+        "schedule_state": normalize_json(metadata_input.schedule_state),
+        "random_state": normalize_json(metadata_input.random_state or {"alignment": None}),
+        "geometry_calibration_state": normalize_json(geometry.geometry_calibration_state),
+        "level_complete": bool(progress.level_complete),
+        "run_complete": bool(progress.run_complete),
+    }
+    # Keep persisted metadata strict JSON.
+    json.dumps(metadata, allow_nan=False, sort_keys=True)
+    return metadata
+
+
 def build_alignment_checkpoint_metadata(
     *,
     projections_shape: tuple[int, ...] | list[int],
@@ -117,41 +205,43 @@ def build_alignment_checkpoint_metadata(
     level_complete: bool = False,
     run_complete: bool = False,
 ) -> dict[str, Any]:
-    """Build normalized checkpoint metadata shared by CLI and tests."""
-    metadata = {
-        "checkpoint_kind": CHECKPOINT_KIND,
-        "schema_version": SCHEMA_VERSION,
-        "tomojax_version": _tomojax_version(),
-        "projection_shape": [int(v) for v in projections_shape],
-        "projection_dtype": str(projections_dtype),
-        "geometry_type": str(geometry_type),
-        "geometry_meta": normalize_json(geometry_meta or {}),
-        "reconstruction_grid": normalize_json(reconstruction_grid),
-        "detector": normalize_json(detector),
-        "state_grid": normalize_json(state_grid),
-        "state_detector": normalize_json(state_detector),
-        "levels": None if levels is None else [int(v) for v in levels],
-        "level_index": int(level_index),
-        "level_factor": int(level_factor),
-        "completed_outer_iters_in_level": int(completed_outer_iters_in_level),
-        "global_outer_iters_completed": int(global_outer_iters_completed),
-        "current_inner_iteration": int(current_inner_iteration),
-        "prev_factor": None if prev_factor is None else int(prev_factor),
-        "L_prev": None if L_prev is None else float(L_prev),
-        "small_impr_streak": int(small_impr_streak),
-        "elapsed_offset": float(elapsed_offset),
-        "config": normalize_json(config),
-        "cli_options": normalize_json(cli_options or {}),
-        "schedule_metadata": normalize_json(schedule_metadata),
-        "schedule_state": normalize_json(schedule_state),
-        "random_state": normalize_json(random_state or {"alignment": None}),
-        "geometry_calibration_state": normalize_json(geometry_calibration_state),
-        "level_complete": bool(level_complete),
-        "run_complete": bool(run_complete),
-    }
-    # Keep persisted metadata strict JSON.
-    json.dumps(metadata, allow_nan=False, sort_keys=True)
-    return metadata
+    """Compatibility wrapper for the legacy wide metadata-builder signature."""
+    return build_alignment_checkpoint_metadata_from_input(
+        AlignmentCheckpointMetadataInput(
+            projection=AlignmentProjectionIdentity(
+                shape=projections_shape,
+                dtype=projections_dtype,
+            ),
+            geometry=AlignmentCheckpointGeometrySnapshot(
+                geometry_type=geometry_type,
+                geometry_meta=geometry_meta,
+                reconstruction_grid=reconstruction_grid,
+                detector=detector,
+                state_grid=state_grid,
+                state_detector=state_detector,
+                geometry_calibration_state=geometry_calibration_state,
+            ),
+            progress=AlignmentCheckpointProgress(
+                levels=levels,
+                level_index=level_index,
+                level_factor=level_factor,
+                completed_outer_iters_in_level=completed_outer_iters_in_level,
+                global_outer_iters_completed=global_outer_iters_completed,
+                prev_factor=prev_factor,
+                current_inner_iteration=current_inner_iteration,
+                L_prev=L_prev,
+                small_impr_streak=small_impr_streak,
+                elapsed_offset=elapsed_offset,
+                level_complete=level_complete,
+                run_complete=run_complete,
+            ),
+            config=config,
+            cli_options=cli_options,
+            random_state=random_state,
+            schedule_metadata=schedule_metadata,
+            schedule_state=schedule_state,
+        )
+    )
 
 
 def save_alignment_checkpoint(

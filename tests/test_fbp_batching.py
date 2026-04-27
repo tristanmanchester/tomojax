@@ -1,8 +1,10 @@
 import numpy as np
 import jax.numpy as jnp
+from importlib import import_module
+
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.recon.fbp import fbp
+from tomojax.recon.fbp import FBPConfig, fbp
 
 
 def make_case(nx=12, ny=12, nz=12, n_views=12):
@@ -51,8 +53,52 @@ def test_fbp_batch_equivalence_with_padded_tail():
     assert np.allclose(np.asarray(rec_all), np.asarray(rec_b4), atol=1e-3)
 
 
+def test_fbp_config_matches_legacy_keywords():
+    grid, det, geom, vol, projs = make_case(8, 8, 8, 8)
+    rec_config = fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        config=FBPConfig(filter_name="ramp", views_per_batch=2),
+    )
+    rec_legacy = fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        filter_name="ramp",
+        views_per_batch=2,
+    )
+
+    assert np.allclose(np.asarray(rec_config), np.asarray(rec_legacy), atol=1e-3)
+
+
+def test_fbp_legacy_keywords_override_config():
+    grid, det, geom, vol, projs = make_case(8, 8, 8, 8)
+    rec_config = fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        config=FBPConfig(filter_name="hann", views_per_batch=1),
+        filter_name="ramp",
+        views_per_batch=2,
+    )
+    rec_legacy = fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        filter_name="ramp",
+        views_per_batch=2,
+    )
+
+    assert np.allclose(np.asarray(rec_config), np.asarray(rec_legacy), atol=1e-3)
+
+
 def test_fbp_oom_retries_until_all_views_are_processed(monkeypatch):
-    import tomojax.recon.fbp as fbp_mod
+    fbp_mod = import_module("tomojax.recon.fbp")
 
     grid = Grid(nx=2, ny=2, nz=1, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=2, nv=1, du=1.0, dv=1.0, det_center=(0.0, 0.0))

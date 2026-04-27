@@ -10,9 +10,9 @@ import sys
 
 from ..calibration.detector_grid import detector_grid_from_geometry_inputs
 from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Detector, Grid
-from ..recon.fbp import fbp
+from ..recon.fbp import FBPConfig, fbp
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.quicklook import save_quicklook_png
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
@@ -427,12 +427,19 @@ def main() -> None:
 
     algorithm_config: dict[str, object]
     if args.algo == "fbp":
+        cfg = FBPConfig(
+            filter_name=str(args.filter),
+            views_per_batch=int(resolved_vpb),
+            projector_unroll=1,
+            checkpoint_projector=bool(args.checkpoint_projector),
+            gather_dtype=_gather,
+        )
         algorithm_config = {
-            "filter": str(args.filter),
-            "views_per_batch": int(resolved_vpb),
-            "projector_unroll": 1,
-            "checkpoint_projector": bool(args.checkpoint_projector),
-            "gather_dtype": _gather,
+            "filter": str(cfg.filter_name),
+            "views_per_batch": int(cfg.views_per_batch),
+            "projector_unroll": int(cfg.projector_unroll),
+            "checkpoint_projector": bool(cfg.checkpoint_projector),
+            "gather_dtype": str(cfg.gather_dtype),
         }
         with transfer_guard_context(args.transfer_guard):
             vol = fbp(
@@ -440,11 +447,7 @@ def main() -> None:
                 recon_grid,
                 detector,
                 proj,
-                filter_name=args.filter,
-                views_per_batch=resolved_vpb,
-                projector_unroll=1,
-                checkpoint_projector=bool(args.checkpoint_projector),
-                gather_dtype=_gather,
+                config=cfg,
                 det_grid=det_grid,
             )
         # For FBP, apply mask post-hoc if requested for parity
@@ -546,16 +549,19 @@ def main() -> None:
         if str(args.warm_start).lower() == "fbp":
             # Compute a quick FBP and use as initialization
             warm_start_vpb = 1 if vpb_mode == "default" else int(resolved_vpb)
-            init_x = fbp(
-                geom,
-                recon_grid,
-                detector,
-                proj,
+            warm_start_cfg = FBPConfig(
                 filter_name=str(args.filter),
                 views_per_batch=warm_start_vpb,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
+            )
+            init_x = fbp(
+                geom,
+                recon_grid,
+                detector,
+                proj,
+                config=warm_start_cfg,
                 det_grid=det_grid,
             )
             if vol_mask is not None:

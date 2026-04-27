@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Iterator, Tuple
+from dataclasses import dataclass, replace
+from typing import Any, Iterator, Tuple
 
 import numpy as np
 import jax
@@ -21,6 +22,19 @@ from ..utils.logging import progress_iter
 
 _RFFT_FILTER_CACHE: "OrderedDict[Tuple[str, int, float, str], np.ndarray]" = OrderedDict()
 _RFFT_FILTER_CACHE_CAP = 8
+_UNSET: Any = object()
+
+
+@dataclass(frozen=True, slots=True)
+class FBPConfig:
+    """Configuration for filtered backprojection."""
+
+    filter_name: str = "ramp"
+    scale: float | None = None
+    views_per_batch: int = 1
+    projector_unroll: int = 1
+    checkpoint_projector: bool = True
+    gather_dtype: str = "fp32"
 
 
 def _default_fbp_scale(n_views: int) -> float:
@@ -291,12 +305,13 @@ def fbp(
     detector: Detector,
     projections: jnp.ndarray,
     *,
-    filter_name: str = "ramp",
-    scale: float | None = None,
-    views_per_batch: int = 1,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
+    config: FBPConfig | None = None,
+    filter_name: str | object = _UNSET,
+    scale: float | None | object = _UNSET,
+    views_per_batch: int | object = _UNSET,
+    projector_unroll: int | object = _UNSET,
+    checkpoint_projector: bool | object = _UNSET,
+    gather_dtype: str | object = _UNSET,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Filtered backprojection for parallel-ray geometry using the explicit adjoint.
@@ -304,6 +319,23 @@ def fbp(
     projections: (n_views, nv, nu) -> volume (nx, ny, nz).
     Memory-safe: filters and backprojects per view-batch.
     """
+    cfg = FBPConfig() if config is None else config
+    updates: dict[str, object] = {}
+    if filter_name is not _UNSET:
+        updates["filter_name"] = str(filter_name)
+    if scale is not _UNSET:
+        updates["scale"] = None if scale is None else float(scale)
+    if views_per_batch is not _UNSET:
+        updates["views_per_batch"] = int(views_per_batch)
+    if projector_unroll is not _UNSET:
+        updates["projector_unroll"] = int(projector_unroll)
+    if checkpoint_projector is not _UNSET:
+        updates["checkpoint_projector"] = bool(checkpoint_projector)
+    if gather_dtype is not _UNSET:
+        updates["gather_dtype"] = str(gather_dtype)
+    if updates:
+        cfg = replace(cfg, **updates)
+
     validate_grid(grid, "fbp grid")
     n_views, _, _ = validate_projection_stack(
         projections,
@@ -316,7 +348,7 @@ def fbp(
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
-    requested_b = int(views_per_batch) if int(views_per_batch) > 0 else n_views
+    requested_b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
 
@@ -327,10 +359,10 @@ def fbp(
             batch_size=b,
             grid=grid,
             detector=detector,
-            filter_name=filter_name,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
+            filter_name=cfg.filter_name,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
             det_grid=det_grid,
         )
         acc.block_until_ready()
@@ -345,16 +377,16 @@ def fbp(
             batch_size=b,
             grid=grid,
             detector=detector,
-            filter_name=filter_name,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
+            filter_name=cfg.filter_name,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
             det_grid=det_grid,
             view_progress=view_progress,
         )
 
-    if scale is None:
+    if cfg.scale is None:
         acc = acc * _default_fbp_scale(n_views)
     else:
-        acc = acc * float(scale)
+        acc = acc * float(cfg.scale)
     return acc

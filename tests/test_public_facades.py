@@ -12,6 +12,7 @@ def test_alignment_facade_exports_documented_api() -> None:
 
 
 def test_reconstruction_facade_exports_documented_api() -> None:
+    assert recon_api.FBPConfig.__name__ == "FBPConfig"
     assert recon_api.FistaConfig.__name__ == "FistaConfig"
     assert recon_api.SPDHGConfig.__name__ == "SPDHGConfig"
     assert callable(recon_api.fbp)

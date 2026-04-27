@@ -25,8 +25,12 @@ from ..align.objectives.losses import (
 from ..align.io.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
 from ..align.io.checkpoint import (
+    AlignmentCheckpointGeometrySnapshot,
+    AlignmentCheckpointMetadataInput,
+    AlignmentCheckpointProgress,
+    AlignmentProjectionIdentity,
     CheckpointError,
-    build_alignment_checkpoint_metadata,
+    build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
@@ -634,38 +638,46 @@ def _checkpoint_metadata(
 ) -> dict[str, object]:
     geometry_meta = getattr(getattr(meta, "metadata", meta), "geometry_meta", None)
     geometry_type = getattr(meta, "geometry_type", "parallel")
-    return build_alignment_checkpoint_metadata(
-        projections_shape=tuple(int(v) for v in projections.shape),
-        projections_dtype=str(projections.dtype),
-        geometry_type=str(geometry_type),
-        geometry_meta=geometry_meta,
-        reconstruction_grid=recon_grid.to_dict(),
-        detector=detector.to_dict(),
-        state_grid=state_grid.to_dict(),
-        state_detector=state_detector.to_dict(),
-        levels=levels,
-        level_index=int(level_index),
-        level_factor=int(level_factor),
-        completed_outer_iters_in_level=int(completed_outer_iters_in_level),
-        global_outer_iters_completed=int(global_outer_iters_completed),
-        config=cfg,
-        cli_options=_checkpoint_cli_options(args, gather_dtype=gather_dtype),
-        prev_factor=prev_factor,
-        current_inner_iteration=0,
-        L_prev=L_prev,
-        small_impr_streak=small_impr_streak,
-        elapsed_offset=elapsed_offset,
-        random_state={
-            "alignment": None,
-            "seed_translations": (
-                "deterministic_phase_correlation" if cfg.seed_translations else None
+    return build_alignment_checkpoint_metadata_from_input(
+        AlignmentCheckpointMetadataInput(
+            projection=AlignmentProjectionIdentity(
+                shape=tuple(int(v) for v in projections.shape),
+                dtype=str(projections.dtype),
             ),
-        },
-        schedule_metadata=schedule_metadata,
-        schedule_state=schedule_state,
-        geometry_calibration_state=geometry_calibration_state,
-        level_complete=level_complete,
-        run_complete=run_complete,
+            geometry=AlignmentCheckpointGeometrySnapshot(
+                geometry_type=str(geometry_type),
+                geometry_meta=geometry_meta,
+                reconstruction_grid=recon_grid.to_dict(),
+                detector=detector.to_dict(),
+                state_grid=state_grid.to_dict(),
+                state_detector=state_detector.to_dict(),
+                geometry_calibration_state=geometry_calibration_state,
+            ),
+            progress=AlignmentCheckpointProgress(
+                levels=levels,
+                level_index=int(level_index),
+                level_factor=int(level_factor),
+                completed_outer_iters_in_level=int(completed_outer_iters_in_level),
+                global_outer_iters_completed=int(global_outer_iters_completed),
+                prev_factor=prev_factor,
+                current_inner_iteration=0,
+                L_prev=L_prev,
+                small_impr_streak=small_impr_streak,
+                elapsed_offset=elapsed_offset,
+                level_complete=level_complete,
+                run_complete=run_complete,
+            ),
+            config=cfg,
+            cli_options=_checkpoint_cli_options(args, gather_dtype=gather_dtype),
+            random_state={
+                "alignment": None,
+                "seed_translations": (
+                    "deterministic_phase_correlation" if cfg.seed_translations else None
+                ),
+            },
+            schedule_metadata=schedule_metadata,
+            schedule_state=schedule_state,
+        )
     )
 
 

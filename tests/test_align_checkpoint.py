@@ -7,8 +7,13 @@ import pytest
 import jax.numpy as jnp
 
 from tomojax.align.checkpoint import (
+    AlignmentCheckpointGeometrySnapshot,
+    AlignmentCheckpointMetadataInput,
+    AlignmentCheckpointProgress,
+    AlignmentProjectionIdentity,
     CheckpointError,
     build_alignment_checkpoint_metadata,
+    build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
@@ -20,7 +25,7 @@ from tomojax.align.pipeline import (
     align,
     align_multires,
 )
-from tomojax.core.geometry import Detector, Grid, ParallelGeometry
+from tomojax.core.geometry import Detector, Grid
 from tomojax.core.multires import scale_detector, scale_grid
 
 from test_align_quick import make_misaligned_case
@@ -48,40 +53,48 @@ def _metadata(
     schedule_metadata: dict[str, object] | None = None,
     schedule_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return build_alignment_checkpoint_metadata(
-        projections_shape=tuple(int(v) for v in projections.shape),
-        projections_dtype=str(projections.dtype),
-        geometry_type="parallel",
-        geometry_meta={},
-        reconstruction_grid=grid.to_dict(),
-        detector=detector.to_dict(),
-        state_grid=(state_grid or grid).to_dict(),
-        state_detector=(state_detector or detector).to_dict(),
-        levels=levels,
-        level_index=level_index,
-        level_factor=level_factor,
-        completed_outer_iters_in_level=completed_outer_iters_in_level,
-        global_outer_iters_completed=global_outer_iters_completed,
-        config=cfg,
-        cli_options={
-            "roi": "off",
-            "grid": None,
-            "requested_gather_dtype": "fp32",
-            "gather_dtype": "fp32",
-            "views_per_batch": 1,
-            "projector_unroll": 1,
-            "checkpoint_projector": True,
-            "mask_vol": "off",
-        },
-        prev_factor=prev_factor,
-        L_prev=L_prev,
-        small_impr_streak=small_impr_streak,
-        elapsed_offset=elapsed_offset,
-        random_state={"alignment": None},
-        schedule_metadata=schedule_metadata,
-        schedule_state=schedule_state,
-        level_complete=level_complete,
-        run_complete=run_complete,
+    return build_alignment_checkpoint_metadata_from_input(
+        AlignmentCheckpointMetadataInput(
+            projection=AlignmentProjectionIdentity(
+                shape=tuple(int(v) for v in projections.shape),
+                dtype=str(projections.dtype),
+            ),
+            geometry=AlignmentCheckpointGeometrySnapshot(
+                geometry_type="parallel",
+                geometry_meta={},
+                reconstruction_grid=grid.to_dict(),
+                detector=detector.to_dict(),
+                state_grid=(state_grid or grid).to_dict(),
+                state_detector=(state_detector or detector).to_dict(),
+            ),
+            progress=AlignmentCheckpointProgress(
+                levels=levels,
+                level_index=level_index,
+                level_factor=level_factor,
+                completed_outer_iters_in_level=completed_outer_iters_in_level,
+                global_outer_iters_completed=global_outer_iters_completed,
+                prev_factor=prev_factor,
+                L_prev=L_prev,
+                small_impr_streak=small_impr_streak,
+                elapsed_offset=elapsed_offset,
+                level_complete=level_complete,
+                run_complete=run_complete,
+            ),
+            config=cfg,
+            cli_options={
+                "roi": "off",
+                "grid": None,
+                "requested_gather_dtype": "fp32",
+                "gather_dtype": "fp32",
+                "views_per_batch": 1,
+                "projector_unroll": 1,
+                "checkpoint_projector": True,
+                "mask_vol": "off",
+            },
+            random_state={"alignment": None},
+            schedule_metadata=schedule_metadata,
+            schedule_state=schedule_state,
+        )
     )
 
 
@@ -131,6 +144,53 @@ def _resume_multires_from_checkpoint(path, expected_metadata) -> AlignMultiresRe
         level_complete=bool(meta.get("level_complete", False)),
         run_complete=bool(meta.get("run_complete", False)),
     )
+
+
+def test_alignment_checkpoint_legacy_metadata_builder_delegates_to_typed_input():
+    grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)
+    projections = jnp.zeros((4, 2, 3), dtype=jnp.float32)
+    cfg = AlignConfig(outer_iters=2, recon_iters=1, early_stop=False)
+
+    typed = _metadata(
+        cfg=cfg,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        completed_outer_iters_in_level=1,
+        global_outer_iters_completed=1,
+        L_prev=2.5,
+    )
+    legacy = build_alignment_checkpoint_metadata(
+        projections_shape=tuple(int(v) for v in projections.shape),
+        projections_dtype=str(projections.dtype),
+        geometry_type="parallel",
+        geometry_meta={},
+        reconstruction_grid=grid.to_dict(),
+        detector=detector.to_dict(),
+        state_grid=grid.to_dict(),
+        state_detector=detector.to_dict(),
+        levels=None,
+        level_index=0,
+        level_factor=1,
+        completed_outer_iters_in_level=1,
+        global_outer_iters_completed=1,
+        config=cfg,
+        cli_options={
+            "roi": "off",
+            "grid": None,
+            "requested_gather_dtype": "fp32",
+            "gather_dtype": "fp32",
+            "views_per_batch": 1,
+            "projector_unroll": 1,
+            "checkpoint_projector": True,
+            "mask_vol": "off",
+        },
+        L_prev=2.5,
+        random_state={"alignment": None},
+    )
+
+    assert legacy == typed
 
 
 def test_alignment_checkpoint_round_trips_arrays_and_metadata(tmp_path):
