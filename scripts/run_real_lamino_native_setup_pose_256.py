@@ -260,6 +260,47 @@ def _load_input(path: Path, *, flip_u: bool, flip_v: bool, transpose_detector: b
     return projections, thetas
 
 
+def _projection_stats(projections: np.ndarray) -> dict[str, Any]:
+    arr = np.asarray(projections, dtype=np.float32)
+    return {
+        "shape": list(arr.shape),
+        "min": float(np.nanmin(arr)),
+        "max": float(np.nanmax(arr)),
+        "percentiles": [float(v) for v in np.nanpercentile(arr, [0.1, 1, 5, 50, 95, 99, 99.9])],
+        "view_median_percentiles": [
+            float(v) for v in np.nanpercentile(np.nanmedian(arr, axis=(1, 2)), [0, 5, 50, 95, 100])
+        ],
+    }
+
+
+def _apply_projection_background(
+    projections: np.ndarray,
+    *,
+    mode: str,
+    edge_px: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    arr = np.asarray(projections, dtype=np.float32)
+    if mode == "none":
+        return arr, np.zeros((arr.shape[0],), dtype=np.float32)
+    if mode == "view_median":
+        offsets = np.nanmedian(arr, axis=(1, 2)).astype(np.float32)
+        return arr - offsets[:, None, None], offsets
+    if mode == "edge_median":
+        edge = max(1, min(int(edge_px), arr.shape[1] // 2, arr.shape[2] // 2))
+        samples = np.concatenate(
+            [
+                arr[:, :edge, :].reshape(arr.shape[0], -1),
+                arr[:, -edge:, :].reshape(arr.shape[0], -1),
+                arr[:, :, :edge].reshape(arr.shape[0], -1),
+                arr[:, :, -edge:].reshape(arr.shape[0], -1),
+            ],
+            axis=1,
+        )
+        offsets = np.nanmedian(samples, axis=1).astype(np.float32)
+        return arr - offsets[:, None, None], offsets
+    raise ValueError(f"unknown projection background mode: {mode}")
+
+
 def _status(path: Path, **updates: Any) -> None:
     current: dict[str, Any] = {}
     if path.exists():
@@ -438,7 +479,7 @@ def _make_cfg(
         pose_model="per_view",
         gauge_fix="mean_translation" if {"dx", "dz"} & set(active_pose) else "none",
         mask_vol="cyl",
-        recon_positivity=True,
+        recon_positivity=bool(args.recon_positivity),
         seed_translations=False,
         early_stop=bool(args.early_stop),
         early_stop_rel_impr=float(args.early_stop_rel),
@@ -858,7 +899,7 @@ def _final_reconstruct(
             views_per_batch=max(1, int(ctx.args.views_per_batch)),
             checkpoint_projector=True,
             gather_dtype=str(ctx.args.gather_dtype),
-            positivity=True,
+            positivity=bool(ctx.args.recon_positivity),
         ),
         det_grid=det_grid,
     )
@@ -926,6 +967,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--recon-iters", type=int, default=40)
     parser.add_argument("--tv-prox-iters", type=int, default=16)
     parser.add_argument("--lambda-tv", type=float, default=0.008)
+    parser.add_argument("--projection-background", choices=["none", "view_median", "edge_median"], default="edge_median")
+    parser.add_argument("--background-edge-px", type=int, default=16)
+    parser.add_argument("--recon-positivity", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--views-per-batch", type=int, default=1)
     parser.add_argument("--gather-dtype", default="bf16")
     parser.add_argument("--gn-damping", type=float, default=1e-3)
@@ -953,14 +997,20 @@ def main() -> int:
     started = datetime.now().isoformat(timespec="seconds")
     _status(ctx.status_path, state="starting", started_at=started)
     try:
-        projections, thetas = _load_input(
+        raw_projections, thetas = _load_input(
             Path(args.input),
             flip_u=bool(args.flip_u),
             flip_v=bool(args.flip_v),
             transpose_detector=bool(args.transpose_detector),
         )
-        if projections.shape != (256, 256, 256):
-            raise ValueError(f"expected 256^3 reduced input, got {projections.shape}")
+        if raw_projections.shape != (256, 256, 256):
+            raise ValueError(f"expected 256^3 reduced input, got {raw_projections.shape}")
+        projections, background_offsets = _apply_projection_background(
+            raw_projections,
+            mode=str(args.projection_background),
+            edge_px=int(args.background_edge_px),
+        )
+        np.save(run_root / "projection_background_offsets.npy", background_offsets.astype(np.float32))
         n_views, nv, nu = projections.shape
         full_nz = int(nv)
         center_phys_z = _global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
@@ -997,6 +1047,26 @@ def main() -> int:
                 "started_at": started,
                 "input": str(args.input),
                 "input_shape": list(projections.shape),
+                "raw_projection_stats": _projection_stats(raw_projections),
+                "working_projection_stats": _projection_stats(projections),
+                "projection_preprocessing": {
+                    "background_mode": str(args.projection_background),
+                    "background_edge_px": int(args.background_edge_px),
+                    "background_offsets_percentiles": [
+                        float(v) for v in np.nanpercentile(background_offsets, [0, 5, 50, 95, 100])
+                    ],
+                    "background_offsets_file": "projection_background_offsets.npy",
+                    "baseline_reconstruction_uses": "raw_projections",
+                    "alignment_and_fista_use": "background_corrected_projections",
+                },
+                "reconstruction": {
+                    "algorithm": "fista_tv",
+                    "lambda_tv": float(args.lambda_tv),
+                    "tv_prox_iters": int(args.tv_prox_iters),
+                    "positivity": bool(args.recon_positivity),
+                    "gather_dtype": str(args.gather_dtype),
+                    "views_per_batch": int(args.views_per_batch),
+                },
                 "worktree": _commit_info(Path.cwd()),
                 "backend": jax.default_backend(),
                 "devices": [str(device) for device in jax.devices()],
@@ -1024,7 +1094,7 @@ def main() -> int:
                 },
             },
         )
-        baseline = run_baseline(ctx, geometry=geometry, grid=grid, detector=detector, projections=projections, full_nz=full_nz)
+        baseline = run_baseline(ctx, geometry=geometry, grid=grid, detector=detector, projections=raw_projections, full_nz=full_nz)
         params5 = np.zeros((n_views, 5), dtype=np.float32)
         setup_state = GeometryCalibrationState.from_geometry(geometry, active_geometry_dofs=())
 
