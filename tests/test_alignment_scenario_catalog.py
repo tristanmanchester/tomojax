@@ -73,6 +73,15 @@ def test_default_and_headline_suites_exclude_rejected_controls_and_duplicate_cor
         assert forbidden.isdisjoint(slugs)
 
 
+def test_headline_suites_exclude_static_detector_v_shift_cases():
+    headline_suites = ("default", "capability_128", "stress_128", "comprehensive_128")
+
+    for suite_name in headline_suites:
+        for scenario in scenario_suite(suite_name).scenarios():
+            assert "det_v_px" not in scenario.active_dofs
+            assert "det_v_px" not in scenario.hidden_setup
+
+
 def test_comprehensive_suite_contains_all_canonical_categories():
     scenarios = scenario_suite("comprehensive_128").scenarios()
     categories = {scenario.category for scenario in scenarios}

@@ -70,7 +70,6 @@ def test_geometry_block_taxonomy_scenarios_cover_new_geometry_blocks():
     dof_sets = {scenario.slug: set(scenario.geometry_dofs) for scenario in scenarios}
 
     assert dof_sets["parallel_cor_u_m004"] == {"det_u_px"}
-    assert dof_sets["parallel_detector_center_uv"] == {"det_u_px", "det_v_px"}
     assert dof_sets["parallel_detector_roll_p2p5"] == {"detector_roll_deg"}
     assert dof_sets["parallel_axis_pitch_full360_p2p0"] == {"axis_rot_x_deg"}
     assert dof_sets["parallel_axis_yaw_full360_m2p0"] == {"axis_rot_y_deg"}

@@ -243,18 +243,6 @@ _CAPABILITY_SCENARIOS: tuple[AlignmentScenario, ...] = (
         hidden_setup={"det_u_px": -4.0},
     ),
     _scenario(
-        "parallel_detector_center_uv",
-        "Parallel CT: 2D detector centre offset",
-        "Detector-u and detector-v centre offsets under the detector centre gauge.",
-        category="capability",
-        family="parallel_ct",
-        acquisition=_acq("parallel", 180.0),
-        active_dofs=("det_u_px", "det_v_px"),
-        schedule="detector_center_2d",
-        expectation=_SUCCESS,
-        hidden_setup={"det_u_px": -4.0, "det_v_px": 3.0},
-    ),
-    _scenario(
         "parallel_detector_roll_p2p5",
         "Parallel CT: detector roll +2.5 deg",
         "Canonical detector-plane roll correction.",
