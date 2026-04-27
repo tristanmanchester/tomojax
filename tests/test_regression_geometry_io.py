@@ -23,6 +23,15 @@ def test_transpose_volume_raises_when_jax_array_support_is_incomplete(monkeypatc
         axes_mod.transpose_volume(np.zeros((2, 3, 4), dtype=np.float32), "xyz", "zyx")
 
 
+def test_transpose_volume_identity_converts_non_array_inputs():
+    nested = [[[1.0], [2.0]], [[3.0], [4.0]]]
+
+    out = axes_mod.transpose_volume(nested, "xyz", "xyz")
+
+    assert isinstance(out, np.ndarray)
+    np.testing.assert_allclose(out, np.asarray(nested))
+
+
 def test_random_cubes_spheres_keeps_inscribed_fov_for_rotated_cube_seed_63():
     nx = ny = nz = 32
     vol = random_cubes_spheres(

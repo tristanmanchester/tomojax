@@ -63,18 +63,22 @@ def transpose_volume(volume: object, src: str, dst: str) -> np.ndarray | JaxArra
     """
 
     perm = axes_to_perm(src, dst)
-    if perm == (0, 1, 2):
-        return volume
 
     if _JAX_ARRAY_TYPES and isinstance(volume, _JAX_ARRAY_TYPES):  # pragma: no cover - exercised in GPU envs
         if jnp is None:
             raise RuntimeError("JAX array transpose requested but jax.numpy is unavailable")
+        if perm == (0, 1, 2):
+            return volume
         return jnp.transpose(volume, axes=perm)
 
     if isinstance(volume, np.ndarray):
+        if perm == (0, 1, 2):
+            return volume
         return np.transpose(volume, axes=perm)
 
     arr = np.asarray(volume)
+    if perm == (0, 1, 2):
+        return arr
     return np.transpose(arr, axes=perm)
 
 
