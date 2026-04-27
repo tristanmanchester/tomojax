@@ -213,7 +213,13 @@ def enrich_multires_stage_stat(
     level_elapsed = stat.get("cumulative_time")
     try:
         level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
-    except Exception:
+    except (TypeError, ValueError, OverflowError) as exc:
+        _record_stat_conversion_error(
+            enriched,
+            "cumulative_time",
+            exc,
+            errors_key="level_stats_errors",
+        )
         level_elapsed_f = None
     enriched["level_elapsed_seconds"] = level_elapsed_f
     enriched["global_elapsed_seconds"] = (

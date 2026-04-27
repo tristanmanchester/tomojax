@@ -94,6 +94,26 @@ def test_alignment_stat_float_conversion_records_errors() -> None:
     assert "TypeError:" in stat["stat_errors"][0]["error"]
 
 
+def test_multires_elapsed_stat_conversion_records_errors() -> None:
+    results = importlib.import_module("tomojax.align._results")
+
+    stat = results.enrich_multires_stage_stat(
+        {"outer_idx": 1, "cumulative_time": object()},
+        level_factor=1,
+        level_index=0,
+        global_outer_idx=1,
+        elapsed_offset=10.0,
+        loss_name="l2",
+        schedule_name="default",
+        stage=None,
+    )
+
+    assert stat["level_elapsed_seconds"] is None
+    assert stat["global_elapsed_seconds"] is None
+    assert stat["level_stats_errors"][0]["key"] == "cumulative_time"
+    assert "TypeError:" in stat["level_stats_errors"][0]["error"]
+
+
 def test_setup_stage_rejects_unsupported_loss_before_fold_reconstruction(monkeypatch) -> None:
     pipeline = importlib.import_module("tomojax.align.pipeline")
     setup_stage = importlib.import_module("tomojax.align._setup_stage")
