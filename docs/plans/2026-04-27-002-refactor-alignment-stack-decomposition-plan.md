@@ -1,7 +1,7 @@
 ---
 title: refactor: Decompose alignment pipeline and losses
 type: refactor
-status: active
+status: completed
 date: 2026-04-27
 origin: docs/ideation/2026-04-27-alignment-stack-decomposition-ideation.md
 deepened: 2026-04-27

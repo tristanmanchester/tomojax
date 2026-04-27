@@ -79,14 +79,6 @@ def _resolved_schedule_for_cfg(
     )
 
 
-AlignCheckpointCallback = Callable[[AlignResumeState], None]
-AlignMultiresCheckpointCallback = Callable[[AlignMultiresResumeState], None]
-
-
-
-
-
-
 @dataclass
 class AlignConfig:
     outer_iters: int = 5

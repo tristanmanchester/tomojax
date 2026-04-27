@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, TypedDict
+from typing import Callable, Iterable, Mapping, TypedDict
 
 import jax.numpy as jnp
 
@@ -88,6 +88,10 @@ class AlignMultiresResumeState:
     stage_name: str | None = None
     stage_completed: bool = False
     completed_outer_iters_in_stage: int = 0
+
+
+AlignCheckpointCallback = Callable[[AlignResumeState], None]
+AlignMultiresCheckpointCallback = Callable[[AlignMultiresResumeState], None]
 
 
 def record_reconstruction_info(
@@ -180,7 +184,9 @@ def enrich_multires_stage_stat(
 
 __all__ = [
     "AlignInfo",
+    "AlignCheckpointCallback",
     "AlignMultiresInfo",
+    "AlignMultiresCheckpointCallback",
     "AlignMultiresResumeState",
     "AlignResumeState",
     "enrich_multires_stage_stat",
