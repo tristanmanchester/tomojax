@@ -3,9 +3,9 @@ import pytest
 import jax.numpy as jnp
 
 import tomojax.align.pipeline as align_pipeline
-from tomojax.align.losses import parse_loss_spec
+from tomojax.align.objectives.losses import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig, align
-from tomojax.align.recon_layer import PoseAdjustedGeometry
+from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 

@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from tomojax.align.losses import (
+from tomojax.align.objectives.losses import (
     LossState,
     _loss_cauchy,
     _loss_chamfer_edge,

@@ -10,7 +10,7 @@ from tomojax.align.motion_models import (
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
-from tomojax.align.dof_specs import ActiveParameterView
+from tomojax.align.model.dof_specs import ActiveParameterView
 from tomojax.align.optimizers import (
     ActiveLbfgsConfig,
     BoundTransform,
@@ -21,7 +21,7 @@ from tomojax.align.optimizers import (
     run_active_validation_lm,
     run_pose_lbfgs,
 )
-from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 
 
 def _lbfgs_config(**kwargs) -> PoseLbfgsConfig:

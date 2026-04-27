@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tomojax.align.dof_specs import dof_spec
+from tomojax.align.model.dof_specs import dof_spec
 from tomojax.align.schedules import schedule_preset
 from tomojax.bench.alignment_scenarios import (
     scenario_catalog,

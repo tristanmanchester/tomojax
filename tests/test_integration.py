@@ -12,7 +12,7 @@ from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.align.pipeline import align, AlignConfig
-from tomojax.align.recon_layer import PoseAdjustedGeometry
+from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 
 
 if sys.version_info < (3, 8):

@@ -5,8 +5,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from tomojax.align.dof_specs import ActiveParameterView, optimizer_step_stats
-from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.model.dof_specs import ActiveParameterView, optimizer_step_stats
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 
 

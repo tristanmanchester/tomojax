@@ -6,14 +6,14 @@ import jax.numpy as jnp
 import tomojax.align.detector_center as detector_center
 import tomojax.align.geometry_blocks as geometry_blocks
 import tomojax.align.pipeline as pipeline
-from tomojax.align.dof_specs import ActiveParameterView
-from tomojax.align.folds import FoldSpec
-from tomojax.align.geometry_applier import BaseGeometryArrays
-from tomojax.align.losses import L2OtsuLossSpec, build_loss_adapter
+from tomojax.align.model.dof_specs import ActiveParameterView
+from tomojax.align.objectives.folds import FoldSpec
+from tomojax.align.geometry.geometry_applier import BaseGeometryArrays
+from tomojax.align.objectives.losses import L2OtsuLossSpec, build_loss_adapter
 from tomojax.align.schedules import schedule_preset
-from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.pipeline import AlignConfig, align_multires
-from tomojax.align.validation_residuals import (
+from tomojax.align.objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
 )

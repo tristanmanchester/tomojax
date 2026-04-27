@@ -6,8 +6,8 @@ import jax.numpy as jnp
 import tomojax.align.pipeline as align_pipeline
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.align.losses import loss_spec_name, parse_loss_schedule, parse_loss_spec
-from tomojax.align.dofs import resolve_scoped_alignment_dofs
+from tomojax.align.objectives.losses import loss_spec_name, parse_loss_schedule, parse_loss_spec
+from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
 from tomojax.align.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
@@ -19,7 +19,7 @@ from tomojax.align.pipeline import (
     align_multires,
     AlignConfig,
 )
-from tomojax.align.recon_layer import PoseAdjustedGeometry
+from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.align.schedules import AlignmentSchedule, AlignmentStage
 
 

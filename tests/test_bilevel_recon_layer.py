@@ -5,10 +5,10 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from tomojax.align.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align import recon_layer as recon_layer_module
-from tomojax.align.recon_layer import ReconLayer, ReconLayerConfig
-from tomojax.align.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+import tomojax.align.objectives.recon_layer as recon_layer_module
+from tomojax.align.objectives.recon_layer import ReconLayer, ReconLayerConfig
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
