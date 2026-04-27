@@ -66,6 +66,20 @@ def test_loss_compatibility_symbols_remain_importable(symbol: str) -> None:
     assert hasattr(losses, symbol)
 
 
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "tomojax.align._loss_adapters",
+        "tomojax.align._loss_kernels",
+        "tomojax.align._loss_specs",
+        "tomojax.align._loss_state",
+    ],
+)
+def test_private_loss_shims_are_not_compatibility_surface(module_name: str) -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(module_name)
+
+
 def test_loss_adapter_exposes_distinct_setup_validation_lm_capability() -> None:
     targets = jnp.zeros((2, 3, 3), dtype=jnp.float32)
 
