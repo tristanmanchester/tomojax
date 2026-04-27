@@ -83,6 +83,17 @@ def test_loss_adapter_exposes_distinct_setup_validation_lm_capability() -> None:
     assert not phasecorr_adapter.supports_setup_validation_lm
 
 
+def test_alignment_stat_float_conversion_records_errors() -> None:
+    results = importlib.import_module("tomojax.align._results")
+    stat: dict[str, object] = {}
+
+    results._set_float_stat(stat, "rot_mean", object())
+
+    assert "rot_mean" not in stat
+    assert stat["stat_errors"][0]["key"] == "rot_mean"
+    assert "TypeError:" in stat["stat_errors"][0]["error"]
+
+
 def test_setup_stage_rejects_unsupported_loss_before_fold_reconstruction(monkeypatch) -> None:
     pipeline = importlib.import_module("tomojax.align.pipeline")
     setup_stage = importlib.import_module("tomojax.align._setup_stage")

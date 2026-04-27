@@ -5,7 +5,7 @@ from typing import Callable, Literal
 import jax.numpy as jnp
 
 ObserverAction = Literal["continue", "advance_level", "stop_run"]
-type OuterStatValue = float | int | bool | str | None
+type OuterStatValue = float | int | bool | str | list[object] | dict[str, object] | None
 type OuterStat = dict[str, OuterStatValue]
 
 ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverAction | None]

@@ -115,6 +115,25 @@ AlignCheckpointCallback = Callable[[AlignResumeState], None]
 AlignMultiresCheckpointCallback = Callable[[AlignMultiresResumeState], None]
 
 
+def _record_stat_conversion_error(
+    stat: OuterStat,
+    key: str,
+    exc: Exception,
+    *,
+    errors_key: str = "stat_errors",
+) -> None:
+    errors = stat.setdefault(errors_key, [])
+    if isinstance(errors, list):
+        errors.append({"key": key, "error": f"{type(exc).__name__}: {exc}"})
+
+
+def _set_float_stat(stat: OuterStat, key: str, value: object) -> None:
+    try:
+        stat[key] = float(value)  # type: ignore[typeddict-unknown-key]
+    except (TypeError, ValueError, OverflowError) as exc:
+        _record_stat_conversion_error(stat, key, exc)
+
+
 def record_reconstruction_info(
     stat: OuterStat,
     *,
@@ -131,8 +150,8 @@ def record_reconstruction_info(
                 L_prev = 1.2 * L_meas
                 stat["L_meas"] = L_meas
                 stat["L_next"] = L_prev
-        except Exception:
-            pass
+        except (TypeError, ValueError, OverflowError) as exc:
+            _record_stat_conversion_error(stat, "L", exc)
     losses = info_rec.get("loss")
     if isinstance(losses, Iterable):
         try:
@@ -145,8 +164,8 @@ def record_reconstruction_info(
                     stat["fista_first"] = float(lhist[0])
                     stat["fista_last"] = float(lhist[-1])
                     stat["fista_min"] = float(min(lhist))
-        except Exception:
-            pass
+        except (TypeError, ValueError, OverflowError) as exc:
+            _record_stat_conversion_error(stat, "loss", exc)
     if recon_algo == "spdhg":
         for src, dst in (
             ("tau", "spdhg_tau"),

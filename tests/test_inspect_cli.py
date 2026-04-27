@@ -5,8 +5,10 @@ import json
 import h5py
 import imageio.v3 as iio
 import numpy as np
+import pytest
 
 from tomojax.cli import inspect as inspect_cli
+from tomojax.data import inspection
 from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
 
 
@@ -181,3 +183,20 @@ def test_inspect_cli_rejects_file_without_projection_data(tmp_path, capsys):
     captured = capsys.readouterr()
     assert status == 1
     assert "Could not find projections dataset" in captured.err
+
+
+def test_inspection_dataset_lookup_propagates_hdf5_access_errors():
+    class BrokenFile:
+        def get(self, path):
+            raise OSError(f"cannot read {path}")
+
+    with pytest.raises(OSError, match="cannot read /entry/data/data"):
+        inspection._dataset_at(BrokenFile(), "/entry/data/data")
+
+
+def test_inspection_attr_conversion_only_tolerates_conversion_failures():
+    class BadString:
+        def __str__(self):
+            raise ValueError("not convertible")
+
+    assert inspection._attr_to_str(BadString(), default="missing") == "missing"

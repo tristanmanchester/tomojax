@@ -285,7 +285,7 @@ def _attr_to_str(v: object, default: str | None = None) -> str | None:
             if v.size >= 1:
                 return _attr_to_str(v.flat[0], default)
         return str(v)
-    except Exception:
+    except (TypeError, UnicodeDecodeError, ValueError):
         return default
 
 
@@ -890,8 +890,8 @@ def validate_nxtomo(path: str) -> ValidationReport:
                 units = _attr_to_str(ang.attrs.get("units"))
                 if units != "degree":
                     report["issues"].append("rotation_angle units attr should be 'degree'")
-    except Exception as exc:  # pragma: no cover (defensive)
-        report["issues"].append(f"Exception during validation: {exc}")
+    except OSError as exc:
+        report["issues"].append(f"Unable to read HDF5 file: {exc}")
     return report
 
 

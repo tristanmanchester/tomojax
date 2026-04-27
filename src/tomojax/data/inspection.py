@@ -42,7 +42,7 @@ def _attr_to_str(value: object, default: str | None = None) -> str | None:
             if value.size >= 1:
                 return _attr_to_str(value.flat[0], default)
         return str(value)
-    except Exception:
+    except (TypeError, UnicodeDecodeError, ValueError):
         return default
 
 
@@ -52,7 +52,7 @@ def _json_attr_to_mapping(value: object) -> dict[str, Any] | None:
         return None
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return None
     return parsed if isinstance(parsed, dict) else None
 
@@ -70,10 +70,7 @@ def _json_safe(value: object) -> object:
 
 
 def _dataset_at(file: h5py.File, path: str) -> h5py.Dataset | None:
-    try:
-        obj = file.get(path)
-    except Exception:
-        return None
+    obj = file.get(path)
     return obj if isinstance(obj, h5py.Dataset) else None
 
 

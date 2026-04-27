@@ -32,6 +32,7 @@ Output structure:
 """
 
 import json
+from dataclasses import dataclass
 import numpy as np
 import h5py
 
@@ -172,6 +173,147 @@ def _volume_chunks(shape: tuple[int, int, int]) -> tuple[int, int, int]:
     return tuple(min(dim, chunk) for dim, chunk in zip(shape, target, strict=True))
 
 
+def _write_entry_metadata(f, *, grid, voxels, tilt_deg, tilt_about):
+    nx_grid, ny_grid, nz_grid = grid
+    vx, vy, vz = voxels
+    entry = f.create_group("entry")
+    entry.attrs["NX_class"] = "NXentry"
+    entry.attrs["definition"] = "NXtomo"
+    entry.attrs["grid_meta_json"] = json.dumps(
+        {
+            "nx": int(nx_grid),
+            "ny": int(ny_grid),
+            "nz": int(nz_grid),
+            "vx": float(vx),
+            "vy": float(vy),
+            "vz": float(vz),
+        }
+    )
+
+    geom = entry.create_group("geometry")
+    geom.attrs["NX_class"] = "NXcollection"
+    geom.attrs["type"] = "lamino"
+    geom.attrs["geometry_meta_json"] = json.dumps(
+        {"tilt_deg": float(tilt_deg), "tilt_about": str(tilt_about)}
+    )
+    return entry
+
+
+def _write_detector(entry, *, projections, image_key_arr, pixel_size_pixels_x, pixel_size_pixels_y):
+    _, ny, nx = projections.shape
+    instr = entry.create_group("instrument")
+    instr.attrs["NX_class"] = "NXinstrument"
+    det = instr.create_group("detector")
+    det.attrs["NX_class"] = "NXdetector"
+
+    dset = det.create_dataset(
+        "data",
+        data=projections.astype(np.float32),
+        dtype="float32",
+        chunks=(1, ny, nx),
+        compression="lzf",
+        shuffle=False,
+        fletcher32=False,
+    )
+    dset.attrs["long_name"] = "projections"
+    det.create_dataset("image_key", data=image_key_arr.astype(np.int32))
+
+    xps = det.create_dataset(
+        "x_pixel_size",
+        data=np.array([pixel_size_pixels_x], dtype=np.float32),
+    )
+    xps.attrs["units"] = "pixel"
+    yps = det.create_dataset(
+        "y_pixel_size",
+        data=np.array([pixel_size_pixels_y], dtype=np.float32),
+    )
+    yps.attrs["units"] = "pixel"
+
+    det.attrs["detector_meta_json"] = json.dumps(
+        {
+            "nu": int(nx),
+            "nv": int(ny),
+            "du": float(pixel_size_pixels_x),
+            "dv": float(pixel_size_pixels_y),
+            "det_center": [0.0, 0.0],
+        }
+    )
+    return instr, dset
+
+
+def _write_source(instr, *, source_name, source_type, source_probe):
+    src = instr.create_group("SOURCE")
+    src.attrs["NX_class"] = "NXsource"
+    string_dtype = h5py.string_dtype(encoding="utf-8")
+    if source_name is not None:
+        src.create_dataset("name", data=np.array(str(source_name), dtype=string_dtype))
+    if source_type is not None:
+        src.create_dataset("type", data=np.array(str(source_type), dtype=string_dtype))
+    if source_probe is not None:
+        src.create_dataset("probe", data=np.array(str(source_probe), dtype=string_dtype))
+
+
+def _write_sample_transforms(entry, *, sample_name, angles_deg):
+    sample = entry.create_group("sample")
+    sample.attrs["NX_class"] = "NXsample"
+    sample.create_dataset(
+        "name",
+        data=np.array(str(sample_name), dtype=h5py.string_dtype(encoding="utf-8")),
+    )
+    trans = sample.create_group("transformations")
+    trans.attrs["NX_class"] = "NXtransformations"
+    trans.attrs["depends_on"] = "rotation_angle"
+
+    ang = trans.create_dataset("rotation_angle", data=angles_deg.astype(np.float32))
+    ang.attrs["units"] = "degree"
+    ang.attrs["summary"] = json.dumps(summarize_angles(angles_deg))
+    trans.create_dataset("rotation_axis", data=np.array([0.0, 0.0, 1.0], dtype=np.float32))
+
+
+def _write_nxdata(entry, projections_dataset):
+    nxdata = entry.create_group("data")
+    nxdata.attrs["NX_class"] = "NXdata"
+    nxdata.attrs["signal"] = "projections"
+    nxdata["projections"] = projections_dataset
+
+
+def _write_tomojax_processing(entry, *, grid):
+    nx_grid, ny_grid, nz_grid = grid
+    proc = entry.create_group("processing")
+    proc.attrs["NX_class"] = "NXprocess"
+    tj = proc.create_group("tomojax")
+    tj.attrs["NX_class"] = "NXcollection"
+    tj.attrs["frame"] = "sample"
+    tj.attrs[VOLUME_AXES_ATTR] = np.array(
+        DISK_VOLUME_AXES,
+        dtype=h5py.string_dtype(encoding="utf-8"),
+    )
+
+    volume_shape = (int(nz_grid), int(ny_grid), int(nx_grid))
+    vol = tj.create_dataset(
+        "volume",
+        shape=volume_shape,
+        dtype="float32",
+        chunks=_volume_chunks(volume_shape),
+        compression="lzf",
+        shuffle=False,
+        fletcher32=False,
+    )
+    vol[...] = 0.0
+    vol.attrs["long_name"] = "ground_truth_volume"
+
+
+@dataclass(frozen=True)
+class PreparedWranglerData:
+    projections: np.ndarray
+    angles_deg: np.ndarray
+    image_key: np.ndarray
+    pixel_size_pixels_x: float
+    pixel_size_pixels_y: float
+    grid: tuple[int, int, int]
+    voxels: tuple[float, float, float]
+
+
 def write_nexus_h5(
     output_path,
     projections,
@@ -204,109 +346,99 @@ def write_nexus_h5(
     nx_grid, ny_grid, nz_grid = grid
     vx, vy, vz = voxels
 
-    # Chunks: [1, ny, nx] for fast angle slicing
-    proj_chunks = (1, ny, nx)
-
     with h5py.File(output_path, "w") as f:
-        # /entry
-        entry = f.create_group("entry")
-        entry.attrs["NX_class"] = "NXentry"
-        entry.attrs["definition"] = "NXtomo"
-        entry.attrs["grid_meta_json"] = json.dumps(
-            {"nx": int(nx_grid), "ny": int(ny_grid), "nz": int(nz_grid),
-             "vx": float(vx), "vy": float(vy), "vz": float(vz)}
+        entry = _write_entry_metadata(
+            f,
+            grid=(nx_grid, ny_grid, nz_grid),
+            voxels=(vx, vy, vz),
+            tilt_deg=tilt_deg,
+            tilt_about=tilt_about,
         )
-
-        # /entry/geometry (NXcollection)
-        geom = entry.create_group("geometry")
-        geom.attrs["NX_class"] = "NXcollection"
-        geom.attrs["type"] = "lamino"
-        geom.attrs["geometry_meta_json"] = json.dumps(
-            {"tilt_deg": float(tilt_deg), "tilt_about": str(tilt_about)}
+        instr, projections_dataset = _write_detector(
+            entry,
+            projections=projections,
+            image_key_arr=image_key_arr,
+            pixel_size_pixels_x=pixel_size_pixels_x,
+            pixel_size_pixels_y=pixel_size_pixels_y,
         )
-
-        # /entry/instrument/detector
-        instr = entry.create_group("instrument")
-        instr.attrs["NX_class"] = "NXinstrument"
-        det = instr.create_group("detector")
-        det.attrs["NX_class"] = "NXdetector"
-
-        dset = det.create_dataset(
-            "data",
-            data=projections.astype(np.float32),
-            dtype="float32",
-            chunks=proj_chunks,
-            compression="lzf",
-            shuffle=False,
-            fletcher32=False,
+        _write_source(
+            instr,
+            source_name=source_name,
+            source_type=source_type,
+            source_probe=source_probe,
         )
-        dset.attrs["long_name"] = "projections"
-        det.create_dataset("image_key", data=image_key_arr.astype(np.int32))
-
-        # Pixel sizes (kept as 'pixel' units per your example)
-        xps = det.create_dataset("x_pixel_size", data=np.array([pixel_size_pixels_x], dtype=np.float32))
-        xps.attrs["units"] = "pixel"
-        yps = det.create_dataset("y_pixel_size", data=np.array([pixel_size_pixels_y], dtype=np.float32))
-        yps.attrs["units"] = "pixel"
-
-        det.attrs["detector_meta_json"] = json.dumps(
-            {"nu": int(nx), "nv": int(ny), "du": float(pixel_size_pixels_x), "dv": float(pixel_size_pixels_y), "det_center": [0.0, 0.0]}
-        )
-
-        src = instr.create_group("SOURCE")
-        src.attrs["NX_class"] = "NXsource"
-        if source_name is not None:
-            src.create_dataset("name", data=np.array(str(source_name), dtype=h5py.string_dtype(encoding="utf-8")))
-        if source_type is not None:
-            src.create_dataset("type", data=np.array(str(source_type), dtype=h5py.string_dtype(encoding="utf-8")))
-        if source_probe is not None:
-            src.create_dataset("probe", data=np.array(str(source_probe), dtype=h5py.string_dtype(encoding="utf-8")))
-
-        # /entry/sample/transformations
-        sample = entry.create_group("sample")
-        sample.attrs["NX_class"] = "NXsample"
-        sample.create_dataset("name", data=np.array(str(sample_name), dtype=h5py.string_dtype(encoding="utf-8")))
-        trans = sample.create_group("transformations")
-        trans.attrs["NX_class"] = "NXtransformations"
-
-        # NeXus expects depends_on as an attribute pointing to the top transform
-        trans.attrs["depends_on"] = "rotation_angle"
-
-        ang = trans.create_dataset("rotation_angle", data=angles_deg.astype(np.float32))
-        ang.attrs["units"] = "degree"
-        ang.attrs["summary"] = json.dumps(summarize_angles(angles_deg))
-
-        trans.create_dataset("rotation_axis", data=np.array([0.0, 0.0, 1.0], dtype=np.float32))
-
-        # /entry/data (NXdata) with hard link to detector data
-        nxdata = entry.create_group("data")
-        nxdata.attrs["NX_class"] = "NXdata"
-        nxdata.attrs["signal"] = "projections"
-        # Hard-link the projections dataset
-        nxdata["projections"] = dset
-
-        # /entry/processing/tomojax (NXcollection) with placeholder volume
-        proc = entry.create_group("processing")
-        proc.attrs["NX_class"] = "NXprocess"
-        tj = proc.create_group("tomojax")
-        tj.attrs["NX_class"] = "NXcollection"
-        tj.attrs["frame"] = "sample"
-        tj.attrs[VOLUME_AXES_ATTR] = np.array(DISK_VOLUME_AXES, dtype=h5py.string_dtype(encoding="utf-8"))
-
-        volume_shape = (int(nz_grid), int(ny_grid), int(nx_grid))
-        vol = tj.create_dataset(
-            "volume",
-            shape=volume_shape,
-            dtype="float32",
-            chunks=_volume_chunks(volume_shape),
-            compression="lzf",
-            shuffle=False,
-            fletcher32=False,
-        )
-        vol[...] = 0.0  # lightweight (128^3 ~ 8 MB as float32)
-        vol.attrs["long_name"] = "ground_truth_volume"
+        _write_sample_transforms(entry, sample_name=sample_name, angles_deg=angles_deg)
+        _write_nxdata(entry, projections_dataset)
+        _write_tomojax_processing(entry, grid=(nx_grid, ny_grid, nz_grid))
 
     print(f"Wrote corrected absorption data to: {output_path}")
+
+
+def _prepare_wrangler_data(args) -> PreparedWranglerData:
+    data, angles_all, image_key = load_raw(
+        args.input_path,
+        args.proj_path,
+        args.angles_path,
+        args.image_key_path,
+    )
+    is_proj = image_key == 0
+    angles = angles_all[is_proj].astype(np.float32)
+    absorption = flat_dark_correct_to_absorption(
+        data=data,
+        image_key=image_key,
+        min_intensity=float(args.min_intensity),
+    )
+
+    by = int(args.bin_y) if args.bin_y is not None else int(args.bin)
+    bx = int(args.bin_x) if args.bin_x is not None else int(args.bin)
+    if by > 1 or bx > 1:
+        absorption = _spatial_bin(absorption, by, bx)
+        print(f"Applied spatial binning: by={by}, bx={bx} -> new shape {absorption.shape}")
+
+    if args.pad_y_multiple or args.pad_x_multiple:
+        before = absorption.shape
+        absorption = _pad_to_multiples(
+            absorption,
+            args.pad_y_multiple,
+            args.pad_x_multiple,
+            mode=str(args.pad_mode),
+        )
+        after = absorption.shape
+        if after != before:
+            print(
+                f"Padded to multiples (y={args.pad_y_multiple}, x={args.pad_x_multiple}): "
+                f"{before} -> {after}"
+            )
+
+    if absorption.shape[0] != angles.shape[0]:
+        raise RuntimeError(
+            f"Projection count mismatch: absorption {absorption.shape[0]} vs angles {angles.shape[0]}"
+        )
+
+    _, ny_pix, nx_pix = absorption.shape
+    if args.grid is not None:
+        grid = tuple(map(int, args.grid))
+    elif args.grid_from_det:
+        grid = (int(nx_pix), int(nx_pix), int(ny_pix))
+    else:
+        grid = (128, 128, 128)
+
+    pixel_size_x = float(args.pixel_size) * float(bx)
+    pixel_size_y = float(args.pixel_size) * float(by)
+    vox = (
+        tuple(map(float, args.voxels))
+        if args.voxels is not None
+        else (pixel_size_x, pixel_size_x, pixel_size_y)
+    )
+    return PreparedWranglerData(
+        projections=absorption,
+        angles_deg=angles,
+        image_key=np.zeros((angles.shape[0],), dtype=np.int32),
+        pixel_size_pixels_x=pixel_size_x,
+        pixel_size_pixels_y=pixel_size_y,
+        grid=grid,
+        voxels=vox,
+    )
 
 
 def main():
@@ -334,71 +466,18 @@ def main():
     p.add_argument("--pad-mode", choices=["edge","constant","reflect"], default="edge", help="Padding mode (default: edge)")
     args = p.parse_args()
 
-    # ---- LOAD ----
-    data, angles_all, image_key = load_raw(
-        args.input_path,
-        args.proj_path,
-        args.angles_path,
-        args.image_key_path,
-    )
-    is_proj = (image_key == 0)
-    angles = angles_all[is_proj].astype(np.float32)
-
-    # ---- CORRECT -> ABSORPTION ----
-    absorption = flat_dark_correct_to_absorption(
-        data=data, image_key=image_key, min_intensity=float(args.min_intensity)
-    )
-
-    # ---- OPTIONAL SPATIAL BINNING ----
-    by = int(args.bin_y) if args.bin_y is not None else int(args.bin)
-    bx = int(args.bin_x) if args.bin_x is not None else int(args.bin)
-    if by > 1 or bx > 1:
-        absorption = _spatial_bin(absorption, by, bx)
-        print(f"Applied spatial binning: by={by}, bx={bx} -> new shape {absorption.shape}")
-
-    # ---- OPTIONAL PADDING TO MULTIPLES (post-binning) ----
-    if args.pad_y_multiple or args.pad_x_multiple:
-        before = absorption.shape
-        absorption = _pad_to_multiples(absorption, args.pad_y_multiple, args.pad_x_multiple, mode=str(args.pad_mode))
-        after = absorption.shape
-        if after != before:
-            print(f"Padded to multiples (y={args.pad_y_multiple}, x={args.pad_x_multiple}): {before} -> {after}")
-
-    # Sanity: angles length must match #projections
-    if absorption.shape[0] != angles.shape[0]:
-        raise RuntimeError(
-            f"Projection count mismatch: absorption {absorption.shape[0]} vs angles {angles.shape[0]}"
-        )
-
-    # ---- WRITE NX/H5 ----
-    # Choose grid dims: default to detector-based (nu, nu, nv)
-    _, ny_pix, nx_pix = absorption.shape
-    if args.grid is not None:
-        grid = tuple(map(int, args.grid))
-    elif args.grid_from_det:
-        grid = (int(nx_pix), int(nx_pix), int(ny_pix))  # (nx, ny, nz)
-    else:
-        grid = (128, 128, 128)
-
-    # Choose voxel sizes: default to detector pixel sizes (du,du,dv)
-    if args.voxels is not None:
-        vox = tuple(map(float, args.voxels))
-    else:
-        vox = (float(args.pixel_size) * float(bx), float(args.pixel_size) * float(bx), float(args.pixel_size) * float(by))
-
-    proj_image_key = np.zeros((angles.shape[0],), dtype=np.int32)
-
+    prepared = _prepare_wrangler_data(args)
     write_nexus_h5(
         output_path=args.output_path,
-        projections=absorption,
-        angles_deg=angles,
-        pixel_size_pixels_x=float(args.pixel_size) * float(bx),
-        pixel_size_pixels_y=float(args.pixel_size) * float(by),
+        projections=prepared.projections,
+        angles_deg=prepared.angles_deg,
+        pixel_size_pixels_x=prepared.pixel_size_pixels_x,
+        pixel_size_pixels_y=prepared.pixel_size_pixels_y,
         tilt_deg=float(args.tilt_deg),
         tilt_about=str(args.tilt_about),
-        grid=grid,
-        voxels=vox,
-        image_key=proj_image_key,
+        grid=prepared.grid,
+        voxels=prepared.voxels,
+        image_key=prepared.image_key,
         sample_name="sample",
         source_name="TomoJAX pipeline",
         source_type="experiment",

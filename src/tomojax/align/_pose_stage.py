@@ -33,7 +33,7 @@ from ._observer import (
     adapt_legacy_observer,
 )
 from ._reconstruction_stage import _run_reconstruction_step
-from ._results import AlignCheckpointCallback, AlignInfo, AlignResumeState
+from ._results import AlignCheckpointCallback, AlignInfo, AlignResumeState, _set_float_stat
 from .model.dofs import bounds_vectors
 from .model.gauge import (
     GaugeFixMode,
@@ -1269,11 +1269,8 @@ def align(
             if use_smooth_pose_model:
                 motion_coeffs_out = fit_motion_coefficients(motion_model, params5_out)
                 params5_out = _coeffs_to_constrained_params(motion_coeffs_out)
-            try:
-                stat["rot_mean"] = float(jnp.mean(jnp.abs(dp_all[:, :3])))
-                stat["trans_mean"] = float(jnp.mean(jnp.abs(dp_all[:, 3:])))
-            except Exception:
-                pass
+            _set_float_stat(stat, "rot_mean", jnp.mean(jnp.abs(dp_all[:, :3])))
+            _set_float_stat(stat, "trans_mean", jnp.mean(jnp.abs(dp_all[:, 3:])))
 
         elif step_kind == "lbfgs":
             params5_out, motion_coeffs_out, loss_after, lbfgs_stats = _run_lbfgs_alignment_step(
@@ -1291,11 +1288,8 @@ def align(
                     vol,
                     loss_before,
                 )
-                try:
-                    stat["rot_rms"] = float(jnp.mean(rms[:3]))
-                    stat["trans_rms"] = float(jnp.mean(rms[3:]))
-                except Exception:
-                    pass
+                _set_float_stat(stat, "rot_rms", jnp.mean(rms[:3]))
+                _set_float_stat(stat, "trans_rms", jnp.mean(rms[3:]))
         else:
             params5_out, motion_coeffs_out, loss_after, rms = _run_gd_alignment_step(
                 params5_in,
@@ -1303,11 +1297,8 @@ def align(
                 vol,
                 loss_before,
             )
-            try:
-                stat["rot_rms"] = float(jnp.mean(rms[:3]))
-                stat["trans_rms"] = float(jnp.mean(rms[3:]))
-            except Exception:
-                pass
+            _set_float_stat(stat, "rot_rms", jnp.mean(rms[:3]))
+            _set_float_stat(stat, "trans_rms", jnp.mean(rms[3:]))
 
         stat["step_kind"] = step_kind
         stat["optimizer_kind"] = step_kind
