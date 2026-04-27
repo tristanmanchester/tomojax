@@ -5,16 +5,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from tomojax.calibration import (
-    CalibrationState,
-    CalibrationVariable,
-    ConventionAudit,
-    ConventionEvidence,
-    MetricSpec,
-    ObjectiveCard,
+from tomojax.calibration.conventions import ConventionAudit, ConventionEvidence
+from tomojax.calibration.manifest import (
     build_calibrated_geometry_metadata_patch,
     build_calibration_manifest,
 )
+from tomojax.calibration.objectives import MetricSpec, ObjectiveCard
+from tomojax.calibration.state import CalibrationState, CalibrationVariable
 
 
 def test_calibration_state_roundtrips_json_and_keeps_sections_separate():

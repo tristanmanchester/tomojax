@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Compatibility facade for alignment configuration and execution."""
+"""Compatibility facade for alignment configuration and execution.
+
+This module preserves historical imports and selected test monkeypatch hooks
+while the implementation lives in private stage modules. Treat it as a
+temporary import shim, not as an extension point for new alignment internals.
+"""
 
 from typing import Iterable
 

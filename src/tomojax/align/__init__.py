@@ -1,4 +1,11 @@
-"""Public alignment API and legacy module aliases."""
+"""Public alignment API and legacy module aliases.
+
+Only ``AlignConfig``, ``align``, and ``align_multires`` are the public alignment
+extension surface. The registered submodule aliases below are temporary
+compatibility shims for older imports; new production code should import owner
+modules under ``align.model``, ``align.geometry``, ``align.objectives``, or
+``align.io`` directly when it needs non-public internals.
+"""
 
 from __future__ import annotations
 

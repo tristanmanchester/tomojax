@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from tomojax.calibration import CandidateScore, ConventionAudit, MetricSpec, ObjectiveCard
+from tomojax.calibration.conventions import ConventionAudit
+from tomojax.calibration.objectives import CandidateScore, MetricSpec, ObjectiveCard
 
 
 def test_convention_audit_records_ambiguity_without_claiming_correction():

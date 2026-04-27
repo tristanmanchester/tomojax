@@ -13,21 +13,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.geometry_blocks import (
+from tomojax.align import AlignConfig, align_multires
+from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
     geometry_with_axis_state,
     level_detector_grid,
     normalize_geometry_dofs,
     summarize_geometry_calibration_stats,
 )
-from tomojax.align.pipeline import AlignConfig, align_multires
-from tomojax.align.schedules import schedule_preset
+from tomojax.align.model.schedules import schedule_preset
 from tomojax.bench.alignment_scenarios import (
     AlignmentScenario,
     phantom_spec,
     scenario_suite,
 )
-from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.data.phantoms import random_cubes_spheres

@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Mapping
 
-from tomojax.align.dof_specs import dof_spec
-from tomojax.align.schedules import schedule_preset
+from tomojax.align.model.dof_specs import dof_spec
+from tomojax.align.model.schedules import schedule_preset
 
 
 GeometryType = Literal["parallel", "lamino"]

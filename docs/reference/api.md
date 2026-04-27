@@ -90,6 +90,34 @@ geom = LaminographyGeometry(
 
 See [Geometry concepts](../concepts/geometry.md) for background.
 
+## Calibration foundations
+
+`tomojax.calibration` is a provisional foundation layer for geometry-calibration
+data contracts, not an estimation workflow package. Estimation workflows live in
+`tomojax.align`.
+
+The package-level facade intentionally exposes only stable value/schema types:
+
+```python
+from tomojax.calibration import (
+    CalibrationState,
+    CalibrationVariable,
+    DetectorPixelScale,
+    DetectorPixelValue,
+)
+```
+
+Lower-level helpers are grouped by owner module and should be imported from that
+module when needed:
+
+| Module | Responsibility |
+|--------|----------------|
+| `tomojax.calibration.detector_grid` | Detector-grid transforms and offsets |
+| `tomojax.calibration.gauge` | Calibration gauge validation |
+| `tomojax.calibration.manifest` | Calibration manifest assembly |
+| `tomojax.calibration.objectives` | Objective-card and metric metadata |
+| `tomojax.calibration.conventions` | Convention audit records |
+
 ## Projector
 
 Forward and back-projection functions live in

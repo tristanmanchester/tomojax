@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tomojax.calibration import DetectorPixelScale, DetectorPixelValue
+from tomojax.calibration.units import DetectorPixelScale, DetectorPixelValue
 from tomojax.core.geometry import Detector
 from tomojax.core.multires import scale_detector
 

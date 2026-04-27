@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomojax.align as align_api
+import tomojax.calibration as calibration_api
 import tomojax.data as data_api
 import tomojax.recon as recon_api
 
@@ -29,3 +30,12 @@ def test_data_facade_exports_documented_api() -> None:
     assert callable(data_api.validate_nxtomo)
     assert callable(data_api.simulate)
     assert callable(data_api.sphere)
+
+
+def test_calibration_facade_exports_only_schema_value_types() -> None:
+    assert set(calibration_api.__all__) == {
+        "CalibrationState",
+        "CalibrationVariable",
+        "DetectorPixelScale",
+        "DetectorPixelValue",
+    }

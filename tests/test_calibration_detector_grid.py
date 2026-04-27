@@ -4,12 +4,13 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from tomojax.calibration import detector_grid_from_center_offset, zero_center_detector_grid
 from tomojax.calibration.detector_grid import (
     detector_grid_from_calibration,
+    detector_grid_from_center_offset,
     detector_grid_from_detector_roll,
     offset_detector_grid,
     transform_detector_grid,
+    zero_center_detector_grid,
 )
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
