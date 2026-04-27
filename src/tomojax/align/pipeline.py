@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core.geometry.base import Geometry, Grid, Detector
-from ..core.geometry.parallel import ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..core.validation import (
@@ -23,10 +22,8 @@ from ..core.validation import (
 )
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon._tv_ops import Regulariser
-from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ..utils.logging import progress_iter, format_duration
 from .parametrizations import se3_from_5d
-from .recon_layer import PoseAdjustedGeometry
 from .dofs import (
     DofBounds,
     ScopedAlignmentDofs,
@@ -35,12 +32,11 @@ from .dofs import (
     normalize_bounds,
 )
 from .diagnostics import GaugePolicy, validate_active_gauge_policy
-from .losses import (
+from ._loss_adapters import build_loss_adapter
+from ._loss_specs import (
     L2OtsuLossSpec,
     AlignmentLossConfig,
-    build_loss_adapter,
     loss_spec_name,
-    loss_is_within_relative_tolerance,
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
@@ -58,13 +54,9 @@ from .gauge import (
     normalize_gauge_fix,
     validate_alignment_gauge_feasible,
 )
-from .fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
-from .folds import FoldSpec
 from .optimizers import (
     PoseLbfgsConfig,
     PoseOptimizationContext,
-    ValidationLmConfig,
-    run_active_validation_lm,
     run_pose_lbfgs,
 )
 from .objectives import ObjectiveProvenance, project_and_score_stack
@@ -77,548 +69,52 @@ from .schedules import (
     resolve_alignment_schedule,
 )
 from .state import AlignmentState, PoseState, SetupGeometryState, alignment_state_from_checkpoint
-from .validation_residuals import accumulate_validation_normals, score_validation_fixed_volume
 from .geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     normalize_geometry_dofs,
     summarize_geometry_calibration_stats,
 )
-from ..core.geometry.axis import RotationAxisGeometry
-from ..core.geometry.lamino import LaminographyGeometry
 from ..utils.fov import cylindrical_mask_xy
-
-
-ObserverAction = Literal["continue", "advance_level", "stop_run"]
-type OuterStatValue = float | int | bool | str | None
-type OuterStat = dict[str, OuterStatValue]
-ObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverAction | None]
-LegacyObserverCallback = Callable[[jnp.ndarray, jnp.ndarray, OuterStat], ObserverAction | bool | None]
-
-
-def _active_dof_mask_for_cfg(cfg: "AlignConfig") -> tuple[bool, bool, bool, bool, bool]:
-    return _scoped_dofs_for_cfg(cfg).pose_mask
-
-
-def _active_dofs_for_cfg(cfg: "AlignConfig") -> tuple[str, ...]:
-    return _scoped_dofs_for_cfg(cfg).active_pose_dofs
-
-
-def _active_geometry_dofs_for_cfg(
-    cfg: "AlignConfig",
-    geometry: Geometry | None = None,
-) -> tuple[str, ...]:
-    return _scoped_dofs_for_cfg(cfg, geometry=geometry).active_geometry_dofs
-
-
-def _scoped_dofs_for_cfg(
-    cfg: "AlignConfig",
-    *,
-    geometry: Geometry | None = None,
-) -> ScopedAlignmentDofs:
-    resolved = _resolved_schedule_for_cfg(cfg, geometry=geometry)
-    return ScopedAlignmentDofs(
-        active_pose_dofs=resolved.active_pose_dofs,
-        active_geometry_dofs=resolved.active_geometry_dofs,
-        frozen_pose_dofs=tuple(name for name in cfg.freeze_dofs if name in {"alpha", "beta", "phi", "dx", "dz"}),
-        frozen_geometry_dofs=tuple(
-            name
-            for name in cfg.freeze_dofs
-            if name
-            in {
-                "det_u_px",
-                "det_v_px",
-                "detector_roll_deg",
-                "axis_rot_x_deg",
-                "axis_rot_y_deg",
-                "tilt_deg",
-            }
-        ),
-    )
-
-
-def _resolved_schedule_for_cfg(
-    cfg: "AlignConfig",
-    *,
-    geometry: Geometry | None = None,
-) -> ResolvedAlignmentSchedule:
-    return resolve_alignment_schedule(
-        schedule=cfg.schedule,
-        optimise_dofs=cfg.optimise_dofs,
-        freeze_dofs=cfg.freeze_dofs,
-        geometry_dofs=cfg.geometry_dofs,
-        geometry=geometry,
-        gauge_policy=cfg.gauge_policy,
-        gauge_priors=cfg.gauge_priors,
-        opt_method=cfg.opt_method,
-        outer_iters=int(cfg.outer_iters),
-        early_stop=bool(cfg.early_stop),
-    )
-
-
-class AlignInfo(TypedDict):
-    loss: list[float]
-    loss_kind: str
-    recon_algo: str
-    L: float | None
-    outer_stats: list[OuterStat]
-    stopped_by_observer: bool
-    observer_action: ObserverAction
-    wall_time_total: float
-    pose_model: str
-    pose_model_variables: int
-    per_view_variables: int
-    pose_model_basis_shape: list[int]
-    active_dofs: list[str]
-    completed_outer_iters: int
-    small_impr_streak: int
-    motion_coeffs: jnp.ndarray | None
-    gauge_fix: str
-    gauge_fix_dofs: list[str]
-    gauge_fix_final: dict[str, float | str | list[str]]
-
-
-class AlignMultiresInfo(TypedDict):
-    loss: list[float]
-    factors: list[int]
-    loss_kind: str | None
-    recon_algo: str
-    outer_stats: list[OuterStat]
-    stopped_by_observer: bool
-    observer_action: ObserverAction
-    total_outer_iters: int
-    wall_time_total: float
-    pose_model: str
-    pose_model_variables: int | None
-    per_view_variables: int | None
-    pose_model_basis_shape: list[int] | None
-    active_dofs: list[str]
-    gauge_fix: str
-    gauge_fix_dofs: list[str]
-    gauge_fix_final: dict[str, float | str | list[str]] | None
-    geometry_dofs: list[str]
-    geometry_calibration_state: dict[str, object] | None
-
-
-class MultiresLevel(TypedDict):
-    factor: int
-    grid: Grid
-    detector: Detector
-    projections: jnp.ndarray
-
-
-@dataclass
-class AlignResumeState:
-    x: jnp.ndarray
-    params5: jnp.ndarray
-    motion_coeffs: jnp.ndarray | None = None
-    start_outer_iter: int = 0
-    loss: list[float] = field(default_factory=list)
-    outer_stats: list[OuterStat] = field(default_factory=list)
-    L: float | None = None
-    small_impr_streak: int = 0
-    elapsed_offset: float = 0.0
-
-
-@dataclass
-class AlignMultiresResumeState:
-    x: jnp.ndarray
-    params5: jnp.ndarray
-    motion_coeffs: jnp.ndarray | None = None
-    level_index: int = 0
-    level_factor: int = 1
-    completed_outer_iters_in_level: int = 0
-    global_outer_iters_completed: int = 0
-    prev_factor: int | None = None
-    loss: list[float] = field(default_factory=list)
-    outer_stats: list[OuterStat] = field(default_factory=list)
-    L: float | None = None
-    small_impr_streak: int = 0
-    elapsed_offset: float = 0.0
-    level_complete: bool = False
-    run_complete: bool = False
-    geometry_calibration_state: dict[str, object] | None = None
-    stage_index: int = 0
-    stage_name: str | None = None
-    stage_completed: bool = False
-    completed_outer_iters_in_stage: int = 0
-
-
-AlignCheckpointCallback = Callable[[AlignResumeState], None]
-AlignMultiresCheckpointCallback = Callable[[AlignMultiresResumeState], None]
-
-
-def _normalize_observer_action(
-    action: ObserverAction | str | None,
-) -> ObserverAction:
-    if action is None:
-        return "continue"
-    if isinstance(action, str):
-        lowered = action.strip().lower()
-        if lowered in {"continue", "advance_level", "stop_run"}:
-            return lowered  # type: ignore[return-value]
-    raise ValueError(f"Unsupported observer action: {action!r}")
-
-
-def adapt_legacy_observer(observer: LegacyObserverCallback | None) -> ObserverCallback | None:
-    """Wrap a legacy bool observer in the explicit ObserverAction contract."""
-    if observer is None:
-        return None
-
-    def _wrapped(x: jnp.ndarray, params5: jnp.ndarray, stat: OuterStat) -> ObserverAction | None:
-        action = observer(x, params5, stat)
-        if action is None or action is False:
-            return None
-        if action is True:
-            return "stop_run"
-        return _normalize_observer_action(action)
-
-    return _wrapped
-
-
-def _should_prefer_gn_candidate(
-    loss_before: float,
-    current_loss: float,
-    candidate_loss: float,
-    rel_tol: float,
-) -> bool:
-    """Accept tolerated GN candidates only when they improve the current best step."""
-    candidate_ok = candidate_loss < loss_before or loss_is_within_relative_tolerance(
-        loss_before, candidate_loss, rel_tol
-    )
-    return candidate_ok and candidate_loss < current_loss
-
-
-def _second_difference_gram(n: int) -> jnp.ndarray:
-    if n < 3:
-        return jnp.zeros((n, n), dtype=jnp.float32)
-    d2 = jnp.zeros((n - 2, n), dtype=jnp.float32)
-    rows = jnp.arange(n - 2, dtype=jnp.int32)
-    d2 = d2.at[rows, rows].set(1.0)
-    d2 = d2.at[rows, rows + 1].set(-2.0)
-    d2 = d2.at[rows, rows + 2].set(1.0)
-    return d2.T @ d2
-
-
-def _smooth_gn_candidate(
-    params5: jnp.ndarray,
-    smoothness_gram: jnp.ndarray,
-    weights: jnp.ndarray,
-) -> jnp.ndarray:
-    """Project a per-view GN candidate through the quadratic curvature prior."""
-    n_views = int(params5.shape[0])
-    if n_views < 3:
-        return params5
-
-    eye = jnp.eye(n_views, dtype=jnp.float32)
-
-    def solve_one_dim(rhs: jnp.ndarray, weight: jnp.ndarray) -> jnp.ndarray:
-        return jax.lax.cond(
-            weight > 0.0,
-            lambda _: jnp.linalg.solve(eye + 2.0 * weight * smoothness_gram, rhs),
-            lambda _: rhs,
-            operand=None,
-        )
-
-    return jax.vmap(solve_one_dim, in_axes=(1, 0), out_axes=1)(params5, weights)
-
-
-def _select_gn_candidate(
-    params5_prev: jnp.ndarray,
-    dp_all: jnp.ndarray,
-    *,
-    loss_before: float,
-    eval_loss: Callable[[jnp.ndarray], float],
-    gn_accept_tol: float,
-    constrain_candidate: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
-    smooth_candidate: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray] | None = None,
-    light_smoothness_weights_sq: jnp.ndarray | None = None,
-    medium_smoothness_weights_sq: jnp.ndarray | None = None,
-    smoothness_weights_sq: jnp.ndarray | None = None,
-    trans_only_smoothness_weights_sq: jnp.ndarray | None = None,
-) -> tuple[jnp.ndarray, float]:
-    """Pick a GN candidate using a small hierarchical full-loss search."""
-
-    def _accepts(candidate_loss: float, current_best_loss: float = float("inf")) -> bool:
-        return _should_prefer_gn_candidate(
-            loss_before,
-            current_best_loss,
-            candidate_loss,
-            gn_accept_tol,
-        )
-
-    def _constrain(candidate: jnp.ndarray) -> jnp.ndarray:
-        if constrain_candidate is None:
-            return candidate
-        return constrain_candidate(candidate)
-
-    raw_params = _constrain(params5_prev + dp_all)
-    raw_loss = eval_loss(raw_params)
-    if _accepts(raw_loss):
-        return raw_params, raw_loss
-
-    half_params = _constrain(params5_prev + jnp.float32(0.5) * dp_all)
-    half_loss = eval_loss(half_params)
-    if _accepts(half_loss):
-        return half_params, half_loss
-
-    base_params = raw_params if raw_loss <= half_loss else half_params
-
-    def _has_active_weights(weights: jnp.ndarray | None) -> bool:
-        return weights is not None and bool(jnp.any(weights > 0.0))
-
-    if smooth_candidate is None:
-        return params5_prev, loss_before
-
-    smooth_weights = []
-    for weights in (
-        light_smoothness_weights_sq,
-        medium_smoothness_weights_sq,
-        smoothness_weights_sq,
-        trans_only_smoothness_weights_sq,
-    ):
-        if _has_active_weights(weights):
-            smooth_weights.append(weights)
-
-    if not smooth_weights:
-        return params5_prev, loss_before
-
-    best_params = params5_prev
-    best_loss = float("inf")
-    accepted = False
-    for weights in smooth_weights:
-        candidate_params = _constrain(smooth_candidate(base_params, weights))
-        candidate_loss = eval_loss(candidate_params)
-        if _accepts(candidate_loss, best_loss):
-            best_params = candidate_params
-            best_loss = candidate_loss
-            accepted = True
-
-    if accepted:
-        return best_params, best_loss
-    return params5_prev, loss_before
-
-
-_EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS = (
-    "allocator",
-    "cholesky",
-    "failed to converge",
-    "inf",
-    "nan",
-    "non-finite",
-    "not positive definite",
-    "out of memory",
-    "resource_exhausted",
-    "singular",
-    "svd",
+from ._observer import (
+    LegacyObserverCallback,
+    ObserverAction,
+    ObserverCallback,
+    OuterStat,
+    _normalize_observer_action,
+    adapt_legacy_observer,
+)
+from ._results import (
+    AlignInfo,
+    AlignMultiresInfo,
+    AlignMultiresResumeState,
+    AlignResumeState,
+    enrich_multires_stage_stat as _enrich_multires_stage_stat,
+    record_reconstruction_info as _record_reconstruction_info,
+)
+from ._pose_stage import (
+    _evaluate_align_loss,
+    _is_expected_align_eval_failure,
+    _second_difference_gram,
+    _select_gn_candidate,
+    _should_prefer_gn_candidate,
+    _smooth_gn_candidate,
+)
+from ._reconstruction_stage import _run_reconstruction_step
+from ._setup_stage import (
+    _geometry_calibration_payload,
+    _geometry_with_setup_state,
+    _optimize_setup_geometry_bilevel_for_level,
+)
+from ._config import (
+    AlignConfig,
+    _active_dof_mask_for_cfg,
+    _active_dofs_for_cfg,
+    _resolved_schedule_for_cfg,
 )
 
 
-def _is_expected_align_eval_failure(exc: Exception) -> bool:
-    if isinstance(exc, FloatingPointError):
-        return True
-    msg = str(exc).lower()
-    return any(snippet in msg for snippet in _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS)
 
 
-def _evaluate_align_loss(
-    eval_loss: Callable[[], float | jnp.ndarray],
-    *,
-    fallback: float | None,
-    context: str,
-) -> float | None:
-    try:
-        return float(eval_loss())
-    except Exception as exc:
-        if _is_expected_align_eval_failure(exc):
-            logging.warning("%s after expected numeric failure: %s", context, exc)
-            return fallback
-        raise
-
-
-@dataclass
-class AlignConfig:
-    outer_iters: int = 5
-    recon_iters: int = 10
-    lambda_tv: float = 0.005
-    regulariser: Regulariser = "tv"
-    huber_delta: float = 1e-2
-    tv_prox_iters: int = 10
-    recon_algo: Literal["fista", "spdhg"] = "fista"
-    recon_positivity: bool = True
-    spdhg_seed: int = 0
-    # Reconstruction stopping criteria
-    recon_rel_tol: float | None = None
-    recon_patience: int = 2
-    # Alignment step sizes
-    lr_rot: float = 1e-3  # radians
-    lr_trans: float = 1e-1  # world units
-    # Memory/throughput knobs
-    views_per_batch: int = 1  # stream one view at a time
-    projector_unroll: int = 1
-    checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    # Solver and regularization
-    opt_method: str = "gn"
-    gn_damping: float = 1e-6
-    lbfgs_maxiter: int = 20
-    lbfgs_ftol: float = 1e-6
-    lbfgs_gtol: float = 1e-5
-    lbfgs_maxls: int = 20
-    lbfgs_memory_size: int = 10
-    w_rot: float = 0.0
-    w_trans: float = 0.0
-    schedule: str | AlignmentSchedule | None = None
-    optimise_dofs: tuple[str, ...] | None = None
-    freeze_dofs: tuple[str, ...] = field(default_factory=tuple)
-    geometry_dofs: tuple[str, ...] = field(default_factory=tuple)
-    bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
-    gauge_policy: GaugePolicy = "reject"
-    gauge_priors: Mapping[str, object] | None = None
-    pose_model: Literal["per_view", "polynomial", "spline"] = "per_view"
-    knot_spacing: int = 8
-    degree: int = 3
-    gauge_fix: GaugeFixMode = "mean_translation"
-    seed_translations: bool = False
-    # Volume masking before forward projection (modeling for ROI/truncation)
-    # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
-    mask_vol: str = "off"
-    # Logging
-    log_summary: bool = False
-    log_compact: bool = True  # print one compact line per outer when log_summary is enabled
-    # Reconstruction Lipschitz (optional override to skip power-method)
-    recon_L: float | None = None
-    # Early stopping across outers (alignment phase)
-    early_stop: bool = True
-    early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
-    early_stop_patience: int = 2
-    # Accept GN steps only when they improve the loss, up to gn_accept_tol.
-    gn_accept_only_improving: bool = True
-    gn_accept_tol: float = 0.0  # allow tiny increases if >0 (as fraction of before)
-    # Data term / similarity
-    loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
-
-    def __post_init__(self) -> None:
-        recon_algo = str(self.recon_algo).strip().lower().replace("-", "_")
-        if recon_algo in {"fista_tv"}:
-            recon_algo = "fista"
-        elif recon_algo in {"spdhg_tv"}:
-            recon_algo = "spdhg"
-        self.recon_algo = recon_algo  # type: ignore[assignment]
-        if self.recon_algo not in {"fista", "spdhg"}:
-            raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
-        opt_method = str(self.opt_method).strip().lower().replace("-", "_")
-        if opt_method in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
-            opt_method = "lbfgs"
-        self.opt_method = opt_method
-        if self.opt_method not in {"gd", "gn", "lbfgs"}:
-            raise ValueError("opt_method must be one of 'gd', 'gn', or 'lbfgs'")
-        if int(self.lbfgs_maxiter) < 1:
-            raise ValueError("lbfgs_maxiter must be >= 1")
-        if int(self.lbfgs_maxls) < 1:
-            raise ValueError("lbfgs_maxls must be >= 1")
-        if int(self.lbfgs_memory_size) < 1:
-            raise ValueError("lbfgs_memory_size must be >= 1")
-        if float(self.lbfgs_ftol) < 0.0:
-            raise ValueError("lbfgs_ftol must be >= 0")
-        if float(self.lbfgs_gtol) < 0.0:
-            raise ValueError("lbfgs_gtol must be >= 0")
-        if self.schedule is not None and self.optimise_dofs is not None:
-            raise ValueError("schedule and optimise_dofs are mutually exclusive")
-        if isinstance(self.schedule, str):
-            self.schedule = self.schedule.strip().lower().replace("-", "_")
-            if not self.schedule:
-                self.schedule = None
-        if self.optimise_dofs is not None:
-            self.optimise_dofs = normalize_alignment_dofs(
-                self.optimise_dofs,
-                option_name="optimise_dofs",
-            )
-        self.freeze_dofs = normalize_alignment_dofs(self.freeze_dofs, option_name="freeze_dofs")
-        self.geometry_dofs = normalize_geometry_dofs(
-            self.geometry_dofs,
-            geometry=None,
-        )
-        self.gauge_policy = str(self.gauge_policy).strip().lower().replace("-", "_")  # type: ignore[assignment]
-        if self.gauge_policy not in {"reject", "anchor_mean", "prior_required", "diagnose_only"}:
-            raise ValueError(
-                "gauge_policy must be one of 'reject', 'anchor_mean', "
-                "'prior_required', or 'diagnose_only'"
-            )
-        _active_dof_mask_for_cfg(self)
-        self.bounds = normalize_bounds(self.bounds, option_name="bounds")
-        pose_model = str(self.pose_model).strip().lower().replace("-", "_")
-        self.pose_model = pose_model  # type: ignore[assignment]
-        if self.pose_model not in {"per_view", "polynomial", "spline"}:
-            raise ValueError("pose_model must be one of 'per_view', 'polynomial', or 'spline'")
-        if self.pose_model == "polynomial" and int(self.degree) < 0:
-            raise ValueError("degree must be >= 0 for polynomial pose_model")
-        if self.pose_model == "spline":
-            if int(self.knot_spacing) < 1:
-                raise ValueError("knot_spacing must be >= 1 for spline pose_model")
-            if int(self.degree) not in (1, 2, 3):
-                raise ValueError("degree must be one of 1, 2, or 3 for spline pose_model")
-        self.gauge_fix = normalize_gauge_fix(self.gauge_fix)
-        if self.gauge_fix == "mean_translation":
-            bounds_lower, bounds_upper = bounds_vectors(self.bounds)
-            active_mask_for_gauge = _active_dof_mask_for_cfg(self)
-            validate_alignment_gauge_feasible(
-                mode=self.gauge_fix,
-                active_mask=active_mask_for_gauge,
-                bounds_lower=bounds_lower,
-                bounds_upper=bounds_upper,
-            )
-
-
-def _record_reconstruction_info(
-    stat: OuterStat,
-    *,
-    info_rec: Mapping[str, object],
-    recon_algo: str,
-    cfg: AlignConfig,
-    outer_idx: int,
-    L_prev: float | None,
-) -> float | None:
-    if recon_algo == "fista":
-        try:
-            L_meas = float(info_rec.get("L", 0.0))
-            if L_meas > 0.0:
-                L_prev = 1.2 * L_meas
-                stat["L_meas"] = L_meas
-                stat["L_next"] = L_prev
-        except Exception:
-            pass
-    losses = info_rec.get("loss")
-    if isinstance(losses, Iterable):
-        try:
-            lhist = list(losses)
-            if lhist:
-                stat["recon_loss_first"] = float(lhist[0])
-                stat["recon_loss_last"] = float(lhist[-1])
-                stat["recon_loss_min"] = float(min(lhist))
-                if recon_algo == "fista":
-                    stat["fista_first"] = float(lhist[0])
-                    stat["fista_last"] = float(lhist[-1])
-                    stat["fista_min"] = float(min(lhist))
-        except Exception:
-            pass
-    if recon_algo == "spdhg":
-        for src, dst in (
-            ("tau", "spdhg_tau"),
-            ("sigma_data", "spdhg_sigma_data"),
-            ("sigma_tv", "spdhg_sigma_tv"),
-            ("views_per_batch", "spdhg_views_per_batch"),
-            ("num_blocks", "spdhg_num_blocks"),
-            ("A_norm", "spdhg_A_norm"),
-        ):
-            value = info_rec.get(src)
-            if value is not None:
-                stat[dst] = (
-                    int(value)
-                    if dst in {"spdhg_views_per_batch", "spdhg_num_blocks"}
-                    else float(value)
-                )
-        stat["spdhg_seed"] = int(cfg.spdhg_seed) + int(outer_idx) - 1
-    return L_prev
 
 
 def _build_alignment_volume_mask(
@@ -639,40 +135,6 @@ def _build_alignment_volume_mask(
         raise ValueError(f"Failed to apply requested mask_vol={mask_mode!r}") from exc
 
 
-def _enrich_multires_stage_stat(
-    stat: Mapping[str, object],
-    *,
-    level_factor: int,
-    level_index: int,
-    global_outer_idx: int,
-    elapsed_offset: float,
-    loss_name: str,
-    schedule_name: str,
-    stage: ResolvedAlignmentStage | None,
-) -> OuterStat:
-    enriched = dict(stat)
-    enriched["level_factor"] = int(level_factor)
-    enriched["level_index"] = int(level_index)
-    enriched["global_outer_idx"] = int(global_outer_idx)
-    enriched["loss_kind"] = str(enriched.get("loss_kind") or loss_name)
-    if stage is not None:
-        enriched.setdefault("schedule_name", schedule_name)
-        enriched.setdefault("schedule_stage_index", int(stage.index))
-        enriched.setdefault("schedule_stage_name", stage.name)
-        enriched.setdefault("schedule_stage_active_dofs", ",".join(stage.active_dofs))
-        enriched.setdefault("gauge_policy", stage.gauge_policy)
-        enriched.setdefault("gauge_status", stage.gauge_decision.status)
-        enriched.setdefault("gauge_decision", stage.gauge_decision.to_dict())
-    level_elapsed = stat.get("cumulative_time")
-    try:
-        level_elapsed_f = float(level_elapsed) if level_elapsed is not None else None
-    except Exception:
-        level_elapsed_f = None
-    enriched["level_elapsed_seconds"] = level_elapsed_f
-    enriched["global_elapsed_seconds"] = (
-        float(elapsed_offset + level_elapsed_f) if level_elapsed_f is not None else None
-    )
-    return enriched
 
 
 @dataclass(frozen=True)
@@ -775,129 +237,6 @@ def _prepare_align_setup(
     )
 
 
-def _run_reconstruction_step(
-    *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
-    params5: jnp.ndarray,
-    x: jnp.ndarray,
-    cfg: AlignConfig,
-    L_prev: float | None,
-    outer_idx: int,
-    recon_algo: str,
-) -> tuple[jnp.ndarray, float | None, OuterStat]:
-    recon_geometry = PoseAdjustedGeometry(geometry=geometry, params5=params5)
-
-    def _run_fista(vpb: int | None, unroll: int, gather: str, gm: str):
-        fista_cfg = FistaConfig(
-            iters=cfg.recon_iters,
-            lambda_tv=cfg.lambda_tv,
-            regulariser=cfg.regulariser,
-            huber_delta=cfg.huber_delta,
-            L=L_prev,
-            views_per_batch=vpb,
-            projector_unroll=int(unroll),
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=gather,
-            grad_mode=gm,
-            tv_prox_iters=int(cfg.tv_prox_iters),
-            recon_rel_tol=cfg.recon_rel_tol,
-            recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
-        )
-        return fista_tv(
-            recon_geometry,
-            grid,
-            detector,
-            projections,
-            init_x=x,
-            config=fista_cfg,
-            det_grid=det_grid,
-        )
-
-    def _run_spdhg():
-        spdhg_cfg = SPDHGConfig(
-            iters=int(cfg.recon_iters),
-            lambda_tv=float(cfg.lambda_tv),
-            regulariser=cfg.regulariser,
-            huber_delta=float(cfg.huber_delta),
-            views_per_batch=max(1, int(cfg.views_per_batch)),
-            seed=int(cfg.spdhg_seed) + int(outer_idx) - 1,
-            projector_unroll=int(cfg.projector_unroll),
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            positivity=bool(cfg.recon_positivity),
-            log_every=1,
-        )
-        return spdhg_tv(
-            recon_geometry,
-            grid,
-            detector,
-            projections,
-            init_x=x,
-            config=spdhg_cfg,
-            det_grid=det_grid,
-        )
-
-    vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
-    recon_retry = False
-    recon_start = time.perf_counter()
-    if recon_algo == "fista":
-        try:
-            x_out, info_rec = _run_fista(
-                vpb0,
-                int(cfg.projector_unroll),
-                cfg.gather_dtype,
-                "auto",
-            )
-        except Exception as e:
-            msg = str(e)
-            is_oom = (
-                ("RESOURCE_EXHAUSTED" in msg)
-                or ("Out of memory" in msg)
-                or ("Allocator" in msg)
-            )
-            if not is_oom:
-                raise
-            logging.warning(
-                "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
-            )
-            try:
-                recon_retry = True
-                x_out, info_rec = _run_fista(1, 1, cfg.gather_dtype, "stream")
-            except Exception as e2:
-                msg2 = str(e2)
-                if (
-                    ("RESOURCE_EXHAUSTED" in msg2)
-                    or ("Out of memory" in msg2)
-                    or ("Allocator" in msg2)
-                ):
-                    logging.error(
-                        "FISTA still OOM at finest level. Reduce memory pressure "
-                        "(smaller problem size or lower internal batching), or "
-                        "provide --recon-L to skip power-method."
-                    )
-                raise
-    else:
-        x_out, info_rec = _run_spdhg()
-
-    jax.block_until_ready(x_out)
-    stat: OuterStat = {
-        "recon_time": time.perf_counter() - recon_start,
-        "recon_retry": recon_retry,
-    }
-    info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
-    L_next = _record_reconstruction_info(
-        stat,
-        info_rec=info_mapping,
-        recon_algo=recon_algo,
-        cfg=cfg,
-        outer_idx=outer_idx,
-        L_prev=L_prev,
-    )
-    return x_out, L_next, stat
 
 
 def align(
@@ -2007,282 +1346,6 @@ def align(
     return x, params5, info
 
 
-def _geometry_with_setup_state(
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    setup: SetupGeometryState,
-) -> Geometry:
-    thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)
-    axis = tuple(float(v) for v in np.asarray(setup_axis_unit(setup), dtype=np.float32))
-    axis_active = (
-        abs(float(setup.axis_rot_x_rad)) > 1e-7
-        or abs(float(setup.axis_rot_y_rad)) > 1e-7
-        or isinstance(geometry, RotationAxisGeometry)
-    )
-    if axis_active:
-        return RotationAxisGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            axis_unit_lab=axis,
-        )
-    if isinstance(geometry, LaminographyGeometry):
-        return LaminographyGeometry(
-            grid=grid,
-            detector=detector,
-            thetas_deg=thetas,
-            tilt_deg=float(geometry.tilt_deg),
-            tilt_about=str(geometry.tilt_about),
-        )
-    return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
-
-
-def _geometry_calibration_payload(
-    state: AlignmentState,
-    active_geometry_dofs: Iterable[str],
-) -> dict[str, object]:
-    return state.to_calibration_state(active_dofs=active_geometry_dofs).to_dict()
-
-
-def _optimize_setup_geometry_bilevel_for_level(
-    *,
-    geometry: Geometry,
-    grid: Grid,
-    detector: Detector,
-    projections: jnp.ndarray,
-    init_x: jnp.ndarray | None,
-    init_params5: jnp.ndarray | None,
-    state: AlignmentState,
-    active_geometry_dofs: Iterable[str],
-    factor: int,
-    cfg: AlignConfig,
-    loss_spec,
-    loss_name: str,
-    schedule_name: str | None = None,
-    stage: ResolvedAlignmentStage | None = None,
-) -> tuple[jnp.ndarray, AlignmentState, list[OuterStat]]:
-    base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
-    active_view = ActiveParameterView.from_dofs(active_geometry_dofs, geometry=geometry)
-    alignment_state = state.replace(
-        setup=state.setup.replace(nominal_axis_unit=base.nominal_axis_unit),
-        pose=PoseState(
-            jnp.zeros((int(projections.shape[0]), 5), dtype=jnp.float32)
-            if init_params5 is None
-            else jnp.asarray(init_params5, dtype=jnp.float32)
-        ),
-        volume=init_x,
-    )
-    n_views = int(projections.shape[0])
-    n_folds = min(2, n_views)
-    folds = FoldSpec(n_folds=n_folds).build(n_views)
-    loss_adapter = build_loss_adapter(loss_spec, projections)
-    if not bool(loss_adapter.supports_gauss_newton):
-        raise ValueError(
-            f"Setup validation-LM requires a Gauss-Newton-compatible loss; got {loss_name!r}"
-        )
-    fold_recon_cfg = FoldReconstructionConfig(
-        iters=max(1, int(cfg.recon_iters)),
-        lambda_tv=float(cfg.lambda_tv),
-        regulariser=str(cfg.regulariser),
-        huber_delta=float(cfg.huber_delta),
-        tv_prox_iters=int(cfg.tv_prox_iters),
-        L=cfg.recon_L,
-        positivity=bool(cfg.recon_positivity),
-        views_per_batch=max(1, int(cfg.views_per_batch)),
-        projector_unroll=int(cfg.projector_unroll),
-        checkpoint_projector=bool(cfg.checkpoint_projector),
-        gather_dtype=str(cfg.gather_dtype),
-    )
-
-    setup_state = alignment_state
-    setup_stats: list[OuterStat] = []
-    last_loss = math.inf
-    outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iters))
-    for outer_idx in range(1, outer_limit + 1):
-        z_current = active_view.pack(setup_state)
-        total_loss = jnp.asarray(0.0, dtype=jnp.float32)
-        total_grad = jnp.zeros_like(z_current)
-        total_hess = jnp.zeros((int(z_current.size), int(z_current.size)), dtype=jnp.float32)
-        residual_count = 0
-        fold_cache: list[tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, dict[str, object]]] = []
-        for fold in range(folds.n_folds):
-            train_idx = folds.train_idx[fold]
-            train_mask = folds.train_mask[fold]
-            val_idx = folds.val_idx[fold]
-            val_mask = folds.val_mask[fold]
-            fold_volume, fold_recon_info = reconstruct_train_fold_nograd(
-                geometry=geometry,
-                grid=grid,
-                detector=detector,
-                projections=projections,
-                state=setup_state,
-                train_idx=train_idx,
-                train_mask=train_mask,
-                init_x=init_x,
-                level_factor=int(factor),
-                cfg=fold_recon_cfg,
-            )
-            normals = accumulate_validation_normals(
-                frozen_state=setup_state,
-                active_view=active_view,
-                z=z_current,
-                base=base,
-                grid=grid,
-                detector=detector,
-                projections=projections,
-                loss_adapter=loss_adapter,
-                fold_volume=fold_volume,
-                val_idx=val_idx,
-                val_mask=val_mask,
-                views_per_batch=max(1, int(cfg.views_per_batch)),
-                projector_unroll=int(cfg.projector_unroll),
-                checkpoint_projector=bool(cfg.checkpoint_projector),
-                gather_dtype=str(cfg.gather_dtype),
-            )
-            total_loss = total_loss + normals.loss
-            total_grad = total_grad + normals.grad
-            total_hess = total_hess + normals.hess
-            residual_count += int(normals.residual_count)
-            fold_cache.append((fold, fold_volume, val_idx, val_mask, fold_recon_info))
-
-        def score_candidate(z_candidate: jnp.ndarray) -> float:
-            score = jnp.asarray(0.0, dtype=jnp.float32)
-            for _fold, fold_volume, val_idx, val_mask, _fold_info in fold_cache:
-                score = score + score_validation_fixed_volume(
-                    frozen_state=setup_state,
-                    active_view=active_view,
-                    z=z_candidate,
-                    base=base,
-                    grid=grid,
-                    detector=detector,
-                    projections=projections,
-                    loss_adapter=loss_adapter,
-                    fold_volume=fold_volume,
-                    val_idx=val_idx,
-                    val_mask=val_mask,
-                    views_per_batch=max(1, int(cfg.views_per_batch)),
-                    projector_unroll=int(cfg.projector_unroll),
-                    checkpoint_projector=bool(cfg.checkpoint_projector),
-                    gather_dtype=str(cfg.gather_dtype),
-                )
-            return float(score)
-
-        opt_result = run_active_validation_lm(
-            state=setup_state,
-            view=active_view,
-            loss=float(total_loss),
-            grad=total_grad,
-            hess=total_hess,
-            score_fn=score_candidate,
-            bounds=cfg.bounds,
-            cfg=ValidationLmConfig(damping=max(float(cfg.gn_damping), 1e-6)),
-        )
-        setup_state = opt_result.state
-        last_loss = float(opt_result.loss)
-        stat = dict(opt_result.stats)
-        stat.update(
-            {
-                "geometry_block": "setup_validation_lm",
-                "geometry_active_dofs": ",".join(active_view.dofs),
-                "geometry_objective": "bilevel_cv",
-                "geometry_optimizer": "validation_lm",
-                "geometry_loss_kind": loss_name,
-                "geometry_loss_before": float(total_loss),
-                "geometry_loss_after": float(opt_result.loss),
-                "geometry_accepted": bool(opt_result.accepted),
-                "geometry_step_norm": float(stat.get("step_norm_whitened", 0.0) or 0.0),
-                "geometry_gradient_norm": float(stat.get("grad_norm_whitened", 0.0) or 0.0),
-                "geometry_max_step": 1.0,
-                "geometry_status": "converged" if opt_result.accepted else "underconverged",
-                "geometry_outer_idx": int(outer_idx),
-                "schedule_name": schedule_name,
-                "schedule_stage_index": (
-                    int(stage.index) if stage is not None else None
-                ),
-                "schedule_stage_name": stage.name if stage is not None else None,
-                "schedule_stage_active_dofs": (
-                    ",".join(stage.active_dofs) if stage is not None else ",".join(active_view.dofs)
-                ),
-                "gauge_policy": stage.gauge_policy if stage is not None else cfg.gauge_policy,
-                "gauge_status": (
-                    stage.gauge_decision.status
-                    if stage is not None
-                    else validate_active_gauge_policy(
-                        active_view.dofs,
-                        policy=cfg.gauge_policy,
-                        priors=cfg.gauge_priors,
-                    ).status
-                ),
-                "gauge_decision": (
-                    stage.gauge_decision.to_dict()
-                    if stage is not None
-                    else validate_active_gauge_policy(
-                        active_view.dofs,
-                        policy=cfg.gauge_policy,
-                        priors=cfg.gauge_priors,
-                    ).to_dict()
-                ),
-                "objective_kind": "bilevel_cv",
-                "objective_provenance": {
-                    "outer_loss_source": "AlignmentLossSpec",
-                    "outer_loss_kind": str(loss_name),
-                    "inner_data_term": "l2_projection",
-                    "inner_regulariser": str(fold_recon_cfg.regulariser),
-                    "validation_split": "interleaved_kfold",
-                    "differentiation_mode": "none",
-                    "initialization_policy": "current_level_volume" if init_x is not None else "zeros",
-                },
-                "optimizer_kind": "validation_lm",
-                "outer_loss_kind": str(loss_name),
-                "recon_sensitivity": "stopped",
-                "train_reconstruction_gradient": False,
-                "views_per_batch": max(1, int(cfg.views_per_batch)),
-                "n_folds": int(folds.n_folds),
-                "fold_eval_mode": "stopped_train_recon_validation_lm",
-                "folds_used": ",".join(str(item[0]) for item in fold_cache),
-                "num_train_reconstructions": int(len(fold_cache)),
-                "validation_residual_count": int(residual_count),
-                "recon_projection_chunked": True,
-                "validation_projection_chunked": True,
-                "active_gradient_mode": "validation_residual_jvp",
-            }
-        )
-        setup_stats.append(stat)
-        if bool(cfg.early_stop) and outer_idx > 1:
-            prev = float(setup_stats[-2].get("geometry_loss_after", math.inf))
-            impr = (prev - last_loss) / max(abs(prev), 1e-6)
-            if impr < float(cfg.early_stop_rel_impr):
-                break
-
-    geom = _geometry_with_setup_state(geometry, grid, detector, setup_state.setup)
-    det_grid = apply_setup_to_detector_grid(
-        detector,
-        setup_state.setup,
-        level_factor=int(factor),
-    )
-    x_next, _ = fista_tv(
-        geom,
-        grid,
-        detector,
-        projections,
-        init_x=init_x,
-        config=FistaConfig(
-            iters=max(1, int(cfg.recon_iters)),
-            lambda_tv=float(cfg.lambda_tv),
-            regulariser=cfg.regulariser,
-            huber_delta=float(cfg.huber_delta),
-            tv_prox_iters=int(cfg.tv_prox_iters),
-            L=cfg.recon_L,
-            views_per_batch=max(1, int(cfg.views_per_batch)),
-            projector_unroll=int(cfg.projector_unroll),
-            checkpoint_projector=bool(cfg.checkpoint_projector),
-            gather_dtype=str(cfg.gather_dtype),
-            positivity=bool(cfg.recon_positivity),
-        ),
-        det_grid=det_grid,
-    )
-    return x_next, setup_state.replace(volume=x_next), setup_stats
 
 
 def align_multires(

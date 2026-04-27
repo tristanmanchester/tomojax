@@ -8,9 +8,9 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
+from ._loss_adapters import LossAdapter
 from .dof_specs import ActiveParameterView
 from .geometry_applier import BaseGeometryArrays, apply_alignment_state, subset_base_geometry
-from .losses import LossAdapter
 from .state import AlignmentState
 
 
@@ -42,9 +42,9 @@ def accumulate_validation_normals(
     gather_dtype: str,
 ) -> ValidationNormalResult:
     """Accumulate validation GN normal equations for one fixed fold volume."""
-    if not bool(loss_adapter.supports_gauss_newton):
+    if not bool(loss_adapter.supports_setup_validation_lm):
         raise ValueError(
-            f"Loss {loss_adapter.name!r} does not expose a Gauss-Newton residual"
+            f"Loss {loss_adapter.name!r} does not support setup validation-LM residuals"
         )
 
     z0 = jnp.asarray(z, dtype=jnp.float32).reshape(-1)

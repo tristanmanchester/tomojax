@@ -10,7 +10,8 @@ from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
 from .geometry_applier import BaseGeometryArrays, apply_alignment_state
-from .losses import AlignmentLossSpec, LossAdapter, build_loss_adapter
+from ._loss_adapters import LossAdapter, build_loss_adapter
+from ._loss_specs import AlignmentLossSpec
 from .state import AlignmentState
 
 
