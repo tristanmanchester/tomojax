@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from ..core.geometry.base import Geometry, Grid, Detector
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T
+from ..core.multires import upsample_volume
 from ..core.validation import (
     validate_grid,
     validate_projection_stack,
@@ -218,7 +219,7 @@ def _accumulate_stage_wall_time(
         return level_wall_time
 
 
-def _build_level_run_state(
+def _prepare_multires_level_state(
     *,
     resume_state: AlignMultiresResumeState | None,
     level_index: int,
@@ -307,6 +308,38 @@ def _build_level_run_state(
     )
 
 
+def _final_multires_volume(
+    *,
+    x_init: jnp.ndarray | None,
+    prev_factor: int | None,
+    grid: Grid,
+) -> jnp.ndarray:
+    if x_init is None:
+        return jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    if prev_factor is not None and prev_factor != 1:
+        return upsample_volume(x_init, prev_factor, (grid.nx, grid.ny, grid.nz))
+    return x_init
+
+
+def _multires_run_is_complete(
+    *,
+    params5: jnp.ndarray | None,
+    stopped_by_observer: bool,
+    resume_state: AlignMultiresResumeState | None,
+    last_level_index_processed: int,
+    level_count: int,
+) -> bool:
+    return (
+        params5 is not None
+        and not stopped_by_observer
+        and (
+            (resume_state is not None and resume_state.run_complete)
+            or last_level_index_processed == level_count - 1
+            or level_count == 0
+        )
+    )
+
+
 def _build_multires_checkpoint_state(
     *,
     x: jnp.ndarray,
@@ -354,6 +387,102 @@ def _build_multires_checkpoint_state(
         stage_name=stage.name,
         stage_completed=bool(stage_completed),
         completed_outer_iters_in_stage=int(completed_outer_iters_in_stage),
+    )
+
+
+def _emit_level_completion_checkpoint(
+    *,
+    checkpoint_callback: AlignMultiresCheckpointCallback | None,
+    x_lvl: jnp.ndarray,
+    params5: jnp.ndarray,
+    info: Mapping[str, object],
+    level_index: int,
+    level_factor: int,
+    level_completed_after: int,
+    global_outer_idx: int,
+    prev_factor: int | None,
+    loss_hist: list[float],
+    global_outer_stats: list[OuterStat],
+    global_elapsed_offset: float,
+    level_complete: bool,
+    setup_alignment_state: object,
+    active_geometry_dofs: tuple[str, ...],
+    resolved_schedule: object,
+    level_stats: list[OuterStat],
+) -> None:
+    if checkpoint_callback is None:
+        return
+    last_stage = resolved_schedule.stages[-1]
+    last_stage_iters = sum(
+        1 for stat in level_stats if stat.get("schedule_stage_index") == int(last_stage.index)
+    )
+    checkpoint_callback(
+        _build_multires_checkpoint_state(
+            x=x_lvl,
+            params5=params5,
+            motion_coeffs=info.get("motion_coeffs"),
+            level_index=int(level_index),
+            level_factor=int(level_factor),
+            completed_outer_iters_in_level=level_completed_after,
+            global_outer_iters_completed=int(global_outer_idx),
+            prev_factor=prev_factor,
+            loss=list(loss_hist),
+            outer_stats=[dict(stat) for stat in global_outer_stats],
+            L=info.get("L"),
+            small_impr_streak=int(info.get("small_impr_streak", 0)),
+            elapsed_offset=float(global_elapsed_offset),
+            level_complete=level_complete,
+            run_complete=False,
+            setup_alignment_state=setup_alignment_state,
+            active_geometry_dofs=active_geometry_dofs,
+            stage=last_stage,
+            stage_completed=level_complete,
+            completed_outer_iters_in_stage=last_stage_iters,
+        )
+    )
+
+
+def _emit_run_completion_checkpoint(
+    *,
+    checkpoint_callback: AlignMultiresCheckpointCallback | None,
+    params5: jnp.ndarray | None,
+    run_complete: bool,
+    x_final: jnp.ndarray,
+    level_count: int,
+    executed_outer_iters: int,
+    loss_hist: list[float],
+    global_outer_stats: list[OuterStat],
+    global_elapsed_offset: float,
+    setup_alignment_state: object,
+    active_geometry_dofs: tuple[str, ...],
+    resolved_schedule: object,
+) -> None:
+    if checkpoint_callback is None or params5 is None or not run_complete:
+        return
+    final_stage = resolved_schedule.stages[-1]
+    checkpoint_callback(
+        _build_multires_checkpoint_state(
+            x=x_final,
+            params5=params5,
+            motion_coeffs=None,
+            level_index=max(0, level_count - 1),
+            level_factor=1,
+            completed_outer_iters_in_level=0,
+            global_outer_iters_completed=int(executed_outer_iters),
+            prev_factor=1,
+            loss=list(loss_hist),
+            outer_stats=[dict(stat) for stat in global_outer_stats],
+            L=None,
+            small_impr_streak=0,
+            elapsed_offset=float(global_elapsed_offset),
+            level_complete=True,
+            run_complete=True,
+            setup_alignment_state=setup_alignment_state,
+            active_geometry_dofs=active_geometry_dofs,
+            stage=final_stage,
+            stage_completed=True,
+            completed_outer_iters_in_stage=0,
+        )
     )
 
 
@@ -457,7 +586,6 @@ def align_multires(
         bin_projections,
         scale_detector,
         scale_grid,
-        upsample_volume,
         validate_scale_factor,
     )
 
@@ -633,7 +761,7 @@ def align_multires(
                 seed_params = seed_params.at[:, 4].set(dz)
             params0 = seed_params
 
-        level_run = _build_level_run_state(
+        level_run = _prepare_multires_level_state(
             resume_state=resume_state,
             level_index=int(li),
             loss_hist=loss_hist,
@@ -867,37 +995,25 @@ def align_multires(
         prev_factor = lvl["factor"]
         last_level_index_processed = int(li)
         global_elapsed_offset += float(level_wall_time)
-        if checkpoint_callback is not None:
-            last_stage = resolved_schedule.stages[-1]
-            last_stage_iters = sum(
-                1
-                for stat in level_stats
-                if stat.get("schedule_stage_index") == int(last_stage.index)
-            )
-            checkpoint_callback(
-                _build_multires_checkpoint_state(
-                    x=x_lvl,
-                    params5=params5,
-                    motion_coeffs=info.get("motion_coeffs"),
-                    level_index=int(li),
-                    level_factor=int(lvl["factor"]),
-                    completed_outer_iters_in_level=level_completed_after,
-                    global_outer_iters_completed=int(global_outer_idx),
-                    prev_factor=prev_factor,
-                    loss=list(loss_hist),
-                    outer_stats=[dict(stat) for stat in global_outer_stats],
-                    L=info.get("L"),
-                    small_impr_streak=int(info.get("small_impr_streak", 0)),
-                    elapsed_offset=float(global_elapsed_offset),
-                    level_complete=level_complete,
-                    run_complete=False,
-                    setup_alignment_state=setup_alignment_state,
-                    active_geometry_dofs=active_geometry_dofs,
-                    stage=last_stage,
-                    stage_completed=level_complete,
-                    completed_outer_iters_in_stage=last_stage_iters,
-                )
-            )
+        _emit_level_completion_checkpoint(
+            checkpoint_callback=checkpoint_callback,
+            x_lvl=x_lvl,
+            params5=params5,
+            info=info,
+            level_index=int(li),
+            level_factor=int(lvl["factor"]),
+            level_completed_after=level_completed_after,
+            global_outer_idx=int(global_outer_idx),
+            prev_factor=prev_factor,
+            loss_hist=loss_hist,
+            global_outer_stats=global_outer_stats,
+            global_elapsed_offset=global_elapsed_offset,
+            level_complete=level_complete,
+            setup_alignment_state=setup_alignment_state,
+            active_geometry_dofs=active_geometry_dofs,
+            resolved_schedule=resolved_schedule,
+            level_stats=level_stats,
+        )
         final_observer_action = level_action
         if level_action == "stop_run":
             stopped_by_observer = True
@@ -905,49 +1021,28 @@ def align_multires(
         if level_action == "advance_level":
             continue
 
-    # Always return a full-resolution-compatible final volume.
-    if x_init is None:
-        x_final = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    elif prev_factor is not None and prev_factor != 1:
-        x_final = upsample_volume(x_init, prev_factor, (grid.nx, grid.ny, grid.nz))
-    else:
-        x_final = x_init
-
-    run_complete = (
-        params5 is not None
-        and not stopped_by_observer
-        and (
-            (resume_state is not None and resume_state.run_complete)
-            or last_level_index_processed == len(levels) - 1
-            or not levels
-        )
+    x_final = _final_multires_volume(x_init=x_init, prev_factor=prev_factor, grid=grid)
+    run_complete = _multires_run_is_complete(
+        params5=params5,
+        stopped_by_observer=stopped_by_observer,
+        resume_state=resume_state,
+        last_level_index_processed=last_level_index_processed,
+        level_count=len(levels),
     )
-    if checkpoint_callback is not None and params5 is not None and run_complete:
-        final_stage = resolved_schedule.stages[-1]
-        checkpoint_callback(
-            _build_multires_checkpoint_state(
-                x=x_final,
-                params5=params5,
-                motion_coeffs=None,
-                level_index=max(0, len(levels) - 1),
-                level_factor=1,
-                completed_outer_iters_in_level=0,
-                global_outer_iters_completed=int(executed_outer_iters),
-                prev_factor=1,
-                loss=list(loss_hist),
-                outer_stats=[dict(stat) for stat in global_outer_stats],
-                L=None,
-                small_impr_streak=0,
-                elapsed_offset=float(global_elapsed_offset),
-                level_complete=True,
-                run_complete=True,
-                setup_alignment_state=setup_alignment_state,
-                active_geometry_dofs=active_geometry_dofs,
-                stage=final_stage,
-                stage_completed=True,
-                completed_outer_iters_in_stage=0,
-            )
-        )
+    _emit_run_completion_checkpoint(
+        checkpoint_callback=checkpoint_callback,
+        params5=params5,
+        run_complete=run_complete,
+        x_final=x_final,
+        level_count=len(levels),
+        executed_outer_iters=executed_outer_iters,
+        loss_hist=loss_hist,
+        global_outer_stats=global_outer_stats,
+        global_elapsed_offset=global_elapsed_offset,
+        setup_alignment_state=setup_alignment_state,
+        active_geometry_dofs=active_geometry_dofs,
+        resolved_schedule=resolved_schedule,
+    )
 
     return (
         x_final,
