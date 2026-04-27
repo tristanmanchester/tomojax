@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import math
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypedDict
 
 import h5py
 import imageio.v3 as iio
@@ -15,8 +15,69 @@ from ..recon.quicklook import scale_to_uint8
 
 PathLike: TypeAlias = str | Path
 
-ProjectionReport: TypeAlias = dict[str, Any]
-InspectionReport: TypeAlias = dict[str, Any]
+
+class DetectorShapeReport(TypedDict):
+    nv: int
+    nu: int
+
+
+class ProjectionStatsReport(TypedDict):
+    min: float | None
+    p01: float | None
+    mean: float | None
+    p50: float | None
+    p99: float | None
+    max: float | None
+
+
+class NonfiniteReport(TypedDict):
+    nan_count: int | None
+    posinf_count: int | None
+    neginf_count: int | None
+    inf_count: int | None
+
+
+class ProjectionReport(TypedDict):
+    found: bool
+    path: str | None
+    shape: list[int] | None
+    dtype: str | None
+    n_views: int | None
+    detector_shape: DetectorShapeReport | None
+    storage_bytes: int | None
+    stats: ProjectionStatsReport
+    nonfinite: NonfiniteReport
+
+
+class DetectorMetadataReport(TypedDict):
+    found: bool
+    nu: object
+    nv: object
+    du: object
+    dv: object
+    det_center: object
+
+
+class AlignmentReport(TypedDict):
+    found: bool
+    params_found: bool
+    params_shape: list[int] | None
+    angle_offset_found: bool
+    angle_offset_shape: list[int] | None
+    misalign_spec_found: bool
+    gauge_fix_found: bool
+
+
+class InspectionReport(TypedDict):
+    schema_version: int
+    input_path: str
+    projection: ProjectionReport
+    angles: dict[str, Any]
+    geometry: dict[str, Any]
+    detector_metadata: DetectorMetadataReport
+    flats_darks: dict[str, Any]
+    alignment: AlignmentReport
+    memory_estimates: dict[str, Any]
 
 _PROJECTION_PATHS = (
     "/entry/instrument/detector/data",
@@ -108,7 +169,7 @@ def _sample_projection_values(dataset: h5py.Dataset) -> np.ndarray:
     return np.concatenate(samples)
 
 
-def _projection_stats(dataset: h5py.Dataset) -> tuple[dict[str, float | None], dict[str, int]]:
+def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, NonfiniteReport]:
     finite_count = 0
     finite_sum = 0.0
     finite_min = math.inf
@@ -251,7 +312,7 @@ def _geometry_report(file: h5py.File) -> dict[str, Any]:
     }
 
 
-def _detector_metadata_report(file: h5py.File) -> dict[str, Any]:
+def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
     detector = file.get("/entry/instrument/detector")
     meta = (
         _json_attr_to_mapping(detector.attrs.get("detector_meta_json"))
@@ -303,7 +364,7 @@ def _flats_darks_report(file: h5py.File) -> dict[str, Any]:
     }
 
 
-def _alignment_report(file: h5py.File) -> dict[str, Any]:
+def _alignment_report(file: h5py.File) -> AlignmentReport:
     align = file.get(_ALIGN_PATH)
     if not isinstance(align, h5py.Group):
         return {
@@ -411,7 +472,7 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
         if projection_dataset is None:
             raise KeyError("Could not find projections dataset under /entry")
         projection = _projection_report(projection_path, projection_dataset)
-        report = {
+        report: InspectionReport = {
             "schema_version": 1,
             "input_path": str(input_path),
             "projection": projection,
