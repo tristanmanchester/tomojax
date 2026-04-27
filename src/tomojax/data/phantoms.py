@@ -388,18 +388,12 @@ def lamino_disk(
     min_value: float = 0.1,
     max_value: float = 1.0,
     max_rot_degrees: float = 180.0,
-    tilt_deg: float = 30.0,
-    tilt_about: str = "x",
 ) -> np.ndarray:
     """Random cubes+spheres phantom constrained to a thin central slab.
 
     Sample-frame convention: the reconstructed/object volume is in (x, y, z)
     coordinates, and the nominal rotation axis is the +z axis. The thin slab is
     therefore orthogonal to +z, i.e., confined to the central few z-slices.
-
-    Note: `tilt_deg`/`tilt_about` are ignored for the slab orientation (kept for
-    signature/backward-compat) since the sample-frame axis is +z regardless of
-    lamino tilt in world coordinates.
     """
 
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
@@ -433,3 +427,39 @@ def lamino_disk(
     if vmax > 0:
         vol = vol / vmax
     return vol.astype(np.float32)
+
+
+def lamino_disk_legacy(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    thickness_ratio: float = 0.2,
+    seed: int = 0,
+    n_cubes: int = 8,
+    n_spheres: int = 7,
+    min_size: int = 4,
+    max_size: int = 32,
+    min_value: float = 0.1,
+    max_value: float = 1.0,
+    max_rot_degrees: float = 180.0,
+    tilt_deg: float = 30.0,
+    tilt_about: str = "x",
+) -> np.ndarray:
+    """Compatibility wrapper for callers that still pass ignored tilt options."""
+
+    del tilt_deg, tilt_about
+    return lamino_disk(
+        nx,
+        ny,
+        nz,
+        thickness_ratio=thickness_ratio,
+        seed=seed,
+        n_cubes=n_cubes,
+        n_spheres=n_spheres,
+        min_size=min_size,
+        max_size=max_size,
+        min_value=min_value,
+        max_value=max_value,
+        max_rot_degrees=max_rot_degrees,
+    )
