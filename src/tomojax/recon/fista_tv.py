@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Literal, Tuple, Optional
+from typing import Literal, NamedTuple, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -36,6 +36,19 @@ from .types import Regulariser
 
 
 GradMode = Literal["auto", "batched", "stream"]
+
+
+class FistaScanState(NamedTuple):
+    x: jnp.ndarray
+    z: jnp.ndarray
+    t: jnp.ndarray
+    loss: jnp.ndarray
+    prev_obj: jnp.ndarray
+    streak: jnp.ndarray
+    done: jnp.ndarray
+    has_prev: jnp.ndarray
+    last_obj: jnp.ndarray
+    iters_done: jnp.ndarray
 
 
 def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
@@ -653,24 +666,10 @@ def fista_tv(
     patience = jnp.int32(int(cfg.recon_patience) if use_early_stop else 0)
     early_flag = jnp.bool_(use_early_stop)
 
-    def step(carry, k):
-        x_c, z_c, t_c, loss_arr, prev_obj, streak, done, has_prev, last_obj, iters_done = carry
-
-        def run_active(state):
-            (
-                x_a,
-                z_a,
-                t_a,
-                loss_a,
-                prev_a,
-                streak_a,
-                done_a,
-                has_prev_a,
-                last_a,
-                iters_a,
-            ) = state
-            _, g = val_and_grad(z_a)
-            y = z_a - (1.0 / L) * g
+    def step(state: FistaScanState, k):
+        def run_active(active_state: FistaScanState):
+            _, g = val_and_grad(active_state.z)
+            y = active_state.z - (1.0 / L) * g
             if regulariser == "huber_tv":
                 x_new = y
             else:
@@ -681,8 +680,8 @@ def fista_tv(
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
             )
-            t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
-            z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
+            t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * active_state.t * active_state.t))
+            z_new = x_new + ((active_state.t - 1.0) / t_new) * (x_new - active_state.x)
             z_new = _project_constraints(
                 z_new,
                 positivity=positivity,
@@ -693,89 +692,67 @@ def fista_tv(
             reg_value = regulariser_value_fn(x_new)
             obj = data_loss_val + cfg.lambda_tv * reg_value
             obj32 = obj.astype(jnp.float32)
-            rel_change = jnp.abs(obj - prev_a) / jnp.maximum(jnp.abs(prev_a), 1e-6)
-            small = jnp.logical_and(early_flag, jnp.logical_and(has_prev_a, rel_change <= tol))
+            rel_change = jnp.abs(obj - active_state.prev_obj) / jnp.maximum(
+                jnp.abs(active_state.prev_obj),
+                1e-6,
+            )
+            small = jnp.logical_and(
+                early_flag,
+                jnp.logical_and(active_state.has_prev, rel_change <= tol),
+            )
             streak_next = jnp.where(
                 early_flag,
-                jnp.where(small, jnp.minimum(streak_a + 1, patience), jnp.int32(0)),
-                streak_a,
+                jnp.where(small, jnp.minimum(active_state.streak + 1, patience), jnp.int32(0)),
+                active_state.streak,
             )
-            done_next = jnp.logical_or(done_a, jnp.logical_and(early_flag, streak_next >= patience))
-            loss_next = loss_a.at[k].set(obj32)
-            return (
-                x_new,
-                z_new,
-                t_new,
-                loss_next,
-                obj,
-                streak_next,
-                done_next,
-                jnp.bool_(True),
-                obj,
-                iters_a + jnp.int32(1),
-            ), None
+            done_next = jnp.logical_or(
+                active_state.done,
+                jnp.logical_and(early_flag, streak_next >= patience),
+            )
+            return active_state._replace(
+                x=x_new,
+                z=z_new,
+                t=t_new,
+                loss=active_state.loss.at[k].set(obj32),
+                prev_obj=obj,
+                streak=streak_next,
+                done=done_next,
+                has_prev=jnp.bool_(True),
+                last_obj=obj,
+                iters_done=active_state.iters_done + jnp.int32(1),
+            )
 
-        def run_skip(state):
-            (
-                x_s,
-                z_s,
-                t_s,
-                loss_s,
-                prev_s,
-                streak_s,
-                done_s,
-                has_prev_s,
-                last_s,
-                iters_s,
-            ) = state
-            loss_next = loss_s.at[k].set(last_s.astype(jnp.float32))
-            return (
-                x_s,
-                z_s,
-                t_s,
-                loss_next,
-                prev_s,
-                streak_s,
-                done_s,
-                has_prev_s,
-                last_s,
-                iters_s,
-            ), None
+        def run_skip(skip_state: FistaScanState):
+            return skip_state._replace(
+                loss=skip_state.loss.at[k].set(skip_state.last_obj.astype(jnp.float32))
+            )
 
-        new_state, _ = jax.lax.cond(
-            done,
+        new_state = jax.lax.cond(
+            state.done,
             run_skip,
             run_active,
-            (x_c, z_c, t_c, loss_arr, prev_obj, streak, done, has_prev, last_obj, iters_done),
+            state,
         )
         return new_state, None
 
     loss_arr0 = jnp.zeros((int(cfg.iters),), dtype=jnp.float32)
-    init_carry = (
-        x,
-        z,
-        t,
-        loss_arr0,
-        jnp.float32(0.0),
-        jnp.int32(0),
-        jnp.bool_(False),
-        jnp.bool_(False),
-        jnp.float32(0.0),
-        jnp.int32(0),
+    init_carry = FistaScanState(
+        x=x,
+        z=z,
+        t=t,
+        loss=loss_arr0,
+        prev_obj=jnp.float32(0.0),
+        streak=jnp.int32(0),
+        done=jnp.bool_(False),
+        has_prev=jnp.bool_(False),
+        last_obj=jnp.float32(0.0),
+        iters_done=jnp.int32(0),
     )
     carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iters)))
-    (
-        x_f,
-        _,
-        _,
-        loss_arr,
-        _,
-        _,
-        done_flag,
-        _,
-        _,
-        iters_done,
-    ) = carry_final
+    x_f = carry_final.x
+    loss_arr = carry_final.loss
+    done_flag = carry_final.done
+    iters_done = carry_final.iters_done
 
     if int(cfg.iters) > 0:
         final_step = max(int(iters_done) - 1, 0)
