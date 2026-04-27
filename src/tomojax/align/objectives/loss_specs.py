@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Literal, Mapping, TypeAlias, cast
+from typing import Callable, Dict, Iterable, Literal, Mapping, TypeAlias, cast
 
 
 RobustLossKind: TypeAlias = Literal[
@@ -136,32 +136,393 @@ class AlignmentLossSchedule:
 
 AlignmentLossConfig: TypeAlias = AlignmentLossSpec | AlignmentLossSchedule
 
-_LOSS_ALIASES: dict[str, str] = {
-    "charb": "charbonnier",
-    "lorentzian": "cauchy",
-    "leclerc": "welsch",
-    "ncc": "zncc",
-    "ms-ssim": "ms_ssim",
-    "msssim": "ms_ssim",
-    "ms_ssim": "ms_ssim",
-    "go": "grad_orient",
-    "phase_corr_soft": "phasecorr",
-    "fftmag": "fft_mag",
-    "chamfer": "chamfer_edge",
-    "gdl": "grad_l1",
-    "poisson_nll": "poisson",
-    "student-t": "student_t",
-    "robust_general": "barron",
-    "mcc": "correntropy",
-    "mi_kde": "mi",
-    "nmi_kde": "nmi",
-    "tsallis_mi": "renyi_mi",
-    "l2-otsu": "l2_otsu",
-    "otsu-l2": "l2_otsu",
-    "edge_aware_l2": "edge_l2",
-    "sliced_wasserstein": "swd",
-    "focal_tversky": "tversky",
+LossBuilder: TypeAlias = Callable[[Mapping[str, float]], AlignmentLossSpec]
+LossMatcher: TypeAlias = Callable[[AlignmentLossSpec], bool]
+LossNameEmitter: TypeAlias = Callable[[AlignmentLossSpec], str]
+LossParamEmitter: TypeAlias = Callable[[AlignmentLossSpec], Dict[str, float]]
+
+
+@dataclass(frozen=True, slots=True)
+class LossKindEntry:
+    build: LossBuilder
+    allowed_params: frozenset[str]
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LossSpecDescriptor:
+    matches: LossMatcher
+    name: LossNameEmitter
+    params: LossParamEmitter
+
+
+def _empty_params(_: AlignmentLossSpec) -> Dict[str, float]:
+    return {}
+
+
+def _build_l2(_: Mapping[str, float]) -> AlignmentLossSpec:
+    return L2LossSpec()
+
+
+def _build_l2_otsu(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return L2OtsuLossSpec(temp=float(raw.get("temp", 0.5)))
+
+
+def _build_pwls(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return PWLSLossSpec(a=float(raw.get("a", 1.0)), b=float(raw.get("b", 0.0)))
+
+
+def _build_edge_l2(_: Mapping[str, float]) -> AlignmentLossSpec:
+    return EdgeL2LossSpec()
+
+
+def _robust_builder(kind: RobustLossKind) -> LossBuilder:
+    def _build(raw: Mapping[str, float]) -> AlignmentLossSpec:
+        return RobustLossSpec(
+            kind=kind,
+            eps=float(raw.get("eps", 1e-3)),
+            delta=float(raw.get("delta", 1.0)),
+            c=float(raw.get("c", 1.0)),
+            nu=float(raw.get("nu", 4.0)),
+            sigma=float(raw.get("sigma", 1.0)),
+            alpha=float(raw.get("alpha", 1.0)),
+        )
+
+    return _build
+
+
+def _correlation_builder(kind: CorrelationLossKind) -> LossBuilder:
+    def _build(raw: Mapping[str, float]) -> AlignmentLossSpec:
+        return CorrelationLossSpec(
+            kind=kind,
+            eps=float(raw.get("eps", 1e-5)),
+            beta=float(raw.get("beta", 10.0)),
+        )
+
+    return _build
+
+
+def _build_ssim(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return SSIMLossSpec(
+        K1=float(raw.get("K1", 0.01)),
+        K2=float(raw.get("K2", 0.03)),
+        window=int(raw.get("window", 7)),
+    )
+
+
+def _build_ms_ssim(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return SSIMLossSpec(
+        multiscale=True,
+        K1=float(raw.get("K1", 0.01)),
+        K2=float(raw.get("K2", 0.03)),
+        window=int(raw.get("window", 7)),
+        levels=int(raw.get("levels", 3)),
+    )
+
+
+def _build_ssim_otsu(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return SSIMLossSpec(
+        otsu_mask=True,
+        K1=float(raw.get("K1", 0.01)),
+        K2=float(raw.get("K2", 0.03)),
+        window=int(raw.get("window", 7)),
+    )
+
+
+def _build_tversky(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return TverskyLossSpec(
+        temp=float(raw.get("temp", 0.5)),
+        alpha=float(raw.get("alpha", 0.7)),
+        beta=float(raw.get("beta", 0.3)),
+        gamma=float(raw.get("gamma", 1.0)),
+    )
+
+
+def _gradient_builder(kind: GradientLossKind) -> LossBuilder:
+    def _build(raw: Mapping[str, float]) -> AlignmentLossSpec:
+        return GradientLossSpec(kind=kind, eps=float(raw.get("eps", 1e-3)))
+
+    return _build
+
+
+def _build_mi(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return InformationLossSpec(
+        bins=int(raw.get("bins", 32)),
+        bw_x=raw.get("bw_x"),
+        bw_y=raw.get("bw_y"),
+    )
+
+
+def _build_nmi(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return InformationLossSpec(
+        normalized=True,
+        bins=int(raw.get("bins", 32)),
+        bw_x=raw.get("bw_x"),
+        bw_y=raw.get("bw_y"),
+    )
+
+
+def _build_renyi_mi(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return InformationLossSpec(
+        renyi_alpha=float(raw.get("alpha", 1.5)),
+        bins=int(raw.get("bins", 32)),
+        bw_x=raw.get("bw_x"),
+        bw_y=raw.get("bw_y"),
+    )
+
+
+def _build_swd(raw: Mapping[str, float]) -> AlignmentLossSpec:
+    return SWDLossSpec(
+        n_samples=int(raw.get("n_samples", -1)),
+        p=int(raw.get("p", 1)),
+    )
+
+
+def _build_mind(_: Mapping[str, float]) -> AlignmentLossSpec:
+    return MindLossSpec()
+
+
+def _build_poisson(_: Mapping[str, float]) -> AlignmentLossSpec:
+    return PoissonLossSpec()
+
+
+_LOSS_KIND_REGISTRY: dict[str, LossKindEntry] = {
+    "l2": LossKindEntry(_build_l2, frozenset()),
+    "l2_otsu": LossKindEntry(_build_l2_otsu, frozenset({"temp"}), aliases=("l2-otsu", "otsu-l2")),
+    "pwls": LossKindEntry(_build_pwls, frozenset({"a", "b"})),
+    "edge_l2": LossKindEntry(_build_edge_l2, frozenset(), aliases=("edge_aware_l2",)),
+    "charbonnier": LossKindEntry(
+        _robust_builder("charbonnier"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+        aliases=("charb",),
+    ),
+    "huber": LossKindEntry(
+        _robust_builder("huber"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+    ),
+    "cauchy": LossKindEntry(
+        _robust_builder("cauchy"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+        aliases=("lorentzian",),
+    ),
+    "welsch": LossKindEntry(
+        _robust_builder("welsch"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+        aliases=("leclerc",),
+    ),
+    "student_t": LossKindEntry(
+        _robust_builder("student_t"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+        aliases=("student-t",),
+    ),
+    "barron": LossKindEntry(
+        _robust_builder("barron"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+        aliases=("robust_general",),
+    ),
+    "correntropy": LossKindEntry(
+        _robust_builder("correntropy"),
+        frozenset({"eps", "delta", "c", "nu", "sigma", "alpha"}),
+        aliases=("mcc",),
+    ),
+    "zncc": LossKindEntry(
+        _correlation_builder("zncc"), frozenset({"eps", "beta"}), aliases=("ncc",)
+    ),
+    "phasecorr": LossKindEntry(
+        _correlation_builder("phasecorr"),
+        frozenset({"eps", "beta"}),
+        aliases=("phase_corr_soft",),
+    ),
+    "fft_mag": LossKindEntry(
+        _correlation_builder("fft_mag"),
+        frozenset({"eps", "beta"}),
+        aliases=("fftmag",),
+    ),
+    "ssim": LossKindEntry(_build_ssim, frozenset({"K1", "K2", "window"})),
+    "ms_ssim": LossKindEntry(
+        _build_ms_ssim,
+        frozenset({"K1", "K2", "window", "levels"}),
+        aliases=("ms-ssim", "msssim"),
+    ),
+    "ssim_otsu": LossKindEntry(_build_ssim_otsu, frozenset({"K1", "K2", "window"})),
+    "tversky": LossKindEntry(
+        _build_tversky,
+        frozenset({"temp", "alpha", "beta", "gamma"}),
+        aliases=("focal_tversky",),
+    ),
+    "grad_l1": LossKindEntry(_gradient_builder("grad_l1"), frozenset({"eps"}), aliases=("gdl",)),
+    "ngf": LossKindEntry(_gradient_builder("ngf"), frozenset({"eps"})),
+    "grad_orient": LossKindEntry(
+        _gradient_builder("grad_orient"), frozenset({"eps"}), aliases=("go",)
+    ),
+    "chamfer_edge": LossKindEntry(
+        _gradient_builder("chamfer_edge"),
+        frozenset({"eps"}),
+        aliases=("chamfer",),
+    ),
+    "mi": LossKindEntry(
+        _build_mi, frozenset({"bins", "bw_x", "bw_y", "alpha"}), aliases=("mi_kde",)
+    ),
+    "nmi": LossKindEntry(
+        _build_nmi, frozenset({"bins", "bw_x", "bw_y", "alpha"}), aliases=("nmi_kde",)
+    ),
+    "renyi_mi": LossKindEntry(
+        _build_renyi_mi,
+        frozenset({"bins", "bw_x", "bw_y", "alpha"}),
+        aliases=("tsallis_mi",),
+    ),
+    "swd": LossKindEntry(
+        _build_swd, frozenset({"n_samples", "p"}), aliases=("sliced_wasserstein",)
+    ),
+    "mind": LossKindEntry(_build_mind, frozenset()),
+    "poisson": LossKindEntry(_build_poisson, frozenset(), aliases=("poisson_nll",)),
 }
+
+_LOSS_ALIASES: dict[str, str] = {
+    alias: canonical for canonical, entry in _LOSS_KIND_REGISTRY.items() for alias in entry.aliases
+}
+_SETUP_VALIDATION_LM_LOSSES = frozenset({"l2", "l2_otsu", "pwls", "edge_l2"})
+
+
+def _robust_params(spec: RobustLossSpec) -> Dict[str, float]:
+    params: Dict[str, float] = {}
+    if spec.kind == "charbonnier":
+        params["eps"] = float(spec.eps)
+    elif spec.kind == "huber":
+        params["delta"] = float(spec.delta)
+    elif spec.kind in {"cauchy", "welsch"}:
+        params["c"] = float(spec.c)
+    elif spec.kind == "student_t":
+        params["nu"] = float(spec.nu)
+        params["sigma"] = float(spec.sigma)
+    elif spec.kind == "barron":
+        params["alpha"] = float(spec.alpha)
+        params["c"] = float(spec.c)
+    elif spec.kind == "correntropy":
+        params["sigma"] = float(spec.sigma)
+    return params
+
+
+def _correlation_params(spec: CorrelationLossSpec) -> Dict[str, float]:
+    if spec.kind == "zncc":
+        return {"eps": float(spec.eps)}
+    if spec.kind == "phasecorr":
+        return {"beta": float(spec.beta)}
+    return {}
+
+
+def _ssim_name(spec: SSIMLossSpec) -> str:
+    if spec.otsu_mask:
+        return "ssim_otsu"
+    return "ms_ssim" if spec.multiscale else "ssim"
+
+
+def _ssim_params(spec: SSIMLossSpec) -> Dict[str, float]:
+    params = {
+        "K1": float(spec.K1),
+        "K2": float(spec.K2),
+        "window": float(spec.window),
+    }
+    if spec.multiscale:
+        params["levels"] = float(spec.levels)
+    return params
+
+
+def _tversky_params(spec: TverskyLossSpec) -> Dict[str, float]:
+    return {
+        "temp": float(spec.temp),
+        "alpha": float(spec.alpha),
+        "beta": float(spec.beta),
+        "gamma": float(spec.gamma),
+    }
+
+
+def _gradient_params(spec: GradientLossSpec) -> Dict[str, float]:
+    return {"eps": float(spec.eps)} if spec.kind in {"ngf", "grad_orient"} else {}
+
+
+def _information_name(spec: InformationLossSpec) -> str:
+    if spec.renyi_alpha is not None:
+        return "renyi_mi"
+    return "nmi" if spec.normalized else "mi"
+
+
+def _information_params(spec: InformationLossSpec) -> Dict[str, float]:
+    params = {"bins": float(spec.bins)}
+    if spec.bw_x is not None:
+        params["bw_x"] = float(spec.bw_x)
+    if spec.bw_y is not None:
+        params["bw_y"] = float(spec.bw_y)
+    if spec.normalized:
+        params["nmi"] = 1.0
+    if spec.renyi_alpha is not None:
+        params["alpha"] = float(spec.renyi_alpha)
+    return params
+
+
+_LOSS_SPEC_DESCRIPTORS: tuple[LossSpecDescriptor, ...] = (
+    LossSpecDescriptor(lambda spec: isinstance(spec, L2LossSpec), lambda _: "l2", _empty_params),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, L2OtsuLossSpec),
+        lambda _: "l2_otsu",
+        lambda spec: {"temp": float(cast(L2OtsuLossSpec, spec).temp)},
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, PWLSLossSpec),
+        lambda _: "pwls",
+        lambda spec: {
+            "a": float(cast(PWLSLossSpec, spec).a),
+            "b": float(cast(PWLSLossSpec, spec).b),
+        },
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, EdgeL2LossSpec), lambda _: "edge_l2", _empty_params
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, RobustLossSpec),
+        lambda spec: cast(RobustLossSpec, spec).kind,
+        lambda spec: _robust_params(cast(RobustLossSpec, spec)),
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, CorrelationLossSpec),
+        lambda spec: cast(CorrelationLossSpec, spec).kind,
+        lambda spec: _correlation_params(cast(CorrelationLossSpec, spec)),
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, SSIMLossSpec),
+        lambda spec: _ssim_name(cast(SSIMLossSpec, spec)),
+        lambda spec: _ssim_params(cast(SSIMLossSpec, spec)),
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, TverskyLossSpec),
+        lambda _: "tversky",
+        lambda spec: _tversky_params(cast(TverskyLossSpec, spec)),
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, GradientLossSpec),
+        lambda spec: cast(GradientLossSpec, spec).kind,
+        lambda spec: _gradient_params(cast(GradientLossSpec, spec)),
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, InformationLossSpec),
+        lambda spec: _information_name(cast(InformationLossSpec, spec)),
+        lambda spec: _information_params(cast(InformationLossSpec, spec)),
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, SWDLossSpec),
+        lambda _: "swd",
+        lambda spec: {
+            "n_samples": float(cast(SWDLossSpec, spec).n_samples),
+            "p": float(cast(SWDLossSpec, spec).p),
+        },
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, MindLossSpec), lambda _: "mind", _empty_params
+    ),
+    LossSpecDescriptor(
+        lambda spec: isinstance(spec, PoissonLossSpec), lambda _: "poisson", _empty_params
+    ),
+)
 
 
 def canonicalize_loss_kind(kind: str) -> str:
@@ -170,101 +531,21 @@ def canonicalize_loss_kind(kind: str) -> str:
 
 
 def loss_spec_name(spec: AlignmentLossSpec) -> str:
-    if isinstance(spec, L2LossSpec):
-        return "l2"
-    if isinstance(spec, L2OtsuLossSpec):
-        return "l2_otsu"
-    if isinstance(spec, PWLSLossSpec):
-        return "pwls"
-    if isinstance(spec, EdgeL2LossSpec):
-        return "edge_l2"
-    if isinstance(spec, RobustLossSpec):
-        return spec.kind
-    if isinstance(spec, CorrelationLossSpec):
-        return spec.kind
-    if isinstance(spec, SSIMLossSpec):
-        if spec.otsu_mask:
-            return "ssim_otsu"
-        return "ms_ssim" if spec.multiscale else "ssim"
-    if isinstance(spec, TverskyLossSpec):
-        return "tversky"
-    if isinstance(spec, GradientLossSpec):
-        return spec.kind
-    if isinstance(spec, InformationLossSpec):
-        if spec.renyi_alpha is not None:
-            return "renyi_mi"
-        return "nmi" if spec.normalized else "mi"
-    if isinstance(spec, SWDLossSpec):
-        return "swd"
-    if isinstance(spec, MindLossSpec):
-        return "mind"
-    if isinstance(spec, PoissonLossSpec):
-        return "poisson"
+    for descriptor in _LOSS_SPEC_DESCRIPTORS:
+        if descriptor.matches(spec):
+            return descriptor.name(spec)
     raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
 
 
 def loss_spec_params(spec: AlignmentLossSpec) -> Dict[str, float]:
-    if isinstance(spec, L2LossSpec | EdgeL2LossSpec | MindLossSpec | PoissonLossSpec):
-        return {}
-    if isinstance(spec, L2OtsuLossSpec):
-        return {"temp": float(spec.temp)}
-    if isinstance(spec, PWLSLossSpec):
-        return {"a": float(spec.a), "b": float(spec.b)}
-    if isinstance(spec, RobustLossSpec):
-        params: Dict[str, float] = {}
-        if spec.kind == "charbonnier":
-            params["eps"] = float(spec.eps)
-        elif spec.kind == "huber":
-            params["delta"] = float(spec.delta)
-        elif spec.kind in {"cauchy", "welsch"}:
-            params["c"] = float(spec.c)
-        elif spec.kind == "student_t":
-            params["nu"] = float(spec.nu)
-            params["sigma"] = float(spec.sigma)
-        elif spec.kind == "barron":
-            params["alpha"] = float(spec.alpha)
-            params["c"] = float(spec.c)
-        elif spec.kind == "correntropy":
-            params["sigma"] = float(spec.sigma)
-        return params
-    if isinstance(spec, CorrelationLossSpec):
-        if spec.kind == "zncc":
-            return {"eps": float(spec.eps)}
-        if spec.kind == "phasecorr":
-            return {"beta": float(spec.beta)}
-        return {}
-    if isinstance(spec, SSIMLossSpec):
-        params = {
-            "K1": float(spec.K1),
-            "K2": float(spec.K2),
-            "window": float(spec.window),
-        }
-        if spec.multiscale:
-            params["levels"] = float(spec.levels)
-        return params
-    if isinstance(spec, TverskyLossSpec):
-        return {
-            "temp": float(spec.temp),
-            "alpha": float(spec.alpha),
-            "beta": float(spec.beta),
-            "gamma": float(spec.gamma),
-        }
-    if isinstance(spec, GradientLossSpec):
-        return {"eps": float(spec.eps)} if spec.kind in {"ngf", "grad_orient"} else {}
-    if isinstance(spec, InformationLossSpec):
-        params = {"bins": float(spec.bins)}
-        if spec.bw_x is not None:
-            params["bw_x"] = float(spec.bw_x)
-        if spec.bw_y is not None:
-            params["bw_y"] = float(spec.bw_y)
-        if spec.normalized:
-            params["nmi"] = 1.0
-        if spec.renyi_alpha is not None:
-            params["alpha"] = float(spec.renyi_alpha)
-        return params
-    if isinstance(spec, SWDLossSpec):
-        return {"n_samples": float(spec.n_samples), "p": float(spec.p)}
+    for descriptor in _LOSS_SPEC_DESCRIPTORS:
+        if descriptor.matches(spec):
+            return descriptor.params(spec)
     raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
+
+
+def loss_spec_supports_setup_validation_lm(spec: AlignmentLossSpec) -> bool:
+    return loss_spec_name(spec) in _SETUP_VALIDATION_LM_LOSSES
 
 
 def parse_loss_spec(
@@ -273,102 +554,13 @@ def parse_loss_spec(
 ) -> AlignmentLossSpec:
     canonical = canonicalize_loss_kind(kind)
     raw = {} if params is None else {str(k): float(v) for k, v in params.items()}
-
-    def _reject_extra_params(consumed: set[str]) -> None:
-        extras = sorted(set(raw) - consumed)
-        if extras:
-            raise ValueError(f"Unsupported parameters for {canonical}: {', '.join(extras)}")
-
-    if canonical == "l2":
-        _reject_extra_params(set())
-        return L2LossSpec()
-    if canonical == "l2_otsu":
-        _reject_extra_params({"temp"})
-        return L2OtsuLossSpec(temp=float(raw.get("temp", 0.5)))
-    if canonical == "pwls":
-        _reject_extra_params({"a", "b"})
-        return PWLSLossSpec(a=float(raw.get("a", 1.0)), b=float(raw.get("b", 0.0)))
-    if canonical == "edge_l2":
-        _reject_extra_params(set())
-        return EdgeL2LossSpec()
-    if canonical in {"charbonnier", "huber", "cauchy", "welsch", "student_t", "barron", "correntropy"}:
-        _reject_extra_params({"eps", "delta", "c", "nu", "sigma", "alpha"})
-        return RobustLossSpec(
-            kind=cast(RobustLossKind, canonical),
-            eps=float(raw.get("eps", 1e-3)),
-            delta=float(raw.get("delta", 1.0)),
-            c=float(raw.get("c", 1.0)),
-            nu=float(raw.get("nu", 4.0)),
-            sigma=float(raw.get("sigma", 1.0)),
-            alpha=float(raw.get("alpha", 1.0)),
-        )
-    if canonical in {"zncc", "phasecorr", "fft_mag"}:
-        _reject_extra_params({"eps", "beta"})
-        return CorrelationLossSpec(
-            kind=cast(CorrelationLossKind, canonical),
-            eps=float(raw.get("eps", 1e-5)),
-            beta=float(raw.get("beta", 10.0)),
-        )
-    if canonical == "ssim":
-        _reject_extra_params({"K1", "K2", "window"})
-        return SSIMLossSpec(
-            K1=float(raw.get("K1", 0.01)),
-            K2=float(raw.get("K2", 0.03)),
-            window=int(raw.get("window", 7)),
-        )
-    if canonical == "ms_ssim":
-        _reject_extra_params({"K1", "K2", "window", "levels"})
-        return SSIMLossSpec(
-            multiscale=True,
-            K1=float(raw.get("K1", 0.01)),
-            K2=float(raw.get("K2", 0.03)),
-            window=int(raw.get("window", 7)),
-            levels=int(raw.get("levels", 3)),
-        )
-    if canonical == "ssim_otsu":
-        _reject_extra_params({"K1", "K2", "window"})
-        return SSIMLossSpec(
-            otsu_mask=True,
-            K1=float(raw.get("K1", 0.01)),
-            K2=float(raw.get("K2", 0.03)),
-            window=int(raw.get("window", 7)),
-        )
-    if canonical == "tversky":
-        _reject_extra_params({"temp", "alpha", "beta", "gamma"})
-        return TverskyLossSpec(
-            temp=float(raw.get("temp", 0.5)),
-            alpha=float(raw.get("alpha", 0.7)),
-            beta=float(raw.get("beta", 0.3)),
-            gamma=float(raw.get("gamma", 1.0)),
-        )
-    if canonical in {"grad_l1", "ngf", "grad_orient", "chamfer_edge"}:
-        _reject_extra_params({"eps"})
-        return GradientLossSpec(
-            kind=cast(GradientLossKind, canonical),
-            eps=float(raw.get("eps", 1e-3)),
-        )
-    if canonical in {"mi", "nmi", "renyi_mi"}:
-        _reject_extra_params({"bins", "bw_x", "bw_y", "alpha"})
-        return InformationLossSpec(
-            normalized=(canonical == "nmi"),
-            renyi_alpha=(float(raw.get("alpha", 1.5)) if canonical == "renyi_mi" else None),
-            bins=int(raw.get("bins", 32)),
-            bw_x=raw.get("bw_x"),
-            bw_y=raw.get("bw_y"),
-        )
-    if canonical == "swd":
-        _reject_extra_params({"n_samples", "p"})
-        return SWDLossSpec(
-            n_samples=int(raw.get("n_samples", -1)),
-            p=int(raw.get("p", 1)),
-        )
-    if canonical == "mind":
-        _reject_extra_params(set())
-        return MindLossSpec()
-    if canonical == "poisson":
-        _reject_extra_params(set())
-        return PoissonLossSpec()
-    raise ValueError(f"Unknown loss kind: {kind}")
+    entry = _LOSS_KIND_REGISTRY.get(canonical)
+    if entry is None:
+        raise ValueError(f"Unknown loss kind: {kind}")
+    extras = sorted(set(raw) - set(entry.allowed_params))
+    if extras:
+        raise ValueError(f"Unsupported parameters for {canonical}: {', '.join(extras)}")
+    return entry.build(raw)
 
 
 def _parse_loss_schedule_level(raw_level: object) -> int:
@@ -391,9 +583,7 @@ def _parse_loss_schedule_loss(raw_loss: object, *, level: int) -> AlignmentLossS
     try:
         return parse_loss_spec(loss_name)
     except ValueError as exc:
-        raise ValueError(
-            f"Invalid loss schedule entry for level {level}: {exc}"
-        ) from exc
+        raise ValueError(f"Invalid loss schedule entry for level {level}: {exc}") from exc
 
 
 def parse_loss_schedule(
@@ -418,9 +608,7 @@ def parse_loss_schedule(
             if not item:
                 raise ValueError("Loss schedule contains an empty entry")
             if ":" not in item:
-                raise ValueError(
-                    f"Loss schedule entry {item!r} must use LEVEL:LOSS format"
-                )
+                raise ValueError(f"Loss schedule entry {item!r} must use LEVEL:LOSS format")
             raw_level, raw_loss = item.split(":", 1)
             raw_entries.append((raw_level, raw_loss))
     else:
@@ -484,7 +672,9 @@ def validate_loss_schedule_levels(
     )
 
 
-def loss_is_within_relative_tolerance(loss_before: float, loss_after: float, rel_tol: float) -> bool:
+def loss_is_within_relative_tolerance(
+    loss_before: float, loss_after: float, rel_tol: float
+) -> bool:
     """Return True when ``loss_after`` stays within a relative tolerance of ``loss_before``."""
     before = float(loss_before)
     after = float(loss_after)
@@ -514,6 +704,7 @@ __all__ = [
     "loss_is_within_relative_tolerance",
     "loss_spec_name",
     "loss_spec_params",
+    "loss_spec_supports_setup_validation_lm",
     "parse_loss_schedule",
     "parse_loss_spec",
     "resolve_loss_for_level",

@@ -53,6 +53,7 @@ from .loss_specs import (
     canonicalize_loss_kind,
     loss_spec_name,
     loss_spec_params,
+    loss_spec_supports_setup_validation_lm,
     parse_loss_spec,
 )
 from .loss_state import LossState
@@ -140,9 +141,7 @@ def _build_renyi_mi_loss(state: LossState, targets: jnp.ndarray):
 def _build_l2_otsu_loss(state: LossState, targets: jnp.ndarray):
     temp = _safe_epsilon(state.params, "temp", 0.5)
     thr = _otsu_thresholds(targets)
-    state.mask = jax.device_put(
-        jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp)
-    )
+    state.mask = jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp))
     return _loss_l2_otsu_soft
 
 
@@ -235,7 +234,10 @@ def _build_loss_from_kind(
                 ls.mask = mask_chunk[local_idx]
             if state.dt_edge is not None:
                 ls.dt_edge = state.dt_edge[global_idx]
-            ls.bins_x = state.bins_x; ls.bins_y = state.bins_y; ls.bw_x = state.bw_x; ls.bw_y = state.bw_y
+            ls.bins_x = state.bins_x
+            ls.bins_y = state.bins_y
+            ls.bw_x = state.bw_x
+            ls.bw_y = state.bw_y
             if state.thr is not None:
                 ls.thr = state.thr[global_idx]
             return f(a, b, ls)
@@ -297,7 +299,7 @@ def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNe
 
 
 def loss_supports_setup_validation_lm(spec: AlignmentLossSpec) -> bool:
-    return isinstance(spec, (L2LossSpec, L2OtsuLossSpec, PWLSLossSpec, EdgeL2LossSpec))
+    return loss_spec_supports_setup_validation_lm(spec)
 
 
 def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAdapter:
