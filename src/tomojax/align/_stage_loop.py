@@ -70,7 +70,7 @@ class MultiresLevel(TypedDict):
 
 
 @dataclass(frozen=True)
-class LevelRunState:
+class LevelResumePlan:
     resuming: bool
     level_completed_before: int
     stats_before_level: list[OuterStat]
@@ -195,6 +195,21 @@ class StageRuntime:
         return emit_multires_checkpoint
 
 
+@dataclass(frozen=True)
+class StageRunResult:
+    x_lvl: jnp.ndarray
+    params5: jnp.ndarray
+    info: dict[str, object]
+    setup_alignment_state: object
+    level_stats: list[OuterStat]
+    level_losses: list[float]
+    level_wall_time: float
+    level_action: ObserverAction
+    final_gauge_fix: str
+    final_gauge_fix_dofs: list[str]
+    final_gauge_fix_stats: dict[str, object]
+
+
 def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
     try:
         return int(stat["schedule_stage_index"])
@@ -219,6 +234,219 @@ def _accumulate_stage_wall_time(
         return level_wall_time
 
 
+def _run_multires_level_stages(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    resolved_schedule: object,
+    active_loss_spec: object,
+    active_loss_name: str,
+    setup_alignment_state: object,
+    active_geometry_dofs: tuple[str, ...],
+    level_factor: int,
+    stage_runtime: StageRuntime,
+    resume_state: AlignMultiresResumeState | None,
+    resuming_this_level: bool,
+    level_resume: LevelResumePlan,
+    global_elapsed_offset: float,
+    x_lvl: jnp.ndarray,
+    params5: jnp.ndarray,
+    level_stats: list[OuterStat],
+    level_losses: list[float],
+    final_gauge_fix: str,
+    final_gauge_fix_dofs: list[str],
+    final_gauge_fix_stats: dict[str, object],
+) -> StageRunResult:
+    info: dict[str, object] = {
+        "loss": [],
+        "loss_kind": active_loss_name,
+        "recon_algo": str(cfg.recon_algo),
+        "L": None,
+        "outer_stats": [],
+        "stopped_by_observer": False,
+        "observer_action": "continue",
+        "wall_time_total": 0.0,
+        "pose_model": str(cfg.pose_model),
+        "pose_model_variables": 0,
+        "per_view_variables": 0,
+        "pose_model_basis_shape": [],
+        "active_dofs": [],
+        "completed_outer_iters": 0,
+        "small_impr_streak": 0,
+        "motion_coeffs": None,
+        "gauge_fix": final_gauge_fix,
+        "gauge_fix_dofs": final_gauge_fix_dofs,
+        "gauge_fix_final": final_gauge_fix_stats or {},
+    }
+    level_wall_time = 0.0
+    level_action: ObserverAction = "continue"
+    stage_resume_consumed = False
+
+    for stage in resolved_schedule.stages:
+        if resuming_this_level:
+            if int(stage.index) < level_resume.resume_stage_index:
+                continue
+            if int(stage.index) == level_resume.resume_stage_index and level_resume.resume_stage_completed:
+                continue
+        stage_global_start = level_resume.global_before_level + len(level_stats)
+        if stage.active_geometry_dofs:
+            cfg_stage = replace(
+                cfg,
+                schedule=None,
+                optimise_dofs=stage.active_geometry_dofs,
+                geometry_dofs=(),
+                outer_iters=int(stage.maxiter),
+                early_stop=bool(stage.early_stop),
+            )
+            geometry_start = time.perf_counter()
+            x_lvl, setup_alignment_state, raw_geometry_stats = (
+                _optimize_setup_geometry_bilevel_for_level(
+                    geometry=geometry,
+                    grid=grid,
+                    detector=detector,
+                    projections=projections,
+                    init_x=x_lvl,
+                    init_params5=params5,
+                    state=setup_alignment_state,
+                    active_geometry_dofs=stage.active_geometry_dofs,
+                    factor=int(level_factor),
+                    cfg=cfg_stage,
+                    loss_spec=active_loss_spec,
+                    loss_name=active_loss_name,
+                    schedule_name=resolved_schedule.name,
+                    stage=stage,
+                )
+            )
+            level_wall_time += time.perf_counter() - geometry_start
+            enriched = stage_runtime.enrich_stats(
+                [dict(stat) for stat in raw_geometry_stats],
+                stage=stage,
+                global_start=stage_global_start,
+            )
+            level_stats.extend(enriched)
+            level_losses.extend(
+                float(stat["geometry_loss_after"])
+                for stat in enriched
+                if stat.get("geometry_loss_after") is not None
+            )
+            info["wall_time_total"] = float(level_wall_time)
+            info["completed_outer_iters"] = len(level_stats)
+            continue
+
+        if not stage.active_pose_dofs:
+            continue
+
+        pose_optimizer = (
+            stage.optimizer_kind if stage.optimizer_kind in {"gd", "gn", "lbfgs"} else cfg.opt_method
+        )
+        pose_gauge_fix = "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
+        cfg_stage = replace(
+            cfg,
+            schedule=None,
+            optimise_dofs=stage.active_pose_dofs,
+            geometry_dofs=(),
+            opt_method=str(pose_optimizer),
+            outer_iters=int(stage.maxiter),
+            early_stop=bool(stage.early_stop),
+            recon_L=None,
+            loss=active_loss_spec,
+            gauge_fix=pose_gauge_fix,
+        )
+        align_kwargs = {}
+        if active_geometry_dofs:
+            geometry_for_align = _geometry_with_setup_state(
+                geometry,
+                grid,
+                detector,
+                setup_alignment_state.setup,
+            )
+            align_kwargs["det_grid_override"] = apply_setup_to_detector_grid(
+                detector,
+                setup_alignment_state.setup,
+                level_factor=int(level_factor),
+            )
+        else:
+            geometry_for_align = geometry
+
+        align_resume_state = None
+        if (
+            resuming_this_level
+            and resume_state is not None
+            and int(stage.index) == level_resume.resume_stage_index
+            and not level_resume.resume_stage_completed
+            and not stage_resume_consumed
+        ):
+            align_resume_state = AlignResumeState(
+                x=resume_state.x,
+                params5=resume_state.params5,
+                motion_coeffs=resume_state.motion_coeffs,
+                start_outer_iter=level_resume.resume_stage_iters,
+                loss=list(level_resume.resume_stage_losses),
+                outer_stats=[dict(stat) for stat in level_resume.resume_stage_stats],
+                L=resume_state.L,
+                small_impr_streak=int(resume_state.small_impr_streak),
+                elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
+            )
+            stage_resume_consumed = True
+
+        x_lvl, params5, info = align(
+            geometry_for_align,
+            grid,
+            detector,
+            projections,
+            cfg=cfg_stage,
+            init_x=x_lvl,
+            init_params5=params5,
+            observer=stage_runtime.observer_for_stage(stage, stage_global_start),
+            resume_state=align_resume_state,
+            checkpoint_callback=stage_runtime.checkpoint_for_stage(
+                stage=stage,
+                global_start=stage_global_start,
+                setup_alignment_state=setup_alignment_state,
+                active_geometry_dofs=active_geometry_dofs,
+            ),
+            **align_kwargs,
+        )
+        setup_alignment_state = setup_alignment_state.replace(
+            pose=PoseState(
+                params5,
+                info.get("motion_coeffs"),  # type: ignore[arg-type]
+            ),
+            volume=x_lvl,
+        )
+        enriched = stage_runtime.enrich_stats(
+            [dict(stat) for stat in info.get("outer_stats", [])],
+            stage=stage,
+            global_start=stage_global_start,
+        )
+        level_stats.extend(enriched)
+        level_losses.extend(float(value) for value in info.get("loss", []))
+        level_wall_time = _accumulate_stage_wall_time(level_wall_time, info)
+        level_action = _normalize_observer_action(info.get("observer_action"))
+        final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
+        final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))
+        final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
+        if level_action != "continue":
+            break
+
+    return StageRunResult(
+        x_lvl=x_lvl,
+        params5=params5,
+        info=info,
+        setup_alignment_state=setup_alignment_state,
+        level_stats=level_stats,
+        level_losses=level_losses,
+        level_wall_time=level_wall_time,
+        level_action=level_action,
+        final_gauge_fix=final_gauge_fix,
+        final_gauge_fix_dofs=final_gauge_fix_dofs,
+        final_gauge_fix_stats=final_gauge_fix_stats,
+    )
+
+
 def _prepare_multires_level_state(
     *,
     resume_state: AlignMultiresResumeState | None,
@@ -226,7 +454,7 @@ def _prepare_multires_level_state(
     loss_hist: list[float],
     global_outer_stats: list[OuterStat],
     executed_outer_iters: int,
-) -> LevelRunState:
+) -> LevelResumePlan:
     resuming = (
         resume_state is not None
         and not resume_state.level_complete
@@ -254,7 +482,7 @@ def _prepare_multires_level_state(
     resume_stage_iters = int(resume_state.completed_outer_iters_in_stage) if resuming else 0
 
     if not resuming:
-        return LevelRunState(
+        return LevelResumePlan(
             resuming=False,
             level_completed_before=0,
             stats_before_level=stats_before_level,
@@ -292,7 +520,7 @@ def _prepare_multires_level_state(
     if len(resume_stage_losses) > resume_stage_iters:
         resume_stage_losses = resume_stage_losses[-resume_stage_iters:]
 
-    return LevelRunState(
+    return LevelResumePlan(
         resuming=True,
         level_completed_before=level_completed_before,
         stats_before_level=stats_before_level,
@@ -776,31 +1004,8 @@ def align_multires(
         resume_stage_iters = level_run.resume_stage_iters
         level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
         level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
-        level_wall_time = 0.0
-        level_action: ObserverAction = "continue"
         x_lvl = x0 if x0 is not None else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
         params5 = params0 if params0 is not None else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
-        info: dict[str, object] = {
-            "loss": [],
-            "loss_kind": active_loss_name,
-            "recon_algo": str(cfg.recon_algo),
-            "L": None,
-            "outer_stats": [],
-            "stopped_by_observer": False,
-            "observer_action": "continue",
-            "wall_time_total": 0.0,
-            "pose_model": str(cfg.pose_model),
-            "pose_model_variables": 0,
-            "per_view_variables": 0,
-            "pose_model_basis_shape": [],
-            "active_dofs": [],
-            "completed_outer_iters": 0,
-            "small_impr_streak": 0,
-            "motion_coeffs": None,
-            "gauge_fix": final_gauge_fix,
-            "gauge_fix_dofs": final_gauge_fix_dofs,
-            "gauge_fix_final": final_gauge_fix_stats or {},
-        }
         stage_runtime = StageRuntime(
             level_index=int(li),
             level_factor=int(lvl["factor"]),
@@ -817,154 +1022,42 @@ def align_multires(
             checkpoint_callback=checkpoint_callback,
         )
 
-        stage_resume_consumed = False
-        for stage in resolved_schedule.stages:
-            if resuming_this_level:
-                if int(stage.index) < resume_stage_index:
-                    continue
-                if int(stage.index) == resume_stage_index and resume_stage_completed:
-                    continue
-            stage_global_start = global_before_level + len(level_stats)
-            if stage.active_geometry_dofs:
-                cfg_stage = replace(
-                    cfg,
-                    schedule=None,
-                    optimise_dofs=stage.active_geometry_dofs,
-                    geometry_dofs=(),
-                    outer_iters=int(stage.maxiter),
-                    early_stop=bool(stage.early_stop),
-                )
-                geometry_start = time.perf_counter()
-                x_lvl, setup_alignment_state, raw_geometry_stats = (
-                    _optimize_setup_geometry_bilevel_for_level(
-                        geometry=geometry,
-                        grid=g,
-                        detector=d,
-                        projections=y,
-                        init_x=x_lvl,
-                        init_params5=params5,
-                        state=setup_alignment_state,
-                        active_geometry_dofs=stage.active_geometry_dofs,
-                        factor=int(lvl["factor"]),
-                        cfg=cfg_stage,
-                        loss_spec=active_loss_spec,
-                        loss_name=active_loss_name,
-                        schedule_name=resolved_schedule.name,
-                        stage=stage,
-                    )
-                )
-                stage_wall = time.perf_counter() - geometry_start
-                level_wall_time += stage_wall
-                enriched = stage_runtime.enrich_stats(
-                    [dict(stat) for stat in raw_geometry_stats],
-                    stage=stage,
-                    global_start=stage_global_start,
-                )
-                level_stats.extend(enriched)
-                level_losses.extend(
-                    float(stat["geometry_loss_after"])
-                    for stat in enriched
-                    if stat.get("geometry_loss_after") is not None
-                )
-                info["wall_time_total"] = float(level_wall_time)
-                info["completed_outer_iters"] = len(level_stats)
-                continue
-
-            if stage.active_pose_dofs:
-                pose_optimizer = (
-                    stage.optimizer_kind
-                    if stage.optimizer_kind in {"gd", "gn", "lbfgs"}
-                    else cfg.opt_method
-                )
-                pose_gauge_fix = (
-                    "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
-                )
-                cfg_stage = replace(
-                    cfg,
-                    schedule=None,
-                    optimise_dofs=stage.active_pose_dofs,
-                    geometry_dofs=(),
-                    opt_method=str(pose_optimizer),
-                    outer_iters=int(stage.maxiter),
-                    early_stop=bool(stage.early_stop),
-                    recon_L=None,
-                    loss=active_loss_spec,
-                    gauge_fix=pose_gauge_fix,
-                )
-                align_kwargs = {}
-                if active_geometry_dofs:
-                    geometry_for_align = _geometry_with_setup_state(
-                        geometry,
-                        g,
-                        d,
-                        setup_alignment_state.setup,
-                    )
-                    det_grid_for_align = apply_setup_to_detector_grid(
-                        d,
-                        setup_alignment_state.setup,
-                        level_factor=int(lvl["factor"]),
-                    )
-                    align_kwargs["det_grid_override"] = det_grid_for_align
-                else:
-                    geometry_for_align = geometry
-                align_resume_state = None
-                if (
-                    resuming_this_level
-                    and int(stage.index) == resume_stage_index
-                    and not resume_stage_completed
-                    and not stage_resume_consumed
-                ):
-                    align_resume_state = AlignResumeState(
-                        x=resume_state.x,
-                        params5=resume_state.params5,
-                        motion_coeffs=resume_state.motion_coeffs,
-                        start_outer_iter=resume_stage_iters,
-                        loss=list(level_run.resume_stage_losses),
-                        outer_stats=[dict(stat) for stat in level_run.resume_stage_stats],
-                        L=resume_state.L,
-                        small_impr_streak=int(resume_state.small_impr_streak),
-                        elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
-                    )
-                    stage_resume_consumed = True
-                x_lvl, params5, info = align(
-                    geometry_for_align,
-                    g,
-                    d,
-                    y,
-                    cfg=cfg_stage,
-                    init_x=x_lvl,
-                    init_params5=params5,
-                    observer=stage_runtime.observer_for_stage(stage, stage_global_start),
-                    resume_state=align_resume_state,
-                    checkpoint_callback=stage_runtime.checkpoint_for_stage(
-                        stage=stage,
-                        global_start=stage_global_start,
-                        setup_alignment_state=setup_alignment_state,
-                        active_geometry_dofs=active_geometry_dofs,
-                    ),
-                    **align_kwargs,
-                )
-                setup_alignment_state = setup_alignment_state.replace(
-                    pose=PoseState(
-                        params5,
-                        info.get("motion_coeffs"),  # type: ignore[arg-type]
-                    ),
-                    volume=x_lvl,
-                )
-                enriched = stage_runtime.enrich_stats(
-                    [dict(stat) for stat in info.get("outer_stats", [])],
-                    stage=stage,
-                    global_start=stage_global_start,
-                )
-                level_stats.extend(enriched)
-                level_losses.extend(float(v) for v in info.get("loss", []))
-                level_wall_time = _accumulate_stage_wall_time(level_wall_time, info)
-                level_action = _normalize_observer_action(info.get("observer_action"))
-                final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
-                final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))
-                final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
-                if level_action != "continue":
-                    break
+        stage_result = _run_multires_level_stages(
+            geometry=geometry,
+            grid=g,
+            detector=d,
+            projections=y,
+            cfg=cfg,
+            resolved_schedule=resolved_schedule,
+            active_loss_spec=active_loss_spec,
+            active_loss_name=active_loss_name,
+            setup_alignment_state=setup_alignment_state,
+            active_geometry_dofs=active_geometry_dofs,
+            level_factor=int(lvl["factor"]),
+            stage_runtime=stage_runtime,
+            resume_state=resume_state,
+            resuming_this_level=resuming_this_level,
+            level_resume=level_run,
+            global_elapsed_offset=global_elapsed_offset,
+            x_lvl=x_lvl,
+            params5=params5,
+            level_stats=level_stats,
+            level_losses=level_losses,
+            final_gauge_fix=final_gauge_fix,
+            final_gauge_fix_dofs=final_gauge_fix_dofs,
+            final_gauge_fix_stats=final_gauge_fix_stats or {},
+        )
+        x_lvl = stage_result.x_lvl
+        params5 = stage_result.params5
+        info = stage_result.info
+        setup_alignment_state = stage_result.setup_alignment_state
+        level_stats = stage_result.level_stats
+        level_losses = stage_result.level_losses
+        level_wall_time = stage_result.level_wall_time
+        level_action = stage_result.level_action
+        final_gauge_fix = stage_result.final_gauge_fix
+        final_gauge_fix_dofs = stage_result.final_gauge_fix_dofs
+        final_gauge_fix_stats = stage_result.final_gauge_fix_stats
 
         info["loss"] = level_losses
         info["outer_stats"] = [
