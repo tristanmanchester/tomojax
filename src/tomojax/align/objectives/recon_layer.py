@@ -8,18 +8,16 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 
 from tomojax.core.geometry import Detector, Geometry, Grid
-from tomojax.core.projector import forward_project_view_T
-from tomojax.recon._tv_ops import huber_tv_value, isotropic_tv_value
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     FistaCoreResult,
-    _projection_loss,
+    fista_objective_arrays,
     fista_tv_core_arrays,
 )
 
-from .geometry_applier import BaseGeometryArrays, apply_alignment_state
-from .parametrizations import se3_from_5d
-from .state import AlignmentState
+from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from ..geometry.parametrizations import se3_from_5d
+from ..model.state import AlignmentState
 
 
 ReconDifferentiationMode = Literal["unrolled", "implicit"]
@@ -180,12 +178,6 @@ def _implicit_reconstruct_arrays(
     damping: float,
 ) -> jnp.ndarray:
     det_u, det_v = det_grid
-    weights = (
-        jnp.ones((int(projections.shape[0]),), dtype=jnp.float32)
-        if view_weights is None
-        else jnp.asarray(view_weights, dtype=jnp.float32).reshape((int(projections.shape[0]),))
-    )
-    weights = jnp.sqrt(jnp.maximum(weights, jnp.float32(0.0)))[:, None, None]
 
     def solve_primal(
         T: jnp.ndarray,
@@ -223,27 +215,16 @@ def _implicit_reconstruct_arrays(
         x_star, T, u, v, y = res
 
         def objective_x(x: jnp.ndarray, T_arg: jnp.ndarray, u_arg: jnp.ndarray, v_arg: jnp.ndarray):
-            data = _projection_loss(
+            return fista_objective_arrays(
                 T_all=T_arg,
                 grid=grid,
                 detector=detector,
                 volume=x,
                 det_grid=(u_arg, v_arg),
                 projections=y,
-                weights=weights,
-                checkpoint_projector=bool(cfg.checkpoint_projector),
-                projector_unroll=int(cfg.projector_unroll),
-                gather_dtype=str(cfg.gather_dtype),
-                views_per_batch=int(cfg.views_per_batch),
+                cfg=cfg,
+                view_weights=view_weights,
             )
-            if cfg.lambda_tv == 0.0:
-                return data
-            reg = (
-                huber_tv_value(x, float(cfg.huber_delta))
-                if cfg.regulariser == "huber_tv"
-                else isotropic_tv_value(x)
-            )
-            return data + jnp.asarray(cfg.lambda_tv, dtype=jnp.float32) * reg
 
         grad_x = jax.grad(objective_x, argnums=0)
 

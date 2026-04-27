@@ -12,16 +12,16 @@ from ..core.geometry.lamino import LaminographyGeometry
 from ..core.geometry.parallel import ParallelGeometry
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ._observer import OuterStat
-from .diagnostics import validate_active_gauge_policy
-from .dof_specs import ActiveParameterView
-from .fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
-from .folds import FoldSpec
-from .geometry_applier import BaseGeometryArrays, apply_setup_to_detector_grid, setup_axis_unit
+from .model.diagnostics import validate_active_gauge_policy
+from .model.dof_specs import ActiveParameterView
+from .objectives.fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
+from .objectives.folds import FoldSpec
+from .geometry.geometry_applier import BaseGeometryArrays, apply_setup_to_detector_grid, setup_axis_unit
 from ._loss_adapters import build_loss_adapter
 from .optimizers import ValidationLmConfig, run_active_validation_lm
-from .schedules import ResolvedAlignmentStage
-from .state import AlignmentState, PoseState, SetupGeometryState
-from .validation_residuals import accumulate_validation_normals, score_validation_fixed_volume
+from .model.schedules import ResolvedAlignmentStage
+from .model.state import AlignmentState, PoseState, SetupGeometryState
+from .objectives.validation_residuals import accumulate_validation_normals, score_validation_fixed_volume
 
 
 def _geometry_with_setup_state(

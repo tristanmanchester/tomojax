@@ -8,10 +8,10 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
-from ._loss_adapters import LossAdapter
-from .dof_specs import ActiveParameterView
-from .geometry_applier import BaseGeometryArrays, apply_alignment_state, subset_base_geometry
-from .state import AlignmentState
+from .._loss_adapters import LossAdapter
+from ..model.dof_specs import ActiveParameterView
+from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state, subset_base_geometry
+from ..model.state import AlignmentState
 
 
 @dataclass(frozen=True, slots=True)

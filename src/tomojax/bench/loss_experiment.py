@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..align.parametrizations import se3_from_5d
+from ..align.geometry.parametrizations import se3_from_5d
 from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device

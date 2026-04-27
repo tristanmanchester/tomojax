@@ -10,14 +10,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from .motion_models import (
+from .model.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
-from .dof_specs import ActiveParameterView, optimizer_step_stats
-from .dofs import DofBounds
-from .state import AlignmentState
+from .model.dof_specs import ActiveParameterView, optimizer_step_stats
+from .model.dofs import DofBounds
+from .model.state import AlignmentState
 
 
 type OptimizerStatValue = float | int | bool | str | None

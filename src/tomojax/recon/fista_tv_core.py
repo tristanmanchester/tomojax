@@ -81,12 +81,7 @@ def fista_tv_core_arrays(
     t_init = jnp.float32(1.0)
     L = jnp.maximum(jnp.asarray(cfg.L, dtype=jnp.float32), jnp.float32(1e-6))
     lam = jnp.asarray(cfg.lambda_tv, dtype=jnp.float32)
-    weights = (
-        jnp.ones((int(projections.shape[0]),), dtype=jnp.float32)
-        if view_weights is None
-        else jnp.asarray(view_weights, dtype=jnp.float32).reshape((int(projections.shape[0]),))
-    )
-    weights = jnp.sqrt(jnp.maximum(weights, jnp.float32(0.0)))[:, None, None]
+    weights = _sqrt_view_weights(projections, view_weights)
 
     def data_loss_fn(x: jnp.ndarray) -> jnp.ndarray:
         masked = _apply_support(x, cfg.support)
@@ -162,6 +157,71 @@ def fista_tv_core_arrays(
         regulariser_value=reg_final,
         effective_iters=jnp.asarray(n_iters, dtype=jnp.int32),
         status="ok",
+    )
+
+
+def projection_loss_arrays(
+    *,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    projections: jnp.ndarray,
+    cfg: FistaCoreConfig,
+    view_weights: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    """Return the weighted projection data term for differentiable recon callers."""
+    masked = _apply_support(jnp.asarray(volume, dtype=jnp.float32), cfg.support)
+    return _projection_loss(
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=masked,
+        det_grid=det_grid,
+        projections=projections,
+        weights=_sqrt_view_weights(projections, view_weights),
+        checkpoint_projector=bool(cfg.checkpoint_projector),
+        projector_unroll=int(cfg.projector_unroll),
+        gather_dtype=str(cfg.gather_dtype),
+        views_per_batch=int(cfg.views_per_batch),
+    )
+
+
+def regulariser_value_arrays(volume: jnp.ndarray, cfg: FistaCoreConfig) -> jnp.ndarray:
+    """Return the reconstruction regulariser value selected by ``cfg``."""
+    if cfg.regulariser == "huber_tv":
+        return huber_tv_value(volume, float(cfg.huber_delta))
+    return isotropic_tv_value(volume)
+
+
+def fista_objective_arrays(
+    *,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    projections: jnp.ndarray,
+    cfg: FistaCoreConfig,
+    view_weights: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    """Return the differentiable FISTA objective value for a candidate volume."""
+    data = projection_loss_arrays(
+        T_all=T_all,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=det_grid,
+        projections=projections,
+        cfg=cfg,
+        view_weights=view_weights,
+    )
+    if cfg.lambda_tv == 0.0:
+        return data
+    return data + jnp.asarray(cfg.lambda_tv, dtype=jnp.float32) * regulariser_value_arrays(
+        volume,
+        cfg,
     )
 
 
@@ -260,6 +320,19 @@ def _projection_loss(
         jnp.arange(num_chunks, dtype=jnp.int32),
     )
     return loss
+
+
+def _sqrt_view_weights(
+    projections: jnp.ndarray,
+    view_weights: jnp.ndarray | None,
+) -> jnp.ndarray:
+    n_views = int(projections.shape[0])
+    weights = (
+        jnp.ones((n_views,), dtype=jnp.float32)
+        if view_weights is None
+        else jnp.asarray(view_weights, dtype=jnp.float32).reshape((n_views,))
+    )
+    return jnp.sqrt(jnp.maximum(weights, jnp.float32(0.0)))[:, None, None]
 
 
 def _projection_loss_and_explicit_grad(

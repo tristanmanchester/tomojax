@@ -7,7 +7,7 @@ import numpy as np
 
 from tomojax.core.geometry import Geometry
 
-from ._loss_adapters import LossAdapter
+from .._loss_adapters import LossAdapter
 
 
 @dataclass(frozen=True, slots=True)

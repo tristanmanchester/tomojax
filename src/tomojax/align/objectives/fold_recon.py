@@ -11,8 +11,8 @@ from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
-from .geometry_applier import apply_setup_to_detector_grid, setup_axis_unit
-from .state import AlignmentState
+from ..geometry.geometry_applier import apply_setup_to_detector_grid, setup_axis_unit
+from ..model.state import AlignmentState
 
 
 @dataclass(frozen=True, slots=True)

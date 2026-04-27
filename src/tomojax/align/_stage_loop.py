@@ -21,16 +21,16 @@ from ._loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from .gauge import (
+from .model.gauge import (
     active_gauge_dofs,
     normalize_gauge_fix,
 )
-from .geometry_applier import BaseGeometryArrays, apply_setup_to_detector_grid
-from .schedules import (
+from .geometry.geometry_applier import BaseGeometryArrays, apply_setup_to_detector_grid
+from .model.schedules import (
     ResolvedAlignmentStage,
 )
-from .state import PoseState, alignment_state_from_checkpoint
-from .geometry_blocks import (
+from .model.state import PoseState, alignment_state_from_checkpoint
+from .geometry.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
 )

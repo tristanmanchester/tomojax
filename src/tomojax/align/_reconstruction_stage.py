@@ -12,7 +12,7 @@ from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ._observer import OuterStat
 from ._results import record_reconstruction_info as _record_reconstruction_info
-from .recon_layer import PoseAdjustedGeometry
+from .objectives.recon_layer import PoseAdjustedGeometry
 
 
 def _run_reconstruction_step(

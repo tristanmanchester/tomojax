@@ -10,20 +10,20 @@ import sys
 
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from ..align.dofs import (
+from ..align.model.dofs import (
     DofBounds,
     normalize_alignment_dofs,
     normalize_bounds,
 )
-from ..align.losses import (
+from ..align.objectives.losses import (
     AlignmentLossConfig,
     parse_loss_schedule,
     parse_loss_spec,
     validate_loss_schedule_levels,
 )
-from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
+from ..align.io.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
-from ..align.checkpoint import (
+from ..align.io.checkpoint import (
     CheckpointError,
     build_alignment_checkpoint_metadata,
     load_alignment_checkpoint,
@@ -36,7 +36,7 @@ from ..align.pipeline import (
     AlignResumeState,
     AlignMultiresResumeState,
 )
-from ..align.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
+from ..align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
 from ..calibration.manifest import build_calibrated_geometry_metadata_patch
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES

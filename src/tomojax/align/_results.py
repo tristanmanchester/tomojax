@@ -6,7 +6,11 @@ from typing import Callable, Iterable, Mapping, TypedDict
 import jax.numpy as jnp
 
 from ._observer import ObserverAction, OuterStat
-from .schedules import ResolvedAlignmentStage
+from .model.schedules import ResolvedAlignmentStage
+
+
+type GaugeFixSummary = dict[str, float | str | list[str]]
+type MetadataDict = dict[str, object]
 
 
 class AlignInfo(TypedDict):
@@ -23,12 +27,18 @@ class AlignInfo(TypedDict):
     per_view_variables: int
     pose_model_basis_shape: list[int]
     active_dofs: list[str]
+    active_pose_dofs: list[str]
+    active_geometry_dofs: list[str]
+    objective_kind: str
+    objective_kinds: list[str]
+    objective_provenance: MetadataDict | None
+    optimizer_kind: str
     completed_outer_iters: int
     small_impr_streak: int
     motion_coeffs: jnp.ndarray | None
     gauge_fix: str
     gauge_fix_dofs: list[str]
-    gauge_fix_final: dict[str, float | str | list[str]]
+    gauge_fix_final: GaugeFixSummary
 
 
 class AlignMultiresInfo(TypedDict):
@@ -46,11 +56,22 @@ class AlignMultiresInfo(TypedDict):
     per_view_variables: int | None
     pose_model_basis_shape: list[int] | None
     active_dofs: list[str]
+    active_pose_dofs: list[str]
+    active_geometry_dofs: list[str]
+    schedule: MetadataDict
+    schedule_name: str
+    schedule_stages: list[MetadataDict]
+    gauge_policy: str
+    gauge_decision: MetadataDict
+    objective_kind: str | None
+    objective_kinds: list[str]
+    objective_provenance: MetadataDict | None
     gauge_fix: str
     gauge_fix_dofs: list[str]
-    gauge_fix_final: dict[str, float | str | list[str]] | None
+    gauge_fix_final: GaugeFixSummary | None
     geometry_dofs: list[str]
-    geometry_calibration_state: dict[str, object] | None
+    geometry_calibration_state: MetadataDict | None
+    geometry_calibration_diagnostics: MetadataDict | None
 
 
 @dataclass

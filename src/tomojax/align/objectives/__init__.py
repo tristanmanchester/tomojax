@@ -9,10 +9,10 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
-from .geometry_applier import BaseGeometryArrays, apply_alignment_state
-from ._loss_adapters import LossAdapter, build_loss_adapter
-from ._loss_specs import AlignmentLossSpec
-from .state import AlignmentState
+from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from .._loss_adapters import LossAdapter, build_loss_adapter
+from .._loss_specs import AlignmentLossSpec
+from ..model.state import AlignmentState
 
 
 ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]

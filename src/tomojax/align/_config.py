@@ -6,17 +6,17 @@ from typing import Literal, Mapping
 from ..core.geometry.base import Geometry
 from ..recon._tv_ops import Regulariser
 from ._loss_specs import AlignmentLossConfig, L2OtsuLossSpec
-from .diagnostics import GaugePolicy
-from .dofs import (
+from .model.diagnostics import GaugePolicy
+from .model.dofs import (
     DofBounds,
     ScopedAlignmentDofs,
     bounds_vectors,
     normalize_alignment_dofs,
     normalize_bounds,
 )
-from .gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
-from .geometry_blocks import normalize_geometry_dofs
-from .schedules import AlignmentSchedule, ResolvedAlignmentSchedule, resolve_alignment_schedule
+from .model.gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
+from .geometry.geometry_blocks import normalize_geometry_dofs
+from .model.schedules import AlignmentSchedule, ResolvedAlignmentSchedule, resolve_alignment_schedule
 
 
 def _active_dof_mask_for_cfg(cfg: "AlignConfig") -> tuple[bool, bool, bool, bool, bool]:

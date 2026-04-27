@@ -18,7 +18,7 @@ from tomojax.calibration.state import CalibrationState, CalibrationVariable
 from tomojax.core.geometry import Detector, Geometry, Grid, RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
-from tomojax.align.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
+from tomojax.align.model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
 
 
 GEOMETRY_DOFS: tuple[str, ...] = GEOMETRY_DOF_NAMES

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Compatibility facade for alignment loss specs, kernels, and adapters."""
 
-from ._loss_adapters import (
+from .._loss_adapters import (
     GaussNewtonWeightFn,
     LossAdapter,
     LossBuilderFn,
@@ -11,7 +11,7 @@ from ._loss_adapters import (
     build_loss_adapter,
     loss_supports_setup_validation_lm,
 )
-from ._loss_kernels import (
+from .._loss_kernels import (
     _compute_otsu_threshold,
     _loss_barron,
     _loss_cauchy,
@@ -44,7 +44,7 @@ from ._loss_kernels import (
     _sobel,
     _validated_renyi_alpha,
 )
-from ._loss_specs import (
+from .._loss_specs import (
     AlignmentLossConfig,
     AlignmentLossSchedule,
     AlignmentLossSpec,
@@ -71,7 +71,7 @@ from ._loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from ._loss_state import LossState
+from .._loss_state import LossState
 
 __all__ = [
     name

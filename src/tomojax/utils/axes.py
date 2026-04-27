@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence, overload
 
 import numpy as np
 
@@ -12,9 +12,12 @@ try:  # pragma: no cover - JAX might be absent in build docs
     import jax  # type: ignore
     import jax.numpy as jnp  # type: ignore
 
+    type JaxArray = jax.Array
     _JAX_ARRAY_TYPES = (jax.Array,)  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - non-JAX contexts
+    jax = None  # type: ignore[assignment]
     jnp = None  # type: ignore[assignment]
+    type JaxArray = Any
     _JAX_ARRAY_TYPES: tuple[type, ...] = ()
 
 
@@ -41,7 +44,19 @@ def axes_to_perm(src: str, dst: str) -> tuple[int, int, int]:
     return tuple(s.index(axis) for axis in d)
 
 
-def transpose_volume(volume: np.ndarray, src: str, dst: str):
+@overload
+def transpose_volume(volume: np.ndarray, src: str, dst: str) -> np.ndarray: ...
+
+
+@overload
+def transpose_volume(volume: JaxArray, src: str, dst: str) -> JaxArray: ...
+
+
+@overload
+def transpose_volume(volume: object, src: str, dst: str) -> np.ndarray | JaxArray: ...
+
+
+def transpose_volume(volume: object, src: str, dst: str) -> np.ndarray | JaxArray:
     """Transpose a volume from `src` axis order to `dst` order.
 
     Keeps numpy arrays as numpy and JAX arrays as JAX when possible.

@@ -23,7 +23,7 @@ from ..core.validation import (
 from ..utils.fov import cylindrical_mask_xy
 from ..utils.logging import format_duration, progress_iter
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
-from ._loss_adapters import build_loss_adapter
+from ._loss_adapters import LossAdapter, build_loss_adapter
 from ._loss_specs import loss_is_within_relative_tolerance, loss_spec_name, resolve_loss_for_level
 from ._observer import (
     ObserverAction,
@@ -34,8 +34,8 @@ from ._observer import (
 )
 from ._reconstruction_stage import _run_reconstruction_step
 from ._results import AlignCheckpointCallback, AlignInfo, AlignResumeState
-from .dofs import bounds_vectors
-from .gauge import (
+from .model.dofs import bounds_vectors
+from .model.gauge import (
     GaugeFixMode,
     active_gauge_dofs,
     apply_alignment_gauge,
@@ -43,7 +43,7 @@ from .gauge import (
     normalize_gauge_fix,
     validate_alignment_gauge_feasible,
 )
-from .motion_models import (
+from .model.motion_models import (
     build_pose_motion_model,
     expand_motion_coefficients,
     fit_motion_coefficients,
@@ -51,7 +51,7 @@ from .motion_models import (
 )
 from .objectives import ObjectiveProvenance, project_and_score_stack
 from .optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
-from .parametrizations import se3_from_5d
+from .geometry.parametrizations import se3_from_5d
 
 
 def _should_prefer_gn_candidate(
@@ -253,6 +253,30 @@ class _AlignSetupState:
     gauge_dofs: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class AlignmentRuntimeContext:
+    pose_stack: jnp.ndarray
+    det_grid: tuple[jnp.ndarray, jnp.ndarray]
+    smoothness_weights: jnp.ndarray
+    smoothness_gram: jnp.ndarray
+    smoothness_weights_sq: jnp.ndarray
+    medium_smoothness_weights_sq: jnp.ndarray
+    trans_only_smoothness_weights_sq: jnp.ndarray
+    light_smoothness_weights_sq: jnp.ndarray
+    volume_mask: jnp.ndarray | None
+    active_loss_name: str
+    loss_adapter: LossAdapter
+    loss_mask: jnp.ndarray | None
+    has_loss_mask: bool
+    supports_gauss_newton: bool
+    objective_provenance: dict[str, str]
+    nv: int
+    nu: int
+    chunk_size: int
+    num_chunks: int
+    empty_loss_mask_chunk: jnp.ndarray
+
+
 def _prepare_align_setup(
     geometry: Geometry,
     grid: Grid,
@@ -331,6 +355,79 @@ def _prepare_align_setup(
         bounds_upper=bounds_upper,
         gauge_fix=gauge_fix,
         gauge_dofs=gauge_dofs,
+    )
+
+
+def _build_alignment_runtime_context(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    n_views: int,
+    active_mask: jnp.ndarray,
+    det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> AlignmentRuntimeContext:
+    pose_stack = stack_view_poses(geometry, n_views)
+    validate_pose_stack(pose_stack, n_views, context="align geometry")
+    det_grid = get_detector_grid_device(detector) if det_grid_override is None else det_grid_override
+
+    smoothness_weights = (
+        jnp.array(
+            [cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans],
+            dtype=jnp.float32,
+        )
+        * active_mask
+    )
+    smoothness_gram = _second_difference_gram(n_views)
+    smoothness_weights_sq = smoothness_weights * smoothness_weights
+    medium_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.4)
+    trans_only_smoothness_weights_sq = smoothness_weights_sq.at[:3].set(0.0)
+    light_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.25)
+
+    active_loss_spec = resolve_loss_for_level(cfg.loss, level_factor=1)
+    active_loss_name = loss_spec_name(active_loss_spec)
+    loss_adapter = build_loss_adapter(active_loss_spec, projections)
+    loss_mask = getattr(loss_adapter.state, "mask", None)
+    chunk_size = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
+    chunk_size = min(chunk_size, n_views)
+    nv = int(projections.shape[1])
+    nu = int(projections.shape[2])
+
+    return AlignmentRuntimeContext(
+        pose_stack=pose_stack,
+        det_grid=det_grid,
+        smoothness_weights=smoothness_weights,
+        smoothness_gram=smoothness_gram,
+        smoothness_weights_sq=smoothness_weights_sq,
+        medium_smoothness_weights_sq=medium_smoothness_weights_sq,
+        trans_only_smoothness_weights_sq=trans_only_smoothness_weights_sq,
+        light_smoothness_weights_sq=light_smoothness_weights_sq,
+        volume_mask=_build_alignment_volume_mask(
+            grid,
+            detector,
+            mask_vol=str(getattr(cfg, "mask_vol", "off")),
+        ),
+        active_loss_name=active_loss_name,
+        loss_adapter=loss_adapter,
+        loss_mask=loss_mask,
+        has_loss_mask=loss_mask is not None,
+        supports_gauss_newton=loss_adapter.supports_gauss_newton,
+        objective_provenance=ObjectiveProvenance(
+            outer_loss_source="AlignmentLossSpec",
+            outer_loss_kind=active_loss_name,
+            inner_data_term="current_reconstruction",
+            inner_regulariser="none",
+            validation_split="none",
+            differentiation_mode="none",
+            initialization_policy="current_level_volume",
+        ).to_dict(),
+        nv=nv,
+        nu=nu,
+        chunk_size=chunk_size,
+        num_chunks=(n_views + chunk_size - 1) // chunk_size,
+        empty_loss_mask_chunk=jnp.zeros((chunk_size, nv, nu), dtype=jnp.float32),
     )
 
 
@@ -480,55 +577,36 @@ def align(
     stopped_by_observer = False
     observer_action: ObserverAction = "continue"
 
-    # Precompute nominal poses once
-    T_nom_all = stack_view_poses(geometry, n_views)
-    validate_pose_stack(T_nom_all, n_views, context="align geometry")
-
-    # Precompute detector grid once (device arrays) to avoid repeated transfers/logging
-    det_grid = get_detector_grid_device(detector) if det_grid_override is None else det_grid_override
-
-    # Static smoothness weights to avoid rebuilding inside jitted loss
-    W_weights = (
-        jnp.array([cfg.w_rot, cfg.w_rot, cfg.w_rot, cfg.w_trans, cfg.w_trans], dtype=jnp.float32)
-        * active_mask
+    runtime = _build_alignment_runtime_context(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        cfg=cfg,
+        n_views=n_views,
+        active_mask=active_mask,
+        det_grid_override=det_grid_override,
     )
-    smoothness_gram = _second_difference_gram(n_views)
-    smoothness_weights_sq = W_weights * W_weights
-    medium_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.4)
-    trans_only_smoothness_weights_sq = smoothness_weights_sq.at[:3].set(0.0)
-    light_smoothness_weights_sq = smoothness_weights_sq * jnp.float32(0.25)
-
-    # Optional static volume mask before projection
-    vol_mask = _build_alignment_volume_mask(
-        grid,
-        detector,
-        mask_vol=str(getattr(cfg, "mask_vol", "off")),
-    )
-
-    # Build per-view loss once (may precompute masks on targets)
-    active_loss_spec = resolve_loss_for_level(cfg.loss, level_factor=1)
-    active_loss_name = loss_spec_name(active_loss_spec)
-    loss_adapter = build_loss_adapter(active_loss_spec, projections)
-    per_view_loss_fn = loss_adapter.per_view_loss
-    loss_state = loss_adapter.state
-    active_objective_provenance = ObjectiveProvenance(
-        outer_loss_source="AlignmentLossSpec",
-        outer_loss_kind=active_loss_name,
-        inner_data_term="current_reconstruction",
-        inner_regulariser="none",
-        validation_split="none",
-        differentiation_mode="none",
-        initialization_policy="current_level_volume",
-    ).to_dict()
-
-    nv = int(projections.shape[1])
-    nu = int(projections.shape[2])
-    chunk_size = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
-    chunk_size = min(chunk_size, n_views)
-    num_chunks = (n_views + chunk_size - 1) // chunk_size
-    loss_mask = getattr(loss_state, "mask", None)
-    has_loss_mask = loss_mask is not None
-    ls_like = loss_adapter.supports_gauss_newton
+    T_nom_all = runtime.pose_stack
+    det_grid = runtime.det_grid
+    W_weights = runtime.smoothness_weights
+    smoothness_gram = runtime.smoothness_gram
+    smoothness_weights_sq = runtime.smoothness_weights_sq
+    medium_smoothness_weights_sq = runtime.medium_smoothness_weights_sq
+    trans_only_smoothness_weights_sq = runtime.trans_only_smoothness_weights_sq
+    light_smoothness_weights_sq = runtime.light_smoothness_weights_sq
+    vol_mask = runtime.volume_mask
+    active_loss_name = runtime.active_loss_name
+    loss_adapter = runtime.loss_adapter
+    per_view_loss_fn = runtime.loss_adapter.per_view_loss
+    active_objective_provenance = runtime.objective_provenance
+    nv = runtime.nv
+    nu = runtime.nu
+    chunk_size = runtime.chunk_size
+    num_chunks = runtime.num_chunks
+    loss_mask = runtime.loss_mask
+    has_loss_mask = runtime.has_loss_mask
+    ls_like = runtime.supports_gauss_newton
 
     def _chunk_schedule(i: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         i = jnp.asarray(i, dtype=jnp.int32)
@@ -584,7 +662,7 @@ def align(
     else:
         motion_loss_and_grad = None
 
-    empty_loss_mask_chunk = jnp.zeros((chunk_size, nv, nu), dtype=jnp.float32)
+    empty_loss_mask_chunk = runtime.empty_loss_mask_chunk
 
     def _loss_mask_chunk(start_shifted: jnp.ndarray) -> jnp.ndarray:
         if has_loss_mask:

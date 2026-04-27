@@ -15,7 +15,7 @@ from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.views import stack_view_poses
 
 from .parametrizations import se3_from_5d
-from .state import AlignmentState, SetupGeometryState
+from ..model.state import AlignmentState, SetupGeometryState
 
 
 @dataclass(frozen=True, slots=True)
