@@ -254,41 +254,43 @@ def test_write_visuals_emits_rich_inspection_artifacts(tmp_path):
         "aligned_tv_volume_nmse": generator._volume_nmse(aligned, base),
     }
     paths = generator._write_visuals(
-        scenario,
+        generator.AlignmentVisualizationPayload(
+            scenario=generator._visual_scenario(scenario),
+            profile=generator._visual_profile(generator.smoke_profile()),
+            theta_span=180.0,
+            truth=base,
+            naive_fbp=naive,
+            calibrated_fbp=calibrated,
+            aligned_tv=aligned,
+            estimates={
+                "det_u_px": -2.9,
+                "det_v_px": 0.0,
+                "detector_roll_deg": 0.0,
+                "axis_rot_x_deg": 0.0,
+                "axis_rot_y_deg": 0.0,
+            },
+            metrics=metrics,
+            diagnostics={"schema_version": 1, "overall_status": "converged", "blocks": []},
+            outer_stats=[
+                {
+                    "loss_kind": "l2_otsu",
+                    "level_factor": 4,
+                    "geometry_block": "detector_center",
+                    "geometry_loss_before": 1.0,
+                    "geometry_loss_after": 0.7,
+                    "geometry_accepted": True,
+                },
+                {
+                    "loss_kind": "l2_otsu",
+                    "level_factor": 4,
+                    "geometry_block": "detector_center",
+                    "geometry_loss_before": 0.7,
+                    "geometry_loss_after": 0.5,
+                    "geometry_accepted": False,
+                },
+            ],
+        ),
         out_dir=tmp_path,
-        profile=generator.smoke_profile(),
-        theta_span=180.0,
-        truth=base,
-        naive_fbp=naive,
-        calibrated_fbp=calibrated,
-        aligned_tv=aligned,
-        estimates={
-            "det_u_px": -2.9,
-            "det_v_px": 0.0,
-            "detector_roll_deg": 0.0,
-            "axis_rot_x_deg": 0.0,
-            "axis_rot_y_deg": 0.0,
-        },
-        metrics=metrics,
-        diagnostics={"schema_version": 1, "overall_status": "converged", "blocks": []},
-        outer_stats=[
-            {
-                "loss_kind": "l2_otsu",
-                "level_factor": 4,
-                "geometry_block": "detector_center",
-                "geometry_loss_before": 1.0,
-                "geometry_loss_after": 0.7,
-                "geometry_accepted": True,
-            },
-            {
-                "loss_kind": "l2_otsu",
-                "level_factor": 4,
-                "geometry_block": "detector_center",
-                "geometry_loss_before": 0.7,
-                "geometry_loss_after": 0.5,
-                "geometry_accepted": False,
-            },
-        ],
     )
 
     expected = {
@@ -323,10 +325,12 @@ def test_write_naive_visuals_emits_reduced_rich_panel(tmp_path):
     )
 
     paths = generator._write_naive_visuals(
-        scenario,
+        generator.NaiveVisualizationPayload(
+            scenario=generator._visual_scenario(scenario),
+            truth=base,
+            naive_fbp=naive,
+        ),
         out_dir=tmp_path,
-        truth=base,
-        naive_fbp=naive,
     )
 
     assert paths["inspection_panel"] == paths["before_after_panel"]
