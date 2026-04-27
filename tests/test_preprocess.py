@@ -9,6 +9,7 @@ import pytest
 from tomojax.cli import preprocess as preprocess_cli
 from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.data.preprocess import PreprocessConfig, _coverage_changed, preprocess_nxtomo
+import tomojax.data.preprocess as preprocess_mod
 
 
 def _attr_to_str(value) -> str:
@@ -255,6 +256,25 @@ def test_preprocess_finds_unique_nonstandard_image_key(tmp_path):
     with h5py.File(out_path, "r") as handle:
         preprocess = handle["/entry/processing/tomojax/preprocess"]
         assert _attr_to_str(preprocess.attrs["image_key_path"]) == "/entry/acquisition/image_key"
+
+
+def test_preprocess_dataset_lookup_propagates_access_errors() -> None:
+    class BrokenFile:
+        def get(self, _path):
+            raise OSError("metadata link is unreadable")
+
+    with pytest.raises(OSError, match="metadata link is unreadable"):
+        preprocess_mod._dataset_at(BrokenFile(), "/entry/instrument/detector/data")
+
+
+def test_preprocess_scalar_detector_metadata_fails_with_dataset_name(tmp_path):
+    raw_path = tmp_path / "bad_scalar.nxs"
+    with h5py.File(raw_path, "w") as handle:
+        detector = handle.create_group("entry").create_group("instrument").create_group("detector")
+        detector.create_dataset("x_pixel_size", data=np.asarray(["not-a-number"], dtype="S12"))
+
+        with pytest.raises(ValueError, match="/entry/instrument/detector/x_pixel_size"):
+            preprocess_mod._read_scalar_dataset(detector, "x_pixel_size")
 
 
 def test_preprocess_cli_smoke(tmp_path, capsys):
