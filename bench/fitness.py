@@ -740,11 +740,11 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         LaminographyGeometry,
     )
     from tomojax.data.simulate import SimConfig, simulate
-    from tomojax.align.losses import parse_loss_spec
+    from tomojax.align.objectives.losses import parse_loss_spec
     from tomojax.recon.fbp import fbp
     from tomojax.recon.fista_tv import fista_tv
     from tomojax.align.pipeline import AlignConfig, align, align_multires
-    from tomojax.align.parametrizations import se3_from_5d
+    from tomojax.align.geometry.parametrizations import se3_from_5d
     from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
     from tomojax.bench.loss_experiment import (
         metrics_abs,
