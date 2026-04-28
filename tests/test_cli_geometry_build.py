@@ -140,6 +140,17 @@ def test_build_geometry_from_meta_uses_saved_axis_unit_lab():
     )
 
 
+def test_build_geometry_from_meta_preserves_saved_detector_roll_metadata():
+    meta = _parallel_meta(
+        detector_roll_deg=1.5,
+        align_params=np.zeros((2, 5), dtype=np.float32),
+    )
+
+    _, _, geom = build_geometry_from_meta(meta, apply_saved_alignment=True)
+
+    assert getattr(geom, "detector_roll_deg") == pytest.approx(1.5)
+
+
 def test_build_geometry_from_meta_rejects_unsupported_geometry_types():
     meta = _parallel_meta(geometry_type="custom")
 

@@ -145,7 +145,7 @@ def fista_tv_core_arrays(
         (x_init, z_init, t_init, loss0),
         jnp.arange(n_iters, dtype=jnp.int32),
     )
-    data_final = loss[-1] if n_iters > 0 else data_loss_fn(x_final)
+    data_final = data_loss_fn(x_final)
     reg_final = regulariser_value(x_final)
     return FistaCoreResult(
         x=x_final,

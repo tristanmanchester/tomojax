@@ -78,6 +78,26 @@ class AugmentedGeometry:
     def rays_for_view(self, i: int) -> RayPair:
         return self.base.rays_for_view(i)
 
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.base, name)
+
+
+@dataclass
+class DetectorRollGeometry:
+    """Geometry wrapper that preserves calibrated detector roll metadata."""
+
+    base: Geometry
+    detector_roll_deg: float
+
+    def pose_for_view(self, i: int) -> PoseMatrix:
+        return self.base.pose_for_view(i)
+
+    def rays_for_view(self, i: int) -> RayPair:
+        return self.base.rays_for_view(i)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.base, name)
+
 
 def _rot_x_np(a: float) -> np.ndarray:
     c, s = np.cos(a), np.sin(a)
@@ -245,6 +265,19 @@ def _base_geometry(
     )
 
 
+def _with_detector_roll_metadata(
+    geom: Geometry,
+    meta: LoadedGeometryMeta,
+) -> Geometry:
+    detector_roll = meta.get("detector_roll_deg")
+    if detector_roll is None:
+        return geom
+    roll = float(detector_roll)
+    if not np.isfinite(roll):
+        return geom
+    return DetectorRollGeometry(base=geom, detector_roll_deg=roll)
+
+
 def build_geometry_from_meta(
     meta: LoadedGeometryMeta,
     *,
@@ -270,7 +303,10 @@ def build_geometry_from_meta(
         meta,
         apply_saved_angle_offset=apply_saved_alignment,
     )
-    geom = _base_geometry(meta=meta, grid=grid, detector=detector, thetas_deg=thetas_deg)
+    geom = _with_detector_roll_metadata(
+        _base_geometry(meta=meta, grid=grid, detector=detector, thetas_deg=thetas_deg),
+        meta,
+    )
 
     if apply_saved_alignment and meta.get("align_params") is not None:
         align_params = np.asarray(meta["align_params"], dtype=np.float32)

@@ -13,6 +13,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+from tomojax.recon.fista_tv_core import projection_loss_arrays
 
 
 def _case(size: int = 6, n_views: int = 5):
@@ -106,6 +107,46 @@ def test_fista_core_views_per_batch_preserves_reconstruction_values():
     )
 
     np.testing.assert_allclose(np.asarray(streamed.x), np.asarray(batched.x), atol=1e-5, rtol=1e-5)
+
+
+def test_fista_core_reports_final_data_loss_not_objective():
+    grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    effective = apply_alignment_state(base, state)
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    cfg = FistaCoreConfig(
+        iters=2,
+        lambda_tv=0.01,
+        L=100.0,
+        checkpoint_projector=False,
+    )
+
+    result = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+    )
+    expected_data_loss = projection_loss_arrays(
+        T_all=effective.pose_stack,
+        grid=grid,
+        detector=detector,
+        volume=result.x,
+        det_grid=effective.det_grid,
+        projections=projections,
+        cfg=cfg,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(result.data_loss),
+        np.asarray(expected_data_loss),
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def test_recon_layer_unrolled_mode_returns_diagnostics():
