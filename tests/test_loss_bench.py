@@ -225,6 +225,90 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
     np.testing.assert_allclose(np.asarray(saved.volume), 0.0)
 
 
+def test_loss_bench_exits_nonzero_after_writing_results_when_run_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expdir = tmp_path / "exp"
+    gt_path = expdir / "gt.nxs"
+    mis_path = expdir / "misaligned.nxs"
+
+    meta_mis = LoadedNXTomo.from_dataset(
+        {
+            "align_params": np.zeros((4, 5), dtype=np.float32),
+            "detector": {"nu": 6, "nv": 1, "du": 1.0, "dv": 1.0, "det_center": (0.0, 0.0)},
+            "grid": {"nx": 6, "ny": 6, "nz": 1, "vx": 1.0, "vy": 1.0, "vz": 1.0},
+            "thetas_deg": np.asarray([0.0, 45.0, 90.0, 135.0], dtype=np.float32),
+            "geometry_type": "parallel",
+            "projections": np.zeros((4, 1, 6), dtype=np.float32),
+            "volume": np.zeros((6, 6, 1), dtype=np.float32),
+            "frame": "sample",
+        }
+    )
+    _write_nxtomo(mis_path, meta_mis)
+    _write_nxtomo(gt_path, meta_mis)
+
+    monkeypatch.setattr(loss_bench, "_make_gt_dataset", lambda *args, **kwargs: str(gt_path))
+    monkeypatch.setattr(
+        loss_bench, "_make_misaligned_dataset", lambda *args, **kwargs: str(mis_path)
+    )
+    monkeypatch.setattr(loss_bench, "setup_logging", lambda: None)
+    monkeypatch.setattr(loss_bench, "log_jax_env", lambda: None)
+
+    def fail_align_multires(*args, **kwargs):
+        raise RuntimeError("synthetic align failure")
+
+    import tomojax.align.pipeline as align_pipeline
+
+    monkeypatch.setattr(align_pipeline, "align_multires", fail_align_multires)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "loss_bench",
+            "--expdir",
+            str(expdir),
+            "--nx",
+            "6",
+            "--ny",
+            "6",
+            "--nz",
+            "1",
+            "--nu",
+            "6",
+            "--nv",
+            "1",
+            "--n-views",
+            "4",
+            "--outer-iters",
+            "1",
+            "--recon-iters",
+            "1",
+            "--losses",
+            "l2",
+            "--gt-metric",
+            "none",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        loss_bench.main()
+
+    assert exc_info.value.code == 1
+
+    results = json.loads((expdir / "results.json").read_text(encoding="utf-8"))
+    record = results["results"][0]
+    assert record["loss"] == "l2"
+    assert record["status"] == "error"
+    assert record["log"] == "logs/l2.log"
+    assert record["output"] is None
+    assert record["error"] == "synthetic align failure"
+
+    csv_lines = (expdir / "results.csv").read_text(encoding="utf-8").splitlines()
+    assert len(csv_lines) == 2
+    assert csv_lines[1].split(",")[0:2] == ["l2", "error"]
+    assert csv_lines[1].split(",")[14:17] == ["logs/l2.log", "None", "synthetic align failure"]
+
+
 def test_loss_bench_reuses_existing_output_without_rerunning_alignment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

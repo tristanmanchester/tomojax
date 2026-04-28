@@ -48,7 +48,18 @@ def load_raw(input_path, proj_path, ang_path, key_path):
     return data, angles_all, image_key
 
 
-def flat_dark_correct_to_absorption(data, image_key, min_intensity=1e-6):
+def _constant_dark_field(value: float, shape: tuple[int, int]) -> np.ndarray:
+    if not np.isfinite(value):
+        raise ValueError("dark field override must be finite")
+    return np.full(shape, float(value), dtype=np.float32)
+
+
+def flat_dark_correct_to_absorption(
+    data,
+    image_key,
+    min_intensity=1e-6,
+    assume_dark_field: float | None = None,
+):
     """
     data: [N, ny, nx] raw detector counts
     image_key: [N] with 0=projection, 1=flat, 2=dark
@@ -65,8 +76,12 @@ def flat_dark_correct_to_absorption(data, image_key, min_intensity=1e-6):
     if flats.size == 0:
         raise RuntimeError("No flat fields found (image_key==1). Cannot normalise.")
     if darks.size == 0:
-        print("WARNING: No dark fields found (image_key==2). Using zeros for dark correction.")
-        darks = np.zeros_like(flats[:1])
+        if assume_dark_field is None:
+            raise ValueError(
+                "No dark fields found (image_key==2); pass --assume-dark-field VALUE "
+                "to use an explicit constant dark field"
+            )
+        darks = _constant_dark_field(assume_dark_field, tuple(data.shape[1:]))[None, ...]
 
     absorption = flat_dark_to_absorption(
         proj.astype(np.float32, copy=False),
@@ -387,6 +402,7 @@ def _prepare_wrangler_data(args) -> PreparedWranglerData:
         data=data,
         image_key=image_key,
         min_intensity=float(args.min_intensity),
+        assume_dark_field=args.assume_dark_field,
     )
 
     by = int(args.bin_y) if args.bin_y is not None else int(args.bin)
@@ -461,6 +477,15 @@ def main():
     p.add_argument("--no-grid-from-det", dest="grid_from_det", action="store_false", default=True, help="Disable deriving grid dims from detector (nu,nu,nv)")
     p.add_argument("--voxels", type=float, nargs=3, metavar=("VX","VY","VZ"), default=None, help="Override voxel sizes for metadata. Default: (du,du,dv)")
     p.add_argument("--min-intensity", type=float, default=1e-6, help="Clamp for normalisation denominator and log")
+    p.add_argument(
+        "--assume-dark-field",
+        type=float,
+        default=None,
+        help=(
+            "Explicit constant dark-field value to use when image_key contains no dark "
+            "frames. By default missing dark fields fail instead of silently using zero."
+        ),
+    )
     p.add_argument("--pad-y-multiple", type=int, default=None, help="Pad rows to nearest multiple (after binning)")
     p.add_argument("--pad-x-multiple", type=int, default=None, help="Pad cols to nearest multiple (after binning)")
     p.add_argument("--pad-mode", choices=["edge","constant","reflect"], default="edge", help="Padding mode (default: edge)")

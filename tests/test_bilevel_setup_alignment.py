@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import numpy as np
 import jax.numpy as jnp
+import pytest
 
 import tomojax.align.geometry.detector_center as detector_center
 import tomojax.align.geometry.geometry_blocks as geometry_blocks
 import tomojax.align.pipeline as pipeline
+from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
+from tomojax.align.model.diagnostics import GaugeDecision
 from tomojax.align.model.dof_specs import ActiveParameterView
 from tomojax.align.objectives.folds import FoldSpec
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import L2OtsuLossSpec
-from tomojax.align.model.schedules import schedule_preset
+from tomojax.align.model.schedules import ResolvedAlignmentStage, schedule_preset
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.pipeline import AlignConfig, align_multires
 from tomojax.align.objectives.validation_residuals import (
@@ -190,3 +193,41 @@ def test_product_setup_path_uses_validation_lm_not_active_lbfgs(monkeypatch):
     assert setup_stats
     assert setup_stats[0]["active_gradient_mode"] == "validation_residual_jvp"
     assert setup_stats[0]["schedule_stage_name"] == "direct_setup"
+
+
+def test_setup_execution_rejects_non_validation_lm_stage_before_running():
+    stage = ResolvedAlignmentStage(
+        index=0,
+        name="bad_setup",
+        active_dofs=("det_u_px",),
+        active_pose_dofs=(),
+        active_geometry_dofs=("det_u_px",),
+        objective_kind="bilevel_cv",
+        optimizer_kind="lbfgs",
+        gauge_policy="diagnose_only",
+        gauge_decision=GaugeDecision(
+            policy="diagnose_only",
+            active_dofs=("det_u_px",),
+            conflicts=(),
+        ),
+        maxiter=1,
+        early_stop=True,
+    )
+
+    with pytest.raises(ValueError, match="supports only 'validation_lm'"):
+        _optimize_setup_geometry_bilevel_for_level(
+            geometry=None,
+            grid=None,
+            detector=None,
+            projections=None,
+            init_x=None,
+            init_params5=None,
+            state=None,
+            active_geometry_dofs=("det_u_px",),
+            factor=1,
+            cfg=None,
+            loss_spec=None,
+            loss_name="l2_otsu",
+            schedule_name="bad",
+            stage=stage,
+        )

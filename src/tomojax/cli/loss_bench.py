@@ -310,6 +310,10 @@ def _best_result(
     )
 
 
+def _has_failed_result(results: list[dict[str, BenchmarkResultValue]]) -> bool:
+    return any(result.get("status") == "error" for result in results)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Benchmark multiple alignment losses on a small misaligned phantom."
@@ -386,6 +390,8 @@ def main() -> None:
     if best:
         logging.info("Best by (rot_rmse_deg + trans_rmse_px): %s", best)
     print(f"Results written to {args.expdir} (results.json, results.csv)")
+    if _has_failed_result(results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover

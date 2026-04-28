@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align.model.dof_specs import ActiveParameterView, optimizer_step_stats
+from tomojax.align.model.dofs import normalize_bounds
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.calibration.axis_geometry import axis_unit_from_rotations
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
@@ -132,6 +133,36 @@ def test_tilt_alias_resolves_through_existing_geometry_rules():
     view = ActiveParameterView.from_dofs(("tilt_deg",), geometry=geometry)
 
     assert view.dofs == ("axis_rot_y_deg",)
+
+
+def test_tilt_bounds_constrain_laminography_z_active_axis():
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0)
+    geometry = LaminographyGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=[0.0, 45.0],
+        tilt_deg=30.0,
+        tilt_about="z",
+    )
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(1))
+    view = ActiveParameterView.from_dofs(("tilt_deg",), geometry=geometry)
+    bounds = normalize_bounds({"tilt_deg": (-2.0, 2.0)})
+
+    lower, upper = view.bounds_whitened(state, bounds=bounds)
+
+    assert view.dofs == ("axis_rot_y_deg",)
+    np.testing.assert_allclose(np.asarray(lower), np.asarray([-2.0]), rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(upper), np.asarray([2.0]), rtol=1e-6)
+
+
+def test_tilt_bounds_reject_ambiguous_concrete_axis_view():
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(1))
+    view = ActiveParameterView.from_dofs(("axis_rot_x_deg", "axis_rot_y_deg"))
+    bounds = normalize_bounds({"tilt_deg": (-2.0, 2.0)})
+
+    with pytest.raises(ValueError, match="Ambiguous tilt_deg alignment bound"):
+        view.bounds_whitened(state, bounds=bounds)
 
 
 def test_optimizer_stats_report_whitened_and_native_motion():

@@ -359,6 +359,52 @@ def test_align_multires_rejects_detector_center_with_active_pose_translations():
         )
 
 
+@pytest.mark.parametrize("optimizer", ["adam", "validation_lm"])
+def test_align_multires_rejects_unsupported_pose_stage_optimizer(monkeypatch, optimizer):
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0)
+    geom = ParallelGeometry(
+        grid=grid,
+        detector=det,
+        thetas_deg=np.linspace(0.0, 180.0, 4, endpoint=False, dtype=np.float32),
+    )
+    projs = jnp.zeros((4, 4, 4), dtype=jnp.float32)
+    schedule = AlignmentSchedule(
+        name="unsupported_pose_optimizer",
+        stages=(
+            AlignmentStage(
+                name=f"{optimizer}_pose",
+                active_dofs=("dx",),
+                objective_kind="fixed_volume",
+                optimizer=optimizer,  # type: ignore[arg-type]
+            ),
+        ),
+    )
+
+    def fail_align(*args, **kwargs):
+        raise AssertionError("unsupported pose optimizers must fail before pose align runs")
+
+    monkeypatch.setattr(stage_loop, "align", fail_align)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Unsupported pose-stage optimizer '{optimizer}'.*{optimizer}_pose",
+    ):
+        align_multires(
+            geom,
+            grid,
+            det,
+            projs,
+            factors=[1],
+            cfg=AlignConfig(
+                schedule=schedule,
+                outer_iters=1,
+                recon_iters=1,
+                early_stop=False,
+            ),
+        )
+
+
 def test_geometry_calibration_diagnostics_classify_underconverged_and_ill_conditioned():
     underconverged = summarize_geometry_calibration_stats(
         [

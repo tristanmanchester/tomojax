@@ -63,11 +63,12 @@ class AlignmentSchedule:
                 raise ValueError("expert_coupled stages must declare an explicit GaugePolicy")
             if (
                 stage.objective_kind in {"bilevel_cv", "all_data_bilevel"}
-                and stage.optimizer == "gn"
+                and stage.optimizer != "validation_lm"
             ):
                 raise ValueError(
-                    f"{stage.objective_kind} stages must use validation_lm, lbfgs, or adam "
-                    "unless a residual contract is explicitly provided for gn"
+                    f"{stage.objective_kind} stage {stage.name!r} uses unsupported optimizer "
+                    f"{stage.optimizer!r}; setup/bilevel stages currently support only "
+                    "'validation_lm'"
                 )
         return self
 

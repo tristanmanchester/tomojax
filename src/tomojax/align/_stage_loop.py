@@ -61,6 +61,8 @@ from ._config import (
     _resolved_schedule_for_cfg,
 )
 
+_SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
+
 
 class MultiresLevel(TypedDict):
     factor: int
@@ -234,6 +236,18 @@ def _accumulate_stage_wall_time(
         return level_wall_time
 
 
+def _pose_stage_optimizer_or_raise(stage: ResolvedAlignmentStage) -> str:
+    optimizer = str(stage.optimizer_kind)
+    if optimizer in _SUPPORTED_POSE_STAGE_OPTIMIZERS:
+        return optimizer
+    supported = ", ".join(f"{name!r}" for name in sorted(_SUPPORTED_POSE_STAGE_OPTIMIZERS))
+    raise ValueError(
+        f"Unsupported pose-stage optimizer {optimizer!r} for alignment stage {stage.name!r}; "
+        f"pose stages support {supported}. Add a pose-stage implementation before selecting "
+        "this optimizer."
+    )
+
+
 def _run_multires_level_stages(
     *,
     geometry: Geometry,
@@ -335,9 +349,7 @@ def _run_multires_level_stages(
         if not stage.active_pose_dofs:
             continue
 
-        pose_optimizer = (
-            stage.optimizer_kind if stage.optimizer_kind in {"gd", "gn", "lbfgs"} else cfg.opt_method
-        )
+        pose_optimizer = _pose_stage_optimizer_or_raise(stage)
         pose_gauge_fix = "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
         cfg_stage = replace(
             cfg,

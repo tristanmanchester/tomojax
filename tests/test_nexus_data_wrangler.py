@@ -59,9 +59,26 @@ def test_spatial_bin_and_padding_helpers() -> None:
         wrangler_mod._spatial_bin(np.zeros((2, 2, 2, 2), dtype=np.float32), 2, 2)
 
 
-def test_flat_dark_correct_handles_missing_darks_and_missing_flats(
-    capsys,
-) -> None:
+def test_flat_dark_correct_rejects_missing_darks_by_default() -> None:
+    wrangler_mod = _load_module(
+        "nexus_data_wrangler_missing_dark_test", "scripts/nexus_data_wrangler.py"
+    )
+    data = np.array(
+        [
+            [[2.0, 4.0], [4.0, 8.0]],
+            [[4.0, 8.0], [8.0, 16.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    with pytest.raises(ValueError, match="pass --assume-dark-field VALUE"):
+        wrangler_mod.flat_dark_correct_to_absorption(
+            data=data,
+            image_key=np.array([0, 1], dtype=np.int32),
+        )
+
+
+def test_flat_dark_correct_uses_explicit_missing_dark_override() -> None:
     wrangler_mod = _load_module(
         "nexus_data_wrangler_contrast_test", "scripts/nexus_data_wrangler.py"
     )
@@ -76,13 +93,33 @@ def test_flat_dark_correct_handles_missing_darks_and_missing_flats(
     absorption = wrangler_mod.flat_dark_correct_to_absorption(
         data=data,
         image_key=np.array([0, 1], dtype=np.int32),
+        assume_dark_field=0.0,
     )
 
     assert np.allclose(
         absorption,
         np.full((1, 2, 2), np.log(2.0), dtype=np.float32),
     )
-    assert "No dark fields found" in capsys.readouterr().out
+
+    with pytest.raises(ValueError, match="dark field override must be finite"):
+        wrangler_mod.flat_dark_correct_to_absorption(
+            data=data,
+            image_key=np.array([0, 1], dtype=np.int32),
+            assume_dark_field=np.nan,
+        )
+
+
+def test_flat_dark_correct_rejects_missing_flats() -> None:
+    wrangler_mod = _load_module(
+        "nexus_data_wrangler_missing_flat_test", "scripts/nexus_data_wrangler.py"
+    )
+    data = np.array(
+        [
+            [[2.0, 4.0], [4.0, 8.0]],
+            [[4.0, 8.0], [8.0, 16.0]],
+        ],
+        dtype=np.float32,
+    )
 
     with pytest.raises(RuntimeError, match="No flat fields found"):
         wrangler_mod.flat_dark_correct_to_absorption(
@@ -149,6 +186,7 @@ def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
 ) -> None:
     wrangler_mod = _load_module("nexus_data_wrangler_main_test", "scripts/nexus_data_wrangler.py")
     write_calls: list[dict[str, object]] = []
+    correction_calls: list[dict[str, object]] = []
 
     def fake_load_raw(*_args):
         return (
@@ -157,7 +195,8 @@ def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
             np.array([0, 1, 2, 0], dtype=np.int32),
         )
 
-    def fake_correct_to_absorption(*_args, **_kwargs):
+    def fake_correct_to_absorption(*_args, **kwargs):
+        correction_calls.append(kwargs)
         return np.arange(2 * 5 * 6, dtype=np.float32).reshape(2, 5, 6)
 
     def fake_write_nexus_h5(**kwargs):
@@ -183,6 +222,8 @@ def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
             "3",
             "--pixel-size",
             "1.5",
+            "--assume-dark-field",
+            "0.0",
             "--pad-y-multiple",
             "3",
             "--pad-x-multiple",
@@ -196,6 +237,7 @@ def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
     write_kwargs = write_calls[0]
     assert "Applied spatial binning: by=2, bx=3 -> new shape (2, 2, 2)" in captured.out
     assert "Padded to multiples (y=3, x=4): (2, 2, 2) -> (2, 3, 4)" in captured.out
+    assert correction_calls[0]["assume_dark_field"] == 0.0
     assert write_kwargs["grid"] == (4, 4, 3)
     assert write_kwargs["voxels"] == (4.5, 4.5, 3.0)
     assert write_kwargs["pixel_size_pixels_x"] == 4.5

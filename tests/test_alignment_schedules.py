@@ -98,8 +98,9 @@ def test_direct_mixed_setup_pose_requires_expert_gauge_policy():
     assert resolved.gauge_decision.status == "allowed_with_gauge_policy"
 
 
-def test_bilevel_cv_stages_do_not_default_to_gn():
-    with pytest.raises(ValueError, match="must use validation_lm"):
+@pytest.mark.parametrize("optimizer", ["gd", "gn", "lbfgs", "adam"])
+def test_bilevel_stages_reject_unsupported_optimizers(optimizer):
+    with pytest.raises(ValueError, match="support only 'validation_lm'"):
         AlignmentSchedule(
             name="bad",
             stages=(
@@ -107,7 +108,7 @@ def test_bilevel_cv_stages_do_not_default_to_gn():
                     name="bad",
                     active_dofs=("det_u_px",),
                     objective_kind="bilevel_cv",
-                    optimizer="gn",
+                    optimizer=optimizer,
                 ),
             ),
         ).validate()

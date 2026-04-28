@@ -203,16 +203,18 @@ def _parse_bound_float(raw: object, *, option_name: str, dof_name: str) -> float
     return value
 
 
-def _validate_bound_name(raw_name: object, *, option_name: str) -> str:
+def _validate_bound_name(
+    raw_name: object,
+    *,
+    option_name: str,
+    geometry: object | None = None,
+) -> str:
     name = str(raw_name).strip().lower()
     valid = ", ".join(ALL_ALIGNMENT_DOF_NAMES)
     if not name:
         raise ValueError(f"Missing alignment DOF name for {option_name}; valid DOFs: {valid}")
-    if name == "tilt_deg":
-        # Bounds are resolved before a concrete geometry may be available; the
-        # default laminography tilt alias follows the same x-axis convention as
-        # normalize_alignment_dofs(..., geometry=None).
-        name = "axis_rot_x_deg"
+    if name == "tilt_deg" and geometry is not None:
+        name = _tilt_alias_for_geometry(geometry)
     if name not in ALL_ALIGNMENT_DOF_INDEX:
         raise ValueError(
             f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
@@ -309,7 +311,12 @@ def _iter_bound_items(value: object, *, option_name: str) -> Iterable[tuple[obje
     )
 
 
-def normalize_bounds(value: object, *, option_name: str = "bounds") -> DofBounds:
+def normalize_bounds(
+    value: object,
+    *,
+    option_name: str = "bounds",
+    geometry: object | None = None,
+) -> DofBounds:
     """Normalize finite per-DOF bounds from CLI/config/Python inputs.
 
     Returned angular setup bounds are stored in internal radians even though the
@@ -317,7 +324,7 @@ def normalize_bounds(value: object, *, option_name: str = "bounds") -> DofBounds
     """
     parsed: dict[str, tuple[float, float]] = {}
     for raw_name, raw_pair in _iter_bound_items(value, option_name=option_name):
-        name = _validate_bound_name(raw_name, option_name=option_name)
+        name = _validate_bound_name(raw_name, option_name=option_name, geometry=geometry)
         if name in parsed:
             raise ValueError(f"Duplicate alignment bounds for {option_name}: {name!r}")
         parsed[name] = _parse_bound_pair(raw_pair, option_name=option_name, dof_name=name)

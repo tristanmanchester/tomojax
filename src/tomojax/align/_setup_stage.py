@@ -305,6 +305,23 @@ def _build_setup_stage_result(
     )
 
 
+def _validate_setup_stage_execution_contract(stage: ResolvedAlignmentStage | None) -> None:
+    if stage is None:
+        return
+    if stage.objective_kind != "bilevel_cv":
+        raise ValueError(
+            f"Setup alignment stage {stage.name!r} uses unsupported objective "
+            f"{stage.objective_kind!r}; setup execution currently supports only "
+            "'bilevel_cv'"
+        )
+    if stage.optimizer_kind != "validation_lm":
+        raise ValueError(
+            f"Setup alignment stage {stage.name!r} uses unsupported optimizer "
+            f"{stage.optimizer_kind!r}; setup execution currently supports only "
+            "'validation_lm'"
+        )
+
+
 def _optimize_setup_geometry_bilevel_for_level(
     *,
     geometry: Geometry,
@@ -322,6 +339,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     schedule_name: str | None = None,
     stage: ResolvedAlignmentStage | None = None,
 ) -> SetupStageResult:
+    _validate_setup_stage_execution_contract(stage)
     base = BaseGeometryArrays.from_geometry(geometry, detector, level_factor=int(factor))
     active_view = ActiveParameterView.from_dofs(active_geometry_dofs, geometry=geometry)
     alignment_state = state.replace(

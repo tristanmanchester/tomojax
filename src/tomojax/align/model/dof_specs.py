@@ -149,6 +149,49 @@ DOF_SPECS: dict[str, DofSpec] = {
 }
 
 
+def _bounds_overrides_for_active_dofs(
+    *,
+    dofs: tuple[str, ...],
+    bounds: DofBounds,
+) -> dict[str, tuple[float, float]]:
+    active = set(dofs)
+    overrides: dict[str, tuple[float, float]] = {}
+    tilt_bound: tuple[float, float] | None = None
+
+    for name, lower, upper in bounds:
+        pair = (lower, upper)
+        if name == "tilt_deg" and name not in active:
+            tilt_bound = pair
+            continue
+        if name in active:
+            overrides[name] = pair
+
+    if tilt_bound is None:
+        return overrides
+
+    if "tilt_deg" in active:
+        target = "tilt_deg"
+    else:
+        concrete_targets = tuple(
+            name for name in ("axis_rot_x_deg", "axis_rot_y_deg") if name in active
+        )
+        if len(concrete_targets) == 0:
+            return overrides
+        if len(concrete_targets) > 1:
+            raise ValueError(
+                "Ambiguous tilt_deg alignment bound: active setup DOFs include both "
+                "axis_rot_x_deg and axis_rot_y_deg; use a concrete bound name"
+            )
+        target = concrete_targets[0]
+
+    if target in overrides:
+        raise ValueError(
+            f"Duplicate alignment bounds after resolving tilt_deg alias: {target!r}"
+        )
+    overrides[target] = tilt_bound
+    return overrides
+
+
 def dof_spec(name: str) -> DofSpec:
     try:
         return DOF_SPECS[str(name)]
@@ -243,7 +286,11 @@ class ActiveParameterView:
         state: AlignmentState,
         bounds: DofBounds | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        overrides = {} if bounds is None else {name: (lo, hi) for name, lo, hi in bounds}
+        overrides = (
+            {}
+            if bounds is None
+            else _bounds_overrides_for_active_dofs(dofs=self.dofs, bounds=bounds)
+        )
         lower_parts: list[jnp.ndarray] = []
         upper_parts: list[jnp.ndarray] = []
         for spec in self.specs:

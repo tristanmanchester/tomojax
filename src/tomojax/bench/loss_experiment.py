@@ -7,6 +7,8 @@ and controller-specific benchmark harness code. Keep stable dataset, misalignmen
 and metric helpers here instead of duplicating them across ``bench/`` and ``scripts/``.
 """
 
+import hashlib
+import json
 import os
 from typing import Dict, List
 
@@ -23,6 +25,10 @@ from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..data.simulate import SimConfig, simulate_to_file
 
 
+_PROVENANCE_KEY = "loss_experiment_provenance"
+_PROVENANCE_VERSION = 1
+
+
 def make_gt_dataset(
     expdir: str,
     *,
@@ -37,7 +43,17 @@ def make_gt_dataset(
 ) -> str:
     """Create or reuse the benchmark ground-truth dataset for an experiment."""
     gt_path = os.path.join(expdir, "gt.nxs")
-    if os.path.exists(gt_path):
+    provenance = _gt_provenance(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nu=nu,
+        nv=nv,
+        n_views=n_views,
+        geometry=geometry,
+        seed=seed,
+    )
+    if os.path.exists(gt_path) and _has_matching_gt_provenance(gt_path, provenance):
         return gt_path
     cfg = SimConfig(
         nx=nx,
@@ -52,6 +68,7 @@ def make_gt_dataset(
         seed=seed,
     )
     simulate_to_file(cfg, gt_path)
+    _write_gt_provenance(gt_path, provenance)
     return gt_path
 
 
@@ -60,10 +77,20 @@ def make_misaligned_dataset(
 ) -> str:
     """Create or reuse a misaligned benchmark dataset derived from the GT volume."""
     mis_path = os.path.join(expdir, "misaligned.nxs")
-    if os.path.exists(mis_path):
+    meta = load_nxtomo(gt_path)
+    source_gt = _source_gt_fingerprint(meta)
+    provenance = _misaligned_provenance(
+        rot_deg=rot_deg,
+        trans_px=trans_px,
+        seed=seed,
+        source_gt=source_gt,
+    )
+    if os.path.exists(mis_path) and _has_matching_misaligned_provenance(
+        mis_path,
+        provenance,
+    ):
         return mis_path
 
-    meta = load_nxtomo(gt_path)
     volume = np.asarray(meta.volume, dtype=np.float32)
     grid, det, geom = build_geometry_from_meta(
         meta.geometry_inputs(),
@@ -110,6 +137,7 @@ def make_misaligned_dataset(
     save_meta.geometry_type = "parallel" if isinstance(geom, ParallelGeometry) else "lamino"
     save_meta.volume = volume
     save_meta.align_params = np.asarray(params5)
+    save_meta.misalign_spec = _with_provenance(save_meta.misalign_spec, provenance)
     save_meta.frame = str(meta.frame or "sample")
     save_nxtomo(
         mis_path,
@@ -117,6 +145,146 @@ def make_misaligned_dataset(
         metadata=save_meta,
     )
     return mis_path
+
+
+def _gt_provenance(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    n_views: int,
+    geometry: str,
+    seed: int,
+) -> dict[str, object]:
+    return {
+        "kind": "ground_truth",
+        "version": _PROVENANCE_VERSION,
+        "nx": int(nx),
+        "ny": int(ny),
+        "nz": int(nz),
+        "nu": int(nu),
+        "nv": int(nv),
+        "n_views": int(n_views),
+        "geometry": str(geometry),
+        "seed": int(seed),
+        "phantom": "shepp",
+        "rotation_deg": None,
+    }
+
+
+def _misaligned_provenance(
+    *,
+    rot_deg: float,
+    trans_px: float,
+    seed: int,
+    source_gt: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "kind": "misaligned",
+        "version": _PROVENANCE_VERSION,
+        "rot_deg": float(rot_deg),
+        "trans_px": float(trans_px),
+        "seed": int(seed),
+        "source_gt": source_gt,
+    }
+
+
+def _has_matching_gt_provenance(path: str, expected: dict[str, object]) -> bool:
+    try:
+        loaded = load_nxtomo(path)
+    except (OSError, KeyError, ValueError):
+        return False
+    return _read_provenance(loaded.geometry_meta) == expected
+
+
+def _has_matching_misaligned_provenance(path: str, expected: dict[str, object]) -> bool:
+    try:
+        loaded = load_nxtomo(path)
+    except (OSError, KeyError, ValueError):
+        return False
+    return _read_provenance(loaded.misalign_spec) == expected
+
+
+def _write_gt_provenance(path: str, provenance: dict[str, object]) -> None:
+    loaded = load_nxtomo(path)
+    metadata = loaded.copy_metadata()
+    metadata.geometry_meta = _with_provenance(metadata.geometry_meta, provenance)
+    save_nxtomo(path, projections=loaded.projections, metadata=metadata)
+
+
+def _read_provenance(mapping: object) -> dict[str, object] | None:
+    if not isinstance(mapping, dict):
+        return None
+    provenance = mapping.get(_PROVENANCE_KEY)
+    if not isinstance(provenance, dict):
+        return None
+    return provenance
+
+
+def _with_provenance(
+    mapping: dict[str, object] | None,
+    provenance: dict[str, object],
+) -> dict[str, object]:
+    updated = dict(mapping or {})
+    updated[_PROVENANCE_KEY] = provenance
+    return updated
+
+
+def _source_gt_fingerprint(meta) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "provenance": _read_provenance(meta.geometry_meta),
+        "projections": _array_fingerprint(meta.projections),
+        "volume": _array_fingerprint(meta.volume),
+        "thetas_deg": _array_fingerprint(meta.thetas_deg),
+        "grid": _jsonable(meta.grid),
+        "detector": _jsonable(meta.detector),
+        "geometry_type": str(meta.geometry_type),
+        "geometry_meta": _jsonable(meta.geometry_meta),
+        "frame": None if meta.frame is None else str(meta.frame),
+    }
+    return {
+        "version": _PROVENANCE_VERSION,
+        "sha256": _stable_sha256(payload),
+        "payload": payload,
+    }
+
+
+def _array_fingerprint(array: object) -> dict[str, object] | None:
+    if array is None:
+        return None
+    arr = np.ascontiguousarray(np.asarray(array))
+    return {
+        "dtype": str(arr.dtype),
+        "shape": [int(dim) for dim in arr.shape],
+        "sha256": hashlib.sha256(arr.view(np.uint8)).hexdigest(),
+    }
+
+
+def _stable_sha256(value: object) -> str:
+    encoded = json.dumps(
+        _jsonable(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _jsonable(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _jsonable(val)
+            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def metrics_abs(

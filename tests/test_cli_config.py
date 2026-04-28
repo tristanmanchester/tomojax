@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -421,6 +422,29 @@ def test_normalize_bounds_accepts_setup_units_in_public_names():
     assert bounds == (
         ("det_u_px", -8.0, 8.0),
         ("detector_roll_deg", math.radians(-5.0), math.radians(5.0)),
+    )
+
+
+def test_normalize_bounds_preserves_tilt_alias_without_geometry():
+    bounds = normalize_bounds(
+        "tilt_deg=-2:2",
+        option_name="--bounds",
+    )
+
+    assert bounds == (
+        ("tilt_deg", math.radians(-2.0), math.radians(2.0)),
+    )
+
+
+def test_normalize_bounds_resolves_tilt_alias_with_geometry():
+    bounds = normalize_bounds(
+        "tilt_deg=-2:2",
+        option_name="--bounds",
+        geometry=SimpleNamespace(tilt_about="z"),
+    )
+
+    assert bounds == (
+        ("axis_rot_y_deg", math.radians(-2.0), math.radians(2.0)),
     )
 
 
