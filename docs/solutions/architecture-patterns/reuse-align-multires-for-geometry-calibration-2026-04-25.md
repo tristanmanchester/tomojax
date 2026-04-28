@@ -727,18 +727,16 @@ of the memory contract.
 ## Related
 
 - `docs/brainstorms/geometry-calibration-solver-requirements.md`
-- `docs/plans/2026-04-26-001-refactor-unified-alignment-state-plan.md`
-- `docs/plans/2026-04-26-002-fix-cor-heldout-calibration-plan.md`
-- `docs/plans/2026-04-26-003-refactor-unified-bilevel-alignment-plan.md`
-- `docs/plans/2026-04-26-004-refactor-validation-lm-setup-alignment-plan.md`
-- `src/tomojax/align/state.py`
-- `src/tomojax/align/dof_specs.py`
-- `src/tomojax/align/geometry_applier.py`
-- `src/tomojax/align/fold_recon.py`
-- `src/tomojax/align/validation_residuals.py`
+- Historical 2026-04-26 alignment plans removed from `docs/plans/`; see Git
+  history if their step-by-step implementation detail is needed.
+- `src/tomojax/align/model/state.py`
+- `src/tomojax/align/model/dof_specs.py`
+- `src/tomojax/align/geometry/geometry_applier.py`
+- `src/tomojax/align/objectives/fold_recon.py`
+- `src/tomojax/align/objectives/validation_residuals.py`
 - `src/tomojax/align/optimizers.py`
 - `src/tomojax/align/pipeline.py`
-- `src/tomojax/align/schedules.py`
+- `src/tomojax/align/model/schedules.py`
 - `scripts/generate_alignment_before_after_128.py`
 - `tests/test_alignment_state.py`
 - `tests/test_geometry_applier.py`

@@ -1,15 +1,9 @@
 # Internal documentation
 
-These files are development-time records — benchmark smoke tests,
-implementation notes, and migration checklists. They aren't part of the
-user-facing documentation and are kept here for contributor reference.
+Current internal docs should describe contributor-facing contracts that are still
+useful while changing the repo. Historical smoke runs, benchmark notes, and old
+implementation logs belong under `docs/archive/` instead of staying mixed with
+active reference material.
 
-| File | Description |
-|------|-------------|
-| [axes-unification-checklist.md](axes-unification-checklist.md) | Volume axis-ordering migration plan |
-| [notes-lbfgs.md](notes-lbfgs.md) | L-BFGS optimizer implementation notes |
-| [fista-constraints-validation.md](fista-constraints-validation.md) | 64^3 FISTA constraint smoke test |
-| [alignment-gauge-benchmark.md](alignment-gauge-benchmark.md) | Gauge-fixing validation benchmark |
-| [alignment-lbfgs-benchmark.md](alignment-lbfgs-benchmark.md) | L-BFGS alignment smoke tests |
-| [alignment-inner-solver-benchmark.md](alignment-inner-solver-benchmark.md) | FISTA vs SPDHG inner-solver comparison |
-| [jax-optax-compatibility.md](jax-optax-compatibility.md) | JAX/Optax version compatibility fix log |
+See `docs/archive/internal-benchmarks/` for archived CPU smoke-test and benchmark
+notes from earlier development stages.

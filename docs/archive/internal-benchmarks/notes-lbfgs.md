@@ -40,8 +40,8 @@
   and fallback reasons.
 - `--lbfgs-memory-size` controls the number of previous gradient/step pairs kept
   by Optax's limited-memory inverse-Hessian approximation.
-- See `docs/alignment_lbfgs_benchmark_64.md` for the CPU `64^3` smoke-test
-  comparisons that motivated the current tuning guidance.
+- See `docs/archive/internal-benchmarks/alignment-lbfgs-benchmark.md` for the
+  CPU `64^3` smoke-test comparisons that motivated the current tuning guidance.
 
 ## Caveats & TODOs
 

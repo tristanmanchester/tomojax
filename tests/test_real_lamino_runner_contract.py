@@ -13,7 +13,10 @@ os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 _SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1] / "scripts" / "run_real_lamino_native_setup_pose_256.py"
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "real_laminography"
+    / "run_real_lamino_native_setup_pose_256.py"
 )
 _SPEC = importlib.util.spec_from_file_location("run_real_lamino_native_setup_pose_256", _SCRIPT_PATH)
 assert _SPEC is not None
