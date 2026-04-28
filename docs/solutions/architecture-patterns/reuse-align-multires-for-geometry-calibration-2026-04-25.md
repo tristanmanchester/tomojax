@@ -273,19 +273,19 @@ be.
 
 Core ownership:
 
-- `src/tomojax/align/state.py` owns `AlignmentState`, `SetupGeometryState`, and
+- `src/tomojax/align/model/state.py` owns `AlignmentState`, `SetupGeometryState`, and
   `PoseState`.
-- `src/tomojax/align/dof_specs.py` owns `DofSpec`, active DOF registration,
+- `src/tomojax/align/model/dof_specs.py` owns `DofSpec`, active DOF registration,
   native units, whitening, bounds, and active masks.
-- `src/tomojax/align/geometry_applier.py` applies setup and pose state to
+- `src/tomojax/align/geometry/geometry_applier.py` applies setup and pose state to
   geometry arrays without Python geometry mutation in the objective hot path.
-- `src/tomojax/align/fold_recon.py` owns stopped train-fold reconstruction.
-- `src/tomojax/align/validation_residuals.py` owns streamed validation residual
+- `src/tomojax/align/objectives/fold_recon.py` owns stopped train-fold reconstruction.
+- `src/tomojax/align/objectives/validation_residuals.py` owns streamed validation residual
   and normal-equation accumulation.
 - `src/tomojax/align/optimizers.py` owns validation-LM and other active-state
   optimizers.
 - `src/tomojax/align/pipeline.py` wires setup stages into `align_multires`.
-- `src/tomojax/align/schedules.py` owns preset active/frozen DOF sets.
+- `src/tomojax/align/model/schedules.py` owns preset active/frozen DOF sets.
 
 Keep geometry-block helpers as metadata/state helpers, not as private solver
 loops. Keep projection-domain COR estimates as initializers or diagnostics, not
@@ -583,11 +583,11 @@ for level in multires_levels:
 The real implementation lives across:
 
 - `src/tomojax/align/pipeline.py`,
-- `src/tomojax/align/fold_recon.py`,
-- `src/tomojax/align/validation_residuals.py`,
+- `src/tomojax/align/objectives/fold_recon.py`,
+- `src/tomojax/align/objectives/validation_residuals.py`,
 - `src/tomojax/align/optimizers.py`,
-- `src/tomojax/align/dof_specs.py`,
-- `src/tomojax/align/geometry_applier.py`.
+- `src/tomojax/align/model/dof_specs.py`,
+- `src/tomojax/align/geometry/geometry_applier.py`.
 
 ### COR setup discovery
 
@@ -731,14 +731,14 @@ of the memory contract.
 - `docs/plans/2026-04-26-002-fix-cor-heldout-calibration-plan.md`
 - `docs/plans/2026-04-26-003-refactor-unified-bilevel-alignment-plan.md`
 - `docs/plans/2026-04-26-004-refactor-validation-lm-setup-alignment-plan.md`
-- `src/tomojax/align/state.py`
-- `src/tomojax/align/dof_specs.py`
-- `src/tomojax/align/geometry_applier.py`
-- `src/tomojax/align/fold_recon.py`
-- `src/tomojax/align/validation_residuals.py`
+- `src/tomojax/align/model/state.py`
+- `src/tomojax/align/model/dof_specs.py`
+- `src/tomojax/align/geometry/geometry_applier.py`
+- `src/tomojax/align/objectives/fold_recon.py`
+- `src/tomojax/align/objectives/validation_residuals.py`
 - `src/tomojax/align/optimizers.py`
 - `src/tomojax/align/pipeline.py`
-- `src/tomojax/align/schedules.py`
+- `src/tomojax/align/model/schedules.py`
 - `scripts/generate_alignment_before_after_128.py`
 - `tests/test_alignment_state.py`
 - `tests/test_geometry_applier.py`
