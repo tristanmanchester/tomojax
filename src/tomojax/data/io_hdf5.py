@@ -58,6 +58,7 @@ class NXTomoMetadata:
     volume: np.ndarray | None = None
     align_params: np.ndarray | None = None
     align_gauge: JsonObject | None = None
+    geometry_calibration: JsonObject | None = None
     angle_offset_deg: np.ndarray | None = None
     misalign_spec: JsonObject | None = None
     simulation_artefacts: JsonObject | None = None
@@ -93,6 +94,7 @@ class NXTomoMetadata:
             volume=data.get("volume"),
             align_params=data.get("align_params"),
             align_gauge=data.get("align_gauge"),
+            geometry_calibration=data.get("geometry_calibration"),
             angle_offset_deg=data.get("angle_offset_deg"),
             misalign_spec=data.get("misalign_spec"),
             simulation_artefacts=data.get("simulation_artefacts"),
@@ -180,7 +182,8 @@ class LoadedNXTomo:
         if key == "volume_axes_source":
             return self.volume_axes_source
         if key in _NXTOMO_METADATA_FIELDS:
-            return getattr(self.metadata, key)
+            value = getattr(self.metadata, key)
+            return default if value is None else value
         geom_meta = self.metadata.geometry_meta or {}
         return geom_meta.get(key, default)
 
@@ -237,6 +240,12 @@ class LoadedNXTomo:
         tilt_about = geom_meta.get("tilt_about")
         if tilt_about is not None:
             payload["tilt_about"] = str(tilt_about)
+        axis_unit_lab = geom_meta.get("axis_unit_lab")
+        if axis_unit_lab is not None:
+            payload["axis_unit_lab"] = axis_unit_lab
+        detector_roll_deg = geom_meta.get("detector_roll_deg")
+        if detector_roll_deg is not None:
+            payload["detector_roll_deg"] = float(detector_roll_deg)
         return payload
 
 
@@ -276,7 +285,7 @@ def _attr_to_str(v: object, default: str | None = None) -> str | None:
             if v.size >= 1:
                 return _attr_to_str(v.flat[0], default)
         return str(v)
-    except Exception:
+    except (TypeError, UnicodeDecodeError, ValueError):
         return default
 
 
@@ -497,6 +506,16 @@ def _load_processing_metadata(
         if misalign_spec is not None:
             out["misalign_spec"] = misalign_spec
 
+    calibration_grp = tomojax_grp.get("calibration")
+    if calibration_grp is not None:
+        geometry_calibration = _load_json_mapping_attr(
+            calibration_grp.attrs.get("geometry_calibration_json"),
+            path=path,
+            context="geometry calibration",
+        )
+        if geometry_calibration is not None:
+            out["geometry_calibration"] = geometry_calibration
+
     simulation_grp = tomojax_grp.get("simulation")
     if simulation_grp is not None:
         simulation_artefacts = _load_json_mapping_attr(
@@ -667,37 +686,45 @@ def save_nxtomo(
             if meta.frame is not None:
                 _write_string_attr(tj, "frame", str(meta.frame))
 
-        # Optional alignment params and misalignment metadata
-        if (
+        # Optional alignment and geometry-calibration metadata
+        has_alignment_metadata = (
             meta.align_params is not None
             or meta.align_gauge is not None
             or meta.angle_offset_deg is not None
             or meta.misalign_spec is not None
-        ):
+        )
+        if has_alignment_metadata or meta.geometry_calibration is not None:
             processing = _ensure_group(entry, "processing", "NXprocess")
             tj = _ensure_group(processing, "tomojax", "NXcollection")
-            align_grp = _ensure_group(tj, "align", "NXcollection")
-            if meta.align_params is not None:
-                dset = align_grp.create_dataset(
-                    "thetas",
-                    data=np.asarray(meta.align_params, dtype=np.float32),
-                    chunks=True,
-                    compression=compression,
+            if has_alignment_metadata:
+                align_grp = _ensure_group(tj, "align", "NXcollection")
+                if meta.align_params is not None:
+                    dset = align_grp.create_dataset(
+                        "thetas",
+                        data=np.asarray(meta.align_params, dtype=np.float32),
+                        chunks=True,
+                        compression=compression,
+                    )
+                    dset.attrs["columns"] = np.array(
+                        ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
+                    )
+                if meta.align_gauge is not None:
+                    align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
+                if meta.angle_offset_deg is not None:
+                    align_grp.create_dataset(
+                        "angle_offset_deg",
+                        data=np.asarray(meta.angle_offset_deg, dtype=np.float32),
+                        chunks=True,
+                        compression=compression,
+                    )
+                if meta.misalign_spec is not None:
+                    align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
+
+            if meta.geometry_calibration is not None:
+                calibration_grp = _ensure_group(tj, "calibration", "NXcollection")
+                calibration_grp.attrs["geometry_calibration_json"] = json.dumps(
+                    meta.geometry_calibration
                 )
-                dset.attrs["columns"] = np.array(
-                    ["alpha", "beta", "phi", "dx", "dz"], dtype=h5py.string_dtype()
-                )
-            if meta.align_gauge is not None:
-                align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
-            if meta.angle_offset_deg is not None:
-                align_grp.create_dataset(
-                    "angle_offset_deg",
-                    data=np.asarray(meta.angle_offset_deg, dtype=np.float32),
-                    chunks=True,
-                    compression=compression,
-                )
-            if meta.misalign_spec is not None:
-                align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
 
         # Optional simulation artefact metadata
         if meta.simulation_artefacts is not None:
@@ -863,17 +890,38 @@ def validate_nxtomo(path: str) -> ValidationReport:
                 units = _attr_to_str(ang.attrs.get("units"))
                 if units != "degree":
                     report["issues"].append("rotation_angle units attr should be 'degree'")
-    except Exception as exc:  # pragma: no cover (defensive)
-        report["issues"].append(f"Exception during validation: {exc}")
+    except OSError as exc:
+        report["issues"].append(f"Unable to read HDF5 file: {exc}")
     return report
 
 
-def save_npz(path: str, projections: np.ndarray, **meta: DatasetValue) -> None:
-    """Simple NPZ saver for tiny tests or interop."""
-    np.savez_compressed(path, projections=projections, **meta)
+def save_npz(
+    path: str,
+    projections: np.ndarray,
+    *,
+    metadata: NXTomoMetadata | None = None,
+    **meta: DatasetValue,
+) -> None:
+    """Write a typed TomoJAX payload to compressed NPZ.
+
+    ``metadata`` is the preferred contract and mirrors ``save_nxtomo``. Extra
+    keyword metadata is retained as a compatibility path for older callers and
+    overrides fields derived from ``metadata`` when both are supplied.
+    """
+    payload: LoadedDataset = {}
+    if metadata is not None:
+        payload.update(
+            LoadedNXTomo(
+                projections=np.asarray(projections),
+                metadata=metadata,
+            ).to_dataset_dict()
+        )
+    payload.update(meta)
+    payload["projections"] = np.asarray(projections)
+    np.savez_compressed(path, **payload)
 
 
-def load_npz(path: str) -> LoadedDataset:
+def _load_npz_dataset(path: str) -> LoadedDataset:
     with np.load(path, allow_pickle=True) as z:
         out: LoadedDataset = {}
         for k in z.files:
@@ -885,14 +933,19 @@ def load_npz(path: str) -> LoadedDataset:
         return out
 
 
+def load_npz(path: str) -> LoadedNXTomo:
+    """Load a compressed NPZ payload using the same typed shape as NXtomo."""
+    return LoadedNXTomo.from_dataset(_load_npz_dataset(path))
+
+
 def convert(in_path: str, out_path: str) -> None:
     """Convert between .npz and .nxs based on file extension."""
     if in_path.endswith(".npz") and out_path.endswith((".nxs", ".h5", ".hdf5")):
         data = load_npz(in_path)
         save_nxtomo(
             out_path,
-            np.asarray(data["projections"]),
-            metadata=NXTomoMetadata.from_dataset(data),
+            data.projections,
+            metadata=data.copy_metadata(),
         )
     elif in_path.endswith((".nxs", ".h5", ".hdf5")) and out_path.endswith(".npz"):
         data = load_nxtomo(in_path)

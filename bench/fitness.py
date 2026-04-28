@@ -740,11 +740,11 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         LaminographyGeometry,
     )
     from tomojax.data.simulate import SimConfig, simulate
-    from tomojax.align.losses import parse_loss_spec
+    from tomojax.align.objectives.loss_specs import parse_loss_spec
     from tomojax.recon.fbp import fbp
     from tomojax.recon.fista_tv import fista_tv
     from tomojax.align.pipeline import AlignConfig, align, align_multires
-    from tomojax.align.parametrizations import se3_from_5d
+    from tomojax.align.geometry.parametrizations import se3_from_5d
     from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
     from tomojax.bench.loss_experiment import (
         metrics_abs,
@@ -1371,6 +1371,107 @@ class RunResult:
     gpu_sampler_error: str | None
 
 
+def _max_run_metric(runs: list[RunResult], field_name: str) -> float | None:
+    return _max_or_none([getattr(run, field_name) for run in runs])
+
+
+def _run_sampler_error(runs: list[RunResult]) -> str | None:
+    return next((run.gpu_sampler_error for run in runs if run.gpu_sampler_error), None)
+
+
+def _run_memory_report(
+    *,
+    first: RunResult,
+    warms: list[RunResult],
+    jax_profile_path: str | None,
+    jax_profile_error: str | None,
+    warmup: RunResult | None = None,
+    primer: RunResult | None = None,
+    include_cold_in_peak: bool,
+) -> dict[str, Any]:
+    setup_runs = [run for run in (warmup, primer) if run is not None]
+    peak_runs = [*setup_runs, *warms]
+    if include_cold_in_peak:
+        peak_runs.append(first)
+
+    warm_peak_gpu = _max_run_metric(warms, "peak_gpu_memory_mb")
+    warm_peak_gpu_process = _max_run_metric(warms, "peak_gpu_memory_process_mb")
+    warm_peak_gpu_device = _max_run_metric(warms, "peak_gpu_memory_device_mb")
+    warm_peak_host = _max_run_metric(warms, "peak_host_rss_mb")
+
+    peak_gpu = _max_run_metric(peak_runs, "peak_gpu_memory_mb")
+    peak_gpu_process = _max_run_metric(peak_runs, "peak_gpu_memory_process_mb")
+    peak_gpu_device = _max_run_metric(peak_runs, "peak_gpu_memory_device_mb")
+    peak_host = _max_run_metric(peak_runs, "peak_host_rss_mb")
+
+    if not include_cold_in_peak:
+        peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first.peak_gpu_memory_mb
+        peak_gpu_process = (
+            warm_peak_gpu_process
+            if warm_peak_gpu_process is not None
+            else first.peak_gpu_memory_process_mb
+        )
+        peak_gpu_device = (
+            warm_peak_gpu_device
+            if warm_peak_gpu_device is not None
+            else first.peak_gpu_memory_device_mb
+        )
+        peak_host = warm_peak_host if warm_peak_host is not None else first.peak_host_rss_mb
+
+    process_samples = [
+        getattr(run, "peak_gpu_memory_process_mb")
+        for run in [*setup_runs, first, *warms]
+        if getattr(run, "peak_gpu_memory_process_mb") is not None
+    ]
+    sample_count = int(sum(run.gpu_memory_sample_count for run in [*setup_runs, first, *warms]))
+    observed_gpu_count = max(
+        [run.gpu_memory_observed_gpu_count for run in [*setup_runs, first, *warms]],
+        default=0,
+    )
+    return {
+        "warmup_peak_gpu_memory_mb": warmup.peak_gpu_memory_mb if warmup is not None else None,
+        "primer_peak_gpu_memory_mb": primer.peak_gpu_memory_mb if primer is not None else None,
+        "first_run_peak_gpu_memory_mb": first.peak_gpu_memory_mb,
+        "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
+        "peak_gpu_memory_mb": peak_gpu,
+        "warmup_peak_gpu_memory_process_mb": (
+            warmup.peak_gpu_memory_process_mb if warmup is not None else None
+        ),
+        "primer_peak_gpu_memory_process_mb": (
+            primer.peak_gpu_memory_process_mb if primer is not None else None
+        ),
+        "first_run_peak_gpu_memory_process_mb": first.peak_gpu_memory_process_mb,
+        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
+        "peak_gpu_memory_process_mb": peak_gpu_process,
+        "warmup_peak_gpu_memory_device_mb": (
+            warmup.peak_gpu_memory_device_mb if warmup is not None else None
+        ),
+        "primer_peak_gpu_memory_device_mb": (
+            primer.peak_gpu_memory_device_mb if primer is not None else None
+        ),
+        "first_run_peak_gpu_memory_device_mb": first.peak_gpu_memory_device_mb,
+        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
+        "peak_gpu_memory_device_mb": peak_gpu_device,
+        "warmup_peak_host_rss_mb": warmup.peak_host_rss_mb if warmup is not None else None,
+        "primer_peak_host_rss_mb": primer.peak_host_rss_mb if primer is not None else None,
+        "first_run_peak_host_rss_mb": first.peak_host_rss_mb,
+        "warm_run_peak_host_rss_mb_max": warm_peak_host,
+        "peak_host_rss_mb": peak_host,
+        "gpu_memory_backend": first.gpu_memory_backend,
+        "gpu_memory_scope": "process" if process_samples else first.gpu_memory_scope,
+        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
+        "gpu_memory_sample_count": sample_count,
+        "gpu_memory_observed_gpu_count": observed_gpu_count,
+        "gpu_memory_process_source": first.gpu_memory_process_source,
+        "gpu_memory_process_supported": bool(
+            any(run.gpu_memory_process_supported for run in [*setup_runs, first, *warms])
+        ),
+        "jax_device_memory_profile_path": jax_profile_path,
+        "jax_device_memory_profile_error": jax_profile_error,
+        "gpu_sampler_error": _run_sampler_error([*setup_runs, first, *warms]),
+    }
+
+
 def _max_or_none(values: list[float | None]) -> float | None:
     finite = [float(v) for v in values if v is not None and math.isfinite(float(v))]
     if not finite:
@@ -1529,6 +1630,319 @@ def _alignment_baseline_volume(
         gather_dtype=align_cfg.gather_dtype,
     )
     return np.asarray(mods.jax.device_get(baseline), dtype=np.float32)
+
+
+@dataclass(frozen=True)
+class AlignmentQualitySection:
+    metrics: dict[str, Any]
+    final_volume: np.ndarray
+    final_info: dict[str, Any]
+
+
+def _alignment_timing_section(
+    *,
+    profile: dict[str, Any],
+    align_cfg: AlignProfileConfig,
+    warmup: RunResult | None,
+    warmup_convergence: ConvergenceRunSummary | None,
+    warmup_incomplete: bool,
+    primer: RunResult | None,
+    primer_convergence: ConvergenceRunSummary | None,
+    first: RunResult,
+    warms: list[RunResult],
+    representative_run_index: int,
+) -> dict[str, Any]:
+    warm_seconds = [run.seconds for run in warms]
+    return {
+        "profile": profile["name"],
+        "task": "align",
+        "loss_kind": align_cfg.loss_kind,
+        "success": True,
+        "warmup_seconds": (warmup.seconds if warmup is not None else None),
+        "warmup_incomplete": warmup_incomplete,
+        "primer_ran": primer is not None,
+        "primer_seconds": (primer.seconds if primer is not None else None),
+        "primer_reached_finest_level": (
+            primer_convergence.reached_finest_level if primer_convergence is not None else None
+        ),
+        "first_run_seconds": first.seconds,
+        "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
+        "warm_run_seconds_std": float(
+            statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
+        ),
+        "time_budget_seconds": align_cfg.time_budget_seconds,
+        "summary_image_path": None,
+        "summary_image_error": None,
+        "representative_run_index": representative_run_index,
+        "warmup_reached_finest_level": (
+            warmup_convergence.reached_finest_level if warmup_convergence is not None else None
+        ),
+        "warmup_stop_reason": (
+            warmup_convergence.final_stop_reason if warmup_convergence is not None else None
+        ),
+    }
+
+
+def _alignment_quality_section(
+    *,
+    bundle: FixtureBundle,
+    grid: Any,
+    detector: Any,
+    geometry: Any,
+    projections: Any,
+    warms: list[RunResult],
+    representative_run: RunResult,
+    align_cfg: AlignProfileConfig,
+    mods: ImportedModules,
+) -> AlignmentQualitySection:
+    jnp = mods.jnp
+    warm_params = np.asarray(
+        mods.jax.device_get(representative_run.output["params"]), dtype=np.float32
+    )
+    final_volume = np.asarray(
+        mods.jax.device_get(representative_run.output["volume"]), dtype=np.float32
+    )
+    final_info = representative_run.output.get("info") or {}
+    gt_params = np.asarray(bundle.align_params, dtype=np.float32)
+    warm_gt_mse_values: list[float] = []
+    warm_trans_rmse_values: list[float | None] = []
+    gt_volume = jnp.asarray(bundle.volume, dtype=jnp.float32)
+
+    for run in warms:
+        run_params = np.asarray(mods.jax.device_get(run.output["params"]), dtype=np.float32)
+        run_abs_metrics = mods.loss_metrics_abs(
+            gt_params,
+            run_params,
+            du=float(detector.du),
+            dv=float(detector.dv),
+        )
+        run_y_hat = mods.gt_projection_helper(
+            gt_volume,
+            grid,
+            detector,
+            geometry,
+            run_params,
+        )
+        warm_gt_mse_values.append(float(jnp.mean((run_y_hat - projections) ** 2).item()))
+        warm_trans_rmse_values.append(_float_or_none(run_abs_metrics.get("trans_rmse_px")))
+
+    abs_metrics = mods.loss_metrics_abs(
+        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
+    )
+    rel_metrics = mods.loss_metrics_relative(
+        gt_params,
+        warm_params,
+        du=float(detector.du),
+        dv=float(detector.dv),
+        k_step=align_cfg.k_step,
+    )
+    gf_metrics = mods.loss_metrics_gf(
+        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
+    )
+    y_hat = mods.gt_projection_helper(
+        gt_volume,
+        grid,
+        detector,
+        geometry,
+        warm_params,
+    )
+    gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
+
+    return AlignmentQualitySection(
+        final_volume=final_volume,
+        final_info=final_info,
+        metrics={
+            "quality": {
+                **abs_metrics,
+                **rel_metrics,
+                **gf_metrics,
+                "gt_mse": gt_mse,
+            },
+            "warm_gt_mse_mean": _mean_or_none(warm_gt_mse_values),
+            "warm_gt_mse_median": _median_or_none(warm_gt_mse_values),
+            "warm_gt_mse_std": (
+                float(statistics.pstdev(warm_gt_mse_values)) if len(warm_gt_mse_values) > 1 else 0.0
+            ),
+            "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
+            "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
+        },
+    )
+
+
+def _alignment_convergence_section(
+    *,
+    first_convergence: ConvergenceRunSummary | None,
+    warm_convergences: list[ConvergenceRunSummary],
+    convergence: ConvergenceConfig,
+) -> tuple[dict[str, Any], bool | None]:
+    if first_convergence is None and not warm_convergences:
+        return {}, None
+
+    warm_aggregate = _aggregate_warm_convergence_runs(
+        warm_convergences,
+        required_successes=convergence.required_warm_successes,
+    )
+    metrics = {
+        "quality_threshold_metric": convergence.metric,
+        "quality_threshold_value": convergence.threshold,
+        "quality_threshold_scope": convergence.threshold_scope,
+        "quality_threshold_met": (
+            bool(warm_aggregate["quality_threshold_met"])
+            if convergence.threshold is not None
+            else None
+        ),
+        "required_warm_successes": int(convergence.required_warm_successes),
+        "warm_threshold_hit_count": (
+            warm_aggregate["warm_threshold_hit_count"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "warm_threshold_total_runs": (
+            warm_aggregate["warm_threshold_total_runs"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "warm_threshold_success_rate": (
+            warm_aggregate["warm_threshold_success_rate"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
+        "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
+        "stopped_on_budget": warm_aggregate["stopped_on_budget"],
+        "reached_finest_level": warm_aggregate["reached_finest_level"],
+        "finest_level_first_elapsed_seconds": warm_aggregate["finest_level_first_elapsed_seconds"],
+        "finest_level_first_outer_idx": warm_aggregate["finest_level_first_outer_idx"],
+        "warm_reached_finest_level_count": warm_aggregate["warm_reached_finest_level_count"],
+        "benchmark_valid": warm_aggregate["benchmark_valid"],
+        "invalid_reason": warm_aggregate["invalid_reason"],
+        "warm_level_summaries": warm_aggregate["warm_level_summaries"],
+        "warm_stopped_on_threshold_count": warm_aggregate["warm_stopped_on_threshold_count"],
+        "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
+        "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
+        "final_stop_reason": warm_aggregate["final_stop_reason"],
+        "final_stop_level_factor": warm_aggregate["final_stop_level_factor"],
+        "first_threshold_crossing_level_factor": (
+            warm_aggregate["first_threshold_crossing_level_factor"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "cold_seconds_to_quality_threshold": (
+            first_convergence.seconds_to_threshold
+            if first_convergence is not None and convergence.threshold is not None
+            else None
+        ),
+        "warm_seconds_to_quality_threshold": (
+            warm_aggregate["warm_seconds_to_quality_threshold"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "cold_outer_iters_to_quality_threshold": (
+            first_convergence.outer_iters_to_threshold
+            if first_convergence is not None and convergence.threshold is not None
+            else None
+        ),
+        "warm_outer_iters_to_quality_threshold": (
+            warm_aggregate["warm_outer_iters_to_quality_threshold"]
+            if convergence.threshold is not None
+            else None
+        ),
+        "cold_best_quality_value": (
+            first_convergence.best_quality_value if first_convergence is not None else None
+        ),
+        "warm_best_quality_value": warm_aggregate["warm_best_quality_value"],
+        "best_quality_value": (
+            warm_aggregate["best_quality_value"]
+            if warm_aggregate["best_quality_value"] is not None
+            else (first_convergence.best_quality_value if first_convergence is not None else None)
+        ),
+        "best_quality_elapsed_seconds": (
+            warm_aggregate["best_quality_elapsed_seconds"]
+            if warm_aggregate["best_quality_elapsed_seconds"] is not None
+            else (
+                first_convergence.best_quality_elapsed_seconds
+                if first_convergence is not None
+                else None
+            )
+        ),
+        "cold_total_outer_iters_executed": (
+            first_convergence.total_outer_iters_executed if first_convergence is not None else None
+        ),
+        "warm_total_outer_iters_executed": warm_aggregate["warm_total_outer_iters_executed"],
+        "total_outer_iters_executed": (
+            warm_aggregate["total_outer_iters_executed"]
+            if warm_aggregate["total_outer_iters_executed"] is not None
+            else (
+                first_convergence.total_outer_iters_executed
+                if first_convergence is not None
+                else None
+            )
+        ),
+        "cold_convergence_trace": first_convergence.trace if first_convergence is not None else [],
+        "warm_convergence_trace": warm_aggregate["warm_convergence_trace"],
+        "warm_convergence_traces": warm_aggregate["warm_convergence_traces"],
+    }
+    return metrics, bool(warm_aggregate["benchmark_valid"])
+
+
+def _alignment_objective_policy_section(
+    metrics: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+    first_convergence: ConvergenceRunSummary | None,
+) -> dict[str, Any]:
+    objective_policy_metrics = _apply_time_memguard_objective(metrics, profile)
+    if objective_policy_metrics and first_convergence is not None:
+        quality_contract = _profile_block(profile, "quality_contract")
+        cold_contract = _quality_contract_crossing(
+            list(first_convergence.trace or []),
+            finest_only=bool(quality_contract.get("finest_only", True)),
+            gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
+            trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
+        )
+        objective_policy_metrics["cold_seconds_to_quality_contract"] = cold_contract.get(
+            "elapsed_seconds"
+        )
+        objective_policy_metrics["cold_outer_iters_to_quality_contract"] = cold_contract.get(
+            "outer_idx"
+        )
+    return objective_policy_metrics
+
+
+def _add_alignment_summary_artifact(
+    metrics: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+    out_path: Path,
+    bundle: FixtureBundle,
+    align_cfg: AlignProfileConfig,
+    final_volume: np.ndarray,
+    final_info: dict[str, Any],
+    mods: ImportedModules,
+) -> None:
+    if not _should_render_alignment_summary(profile):
+        return
+    summary_path = _alignment_summary_path(out_path)
+    try:
+        baseline_volume = _alignment_baseline_volume(bundle, align_cfg, mods)
+        save_alignment_summary(
+            out_path=summary_path,
+            profile_name=str(profile["name"]),
+            gt_volume=np.asarray(bundle.volume, dtype=np.float32),
+            baseline_volume=baseline_volume,
+            final_volume=final_volume,
+            loss_history=[float(v) for v in list(final_info.get("loss") or [])],
+            convergence_trace=metrics.get("warm_convergence_trace"),
+            convergence_metric_name=metrics.get("quality_threshold_metric"),
+            quality_threshold_value=metrics.get("quality_threshold_value"),
+            metrics=metrics,
+            quality=dict(metrics["quality"]),
+            fixture=bundle.shape_summary,
+            representative_run_index=metrics.get("representative_run_index"),
+        )
+        metrics["summary_image_path"] = str(summary_path)
+    except Exception as exc:
+        metrics["summary_image_error"] = str(exc)
 
 
 def _make_align_task(
@@ -1863,30 +2277,16 @@ def _run_recon_profile(
     warm_volume = warms[-1].output["volume"]
     recon_mse = float(jnp.mean((warm_volume - volume_gt) ** 2).item())
 
-    warm_peak_gpu = max(
-        (v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None
-    )
-    warm_peak_gpu_process = max(
-        (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_gpu_device = max(
-        (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_host = max(
-        (v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None
-    )
-    first_peak_gpu = first.peak_gpu_memory_mb
-    first_peak_gpu_process = first.peak_gpu_memory_process_mb
-    first_peak_gpu_device = first.peak_gpu_memory_device_mb
-    first_peak_host = first.peak_host_rss_mb
     jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
         mods, measurement_cfg, out_path
     )
-
-    peak_gpu = warm_peak_gpu if warm_peak_gpu is not None else first_peak_gpu
-    peak_host = warm_peak_host if warm_peak_host is not None else first_peak_host
+    memory_metrics = _run_memory_report(
+        first=first,
+        warms=warms,
+        jax_profile_path=jax_profile_path,
+        jax_profile_error=jax_profile_error,
+        include_cold_in_peak=False,
+    )
 
     metrics = {
         "profile": profile["name"],
@@ -1897,46 +2297,10 @@ def _run_recon_profile(
         "warm_run_seconds_std": float(
             statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
         ),
-        "first_run_peak_gpu_memory_mb": first_peak_gpu,
-        "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
-        "peak_gpu_memory_mb": peak_gpu,
-        "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
-        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
-        "peak_gpu_memory_process_mb": (
-            warm_peak_gpu_process if warm_peak_gpu_process is not None else first_peak_gpu_process
-        ),
-        "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
-        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
-        "peak_gpu_memory_device_mb": (
-            warm_peak_gpu_device if warm_peak_gpu_device is not None else first_peak_gpu_device
-        ),
-        "first_run_peak_host_rss_mb": first_peak_host,
-        "warm_run_peak_host_rss_mb_max": warm_peak_host,
-        "peak_host_rss_mb": peak_host,
-        "gpu_memory_backend": first.gpu_memory_backend,
-        "gpu_memory_scope": (
-            "process"
-            if (warm_peak_gpu_process is not None or first_peak_gpu_process is not None)
-            else first.gpu_memory_scope
-        ),
-        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
-        "gpu_memory_sample_count": int(
-            first.gpu_memory_sample_count + sum(w.gpu_memory_sample_count for w in warms)
-        ),
-        "gpu_memory_observed_gpu_count": max(
-            [first.gpu_memory_observed_gpu_count, *[w.gpu_memory_observed_gpu_count for w in warms]]
-        ),
-        "gpu_memory_process_source": first.gpu_memory_process_source,
-        "gpu_memory_process_supported": bool(
-            first.gpu_memory_process_supported or any(w.gpu_memory_process_supported for w in warms)
-        ),
-        "jax_device_memory_profile_path": jax_profile_path,
-        "jax_device_memory_profile_error": jax_profile_error,
+        **memory_metrics,
         "quality": {
             "recon_mse": recon_mse,
         },
-        "gpu_sampler_error": first.gpu_sampler_error
-        or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None),
     }
     return metrics
 
@@ -2075,380 +2439,78 @@ def _run_align_profile(
     first = warms[0]
     representative_run_index = len(warms) - 1
     representative_run = warms[representative_run_index]
-    warm_seconds = [run.seconds for run in warms]
-    warm_params = np.asarray(
-        mods.jax.device_get(representative_run.output["params"]), dtype=np.float32
-    )
-    final_volume = np.asarray(
-        mods.jax.device_get(representative_run.output["volume"]), dtype=np.float32
-    )
-    final_info = representative_run.output.get("info") or {}
     first_convergence = first.output.get("convergence")
     warm_convergences = [
         run.output.get("convergence") for run in warms if run.output.get("convergence") is not None
     ]
-    gt_params = np.asarray(bundle.align_params, dtype=np.float32)
-    warm_gt_mse_values: list[float] = []
-    warm_trans_rmse_values: list[float | None] = []
-    gt_volume = jnp.asarray(bundle.volume, dtype=jnp.float32)
-    for run in warms:
-        run_params = np.asarray(mods.jax.device_get(run.output["params"]), dtype=np.float32)
-        run_abs_metrics = mods.loss_metrics_abs(
-            gt_params,
-            run_params,
-            du=float(detector.du),
-            dv=float(detector.dv),
-        )
-        run_y_hat = mods.gt_projection_helper(
-            gt_volume,
-            grid,
-            detector,
-            geometry,
-            run_params,
-        )
-        warm_gt_mse_values.append(float(jnp.mean((run_y_hat - projections) ** 2).item()))
-        warm_trans_rmse_values.append(_float_or_none(run_abs_metrics.get("trans_rmse_px")))
-    abs_metrics = mods.loss_metrics_abs(
-        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
-    )
-    rel_metrics = mods.loss_metrics_relative(
-        gt_params,
-        warm_params,
-        du=float(detector.du),
-        dv=float(detector.dv),
-        k_step=align_cfg.k_step,
-    )
-    gf_metrics = mods.loss_metrics_gf(
-        gt_params, warm_params, du=float(detector.du), dv=float(detector.dv)
-    )
-    y_hat = mods.gt_projection_helper(
-        gt_volume,
-        grid,
-        detector,
-        geometry,
-        warm_params,
-    )
-    gt_mse = float(jnp.mean((y_hat - projections) ** 2).item())
 
-    warm_peak_gpu = max(
-        (v for v in [run.peak_gpu_memory_mb for run in warms] if v is not None), default=None
-    )
-    warm_peak_gpu_process = max(
-        (v for v in [run.peak_gpu_memory_process_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_gpu_device = max(
-        (v for v in [run.peak_gpu_memory_device_mb for run in warms] if v is not None),
-        default=None,
-    )
-    warm_peak_host = max(
-        (v for v in [run.peak_host_rss_mb for run in warms] if v is not None), default=None
-    )
-    warmup_peak_gpu = warmup.peak_gpu_memory_mb if warmup is not None else None
-    warmup_peak_gpu_process = warmup.peak_gpu_memory_process_mb if warmup is not None else None
-    warmup_peak_gpu_device = warmup.peak_gpu_memory_device_mb if warmup is not None else None
-    warmup_peak_host = warmup.peak_host_rss_mb if warmup is not None else None
-    primer_peak_gpu = primer.peak_gpu_memory_mb if primer is not None else None
-    primer_peak_gpu_process = primer.peak_gpu_memory_process_mb if primer is not None else None
-    primer_peak_gpu_device = primer.peak_gpu_memory_device_mb if primer is not None else None
-    primer_peak_host = primer.peak_host_rss_mb if primer is not None else None
-    first_peak_gpu = first.peak_gpu_memory_mb
-    first_peak_gpu_process = first.peak_gpu_memory_process_mb
-    first_peak_gpu_device = first.peak_gpu_memory_device_mb
-    first_peak_host = first.peak_host_rss_mb
     jax_profile_path, jax_profile_error = _maybe_save_jax_device_memory_profile(
         mods, measurement_cfg, out_path
     )
-    peak_gpu_candidates = [
-        v
-        for v in (warmup_peak_gpu, primer_peak_gpu, first_peak_gpu, warm_peak_gpu)
-        if v is not None
-    ]
-    peak_host_candidates = [
-        v
-        for v in (warmup_peak_host, primer_peak_host, first_peak_host, warm_peak_host)
-        if v is not None
-    ]
-    peak_gpu = max(peak_gpu_candidates) if peak_gpu_candidates else None
-    peak_host = max(peak_host_candidates) if peak_host_candidates else None
+    memory_metrics = _run_memory_report(
+        first=first,
+        warms=warms,
+        warmup=warmup,
+        primer=primer,
+        jax_profile_path=jax_profile_path,
+        jax_profile_error=jax_profile_error,
+        include_cold_in_peak=True,
+    )
 
-    metrics = {
-        "profile": profile["name"],
-        "task": "align",
-        "loss_kind": align_cfg.loss_kind,
-        "success": True,
-        "warmup_seconds": (warmup.seconds if warmup is not None else None),
-        "warmup_incomplete": warmup_incomplete,
-        "warmup_peak_gpu_memory_mb": warmup_peak_gpu,
-        "primer_ran": primer is not None,
-        "primer_seconds": (primer.seconds if primer is not None else None),
-        "primer_reached_finest_level": (
-            primer_convergence.reached_finest_level if primer_convergence is not None else None
-        ),
-        "primer_peak_gpu_memory_mb": primer_peak_gpu,
-        "first_run_seconds": first.seconds,
-        "warm_run_seconds_mean": float(statistics.mean(warm_seconds)),
-        "warm_run_seconds_std": float(
-            statistics.pstdev(warm_seconds) if len(warm_seconds) > 1 else 0.0
-        ),
-        "warmup_peak_gpu_memory_process_mb": warmup_peak_gpu_process,
-        "primer_peak_gpu_memory_process_mb": primer_peak_gpu_process,
-        "first_run_peak_gpu_memory_mb": first_peak_gpu,
-        "warm_run_peak_gpu_memory_mb_max": warm_peak_gpu,
-        "peak_gpu_memory_mb": peak_gpu,
-        "warmup_peak_gpu_memory_device_mb": warmup_peak_gpu_device,
-        "primer_peak_gpu_memory_device_mb": primer_peak_gpu_device,
-        "first_run_peak_gpu_memory_process_mb": first_peak_gpu_process,
-        "warm_run_peak_gpu_memory_process_mb_max": warm_peak_gpu_process,
-        "peak_gpu_memory_process_mb": _max_or_none(
-            [
-                warmup_peak_gpu_process,
-                primer_peak_gpu_process,
-                first_peak_gpu_process,
-                warm_peak_gpu_process,
-            ]
-        ),
-        "warmup_peak_host_rss_mb": warmup_peak_host,
-        "primer_peak_host_rss_mb": primer_peak_host,
-        "first_run_peak_gpu_memory_device_mb": first_peak_gpu_device,
-        "warm_run_peak_gpu_memory_device_mb_max": warm_peak_gpu_device,
-        "peak_gpu_memory_device_mb": _max_or_none(
-            [
-                warmup_peak_gpu_device,
-                primer_peak_gpu_device,
-                first_peak_gpu_device,
-                warm_peak_gpu_device,
-            ]
-        ),
-        "first_run_peak_host_rss_mb": first_peak_host,
-        "warm_run_peak_host_rss_mb_max": warm_peak_host,
-        "peak_host_rss_mb": peak_host,
-        "gpu_memory_backend": first.gpu_memory_backend,
-        "gpu_memory_scope": (
-            "process"
-            if (
-                warmup_peak_gpu_process is not None
-                or primer_peak_gpu_process is not None
-                or warm_peak_gpu_process is not None
-                or first_peak_gpu_process is not None
-            )
-            else first.gpu_memory_scope
-        ),
-        "gpu_memory_sample_interval_seconds": first.gpu_memory_sample_interval_seconds,
-        "gpu_memory_sample_count": int(
-            (warmup.gpu_memory_sample_count if warmup is not None else 0)
-            + (primer.gpu_memory_sample_count if primer is not None else 0)
-            + sum(w.gpu_memory_sample_count for w in warms)
-        ),
-        "gpu_memory_observed_gpu_count": max(
-            [
-                *([warmup.gpu_memory_observed_gpu_count] if warmup is not None else []),
-                *([primer.gpu_memory_observed_gpu_count] if primer is not None else []),
-                *[w.gpu_memory_observed_gpu_count for w in warms],
-            ]
-        ),
-        "gpu_memory_process_source": first.gpu_memory_process_source,
-        "gpu_memory_process_supported": bool(
-            (warmup.gpu_memory_process_supported if warmup is not None else False)
-            or (primer.gpu_memory_process_supported if primer is not None else False)
-            or any(w.gpu_memory_process_supported for w in warms)
-        ),
-        "jax_device_memory_profile_path": jax_profile_path,
-        "jax_device_memory_profile_error": jax_profile_error,
-        "quality": {
-            **abs_metrics,
-            **rel_metrics,
-            **gf_metrics,
-            "gt_mse": gt_mse,
-        },
-        "time_budget_seconds": time_budget_seconds,
-        "quality_threshold_scope": convergence.threshold_scope,
-        "warm_gt_mse_mean": _mean_or_none(warm_gt_mse_values),
-        "warm_gt_mse_median": _median_or_none(warm_gt_mse_values),
-        "warm_gt_mse_std": (
-            float(statistics.pstdev(warm_gt_mse_values)) if len(warm_gt_mse_values) > 1 else 0.0
-        ),
-        "warm_trans_rmse_px_mean": _mean_or_none(warm_trans_rmse_values),
-        "warm_trans_rmse_px_median": _median_or_none(warm_trans_rmse_values),
-        "gpu_sampler_error": (
-            (warmup.gpu_sampler_error if warmup is not None else None)
-            or (primer.gpu_sampler_error if primer is not None else None)
-            or first.gpu_sampler_error
-            or next((w.gpu_sampler_error for w in warms if w.gpu_sampler_error), None)
-        ),
-        "summary_image_path": None,
-        "summary_image_error": None,
-        "representative_run_index": representative_run_index,
-        "warmup_reached_finest_level": (
-            warmup_convergence.reached_finest_level if warmup_convergence is not None else None
-        ),
-        "warmup_stop_reason": (
-            warmup_convergence.final_stop_reason if warmup_convergence is not None else None
-        ),
-    }
-    if first_convergence is not None or warm_convergences:
-        warm_aggregate = _aggregate_warm_convergence_runs(
-            warm_convergences,
-            required_successes=convergence.required_warm_successes,
+    quality_section = _alignment_quality_section(
+        bundle=bundle,
+        grid=grid,
+        detector=detector,
+        geometry=geometry,
+        projections=projections,
+        warms=warms,
+        representative_run=representative_run,
+        align_cfg=align_cfg,
+        mods=mods,
+    )
+
+    metrics = _alignment_timing_section(
+        profile=profile,
+        align_cfg=align_cfg,
+        warmup=warmup,
+        warmup_convergence=warmup_convergence,
+        warmup_incomplete=warmup_incomplete,
+        primer=primer,
+        primer_convergence=primer_convergence,
+        first=first,
+        warms=warms,
+        representative_run_index=representative_run_index,
+    )
+    metrics.update(memory_metrics)
+    metrics.update(quality_section.metrics)
+    metrics["quality_threshold_scope"] = convergence.threshold_scope
+
+    convergence_metrics, convergence_success = _alignment_convergence_section(
+        first_convergence=first_convergence,
+        warm_convergences=warm_convergences,
+        convergence=convergence,
+    )
+    metrics.update(convergence_metrics)
+    if convergence_success is not None:
+        metrics["success"] = convergence_success
+
+    metrics.update(
+        _alignment_objective_policy_section(
+            metrics,
+            profile=profile,
+            first_convergence=first_convergence,
         )
-        metrics.update(
-            {
-                "quality_threshold_metric": convergence.metric,
-                "quality_threshold_value": convergence.threshold,
-                "quality_threshold_scope": convergence.threshold_scope,
-                "quality_threshold_met": (
-                    bool(warm_aggregate["quality_threshold_met"])
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "required_warm_successes": int(convergence.required_warm_successes),
-                "warm_threshold_hit_count": (
-                    warm_aggregate["warm_threshold_hit_count"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "warm_threshold_total_runs": (
-                    warm_aggregate["warm_threshold_total_runs"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "warm_threshold_success_rate": (
-                    warm_aggregate["warm_threshold_success_rate"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "stopped_on_threshold": warm_aggregate["stopped_on_threshold"],
-                "stopped_on_plateau": warm_aggregate["stopped_on_plateau"],
-                "stopped_on_budget": warm_aggregate["stopped_on_budget"],
-                "reached_finest_level": warm_aggregate["reached_finest_level"],
-                "finest_level_first_elapsed_seconds": warm_aggregate[
-                    "finest_level_first_elapsed_seconds"
-                ],
-                "finest_level_first_outer_idx": warm_aggregate["finest_level_first_outer_idx"],
-                "warm_reached_finest_level_count": warm_aggregate[
-                    "warm_reached_finest_level_count"
-                ],
-                "benchmark_valid": warm_aggregate["benchmark_valid"],
-                "invalid_reason": warm_aggregate["invalid_reason"],
-                "warm_level_summaries": warm_aggregate["warm_level_summaries"],
-                "warm_stopped_on_threshold_count": warm_aggregate[
-                    "warm_stopped_on_threshold_count"
-                ],
-                "warm_stopped_on_plateau_count": warm_aggregate["warm_stopped_on_plateau_count"],
-                "warm_stopped_on_budget_count": warm_aggregate["warm_stopped_on_budget_count"],
-                "final_stop_reason": warm_aggregate["final_stop_reason"],
-                "final_stop_level_factor": warm_aggregate["final_stop_level_factor"],
-                "first_threshold_crossing_level_factor": (
-                    warm_aggregate["first_threshold_crossing_level_factor"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "cold_seconds_to_quality_threshold": (
-                    first_convergence.seconds_to_threshold
-                    if first_convergence is not None and convergence.threshold is not None
-                    else None
-                ),
-                "warm_seconds_to_quality_threshold": (
-                    warm_aggregate["warm_seconds_to_quality_threshold"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "cold_outer_iters_to_quality_threshold": (
-                    first_convergence.outer_iters_to_threshold
-                    if first_convergence is not None and convergence.threshold is not None
-                    else None
-                ),
-                "warm_outer_iters_to_quality_threshold": (
-                    warm_aggregate["warm_outer_iters_to_quality_threshold"]
-                    if convergence.threshold is not None
-                    else None
-                ),
-                "cold_best_quality_value": (
-                    first_convergence.best_quality_value if first_convergence is not None else None
-                ),
-                "warm_best_quality_value": warm_aggregate["warm_best_quality_value"],
-                "best_quality_value": (
-                    warm_aggregate["best_quality_value"]
-                    if warm_aggregate["best_quality_value"] is not None
-                    else (
-                        first_convergence.best_quality_value
-                        if first_convergence is not None
-                        else None
-                    )
-                ),
-                "best_quality_elapsed_seconds": (
-                    warm_aggregate["best_quality_elapsed_seconds"]
-                    if warm_aggregate["best_quality_elapsed_seconds"] is not None
-                    else (
-                        first_convergence.best_quality_elapsed_seconds
-                        if first_convergence is not None
-                        else None
-                    )
-                ),
-                "cold_total_outer_iters_executed": (
-                    first_convergence.total_outer_iters_executed
-                    if first_convergence is not None
-                    else None
-                ),
-                "warm_total_outer_iters_executed": warm_aggregate[
-                    "warm_total_outer_iters_executed"
-                ],
-                "total_outer_iters_executed": (
-                    warm_aggregate["total_outer_iters_executed"]
-                    if warm_aggregate["total_outer_iters_executed"] is not None
-                    else (
-                        first_convergence.total_outer_iters_executed
-                        if first_convergence is not None
-                        else None
-                    )
-                ),
-                "cold_convergence_trace": (
-                    first_convergence.trace if first_convergence is not None else []
-                ),
-                "warm_convergence_trace": warm_aggregate["warm_convergence_trace"],
-                "warm_convergence_traces": warm_aggregate["warm_convergence_traces"],
-            }
-        )
-        metrics["success"] = bool(warm_aggregate["benchmark_valid"])
-    objective_policy_metrics = _apply_time_memguard_objective(metrics, profile)
-    if objective_policy_metrics:
-        if first_convergence is not None:
-            quality_contract = _profile_block(profile, "quality_contract")
-            cold_contract = _quality_contract_crossing(
-                list(first_convergence.trace or []),
-                finest_only=bool(quality_contract.get("finest_only", True)),
-                gt_mse_max=_float_or_none(quality_contract.get("gt_mse_max")),
-                trans_gf_rmse_px_max=_float_or_none(quality_contract.get("trans_gf_rmse_px_max")),
-            )
-            objective_policy_metrics["cold_seconds_to_quality_contract"] = cold_contract.get(
-                "elapsed_seconds"
-            )
-            objective_policy_metrics["cold_outer_iters_to_quality_contract"] = cold_contract.get(
-                "outer_idx"
-            )
-        metrics.update(objective_policy_metrics)
-    if _should_render_alignment_summary(profile):
-        summary_path = _alignment_summary_path(out_path)
-        try:
-            baseline_volume = _alignment_baseline_volume(bundle, align_cfg, mods)
-            save_alignment_summary(
-                out_path=summary_path,
-                profile_name=str(profile["name"]),
-                gt_volume=np.asarray(bundle.volume, dtype=np.float32),
-                baseline_volume=baseline_volume,
-                final_volume=final_volume,
-                loss_history=[float(v) for v in list(final_info.get("loss") or [])],
-                convergence_trace=metrics.get("warm_convergence_trace"),
-                convergence_metric_name=metrics.get("quality_threshold_metric"),
-                quality_threshold_value=metrics.get("quality_threshold_value"),
-                metrics=metrics,
-                quality=dict(metrics["quality"]),
-                fixture=bundle.shape_summary,
-                representative_run_index=metrics.get("representative_run_index"),
-            )
-            metrics["summary_image_path"] = str(summary_path)
-        except Exception as exc:
-            metrics["summary_image_error"] = str(exc)
+    )
+    _add_alignment_summary_artifact(
+        metrics,
+        profile=profile,
+        out_path=out_path,
+        bundle=bundle,
+        align_cfg=align_cfg,
+        final_volume=quality_section.final_volume,
+        final_info=quality_section.final_info,
+        mods=mods,
+    )
     return metrics
 
 
@@ -2478,31 +2540,13 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def execute_profile(
+def _initial_benchmark_metrics(
     *,
-    profile_arg: str,
-    out_path: Path,
-    profile_root: str = str(PROFILES_DIR),
-    progress_callback: ProgressCallback | None = None,
+    profile: Mapping[str, Any],
+    profile_path: Path,
+    env_updates: Mapping[str, Any],
 ) -> dict[str, Any]:
-    out_path = out_path.resolve()
-    _ensure_dir(out_path.parent)
-    _ensure_dir(_bench_data_root())
-    _ensure_dir(OUT_DIR)
-
-    profile_path = _resolve_profile_path(profile_arg, profile_root)
-    profile = _load_profile(profile_path)
-    env_updates = _configure_environment(profile)
-    _emit_progress(
-        progress_callback,
-        stage_kind="profile_loading",
-        phase="profile_loading",
-        task=str(profile.get("task", "recon")),
-        message=f"Loaded benchmark profile {profile['name']}.",
-        detail=f"profile_path={profile_path.name}",
-    )
-
-    metrics: dict[str, Any] = {
+    return {
         "profile": profile.get("name", profile_path.stem),
         "success": False,
         "objective_name": str(profile.get("objective_name", "warm_run_seconds_mean")),
@@ -2601,8 +2645,112 @@ def execute_profile(
         "oom": False,
         "error": None,
         "profile_path": str(profile_path),
-        "env": env_updates,
+        "env": dict(env_updates),
     }
+
+
+@dataclass
+class BenchmarkReportBuilder:
+    profile: dict[str, Any]
+    profile_path: Path
+    env_updates: dict[str, Any]
+    metrics: dict[str, Any] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.metrics = _initial_benchmark_metrics(
+            profile=self.profile,
+            profile_path=self.profile_path,
+            env_updates=self.env_updates,
+        )
+
+    def record_run(
+        self,
+        *,
+        run_metrics: dict[str, Any],
+        fixture: FixtureBundle,
+        fixture_path: Path,
+        fixture_generated: bool,
+        mods: ImportedModules,
+    ) -> None:
+        self.metrics.update(run_metrics)
+        objective_name, objective_direction, objective_value = _resolve_objective(
+            self.metrics,
+            self.profile,
+        )
+        self.metrics["objective_name"] = objective_name
+        self.metrics["objective_direction"] = objective_direction
+        self.metrics["objective_value"] = (
+            _float_or_none(objective_value)
+            if isinstance(objective_value, (float, int, np.floating, np.integer))
+            else objective_value
+        )
+        self.metrics["device"] = _device_info(mods)
+        self.metrics["fixture"] = {
+            "path": str(fixture_path),
+            "generated_in_process": fixture_generated,
+            **fixture.shape_summary,
+        }
+        self.metrics["success"] = bool(
+            run_metrics.get(
+                "success",
+                self.metrics.get("objective_value") is not None
+                or objective_name == "warm_run_seconds_mean",
+            )
+        )
+
+    def record_error(self, exc: Exception) -> None:
+        message = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+        self.metrics["error"] = message
+        msg_lower = message.lower()
+        self.metrics["oom"] = ("resource exhausted" in msg_lower) or ("out of memory" in msg_lower)
+        self.metrics["success"] = False
+        if not self.metrics.get("device"):
+            try:
+                import jax
+
+                self.metrics["device"] = {
+                    "jax_backend": str(jax.default_backend()),
+                    "jax_devices": [str(getattr(d, "device_kind", d)) for d in jax.devices()],
+                    "gpu_name": None,
+                }
+            except Exception:
+                pass
+
+    def write(self, out_path: Path) -> None:
+        with out_path.open("w", encoding="utf-8") as handle:
+            json.dump(_json_safe(self.metrics), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+
+def execute_profile(
+    *,
+    profile_arg: str,
+    out_path: Path,
+    profile_root: str = str(PROFILES_DIR),
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    out_path = out_path.resolve()
+    _ensure_dir(out_path.parent)
+    _ensure_dir(_bench_data_root())
+    _ensure_dir(OUT_DIR)
+
+    profile_path = _resolve_profile_path(profile_arg, profile_root)
+    profile = _load_profile(profile_path)
+    env_updates = _configure_environment(profile)
+    _emit_progress(
+        progress_callback,
+        stage_kind="profile_loading",
+        phase="profile_loading",
+        task=str(profile.get("task", "recon")),
+        message=f"Loaded benchmark profile {profile['name']}.",
+        detail=f"profile_path={profile_path.name}",
+    )
+
+    report = BenchmarkReportBuilder(
+        profile=profile,
+        profile_path=profile_path,
+        env_updates=env_updates,
+    )
 
     try:
         mods = _import_modules(profile)
@@ -2628,50 +2776,18 @@ def execute_profile(
                 progress_callback=progress_callback,
             )
 
-        metrics.update(run_metrics)
-        objective_name, objective_direction, objective_value = _resolve_objective(metrics, profile)
-        metrics["objective_name"] = objective_name
-        metrics["objective_direction"] = objective_direction
-        metrics["objective_value"] = (
-            _float_or_none(objective_value)
-            if isinstance(objective_value, (float, int, np.floating, np.integer))
-            else objective_value
-        )
-        metrics["device"] = _device_info(mods)
-        metrics["fixture"] = {
-            "path": str(fixture_path),
-            "generated_in_process": fixture_generated,
-            **fixture.shape_summary,
-        }
-        metrics["success"] = bool(
-            run_metrics.get(
-                "success",
-                metrics.get("objective_value") is not None
-                or objective_name == "warm_run_seconds_mean",
-            )
+        report.record_run(
+            run_metrics=run_metrics,
+            fixture=fixture,
+            fixture_path=fixture_path,
+            fixture_generated=fixture_generated,
+            mods=mods,
         )
     except Exception as exc:  # pragma: no cover - exercised in error conditions
-        message = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-        metrics["error"] = message
-        msg_lower = message.lower()
-        metrics["oom"] = ("resource exhausted" in msg_lower) or ("out of memory" in msg_lower)
-        metrics["success"] = False
-        if not metrics.get("device"):
-            try:
-                import jax
+        report.record_error(exc)
 
-                metrics["device"] = {
-                    "jax_backend": str(jax.default_backend()),
-                    "jax_devices": [str(getattr(d, "device_kind", d)) for d in jax.devices()],
-                    "gpu_name": None,
-                }
-            except Exception:
-                pass
-
-    with out_path.open("w", encoding="utf-8") as handle:
-        json.dump(_json_safe(metrics), handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    return metrics
+    report.write(out_path)
+    return report.metrics
 
 
 def main() -> int:

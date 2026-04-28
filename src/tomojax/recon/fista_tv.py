@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Callable, Literal, Tuple, Optional
+from typing import Literal, NamedTuple, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +18,6 @@ from ..core.projector import (
 from ..core.validation import (
     validate_grid,
     validate_optional_broadcastable_shape,
-    validate_optional_same_shape,
     validate_pose_stack,
     validate_projection_shape,
     validate_projection_stack,
@@ -26,7 +25,6 @@ from ..core.validation import (
 )
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
-    Regulariser,
     div3,
     grad3,
     huber_tv_grad,
@@ -34,9 +32,50 @@ from ._tv_ops import (
     isotropic_tv_value,
     validate_regulariser,
 )
+from .types import Regulariser
 
 
 GradMode = Literal["auto", "batched", "stream"]
+
+
+class FistaScanState(NamedTuple):
+    x: jnp.ndarray
+    z: jnp.ndarray
+    t: jnp.ndarray
+    loss: jnp.ndarray
+    prev_obj: jnp.ndarray
+    streak: jnp.ndarray
+    done: jnp.ndarray
+    has_prev: jnp.ndarray
+    last_obj: jnp.ndarray
+    iters_done: jnp.ndarray
+
+
+def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
+    requested = (
+        int(views_per_batch)
+        if (views_per_batch is not None and int(views_per_batch) > 0)
+        else int(n_views)
+    )
+    return max(1, min(requested, int(n_views)))
+
+
+def _view_chunk_schedule(
+    i: jnp.ndarray,
+    *,
+    n_views: int,
+    chunk_size: int,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    i = jnp.asarray(i, dtype=jnp.int32)
+    b = jnp.int32(chunk_size)
+    start = i * b
+    remaining = jnp.maximum(0, jnp.int32(n_views) - start)
+    valid = jnp.minimum(b, remaining)
+    shift = b - valid
+    start_shifted = jnp.maximum(0, start - shift)
+    idx = jnp.arange(chunk_size, dtype=jnp.int32)
+    valid_mask = idx >= (b - valid)
+    return start_shifted, valid_mask, start_shifted + idx
 
 
 @dataclass
@@ -75,6 +114,7 @@ def grad_data_term(
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> Tuple[jnp.ndarray, float]:
     """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
 
@@ -103,7 +143,7 @@ def grad_data_term(
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="grad_data_term geometry")
 
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
 
     def apply_mask(vol):
@@ -144,27 +184,20 @@ def grad_data_term(
         n = int(T_all.shape[0])
         nv = int(projections.shape[1])
         nu = int(projections.shape[2])
-        b = (
-            int(views_per_batch)
-            if (views_per_batch is not None and int(views_per_batch) > 0)
-            else n
-        )
-        b = min(b, n)
+        b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
         def body(carry, i):
             loss_acc, grad_acc = carry
-            i = jnp.int32(i)
-            start = i * jnp.int32(b)
-            remaining = jnp.maximum(0, jnp.int32(n) - start)
-            valid = jnp.minimum(jnp.int32(b), remaining)
-            shift = jnp.int32(b) - valid
-            start_shifted = jnp.maximum(0, start - shift)
+            start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
+                i,
+                n_views=n,
+                chunk_size=b,
+            )
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = vm_project(T_chunk, masked_vol)
-            idx = jnp.arange(b)
-            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
+            mask = valid_mask[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
             grad_batch = sum_backproject_views_T(
@@ -242,6 +275,7 @@ def data_term_value(
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
     validate_grid(grid, "data_term_value grid")
@@ -263,7 +297,7 @@ def data_term_value(
         T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="data_term_value geometry")
 
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
     def batched_loss(vol):
         masked_vol = vol * vol_mask if vol_mask is not None else vol
@@ -281,26 +315,19 @@ def data_term_value(
             in_axes=(0, None),
         )
         n = int(T_all.shape[0])
-        b = (
-            int(views_per_batch)
-            if (views_per_batch is not None and int(views_per_batch) > 0)
-            else n
-        )
-        b = min(b, n)
+        b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
         def body(loss_acc, i):
-            i = jnp.int32(i)
-            start = i * jnp.int32(b)
-            remaining = jnp.maximum(0, jnp.int32(n) - start)
-            valid = jnp.minimum(jnp.int32(b), remaining)
-            shift = jnp.int32(b) - valid
-            start_shifted = jnp.maximum(0, start - shift)
+            start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
+                i,
+                n_views=n,
+                chunk_size=b,
+            )
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
             y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
             pred = vm_project(T_chunk, masked_vol)
-            idx = jnp.arange(b)
-            mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
+            mask = valid_mask[:, None, None]
             resid = (pred - y_chunk).astype(jnp.float32) * mask
             loss_batch = 0.5 * jnp.vdot(resid, resid).real
             return (loss_acc + loss_batch, None)
@@ -362,6 +389,7 @@ def power_method_L(
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
     vol_mask: Optional[jnp.ndarray] = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
     validate_grid(grid, "power_method_L grid")
@@ -398,6 +426,7 @@ def power_method_L(
             grad_mode=grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
         return g
 
@@ -504,6 +533,7 @@ def fista_tv(
     init_x: jnp.ndarray | None = None,
     config: FistaConfig = FistaConfig(),
     callback: LossCallback | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
@@ -574,6 +604,7 @@ def fista_tv(
             grad_mode="stream",
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
     if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
         L += float(cfg.lambda_tv) * 12.0 / huber_delta
@@ -593,6 +624,7 @@ def fista_tv(
             grad_mode=cfg.grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
         if regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             g = g + jnp.asarray(cfg.lambda_tv, dtype=z.dtype) * huber_tv_grad(z, huber_delta)
@@ -614,6 +646,7 @@ def fista_tv(
             grad_mode=cfg.grad_mode,
             T_all=T_all,
             vol_mask=vol_mask,
+            det_grid=det_grid,
         )
 
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
@@ -633,24 +666,10 @@ def fista_tv(
     patience = jnp.int32(int(cfg.recon_patience) if use_early_stop else 0)
     early_flag = jnp.bool_(use_early_stop)
 
-    def step(carry, k):
-        x_c, z_c, t_c, loss_arr, prev_obj, streak, done, has_prev, last_obj, iters_done = carry
-
-        def run_active(state):
-            (
-                x_a,
-                z_a,
-                t_a,
-                loss_a,
-                prev_a,
-                streak_a,
-                done_a,
-                has_prev_a,
-                last_a,
-                iters_a,
-            ) = state
-            _, g = val_and_grad(z_a)
-            y = z_a - (1.0 / L) * g
+    def step(state: FistaScanState, k):
+        def run_active(active_state: FistaScanState):
+            _, g = val_and_grad(active_state.z)
+            y = active_state.z - (1.0 / L) * g
             if regulariser == "huber_tv":
                 x_new = y
             else:
@@ -661,8 +680,8 @@ def fista_tv(
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
             )
-            t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * t_a * t_a))
-            z_new = x_new + ((t_a - 1.0) / t_new) * (x_new - x_a)
+            t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * active_state.t * active_state.t))
+            z_new = x_new + ((active_state.t - 1.0) / t_new) * (x_new - active_state.x)
             z_new = _project_constraints(
                 z_new,
                 positivity=positivity,
@@ -673,89 +692,67 @@ def fista_tv(
             reg_value = regulariser_value_fn(x_new)
             obj = data_loss_val + cfg.lambda_tv * reg_value
             obj32 = obj.astype(jnp.float32)
-            rel_change = jnp.abs(obj - prev_a) / jnp.maximum(jnp.abs(prev_a), 1e-6)
-            small = jnp.logical_and(early_flag, jnp.logical_and(has_prev_a, rel_change <= tol))
+            rel_change = jnp.abs(obj - active_state.prev_obj) / jnp.maximum(
+                jnp.abs(active_state.prev_obj),
+                1e-6,
+            )
+            small = jnp.logical_and(
+                early_flag,
+                jnp.logical_and(active_state.has_prev, rel_change <= tol),
+            )
             streak_next = jnp.where(
                 early_flag,
-                jnp.where(small, jnp.minimum(streak_a + 1, patience), jnp.int32(0)),
-                streak_a,
+                jnp.where(small, jnp.minimum(active_state.streak + 1, patience), jnp.int32(0)),
+                active_state.streak,
             )
-            done_next = jnp.logical_or(done_a, jnp.logical_and(early_flag, streak_next >= patience))
-            loss_next = loss_a.at[k].set(obj32)
-            return (
-                x_new,
-                z_new,
-                t_new,
-                loss_next,
-                obj,
-                streak_next,
-                done_next,
-                jnp.bool_(True),
-                obj,
-                iters_a + jnp.int32(1),
-            ), None
+            done_next = jnp.logical_or(
+                active_state.done,
+                jnp.logical_and(early_flag, streak_next >= patience),
+            )
+            return active_state._replace(
+                x=x_new,
+                z=z_new,
+                t=t_new,
+                loss=active_state.loss.at[k].set(obj32),
+                prev_obj=obj,
+                streak=streak_next,
+                done=done_next,
+                has_prev=jnp.bool_(True),
+                last_obj=obj,
+                iters_done=active_state.iters_done + jnp.int32(1),
+            )
 
-        def run_skip(state):
-            (
-                x_s,
-                z_s,
-                t_s,
-                loss_s,
-                prev_s,
-                streak_s,
-                done_s,
-                has_prev_s,
-                last_s,
-                iters_s,
-            ) = state
-            loss_next = loss_s.at[k].set(last_s.astype(jnp.float32))
-            return (
-                x_s,
-                z_s,
-                t_s,
-                loss_next,
-                prev_s,
-                streak_s,
-                done_s,
-                has_prev_s,
-                last_s,
-                iters_s,
-            ), None
+        def run_skip(skip_state: FistaScanState):
+            return skip_state._replace(
+                loss=skip_state.loss.at[k].set(skip_state.last_obj.astype(jnp.float32))
+            )
 
-        new_state, _ = jax.lax.cond(
-            done,
+        new_state = jax.lax.cond(
+            state.done,
             run_skip,
             run_active,
-            (x_c, z_c, t_c, loss_arr, prev_obj, streak, done, has_prev, last_obj, iters_done),
+            state,
         )
         return new_state, None
 
     loss_arr0 = jnp.zeros((int(cfg.iters),), dtype=jnp.float32)
-    init_carry = (
-        x,
-        z,
-        t,
-        loss_arr0,
-        jnp.float32(0.0),
-        jnp.int32(0),
-        jnp.bool_(False),
-        jnp.bool_(False),
-        jnp.float32(0.0),
-        jnp.int32(0),
+    init_carry = FistaScanState(
+        x=x,
+        z=z,
+        t=t,
+        loss=loss_arr0,
+        prev_obj=jnp.float32(0.0),
+        streak=jnp.int32(0),
+        done=jnp.bool_(False),
+        has_prev=jnp.bool_(False),
+        last_obj=jnp.float32(0.0),
+        iters_done=jnp.int32(0),
     )
     carry_final, _ = jax.lax.scan(step, init_carry, jnp.arange(int(cfg.iters)))
-    (
-        x_f,
-        _,
-        _,
-        loss_arr,
-        _,
-        _,
-        done_flag,
-        _,
-        _,
-        iters_done,
-    ) = carry_final
+    x_f = carry_final.x
+    loss_arr = carry_final.loss
+    done_flag = carry_final.done
+    iters_done = carry_final.iters_done
 
     if int(cfg.iters) > 0:
         final_step = max(int(iters_done) - 1, 0)

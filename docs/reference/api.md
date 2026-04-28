@@ -2,8 +2,11 @@
 
 The Python API exposes the same algorithms as the CLI tools. Use it
 when you need to integrate TomoJAX into scripts, notebooks, or custom
-pipelines. All functions are JIT-compatible and support automatic
-differentiation via JAX.
+pipelines. Array-level projector, objective, and reconstruction kernels
+are designed for JAX `jit` and automatic differentiation. Higher-level
+workflow functions such as `align` and `align_multires` are Python
+orchestration APIs: they validate inputs, manage schedules/checkpoints,
+and call JAX kernels internally.
 
 ## Core geometry
 
@@ -86,6 +89,34 @@ geom = LaminographyGeometry(
 | `tilt_about` | `str` | `"x"` | Tilt plane: `"x"` or `"z"` |
 
 See [Geometry concepts](../concepts/geometry.md) for background.
+
+## Calibration foundations
+
+`tomojax.calibration` is a provisional foundation layer for geometry-calibration
+data contracts, not an estimation workflow package. Estimation workflows live in
+`tomojax.align`.
+
+The package-level facade intentionally exposes only stable value/schema types:
+
+```python
+from tomojax.calibration import (
+    CalibrationState,
+    CalibrationVariable,
+    DetectorPixelScale,
+    DetectorPixelValue,
+)
+```
+
+Lower-level helpers are grouped by owner module and should be imported from that
+module when needed:
+
+| Module | Responsibility |
+|--------|----------------|
+| `tomojax.calibration.detector_grid` | Detector-grid transforms and offsets |
+| `tomojax.calibration.gauge` | Calibration gauge validation |
+| `tomojax.calibration.manifest` | Calibration manifest assembly |
+| `tomojax.calibration.objectives` | Objective-card and metric metadata |
+| `tomojax.calibration.conventions` | Convention audit records |
 
 ## Projector
 
@@ -170,7 +201,7 @@ det_grid = get_detector_grid_device(det)
 Filtered backprojection:
 
 ```python
-from tomojax.recon.fbp import fbp
+from tomojax.recon import fbp
 
 volume = fbp(geom, grid, det, projections, filter_name="ramp")
 # volume shape: (nx, ny, nz)
@@ -190,7 +221,7 @@ volume = fbp(geom, grid, det, projections, filter_name="ramp")
 FISTA with TV regularization:
 
 ```python
-from tomojax.recon.fista_tv import fista_tv, FistaConfig
+from tomojax.recon import fista_tv, FistaConfig
 
 config = FistaConfig(iters=50, lambda_tv=0.005)
 volume, info = fista_tv(geom, grid, det, projections, config=config)
@@ -224,7 +255,7 @@ volume, info = fista_tv(geom, grid, det, projections, config=config)
 Stochastic Primal-Dual Hybrid Gradient:
 
 ```python
-from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
+from tomojax.recon import spdhg_tv, SPDHGConfig
 
 config = SPDHGConfig(iters=400, lambda_tv=0.005, views_per_batch=16)
 volume, info = spdhg_tv(geom, grid, det, projections, config=config)
@@ -245,12 +276,18 @@ volume, info = spdhg_tv(geom, grid, det, projections, config=config)
 
 ## Alignment
 
+`align` and `align_multires` are workflow-level orchestration APIs.
+Call them from Python directly; do not treat the entire function as a
+single `jax.jit`-compatible primitive. Their inner projector, loss,
+gradient, and reconstruction kernels are compiled or differentiated at
+the appropriate internal boundaries.
+
 ### `align`
 
 Joint per-view alignment and reconstruction:
 
 ```python
-from tomojax.align.pipeline import align, AlignConfig
+from tomojax.align import align, AlignConfig
 
 cfg = AlignConfig(
     outer_iters=4,
@@ -291,10 +328,38 @@ volume, params5, info = align(geom, grid, det, projections, cfg=cfg)
 | `early_stop` | `bool` | `True` | Stop on plateau |
 | `early_stop_rel_impr` | `float` | `1e-3` | Minimum relative improvement |
 | `early_stop_patience` | `int` | `2` | Patience iterations |
+| `schedule` | `str \| AlignmentSchedule \| None` | `None` | Executable preset such as `"cor"`, `"setup_safe"`, or `"pose_only"` |
 | `optimise_dofs` | `tuple \| None` | `None` | Active DOFs (all if None) |
 | `freeze_dofs` | `tuple` | `()` | DOFs to freeze |
+| `gauge_policy` | `str` | `"reject"` | Policy for gauge-coupled direct/expert DOF sets |
 | `checkpoint_projector` | `bool` | `True` | Gradient checkpointing |
 | `gather_dtype` | `str` | `"fp32"` | Mixed-precision gather |
+
+Use `align_multires` for setup-geometry schedules:
+
+```python
+from tomojax.align import align_multires, AlignConfig
+
+cfg = AlignConfig(
+    schedule="setup_safe",
+    outer_iters=12,
+    recon_iters=30,
+)
+volume, params5, info = align_multires(
+    geom,
+    grid,
+    det,
+    projections,
+    factors=(8, 4, 2, 1),
+    cfg=cfg,
+)
+print(info["schedule"]["stages"])
+print(info["geometry_calibration_state"])
+```
+
+`schedule` and explicit `optimise_dofs` are mutually exclusive for ordinary
+calls. Direct mixed setup+pose DOF sets reject under the default gauge policy;
+use a public staged schedule or supply an explicit expert gauge policy.
 
 See [Alignment concepts](../concepts/alignment.md) for algorithm
 background and [align CLI](../cli/align.md) for the full list of
@@ -302,14 +367,14 @@ fields.
 
 ## Data I/O
 
-HDF5 NXtomo read/write functions live in `tomojax.data.io_hdf5`.
+HDF5 NXtomo read/write functions are available from `tomojax.data`.
 
 ### `load_nxtomo`
 
 Load an NXtomo dataset:
 
 ```python
-from tomojax.data.io_hdf5 import load_nxtomo
+from tomojax.data import load_nxtomo
 
 result = load_nxtomo("data/scan.nxs")
 projections = result.projections  # (n_views, nv, nu)
@@ -329,7 +394,7 @@ regardless of on-disk layout.
 Write a dataset to HDF5:
 
 ```python
-from tomojax.data.io_hdf5 import save_nxtomo, NXTomoMetadata
+from tomojax.data import save_nxtomo, NXTomoMetadata
 
 metadata = NXTomoMetadata(
     thetas_deg=thetas,
@@ -353,7 +418,7 @@ save_nxtomo("out/result.nxs", projections, metadata=metadata)
 Run lightweight schema checks:
 
 ```python
-from tomojax.data.io_hdf5 import validate_nxtomo
+from tomojax.data import validate_nxtomo
 
 report = validate_nxtomo("data/scan.nxs")
 if report["issues"]:
@@ -369,7 +434,7 @@ if report["issues"]:
 Generate synthetic CT data:
 
 ```python
-from tomojax.data.simulate import simulate, SimConfig
+from tomojax.data import simulate, SimConfig
 
 cfg = SimConfig(
     nx=128, ny=128, nz=128,
@@ -391,7 +456,7 @@ volume = data["volume"]
 All phantoms return `np.ndarray` of shape `(nx, ny, nz)` as float32:
 
 ```python
-from tomojax.data.phantoms import (
+from tomojax.data import (
     sphere,
     cube,
     rotated_centered_cube,

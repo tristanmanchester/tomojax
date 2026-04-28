@@ -14,12 +14,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..align.parametrizations import se3_from_5d
+from ..align.geometry.parametrizations import se3_from_5d
 from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..data.simulate import SimConfig, simulate_to_file
 
 
@@ -123,7 +123,7 @@ def metrics_abs(
     params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float
 ) -> Dict[str, float]:
     """Absolute parameter RMSE/MAE in degrees and pixels."""
-    assert params_true.shape == params_est.shape
+    _validate_matching_pose_params(params_true, params_est)
     d = params_est - params_true
     d_deg = np.rad2deg(d[:, :3])
     dx_px = d[:, 3] / max(1e-12, float(du))
@@ -165,6 +165,14 @@ def _params_to_T(params: np.ndarray) -> np.ndarray:
     return np.asarray(jax.vmap(se3_from_5d)(p_j))
 
 
+def _validate_matching_pose_params(params_true: np.ndarray, params_est: np.ndarray) -> None:
+    if params_true.shape != params_est.shape:
+        raise ValueError(
+            "Pose parameter arrays must have matching shapes; "
+            f"got params_true.shape={params_true.shape} and params_est.shape={params_est.shape}"
+        )
+
+
 def metrics_relative(
     params_true: np.ndarray,
     params_est: np.ndarray,
@@ -174,7 +182,7 @@ def metrics_relative(
     k_step: int = 1,
 ) -> Dict[str, float]:
     """Gauge-invariant relative-motion error over k-step pose differences."""
-    assert params_true.shape == params_est.shape
+    _validate_matching_pose_params(params_true, params_est)
     if params_true.shape[0] <= k_step:
         return {"rot_rel_rmse_deg": float("nan"), "trans_rel_rmse_px": float("nan")}
 

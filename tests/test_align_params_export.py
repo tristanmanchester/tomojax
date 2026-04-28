@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.gauge import apply_alignment_gauge
+from tomojax.align.model.gauge import apply_alignment_gauge
 from tomojax.align.params_export import (
     ALIGNMENT_PARAMS_SCHEMA,
     CSV_FIELDNAMES,

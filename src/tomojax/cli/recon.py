@@ -8,10 +8,11 @@ import jax.numpy as jnp
 import os
 import sys
 
+from ..calibration.detector_grid import detector_grid_from_geometry_inputs
 from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..core.geometry import Detector, Grid
-from ..recon.fbp import fbp
+from ..recon.fbp import FBPConfig, fbp
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.quicklook import save_quicklook_png
 from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
@@ -90,6 +91,64 @@ def _resolve_views_per_batch(
         return int(estimate.views_per_batch), "auto"
 
     return max(1, int(requested)), "explicit"
+
+
+def _resolve_recon_grid_for_cli(
+    grid: Grid,
+    detector: Detector,
+    *,
+    is_parallel: bool,
+    roi_mode: str,
+) -> Grid:
+    if roi_mode == "off":
+        return grid
+
+    try:
+        info = compute_roi(grid, detector, crop_y_to_u=is_parallel)
+        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
+        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+        det_smaller = (
+            (info.r_u + 1e-6) < full_half_x
+            or (is_parallel and (info.r_u + 1e-6) < full_half_y)
+            or (info.r_v + 1e-6) < full_half_z
+        )
+        if roi_mode == "auto" and det_smaller:
+            if is_parallel:
+                return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
+            return grid_from_detector_fov(grid, detector, crop_y_to_u=False)
+        if roi_mode == "cube":
+            from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
+
+            return _grid_cube(grid, detector, crop_y_to_u=is_parallel)
+        if roi_mode == "bbox":
+            return grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
+        return grid
+    except Exception as exc:
+        if roi_mode == "auto":
+            logging.warning(
+                "--roi=auto could not be applied; continuing without ROI crop: %s",
+                exc,
+                exc_info=True,
+            )
+            return grid
+        raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
+
+
+def _resolve_volume_mask_for_cli(
+    grid: Grid,
+    detector: Detector,
+    *,
+    mask_vol: str,
+) -> jnp.ndarray | None:
+    mask_mode = str(mask_vol).lower()
+    if mask_mode not in ("cyl", "cylindrical"):
+        return None
+    try:
+        m_xy = cylindrical_mask_xy(grid, detector)
+        return jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
+    except Exception as exc:
+        raise ValueError(f"Failed to apply requested --mask-vol={mask_mode!r}") from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -306,6 +365,12 @@ def main() -> None:
         apply_saved_alignment=False,
     )
     proj = jnp.asarray(meta.projections, dtype=jnp.float32)
+    det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
+    if det_grid is not None:
+        logging.info(
+            "Applying saved detector_roll_deg=%s from geometry metadata",
+            geometry_meta.get("detector_roll_deg"),
+        )
 
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
@@ -314,36 +379,14 @@ def main() -> None:
         _gather = _default_gather_dtype()
 
     # Optional ROI selection
-    recon_grid = grid
     roi_mode = str(args.roi).lower()
     is_parallel = meta.geometry_type == "parallel"
-    if roi_mode != "off":
-        try:
-            info = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-            # Only crop when detector FOV is smaller than current grid (auto)
-            full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
-            full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
-            full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-            det_smaller = (
-                (info.r_u + 1e-6) < full_half_x
-                or (is_parallel and (info.r_u + 1e-6) < full_half_y)
-                or (info.r_v + 1e-6) < full_half_z
-            )
-            if roi_mode == "auto" and det_smaller:
-                if is_parallel:
-                    recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
-                else:
-                    recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
-            elif roi_mode == "cube":
-                # Same as align default policy for cubic volumes
-                from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
-
-                recon_grid = _grid_cube(grid, detector, crop_y_to_u=is_parallel)
-            elif roi_mode == "bbox":
-                recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
-        except Exception:
-            # Fall back silently if FOV computation fails
-            recon_grid = grid
+    recon_grid = _resolve_recon_grid_for_cli(
+        grid,
+        detector,
+        is_parallel=is_parallel,
+        roi_mode=roi_mode,
+    )
 
     # Rebuild geometry if grid changed
     if args.grid is not None:
@@ -360,13 +403,11 @@ def main() -> None:
         )
 
     # Prepare optional volume mask
-    vol_mask = None
-    try:
-        if str(args.mask_vol).lower() in ("cyl", "cylindrical"):
-            m_xy = cylindrical_mask_xy(recon_grid, detector)
-            vol_mask = jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
-    except Exception:
-        vol_mask = None
+    vol_mask = _resolve_volume_mask_for_cli(
+        recon_grid,
+        detector,
+        mask_vol=str(args.mask_vol),
+    )
 
     resolved_vpb, vpb_mode = _resolve_views_per_batch(
         args.views_per_batch,
@@ -386,12 +427,19 @@ def main() -> None:
 
     algorithm_config: dict[str, object]
     if args.algo == "fbp":
+        cfg = FBPConfig(
+            filter_name=str(args.filter),
+            views_per_batch=int(resolved_vpb),
+            projector_unroll=1,
+            checkpoint_projector=bool(args.checkpoint_projector),
+            gather_dtype=_gather,
+        )
         algorithm_config = {
-            "filter": str(args.filter),
-            "views_per_batch": int(resolved_vpb),
-            "projector_unroll": 1,
-            "checkpoint_projector": bool(args.checkpoint_projector),
-            "gather_dtype": _gather,
+            "filter": str(cfg.filter_name),
+            "views_per_batch": int(cfg.views_per_batch),
+            "projector_unroll": int(cfg.projector_unroll),
+            "checkpoint_projector": bool(cfg.checkpoint_projector),
+            "gather_dtype": str(cfg.gather_dtype),
         }
         with transfer_guard_context(args.transfer_guard):
             vol = fbp(
@@ -399,11 +447,9 @@ def main() -> None:
                 recon_grid,
                 detector,
                 proj,
-                filter_name=args.filter,
-                views_per_batch=resolved_vpb,
-                projector_unroll=1,
-                checkpoint_projector=bool(args.checkpoint_projector),
-                gather_dtype=_gather,
+                config=cfg,
+                views_per_batch=int(resolved_vpb),
+                det_grid=det_grid,
             )
         # For FBP, apply mask post-hoc if requested for parity
         if vol_mask is not None:
@@ -456,6 +502,7 @@ def main() -> None:
                 detector,
                 proj,
                 config=cfg,
+                det_grid=det_grid,
             )
     else:  # spdhg
         # Build SPDHG config
@@ -503,16 +550,20 @@ def main() -> None:
         if str(args.warm_start).lower() == "fbp":
             # Compute a quick FBP and use as initialization
             warm_start_vpb = 1 if vpb_mode == "default" else int(resolved_vpb)
-            init_x = fbp(
-                geom,
-                recon_grid,
-                detector,
-                proj,
+            warm_start_cfg = FBPConfig(
                 filter_name=str(args.filter),
                 views_per_batch=warm_start_vpb,
                 projector_unroll=1,
                 checkpoint_projector=bool(args.checkpoint_projector),
                 gather_dtype=_gather,
+            )
+            init_x = fbp(
+                geom,
+                recon_grid,
+                detector,
+                proj,
+                config=warm_start_cfg,
+                det_grid=det_grid,
             )
             if vol_mask is not None:
                 init_x = init_x * vol_mask
@@ -526,6 +577,7 @@ def main() -> None:
                 proj,
                 init_x=init_x,
                 config=cfg,
+                det_grid=det_grid,
             )
 
     # Save the reconstruction in the object (sample) frame.
@@ -565,6 +617,8 @@ def main() -> None:
                 "input_projection_shape": list(meta.projections.shape),
                 "reconstruction_grid": recon_grid.to_dict(),
                 "detector": detector.to_dict(),
+                "detector_roll_deg": geometry_meta.get("detector_roll_deg"),
+                "detector_grid_replayed": det_grid is not None,
                 "roi": {
                     "requested": roi_mode,
                     "is_parallel": bool(is_parallel),

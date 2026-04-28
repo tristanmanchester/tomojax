@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 import tomojax.cli.align as align_cli
-from tomojax.align.dofs import normalize_bounds
-from tomojax.align.losses import loss_spec_name, resolve_loss_for_level
+from tomojax.align.model.dofs import normalize_bounds
+from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align.pipeline import AlignConfig
 from tomojax.cli.config import parse_args_with_config
 import tomojax.cli.recon as recon_cli
@@ -325,6 +327,26 @@ def test_align_cli_dof_options_parse_and_normalize_named_dofs():
     assert freeze_dofs == ("phi",)
 
 
+def test_align_cli_schedule_surface_excludes_static_detector_center_preset(capsys):
+    parser = align_cli._build_parser()
+
+    with pytest.raises(SystemExit):
+        parse_args_with_config(
+            parser,
+            [
+                "--data",
+                "input.nxs",
+                "--out",
+                "runs/align.nxs",
+                "--schedule",
+                "detector_center_2d",
+            ],
+            required=("data", "out"),
+        )
+
+    assert "invalid choice" in capsys.readouterr().err
+
+
 def test_align_config_toml_accepts_dof_arrays(tmp_path):
     config_path = tmp_path / "align.toml"
     config_path.write_text(
@@ -387,6 +409,18 @@ def test_normalize_bounds_accepts_cli_string_in_canonical_order():
         ("alpha", -0.05, 0.05),
         ("dx", -20.0, 20.0),
         ("dz", -10.0, 10.0),
+    )
+
+
+def test_normalize_bounds_accepts_setup_units_in_public_names():
+    bounds = normalize_bounds(
+        "det_u_px=-8:8,detector_roll_deg=-5:5",
+        option_name="--bounds",
+    )
+
+    assert bounds == (
+        ("det_u_px", -8.0, 8.0),
+        ("detector_roll_deg", math.radians(-5.0), math.radians(5.0)),
     )
 
 

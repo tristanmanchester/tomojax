@@ -37,6 +37,7 @@ def _patch_one_voxel_quadratic(
         grad_mode="auto",
         T_all=None,
         vol_mask=None,
+        det_grid=None,
     ):
         resid = x - target_arr
         loss = 0.5 * jnp.vdot(resid, resid).real
@@ -85,6 +86,7 @@ def test_fista_reports_objective_at_primal_iterate_not_momentum(monkeypatch: pyt
         grad_mode="auto",
         T_all=None,
         vol_mask=None,
+        det_grid=None,
     ):
         resid = x - target
         loss = 0.5 * jnp.vdot(resid, resid).real

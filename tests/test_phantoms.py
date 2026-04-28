@@ -1,6 +1,8 @@
+import inspect
+
 import numpy as np
 
-from tomojax.data.phantoms import lamino_disk
+from tomojax.data.phantoms import lamino_disk, lamino_disk_legacy
 
 
 def test_lamino_disk_thickness_centered():
@@ -26,3 +28,26 @@ def test_lamino_disk_thickness_centered():
     dist = np.abs(zs - cz)
     expected = max(1, int(round(ratio * nz))) * 0.5 + 0.75
     assert dist.max() <= expected
+
+
+def test_lamino_disk_primary_api_has_no_ignored_tilt_args():
+    signature = inspect.signature(lamino_disk)
+
+    assert "tilt_deg" not in signature.parameters
+    assert "tilt_about" not in signature.parameters
+
+
+def test_lamino_disk_legacy_accepts_ignored_tilt_args():
+    base = lamino_disk(16, 16, 16, seed=2, min_size=4, max_size=8)
+    legacy = lamino_disk_legacy(
+        16,
+        16,
+        16,
+        seed=2,
+        min_size=4,
+        max_size=8,
+        tilt_deg=55.0,
+        tilt_about="z",
+    )
+
+    np.testing.assert_allclose(legacy, base)

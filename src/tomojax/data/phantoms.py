@@ -179,6 +179,8 @@ def _sample_random_sphere_params(
     min_value: float,
     max_value: float,
     use_inscribed_fov: bool,
+    placement: str,
+    radial_exponent: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
     """Sample sphere parameters while preserving the legacy RNG sequence."""
@@ -188,7 +190,21 @@ def _sample_random_sphere_params(
 
     for _ in range(max(0, int(n_spheres))):
         radius = float(rng.uniform(min_size / 2.0, max_size / 2.0))
-        if use_inscribed_fov:
+        if radius > nz / 2.0:
+            continue
+        if placement == "center_biased_sphere":
+            center = _sample_center_biased_sphere(
+                nx,
+                ny,
+                nz,
+                margin=radius,
+                radial_exponent=radial_exponent,
+                rng=rng,
+            )
+            if center is None:
+                continue
+            cx, cy, cz = center
+        elif use_inscribed_fov:
             rmax = fov_r - radius
             if rmax <= 1:
                 continue
@@ -198,6 +214,8 @@ def _sample_random_sphere_params(
             cy = cy0 + r * np.sin(th)
             cz = float(rng.uniform(radius, nz - radius))
         else:
+            if radius > nx / 2.0 or radius > ny / 2.0:
+                continue
             cx = float(rng.uniform(radius, nx - radius))
             cy = float(rng.uniform(radius, ny - radius))
             cz = float(rng.uniform(radius, nz - radius))
@@ -240,6 +258,33 @@ def _rasterize_spheres_python_roi(vol: np.ndarray, params: np.ndarray) -> None:
         sub[mask] = np.maximum(sub[mask], value)
 
 
+def _sample_center_biased_sphere(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    margin: float,
+    radial_exponent: float,
+    rng: np.random.Generator,
+) -> tuple[float, float, float] | None:
+    """Sample a center inside the inscribed 3D sphere, biased toward volume center."""
+    rmax = (min(nx, ny, nz) - 1) / 2.0 - float(margin)
+    if rmax <= 1:
+        return None
+
+    direction = rng.normal(size=3)
+    norm = float(np.linalg.norm(direction))
+    if norm <= 0:
+        return None
+    direction = direction / norm
+
+    exponent = max(float(radial_exponent), 1e-6)
+    radius = rmax * float(rng.uniform(0.0, 1.0) ** exponent)
+    center = np.array([(nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0], dtype=np.float64)
+    point = center + radius * direction
+    return float(point[0]), float(point[1]), float(point[2])
+
+
 def random_cubes_spheres(
     nx: int,
     ny: int,
@@ -253,12 +298,18 @@ def random_cubes_spheres(
     max_value: float = 1.0,
     max_rot_degrees: float = 180.0,
     use_inscribed_fov: bool = True,
+    placement: str = "legacy",
+    radial_exponent: float = 0.75,
     seed: int = 0,
 ) -> np.ndarray:
     """Random rotated cubes + spheres phantom (deterministic).
 
     Ensures objects fit within FOV if `use_inscribed_fov=True`.
     """
+    if placement not in {"legacy", "center_biased_sphere"}:
+        msg = "placement must be 'legacy' or 'center_biased_sphere'"
+        raise ValueError(msg)
+
     vol = np.zeros((nx, ny, nz), dtype=np.float32)
     rng = np.random.default_rng(seed)
 
@@ -268,7 +319,22 @@ def random_cubes_spheres(
     # Cubes
     for _ in range(max(0, int(n_cubes))):
         size = float(rng.uniform(min_size, max_size))
-        if use_inscribed_fov:
+        if size > nz:
+            continue
+        if placement == "center_biased_sphere":
+            margin = size * np.sqrt(3) / 2.0
+            center = _sample_center_biased_sphere(
+                nx,
+                ny,
+                nz,
+                margin=margin,
+                radial_exponent=radial_exponent,
+                rng=rng,
+            )
+            if center is None:
+                continue
+            cx, cy, cz = center
+        elif use_inscribed_fov:
             max_xy_extent = size * np.sqrt(3) / 2.0
             rmax = fov_r - max_xy_extent
             if rmax <= 1:
@@ -280,6 +346,8 @@ def random_cubes_spheres(
             cz = float(rng.uniform(size / 2.0, nz - size / 2.0))
         else:
             margin = size * np.sqrt(3) / 2.0
+            if margin > nx / 2.0 or margin > ny / 2.0 or margin > nz / 2.0:
+                continue
             cx = float(rng.uniform(margin, nx - margin))
             cy = float(rng.uniform(margin, ny - margin))
             cz = float(rng.uniform(margin, nz - margin))
@@ -297,6 +365,8 @@ def random_cubes_spheres(
         min_value=min_value,
         max_value=max_value,
         use_inscribed_fov=use_inscribed_fov,
+        placement=placement,
+        radial_exponent=radial_exponent,
         rng=rng,
     )
     _rasterize_spheres_python_roi(vol, params)
@@ -318,18 +388,12 @@ def lamino_disk(
     min_value: float = 0.1,
     max_value: float = 1.0,
     max_rot_degrees: float = 180.0,
-    tilt_deg: float = 30.0,
-    tilt_about: str = "x",
 ) -> np.ndarray:
     """Random cubes+spheres phantom constrained to a thin central slab.
 
     Sample-frame convention: the reconstructed/object volume is in (x, y, z)
     coordinates, and the nominal rotation axis is the +z axis. The thin slab is
     therefore orthogonal to +z, i.e., confined to the central few z-slices.
-
-    Note: `tilt_deg`/`tilt_about` are ignored for the slab orientation (kept for
-    signature/backward-compat) since the sample-frame axis is +z regardless of
-    lamino tilt in world coordinates.
     """
 
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
@@ -363,3 +427,39 @@ def lamino_disk(
     if vmax > 0:
         vol = vol / vmax
     return vol.astype(np.float32)
+
+
+def lamino_disk_legacy(
+    nx: int,
+    ny: int,
+    nz: int,
+    *,
+    thickness_ratio: float = 0.2,
+    seed: int = 0,
+    n_cubes: int = 8,
+    n_spheres: int = 7,
+    min_size: int = 4,
+    max_size: int = 32,
+    min_value: float = 0.1,
+    max_value: float = 1.0,
+    max_rot_degrees: float = 180.0,
+    tilt_deg: float = 30.0,
+    tilt_about: str = "x",
+) -> np.ndarray:
+    """Compatibility wrapper for callers that still pass ignored tilt options."""
+
+    del tilt_deg, tilt_about
+    return lamino_disk(
+        nx,
+        ny,
+        nz,
+        thickness_ratio=thickness_ratio,
+        seed=seed,
+        n_cubes=n_cubes,
+        n_spheres=n_spheres,
+        min_size=min_size,
+        max_size=max_size,
+        min_value=min_value,
+        max_value=max_value,
+        max_rot_degrees=max_rot_degrees,
+    )

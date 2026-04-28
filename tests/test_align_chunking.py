@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 import jax.numpy as jnp
 
-import tomojax.align.pipeline as align_pipeline
-from tomojax.align.losses import parse_loss_spec
-from tomojax.align.parametrizations import se3_from_5d
+import tomojax.align._reconstruction_stage as reconstruction_stage
+from tomojax.align.objectives.loss_specs import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig, align
+from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 
@@ -24,19 +24,14 @@ def make_misaligned_case(nx=10, ny=10, nz=10, n_views=5, seed=0):
     true_params[:, :3] = rng.normal(scale=np.deg2rad(0.15), size=(n_views, 3))
     true_params[:, 3:] = rng.normal(scale=0.2, size=(n_views, 2))
 
-    projs = []
-    for i in range(n_views):
-
-        class _G:
-            def pose_for_view(self, _):
-                T_nom = jnp.asarray(geom_nom.pose_for_view(i), dtype=jnp.float32)
-                T_al = se3_from_5d(jnp.asarray(true_params[i]))
-                return tuple(map(tuple, T_nom @ T_al))
-
-            def rays_for_view(self, _):
-                return geom_nom.rays_for_view(i)
-
-        projs.append(forward_project_view(_G(), grid, det, vol, view_index=0))
+    aligned_geometry = PoseAdjustedGeometry(
+        geometry=geom_nom,
+        params5=jnp.asarray(true_params, dtype=jnp.float32),
+    )
+    projs = [
+        forward_project_view(aligned_geometry, grid, det, vol, view_index=i)
+        for i in range(n_views)
+    ]
     return grid, det, geom_nom, vol, jnp.stack(projs, axis=0)
 
 
@@ -46,7 +41,7 @@ def _freeze_reconstruction(monkeypatch):
         assert init_x is not None
         return jnp.asarray(init_x, dtype=jnp.float32), {"loss": [0.0, 0.0]}
 
-    monkeypatch.setattr(align_pipeline, "fista_tv", fake_fista_tv)
+    monkeypatch.setattr(reconstruction_stage, "fista_tv", fake_fista_tv)
 
 
 def _run_fixed_volume_alignment(

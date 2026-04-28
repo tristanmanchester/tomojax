@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 import json
-import math
 import os
 from pathlib import Path
 import platform
 import sys
 from typing import Any
+
+from tomojax.utils.json import normalize_json
 
 
 SCHEMA_VERSION = 1
@@ -18,39 +18,7 @@ SCHEMA_VERSION = 1
 
 def _normalize_json(value: Any) -> Any:
     """Convert common CLI/runtime objects into strict JSON-compatible values."""
-    if value is None or isinstance(value, bool | int | str):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else str(value)
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, argparse.Namespace):
-        return _normalize_json(vars(value))
-    if is_dataclass(value) and not isinstance(value, type):
-        return _normalize_json(asdict(value))
-    if isinstance(value, Mapping):
-        return {str(k): _normalize_json(v) for k, v in value.items()}
-    if isinstance(value, tuple | list | set | frozenset):
-        return [_normalize_json(v) for v in value]
-
-    try:
-        import numpy as np
-
-        if isinstance(value, np.generic):
-            return _normalize_json(value.item())
-        if isinstance(value, np.ndarray):
-            return _normalize_json(value.tolist())
-    except Exception:
-        pass
-
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        try:
-            return _normalize_json(to_dict())
-        except Exception:
-            pass
-
-    return str(value)
+    return normalize_json(value, namespace=True, catch_to_dict_errors=True)
 
 
 def _format_timestamp(timestamp: datetime | str | None) -> str:

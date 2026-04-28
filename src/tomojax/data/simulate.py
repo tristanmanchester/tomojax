@@ -159,8 +159,6 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
             min_value=cfg.min_value,
             max_value=cfg.max_value,
             max_rot_degrees=cfg.max_rot_deg,
-            tilt_deg=cfg.tilt_deg,
-            tilt_about=cfg.tilt_about,
         )
     else:
         raise ValueError(f"unknown phantom {cfg.phantom}")

@@ -7,8 +7,14 @@ import pytest
 import jax.numpy as jnp
 
 from tomojax.align.checkpoint import (
+    AlignmentCheckpointGeometrySnapshot,
+    AlignmentCheckpointMetadataInput,
+    AlignmentCheckpointProgress,
+    AlignmentProjectionIdentity,
     CheckpointError,
+    CheckpointMetadata,
     build_alignment_checkpoint_metadata,
+    build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
@@ -20,8 +26,8 @@ from tomojax.align.pipeline import (
     align,
     align_multires,
 )
-from tomojax.core.geometry import Detector, Grid, ParallelGeometry
-from tomojax.recon.multires import scale_detector, scale_grid
+from tomojax.core.geometry import Detector, Grid
+from tomojax.core.multires import scale_detector, scale_grid
 
 from test_align_quick import make_misaligned_case
 
@@ -45,43 +51,58 @@ def _metadata(
     elapsed_offset: float = 0.0,
     level_complete: bool = False,
     run_complete: bool = False,
-) -> dict[str, object]:
-    return build_alignment_checkpoint_metadata(
-        projections_shape=tuple(int(v) for v in projections.shape),
-        projections_dtype=str(projections.dtype),
-        geometry_type="parallel",
-        geometry_meta={},
-        reconstruction_grid=grid.to_dict(),
-        detector=detector.to_dict(),
-        state_grid=(state_grid or grid).to_dict(),
-        state_detector=(state_detector or detector).to_dict(),
-        levels=levels,
-        level_index=level_index,
-        level_factor=level_factor,
-        completed_outer_iters_in_level=completed_outer_iters_in_level,
-        global_outer_iters_completed=global_outer_iters_completed,
-        config=cfg,
-        cli_options={
-            "roi": "off",
-            "grid": None,
-            "requested_gather_dtype": "fp32",
-            "gather_dtype": "fp32",
-            "views_per_batch": 1,
-            "projector_unroll": 1,
-            "checkpoint_projector": True,
-            "mask_vol": "off",
-        },
-        prev_factor=prev_factor,
-        L_prev=L_prev,
-        small_impr_streak=small_impr_streak,
-        elapsed_offset=elapsed_offset,
-        random_state={"alignment": None},
-        level_complete=level_complete,
-        run_complete=run_complete,
+    schedule_metadata: dict[str, object] | None = None,
+    schedule_state: dict[str, object] | None = None,
+) -> CheckpointMetadata:
+    return build_alignment_checkpoint_metadata_from_input(
+        AlignmentCheckpointMetadataInput(
+            projection=AlignmentProjectionIdentity(
+                shape=tuple(int(v) for v in projections.shape),
+                dtype=str(projections.dtype),
+            ),
+            geometry=AlignmentCheckpointGeometrySnapshot(
+                geometry_type="parallel",
+                geometry_meta={},
+                reconstruction_grid=grid.to_dict(),
+                detector=detector.to_dict(),
+                state_grid=(state_grid or grid).to_dict(),
+                state_detector=(state_detector or detector).to_dict(),
+            ),
+            progress=AlignmentCheckpointProgress(
+                levels=levels,
+                level_index=level_index,
+                level_factor=level_factor,
+                completed_outer_iters_in_level=completed_outer_iters_in_level,
+                global_outer_iters_completed=global_outer_iters_completed,
+                prev_factor=prev_factor,
+                L_prev=L_prev,
+                small_impr_streak=small_impr_streak,
+                elapsed_offset=elapsed_offset,
+                level_complete=level_complete,
+                run_complete=run_complete,
+            ),
+            config=cfg,
+            cli_options={
+                "roi": "off",
+                "grid": None,
+                "requested_gather_dtype": "fp32",
+                "gather_dtype": "fp32",
+                "views_per_batch": 1,
+                "projector_unroll": 1,
+                "checkpoint_projector": True,
+                "mask_vol": "off",
+            },
+            random_state={"alignment": None},
+            schedule_metadata=schedule_metadata,
+            schedule_state=schedule_state,
+        )
     )
 
 
-def _resume_single_from_checkpoint(path, expected_metadata) -> AlignResumeState:
+def _resume_single_from_checkpoint(
+    path,
+    expected_metadata: CheckpointMetadata,
+) -> AlignResumeState:
     checkpoint = load_alignment_checkpoint(path)
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     meta = checkpoint.metadata
@@ -102,7 +123,10 @@ def _resume_single_from_checkpoint(path, expected_metadata) -> AlignResumeState:
     )
 
 
-def _resume_multires_from_checkpoint(path, expected_metadata) -> AlignMultiresResumeState:
+def _resume_multires_from_checkpoint(
+    path,
+    expected_metadata: CheckpointMetadata,
+) -> AlignMultiresResumeState:
     checkpoint = load_alignment_checkpoint(path)
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     meta = checkpoint.metadata
@@ -127,6 +151,53 @@ def _resume_multires_from_checkpoint(path, expected_metadata) -> AlignMultiresRe
         level_complete=bool(meta.get("level_complete", False)),
         run_complete=bool(meta.get("run_complete", False)),
     )
+
+
+def test_alignment_checkpoint_legacy_metadata_builder_delegates_to_typed_input():
+    grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)
+    projections = jnp.zeros((4, 2, 3), dtype=jnp.float32)
+    cfg = AlignConfig(outer_iters=2, recon_iters=1, early_stop=False)
+
+    typed = _metadata(
+        cfg=cfg,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        completed_outer_iters_in_level=1,
+        global_outer_iters_completed=1,
+        L_prev=2.5,
+    )
+    legacy = build_alignment_checkpoint_metadata(
+        projections_shape=tuple(int(v) for v in projections.shape),
+        projections_dtype=str(projections.dtype),
+        geometry_type="parallel",
+        geometry_meta={},
+        reconstruction_grid=grid.to_dict(),
+        detector=detector.to_dict(),
+        state_grid=grid.to_dict(),
+        state_detector=detector.to_dict(),
+        levels=None,
+        level_index=0,
+        level_factor=1,
+        completed_outer_iters_in_level=1,
+        global_outer_iters_completed=1,
+        config=cfg,
+        cli_options={
+            "roi": "off",
+            "grid": None,
+            "requested_gather_dtype": "fp32",
+            "gather_dtype": "fp32",
+            "views_per_batch": 1,
+            "projector_unroll": 1,
+            "checkpoint_projector": True,
+            "mask_vol": "off",
+        },
+        L_prev=2.5,
+        random_state={"alignment": None},
+    )
+
+    assert legacy == typed
 
 
 def test_alignment_checkpoint_round_trips_arrays_and_metadata(tmp_path):
@@ -165,6 +236,61 @@ def test_alignment_checkpoint_round_trips_arrays_and_metadata(tmp_path):
     assert checkpoint.loss_history == [3.0, 2.0]
     assert checkpoint.outer_stats[0]["outer_idx"] == 1
     assert checkpoint.metadata["completed_outer_iters_in_level"] == 1
+
+
+def test_alignment_checkpoint_records_optional_schedule_metadata(tmp_path):
+    grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)
+    projections = jnp.zeros((4, 2, 3), dtype=jnp.float32)
+    cfg = AlignConfig(schedule="cor", outer_iters=2, recon_iters=1, early_stop=False)
+    schedule_metadata = {
+        "name": "cor",
+        "stages": [{"stage_name": "cor", "active_dofs": ["det_u_px"]}],
+    }
+    schedule_state = {
+        "stage_index": 0,
+        "stage_name": "cor",
+        "stage_completed": False,
+        "completed_outer_iters_in_stage": 1,
+    }
+    metadata = _metadata(
+        cfg=cfg,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        levels=[1],
+        schedule_metadata=schedule_metadata,
+        schedule_state=schedule_state,
+    )
+
+    path = tmp_path / "schedule_checkpoint.npz"
+    save_alignment_checkpoint(
+        path,
+        x=np.ones((3, 3, 2), dtype=np.float32),
+        params5=np.zeros((4, 5), dtype=np.float32),
+        loss_history=[2.0],
+        outer_stats=[],
+        metadata=metadata,
+    )
+
+    checkpoint = load_alignment_checkpoint(path)
+    validate_alignment_checkpoint(checkpoint, metadata)
+    assert checkpoint.metadata["schedule_metadata"]["name"] == "cor"
+    assert checkpoint.metadata["schedule_state"]["stage_name"] == "cor"
+
+    legacy_metadata = dict(checkpoint.metadata)
+    legacy_metadata.pop("schedule_metadata")
+    legacy_metadata.pop("schedule_state")
+    save_alignment_checkpoint(
+        path,
+        x=checkpoint.x,
+        params5=checkpoint.params5,
+        loss_history=checkpoint.loss_history,
+        outer_stats=checkpoint.outer_stats,
+        metadata=legacy_metadata,
+    )
+    legacy_checkpoint = load_alignment_checkpoint(path)
+    validate_alignment_checkpoint(legacy_checkpoint, metadata)
 
 
 def test_alignment_checkpoint_accepts_missing_recon_solver_defaults(tmp_path):

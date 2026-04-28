@@ -21,6 +21,14 @@ if sys.version_info < (3, 8):
     pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
+def _gather_dtype_adjoint_tolerance(gather_dtype: str) -> dict[str, float]:
+    if gather_dtype == "fp32":
+        return {"atol": 1e-5, "rtol": 1e-5}
+    # Half-precision GPU paths can differ from JAX's VJP oracle by one or two
+    # quantization steps, especially for tilted laminography interpolation.
+    return {"atol": 5e-3, "rtol": 5e-3}
+
+
 def make_aligned_case(nx=16, ny=16, nz=16):
     grid = Grid(nx=nx, ny=ny, nz=nz, vx=1.0, vy=1.0, vz=1.0)
     # Detector aligned and covering FOV exactly
@@ -272,8 +280,9 @@ def test_backproject_matches_vjp_lamino(gather_dtype: str):
         view_index=0,
         gather_dtype=gather_dtype,
     )
+    tol = _gather_dtype_adjoint_tolerance(gather_dtype)
 
-    assert np.allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-5, rtol=1e-5)
+    assert np.allclose(np.asarray(explicit), np.asarray(oracle), **tol)
 
 
 def test_sum_backproject_views_matches_per_view_sum():

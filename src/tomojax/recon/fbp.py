@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Iterator, Tuple
+from dataclasses import dataclass, replace
+from typing import Any, Iterator, Tuple
 
 import numpy as np
 import jax
@@ -12,6 +13,7 @@ from ..core.geometry.views import stack_view_poses
 from ..core.projector import backproject_view_T
 from ..core.validation import (
     validate_grid,
+    validate_detector_grid,
     validate_pose_stack,
     validate_projection_stack,
 )
@@ -20,6 +22,19 @@ from ..utils.logging import progress_iter
 
 _RFFT_FILTER_CACHE: "OrderedDict[Tuple[str, int, float, str], np.ndarray]" = OrderedDict()
 _RFFT_FILTER_CACHE_CAP = 8
+_UNSET: Any = object()
+
+
+@dataclass(frozen=True, slots=True)
+class FBPConfig:
+    """Configuration for filtered backprojection."""
+
+    filter_name: str = "ramp"
+    scale: float | None = None
+    views_per_batch: int = 1
+    projector_unroll: int = 1
+    checkpoint_projector: bool = True
+    gather_dtype: str = "fp32"
 
 
 def _default_fbp_scale(n_views: int) -> float:
@@ -84,6 +99,7 @@ def _bp_one(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Backproject one view with the explicit discrete adjoint."""
     del checkpoint_projector
@@ -94,6 +110,7 @@ def _bp_one(
         filtered.astype(jnp.float32),
         unroll=int(projector_unroll),
         gather_dtype=gather_dtype,
+        det_grid=det_grid,
     )
 
 
@@ -118,6 +135,7 @@ def _bp_batch_sum(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Backproject a fixed-size chunk while keeping peak memory at one volume."""
 
@@ -131,6 +149,7 @@ def _bp_batch_sum(
             projector_unroll=projector_unroll,
             checkpoint_projector=checkpoint_projector,
             gather_dtype=gather_dtype,
+            det_grid=det_grid,
         )
         return accum + bp, None
 
@@ -167,6 +186,7 @@ def _run_fbp_fast_path(
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
 ) -> jnp.ndarray:
     """Run FBP as one compiled scan over padded view chunks."""
     n_views, nv, nu = map(int, proj.shape)
@@ -183,7 +203,7 @@ def _run_fbp_fast_path(
     y_chunks = proj.reshape((num_chunks, batch_size, nv, nu))
     valid_mask = (jnp.arange(total_views) < n_views).reshape((num_chunks, batch_size, 1, 1))
 
-    def scan_chunks(T_chunks_in, y_chunks_in, valid_mask_in):
+    def scan_chunks(T_chunks_in, y_chunks_in, valid_mask_in, det_grid_in):
         rows = y_chunks_in.reshape((num_chunks, batch_size * nv, nu))
         rows_f = jax.vmap(
             lambda chunk_rows: _fft_filter_rows_jit(
@@ -205,6 +225,7 @@ def _run_fbp_fast_path(
                 projector_unroll=projector_unroll,
                 checkpoint_projector=checkpoint_projector,
                 gather_dtype=gather_dtype,
+                det_grid=det_grid_in,
             )
             return accum + acc_chunk, None
 
@@ -212,7 +233,7 @@ def _run_fbp_fast_path(
         acc, _ = jax.lax.scan(body, init, (T_chunks_in, filt_chunks))
         return acc
 
-    return jax.jit(scan_chunks)(T_chunks, y_chunks, valid_mask)
+    return jax.jit(scan_chunks)(T_chunks, y_chunks, valid_mask, det_grid)
 
 
 def _run_fbp_with_backoff(
@@ -226,6 +247,7 @@ def _run_fbp_with_backoff(
     projector_unroll: int,
     checkpoint_projector: bool,
     gather_dtype: str,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     view_progress: Iterator[int],
 ) -> jnp.ndarray:
     """Fallback path that retries smaller chunks after OOM without skipping views."""
@@ -263,6 +285,7 @@ def _run_fbp_with_backoff(
                 projector_unroll=projector_unroll,
                 checkpoint_projector=checkpoint_projector,
                 gather_dtype=gather_dtype,
+                det_grid=det_grid,
             )
             s += cur
             for _ in range(cur):
@@ -282,18 +305,37 @@ def fbp(
     detector: Detector,
     projections: jnp.ndarray,
     *,
-    filter_name: str = "ramp",
-    scale: float | None = None,
-    views_per_batch: int = 1,
-    projector_unroll: int = 1,
-    checkpoint_projector: bool = True,
-    gather_dtype: str = "fp32",
+    config: FBPConfig | None = None,
+    filter_name: str | object = _UNSET,
+    scale: float | None | object = _UNSET,
+    views_per_batch: int | object = _UNSET,
+    projector_unroll: int | object = _UNSET,
+    checkpoint_projector: bool | object = _UNSET,
+    gather_dtype: str | object = _UNSET,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Filtered backprojection for parallel-ray geometry using the explicit adjoint.
 
     projections: (n_views, nv, nu) -> volume (nx, ny, nz).
     Memory-safe: filters and backprojects per view-batch.
     """
+    cfg = FBPConfig() if config is None else config
+    updates: dict[str, object] = {}
+    if filter_name is not _UNSET:
+        updates["filter_name"] = str(filter_name)
+    if scale is not _UNSET:
+        updates["scale"] = None if scale is None else float(scale)
+    if views_per_batch is not _UNSET:
+        updates["views_per_batch"] = int(views_per_batch)
+    if projector_unroll is not _UNSET:
+        updates["projector_unroll"] = int(projector_unroll)
+    if checkpoint_projector is not _UNSET:
+        updates["checkpoint_projector"] = bool(checkpoint_projector)
+    if gather_dtype is not _UNSET:
+        updates["gather_dtype"] = str(gather_dtype)
+    if updates:
+        cfg = replace(cfg, **updates)
+
     validate_grid(grid, "fbp grid")
     n_views, _, _ = validate_projection_stack(
         projections,
@@ -301,11 +343,12 @@ def fbp(
         geometry=geometry,
         context="fbp projections",
     )
+    validate_detector_grid(det_grid, detector, context="fbp det_grid")
     proj = jnp.asarray(projections, dtype=jnp.float32)
     # Precompute poses once
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="fbp geometry")
-    requested_b = int(views_per_batch) if int(views_per_batch) > 0 else n_views
+    requested_b = int(cfg.views_per_batch) if int(cfg.views_per_batch) > 0 else n_views
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
 
@@ -316,10 +359,11 @@ def fbp(
             batch_size=b,
             grid=grid,
             detector=detector,
-            filter_name=filter_name,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
+            filter_name=cfg.filter_name,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
         )
         acc.block_until_ready()
         for _ in range(n_views):
@@ -333,15 +377,16 @@ def fbp(
             batch_size=b,
             grid=grid,
             detector=detector,
-            filter_name=filter_name,
-            projector_unroll=projector_unroll,
-            checkpoint_projector=checkpoint_projector,
-            gather_dtype=gather_dtype,
+            filter_name=cfg.filter_name,
+            projector_unroll=cfg.projector_unroll,
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            det_grid=det_grid,
             view_progress=view_progress,
         )
 
-    if scale is None:
+    if cfg.scale is None:
         acc = acc * _default_fbp_scale(n_views)
     else:
-        acc = acc * float(scale)
+        acc = acc * float(cfg.scale)
     return acc

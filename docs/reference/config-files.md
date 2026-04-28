@@ -99,6 +99,7 @@ levels = [4, 2, 1]
 opt_method = "gn"
 gn_damping = 0.001
 gauge_fix = "mean_translation"
+gauge_policy = "reject"
 gather_dtype = "auto"
 checkpoint_projector = true
 log_summary = true
@@ -114,12 +115,15 @@ save_manifest = "runs/align_from_config.manifest.json"
 # DOF selection (translation-only 2-DOF)
 optimise_dofs = ["dx", "dz"]
 
+# Executable setup/pose schedule. Mutually exclusive with optimise_dofs.
+# schedule = "setup_safe"
+
 # Loss schedule (per pyramid level)
 loss_schedule = "4:phasecorr,2:ssim,1:l2_otsu"
 
 # Bounds on active DOFs
 # (TOML inline table syntax)
-bounds = { dx = [-20, 20], dz = [-20, 20] }
+bounds = { dx = [-20, 20], dz = [-20, 20], detector_roll_deg = [-5, 5] }
 
 # Smooth pose model
 pose_model = "spline"

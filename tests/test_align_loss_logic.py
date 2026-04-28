@@ -1,8 +1,17 @@
 import jax.numpy as jnp
 import pytest
 
-from tomojax.align.losses import (
-    LossState,
+from tomojax.align.objectives.loss_adapters import build_loss
+from tomojax.align.objectives.loss_state import LossState
+from tomojax.align.objectives.loss_specs import (
+    loss_is_within_relative_tolerance,
+    loss_spec_name,
+    parse_loss_schedule,
+    parse_loss_spec,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
+)
+from tomojax.align.objectives.loss_kernels import (
     _loss_cauchy,
     _loss_chamfer_edge,
     _loss_l2_otsu_soft,
@@ -11,15 +20,8 @@ from tomojax.align.losses import (
     _loss_ssim_otsu,
     _loss_tversky,
     _loss_welsch,
-    build_loss,
-    loss_is_within_relative_tolerance,
-    loss_spec_name,
-    parse_loss_schedule,
-    parse_loss_spec,
-    resolve_loss_for_level,
-    validate_loss_schedule_levels,
 )
-from tomojax.align.pipeline import _should_prefer_gn_candidate
+from tomojax.align._pose_stage import _should_prefer_gn_candidate
 
 
 def test_loss_is_within_relative_tolerance_allows_small_increase():

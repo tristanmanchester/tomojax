@@ -4,16 +4,17 @@ import pytest
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
-from tomojax.core.projector import forward_project_view
-from tomojax.recon.fista_tv import FistaConfig, fista_tv, grad_data_term
-from tomojax.recon.multires import (
+from tomojax.core.multires import (
     bin_projections,
     bin_volume,
-    fista_multires,
     scale_detector,
     scale_grid,
     upsample_volume,
+    validate_scale_factor,
 )
+from tomojax.core.projector import forward_project_view
+from tomojax.recon.fista_tv import FistaConfig, fista_tv, grad_data_term
+from tomojax.recon.multires import fista_multires
 
 
 if sys.version_info < (3, 8):
@@ -97,6 +98,10 @@ def test_scale_grid_rejects_non_positive_or_non_integral_factor(factor):
 
     with pytest.raises(ValueError, match="integer >= 1"):
         scale_grid(grid, factor)  # type: ignore[arg-type]
+
+
+def test_validate_scale_factor_is_public_core_api():
+    assert validate_scale_factor("3") == 3
 
 
 @pytest.mark.parametrize("factor", [0, -1, 2.5])

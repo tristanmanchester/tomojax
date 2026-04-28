@@ -21,6 +21,7 @@ import tomojax.cli.recon as recon_cli
 import tomojax.cli.runtime_checks as runtime_checks_cli
 import tomojax.cli.simulate as simulate_cli
 from tomojax.data.io_hdf5 import LoadedNXTomo
+from tomojax.core.geometry import Detector, Grid
 
 
 def test_convert_main_delegates_to_converter(monkeypatch):
@@ -155,7 +156,7 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "--bounds" in captured.out
-    assert "dx=-20:20,dz=-20:20,alpha=-0.05:0.05" in captured.out
+    assert "det_u_px=-8:8,detector_roll_deg=-5:5" in captured.out
     assert "--pose-model" in captured.out
     assert "--recon-algo" in captured.out
     assert "--views-per-batch" in captured.out
@@ -164,8 +165,26 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--checkpoint" in captured.out
     assert "--checkpoint-every" in captured.out
     assert "--resume" in captured.out
+    assert "--optimise-geometry" not in captured.out
+    assert "--schedule" in captured.out
+    assert "cor" in captured.out
+    assert "det_u_px" in captured.out
+    assert "detector_roll" in captured.out
     assert "lbfgs" in captured.out
     assert "--lbfgs-memory-size" in captured.out
+
+
+def test_align_primary_dof_parser_accepts_geometry_dofs():
+    parser = argparse.ArgumentParser()
+    args = argparse.Namespace(
+        optimise_dofs=["det_u_px", "dx"],
+        freeze_dofs=["dx"],
+    )
+
+    optimise_dofs, freeze_dofs = align_cli._parse_dof_args(args, parser)
+
+    assert optimise_dofs == ("det_u_px", "dx")
+    assert freeze_dofs == ("dx",)
 
 
 def test_recon_views_per_batch_parser_accepts_auto_and_integers():
@@ -307,11 +326,12 @@ def test_recon_main_passes_fista_constraints_and_records_manifest(monkeypatch, t
         captured["transfer_guard"] = mode
         yield
 
-    def fake_fista_tv(geom, recon_grid, recon_detector, projections, *, config):
+    def fake_fista_tv(geom, recon_grid, recon_detector, projections, *, config, det_grid=None):
         captured["fista_grid"] = recon_grid
         captured["fista_detector"] = recon_detector
         captured["fista_projections_shape"] = tuple(projections.shape)
         captured["fista_config"] = config
+        captured["fista_det_grid"] = det_grid
         volume = jnp.zeros((recon_grid.nx, recon_grid.ny, recon_grid.nz), dtype=jnp.float32)
         return volume, {"loss": [0.0]}
 

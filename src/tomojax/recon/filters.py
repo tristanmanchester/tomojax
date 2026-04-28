@@ -45,7 +45,8 @@ def _hann_filter_np(n: int, du: float) -> np.ndarray:
 def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
     """Host-side filter lookup with a small LRU cache.
 
-    Returns an np.float32 array of length ``n``.
+    Returns a read-only np.float32 array of length ``n``. Callers that
+    need to mutate filter coefficients must copy the returned array first.
     """
     filter_name = _normalize_filter_name(name)
     key = (filter_name, int(n), float(du))
@@ -60,6 +61,7 @@ def get_filter_np(name: str, n: int, du: float) -> np.ndarray:
         H = _hann_filter_np(n, du)
     else:
         raise ValueError(f"Unknown filter {name}")
+    H.setflags(write=False)
     _FILTER_CACHE[key] = H
     if len(_FILTER_CACHE) > _FILTER_CACHE_CAP:
         _FILTER_CACHE.popitem(last=False)

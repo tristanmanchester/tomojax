@@ -24,7 +24,6 @@ from ..core.validation import (
 )
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
-    Regulariser,
     div3,
     grad3,
     huber_tv_value,
@@ -32,6 +31,7 @@ from ._tv_ops import (
     prox_huber_tv_conj,
     validate_regulariser,
 )
+from .types import Regulariser
 
 
 # --------- config ----------
@@ -78,10 +78,11 @@ def _estimate_norm_A2(
     key: jax.Array | None = None,
     power_iters: int = 20,
     safety: float = 1.05,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
     """Reuse your power method to estimate ||A||^2 (i.e., Lipschitz of ∇(1/2||Ax||^2))."""
     n_views, nv, nu = projections_shape
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
     def A_apply(vol, T_chunk):
         vm_project = jax.vmap(
@@ -180,6 +181,7 @@ def spdhg_tv(
     init_x: jnp.ndarray | None = None,
     config: SPDHGConfig = SPDHGConfig(),
     callback: LossCallback | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
     """
     SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
@@ -228,7 +230,7 @@ def spdhg_tv(
     # precompute per-view poses once (like your FISTA)
     T_all = stack_view_poses(geometry, n_views)
     validate_pose_stack(T_all, n_views, context="spdhg_tv geometry")
-    det_grid = get_detector_grid_device(detector)
+    det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
     # batched projector over a chunk of views
     def project_chunk(T_chunk, vol):
@@ -265,6 +267,7 @@ def spdhg_tv(
             key=jax.random.key(config.seed),
             power_iters=20,
             safety=1.05,
+            det_grid=det_grid,
         )
         L_A = float(np.sqrt(L_A2))
         rho = 0.99
@@ -283,7 +286,7 @@ def spdhg_tv(
     rng = np.random.default_rng(config.seed)
     epochs = (config.iters + m - 1) // m
     block_ids = []
-    for e in range(epochs):
+    for _ in range(epochs):
         perm = rng.permutation(m)
         block_ids.extend(list(perm))
     block_ids = jnp.asarray(block_ids[: config.iters], dtype=jnp.int32)

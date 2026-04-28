@@ -1,27 +1,37 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
 import numpy as np
 import jax.numpy as jnp
 import os
 import sys
+from typing import Any, Callable
 
 from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from ..align.dofs import DofBounds, active_dof_mask, normalize_bounds, normalize_dofs
-from ..align.losses import (
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
+from ..align.model.dofs import (
+    DofBounds,
+    normalize_alignment_dofs,
+    normalize_bounds,
+)
+from ..align.objectives.loss_specs import (
     AlignmentLossConfig,
     parse_loss_schedule,
     parse_loss_spec,
     validate_loss_schedule_levels,
 )
-from ..align.params_export import save_alignment_params_csv, save_alignment_params_json
+from ..align.io.params_export import save_alignment_params_csv, save_alignment_params_json
 from ..core.geometry import Grid, Detector
-from ..align.checkpoint import (
+from ..align.io.checkpoint import (
+    AlignmentCheckpointGeometrySnapshot,
+    AlignmentCheckpointMetadataInput,
+    AlignmentCheckpointProgress,
+    AlignmentProjectionIdentity,
     CheckpointError,
-    build_alignment_checkpoint_metadata,
+    CheckpointMetadata,
+    build_alignment_checkpoint_metadata_from_input,
     load_alignment_checkpoint,
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
@@ -32,6 +42,8 @@ from ..align.pipeline import (
     AlignResumeState,
     AlignMultiresResumeState,
 )
+from ..align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
+from ..calibration.manifest import build_calibrated_geometry_metadata_patch
 from ..utils.logging import setup_logging, log_jax_env
 from ..utils.axes import DISK_VOLUME_AXES
 from ._runtime import transfer_guard_context
@@ -92,31 +104,47 @@ def _resolve_recon_grid_and_mask(
     roi_mode: str,
     grid_override: tuple[int, int, int] | list[int] | None,
 ) -> tuple[Grid, bool]:
-    try:
-        roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
-        full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
-        full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
-        full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
-        det_smaller = (
-            (roi.r_u + 1e-6) < full_half_x
-            or (is_parallel and (roi.r_u + 1e-6) < full_half_y)
-            or (roi.r_v + 1e-6) < full_half_z
-        )
-    except Exception:
-        det_smaller = False
-
     recon_grid = grid
     apply_cyl_mask = False
-    if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
-        if roi_mode == "auto" and not is_parallel:
-            recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
-        else:
-            recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
-    elif roi_mode == "bbox":
-        recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
-    elif roi_mode == "cyl":
-        recon_grid = grid_from_detector_fov_slices(grid, detector, crop_y_to_u=is_parallel)
-        apply_cyl_mask = True
+
+    if roi_mode != "off":
+        try:
+            roi = compute_roi(grid, detector, crop_y_to_u=is_parallel)
+            full_half_x = ((grid.nx / 2.0) - 0.5) * float(grid.vx)
+            full_half_y = ((grid.ny / 2.0) - 0.5) * float(grid.vy)
+            full_half_z = ((grid.nz / 2.0) - 0.5) * float(grid.vz)
+            det_smaller = (
+                (roi.r_u + 1e-6) < full_half_x
+                or (is_parallel and (roi.r_u + 1e-6) < full_half_y)
+                or (roi.r_v + 1e-6) < full_half_z
+            )
+            if roi_mode == "cube" or (roi_mode == "auto" and det_smaller):
+                if roi_mode == "auto" and not is_parallel:
+                    recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=False)
+                else:
+                    recon_grid = grid_from_detector_fov_slices(
+                        grid,
+                        detector,
+                        crop_y_to_u=is_parallel,
+                    )
+            elif roi_mode == "bbox":
+                recon_grid = grid_from_detector_fov(grid, detector, crop_y_to_u=is_parallel)
+            elif roi_mode == "cyl":
+                recon_grid = grid_from_detector_fov_slices(
+                    grid,
+                    detector,
+                    crop_y_to_u=is_parallel,
+                )
+                apply_cyl_mask = True
+        except Exception as exc:
+            if roi_mode == "auto":
+                logging.warning(
+                    "--roi=auto could not be applied; continuing without ROI crop: %s",
+                    exc,
+                    exc_info=True,
+                )
+            else:
+                raise ValueError(f"Failed to apply requested --roi={roi_mode!r}") from exc
 
     # Explicit grid overrides take full precedence over ROI-derived masking.
     if grid_override is not None:
@@ -135,10 +163,9 @@ def _parse_dof_args(
         optimise_dofs = (
             None
             if args.optimise_dofs is None
-            else normalize_dofs(args.optimise_dofs, option_name="--optimise-dofs")
+            else normalize_alignment_dofs(args.optimise_dofs, option_name="--optimise-dofs")
         )
-        freeze_dofs = normalize_dofs(args.freeze_dofs, option_name="--freeze-dofs")
-        active_dof_mask(optimise_dofs=optimise_dofs, freeze_dofs=freeze_dofs)
+        freeze_dofs = normalize_alignment_dofs(args.freeze_dofs, option_name="--freeze-dofs")
     except ValueError as exc:
         parser.error(str(exc))
     return optimise_dofs, freeze_dofs
@@ -302,14 +329,27 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         metavar="DOF[,DOF]",
-        help="Named alignment DOFs to optimise: alpha,beta,phi,dx,dz. Example: dx,dz",
+        help=(
+            "Named alignment DOFs to optimise across pose and geometry: "
+            "alpha,beta,phi,dx,dz,det_u_px,det_v_px,detector_roll_deg,"
+            "axis_rot_x_deg,axis_rot_y_deg. Example: dx,dz or det_u_px"
+        ),
     )
     p.add_argument(
         "--freeze-dofs",
         nargs="+",
         default=None,
         metavar="DOF[,DOF]",
-        help="Named alignment DOFs to keep fixed at initial values. Example: phi",
+        help="Named alignment DOFs to keep fixed at initial values. Example: phi or det_u_px",
+    )
+    p.add_argument(
+        "--schedule",
+        choices=list(PUBLIC_SCHEDULE_PRESETS),
+        default=None,
+        help=(
+            "Executable alignment preset. Setup presets use validation-LM stages; "
+            "explicit --optimise-dofs is the lower-level direct surface."
+        ),
     )
     p.add_argument(
         "--bounds",
@@ -317,8 +357,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DOF=LOWER:UPPER[,DOF=LOWER:UPPER]",
         help=(
-            "Finite per-DOF parameter bounds. Rotations are radians; translations are "
-            "world units. Example: dx=-20:20,dz=-20:20,alpha=-0.05:0.05"
+            "Finite per-DOF parameter bounds. Pose rotations use radians, translations "
+            "use world units, setup *_deg DOFs use degrees, and det_*_px uses native "
+            "detector pixels. Example: det_u_px=-8:8,detector_roll_deg=-5:5"
+        ),
+    )
+    p.add_argument(
+        "--gauge-policy",
+        choices=["reject", "anchor_mean", "prior_required", "diagnose_only"],
+        default="reject",
+        help=(
+            "Policy for gauge-coupled direct/expert DOF sets. Public presets carry "
+            "their own stage policies; direct mixed setup+pose defaults to reject."
         ),
     )
     p.add_argument(
@@ -554,6 +604,10 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
+        "gauge_policy": str(args.gauge_policy),
+        "optimise_dofs": list(args.optimise_dofs or []),
+        "freeze_dofs": list(args.freeze_dofs or []),
+        "schedule": args.schedule,
     }
 
 
@@ -579,51 +633,68 @@ def _checkpoint_metadata(
     elapsed_offset: float,
     level_complete: bool,
     run_complete: bool,
-) -> dict[str, object]:
+    schedule_metadata: dict[str, object] | None = None,
+    geometry_calibration_state: dict[str, object] | None = None,
+    schedule_state: dict[str, object] | None = None,
+) -> CheckpointMetadata:
     geometry_meta = getattr(getattr(meta, "metadata", meta), "geometry_meta", None)
     geometry_type = getattr(meta, "geometry_type", "parallel")
-    return build_alignment_checkpoint_metadata(
-        projections_shape=tuple(int(v) for v in projections.shape),
-        projections_dtype=str(projections.dtype),
-        geometry_type=str(geometry_type),
-        geometry_meta=geometry_meta,
-        reconstruction_grid=recon_grid.to_dict(),
-        detector=detector.to_dict(),
-        state_grid=state_grid.to_dict(),
-        state_detector=state_detector.to_dict(),
-        levels=levels,
-        level_index=int(level_index),
-        level_factor=int(level_factor),
-        completed_outer_iters_in_level=int(completed_outer_iters_in_level),
-        global_outer_iters_completed=int(global_outer_iters_completed),
-        config=cfg,
-        cli_options=_checkpoint_cli_options(args, gather_dtype=gather_dtype),
-        prev_factor=prev_factor,
-        current_inner_iteration=0,
-        L_prev=L_prev,
-        small_impr_streak=small_impr_streak,
-        elapsed_offset=elapsed_offset,
-        random_state={
-            "alignment": None,
-            "seed_translations": (
-                "deterministic_phase_correlation" if cfg.seed_translations else None
+    return build_alignment_checkpoint_metadata_from_input(
+        AlignmentCheckpointMetadataInput(
+            projection=AlignmentProjectionIdentity(
+                shape=tuple(int(v) for v in projections.shape),
+                dtype=str(projections.dtype),
             ),
-        },
-        level_complete=level_complete,
-        run_complete=run_complete,
+            geometry=AlignmentCheckpointGeometrySnapshot(
+                geometry_type=str(geometry_type),
+                geometry_meta=geometry_meta,
+                reconstruction_grid=recon_grid.to_dict(),
+                detector=detector.to_dict(),
+                state_grid=state_grid.to_dict(),
+                state_detector=state_detector.to_dict(),
+                geometry_calibration_state=geometry_calibration_state,
+            ),
+            progress=AlignmentCheckpointProgress(
+                levels=levels,
+                level_index=int(level_index),
+                level_factor=int(level_factor),
+                completed_outer_iters_in_level=int(completed_outer_iters_in_level),
+                global_outer_iters_completed=int(global_outer_iters_completed),
+                prev_factor=prev_factor,
+                current_inner_iteration=0,
+                L_prev=L_prev,
+                small_impr_streak=small_impr_streak,
+                elapsed_offset=elapsed_offset,
+                level_complete=level_complete,
+                run_complete=run_complete,
+            ),
+            config=cfg,
+            cli_options=_checkpoint_cli_options(args, gather_dtype=gather_dtype),
+            random_state={
+                "alignment": None,
+                "seed_translations": (
+                    "deterministic_phase_correlation" if cfg.seed_translations else None
+                ),
+            },
+            schedule_metadata=schedule_metadata,
+            schedule_state=schedule_state,
+        )
     )
 
 
 def _resume_state_from_checkpoint(
     checkpoint_path: str,
     *,
-    expected_metadata: dict[str, object],
+    expected_metadata: CheckpointMetadata,
     used_multires: bool,
 ) -> AlignResumeState | AlignMultiresResumeState:
     checkpoint = load_alignment_checkpoint(checkpoint_path)
     validate_alignment_checkpoint(checkpoint, expected_metadata)
     metadata = checkpoint.metadata
     if used_multires:
+        schedule_state = metadata.get("schedule_state")
+        if not isinstance(schedule_state, dict):
+            schedule_state = {}
         return AlignMultiresResumeState(
             x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
             params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
@@ -646,6 +717,21 @@ def _resume_state_from_checkpoint(
             elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
             level_complete=bool(metadata.get("level_complete", False)),
             run_complete=bool(metadata.get("run_complete", False)),
+            geometry_calibration_state=(
+                dict(metadata["geometry_calibration_state"])
+                if isinstance(metadata.get("geometry_calibration_state"), dict)
+                else None
+            ),
+            stage_index=int(schedule_state.get("stage_index", 0)),
+            stage_name=(
+                str(schedule_state["stage_name"])
+                if schedule_state.get("stage_name") is not None
+                else None
+            ),
+            stage_completed=bool(schedule_state.get("stage_completed", False)),
+            completed_outer_iters_in_stage=int(
+                schedule_state.get("completed_outer_iters_in_stage", 0)
+            ),
         )
     return AlignResumeState(
         x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
@@ -664,24 +750,58 @@ def _resume_state_from_checkpoint(
     )
 
 
-def main() -> None:
-    p = _build_parser()
-    args, config_metadata = parse_args_with_config(p, required=("data", "out"))
+@dataclass(frozen=True, slots=True)
+class AlignCliRunPlan:
+    args: argparse.Namespace
+    config_metadata: dict[str, Any]
+    loss_config: AlignmentLossConfig
+    loss_params: dict[str, float]
+    levels: list[int] | None
+    run_levels: list[int] | None
+    meta: Any
+    geometry_meta: dict[str, Any]
+    grid: Grid
+    recon_grid: Grid
+    detector: Detector
+    geometry: Any
+    projections: jnp.ndarray
+    cfg: AlignConfig
+    gather_dtype: str
+    geometry_dofs: tuple[str, ...]
+    schedule_metadata: dict[str, object] | None
+    checkpoint_path: str | None
+    checkpoint_every: int | None
+    resume_state: AlignResumeState | AlignMultiresResumeState | None
+    apply_cyl_mask: bool
 
-    setup_logging()
-    log_jax_env()
-    _init_jax_compilation_cache()
-    if args.progress:
-        os.environ["TOMOJAX_PROGRESS"] = "1"
-    loss_config, loss_params = _parse_loss_config(args, p)
-    optimise_dofs, freeze_dofs = _parse_dof_args(args, p)
+
+@dataclass(frozen=True, slots=True)
+class AlignCliExecutionResult:
+    x: jnp.ndarray
+    params5: jnp.ndarray
+    info: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class AlignCliCheckpointCallbacks:
+    single: Callable[..., None]
+    multires: Callable[[AlignMultiresResumeState], None]
+
+
+def _build_align_cli_run_plan(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    config_metadata: dict[str, Any],
+) -> AlignCliRunPlan:
+    loss_config, loss_params = _parse_loss_config(args, parser)
+    optimise_dofs, freeze_dofs = _parse_dof_args(args, parser)
     levels = (
         [int(v) for v in args.levels] if args.levels is not None and len(args.levels) > 0 else None
     )
     try:
         validate_loss_schedule_levels(loss_config, levels if levels is not None else [1])
     except ValueError as exc:
-        p.error(str(exc))
+        parser.error(str(exc))
 
     meta = load_nxtomo(args.data)
     geometry_meta = meta.geometry_inputs()
@@ -691,14 +811,29 @@ def main() -> None:
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
     )
-    proj = jnp.asarray(meta.projections, dtype=jnp.float32)
+    projections = jnp.asarray(meta.projections, dtype=jnp.float32)
+    try:
+        resolved_schedule = resolve_alignment_schedule(
+            schedule=args.schedule,
+            optimise_dofs=optimise_dofs,
+            freeze_dofs=freeze_dofs,
+            geometry_dofs=(),
+            geometry=geom,
+            gauge_policy=str(args.gauge_policy),
+            opt_method=str(args.opt_method),
+            outer_iters=int(args.outer_iters),
+            early_stop=bool(args.early_stop),
+        )
+        geometry_dofs = resolved_schedule.active_geometry_dofs
+        schedule_metadata: dict[str, object] | None = resolved_schedule.to_dict()
+    except ValueError as exc:
+        parser.error(str(exc))
 
-    # Resolve default gather dtype lazily at runtime
     from ..utils.memory import default_gather_dtype as _default_gather_dtype
 
-    _gather = str(args.gather_dtype)
-    if _gather == "auto":
-        _gather = _default_gather_dtype()
+    gather_dtype = str(args.gather_dtype)
+    if gather_dtype == "auto":
+        gather_dtype = _default_gather_dtype()
 
     cfg = AlignConfig(
         outer_iters=args.outer_iters,
@@ -715,7 +850,7 @@ def main() -> None:
         views_per_batch=int(args.views_per_batch),
         projector_unroll=1,
         checkpoint_projector=bool(args.checkpoint_projector),
-        gather_dtype=_gather,
+        gather_dtype=gather_dtype,
         opt_method=str(args.opt_method),
         gn_damping=float(args.gn_damping),
         lbfgs_maxiter=int(args.lbfgs_maxiter),
@@ -725,9 +860,12 @@ def main() -> None:
         lbfgs_memory_size=int(args.lbfgs_memory_size),
         w_rot=float(args.w_rot),
         w_trans=float(args.w_trans),
+        schedule=args.schedule,
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
+        geometry_dofs=(),
         bounds=args.bounds,
+        gauge_policy=str(args.gauge_policy),
         pose_model=str(args.pose_model),
         knot_spacing=int(args.knot_spacing),
         degree=int(args.degree),
@@ -746,7 +884,6 @@ def main() -> None:
         ),
         mask_vol=str(args.mask_vol),
     )
-    # ROI handling (align on realistic FOV)
     recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
         grid,
         detector,
@@ -754,11 +891,7 @@ def main() -> None:
         roi_mode=str(args.roi).lower(),
         grid_override=args.grid,
     )
-
-    # Rebuild geometry if grid changed
     if recon_grid is not grid:
-        # Once ROI and explicit sizing resolve an effective grid, keep that grid's
-        # origin/centre metadata authoritative when rebuilding geometry.
         _, _, geom = build_geometry_from_meta(
             geometry_meta,
             grid_override=recon_grid,
@@ -770,19 +903,23 @@ def main() -> None:
     if checkpoint_path is not None and checkpoint_every is None:
         checkpoint_every = 1
     if checkpoint_every is not None and int(checkpoint_every) < 1:
-        p.error("--checkpoint-every must be an integer >= 1")
+        parser.error("--checkpoint-every must be an integer >= 1")
+
+    run_levels = levels
+    if run_levels is None and (args.schedule is not None or bool(geometry_dofs)):
+        run_levels = [1]
 
     expected_checkpoint_metadata = _checkpoint_metadata(
         meta=meta,
-        projections=proj,
+        projections=projections,
         cfg=cfg,
         args=args,
         recon_grid=recon_grid,
         detector=detector,
         state_grid=recon_grid,
         state_detector=detector,
-        gather_dtype=_gather,
-        levels=levels,
+        gather_dtype=gather_dtype,
+        levels=run_levels,
         level_index=0,
         level_factor=1,
         completed_outer_iters_in_level=0,
@@ -793,6 +930,7 @@ def main() -> None:
         elapsed_offset=0.0,
         level_complete=False,
         run_complete=False,
+        schedule_metadata=schedule_metadata,
     )
     resume_state = None
     if args.resume is not None:
@@ -800,45 +938,75 @@ def main() -> None:
             resume_state = _resume_state_from_checkpoint(
                 args.resume,
                 expected_metadata=expected_checkpoint_metadata,
-                used_multires=levels is not None,
+                used_multires=run_levels is not None,
             )
         except CheckpointError as exc:
             raise SystemExit(f"tomojax-align: {exc}") from exc
         logging.info("Resuming alignment from checkpoint %s", args.resume)
 
-    def _state_grid_detector(
-        level_factor: int,
-        *,
-        run_complete: bool,
-    ) -> tuple[Grid, Detector]:
-        if levels is None or run_complete:
-            return recon_grid, detector
-        from ..recon.multires import scale_detector, scale_grid
+    return AlignCliRunPlan(
+        args=args,
+        config_metadata=config_metadata,
+        loss_config=loss_config,
+        loss_params=loss_params,
+        levels=levels,
+        run_levels=run_levels,
+        meta=meta,
+        geometry_meta=geometry_meta,
+        grid=grid,
+        recon_grid=recon_grid,
+        detector=detector,
+        geometry=geom,
+        projections=projections,
+        cfg=cfg,
+        gather_dtype=gather_dtype,
+        geometry_dofs=tuple(geometry_dofs),
+        schedule_metadata=schedule_metadata,
+        checkpoint_path=checkpoint_path,
+        checkpoint_every=None if checkpoint_every is None else int(checkpoint_every),
+        resume_state=resume_state,
+        apply_cyl_mask=apply_cyl_mask,
+    )
 
-        return scale_grid(recon_grid, int(level_factor)), scale_detector(
-            detector, int(level_factor)
-        )
 
-    def _write_single_checkpoint(
+def _state_grid_detector_for_checkpoint(
+    plan: AlignCliRunPlan,
+    level_factor: int,
+    *,
+    run_complete: bool,
+) -> tuple[Grid, Detector]:
+    if plan.run_levels is None or run_complete:
+        return plan.recon_grid, plan.detector
+    from ..core.multires import scale_detector, scale_grid
+
+    return scale_grid(plan.recon_grid, int(level_factor)), scale_detector(
+        plan.detector,
+        int(level_factor),
+    )
+
+
+def _make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckpointCallbacks:
+    def write_single_checkpoint(
         state: AlignResumeState,
         *,
         run_complete: bool = False,
     ) -> None:
-        if checkpoint_path is None:
+        if plan.checkpoint_path is None:
             return
         completed = int(state.start_outer_iter)
-        if not run_complete and (completed <= 0 or completed % int(checkpoint_every or 1) != 0):
+        every = int(plan.checkpoint_every or 1)
+        if not run_complete and (completed <= 0 or completed % every != 0):
             return
         metadata = _checkpoint_metadata(
-            meta=meta,
-            projections=proj,
-            cfg=cfg,
-            args=args,
-            recon_grid=recon_grid,
-            detector=detector,
-            state_grid=recon_grid,
-            state_detector=detector,
-            gather_dtype=_gather,
+            meta=plan.meta,
+            projections=plan.projections,
+            cfg=plan.cfg,
+            args=plan.args,
+            recon_grid=plan.recon_grid,
+            detector=plan.detector,
+            state_grid=plan.recon_grid,
+            state_detector=plan.detector,
+            gather_dtype=plan.gather_dtype,
             levels=None,
             level_index=0,
             level_factor=1,
@@ -848,11 +1016,12 @@ def main() -> None:
             L_prev=state.L,
             small_impr_streak=int(state.small_impr_streak),
             elapsed_offset=float(state.elapsed_offset),
-            level_complete=run_complete or completed >= int(cfg.outer_iters),
+            level_complete=run_complete or completed >= int(plan.cfg.outer_iters),
             run_complete=run_complete,
+            schedule_metadata=plan.schedule_metadata,
         )
         save_alignment_checkpoint(
-            checkpoint_path,
+            plan.checkpoint_path,
             x=state.x,
             params5=state.params5,
             motion_coeffs=state.motion_coeffs,
@@ -860,33 +1029,35 @@ def main() -> None:
             outer_stats=state.outer_stats,
             metadata=metadata,
         )
-        logging.info("Saved alignment checkpoint to %s", checkpoint_path)
+        logging.info("Saved alignment checkpoint to %s", plan.checkpoint_path)
 
-    def _write_multires_checkpoint(state: AlignMultiresResumeState) -> None:
-        if checkpoint_path is None:
+    def write_multires_checkpoint(state: AlignMultiresResumeState) -> None:
+        if plan.checkpoint_path is None:
             return
         completed = int(state.global_outer_iters_completed)
+        every = int(plan.checkpoint_every or 1)
         if (
             not state.run_complete
             and not state.level_complete
-            and (completed <= 0 or completed % int(checkpoint_every or 1) != 0)
+            and (completed <= 0 or completed % every != 0)
         ):
             return
-        state_grid, state_detector = _state_grid_detector(
+        state_grid, state_detector = _state_grid_detector_for_checkpoint(
+            plan,
             int(state.level_factor),
             run_complete=bool(state.run_complete),
         )
         metadata = _checkpoint_metadata(
-            meta=meta,
-            projections=proj,
-            cfg=cfg,
-            args=args,
-            recon_grid=recon_grid,
-            detector=detector,
+            meta=plan.meta,
+            projections=plan.projections,
+            cfg=plan.cfg,
+            args=plan.args,
+            recon_grid=plan.recon_grid,
+            detector=plan.detector,
             state_grid=state_grid,
             state_detector=state_detector,
-            gather_dtype=_gather,
-            levels=levels,
+            gather_dtype=plan.gather_dtype,
+            levels=plan.run_levels,
             level_index=int(state.level_index),
             level_factor=int(state.level_factor),
             completed_outer_iters_in_level=int(state.completed_outer_iters_in_level),
@@ -897,9 +1068,17 @@ def main() -> None:
             elapsed_offset=float(state.elapsed_offset),
             level_complete=bool(state.level_complete),
             run_complete=bool(state.run_complete),
+            schedule_metadata=plan.schedule_metadata,
+            schedule_state={
+                "stage_index": int(state.stage_index),
+                "stage_name": state.stage_name,
+                "stage_completed": bool(state.stage_completed),
+                "completed_outer_iters_in_stage": int(state.completed_outer_iters_in_stage),
+            },
+            geometry_calibration_state=state.geometry_calibration_state,
         )
         save_alignment_checkpoint(
-            checkpoint_path,
+            plan.checkpoint_path,
             x=state.x,
             params5=state.params5,
             motion_coeffs=state.motion_coeffs,
@@ -907,183 +1086,314 @@ def main() -> None:
             outer_stats=state.outer_stats,
             metadata=metadata,
         )
-        logging.info("Saved alignment checkpoint to %s", checkpoint_path)
+        logging.info("Saved alignment checkpoint to %s", plan.checkpoint_path)
 
-    if args.levels is not None and len(args.levels) > 0:
+    return AlignCliCheckpointCallbacks(
+        single=write_single_checkpoint, multires=write_multires_checkpoint
+    )
+
+
+def _execute_alignment_plan(
+    plan: AlignCliRunPlan,
+    *,
+    single_checkpoint_callback: Callable[..., None],
+    multires_checkpoint_callback: Callable[[AlignMultiresResumeState], None],
+) -> AlignCliExecutionResult:
+    args = plan.args
+    if plan.run_levels is not None and len(plan.run_levels) > 0:
         from ..align.pipeline import align_multires
 
         with transfer_guard_context(args.transfer_guard):
             x, params5, info = align_multires(
-                geom,
-                recon_grid,
-                detector,
-                proj,
-                factors=args.levels,
-                cfg=cfg,
+                plan.geometry,
+                plan.recon_grid,
+                plan.detector,
+                plan.projections,
+                factors=plan.run_levels,
+                cfg=plan.cfg,
                 resume_state=(
-                    resume_state if isinstance(resume_state, AlignMultiresResumeState) else None
+                    plan.resume_state
+                    if isinstance(plan.resume_state, AlignMultiresResumeState)
+                    else None
                 ),
-                checkpoint_callback=_write_multires_checkpoint
-                if checkpoint_path is not None
+                checkpoint_callback=multires_checkpoint_callback
+                if plan.checkpoint_path is not None
                 else None,
             )
-    else:
-        with transfer_guard_context(args.transfer_guard):
-            x, params5, info = align(
-                geom,
-                recon_grid,
-                detector,
-                proj,
-                cfg=cfg,
-                resume_state=resume_state if isinstance(resume_state, AlignResumeState) else None,
-                checkpoint_callback=_write_single_checkpoint
-                if checkpoint_path is not None
-                else None,
-            )
-        if checkpoint_path is not None:
-            _write_single_checkpoint(
-                AlignResumeState(
-                    x=x,
-                    params5=params5,
-                    motion_coeffs=info.get("motion_coeffs") if isinstance(info, dict) else None,
-                    start_outer_iter=int(
-                        info.get("completed_outer_iters", len(info.get("outer_stats", [])))
-                        if isinstance(info, dict)
-                        else int(cfg.outer_iters)
-                    ),
-                    loss=list(info.get("loss", [])) if isinstance(info, dict) else [],
-                    outer_stats=(
-                        [dict(stat) for stat in info.get("outer_stats", [])]
-                        if isinstance(info, dict)
-                        else []
-                    ),
-                    L=info.get("L") if isinstance(info, dict) else None,
-                    small_impr_streak=int(info.get("small_impr_streak", 0))
-                    if isinstance(info, dict)
-                    else 0,
-                    elapsed_offset=float(info.get("wall_time_total", 0.0))
-                    if isinstance(info, dict)
-                    else 0.0,
+        return AlignCliExecutionResult(x=x, params5=params5, info=dict(info))
+
+    with transfer_guard_context(args.transfer_guard):
+        x, params5, info = align(
+            plan.geometry,
+            plan.recon_grid,
+            plan.detector,
+            plan.projections,
+            cfg=plan.cfg,
+            resume_state=plan.resume_state
+            if isinstance(plan.resume_state, AlignResumeState)
+            else None,
+            checkpoint_callback=single_checkpoint_callback
+            if plan.checkpoint_path is not None
+            else None,
+        )
+    info_dict = dict(info)
+    if plan.checkpoint_path is not None:
+        single_checkpoint_callback(
+            AlignResumeState(
+                x=x,
+                params5=params5,
+                motion_coeffs=info_dict.get("motion_coeffs"),
+                start_outer_iter=int(
+                    info_dict.get(
+                        "completed_outer_iters",
+                        len(info_dict.get("outer_stats", [])),
+                    )
                 ),
-                run_complete=True,
-            )
+                loss=list(info_dict.get("loss", [])),
+                outer_stats=[dict(stat) for stat in info_dict.get("outer_stats", [])],
+                L=info_dict.get("L"),
+                small_impr_streak=int(info_dict.get("small_impr_streak", 0)),
+                elapsed_offset=float(info_dict.get("wall_time_total", 0.0)),
+            ),
+            run_complete=True,
+        )
+    return AlignCliExecutionResult(x=x, params5=params5, info=info_dict)
 
-    # Optional cylindrical mask in x–y
-    if apply_cyl_mask:
-        import numpy as _np
 
-        try:
-            m_xy = cylindrical_mask_xy(recon_grid, detector)
-            m = jnp.asarray(m_xy, dtype=x.dtype)[:, :, None]
-            x = x * m
-        except Exception:
-            m_xy = cylindrical_mask_xy(recon_grid, detector)
-            m = _np.asarray(m_xy, dtype=_np.float32)[:, :, None]
-            x = jnp.asarray(_np.asarray(x) * m)
+def _apply_alignment_output_mask(plan: AlignCliRunPlan, x: jnp.ndarray) -> jnp.ndarray:
+    if not plan.apply_cyl_mask:
+        return x
+    try:
+        m_xy = cylindrical_mask_xy(plan.recon_grid, plan.detector)
+        m = jnp.asarray(m_xy, dtype=x.dtype)[:, :, None]
+        return x * m
+    except Exception:
+        m_xy = cylindrical_mask_xy(plan.recon_grid, plan.detector)
+        m = np.asarray(m_xy, dtype=np.float32)[:, :, None]
+        return jnp.asarray(np.asarray(x) * m)
 
-    # Avoid copying projections back from device: reuse host array from metadata
-    params5_np = np.asarray(params5)
-    align_gauge_metadata = None
-    if isinstance(info, dict):
-        align_gauge_metadata = {
-            "mode": str(info.get("gauge_fix", args.gauge_fix)),
-            "dofs": list(info.get("gauge_fix_dofs", [])),
-            "final": dict(info.get("gauge_fix_final", {}) or {}),
-        }
-    save_meta = meta.copy_metadata()
-    save_meta.grid = recon_grid.to_dict()
+
+def _alignment_gauge_metadata(
+    plan: AlignCliRunPlan,
+    info: dict[str, Any],
+) -> dict[str, object]:
+    return {
+        "mode": str(info.get("gauge_fix", plan.args.gauge_fix)),
+        "dofs": list(info.get("gauge_fix_dofs", [])),
+        "final": dict(info.get("gauge_fix_final", {}) or {}),
+    }
+
+
+def _write_alignment_result_volume(
+    plan: AlignCliRunPlan,
+    *,
+    x: jnp.ndarray,
+    params5_np: np.ndarray,
+    gauge_metadata: dict[str, object],
+    geometry_calibration_state: object,
+) -> Any:
+    save_meta = plan.meta.copy_metadata()
+    save_meta.grid = plan.recon_grid.to_dict()
     save_meta.volume = np.asarray(x)
     save_meta.align_params = params5_np
-    save_meta.align_gauge = align_gauge_metadata
-    save_meta.frame = str(meta.frame or "sample")
-    save_meta.volume_axes_order = str(args.volume_axes)
+    save_meta.align_gauge = gauge_metadata
+    if isinstance(geometry_calibration_state, dict):
+        calibration_patch = build_calibrated_geometry_metadata_patch(
+            calibration_state=geometry_calibration_state,
+            detector=plan.detector.to_dict(),
+            geometry_meta=save_meta.geometry_meta or {},
+        )
+        save_meta.detector = calibration_patch["detector"]  # type: ignore[assignment]
+        save_meta.geometry_meta = calibration_patch["geometry_meta"]  # type: ignore[assignment]
+        save_meta.geometry_calibration = calibration_patch["geometry_calibration"]  # type: ignore[assignment]
+    save_meta.frame = str(plan.meta.frame or "sample")
+    save_meta.volume_axes_order = str(plan.args.volume_axes)
     save_nxtomo(
-        args.out,
-        projections=meta.projections,
+        plan.args.out,
+        projections=plan.meta.projections,
         metadata=save_meta,
     )
-    logging.info("Saved alignment results to %s", args.out)
-    if args.save_params_json is not None:
+    logging.info("Saved alignment results to %s", plan.args.out)
+    return save_meta
+
+
+def _write_alignment_params_exports(
+    plan: AlignCliRunPlan,
+    *,
+    params5_np: np.ndarray,
+    gauge_metadata: dict[str, object],
+) -> None:
+    if plan.args.save_params_json is not None:
         save_alignment_params_json(
-            args.save_params_json,
+            plan.args.save_params_json,
             params5_np,
-            du=float(detector.du),
-            dv=float(detector.dv),
-            gauge_metadata=align_gauge_metadata,
+            du=float(plan.detector.du),
+            dv=float(plan.detector.dv),
+            gauge_metadata=gauge_metadata,
         )
-        logging.info("Saved alignment parameter JSON to %s", args.save_params_json)
-    if args.save_params_csv is not None:
+        logging.info("Saved alignment parameter JSON to %s", plan.args.save_params_json)
+    if plan.args.save_params_csv is not None:
         save_alignment_params_csv(
-            args.save_params_csv,
+            plan.args.save_params_csv,
             params5_np,
-            du=float(detector.du),
-            dv=float(detector.dv),
+            du=float(plan.detector.du),
+            dv=float(plan.detector.dv),
         )
-        logging.info("Saved alignment parameter CSV to %s", args.save_params_csv)
-    if args.save_manifest is not None:
-        loss_values = info.get("loss", []) if isinstance(info, dict) else []
-        manifest = build_manifest(
-            "tomojax-align",
-            list(sys.argv),
-            args,
-            {
-                "input_path": args.data,
-                "output_path": args.out,
-                "save_params_json": args.save_params_json,
-                "save_params_csv": args.save_params_csv,
-                "manifest_path": args.save_manifest,
-                "config_path": config_metadata["config_path"],
-                "config_file_values": config_metadata["config_file_values"],
-                "explicit_cli_keys": config_metadata["explicit_cli_keys"],
-                "effective_options": config_metadata["effective_options"],
-                "geometry_type": str(meta.geometry_type),
-                "input_projection_shape": list(meta.projections.shape),
-                "reconstruction_grid": recon_grid.to_dict(),
-                "detector": detector.to_dict(),
-                "roi": {
-                    "requested": str(args.roi),
-                    "is_parallel": bool(meta.geometry_type == "parallel"),
-                    "grid_changed": recon_grid != grid,
-                    "cylindrical_output_mask": bool(apply_cyl_mask),
-                },
-                "requested_gather_dtype": str(args.gather_dtype),
-                "gather_dtype": _gather,
-                "recon_algo": str(args.recon_algo),
-                "regulariser": str(args.regulariser),
-                "huber_delta": float(args.huber_delta),
-                "views_per_batch": int(args.views_per_batch),
-                "spdhg_seed": int(args.spdhg_seed),
-                "recon_positivity": bool(args.recon_positivity),
-                "projector_unroll": 1,
-                "checkpoint_projector": bool(args.checkpoint_projector),
-                "transfer_guard": str(args.transfer_guard),
-                "levels": args.levels,
-                "used_multires": bool(args.levels is not None and len(args.levels) > 0),
-                "checkpoint_path": args.checkpoint,
-                "checkpoint_every": args.checkpoint_every,
-                "resume_path": args.resume,
-                "loss_params": loss_params,
-                "loss_spec": loss_config,
-                "align_config": cfg,
-                "alignment_params_shape": list(params5_np.shape),
-                "alignment_gauge": align_gauge_metadata,
-                "volume_shape": list(np.asarray(x).shape),
-                "volume_axes": str(args.volume_axes),
-                "frame": str(save_meta.frame),
-                "run_info": {
-                    "loss_count": len(loss_values),
-                    "final_loss": loss_values[-1] if len(loss_values) else None,
-                    "stopped_by_observer": (
-                        info.get("stopped_by_observer") if isinstance(info, dict) else None
-                    ),
-                    "observer_action": (
-                        info.get("observer_action") if isinstance(info, dict) else None
-                    ),
-                },
-            },
-        )
-        save_manifest(args.save_manifest, manifest)
-        logging.info("Saved reproducibility manifest to %s", args.save_manifest)
+        logging.info("Saved alignment parameter CSV to %s", plan.args.save_params_csv)
+
+
+def _build_alignment_manifest_payload_from_result(
+    plan: AlignCliRunPlan,
+    execution: AlignCliExecutionResult,
+    *,
+    x: jnp.ndarray,
+    params5_np: np.ndarray,
+    gauge_metadata: dict[str, object],
+    geometry_calibration_state: object,
+    save_meta: Any,
+) -> dict[str, object]:
+    args = plan.args
+    info = execution.info
+    loss_values = info.get("loss", [])
+    return {
+        "input_path": args.data,
+        "output_path": args.out,
+        "save_params_json": args.save_params_json,
+        "save_params_csv": args.save_params_csv,
+        "manifest_path": args.save_manifest,
+        "config_path": plan.config_metadata["config_path"],
+        "config_file_values": plan.config_metadata["config_file_values"],
+        "explicit_cli_keys": plan.config_metadata["explicit_cli_keys"],
+        "effective_options": plan.config_metadata["effective_options"],
+        "geometry_type": str(plan.meta.geometry_type),
+        "input_projection_shape": list(plan.meta.projections.shape),
+        "reconstruction_grid": plan.recon_grid.to_dict(),
+        "detector": plan.detector.to_dict(),
+        "roi": {
+            "requested": str(args.roi),
+            "is_parallel": bool(plan.meta.geometry_type == "parallel"),
+            "grid_changed": plan.recon_grid != plan.grid,
+            "cylindrical_output_mask": bool(plan.apply_cyl_mask),
+        },
+        "requested_gather_dtype": str(args.gather_dtype),
+        "gather_dtype": plan.gather_dtype,
+        "recon_algo": str(args.recon_algo),
+        "regulariser": str(args.regulariser),
+        "huber_delta": float(args.huber_delta),
+        "views_per_batch": int(args.views_per_batch),
+        "spdhg_seed": int(args.spdhg_seed),
+        "recon_positivity": bool(args.recon_positivity),
+        "projector_unroll": 1,
+        "checkpoint_projector": bool(args.checkpoint_projector),
+        "transfer_guard": str(args.transfer_guard),
+        "levels": plan.run_levels,
+        "schedule": info.get("schedule", plan.schedule_metadata),
+        "used_multires": bool(plan.run_levels is not None and len(plan.run_levels) > 0),
+        "checkpoint_path": args.checkpoint,
+        "checkpoint_every": args.checkpoint_every,
+        "resume_path": args.resume,
+        "loss_params": plan.loss_params,
+        "loss_spec": plan.loss_config,
+        "align_config": plan.cfg,
+        "objective_kind": info.get("objective_kind"),
+        "objective_kinds": list(info.get("objective_kinds", [])),
+        "objective_provenance": info.get("objective_provenance"),
+        "gauge_policy": str(args.gauge_policy),
+        "gauge_decision": info.get("gauge_decision"),
+        "active_dofs": list(info.get("active_dofs", [])),
+        "active_pose_dofs": list(info.get("active_pose_dofs", [])),
+        "active_geometry_dofs": list(info.get("active_geometry_dofs", [])),
+        "geometry_dofs": list(plan.geometry_dofs),
+        "geometry_calibration_state": geometry_calibration_state,
+        "alignment_params_shape": list(params5_np.shape),
+        "alignment_gauge": gauge_metadata,
+        "volume_shape": list(np.asarray(x).shape),
+        "volume_axes": str(args.volume_axes),
+        "frame": str(save_meta.frame),
+        "run_info": {
+            "loss_count": len(loss_values),
+            "final_loss": loss_values[-1] if len(loss_values) else None,
+            "loss_kind": info.get("loss_kind"),
+            "stopped_by_observer": info.get("stopped_by_observer"),
+            "observer_action": info.get("observer_action"),
+        },
+    }
+
+
+def _write_alignment_manifest(
+    plan: AlignCliRunPlan,
+    execution: AlignCliExecutionResult,
+    *,
+    x: jnp.ndarray,
+    params5_np: np.ndarray,
+    gauge_metadata: dict[str, object],
+    geometry_calibration_state: object,
+    save_meta: Any,
+) -> None:
+    if plan.args.save_manifest is None:
+        return
+    payload = _build_alignment_manifest_payload_from_result(
+        plan,
+        execution,
+        x=x,
+        params5_np=params5_np,
+        gauge_metadata=gauge_metadata,
+        geometry_calibration_state=geometry_calibration_state,
+        save_meta=save_meta,
+    )
+    manifest = build_manifest("tomojax-align", list(sys.argv), plan.args, payload)
+    save_manifest(plan.args.save_manifest, manifest)
+    logging.info("Saved reproducibility manifest to %s", plan.args.save_manifest)
+
+
+def _write_alignment_outputs(
+    plan: AlignCliRunPlan,
+    execution: AlignCliExecutionResult,
+) -> None:
+    x = _apply_alignment_output_mask(plan, execution.x)
+    params5_np = np.asarray(execution.params5)
+    gauge_metadata = _alignment_gauge_metadata(plan, execution.info)
+    geometry_calibration_state = execution.info.get("geometry_calibration_state")
+    save_meta = _write_alignment_result_volume(
+        plan,
+        x=x,
+        params5_np=params5_np,
+        gauge_metadata=gauge_metadata,
+        geometry_calibration_state=geometry_calibration_state,
+    )
+    _write_alignment_params_exports(
+        plan,
+        params5_np=params5_np,
+        gauge_metadata=gauge_metadata,
+    )
+    _write_alignment_manifest(
+        plan,
+        execution,
+        x=x,
+        params5_np=params5_np,
+        gauge_metadata=gauge_metadata,
+        geometry_calibration_state=geometry_calibration_state,
+        save_meta=save_meta,
+    )
+
+
+def main() -> None:
+    p = _build_parser()
+    args, config_metadata = parse_args_with_config(p, required=("data", "out"))
+
+    setup_logging()
+    log_jax_env()
+    _init_jax_compilation_cache()
+    if args.progress:
+        os.environ["TOMOJAX_PROGRESS"] = "1"
+    plan = _build_align_cli_run_plan(p, args, config_metadata)
+    checkpoint_callbacks = _make_align_cli_checkpoint_callbacks(plan)
+    execution = _execute_alignment_plan(
+        plan,
+        single_checkpoint_callback=checkpoint_callbacks.single,
+        multires_checkpoint_callback=checkpoint_callbacks.multires,
+    )
+    _write_alignment_outputs(plan, execution)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -7,7 +7,15 @@ from typing import Sequence, TypedDict
 
 import numpy as np
 
-from ..core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
+from ..core.geometry import (
+    Detector,
+    Geometry,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    RotationAxisGeometry,
+    normalize_axis_unit,
+)
 from ..core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
 
 
@@ -24,6 +32,8 @@ class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
     geometry_type: str
     tilt_deg: float
     tilt_about: str
+    axis_unit_lab: Sequence[float]
+    detector_roll_deg: float
     angle_offset_deg: np.ndarray
     misalign_spec: dict[str, JsonValue]
     align_params: np.ndarray
@@ -67,6 +77,26 @@ class AugmentedGeometry:
 
     def rays_for_view(self, i: int) -> RayPair:
         return self.base.rays_for_view(i)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.base, name)
+
+
+@dataclass
+class DetectorRollGeometry:
+    """Geometry wrapper that preserves calibrated detector roll metadata."""
+
+    base: Geometry
+    detector_roll_deg: float
+
+    def pose_for_view(self, i: int) -> PoseMatrix:
+        return self.base.pose_for_view(i)
+
+    def rays_for_view(self, i: int) -> RayPair:
+        return self.base.rays_for_view(i)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.base, name)
 
 
 def _rot_x_np(a: float) -> np.ndarray:
@@ -212,6 +242,14 @@ def _base_geometry(
     detector: Detector,
     thetas_deg: Sequence[float],
 ) -> Geometry:
+    if meta.get("axis_unit_lab") is not None:
+        return RotationAxisGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas_deg,
+            axis_unit_lab=normalize_axis_unit(meta["axis_unit_lab"]),  # type: ignore[arg-type]
+        )
+
     gtype = _normalize_geometry_type(meta.get("geometry_type"))
     if gtype == "parallel":
         return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas_deg)
@@ -225,6 +263,19 @@ def _base_geometry(
         tilt_deg=tilt_deg,
         tilt_about=tilt_about,
     )
+
+
+def _with_detector_roll_metadata(
+    geom: Geometry,
+    meta: LoadedGeometryMeta,
+) -> Geometry:
+    detector_roll = meta.get("detector_roll_deg")
+    if detector_roll is None:
+        return geom
+    roll = float(detector_roll)
+    if not np.isfinite(roll):
+        return geom
+    return DetectorRollGeometry(base=geom, detector_roll_deg=roll)
 
 
 def build_geometry_from_meta(
@@ -252,7 +303,10 @@ def build_geometry_from_meta(
         meta,
         apply_saved_angle_offset=apply_saved_alignment,
     )
-    geom = _base_geometry(meta=meta, grid=grid, detector=detector, thetas_deg=thetas_deg)
+    geom = _with_detector_roll_metadata(
+        _base_geometry(meta=meta, grid=grid, detector=detector, thetas_deg=thetas_deg),
+        meta,
+    )
 
     if apply_saved_alignment and meta.get("align_params") is not None:
         align_params = np.asarray(meta["align_params"], dtype=np.float32)

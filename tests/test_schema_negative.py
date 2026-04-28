@@ -20,3 +20,13 @@ def test_validator_catches_missing_groups(tmp_path):
         # Intentionally omit sample/transformations/rotation_angle
     rep = validate_nxtomo(str(p))
     assert rep["issues"] and any("rotation_angle" in s for s in rep["issues"]) 
+
+
+def test_validator_reports_unreadable_hdf5_file(tmp_path):
+    path = tmp_path / "not_hdf5.nxs"
+    path.write_text("not an hdf5 file", encoding="utf-8")
+
+    report = validate_nxtomo(str(path))
+
+    assert report["issues"]
+    assert any("Unable to read HDF5 file" in issue for issue in report["issues"])

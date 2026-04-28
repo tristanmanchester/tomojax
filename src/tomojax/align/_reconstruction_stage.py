@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import logging
+import time
+from typing import Mapping
+
+import jax
+import jax.numpy as jnp
+
+from ..core.geometry.base import Detector, Geometry, Grid
+from ..recon.fista_tv import FistaConfig, fista_tv
+from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
+from ._observer import OuterStat
+from ._results import record_reconstruction_info as _record_reconstruction_info
+from .objectives.recon_layer import PoseAdjustedGeometry
+
+
+def _run_reconstruction_step(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    params5: jnp.ndarray,
+    x: jnp.ndarray,
+    cfg: object,
+    L_prev: float | None,
+    outer_idx: int,
+    recon_algo: str,
+) -> tuple[jnp.ndarray, float | None, OuterStat]:
+    recon_geometry = PoseAdjustedGeometry(geometry=geometry, params5=params5)
+
+    def _run_fista(vpb: int | None, unroll: int, gather: str, gm: str):
+        fista_cfg = FistaConfig(
+            iters=cfg.recon_iters,
+            lambda_tv=cfg.lambda_tv,
+            regulariser=cfg.regulariser,
+            huber_delta=cfg.huber_delta,
+            L=L_prev,
+            views_per_batch=vpb,
+            projector_unroll=int(unroll),
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=gather,
+            grad_mode=gm,
+            tv_prox_iters=int(cfg.tv_prox_iters),
+            recon_rel_tol=cfg.recon_rel_tol,
+            recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
+        )
+        return fista_tv(
+            recon_geometry,
+            grid,
+            detector,
+            projections,
+            init_x=x,
+            config=fista_cfg,
+            det_grid=det_grid,
+        )
+
+    def _run_spdhg():
+        spdhg_cfg = SPDHGConfig(
+            iters=int(cfg.recon_iters),
+            lambda_tv=float(cfg.lambda_tv),
+            regulariser=cfg.regulariser,
+            huber_delta=float(cfg.huber_delta),
+            views_per_batch=max(1, int(cfg.views_per_batch)),
+            seed=int(cfg.spdhg_seed) + int(outer_idx) - 1,
+            projector_unroll=int(cfg.projector_unroll),
+            checkpoint_projector=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+            positivity=bool(cfg.recon_positivity),
+            log_every=1,
+        )
+        return spdhg_tv(
+            recon_geometry,
+            grid,
+            detector,
+            projections,
+            init_x=x,
+            config=spdhg_cfg,
+            det_grid=det_grid,
+        )
+
+    vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
+    recon_retry = False
+    recon_start = time.perf_counter()
+    if recon_algo == "fista":
+        try:
+            x_out, info_rec = _run_fista(
+                vpb0,
+                int(cfg.projector_unroll),
+                cfg.gather_dtype,
+                "auto",
+            )
+        except Exception as e:
+            msg = str(e)
+            is_oom = (
+                ("RESOURCE_EXHAUSTED" in msg)
+                or ("Out of memory" in msg)
+                or ("Allocator" in msg)
+            )
+            if not is_oom:
+                raise
+            logging.warning(
+                "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
+            )
+            try:
+                recon_retry = True
+                x_out, info_rec = _run_fista(1, 1, cfg.gather_dtype, "stream")
+            except Exception as e2:
+                msg2 = str(e2)
+                if (
+                    ("RESOURCE_EXHAUSTED" in msg2)
+                    or ("Out of memory" in msg2)
+                    or ("Allocator" in msg2)
+                ):
+                    logging.error(
+                        "FISTA still OOM at finest level. Reduce memory pressure "
+                        "(smaller problem size or lower internal batching), or "
+                        "provide --recon-L to skip power-method."
+                    )
+                raise
+    else:
+        x_out, info_rec = _run_spdhg()
+
+    jax.block_until_ready(x_out)
+    stat: OuterStat = {
+        "recon_time": time.perf_counter() - recon_start,
+        "recon_retry": recon_retry,
+    }
+    info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
+    L_next = _record_reconstruction_info(
+        stat,
+        info_rec=info_mapping,
+        recon_algo=recon_algo,
+        cfg=cfg,
+        outer_idx=outer_idx,
+        L_prev=L_prev,
+    )
+    return x_out, L_next, stat
+

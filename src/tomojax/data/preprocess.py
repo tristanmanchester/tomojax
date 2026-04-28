@@ -91,10 +91,7 @@ def _json_mapping_attr(value: object) -> dict[str, Any] | None:
 
 
 def _dataset_at(file: h5py.File, path: str) -> h5py.Dataset | None:
-    try:
-        obj = file.get(path)
-    except Exception:
-        return None
+    obj = file.get(path)
     return obj if isinstance(obj, h5py.Dataset) else None
 
 
@@ -156,12 +153,17 @@ def _resolve_image_key_dataset(
 
 
 def _read_scalar_dataset(group: h5py.Group | None, name: str) -> float | None:
-    if group is None or name not in group:
+    if group is None:
+        return None
+    dataset = group.get(name)
+    if not isinstance(dataset, h5py.Dataset):
         return None
     try:
-        return float(np.asarray(group[name][...]).reshape(-1)[0])
-    except Exception:
-        return None
+        return float(np.asarray(dataset[...]).reshape(-1)[0])
+    except (TypeError, ValueError, OverflowError, IndexError) as exc:
+        raise ValueError(
+            f"Could not read scalar detector metadata dataset {dataset.name!r}"
+        ) from exc
 
 
 def _detector_meta_from_raw(
