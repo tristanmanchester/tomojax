@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import csv
 import json
 from pathlib import Path
 
@@ -188,8 +190,8 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
         assert isinstance(record[key], int | float)
         assert np.isfinite(record[key])
 
-    csv_lines = (expdir / "results.csv").read_text(encoding="utf-8").splitlines()
-    assert csv_lines[0].split(",") == [
+    csv_rows = list(csv.DictReader((expdir / "results.csv").open(encoding="utf-8", newline="")))
+    assert csv_rows[0].keys() == {
         "loss",
         "status",
         "seconds",
@@ -207,10 +209,14 @@ def test_loss_bench_runs_supported_workflow_and_writes_output(
         "log",
         "output",
         "error",
-    ]
-    assert len(csv_lines) == 2
-    assert csv_lines[1].split(",")[0:2] == ["l2", "ok"]
-    assert csv_lines[1].split(",")[13:17] == ["", "logs/l2.log", "align_l2.nxs", "None"]
+    }
+    assert len(csv_rows) == 1
+    assert csv_rows[0]["loss"] == "l2"
+    assert csv_rows[0]["status"] == "ok"
+    assert csv_rows[0]["gt_mse"] == ""
+    assert csv_rows[0]["log"] == "logs/l2.log"
+    assert csv_rows[0]["output"] == "align_l2.nxs"
+    assert csv_rows[0]["error"] == ""
 
     assert out_path.exists()
     saved = load_nxtomo(str(out_path))
@@ -303,10 +309,52 @@ def test_loss_bench_exits_nonzero_after_writing_results_when_run_errors(
     assert record["output"] is None
     assert record["error"] == "synthetic align failure"
 
-    csv_lines = (expdir / "results.csv").read_text(encoding="utf-8").splitlines()
-    assert len(csv_lines) == 2
-    assert csv_lines[1].split(",")[0:2] == ["l2", "error"]
-    assert csv_lines[1].split(",")[14:17] == ["logs/l2.log", "None", "synthetic align failure"]
+    csv_rows = list(csv.DictReader((expdir / "results.csv").open(encoding="utf-8", newline="")))
+    assert len(csv_rows) == 1
+    assert csv_rows[0]["loss"] == "l2"
+    assert csv_rows[0]["status"] == "error"
+    assert csv_rows[0]["log"] == "logs/l2.log"
+    assert csv_rows[0]["output"] == ""
+    assert csv_rows[0]["error"] == "synthetic align failure"
+
+
+def test_write_results_summary_escapes_csv_special_characters(tmp_path: Path) -> None:
+    args = argparse.Namespace(expdir=str(tmp_path), losses=["bad,loss"])
+    results = [
+        {
+            "loss": 'bad,loss"',
+            "status": "error",
+            "seconds": 1.25,
+            "log": "logs/bad.log",
+            "output": None,
+            "error": 'first line,\nsecond "quoted" line',
+        }
+    ]
+
+    loss_bench._write_results_summary(str(tmp_path), args, results)
+
+    csv_rows = list(csv.DictReader((tmp_path / "results.csv").open(encoding="utf-8", newline="")))
+    assert csv_rows == [
+        {
+            "loss": 'bad,loss"',
+            "status": "error",
+            "seconds": "1.25",
+            "rot_rmse_deg": "",
+            "rot_mse_deg": "",
+            "trans_rmse_px": "",
+            "trans_mse_px": "",
+            "rot_mae_deg": "",
+            "trans_mae_px": "",
+            "rot_rel_rmse_deg": "",
+            "trans_rel_rmse_px": "",
+            "rot_gf_rmse_deg": "",
+            "trans_gf_rmse_px": "",
+            "gt_mse": "",
+            "log": "logs/bad.log",
+            "output": "",
+            "error": 'first line,\nsecond "quoted" line',
+        }
+    ]
 
 
 def test_loss_bench_reuses_existing_output_without_rerunning_alignment(

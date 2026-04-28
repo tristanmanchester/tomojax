@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import math
+import re
 import time
 from typing import Any, Callable, Mapping
 
@@ -185,14 +186,16 @@ _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS = (
     "allocator",
     "cholesky",
     "failed to converge",
-    "inf",
-    "nan",
     "non-finite",
+    "nonfinite",
     "not positive definite",
     "out of memory",
     "resource_exhausted",
     "singular",
     "svd",
+)
+_EXPECTED_ALIGN_EVAL_NUMERIC_TOKEN_RE = re.compile(
+    r"(?<![a-z0-9_])(?:[+-]?(?:inf|nan)s?|infinite|infinity)(?![a-z0-9_])"
 )
 
 
@@ -200,7 +203,9 @@ def _is_expected_align_eval_failure(exc: Exception) -> bool:
     if isinstance(exc, FloatingPointError):
         return True
     msg = str(exc).lower()
-    return any(snippet in msg for snippet in _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS)
+    return bool(_EXPECTED_ALIGN_EVAL_NUMERIC_TOKEN_RE.search(msg)) or any(
+        snippet in msg for snippet in _EXPECTED_ALIGN_EVAL_FAILURE_SNIPPETS
+    )
 
 
 def _evaluate_align_loss(

@@ -343,6 +343,21 @@ def test_profile_reference_uses_nested_section_reference_file(tmp_path: Path) ->
     assert reference["memory_caps"]["metric_preference"] == ["peak_gpu_memory_mb"]
 
 
+def test_profile_reference_returns_empty_for_missing_reference_file(tmp_path: Path) -> None:
+    profile = {"reference_file": str(tmp_path / "missing.json")}
+
+    assert fitness._profile_reference(profile) == {}
+
+
+def test_profile_reference_raises_for_malformed_configured_reference(tmp_path: Path) -> None:
+    reference_path = tmp_path / "ref.json"
+    reference_path.write_text("{not valid json", encoding="utf-8")
+    profile = {"reference_file": str(reference_path)}
+
+    with pytest.raises(ValueError, match="Failed to load benchmark reference file"):
+        fitness._profile_reference(profile)
+
+
 def test_profile_block_merges_reference_defaults_with_profile_override(tmp_path: Path) -> None:
     reference_path = tmp_path / "ref.json"
     reference_path.write_text(

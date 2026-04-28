@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import operator
 from typing import Tuple
 from collections import OrderedDict
 
@@ -93,6 +94,8 @@ def get_detector_grid_device(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
 
 def _resolve_gather_target(gather_dtype: str) -> jnp.dtype:
     """Resolve the gather/interpolation dtype for the forward projector."""
+    if not isinstance(gather_dtype, str):
+        raise ValueError(f"gather_dtype must be a string; got {type(gather_dtype).__name__}")
     gd = gather_dtype.lower()
     if gd == "auto":
         try:
@@ -106,7 +109,13 @@ def _resolve_gather_target(gather_dtype: str) -> jnp.dtype:
         return jnp.bfloat16
     if gd in ("fp16", "float16", "half"):
         return jnp.float16
-    return jnp.float32
+    if gd in ("fp32", "float32", "single"):
+        return jnp.float32
+    raise ValueError(
+        "gather_dtype must be one of 'auto', 'fp32', 'float32', 'single', "
+        "'bf16', 'bfloat16', 'fp16', 'float16', or 'half'; "
+        f"got {gather_dtype!r}"
+    )
 
 
 def _prepare_volume_for_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
@@ -131,8 +140,26 @@ def _resolve_detector_grid(
 
 
 def _resolve_n_steps(grid: Grid, step_size: float, n_steps: int | None) -> int:
+    if not math.isfinite(step_size) or step_size <= 0.0:
+        raise ValueError(
+            f"projector traversal step_size must be finite and > 0; got {step_size!r}"
+        )
     if n_steps is not None:
-        return int(n_steps)
+        if isinstance(n_steps, bool):
+            raise ValueError(
+                f"projector traversal n_steps must be a positive integer; got {n_steps!r}"
+            )
+        try:
+            n_steps_val = operator.index(n_steps)
+        except TypeError:
+            raise ValueError(
+                f"projector traversal n_steps must be a positive integer; got {n_steps!r}"
+            ) from None
+        if n_steps_val <= 0:
+            raise ValueError(
+                f"projector traversal n_steps must be a positive integer; got {n_steps!r}"
+            )
+        return n_steps_val
     support_lengths = (
         float((grid.nx + 1) * grid.vx),
         float((grid.ny + 1) * grid.vy),
@@ -464,7 +491,11 @@ def forward_project_view(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Wrapper that fetches pose from geometry and calls pose-aware variant."""
+    """Wrapper that fetches pose from geometry and calls the pose-aware variant.
+
+    The projector uses the supplied ``Grid``/``Detector`` for the standard
+    detector-plane ray model; ``geometry.rays_for_view`` is not consumed.
+    """
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
     return forward_project_view_T(
         T,
@@ -493,7 +524,11 @@ def backproject_view(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Wrapper that fetches pose and calls the explicit gather-dtype adjoint."""
+    """Wrapper that fetches pose and calls the explicit gather-dtype adjoint.
+
+    The projector uses the supplied ``Grid``/``Detector`` for the standard
+    detector-plane ray model; ``geometry.rays_for_view`` is not consumed.
+    """
     T = jnp.asarray(geometry.pose_for_view(view_index), dtype=jnp.float32)
     return backproject_view_T(
         T,

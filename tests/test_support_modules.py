@@ -31,11 +31,7 @@ def test_perf_harness_run_sets_progress_env_and_truncates_stdout(monkeypatch):
         calls.append((cmd, env))
         return SimpleNamespace(returncode=7, stdout=command_stdout)
 
-    class FakeProcess:
-        def memory_info(self):
-            return SimpleNamespace(rss=10)
-
-    perf_mod.psutil = SimpleNamespace(Process=lambda: FakeProcess())
+    perf_mod.psutil = None
     monkeypatch.setattr(perf_mod.time, "perf_counter", iter([1.0, 2.25]).__next__)
     monkeypatch.setattr(perf_mod, "run_command", fake_subprocess_run)
 
@@ -45,8 +41,59 @@ def test_perf_harness_run_sets_progress_env_and_truncates_stdout(monkeypatch):
     assert result["cmd"] == ["python", "-m", "tomojax.cli.recon"]
     assert result["rc"] == 7
     assert result["secs"] == 1.25
-    assert result["rss_delta"] == 0
+    assert "rss_delta" not in result
+    assert result["child_peak_rss"] is None
+    assert result["child_final_rss"] is None
     assert result["stdout"] == command_stdout[-2000:]
+
+
+def test_perf_harness_run_reports_observed_child_rss(monkeypatch):
+    perf_mod = _load_module("perf_harness_child_memory_test", "scripts/perf_harness.py")
+    popen_calls = []
+
+    class FakePopen:
+        def __init__(self, cmd, *, env, stdout, stderr, text, shell):
+            popen_calls.append(
+                {
+                    "cmd": cmd,
+                    "env": env,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "text": text,
+                    "shell": shell,
+                }
+            )
+            self.pid = 1234
+            self.returncode = None
+            self._communicate_calls = 0
+
+        def communicate(self, timeout):
+            self._communicate_calls += 1
+            if self._communicate_calls == 1:
+                raise perf_mod.subprocess.TimeoutExpired(popen_calls[0]["cmd"], timeout)
+            self.returncode = 0
+            return "child output", None
+
+    class FakeChild:
+        def __init__(self) -> None:
+            self._rss_values = iter([100, 150, 125])
+
+        def memory_info(self):
+            return SimpleNamespace(rss=next(self._rss_values))
+
+    monkeypatch.setattr(perf_mod.subprocess, "Popen", FakePopen)
+    perf_mod.psutil = SimpleNamespace(Process=lambda pid: FakeChild())
+    monkeypatch.setattr(perf_mod.time, "perf_counter", iter([4.0, 5.0]).__next__)
+
+    result = perf_mod.run(["python", "-m", "tomojax.cli.recon"])
+
+    assert popen_calls[0]["env"]["TOMOJAX_PROGRESS"] == "0"
+    assert popen_calls[0]["shell"] is False
+    assert result["rc"] == 0
+    assert result["secs"] == 1.0
+    assert result["child_peak_rss"] == 150
+    assert result["child_final_rss"] == 125
+    assert result["stdout"] == "child output"
 
 
 def test_perf_harness_main_writes_json_and_prints_summary(monkeypatch, tmp_path, capsys):
@@ -55,7 +102,14 @@ def test_perf_harness_main_writes_json_and_prints_summary(monkeypatch, tmp_path,
 
     def fake_run(cmd: list[str]) -> dict:
         run_calls.append(cmd)
-        return {"cmd": cmd, "rc": 0, "secs": 0.5, "rss_delta": 0, "stdout": "ok"}
+        return {
+            "cmd": cmd,
+            "rc": 0,
+            "secs": 0.5,
+            "child_peak_rss": 1024,
+            "child_final_rss": 512,
+            "stdout": "ok",
+        }
 
     monkeypatch.setattr(perf_mod, "run", fake_run)
     monkeypatch.setattr(

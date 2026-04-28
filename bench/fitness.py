@@ -380,8 +380,8 @@ def _profile_reference(profile: dict[str, Any]) -> dict[str, Any]:
         return {}
     try:
         return _load_json_object(reference_path)
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ValueError(f"Failed to load benchmark reference file: {reference_path}") from exc
 
 
 def _profile_block(profile: dict[str, Any], block_name: str) -> dict[str, Any]:

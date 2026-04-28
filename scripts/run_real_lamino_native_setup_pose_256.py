@@ -298,6 +298,45 @@ def _load_input(path: Path, *, flip_u: bool, flip_v: bool, transpose_detector: b
     return projections, thetas
 
 
+def _parse_shape3(text: str) -> tuple[int, int, int]:
+    parts = [part.strip() for part in str(text).lower().replace("x", ",").split(",")]
+    if len(parts) != 3 or any(not part for part in parts):
+        raise argparse.ArgumentTypeError("expected three positive integers as n_views,nv,nu")
+    try:
+        shape = (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected three positive integers as n_views,nv,nu") from exc
+    if any(dim <= 0 for dim in shape):
+        raise argparse.ArgumentTypeError("expected three positive integers as n_views,nv,nu")
+    return shape
+
+
+def _validate_loaded_input(
+    projections: np.ndarray,
+    thetas: np.ndarray,
+    *,
+    expected_projection_shape: tuple[int, int, int] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    projections = np.asarray(projections, dtype=np.float32)
+    thetas = np.asarray(thetas, dtype=np.float32).reshape(-1)
+    if projections.ndim != 3:
+        raise ValueError(
+            "input projections must be a 3-D array with shape (n_views, nv, nu); "
+            f"got shape {projections.shape}"
+        )
+    if expected_projection_shape is not None and tuple(projections.shape) != expected_projection_shape:
+        raise ValueError(
+            "input projections shape mismatch: expected "
+            f"{expected_projection_shape} from --expected-projection-shape, got {projections.shape}"
+        )
+    if thetas.shape[0] != projections.shape[0]:
+        raise ValueError(
+            "input theta count must match projections n_views; "
+            f"got {thetas.shape[0]} theta values for projections shape {projections.shape}"
+        )
+    return projections, thetas
+
+
 def _projection_stats(projections: np.ndarray) -> dict[str, Any]:
     arr = np.asarray(projections, dtype=np.float32)
     return {
@@ -1000,7 +1039,17 @@ def _commit_info(worktree: Path) -> dict[str, Any]:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Native staged setup+pose alignment for real k11-54014 laminography.")
-    parser.add_argument("--input", default="/home/tristan/projects/tomojax/runs/real-lamo-256/k11-54014_corrected_log_256cube.nxs")
+    parser.add_argument("--input", required=True, help="Input NXtomo/HDF5 file with entry/imaging/data projections.")
+    parser.add_argument(
+        "--expected-projection-shape",
+        type=_parse_shape3,
+        default=None,
+        metavar="N,NV,NU",
+        help=(
+            "Optional loaded projection shape contract. Accepts N,NV,NU or NxNVxNU; "
+            "when omitted, the runner derives dimensions from the input stack."
+        ),
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument("--tilt-deg", type=float, default=34.4)
     parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
@@ -1055,8 +1104,11 @@ def main() -> int:
             flip_v=bool(args.flip_v),
             transpose_detector=bool(args.transpose_detector),
         )
-        if raw_projections.shape != (256, 256, 256):
-            raise ValueError(f"expected 256^3 reduced input, got {raw_projections.shape}")
+        raw_projections, thetas = _validate_loaded_input(
+            raw_projections,
+            thetas,
+            expected_projection_shape=args.expected_projection_shape,
+        )
         projections, background_offsets = _apply_projection_background(
             raw_projections,
             mode=str(args.projection_background),
@@ -1098,6 +1150,11 @@ def main() -> int:
                 "status": "running",
                 "started_at": started,
                 "input": str(args.input),
+                "expected_projection_shape": (
+                    None
+                    if args.expected_projection_shape is None
+                    else list(args.expected_projection_shape)
+                ),
                 "input_shape": list(projections.shape),
                 "raw_projection_stats": _projection_stats(raw_projections),
                 "working_projection_stats": _projection_stats(projections),

@@ -70,6 +70,43 @@ def test_loss_compatibility_symbols_remain_importable(symbol: str) -> None:
 @pytest.mark.parametrize(
     "module_name",
     [
+        "tomojax.align.checkpoint",
+        "tomojax.align.diagnostics",
+        "tomojax.align.motion_models",
+        "tomojax.align.params_export",
+    ],
+)
+def test_bounded_alignment_legacy_module_aliases_remain_importable(module_name: str) -> None:
+    importlib.import_module("tomojax.align")
+
+    assert importlib.import_module(module_name)
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "tomojax.align.detector_center",
+        "tomojax.align.dof_specs",
+        "tomojax.align.dofs",
+        "tomojax.align.gauge",
+        "tomojax.align.geometry_applier",
+        "tomojax.align.geometry_blocks",
+        "tomojax.align.initializers",
+        "tomojax.align.parametrizations",
+        "tomojax.align.schedules",
+        "tomojax.align.state",
+    ],
+)
+def test_undocumented_alignment_legacy_module_aliases_are_not_registered(module_name: str) -> None:
+    importlib.import_module("tomojax.align")
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(module_name)
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
         "tomojax.align._loss_adapters",
         "tomojax.align._loss_kernels",
         "tomojax.align._loss_specs",

@@ -8,6 +8,7 @@ from tomojax.align.geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_alignment_state,
     apply_setup_to_detector_grid,
+    materialize_setup_geometry,
     pose_stack_for_setup,
 )
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
@@ -95,6 +96,76 @@ def test_laminography_nominal_axis_matches_lamino_pose_stack():
     np.testing.assert_allclose(
         np.asarray(pose_stack_for_setup(base, setup)),
         np.asarray(stack_view_poses(geometry, 2)),
+        atol=1e-6,
+    )
+
+
+def test_laminography_tilt_state_materializes_effective_tilt():
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0)
+    geometry = LaminographyGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=[0.0, 45.0],
+        tilt_deg=30.0,
+        tilt_about="x",
+    )
+    setup = SetupGeometryState.from_degrees(tilt_deg=5.0)
+
+    materialized = materialize_setup_geometry(geometry, grid, detector, setup)
+
+    assert isinstance(materialized, LaminographyGeometry)
+    np.testing.assert_allclose(materialized.tilt_deg, 35.0)
+    np.testing.assert_allclose(
+        np.asarray(stack_view_poses(materialized, 2)),
+        np.asarray(
+            stack_view_poses(
+                LaminographyGeometry(
+                    grid=grid,
+                    detector=detector,
+                    thetas_deg=[0.0, 45.0],
+                    tilt_deg=35.0,
+                    tilt_about="x",
+                ),
+                2,
+            )
+        ),
+        atol=1e-6,
+    )
+
+
+def test_laminography_tilt_state_changes_array_pose_stack():
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0)
+    geometry = LaminographyGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=[0.0, 45.0],
+        tilt_deg=30.0,
+        tilt_about="z",
+    )
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(
+        setup=SetupGeometryState.from_degrees(tilt_deg=-5.0),
+        pose=PoseState.zeros(2),
+    )
+
+    effective = apply_alignment_state(base, state)
+
+    np.testing.assert_allclose(
+        np.asarray(effective.pose_stack),
+        np.asarray(
+            stack_view_poses(
+                LaminographyGeometry(
+                    grid=grid,
+                    detector=detector,
+                    thetas_deg=[0.0, 45.0],
+                    tilt_deg=25.0,
+                    tilt_about="z",
+                ),
+                2,
+            )
+        ),
         atol=1e-6,
     )
 

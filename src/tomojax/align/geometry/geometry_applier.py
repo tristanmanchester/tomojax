@@ -27,6 +27,8 @@ class BaseGeometryArrays:
     nominal_pose_stack: jnp.ndarray
     detector: Detector
     nominal_axis_unit: jnp.ndarray
+    nominal_tilt_deg: float | None = None
+    tilt_about: str | None = None
     level_factor: int = 1
 
     @classmethod
@@ -39,11 +41,14 @@ class BaseGeometryArrays:
     ) -> "BaseGeometryArrays":
         thetas = jnp.asarray(getattr(geometry, "thetas_deg"), dtype=jnp.float32)
         n_views = int(thetas.shape[0])
+        is_lamino = isinstance(geometry, LaminographyGeometry)
         return cls(
             thetas_deg=thetas,
             nominal_pose_stack=stack_view_poses(geometry, n_views),
             detector=detector,
             nominal_axis_unit=_nominal_axis_unit_from_geometry(geometry),
+            nominal_tilt_deg=float(geometry.tilt_deg) if is_lamino else None,
+            tilt_about=str(geometry.tilt_about) if is_lamino else None,
             level_factor=max(1, int(level_factor)),
         )
 
@@ -81,8 +86,71 @@ def apply_setup_to_detector_grid(
 
 def setup_axis_unit(setup: SetupGeometryState) -> jnp.ndarray:
     """Return effective lab-frame axis unit from radian setup rotations."""
-    return axis_unit_from_rotations(
+    nominal = axis_unit_from_rotations(
         setup.nominal_axis_unit,
+        axis_rot_x_deg=jnp.rad2deg(setup.tilt_rad),
+        axis_rot_y_deg=0.0,
+    )
+    return axis_unit_from_rotations(
+        nominal,
+        axis_rot_x_deg=jnp.rad2deg(setup.axis_rot_x_rad),
+        axis_rot_y_deg=jnp.rad2deg(setup.axis_rot_y_rad),
+    )
+
+
+def _laminography_axis_unit_jax(tilt_deg: object, tilt_about: str) -> jnp.ndarray:
+    tilt = jnp.deg2rad(jnp.asarray(tilt_deg, dtype=jnp.float32))
+    c, s = jnp.cos(tilt), jnp.sin(tilt)
+    zero = jnp.asarray(0.0, dtype=jnp.float32)
+    if str(tilt_about) == "x":
+        axis = jnp.stack((zero, s, c))
+    elif str(tilt_about) == "z":
+        axis = jnp.stack((s, zero, c))
+    else:
+        raise ValueError("tilt_about must be 'x' or 'z'")
+    return axis / jnp.maximum(jnp.linalg.norm(axis), jnp.float32(1e-8))
+
+
+def _setup_axis_unit_for_base(
+    base: BaseGeometryArrays,
+    setup: SetupGeometryState,
+) -> jnp.ndarray:
+    if base.nominal_tilt_deg is None:
+        nominal = axis_unit_from_rotations(
+            base.nominal_axis_unit,
+            axis_rot_x_deg=jnp.rad2deg(setup.tilt_rad),
+            axis_rot_y_deg=0.0,
+        )
+    else:
+        nominal = _laminography_axis_unit_jax(
+            jnp.asarray(base.nominal_tilt_deg, dtype=jnp.float32)
+            + jnp.rad2deg(setup.tilt_rad),
+            str(base.tilt_about),
+        )
+    return axis_unit_from_rotations(
+        nominal,
+        axis_rot_x_deg=jnp.rad2deg(setup.axis_rot_x_rad),
+        axis_rot_y_deg=jnp.rad2deg(setup.axis_rot_y_rad),
+    )
+
+
+def _setup_axis_unit_for_geometry(
+    geometry: Geometry,
+    setup: SetupGeometryState,
+) -> jnp.ndarray:
+    if isinstance(geometry, LaminographyGeometry):
+        nominal = _laminography_axis_unit_jax(
+            float(geometry.tilt_deg) + jnp.rad2deg(setup.tilt_rad),
+            str(geometry.tilt_about),
+        )
+    else:
+        nominal = axis_unit_from_rotations(
+            _nominal_axis_unit_from_geometry(geometry),
+            axis_rot_x_deg=jnp.rad2deg(setup.tilt_rad),
+            axis_rot_y_deg=0.0,
+        )
+    return axis_unit_from_rotations(
+        nominal,
         axis_rot_x_deg=jnp.rad2deg(setup.axis_rot_x_rad),
         axis_rot_y_deg=jnp.rad2deg(setup.axis_rot_y_rad),
     )
@@ -100,10 +168,17 @@ def materialize_setup_geometry(
     thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)
     if indices is not None:
         thetas = thetas[np.asarray(indices, dtype=np.int32)]
-    axis = tuple(float(v) for v in np.asarray(setup_axis_unit(setup), dtype=np.float32))
+    axis = tuple(
+        float(v)
+        for v in np.asarray(_setup_axis_unit_for_geometry(geometry, setup), dtype=np.float32)
+    )
     setup_rotated_axis = (
         abs(float(setup.axis_rot_x_rad)) > 1e-7
         or abs(float(setup.axis_rot_y_rad)) > 1e-7
+        or (
+            not isinstance(geometry, LaminographyGeometry)
+            and abs(float(setup.tilt_rad)) > 1e-7
+        )
     )
     if isinstance(geometry, RotationAxisGeometry) or setup_rotated_axis:
         return RotationAxisGeometry(
@@ -117,7 +192,7 @@ def materialize_setup_geometry(
             grid=grid,
             detector=detector,
             thetas_deg=thetas,
-            tilt_deg=float(geometry.tilt_deg),
+            tilt_deg=float(geometry.tilt_deg) + float(np.rad2deg(float(setup.tilt_rad))),
             tilt_about=str(geometry.tilt_about),
         )
     return ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
@@ -129,7 +204,7 @@ def apply_alignment_state(
 ) -> EffectiveGeometryArrays:
     """Apply setup and pose state to base arrays without Python geometry mutation."""
     setup = state.setup
-    axis = setup_axis_unit(setup)
+    axis = _setup_axis_unit_for_base(base, setup)
     setup_pose = axis_pose_stack(base.thetas_deg, axis)
     pose_delta = jax.vmap(se3_from_5d)(state.pose.params5)
     pose_stack = setup_pose @ pose_delta
@@ -145,7 +220,7 @@ def pose_stack_for_setup(
     base: BaseGeometryArrays,
     setup: SetupGeometryState,
 ) -> jnp.ndarray:
-    axis = setup_axis_unit(setup)
+    axis = _setup_axis_unit_for_base(base, setup)
     return axis_pose_stack(base.thetas_deg, axis)
 
 
@@ -172,5 +247,7 @@ def subset_base_geometry(
         nominal_pose_stack=base.nominal_pose_stack[idx],
         detector=base.detector,
         nominal_axis_unit=base.nominal_axis_unit,
+        nominal_tilt_deg=base.nominal_tilt_deg,
+        tilt_about=base.tilt_about,
         level_factor=base.level_factor,
     )

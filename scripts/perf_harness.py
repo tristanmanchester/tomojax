@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -14,20 +15,82 @@ except Exception:  # pragma: no cover - optional
 from tomojax.utils.subprocesses import run_command
 
 
+def _sample_child_rss(child) -> int | None:
+    try:
+        return int(child.memory_info().rss)
+    except Exception:
+        return None
+
+
+def _run_with_child_memory(cmd: list[str], env: dict[str, str]):
+    proc = subprocess.Popen(  # nosec B603
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        shell=False,
+    )
+    try:
+        child = psutil.Process(proc.pid)
+    except Exception:
+        stdout, _ = proc.communicate()
+        return {
+            "returncode": proc.returncode,
+            "stdout": stdout,
+            "child_peak_rss": None,
+            "child_final_rss": None,
+        }
+    peak_rss: int | None = None
+    final_rss: int | None = None
+
+    def sample() -> None:
+        nonlocal peak_rss, final_rss
+        rss = _sample_child_rss(child)
+        if rss is None:
+            return
+        final_rss = rss
+        peak_rss = rss if peak_rss is None else max(peak_rss, rss)
+
+    sample()
+    while True:
+        try:
+            stdout, _ = proc.communicate(timeout=0.05)
+            sample()
+            break
+        except subprocess.TimeoutExpired:
+            sample()
+
+    return {
+        "returncode": proc.returncode,
+        "stdout": stdout,
+        "child_peak_rss": peak_rss,
+        "child_final_rss": final_rss,
+    }
+
+
 def run(cmd: list[str]) -> dict:
     t0 = time.perf_counter()
-    rss0 = psutil.Process().memory_info().rss if psutil else 0
     env = os.environ.copy()
     env["TOMOJAX_PROGRESS"] = "0"
-    proc = run_command(cmd, env=env, stdout=-1, stderr=-2, text=True)  # nosec B603
+    if psutil is None:
+        proc = run_command(cmd, env=env, stdout=-1, stderr=-2, text=True)  # nosec B603
+        run_result = {
+            "returncode": proc.returncode,
+            "stdout": proc.stdout,
+            "child_peak_rss": None,
+            "child_final_rss": None,
+        }
+    else:
+        run_result = _run_with_child_memory(cmd, env)
     t1 = time.perf_counter()
-    rss1 = psutil.Process().memory_info().rss if psutil else 0
     return {
         "cmd": cmd,
-        "rc": proc.returncode,
+        "rc": run_result["returncode"],
         "secs": round(t1 - t0, 3),
-        "rss_delta": int(max(0, rss1 - rss0)),
-        "stdout": proc.stdout[-2000:],
+        "child_peak_rss": run_result["child_peak_rss"],
+        "child_final_rss": run_result["child_final_rss"],
+        "stdout": run_result["stdout"][-2000:],
     }
 
 

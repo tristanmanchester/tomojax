@@ -205,8 +205,11 @@ def _spline_interpolation_basis(
 
     try:
         from scipy.interpolate import make_interp_spline
-    except Exception:
-        return _linear_interpolation_basis(scan_coordinate, knot_x)
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to build spline pose_model: scipy.interpolate.make_interp_spline "
+            "is required for spline degree > 1"
+        ) from exc
 
     cols = []
     for i in range(n_knots):
@@ -215,8 +218,11 @@ def _spline_interpolation_basis(
         try:
             spline = make_interp_spline(knot_x, values, k=eff_degree)
             col = np.asarray(spline(scan_coordinate), dtype=np.float64)
-        except Exception:
-            return _linear_interpolation_basis(scan_coordinate, knot_x)
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to build spline pose_model basis "
+                f"(degree={eff_degree}, n_knots={n_knots}, n_views={n_views})"
+            ) from exc
         cols.append(col)
     return np.stack(cols, axis=1).astype(np.float32)
 

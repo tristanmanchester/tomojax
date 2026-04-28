@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import builtins
+from types import SimpleNamespace
+
 import numpy as np
 import jax.numpy as jnp
+import pytest
 
 from tomojax.align.motion_models import (
     build_pose_motion_model,
@@ -62,6 +66,53 @@ def test_spline_motion_model_expands_to_per_view_params_shape():
 
     assert coeffs.shape == (4, 5)
     assert expanded.shape == (n_views, 5)
+
+
+def test_spline_motion_model_fails_when_scipy_import_fails(monkeypatch):
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "scipy.interpolate":
+            raise ImportError("blocked scipy import")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    with pytest.raises(RuntimeError, match="scipy\\.interpolate\\.make_interp_spline"):
+        build_pose_motion_model(
+            pose_model="spline",
+            n_views=8,
+            active_dofs=("dx",),
+            frozen_params5=jnp.zeros((8, 5), dtype=jnp.float32),
+            knot_spacing=2,
+            degree=3,
+        )
+
+
+def test_spline_motion_model_fails_when_spline_construction_fails(monkeypatch):
+    original_import = builtins.__import__
+
+    def fail_make_interp_spline(*args, **kwargs):
+        raise ValueError("synthetic spline failure")
+
+    fake_interpolate = SimpleNamespace(make_interp_spline=fail_make_interp_spline)
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "scipy.interpolate":
+            return fake_interpolate
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    with pytest.raises(RuntimeError, match="Failed to build spline pose_model basis"):
+        build_pose_motion_model(
+            pose_model="spline",
+            n_views=8,
+            active_dofs=("dx",),
+            frozen_params5=jnp.zeros((8, 5), dtype=jnp.float32),
+            knot_spacing=2,
+            degree=3,
+        )
 
 
 def test_smooth_motion_model_uses_fewer_variables_than_per_view():

@@ -9,6 +9,7 @@ under ``scripts/``.
 """
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -289,11 +290,11 @@ def _write_results_summary(
         "output",
         "error",
     ]
-    with open(csv_path, "w", encoding="utf-8") as f:
-        f.write(",".join(keys) + "\n")
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
+        writer.writeheader()
         for result in results:
-            row = [str(result.get(k, "")) for k in keys]
-            f.write(",".join(row) + "\n")
+            writer.writerow({key: result.get(key, "") for key in keys})
 
 
 def _best_result(

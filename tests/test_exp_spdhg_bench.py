@@ -8,6 +8,7 @@ import warnings
 
 import h5py
 import numpy as np
+import pytest
 
 from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo
 
@@ -84,6 +85,227 @@ def test_helpers_compute_metrics_and_write_outputs(tmp_path: Path) -> None:
     assert np.allclose(saved.volume, shifted)
     assert saved.frame == "recon"
     assert np.allclose(saved.projections, np.ones((2, 8, 8), dtype=np.float32))
+
+
+def test_prepare_or_load_dataset_falls_back_only_for_expected_resource_errors(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    bench_mod = _load_module("exp_spdhg_bench_fallback_expected_test", "scripts/exp_spdhg_bench.py")
+    args = bench_mod.parse_args(
+        [
+            "--outdir",
+            str(tmp_path),
+            "--nx",
+            "8",
+            "--ny",
+            "8",
+            "--nz",
+            "8",
+            "--nu",
+            "8",
+            "--nv",
+            "8",
+            "--n-views",
+            "2",
+            "--overwrite-data",
+        ]
+    )
+    fallback_calls = []
+
+    def fake_generate_dataset(_plan):
+        raise RuntimeError("RESOURCE_EXHAUSTED: simulated GPU allocation failure")
+
+    def fake_run_simulate_fallback(plan):
+        fallback_calls.append(plan.sim_path)
+
+    monkeypatch.setattr(bench_mod, "generate_dataset", fake_generate_dataset)
+    monkeypatch.setattr(bench_mod, "run_simulate_fallback", fake_run_simulate_fallback)
+
+    sim_path = bench_mod.prepare_or_load_dataset(args)
+    captured = capsys.readouterr()
+
+    assert sim_path == str(tmp_path / "dataset.nxs")
+    assert fallback_calls == [str(tmp_path / "dataset.nxs")]
+    assert "falling back to CLI simulate" in captured.out
+
+
+def test_prepare_or_load_dataset_reraises_unexpected_errors(monkeypatch, tmp_path: Path) -> None:
+    bench_mod = _load_module("exp_spdhg_bench_fallback_unexpected_test", "scripts/exp_spdhg_bench.py")
+    args = bench_mod.parse_args(
+        [
+            "--outdir",
+            str(tmp_path),
+            "--nx",
+            "8",
+            "--ny",
+            "8",
+            "--nz",
+            "8",
+            "--nu",
+            "8",
+            "--nv",
+            "8",
+            "--n-views",
+            "2",
+            "--overwrite-data",
+        ]
+    )
+    fallback_calls = []
+
+    def fake_generate_dataset(_plan):
+        raise ValueError("projection shape mismatch")
+
+    def fake_run_simulate_fallback(_plan):
+        fallback_calls.append(True)
+
+    monkeypatch.setattr(bench_mod, "generate_dataset", fake_generate_dataset)
+    monkeypatch.setattr(bench_mod, "run_simulate_fallback", fake_run_simulate_fallback)
+
+    with pytest.raises(ValueError, match="projection shape mismatch"):
+        bench_mod.prepare_or_load_dataset(args)
+
+    assert fallback_calls == []
+
+
+def test_run_reconstructions_reraises_unexpected_fbp_errors(monkeypatch, tmp_path: Path) -> None:
+    bench_mod = _load_module("exp_spdhg_bench_fbp_unexpected_test", "scripts/exp_spdhg_bench.py")
+    gt_volume = np.ones((8, 8, 8), dtype=np.float32)
+    dataset = _loaded_dataset(gt_volume)
+    grid = bench_mod.Grid(8, 8, 8, 1.0, 1.0, 1.0)
+    detector = bench_mod.Detector(8, 8, 1.0, 1.0, det_center=(0.0, 0.0))
+    geometry = bench_mod.ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+    )
+    bundle = bench_mod.GeometryBundle(
+        data=dataset,
+        projections=bench_mod.jnp.asarray(dataset.projections, dtype=bench_mod.jnp.float32),
+        grid=grid,
+        detector=detector,
+        geometry=geometry,
+        ground_truth=gt_volume,
+    )
+    args = bench_mod.parse_args(
+        [
+            "--outdir",
+            str(tmp_path),
+            "--nx",
+            "8",
+            "--ny",
+            "8",
+            "--nz",
+            "8",
+            "--nu",
+            "8",
+            "--nv",
+            "8",
+            "--n-views",
+            "2",
+        ]
+    )
+    run_calls = []
+
+    def fake_fbp(*_args, **_kwargs):
+        raise ValueError("bad detector geometry")
+
+    def fake_run_command(*_args, **_kwargs):
+        run_calls.append(True)
+
+    monkeypatch.setattr(bench_mod, "fbp", fake_fbp)
+    monkeypatch.setattr(bench_mod, "run_command", fake_run_command)
+
+    with pytest.raises(ValueError, match="bad detector geometry"):
+        bench_mod.run_reconstructions(
+            args,
+            bundle,
+            gather="fp32",
+            vol_mask_np=None,
+            vol_mask=None,
+        )
+
+    assert run_calls == []
+
+
+def test_run_reconstructions_falls_back_for_expected_fbp_resource_errors(
+    monkeypatch, tmp_path: Path
+) -> None:
+    bench_mod = _load_module("exp_spdhg_bench_fbp_expected_test", "scripts/exp_spdhg_bench.py")
+    gt_volume = np.ones((8, 8, 8), dtype=np.float32)
+    dataset = _loaded_dataset(gt_volume)
+    grid = bench_mod.Grid(8, 8, 8, 1.0, 1.0, 1.0)
+    detector = bench_mod.Detector(8, 8, 1.0, 1.0, det_center=(0.0, 0.0))
+    geometry = bench_mod.ParallelGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=np.array([0.0, 90.0], dtype=np.float32),
+    )
+    bundle = bench_mod.GeometryBundle(
+        data=dataset,
+        projections=bench_mod.jnp.asarray(dataset.projections, dtype=bench_mod.jnp.float32),
+        grid=grid,
+        detector=detector,
+        geometry=geometry,
+        ground_truth=gt_volume,
+    )
+    args = bench_mod.parse_args(
+        [
+            "--outdir",
+            str(tmp_path),
+            "--nx",
+            "8",
+            "--ny",
+            "8",
+            "--nz",
+            "8",
+            "--nu",
+            "8",
+            "--nv",
+            "8",
+            "--n-views",
+            "2",
+        ]
+    )
+    run_calls = []
+
+    def fake_fbp(*_args, **_kwargs):
+        raise RuntimeError("RESOURCE_EXHAUSTED: simulated GPU allocation failure")
+
+    def fake_run_command(cmd: list[str], *, check: bool, env: dict[str, str]):
+        run_calls.append((cmd, check, env))
+        out_path = Path(cmd[cmd.index("--out") + 1])
+        with h5py.File(out_path, "w") as handle:
+            handle.create_dataset(
+                "/entry/processing/tomojax/volume",
+                data=np.full(gt_volume.shape, 2.0, dtype=np.float32),
+            )
+
+    monkeypatch.setattr(bench_mod, "fbp", fake_fbp)
+    monkeypatch.setattr(bench_mod, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        bench_mod,
+        "fista_tv",
+        lambda *_args, **_kwargs: (np.full(gt_volume.shape, 3.0, dtype=np.float32), {}),
+    )
+    monkeypatch.setattr(
+        bench_mod,
+        "spdhg_tv",
+        lambda *_args, **_kwargs: (np.full(gt_volume.shape, 4.0, dtype=np.float32), {}),
+    )
+    monkeypatch.setattr(bench_mod, "save_volume", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bench_mod, "save_slice_png", lambda *_args, **_kwargs: None)
+
+    results = bench_mod.run_reconstructions(
+        args,
+        bundle,
+        gather="fp32",
+        vol_mask_np=None,
+        vol_mask=None,
+    )
+
+    assert len(run_calls) == 1
+    assert run_calls[0][2]["JAX_PLATFORM_NAME"] == "cpu"
+    assert np.allclose(results.volumes["fbp"], np.full(gt_volume.shape, 2.0, dtype=np.float32))
 
 
 def test_main_reuses_dataset_and_writes_benchmark_artifacts(

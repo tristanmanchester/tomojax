@@ -142,9 +142,14 @@ def test_select_gn_candidate_reverts_when_no_candidate_is_acceptable():
 
 def test_is_expected_align_eval_failure_accepts_numeric_failures():
     assert _is_expected_align_eval_failure(FloatingPointError("nan in solve"))
+    assert _is_expected_align_eval_failure(RuntimeError("encountered +Inf residual"))
+    assert _is_expected_align_eval_failure(RuntimeError("loss contains NaNs"))
+    assert _is_expected_align_eval_failure(RuntimeError("NaN in candidate loss"))
     assert _is_expected_align_eval_failure(RuntimeError("Singular matrix in GN solve"))
     assert _is_expected_align_eval_failure(RuntimeError("RESOURCE_EXHAUSTED: OOM"))
 
 
 def test_is_expected_align_eval_failure_rejects_unexpected_errors():
     assert not _is_expected_align_eval_failure(RuntimeError("unexpected callback failure"))
+    assert not _is_expected_align_eval_failure(RuntimeError("callback info payload missing"))
+    assert not _is_expected_align_eval_failure(RuntimeError("model inference fallback failed"))

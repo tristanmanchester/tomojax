@@ -167,15 +167,25 @@ def _parallel_detector_rays(
 
 
 class Geometry(Protocol):
-    """Common interface for CT, laminography, and custom geometries.
+    """Common pose interface for projector-compatible geometries.
 
-    Implementations describe per-view pose and per-pixel rays.
-    Contract: pose_for_view(i) returns a 4x4 world_from_object transform suitable
-    for the projector; rays_for_view(i) must define world-frame rays.
+    Projector contract: ``pose_for_view(i)`` returns a 4x4 world_from_object
+    transform. The core projector combines that pose with the supplied
+    ``Grid``/``Detector`` to construct the standard parallel-beam detector
+    rays; it does not consume custom per-pixel ray callbacks.
+
+    Concrete geometries may expose ``rays_for_view(i)`` as an optional
+    metadata/inspection helper, but that helper is not part of the projector
+    contract and custom rays are not supported by ``forward_project_view`` or
+    ``backproject_view``.
     """
 
     def pose_for_view(self, i: int) -> PoseMatrix:
         """Returns a 4x4 homogeneous transform world_from_object (row-major)."""
+
+
+class RayGeometry(Geometry, Protocol):
+    """Optional ray-inspection interface implemented by built-in geometries."""
 
     def rays_for_view(self, i: int) -> RayPair:
         """Returns (origin_fn, dir_fn) that map detector pixel (u,v) to a ray.

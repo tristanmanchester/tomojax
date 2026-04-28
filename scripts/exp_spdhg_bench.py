@@ -99,6 +99,26 @@ class SimulationGeometryBundle:
     volume: jnp.ndarray
 
 
+_EXPECTED_FALLBACK_FAILURE_SNIPPETS = (
+    "allocator",
+    "cuda_error_out_of_memory",
+    "cudnn_status_alloc_failed",
+    "failed to allocate",
+    "memory allocation",
+    "out of memory",
+    "resource_exhausted",
+)
+
+
+def _is_expected_fallback_failure(exc: Exception) -> bool:
+    if isinstance(exc, MemoryError):
+        return True
+    if not isinstance(exc, (RuntimeError, TimeoutError, OSError)):
+        return False
+    msg = str(exc).lower()
+    return any(snippet in msg for snippet in _EXPECTED_FALLBACK_FAILURE_SNIPPETS)
+
+
 def ensure_dir(p: str) -> None:
     if p and not os.path.exists(p):
         os.makedirs(p, exist_ok=True)
@@ -460,6 +480,8 @@ def prepare_or_load_dataset(args: argparse.Namespace) -> str:
         try:
             generate_dataset(plan)
         except Exception as e:
+            if not _is_expected_fallback_failure(e):
+                raise
             print(f"[simulate] in-process chunked path failed ({e}); falling back to CLI simulate…")
             run_simulate_fallback(plan)
     else:
@@ -560,14 +582,11 @@ def run_reconstructions(
             gather_dtype=gather,
         )
 
-    vol_fbp = None
-    try:
-        if args.fbp_on_cpu:
-            raise RuntimeError("force_cpu")
-        vol_fbp = run_fbp_gpu()
-    except Exception as e:
-        # Fallback: run FBP via CLI on CPU, then load volume back
-        print(f"[fbp] GPU path failed ({e}); falling back to CPU subprocess…")
+    def run_fbp_cpu_subprocess(reason: Exception | None) -> np.ndarray:
+        if reason is None:
+            print("[fbp] running CPU subprocess by request")
+        else:
+            print(f"[fbp] GPU path failed ({reason}); falling back to CPU subprocess…")
         fbp_tmp = os.path.join(args.outdir, "fbp_cpu_tmp.nxs")
         cmd = [
             sys.executable,
@@ -588,7 +607,17 @@ def run_reconstructions(
         import h5py
 
         with h5py.File(fbp_tmp, "r") as f:
-            vol_fbp = np.asarray(f["/entry/processing/tomojax/volume"])  # zyx on disk by default
+            return np.asarray(f["/entry/processing/tomojax/volume"])  # zyx on disk by default
+
+    if args.fbp_on_cpu:
+        vol_fbp = run_fbp_cpu_subprocess(None)
+    else:
+        try:
+            vol_fbp = run_fbp_gpu()
+        except Exception as e:
+            if not _is_expected_fallback_failure(e):
+                raise
+            vol_fbp = run_fbp_cpu_subprocess(e)
     if vol_mask_np is not None:
         vol_fbp = vol_fbp * vol_mask
     fbp_time = time.perf_counter() - t0

@@ -40,6 +40,17 @@ def make_aligned_case(nx=16, ny=16, nz=16):
     return grid, det, geom, vol
 
 
+class PoseOnlyIdentityGeometry:
+    def __hash__(self):
+        return hash("PoseOnlyIdentityGeometry")
+
+    def __eq__(self, other):
+        return isinstance(other, PoseOnlyIdentityGeometry)
+
+    def pose_for_view(self, _view_index):
+        return tuple(map(tuple, np.eye(4, dtype=np.float64)))
+
+
 def test_forward_project_uniform_volume_returns_path_length():
     grid, det, geom, vol = make_aligned_case(16, 16, 16)
     proj = forward_project_view(geom, grid, det, vol, view_index=0)
@@ -67,6 +78,37 @@ def test_backproject_rejects_bad_detector_image_shape_with_expected_and_actual()
         match=r"expected .*=\(8, 8\).*actual \(9, 8\).*Likely fix",
     ):
         backproject_view_T(jnp.eye(4, dtype=jnp.float32), grid, det, bad_image)
+
+
+@pytest.mark.parametrize("n_steps", [0, -1])
+def test_forward_project_rejects_nonpositive_n_steps(n_steps: int):
+    grid, det, geom, vol = make_aligned_case(8, 8, 8)
+
+    with pytest.raises(ValueError, match="n_steps must be a positive integer"):
+        forward_project_view(geom, grid, det, vol, view_index=0, n_steps=n_steps)
+
+
+@pytest.mark.parametrize("step_size", [0.0, -1.0, np.inf, np.nan])
+def test_forward_project_rejects_nonpositive_or_nonfinite_step_size(step_size: float):
+    grid, det, geom, vol = make_aligned_case(8, 8, 8)
+
+    with pytest.raises(ValueError, match="step_size must be finite and > 0"):
+        forward_project_view(geom, grid, det, vol, view_index=0, step_size=step_size)
+
+
+def test_backproject_rejects_invalid_step_size_even_with_explicit_n_steps():
+    grid, det, _, _ = make_aligned_case(8, 8, 8)
+    image = jnp.ones((det.nv, det.nu), dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="step_size must be finite and > 0"):
+        backproject_view_T(
+            jnp.eye(4, dtype=jnp.float32),
+            grid,
+            det,
+            image,
+            step_size=0.0,
+            n_steps=1,
+        )
 
 
 @pytest.mark.parametrize("gather_dtype", ["fp32", "bf16", "fp16"])
@@ -117,21 +159,8 @@ def test_view_loss_forwards_gather_dtype(monkeypatch):
 
 
 def test_view_loss_value_and_grad_accepts_gather_dtype():
-    class HashableIdentityGeometry:
-        def __hash__(self):
-            return hash("HashableIdentityGeometry")
-
-        def __eq__(self, other):
-            return isinstance(other, HashableIdentityGeometry)
-
-        def pose_for_view(self, _view_index):
-            return tuple(map(tuple, np.eye(4, dtype=np.float64)))
-
-        def rays_for_view(self, _view_index):
-            raise NotImplementedError
-
     grid, det, _, vol = make_aligned_case(4, 4, 4)
-    geom = HashableIdentityGeometry()
+    geom = PoseOnlyIdentityGeometry()
     measured = forward_project_view(geom, grid, det, vol, view_index=0, gather_dtype="bf16")
 
     loss, grad = operators_mod.view_loss_value_and_grad(
@@ -146,6 +175,48 @@ def test_view_loss_value_and_grad_accepts_gather_dtype():
 
     assert np.isfinite(float(loss))
     assert grad.shape == vol.shape
+
+
+def test_projector_contract_accepts_pose_only_geometry():
+    grid, det, _, vol = make_aligned_case(4, 4, 4)
+    geom = PoseOnlyIdentityGeometry()
+    image = jnp.ones((det.nv, det.nu), dtype=jnp.float32)
+
+    projected = forward_project_view(geom, grid, det, vol, view_index=0)
+    backprojected = backproject_view(geom, grid, det, image, view_index=0)
+
+    assert projected.shape == (det.nv, det.nu)
+    assert backprojected.shape == vol.shape
+
+
+@pytest.mark.parametrize("gather_dtype", ["float64", "unknown", ""])
+def test_forward_project_rejects_invalid_gather_dtype(gather_dtype: str):
+    grid, det, geom, vol = make_aligned_case(4, 4, 4)
+
+    with pytest.raises(ValueError, match="gather_dtype must be one of"):
+        forward_project_view(
+            geom,
+            grid,
+            det,
+            vol,
+            view_index=0,
+            gather_dtype=gather_dtype,
+        )
+
+
+def test_backproject_rejects_invalid_gather_dtype():
+    grid, det, geom, _ = make_aligned_case(4, 4, 4)
+    image = jnp.ones((det.nv, det.nu), dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="gather_dtype must be one of"):
+        backproject_view(
+            geom,
+            grid,
+            det,
+            image,
+            view_index=0,
+            gather_dtype="float64",
+        )
 
 
 def test_forward_project_non_cubic_rotated_volume_uses_full_ray_extent():
