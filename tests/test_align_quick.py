@@ -438,6 +438,39 @@ def test_axis_direction_diagnostics_mark_180_degree_acquisition_ill_conditioned(
     assert block["theta_span_deg"] == pytest.approx(180.0)
 
 
+def test_axis_direction_diagnostics_wrap_theta_span_before_classifying():
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=4, nv=4, du=1.0, dv=1.0)
+    geom = ParallelGeometry(
+        grid=grid,
+        detector=det,
+        thetas_deg=np.asarray([350.0, 355.0, 0.0, 5.0], dtype=np.float32),
+    )
+    diagnostics = {
+        "schema_version": 1,
+        "overall_status": "converged",
+        "blocks": [
+            {
+                "geometry_block": "axis_direction",
+                "geometry_active_dofs": "axis_rot_x_deg",
+                "status": "converged",
+            }
+        ],
+    }
+
+    annotated = add_geometry_acquisition_diagnostics(
+        diagnostics,
+        geom,
+        ("axis_rot_x_deg",),
+    )
+
+    block = annotated["blocks"][0]
+    assert annotated["overall_status"] == "ill_conditioned"
+    assert annotated["warnings"] == ["axis_direction_sub_full_rotation_acquisition"]
+    assert block["status"] == "ill_conditioned"
+    assert block["theta_span_deg"] == pytest.approx(15.0)
+
+
 def test_align_multires_rejects_non_integral_factors_before_truncating():
     grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 3, 5)
 
