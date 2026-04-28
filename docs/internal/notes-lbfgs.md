@@ -26,8 +26,8 @@
 - `--opt-method lbfgs` uses Optax L-BFGS with zoom line search. The expensive
   objective and gradients stay in JAX; Python only drives the small outer
   optimiser loop and logging.
-- The implementation lives in `src/tomojax/align/optimizers.py`; `pipeline.py`
-  builds the reconstruction/alignment closures and delegates the pose step.
+- The implementation lives in `src/tomojax/align/optimizers.py`; the pose stage
+  builds the reconstruction/alignment objectives and invokes the optimizer.
 - The optimiser runs inside each alignment outer step and updates only active
   pose/alignment variables; it does not optimise the reconstruction volume.
 - DOF masks are handled by flattening only active per-view pose variables.
