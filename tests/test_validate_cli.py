@@ -1,14 +1,9 @@
-import sys
 
 import h5py
 import numpy as np
 import pytest
 
 from tomojax.cli import validate as validate_cli
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def _write_minimal_nxtomo(path):

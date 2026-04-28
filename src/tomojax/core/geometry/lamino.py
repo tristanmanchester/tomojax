@@ -6,7 +6,7 @@ from typing import Sequence
 import numpy as np
 
 from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
-from .transforms import rot_axis_angle
+from .transforms import align_u_to_v, rot_axis_angle
 
 
 def laminography_tilt_matrix(tilt_deg: float, tilt_about: str) -> np.ndarray:
@@ -26,31 +26,6 @@ def laminography_axis_unit(tilt_deg: float, tilt_about: str) -> np.ndarray:
     R_tilt = laminography_tilt_matrix(tilt_deg, tilt_about)
     ax = R_tilt @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
     return ax / (np.linalg.norm(ax) + 1e-12)
-
-
-def _align_u_to_v(u: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Small utility: rotation matrix mapping unit vector u to unit vector v."""
-    u = u / (np.linalg.norm(u) + 1e-12)
-    v = v / (np.linalg.norm(v) + 1e-12)
-    c = float(np.dot(u, v))
-    if c > 1.0 - 1e-12:
-        return np.eye(3, dtype=np.float64)
-    if c < -1.0 + 1e-12:
-        # 180-degree: pick any axis orthogonal to u
-        tmp = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-        if abs(np.dot(tmp, u)) > 0.9:
-            tmp = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        k = tmp - np.dot(tmp, u) * u
-        k = k / (np.linalg.norm(k) + 1e-12)
-        K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
-        return np.eye(3) + 2.0 * (K @ K)
-    k = np.cross(u, v)
-    s = float(np.linalg.norm(k))  # = sin(theta)
-    # Unit rotation axis
-    k = k / (s + 1e-12)
-    K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]], dtype=np.float64)
-    # Rodrigues' rotation formula with unit K: R = I + sin(theta)K + (1-cos(theta))K^2
-    return np.eye(3, dtype=np.float64) + s * K + (1.0 - c) * (K @ K)
 
 
 @dataclass
@@ -91,7 +66,7 @@ class LaminographyGeometry:
         theta = float(np.deg2rad(self.thetas_deg[i]))
         axis = self._axis_unit()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        S = _align_u_to_v(ez, axis)
+        S = align_u_to_v(ez, axis)
         Rz = rot_axis_angle(ez, theta)[:3, :3]
         R = S @ Rz
         T = np.eye(4, dtype=np.float64)

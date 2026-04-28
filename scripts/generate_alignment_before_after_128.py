@@ -34,6 +34,7 @@ from tomojax.core.projector import forward_project_view
 from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.utils.json import normalize_json
 
 try:
     from scripts.alignment_visuals import (
@@ -740,15 +741,7 @@ def _write_json(path: Path, payload: Any) -> None:
 
 
 def _json_safe(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
+    return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
 
 
 def _execute_scenario_computation(

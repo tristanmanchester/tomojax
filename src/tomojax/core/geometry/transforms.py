@@ -81,3 +81,27 @@ def rot_axis_angle(axis: np.ndarray, theta: float) -> np.ndarray:
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R
     return T
+
+
+def align_u_to_v(u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Return a rotation matrix mapping unit vector ``u`` to unit vector ``v``."""
+    u = np.asarray(u, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    u = u / (np.linalg.norm(u) + 1e-12)
+    v = v / (np.linalg.norm(v) + 1e-12)
+    c = float(np.dot(u, v))
+    if c > 1.0 - 1e-12:
+        return np.eye(3, dtype=np.float64)
+    if c < -1.0 + 1e-12:
+        tmp = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        if abs(np.dot(tmp, u)) > 0.9:
+            tmp = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        k = tmp - np.dot(tmp, u) * u
+        k = k / (np.linalg.norm(k) + 1e-12)
+        K = hat_so3(k)
+        return np.eye(3, dtype=np.float64) + 2.0 * (K @ K)
+    k = np.cross(u, v)
+    s = float(np.linalg.norm(k))
+    k = k / (s + 1e-12)
+    K = hat_so3(k)
+    return np.eye(3, dtype=np.float64) + s * K + (1.0 - c) * (K @ K)

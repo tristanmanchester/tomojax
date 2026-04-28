@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Compatibility facade for public alignment loss specs and adapters.
 
 This module exists for historical ``tomojax.align.losses`` imports. New code
@@ -8,6 +6,8 @@ from ``align.objectives.loss_adapters`` instead of treating the compatibility
 facade as an extension point. Private kernels live in
 ``align.objectives.loss_kernels`` and are intentionally not re-exported here.
 """
+
+from __future__ import annotations
 
 from .loss_adapters import (
     GaussNewtonWeightFn,

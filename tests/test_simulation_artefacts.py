@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 
 import h5py
 import jax.numpy as jnp
@@ -14,10 +13,6 @@ from tomojax.data.artefacts import (
     apply_simulation_artefacts,
 )
 from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo, validate_nxtomo
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def _base(value: float = 1.0) -> jnp.ndarray:

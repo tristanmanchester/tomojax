@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 import pytest
 
@@ -9,10 +8,6 @@ from tomojax.core.geometry import (
     LaminographyGeometry,
 )
 from tomojax.core.geometry.transforms import rotz, rot_axis_angle, exp_se3, invert, compose
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def test_parallel_pose_identity_and_quarter_turn():

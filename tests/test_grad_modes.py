@@ -1,14 +1,9 @@
-import sys
 import numpy as np
 import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.recon.fista_tv import grad_data_term
-
-
-if sys.version_info < (3, 8):
-    raise SystemExit
 
 
 def make_case(n_views=5, nx=12, ny=12, nz=12):

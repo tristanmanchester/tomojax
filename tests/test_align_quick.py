@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 import pytest
 import jax.numpy as jnp
@@ -22,10 +21,6 @@ from tomojax.align.pipeline import (
 )
 from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def make_misaligned_case(nx=12, ny=12, nz=12, n_views=8, seed=0):

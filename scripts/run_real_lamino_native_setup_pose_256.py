@@ -46,25 +46,11 @@ from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume
+from tomojax.utils.json import normalize_json
 
 
 def _json_safe(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    if hasattr(value, "shape") and hasattr(value, "dtype"):
-        try:
-            return np.asarray(value).tolist()
-        except Exception:
-            return str(value)
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
+    return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
 
 
 def _write_json(path: Path, payload: Any) -> None:

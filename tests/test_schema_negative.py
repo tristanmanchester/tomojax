@@ -1,13 +1,8 @@
-import sys
 import h5py
 import numpy as np
 import pytest
 
 from tomojax.data.io_hdf5 import validate_nxtomo
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def test_validator_catches_missing_groups(tmp_path):

@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 import pytest
 import jax.numpy as jnp
@@ -7,10 +6,6 @@ from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from tomojax.data.simulate import SimConfig, simulate
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def make_simple_case(nx=12, ny=12, nz=12, n_views=12):

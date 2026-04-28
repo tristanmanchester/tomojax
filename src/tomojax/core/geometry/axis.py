@@ -6,8 +6,7 @@ from typing import Sequence
 import numpy as np
 
 from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
-from .lamino import _align_u_to_v
-from .transforms import rot_axis_angle
+from .transforms import align_u_to_v, rot_axis_angle
 
 
 def normalize_axis_unit(axis_unit_lab: Sequence[float]) -> tuple[float, float, float]:
@@ -47,7 +46,7 @@ class RotationAxisGeometry:
         theta = float(np.deg2rad(self.thetas_deg[i]))
         axis = self._axis_unit()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        S = _align_u_to_v(ez, axis)
+        S = align_u_to_v(ez, axis)
         Rz = rot_axis_angle(ez, theta)[:3, :3]
         T = np.eye(4, dtype=np.float64)
         T[:3, :3] = S @ Rz

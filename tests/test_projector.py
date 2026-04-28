@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 import pytest
 import jax
@@ -15,10 +14,6 @@ from tomojax.core.projector import (
 )
 from tomojax.core import operators as operators_mod
 from tomojax.core.operators import adjoint_test_once
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def _gather_dtype_adjoint_tolerance(gather_dtype: str) -> dict[str, float]:

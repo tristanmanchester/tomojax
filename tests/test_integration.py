@@ -1,7 +1,6 @@
 import os
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 
-import sys
 import numpy as np
 import pytest
 import jax.numpy as jnp
@@ -13,10 +12,6 @@ from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.align.pipeline import align, AlignConfig
 from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
-
-
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
 
 
 def psnr(x, y):

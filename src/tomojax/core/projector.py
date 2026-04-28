@@ -474,9 +474,6 @@ def sum_backproject_views_T(
     return acc
 
 
-_sum_backproject_views_T = sum_backproject_views_T
-
-
 def forward_project_view(
     geometry: Geometry,
     grid: Grid,

@@ -11,10 +11,6 @@ from tomojax.data.io_hdf5 import validate_nxtomo
 from tomojax.data.simulate import SimConfig, simulate, simulate_to_file
 
 
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
-
-
 def test_simulate_deterministic_seed():
     cfg = SimConfig(
         nx=16,

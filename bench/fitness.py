@@ -10,6 +10,7 @@ without pulling one-off script behavior into the fixed profile surface.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -25,8 +26,6 @@ from typing import Any, Callable, Mapping
 import numpy as np
 import psutil
 import yaml
-from memory import GpuMemoryMonitor, GpuMemorySnapshot
-from visualize import save_alignment_summary
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(__file__).resolve().parent
@@ -37,6 +36,24 @@ REFERENCE_DIR = BENCH_ROOT / "reference"
 OUT_DIR = BENCH_ROOT / "out"
 MB = 1024.0 * 1024.0
 ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _load_bench_sibling(module_name: str) -> Any:
+    """Load a sibling benchmark helper without relying on bare sys.path imports."""
+    path = BENCH_ROOT / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(f"_tomojax_bench_{module_name}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load benchmark helper module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+_memory_mod = _load_bench_sibling("memory")
+GpuMemoryMonitor = _memory_mod.GpuMemoryMonitor
+GpuMemorySnapshot = _memory_mod.GpuMemorySnapshot
+save_alignment_summary = _load_bench_sibling("visualize").save_alignment_summary
 
 
 def _repo_pythonpath() -> None:
@@ -2527,17 +2544,9 @@ def _resolve_objective(metrics: dict[str, Any], profile: dict[str, Any]) -> tupl
 
 
 def _json_safe(value: Any) -> Any:
-    if isinstance(value, (np.floating, np.integer)):
-        return value.item()
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    return value
+    from tomojax.utils.json import normalize_json
+
+    return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
 
 
 def _initial_benchmark_metrics(

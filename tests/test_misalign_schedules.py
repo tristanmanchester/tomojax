@@ -10,10 +10,6 @@ from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.cli.misalign import _apply_box
 
 
-if sys.version_info < (3, 8):
-    pytest.skip("Requires Python 3.8+ for package code", allow_module_level=True)
-
-
 def _make_gt(path, nx=16, ny=16, nz=16, n_views=8, *, include_grid=True):
     grid = Grid(nx=nx, ny=ny, nz=nz, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=nx, nv=nz, du=1.0, dv=1.0, det_center=(0.0, 0.0))

@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Compatibility facade for alignment configuration and execution.
 
 This module preserves the stable alignment entry points while the implementation
 lives in private stage modules. Tests and internal callers that need stage
 details should import those owner modules directly.
 """
+
+from __future__ import annotations
 
 from typing import Iterable
 
