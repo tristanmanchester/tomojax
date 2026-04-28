@@ -448,6 +448,7 @@ def main() -> None:
                 detector,
                 proj,
                 config=cfg,
+                views_per_batch=int(resolved_vpb),
                 det_grid=det_grid,
             )
         # For FBP, apply mask post-hoc if requested for parity
