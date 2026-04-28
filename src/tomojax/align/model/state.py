@@ -6,6 +6,7 @@ from typing import Iterable, Mapping
 import jax
 import jax.numpy as jnp
 
+from tomojax.calibration.axis_geometry import axis_unit_from_rotations
 from tomojax.calibration.state import CalibrationState, CalibrationVariable
 
 
@@ -75,6 +76,14 @@ class SetupGeometryState:
             "axis_rot_y_deg": jnp.rad2deg(self.axis_rot_y_rad),
             "tilt_deg": jnp.rad2deg(self.tilt_rad),
         }
+
+    def axis_unit_lab(self) -> jnp.ndarray:
+        deg = self.degrees_dict()
+        return axis_unit_from_rotations(
+            self.nominal_axis_unit,
+            axis_rot_x_deg=deg["axis_rot_x_deg"],
+            axis_rot_y_deg=deg["axis_rot_y_deg"],
+        )
 
     def replace(self, **updates: object) -> "SetupGeometryState":
         values = {
@@ -173,6 +182,7 @@ class AlignmentState:
             return "estimated" if name in active else "frozen"
 
         deg = self.setup.degrees_dict()
+        axis_unit = self.setup.axis_unit_lab()
         return CalibrationState(
             detector=(
                 CalibrationVariable(
@@ -219,7 +229,7 @@ class AlignmentState:
                 ),
                 CalibrationVariable(
                     name="axis_unit_lab",
-                    value=[float(v) for v in self.setup.nominal_axis_unit],
+                    value=[float(v) for v in axis_unit],
                     unit="unit_vector",
                     status="derived",
                     frame="scan",

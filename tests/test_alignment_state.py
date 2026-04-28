@@ -7,6 +7,7 @@ import jax.numpy as jnp
 
 from tomojax.align.model.dof_specs import ActiveParameterView, optimizer_step_stats
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.calibration.axis_geometry import axis_unit_from_rotations
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 
 
@@ -88,6 +89,33 @@ def test_degree_facing_setup_metadata_uses_radian_optimizer_state():
     assert variables["detector_roll_deg"].value == pytest.approx(6.0, abs=1e-5)
     assert variables["detector_roll_deg"].status == "estimated"
     assert variables["axis_rot_x_deg"].status == "frozen"
+
+
+def test_calibration_state_exports_axis_unit_from_axis_rotations():
+    setup = SetupGeometryState.from_degrees(
+        axis_rot_x_deg=6.0,
+        axis_rot_y_deg=-7.0,
+        nominal_axis_unit=(0.0, 0.0, 1.0),
+    )
+    state = AlignmentState(setup=setup, pose=PoseState.zeros(1))
+
+    calibration = state.to_calibration_state(
+        active_dofs=("axis_rot_x_deg", "axis_rot_y_deg")
+    )
+    variables = calibration.variables_by_name()
+    expected_axis = axis_unit_from_rotations(
+        (0.0, 0.0, 1.0),
+        axis_rot_x_deg=6.0,
+        axis_rot_y_deg=-7.0,
+    )
+
+    np.testing.assert_allclose(
+        variables["axis_unit_lab"].value,
+        np.asarray(expected_axis),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    assert variables["axis_unit_lab"].status == "derived"
 
 
 def test_tilt_alias_resolves_through_existing_geometry_rules():
