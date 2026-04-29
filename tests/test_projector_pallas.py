@@ -163,6 +163,28 @@ def test_pallas_forward_project_accepts_explicit_supported_variant_controls() ->
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
 
 
+def test_pallas_forward_project_transposed_layout_handles_tile_remainder() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(17.0, grid=grid, detector=detector)
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+
+    oracle = forward_project_view_T(T, grid, detector, volume)
+    candidate = forward_project_view_T_pallas(
+        T,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+        layout_variant="detector_uv",
+    )
+
+    assert candidate.shape == (7, 9)
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
 def test_pallas_forward_project_z_integer_variant_matches_jax() -> None:
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
@@ -260,7 +282,7 @@ def test_pallas_forward_project_rejects_unsupported_gather_dtype(gather_dtype: s
     [
         ({"num_warps": 3}, "num_warps"),
         ({"kernel_variant": "z_locked8"}, "kernel_variant"),
-        ({"layout_variant": "detector_uv"}, "layout_variant"),
+        ({"layout_variant": "unknown_layout"}, "layout_variant"),
         ({"state_mode": "cached"}, "state_mode"),
     ],
 )
