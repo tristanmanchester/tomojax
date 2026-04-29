@@ -766,6 +766,21 @@ this benchmark; the next useful direction is improving the projection body or
 specializing for high-ray workloads, not carrying this fused-reduction variant
 as a performance path.
 
+**Follow-up result, 2026-04-29:** Accepted a benchmark-only high-ray dispatch
+policy for residual objectives. The policy estimates workload size from
+`n_views * nu * nv * n_steps` and selects materialized Pallas only above a
+`1_000_000_000` ray-step threshold; below that threshold it reuses the measured
+JAX materialized baseline. The first implementation re-timed a duplicate JAX
+call for JAX-selected cases and missed the low-case guard (`0.904x` on
+`residual-64`), so it was corrected to model the policy rather than a redundant
+call. The verified dispatch run, pinned to commit `df9a1b2` and archived on
+`vivobook`, was parity-clean on all cases. It selected JAX for `residual-64`
+and `residual-128`, giving `1.000x` for both ordinary cases, and selected
+materialized Pallas for `high-ray-residual-128`, reaching `4.2197x` versus JAX
+materialized. Dispatch geomean was `1.6159x`, worst case `1.000x`, and best
+case `4.2197x`, clearing the gate. This remains benchmark-only evidence for
+selective objective dispatch, not a product alignment-path default.
+
 ---
 
 - U8. **Document Results and Promotion Criteria**
