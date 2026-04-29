@@ -571,16 +571,69 @@ def _make_backend_callable(
     requested_backend: BackendName,
     fixture: ForwardProjectorFixture,
     config: ForwardProjectorBenchmarkConfig,
-) -> tuple[Callable[[], jnp.ndarray], str, str | None]:
+) -> tuple[Callable[[], jnp.ndarray], str, str | None, dict[str, Any]]:
     if requested_backend == "jax":
-        return lambda: _call_jax(fixture, config), "jax", None
+        return lambda: _call_jax(fixture, config), "jax", None, {}
 
     pallas_fn, fallback_reason = _resolve_pallas_callable()
     if pallas_fn is None:
-        return lambda: _call_jax(fixture, config), "jax", fallback_reason
+        return lambda: _call_jax(fixture, config), "jax", fallback_reason, {}
     unsupported_reason = _pallas_unsupported_reason(fixture, config)
     if unsupported_reason:
-        return lambda: _call_jax(fixture, config), "jax", unsupported_reason
+        return lambda: _call_jax(fixture, config), "jax", unsupported_reason, {}
+
+    pallas_module, module_reason = _resolve_pallas_module()
+    if pallas_module is None:
+        return lambda: _call_jax(fixture, config), "jax", module_reason, {}
+
+    if config.pallas_state_mode == "cached":
+        prepare_fn = getattr(pallas_module, "prepare_forward_project_view_T_pallas_state", None)
+        with_state_fn = getattr(pallas_module, "forward_project_view_T_pallas_with_state", None)
+        block_state_fn = getattr(pallas_module, "block_forward_project_view_T_pallas_state", None)
+        if prepare_fn is None or with_state_fn is None:
+            return (
+                lambda: _call_jax(fixture, config),
+                "jax",
+                "pallas_cached_state_callable_missing",
+                {},
+            )
+        setup_start = time.perf_counter()
+        state = prepare_fn(
+            fixture.T,
+            fixture.grid,
+            fixture.detector,
+            step_size=config.step_size,
+            n_steps=config.n_steps,
+            gather_dtype=config.gather_dtype,
+            det_grid=fixture.det_grid,
+            tile_shape=config.pallas_tile_shape,
+            num_warps=config.pallas_num_warps,
+            kernel_variant=config.pallas_kernel_variant,
+            layout_variant=config.pallas_layout_variant,
+        )
+        if block_state_fn is None:
+            jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray))
+        else:
+            block_state_fn(state)
+        setup_seconds = time.perf_counter() - setup_start
+
+        def call_cached_pallas() -> jnp.ndarray:
+            return with_state_fn(
+                state,
+                fixture.volume,
+                interpret=False,
+                unroll=config.unroll,
+            )
+
+        return (
+            call_cached_pallas,
+            "pallas",
+            None,
+            {
+                "pallas_state_setup_seconds": float(setup_seconds),
+                "pallas_state_timing_mode": "cached",
+            },
+        )
 
     def call_pallas() -> jnp.ndarray:
         return pallas_fn(
@@ -600,7 +653,12 @@ def _make_backend_callable(
             state_mode=config.pallas_state_mode,
         )
 
-    return call_pallas, "pallas", None
+    return (
+        call_pallas,
+        "pallas",
+        None,
+        {"pallas_state_timing_mode": str(config.pallas_state_mode)},
+    )
 
 
 def _make_sinogram_callable(
@@ -693,7 +751,11 @@ def benchmark_backend(
     oracle: jnp.ndarray | None = None,
 ) -> tuple[dict[str, Any], jnp.ndarray]:
     """Run first-call and warm-call timings for one requested backend."""
-    call, actual_backend, fallback_reason = _make_backend_callable(requested_backend, fixture, config)
+    call, actual_backend, fallback_reason, setup_metadata = _make_backend_callable(
+        requested_backend,
+        fixture,
+        config,
+    )
     first_seconds, first_output = _time_blocked_call(call)
 
     warm_seconds: list[float] = []
@@ -711,6 +773,7 @@ def benchmark_backend(
         "eligible_for_speed_claim": bool(requested_backend == actual_backend),
         "first_call_seconds": float(first_seconds),
         **timings,
+        **setup_metadata,
         **_error_metrics(warm_output, reference),
     }
     if requested_backend == "pallas":

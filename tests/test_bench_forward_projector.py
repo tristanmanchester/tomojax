@@ -161,7 +161,9 @@ def test_benchmark_backend_records_pallas_variant_metadata(
     fixture = make_forward_projector_fixture(config)
 
     def fake_make_callable(_requested_backend, _fixture, _config):
-        return lambda: jnp.ones((2, 2), dtype=jnp.float32), "pallas", None
+        return lambda: jnp.ones((2, 2), dtype=jnp.float32), "pallas", None, {
+            "pallas_state_timing_mode": "inline"
+        }
 
     monkeypatch.setattr(
         "tomojax.bench.forward_projector._make_backend_callable",
@@ -193,6 +195,43 @@ def test_benchmark_backend_records_pallas_variant_metadata(
         "resolved_n_steps": 6,
         "effective_pallas_n_steps": 6,
     }
+    assert result["pallas_state_timing_mode"] == "inline"
+
+
+def test_benchmark_backend_records_cached_state_setup_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ForwardProjectorBenchmarkConfig(
+        nx=2,
+        ny=2,
+        nz=2,
+        nu=2,
+        nv=2,
+        warm_runs=1,
+        pallas_state_mode="cached",
+    )
+    fixture = make_forward_projector_fixture(config)
+
+    def fake_make_callable(_requested_backend, _fixture, _config):
+        return lambda: jnp.ones((2, 2), dtype=jnp.float32), "pallas", None, {
+            "pallas_state_setup_seconds": 0.125,
+            "pallas_state_timing_mode": "cached",
+        }
+
+    monkeypatch.setattr(
+        "tomojax.bench.forward_projector._make_backend_callable",
+        fake_make_callable,
+    )
+
+    result, _ = benchmark_backend(
+        "pallas",
+        fixture,
+        config,
+        oracle=jnp.ones((2, 2), dtype=jnp.float32),
+    )
+
+    assert result["pallas_state_setup_seconds"] == pytest.approx(0.125)
+    assert result["pallas_state_timing_mode"] == "cached"
 
 
 def test_forward_projector_benchmark_records_invalid_pallas_variant_fallback() -> None:
