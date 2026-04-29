@@ -130,6 +130,8 @@ For isolated forward-projector kernel work, use the single-view microbenchmark:
 uv run python bench/forward_projector.py --preset smoke --out bench/out/forward_projector_smoke.json
 uv run python bench/forward_projector.py --preset profile-128 --out bench/out/forward_projector_128.json
 uv run python bench/forward_projector.py --preset high-ray-count-128 --out bench/out/forward_projector_high_ray_128.json
+uv run python bench/forward_projector.py --suite quick --out bench/out/forward_projector_quick.json
+uv run python bench/forward_projector.py --suite confirm --out bench/out/forward_projector_confirm.json
 ```
 
 The forward-projector benchmark always builds the fixture with the current JAX projector as the
@@ -138,7 +140,10 @@ ineligible for speed claims if they fall back to JAX.
 Use `high-ray-count-128` as the first go/no-go benchmark for detector-tiled Pallas kernels; it
 keeps the volume at `128^3`, raises the detector to `256x256` rays, and uses a half-voxel step
 size so output tiling and traversal work matter. Use `noncubic-align-128` to check an
-alignment-like `128x128x96` shape.
+alignment-like `128x128x96` shape. Use `--suite quick` for inner-loop kernel work and
+`--suite confirm` before making a Pallas performance claim; the confirmation suite runs
+`profile-128`, `noncubic-align-128`, and `high-ray-count-128` with 25 warm repeats each and
+reports aggregate speedup and parity fields.
 
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline

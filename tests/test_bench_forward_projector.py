@@ -9,12 +9,16 @@ import pytest
 from tomojax.bench.forward_projector import (
     ForwardProjectorBenchmarkConfig,
     PRESET_NAMES,
+    SUITE_NAMES,
+    _geomean,
     _block_tree_ready,
     _time_blocked_call,
     benchmark_backend,
     make_forward_projector_fixture,
     preset_config,
     run_forward_projector_benchmark,
+    run_forward_projector_suite,
+    suite_cases,
     write_benchmark_json,
 )
 
@@ -22,6 +26,11 @@ from tomojax.bench.forward_projector import (
 def test_preset_config_rejects_unknown_name() -> None:
     with pytest.raises(ValueError, match="preset must be one of"):
         preset_config("unknown")
+
+
+def test_suite_cases_rejects_unknown_name() -> None:
+    with pytest.raises(ValueError, match="suite must be one of"):
+        suite_cases("unknown")
 
 
 @pytest.mark.parametrize("preset_name", PRESET_NAMES)
@@ -37,6 +46,23 @@ def test_preset_config_returns_named_workloads(preset_name: str) -> None:
         assert config.nu * config.nv > config.nx * config.nz
     if preset_name == "noncubic-align-128":
         assert config.nz != config.nx
+
+
+@pytest.mark.parametrize("suite_name", SUITE_NAMES)
+def test_suite_cases_returns_named_workloads(suite_name: str) -> None:
+    cases = suite_cases(suite_name)
+
+    assert cases
+    assert all(case.name for case in cases)
+    if suite_name == "quick":
+        assert [case.name for case in cases] == ["high-ray-count-128"]
+    if suite_name == "confirm":
+        assert [case.name for case in cases] == [
+            "profile-128",
+            "noncubic-align-128",
+            "high-ray-count-128",
+        ]
+        assert all(case.config.warm_runs == 25 for case in cases)
 
 
 def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
@@ -72,6 +98,71 @@ def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
         assert pallas_row["fallback_reason"]
         assert pallas_row["speedup_vs_jax_warm_median"] is None
     assert pallas_row["max_abs_error"] == pytest.approx(0.0)
+
+
+def test_forward_projector_suite_reports_cases_and_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, bool]] = []
+
+    def fake_run(config: ForwardProjectorBenchmarkConfig) -> dict:
+        calls.append((config.warm_runs, config.include_pallas))
+        return {
+            "benchmark": "forward_projector",
+            "fixture_backend": "jax",
+            "config": {"warm_runs": config.warm_runs},
+            "fixture": {"total_ray_steps": 1},
+            "device": {},
+            "results": [
+                {
+                    "requested_backend": "jax",
+                    "actual_backend": "jax",
+                    "eligible_for_speed_claim": True,
+                    "warm_seconds_median": 2.0,
+                    "finite": True,
+                    "max_abs_error": 0.0,
+                    "max_relative_error": 0.0,
+                },
+                {
+                    "requested_backend": "pallas",
+                    "actual_backend": "pallas",
+                    "eligible_for_speed_claim": True,
+                    "warm_seconds_median": 1.0,
+                    "speedup_vs_jax_warm_median": 2.0,
+                    "finite": True,
+                    "max_abs_error": 0.0,
+                    "max_relative_error": 0.0,
+                },
+            ],
+        }
+
+    monkeypatch.setattr("tomojax.bench.forward_projector.run_forward_projector_benchmark", fake_run)
+    monkeypatch.setattr("tomojax.bench.forward_projector._device_metadata", lambda: {"test": True})
+
+    metrics = run_forward_projector_suite("confirm", overrides={"warm_runs": 3})
+
+    assert metrics["benchmark"] == "forward_projector_suite"
+    assert metrics["suite"] == "confirm"
+    assert [case["case_name"] for case in metrics["cases"]] == [
+        "profile-128",
+        "noncubic-align-128",
+        "high-ray-count-128",
+    ]
+    assert calls == [(3, True), (3, True), (3, True)]
+    assert metrics["summary"] == {
+        "cases_total": 3,
+        "cases_with_requested_pallas": 3,
+        "cases_pallas_eligible": 3,
+        "cases_parity_passed": 3,
+        "geomean_speedup_vs_jax_warm_median": pytest.approx(2.0),
+        "worst_case_speedup_vs_jax_warm_median": 2.0,
+        "best_case_speedup_vs_jax_warm_median": 2.0,
+    }
+
+
+def test_geomean_returns_none_for_empty_or_invalid_values() -> None:
+    assert _geomean([]) is None
+    assert _geomean([1.0, 0.0]) is None
 
 
 def test_benchmark_backend_blocks_each_timed_call(monkeypatch: pytest.MonkeyPatch) -> None:

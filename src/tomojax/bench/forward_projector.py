@@ -4,7 +4,7 @@ import importlib
 import json
 import statistics
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -16,7 +16,9 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import _resolve_n_steps, forward_project_view_T, get_detector_grid_device
 
 BackendName = Literal["jax", "pallas"]
+SuiteName = Literal["quick", "confirm"]
 PRESET_NAMES = ("tiny", "smoke", "profile-128", "noncubic-align-128", "high-ray-count-128")
+SUITE_NAMES = ("quick", "confirm")
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,12 @@ class ForwardProjectorFixture:
     T: jnp.ndarray
     volume: jnp.ndarray
     det_grid: tuple[jnp.ndarray, jnp.ndarray]
+
+
+@dataclass(frozen=True)
+class ForwardProjectorSuiteCase:
+    name: str
+    config: ForwardProjectorBenchmarkConfig
 
 
 def preset_config(name: str) -> ForwardProjectorBenchmarkConfig:
@@ -76,6 +84,28 @@ def preset_config(name: str) -> ForwardProjectorBenchmarkConfig:
             warm_runs=7,
         )
     raise ValueError(f"preset must be one of: {', '.join(PRESET_NAMES)}")
+
+
+def suite_cases(name: str) -> tuple[ForwardProjectorSuiteCase, ...]:
+    """Return the named benchmark suite as concrete per-case configs."""
+    if name == "quick":
+        return (ForwardProjectorSuiteCase("high-ray-count-128", preset_config("high-ray-count-128")),)
+    if name == "confirm":
+        return (
+            ForwardProjectorSuiteCase(
+                "profile-128",
+                replace(preset_config("profile-128"), warm_runs=25),
+            ),
+            ForwardProjectorSuiteCase(
+                "noncubic-align-128",
+                replace(preset_config("noncubic-align-128"), warm_runs=25),
+            ),
+            ForwardProjectorSuiteCase(
+                "high-ray-count-128",
+                replace(preset_config("high-ray-count-128"), warm_runs=25),
+            ),
+        )
+    raise ValueError(f"suite must be one of: {', '.join(SUITE_NAMES)}")
 
 
 def make_forward_projector_fixture(
@@ -306,6 +336,66 @@ def run_forward_projector_benchmark(
         "device": _device_metadata(),
         "results": results,
     }
+
+
+def run_forward_projector_suite(
+    name: str,
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run a named set of forward-projector cases and return one JSON-ready report."""
+    case_metrics: list[dict[str, Any]] = []
+    for case in suite_cases(name):
+        config = replace(case.config, **(overrides or {}))
+        metrics = run_forward_projector_benchmark(config)
+        metrics["case_name"] = case.name
+        case_metrics.append(metrics)
+    return {
+        "benchmark": "forward_projector_suite",
+        "suite": name,
+        "device": _device_metadata(),
+        "summary": _suite_summary(case_metrics),
+        "cases": case_metrics,
+    }
+
+
+def _suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    pallas_rows = [
+        row
+        for case in cases
+        for row in case.get("results", [])
+        if row.get("requested_backend") == "pallas"
+    ]
+    speedups = [
+        float(row["speedup_vs_jax_warm_median"])
+        for row in pallas_rows
+        if row.get("speedup_vs_jax_warm_median") is not None
+    ]
+    return {
+        "cases_total": len(cases),
+        "cases_with_requested_pallas": len(pallas_rows),
+        "cases_pallas_eligible": sum(1 for row in pallas_rows if row.get("eligible_for_speed_claim")),
+        "cases_parity_passed": sum(1 for row in pallas_rows if _parity_passed(row)),
+        "geomean_speedup_vs_jax_warm_median": _geomean(speedups),
+        "worst_case_speedup_vs_jax_warm_median": min(speedups) if speedups else None,
+        "best_case_speedup_vs_jax_warm_median": max(speedups) if speedups else None,
+    }
+
+
+def _parity_passed(row: dict[str, Any], *, atol: float = 1e-4, rtol: float = 1e-4) -> bool:
+    return bool(
+        row.get("finite")
+        and row.get("max_abs_error") is not None
+        and row.get("max_relative_error") is not None
+        and float(row["max_abs_error"]) <= atol
+        and float(row["max_relative_error"]) <= rtol
+    )
+
+
+def _geomean(values: list[float]) -> float | None:
+    if not values or any(value <= 0.0 for value in values):
+        return None
+    return float(np.exp(np.mean(np.log(np.asarray(values, dtype=np.float64)))))
 
 
 def _speedup(*, baseline: float | None, candidate: float | None) -> float | None:
