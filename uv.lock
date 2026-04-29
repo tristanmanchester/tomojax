@@ -699,6 +699,7 @@ cuda12 = [
 dev = [
     { name = "psutil" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -725,6 +726,7 @@ provides-extras = ["bench", "cpu", "cuda12"]
 dev = [
     { name = "psutil", specifier = ">=7.0.0,<8" },
     { name = "pytest", specifier = ">=8,<9" },
+    { name = "pyyaml", specifier = ">=6.0.2,<7" },
     { name = "ruff", specifier = ">=0.11,<0.12" },
 ]
 
