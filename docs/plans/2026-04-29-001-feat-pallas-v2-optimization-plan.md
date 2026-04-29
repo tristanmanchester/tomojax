@@ -686,6 +686,20 @@ experimental benchmark mode and use it as evidence that future Pallas work
 should focus on higher arithmetic intensity, fused scoring, or high-ray
 workloads rather than a generic forward-sinogram replacement.
 
+**Follow-up result, 2026-04-29:** Accepted a benchmark-only high-ray dispatch
+policy for sinogram projection. The policy mirrors residual dispatch: it
+estimates workload size from `n_views * nu * nv * n_steps`, reuses the best JAX
+baseline for ordinary cases, and selects `pallas_batched` only above a
+`1_000_000_000` ray-step threshold. The verified GPU run, pinned to commit
+`3828640` and archived on `vivobook`, was parity-clean. Dispatch selected JAX
+`vmap` for `sinogram-64` and `sinogram-128`, giving `1.000x` for both ordinary
+cases, and selected batched Pallas for `high-ray-sinogram-128`, reaching
+`3.3494x` versus the best JAX median. Dispatch geomean was `1.4962x`, worst
+case `1.000x`, and best case `3.3494x`, clearing the selective-dispatch gate.
+This does not make batched Pallas a generic sinogram replacement; it confirms
+that a workload-aware policy can capture the high-ray win without regressing
+ordinary JAX-vmap workloads.
+
 ---
 
 - U7. **Plan and Spike Fused Residual Reduction**
