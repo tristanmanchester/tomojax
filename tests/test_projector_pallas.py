@@ -8,6 +8,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     forward_project_view_T_pallas,
+    pallas_projector_traversal_metadata,
     pallas_projector_variant_metadata,
 )
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
@@ -179,6 +180,26 @@ def test_pallas_variant_metadata_normalizes_auto_to_generic() -> None:
         "state_mode": "inline",
         "gather_dtype": "fp32",
     }
+
+
+def test_pallas_traversal_metadata_tightens_default_diagonal_bound() -> None:
+    grid = Grid(nx=16, ny=16, nz=16, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=16, nv=16, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(grid=grid, detector=detector)
+
+    metadata = pallas_projector_traversal_metadata(T, grid)
+
+    assert metadata["resolved_n_steps"] == 30
+    assert metadata["effective_pallas_n_steps"] == 19
+
+
+def test_pallas_tightened_traversal_matches_jax_for_uniform_volume() -> None:
+    grid = Grid(nx=16, ny=16, nz=16, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=16, nv=16, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(grid=grid, detector=detector)
+    volume = jnp.ones((16, 16, 16), dtype=jnp.float32)
+
+    _assert_matches_jax(T, grid, detector, volume)
 
 
 @pytest.mark.parametrize("gather_dtype", ["bf16", "fp16"])

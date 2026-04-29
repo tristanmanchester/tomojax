@@ -150,6 +150,62 @@ def pallas_projector_variant_metadata(
     }
 
 
+def pallas_projector_traversal_metadata(
+    T: jnp.ndarray,
+    grid: Grid,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+) -> dict[str, int]:
+    """Return resolved JAX and effective Pallas traversal counts."""
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
+    resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
+    effective_n_steps = _resolve_effective_pallas_n_steps(
+        T,
+        grid,
+        step_size_value,
+        resolved_n_steps,
+    )
+    return {
+        "resolved_n_steps": int(resolved_n_steps),
+        "effective_pallas_n_steps": int(effective_n_steps),
+    }
+
+
+def _resolve_effective_pallas_n_steps(
+    T: jnp.ndarray,
+    grid: Grid,
+    step_size: float,
+    resolved_n_steps: int,
+) -> int:
+    try:
+        T_host = np.asarray(T, dtype=np.float32)
+    except Exception:
+        return int(resolved_n_steps)
+    if T_host.shape != (4, 4):
+        return int(resolved_n_steps)
+
+    ray_dir = T_host[:3, :3].T[:, 1]
+    support_lengths = np.asarray(
+        [
+            (int(grid.nx) + 1) * float(grid.vx),
+            (int(grid.ny) + 1) * float(grid.vy),
+            (int(grid.nz) + 1) * float(grid.vz),
+        ],
+        dtype=np.float64,
+    )
+    abs_dir = np.abs(ray_dir.astype(np.float64))
+    active_axes = abs_dir > 1e-8
+    if not np.any(active_axes):
+        return int(resolved_n_steps)
+
+    max_path_length = float(np.min(support_lengths[active_axes] / abs_dir[active_axes]))
+    # Preserve a small fp32/slab-boundary guard; per-ray n_steps_ray still masks
+    # the exact active samples.
+    effective_n_steps = int(math.ceil(max_path_length / float(step_size))) + 2
+    return max(1, min(int(resolved_n_steps), effective_n_steps))
+
+
 def _ensure_float32_volume(volume: jnp.ndarray) -> None:
     dtype = getattr(volume, "dtype", None)
     if dtype != jnp.dtype(jnp.float32):
@@ -205,7 +261,7 @@ def _validate_public_call(
     kernel_variant: str,
     layout_variant: str,
     state_mode: str,
-) -> tuple[int, int, int, int, int, int, float, int, tuple[int, int], int]:
+) -> tuple[int, int, int, int, int, int, float, int, int, tuple[int, int], int]:
     nx, ny, nz = validate_volume(
         volume,
         grid,
@@ -235,7 +291,13 @@ def _validate_public_call(
     else:
         step_size_value = float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
-    return nx, ny, nz, nv, nu, nx * ny * nz, step_size_value, n_steps_value, (
+    effective_n_steps_value = _resolve_effective_pallas_n_steps(
+        T,
+        grid,
+        step_size_value,
+        n_steps_value,
+    )
+    return nx, ny, nz, nv, nu, nx * ny * nz, step_size_value, n_steps_value, effective_n_steps_value, (
         tile_v,
         tile_u,
     ), int(variant["num_warps"])
@@ -287,6 +349,7 @@ def _trilinear_load(
     ix_f: jnp.ndarray,
     iy_f: jnp.ndarray,
     iz_f: jnp.ndarray,
+    active: jnp.ndarray,
     *,
     nx: int,
     ny: int,
@@ -308,7 +371,7 @@ def _trilinear_load(
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
         idx = ix * (ny * nz) + iy * nz + iz
         idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
-        return plt.load(volume_ref.at[idx], mask=inb, other=0.0)
+        return plt.load(volume_ref.at[idx], mask=active & inb, other=0.0)
 
     c000 = gather(fx, fy, fz) * (wx0 * wy0 * wz0)
     c001 = gather(fx, fy, cz) * (wx0 * wy0 * wz1)
@@ -430,18 +493,19 @@ def _projector_kernel(
 
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
+        active = step_idx < n_steps_ray
         sample = _trilinear_load(
             volume_ref,
             ix,
             iy,
             iz,
+            active,
             nx=nx,
             ny=ny,
             nz=nz,
         )
-        active = (step_idx < n_steps_ray).astype(jnp.float32)
         return (
-            acc + sample.astype(jnp.float32) * active * step_size32,
+            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
             ix + dix,
             iy + diy,
             iz + diz,
@@ -488,6 +552,7 @@ def forward_project_view_T_pallas(
         volume_size,
         step_size_value,
         n_steps_value,
+        effective_n_steps_value,
         (tile_v, tile_u),
         num_warps_value,
     ) = (
@@ -527,7 +592,7 @@ def forward_project_view_T_pallas(
         vy=float(grid.vy),
         vz=float(grid.vz),
         step_size=float(step_size_value),
-        n_steps=int(n_steps_value),
+        n_steps=int(effective_n_steps_value),
         tile_v=int(tile_v),
         tile_u=int(tile_u),
         unroll=unroll,
