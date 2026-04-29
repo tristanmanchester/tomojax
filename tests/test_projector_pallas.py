@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
+    forward_project_residual_sse_T_pallas,
     forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
     forward_project_views_T_pallas,
@@ -263,6 +264,64 @@ def test_pallas_forward_project_views_one_view_matches_single_view_pallas() -> N
 
     assert batched.shape == (1, 8, 8)
     np.testing.assert_allclose(np.asarray(batched[0]), np.asarray(single), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_forward_project_residual_sse_matches_materialized_jax() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+    oracle_projection = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume) for T in poses],
+        axis=0,
+    )
+    target = oracle_projection + jnp.linspace(
+        0.0,
+        0.01,
+        oracle_projection.size,
+        dtype=jnp.float32,
+    ).reshape(oracle_projection.shape)
+
+    candidate = forward_project_residual_sse_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        target,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    expected = jnp.sum((oracle_projection - target) ** 2, dtype=jnp.float32)
+
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(expected), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_forward_project_residual_sse_zero_target_matches_materialized_jax() -> None:
+    grid = Grid(nx=6, ny=6, nz=6, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (15.0, 45.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume = jnp.ones((6, 6, 6), dtype=jnp.float32)
+    oracle_projection = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume) for T in poses],
+        axis=0,
+    )
+    target = jnp.zeros_like(oracle_projection)
+
+    candidate = forward_project_residual_sse_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        target,
+        interpret=True,
+        tile_shape=(4, 4),
+    )
+    expected = jnp.sum(oracle_projection**2, dtype=jnp.float32)
+
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(expected), atol=1e-4, rtol=1e-4)
 
 
 def test_pallas_forward_project_transposed_layout_handles_tile_remainder() -> None:

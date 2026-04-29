@@ -167,6 +167,18 @@ Pallas sinogram kernel. Requested Pallas results are compared against the best J
 just the loop baseline, so the suite cannot claim a workflow-relevant speedup by beating a weaker
 dispatch shape.
 
+For fused objective experiments, use the forward-residual benchmark:
+
+```bash
+uv run python bench/forward_residual.py --suite residual --out bench/out/forward_residual.json
+```
+
+This benchmark compares JAX materialized projection plus sum-of-squared-error reduction,
+Pallas batched materialized projection plus the same reduction, and the experimental fused
+Pallas SSE path that writes per-tile partial reductions instead of materializing a projection
+stack. Treat it as a non-differentiated scoring benchmark only; it is not an alignment-gradient
+or reconstruction API claim.
+
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline
 from the misaligned projections, the final aligned volume, the absolute error volume, and a small
