@@ -124,6 +124,17 @@ uv run python bench/fitness.py --profile screen_accuracy_align_parallel_3d_96 --
 
 The JSON schema is documented in `bench/metrics_schema.json`.
 
+For isolated forward-projector kernel work, use the single-view microbenchmark:
+
+```bash
+uv run python bench/forward_projector.py --preset smoke --out bench/out/forward_projector_smoke.json
+uv run python bench/forward_projector.py --preset profile-128 --out bench/out/forward_projector_128.json
+```
+
+The forward-projector benchmark always builds the fixture with the current JAX projector as the
+oracle, records first-call and warm-call timings separately, and marks requested Pallas runs as
+ineligible for speed claims if they fall back to JAX.
+
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline
 from the misaligned projections, the final aligned volume, the absolute error volume, and a small
