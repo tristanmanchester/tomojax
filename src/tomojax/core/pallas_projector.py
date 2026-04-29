@@ -717,7 +717,6 @@ def _trilinear_load(
     nx: int,
     ny: int,
     nz: int,
-    active_mask: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
@@ -733,8 +732,6 @@ def _trilinear_load(
 
     def gather(ix: jnp.ndarray, iy: jnp.ndarray, iz: jnp.ndarray) -> jnp.ndarray:
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
-        if active_mask is not None:
-            inb = inb & active_mask
         idx = ix * (ny * nz) + iy * nz + iz
         idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
         return plt.load(volume_ref.at[idx], mask=inb, other=0.0)
@@ -759,7 +756,6 @@ def _trilinear_load_z_integer(
     nx: int,
     ny: int,
     nz: int,
-    active_mask: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     fx = jnp.floor(ix_f).astype(jnp.int32)
     fy = jnp.floor(iy_f).astype(jnp.int32)
@@ -773,8 +769,6 @@ def _trilinear_load_z_integer(
 
     def gather(ix: jnp.ndarray, iy: jnp.ndarray) -> jnp.ndarray:
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
-        if active_mask is not None:
-            inb = inb & active_mask
         idx = ix * (ny * nz) + iy * nz + iz
         idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
         return plt.load(volume_ref.at[idx], mask=inb, other=0.0)
@@ -822,7 +816,6 @@ def _projector_kernel(
     else:
         det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
         det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
-    in_detector = (det_u < nu) & (det_v < nv)
 
     xr = (
         (det_u.astype(jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * jnp.float32(du)
@@ -900,7 +893,7 @@ def _projector_kernel(
 
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
-        active = (step_idx < n_steps_ray) & in_detector
+        active = step_idx < n_steps_ray
         if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
             sample = _trilinear_load_z_integer(
                 volume_ref,
@@ -910,7 +903,6 @@ def _projector_kernel(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         else:
             sample = _trilinear_load(
@@ -921,7 +913,6 @@ def _projector_kernel(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         return (
             acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
@@ -983,7 +974,6 @@ def _projector_views_kernel(
     else:
         det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
         det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
-    in_detector = (det_u < nu) & (det_v < nv)
 
     xr = (
         (det_u.astype(jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * jnp.float32(du)
@@ -1059,7 +1049,7 @@ def _projector_views_kernel(
 
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
-        active = (step_idx < n_steps_ray) & in_detector
+        active = step_idx < n_steps_ray
         if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
             sample = _trilinear_load_z_integer(
                 volume_ref,
@@ -1069,7 +1059,6 @@ def _projector_views_kernel(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         else:
             sample = _trilinear_load(
@@ -1080,7 +1069,6 @@ def _projector_views_kernel(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         return (
             acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
@@ -1221,7 +1209,7 @@ def _projector_residual_sse_kernel(
 
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
-        active = (step_idx < n_steps_ray) & in_detector
+        active = step_idx < n_steps_ray
         if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
             sample = _trilinear_load_z_integer(
                 volume_ref,
@@ -1231,7 +1219,6 @@ def _projector_residual_sse_kernel(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         else:
             sample = _trilinear_load(
@@ -1242,7 +1229,6 @@ def _projector_residual_sse_kernel(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         return (
             acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
@@ -1528,7 +1514,7 @@ def _projector_kernel_cached(
 
     def body(step_idx, carry):
         acc, ix, iy, iz = carry
-        active = (step_idx < n_steps_ray) & in_detector
+        active = step_idx < n_steps_ray
         if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
             sample = _trilinear_load_z_integer(
                 volume_ref,
@@ -1538,7 +1524,6 @@ def _projector_kernel_cached(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         else:
             sample = _trilinear_load(
@@ -1549,7 +1534,6 @@ def _projector_kernel_cached(
                 nx=nx,
                 ny=ny,
                 nz=nz,
-                active_mask=active,
             )
         return (
             acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,

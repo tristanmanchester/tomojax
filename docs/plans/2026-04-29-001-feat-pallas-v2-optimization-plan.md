@@ -360,6 +360,17 @@ rotated or remainder-tile edges.
   parity with JAX; if it does not, the plan proceeds to U3 rather than trying
   arbitrary loop-bound tuning.
 
+**Result, 2026-04-29:** Kept the tightened effective loop bound, but rejected
+threading per-step activity into every trilinear load mask. The isolated
+active-mask sweep, pinned to commit `e683fcb`, was parity-clean on the RTX 4070
+Laptop GPU but did not improve enough to justify the extra mask/register
+pressure. Against the accepted `auto` baseline, `quick` regressed from
+`1.5713x` to `1.5390x`, `confirm` improved only from `1.2588x` to `1.2640x`,
+and `stress` was effectively flat (`1.2550x` to `1.2551x`). Residual results
+were mixed: fused geomean dipped from `0.4354x` to `0.4343x`, while
+materialized residual moved from `0.4863x` to `0.4889x`. Decision: revert the
+active-load-mask change and keep the simpler clipped in-bounds loads.
+
 ---
 
 - U3. **Add z-Locked Fast Paths**
