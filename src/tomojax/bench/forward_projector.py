@@ -383,15 +383,48 @@ def _sinogram_fixture_metadata(
     }
 
 
-def _resolve_pallas_callable() -> tuple[Callable[..., jnp.ndarray] | None, str | None]:
+def _resolve_pallas_module() -> tuple[Any | None, str | None]:
     try:
         module = importlib.import_module("tomojax.core.pallas_projector")
     except Exception as exc:
         return None, f"pallas_module_unavailable: {exc}"
+    return module, None
+
+
+def _resolve_pallas_callable() -> tuple[Callable[..., jnp.ndarray] | None, str | None]:
+    module, fallback_reason = _resolve_pallas_module()
+    if module is None:
+        return None, fallback_reason
     fn = getattr(module, "forward_project_view_T_pallas", None)
     if fn is None:
         return None, "pallas_callable_missing"
     return fn, None
+
+
+def _pallas_unsupported_reason(
+    fixture: ForwardProjectorFixture | ForwardSinogramFixture,
+    config: ForwardProjectorBenchmarkConfig | ForwardSinogramBenchmarkConfig,
+) -> str | None:
+    module, fallback_reason = _resolve_pallas_module()
+    if module is None:
+        return fallback_reason
+    support_fn = getattr(module, "pallas_projector_unsupported_reason", None)
+    if support_fn is None:
+        return None
+    T = fixture.T if isinstance(fixture, ForwardProjectorFixture) else fixture.T_stack[0]
+    try:
+        return support_fn(
+            T,
+            fixture.grid,
+            fixture.detector,
+            fixture.volume,
+            step_size=config.step_size,
+            n_steps=config.n_steps,
+            gather_dtype=config.gather_dtype,
+            det_grid=fixture.det_grid,
+        )
+    except Exception as exc:
+        return f"pallas_support_check_failed: {exc}"
 
 
 def _call_jax(
@@ -467,6 +500,9 @@ def _make_backend_callable(
     pallas_fn, fallback_reason = _resolve_pallas_callable()
     if pallas_fn is None:
         return lambda: _call_jax(fixture, config), "jax", fallback_reason
+    unsupported_reason = _pallas_unsupported_reason(fixture, config)
+    if unsupported_reason:
+        return lambda: _call_jax(fixture, config), "jax", unsupported_reason
 
     def call_pallas() -> jnp.ndarray:
         return pallas_fn(
@@ -497,6 +533,9 @@ def _make_sinogram_callable(
     pallas_fn, fallback_reason = _resolve_pallas_callable()
     if pallas_fn is None:
         return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", fallback_reason
+    unsupported_reason = _pallas_unsupported_reason(fixture, config)
+    if unsupported_reason:
+        return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", unsupported_reason
 
     def call_pallas_loop() -> jnp.ndarray:
         images = [
