@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
+    bind_forward_project_view_T_pallas,
     forward_project_residual_sse_T_pallas,
     forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
@@ -192,6 +193,30 @@ def test_pallas_forward_project_cached_state_matches_jax() -> None:
     assert state.n_steps <= state.resolved_n_steps
     assert candidate.shape == (7, 9)
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_bound_forward_project_callable_matches_jax_for_repeated_volumes() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(31.0, grid=grid, detector=detector)
+    volume_a = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+    volume_b = jnp.flip(volume_a, axis=0)
+
+    projector = bind_forward_project_view_T_pallas(
+        T,
+        grid,
+        detector,
+        step_size=0.5,
+        tile_shape=(4, 8),
+        num_warps=1,
+        kernel_variant="auto",
+        interpret=True,
+    )
+
+    for volume in (volume_a, volume_b):
+        candidate = projector(volume)
+        oracle = forward_project_view_T(T, grid, detector, volume, step_size=0.5)
+        np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
 
 
 def test_pallas_forward_project_precompute_inclusive_mode_matches_jax() -> None:

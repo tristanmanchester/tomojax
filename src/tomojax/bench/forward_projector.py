@@ -631,10 +631,11 @@ def _make_backend_callable(
         return lambda: _call_jax(fixture, config), "jax", module_reason, {}
 
     if config.pallas_state_mode == "cached":
+        bind_fn = getattr(pallas_module, "bind_forward_project_view_T_pallas", None)
         prepare_fn = getattr(pallas_module, "prepare_forward_project_view_T_pallas_state", None)
         with_state_fn = getattr(pallas_module, "forward_project_view_T_pallas_with_state", None)
         block_state_fn = getattr(pallas_module, "block_forward_project_view_T_pallas_state", None)
-        if prepare_fn is None or with_state_fn is None:
+        if bind_fn is None and (prepare_fn is None or with_state_fn is None):
             return (
                 lambda: _call_jax(fixture, config),
                 "jax",
@@ -642,32 +643,53 @@ def _make_backend_callable(
                 {},
             )
         setup_start = time.perf_counter()
-        state = prepare_fn(
-            fixture.T,
-            fixture.grid,
-            fixture.detector,
-            step_size=config.step_size,
-            n_steps=config.n_steps,
-            gather_dtype=config.gather_dtype,
-            det_grid=fixture.det_grid,
-            tile_shape=config.pallas_tile_shape,
-            num_warps=config.pallas_num_warps,
-            kernel_variant=config.pallas_kernel_variant,
-            layout_variant=config.pallas_layout_variant,
-        )
-        if block_state_fn is None:
-            jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray))
+        if bind_fn is not None:
+            bound_pallas = bind_fn(
+                fixture.T,
+                fixture.grid,
+                fixture.detector,
+                step_size=config.step_size,
+                n_steps=config.n_steps,
+                unroll=config.unroll,
+                gather_dtype=config.gather_dtype,
+                det_grid=fixture.det_grid,
+                interpret=False,
+                tile_shape=config.pallas_tile_shape,
+                num_warps=config.pallas_num_warps,
+                kernel_variant=config.pallas_kernel_variant,
+                layout_variant=config.pallas_layout_variant,
+                block_state=True,
+            )
         else:
-            block_state_fn(state)
+            state = prepare_fn(
+                fixture.T,
+                fixture.grid,
+                fixture.detector,
+                step_size=config.step_size,
+                n_steps=config.n_steps,
+                gather_dtype=config.gather_dtype,
+                det_grid=fixture.det_grid,
+                tile_shape=config.pallas_tile_shape,
+                num_warps=config.pallas_num_warps,
+                kernel_variant=config.pallas_kernel_variant,
+                layout_variant=config.pallas_layout_variant,
+            )
+            if block_state_fn is None:
+                jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray))
+            else:
+                block_state_fn(state)
+
+            def bound_pallas(volume: jnp.ndarray) -> jnp.ndarray:
+                return with_state_fn(
+                    state,
+                    volume,
+                    interpret=False,
+                    unroll=config.unroll,
+                )
         setup_seconds = time.perf_counter() - setup_start
 
         def call_cached_pallas() -> jnp.ndarray:
-            return with_state_fn(
-                state,
-                fixture.volume,
-                interpret=False,
-                unroll=config.unroll,
-            )
+            return bound_pallas(fixture.volume)
 
         return (
             call_cached_pallas,
@@ -676,6 +698,7 @@ def _make_backend_callable(
             {
                 "pallas_state_setup_seconds": float(setup_seconds),
                 "pallas_state_timing_mode": "cached",
+                "pallas_bound_callable": bind_fn is not None,
             },
         )
 

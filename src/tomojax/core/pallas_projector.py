@@ -4,7 +4,7 @@ import functools
 import math
 import operator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -1366,6 +1366,124 @@ def block_forward_project_view_T_pallas_state(
     """Block until prepared traversal-state arrays are materialized."""
     jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray))
     return state
+
+
+class BoundForwardProjectViewTPallas:
+    """Fixed-geometry Pallas projector callable for repeated-volume workflows."""
+
+    def __init__(
+        self,
+        state: PallasForwardProjectorTraversalState,
+        *,
+        interpret: bool = False,
+        unroll: int | None = None,
+    ) -> None:
+        if not interpret and jax.default_backend() == "cpu":
+            raise PallasProjectorUnsupported(
+                _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+            )
+        self.state = state
+        self.interpret = bool(interpret)
+        self.unroll = unroll
+
+        tile_v, tile_u = state.tile_shape
+        kernel = functools.partial(
+            _projector_kernel_cached,
+            nx=int(state.nx),
+            ny=int(state.ny),
+            nz=int(state.nz),
+            nu=int(state.nu),
+            nv=int(state.nv),
+            dix=float(state.dix),
+            diy=float(state.diy),
+            diz=float(state.diz),
+            step_size=float(state.step_size),
+            n_steps=int(state.n_steps),
+            tile_v=int(tile_v),
+            tile_u=int(tile_u),
+            kernel_variant_id=int(state.kernel_variant_id),
+            unroll=unroll,
+        )
+        grid_shape = (math.ceil(state.nv / tile_v), math.ceil(state.nu / tile_u))
+        self._call: Callable[
+            [jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+            jnp.ndarray,
+        ] = pl.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((state.nv, state.nu), jnp.float32),
+            grid=grid_shape,
+            in_specs=[
+                pl.no_block_spec,
+                pl.no_block_spec,
+                pl.no_block_spec,
+                pl.no_block_spec,
+                pl.no_block_spec,
+            ],
+            out_specs=pl.BlockSpec((tile_v, tile_u), lambda pv, pu: (pv, pu)),
+            interpret=interpret,
+            compiler_params=plt.CompilerParams(num_warps=state.num_warps),
+            name="tomojax_forward_project_view_T_pallas_bound_cached",
+        )
+
+    def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
+        nx, ny, nz = validate_volume(
+            volume,
+            Grid(nx=self.state.nx, ny=self.state.ny, nz=self.state.nz, vx=1.0, vy=1.0, vz=1.0),
+            context="BoundForwardProjectViewTPallas.__call__",
+            name="volume",
+        )
+        _ensure_float32_volume(volume)
+        if (nx, ny, nz) != (self.state.nx, self.state.ny, self.state.nz):
+            raise PallasProjectorUnsupported(
+                _unsupported(
+                    "volume shape does not match cached traversal state: "
+                    f"got {(nx, ny, nz)}, expected "
+                    f"{(self.state.nx, self.state.ny, self.state.nz)}"
+                )
+            )
+        return self._call(
+            self.state.ix0,
+            self.state.iy0,
+            self.state.iz0,
+            self.state.n_steps_ray,
+            jnp.ravel(volume, order="C"),
+        )
+
+
+def bind_forward_project_view_T_pallas(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool = False,
+    tile_shape: tuple[int, int] = (8, 16),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    block_state: bool = True,
+) -> BoundForwardProjectViewTPallas:
+    """Bind fixed geometry once and return a callable that projects volumes."""
+    state = prepare_forward_project_view_T_pallas_state(
+        T,
+        grid,
+        detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+    )
+    if block_state:
+        block_forward_project_view_T_pallas_state(state)
+    return BoundForwardProjectViewTPallas(state, interpret=interpret, unroll=unroll)
 
 
 def _projector_kernel_cached(
