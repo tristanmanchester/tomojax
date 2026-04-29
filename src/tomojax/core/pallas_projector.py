@@ -349,7 +349,6 @@ def _trilinear_load(
     ix_f: jnp.ndarray,
     iy_f: jnp.ndarray,
     iz_f: jnp.ndarray,
-    active: jnp.ndarray,
     *,
     nx: int,
     ny: int,
@@ -371,7 +370,7 @@ def _trilinear_load(
         inb = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
         idx = ix * (ny * nz) + iy * nz + iz
         idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
-        return plt.load(volume_ref.at[idx], mask=active & inb, other=0.0)
+        return plt.load(volume_ref.at[idx], mask=inb, other=0.0)
 
     c000 = gather(fx, fy, fz) * (wx0 * wy0 * wz0)
     c001 = gather(fx, fy, cz) * (wx0 * wy0 * wz1)
@@ -499,7 +498,6 @@ def _projector_kernel(
             ix,
             iy,
             iz,
-            active,
             nx=nx,
             ny=ny,
             nz=nz,
