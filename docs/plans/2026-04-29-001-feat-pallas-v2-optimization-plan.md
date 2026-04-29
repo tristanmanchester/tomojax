@@ -929,6 +929,15 @@ designed separately, with voxel-owned backprojection as the likely next
 planning target because it addresses the adjoint/reconstruction side rather
 than another low-coverage forward-projector special case.
 
+**Follow-up plan, 2026-04-29:** Created
+`docs/plans/2026-04-29-002-feat-pallas-backprojection-plan.md`. The first
+backprojection candidate should be a ray-owned Pallas atomic-scatter prototype,
+not immediate reconstruction integration. Pallas exposes Triton
+`atomic_add`, so a bounded prototype is feasible, but it needs explicit output
+zeroing via `pallas_call` input/output aliasing, CPU `interpret=True` parity
+tests, and a dedicated backprojection benchmark before any product path uses
+it.
+
 ---
 
 ## System-Wide Impact
