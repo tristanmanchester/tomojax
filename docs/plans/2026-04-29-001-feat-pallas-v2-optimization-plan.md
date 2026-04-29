@@ -892,6 +892,45 @@ exploit on this GPU; conversion and/or vectorization effects likely dominate.
 
 ---
 
+- U10. **Probe Canonical Analytic Traversal Fast Paths**
+
+**Goal:** Determine whether a very narrow analytic shortcut, such as an
+axis-aligned column-sum style path, applies often enough in the benchmark suite
+to justify kernel implementation.
+
+**Requirements:** R2, R3, R4, R6, R11, R12
+
+**Dependencies:** U3, U6, U9
+
+**Approach:**
+- Classify the current `quick`, `confirm`, `stress`, and `sinogram` geometry
+  before implementing a new kernel.
+- Count how many single-view cases and sinogram views meet a strict
+  axis-aligned ray predicate with integer detector lattice mapping in both
+  object `x` and `z`.
+- Preserve the existing `z_integer4` result as the broader geometry fast path;
+  only implement an additional analytic path if the predicate covers a
+  meaningful part of the measured workloads.
+
+**Probe result, 2026-04-29:** Rejected the narrow axis-aligned column-sum
+candidate. The vivobook probe was archived at
+`/home/tristan/projects/tomojax-benchmark-archive/pallas/pallas-analytic-probe-20260429T131328Z`.
+All eight single-view suite cases already select `z_integer4`, but none have an
+axis-aligned object-space ray with integer `x` and `z` detector lattice mapping.
+The sinogram suites contain only three qualifying axis-aligned views out of
+`360` total views: one each in `sinogram-64`, `sinogram-128`, and
+`high-ray-sinogram-128`. That coverage is too small to justify another
+specialized forward kernel.
+
+Decision: do not implement a column-sum or axis-y-only forward fast path for
+the current benchmark suite. The useful analytic specialization remains the
+already accepted `z_integer4` path. The next broader candidate should be
+designed separately, with voxel-owned backprojection as the likely next
+planning target because it addresses the adjoint/reconstruction side rather
+than another low-coverage forward-projector special case.
+
+---
+
 ## System-Wide Impact
 
 - **Interaction graph:** The work touches only the experimental Pallas module,
