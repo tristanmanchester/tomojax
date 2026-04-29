@@ -52,7 +52,7 @@ class ForwardProjectorBenchmarkConfig:
     include_pallas: bool = True
     pallas_tile_shape: tuple[int, int] = (8, 16)
     pallas_num_warps: int = 4
-    pallas_kernel_variant: str = "generic"
+    pallas_kernel_variant: str = "auto"
     pallas_layout_variant: str = "detector_vu"
     pallas_state_mode: str = "inline"
 
@@ -90,7 +90,7 @@ class ForwardSinogramBenchmarkConfig:
     include_pallas: bool = True
     pallas_tile_shape: tuple[int, int] = (8, 16)
     pallas_num_warps: int = 4
-    pallas_kernel_variant: str = "generic"
+    pallas_kernel_variant: str = "auto"
     pallas_layout_variant: str = "detector_vu"
     pallas_state_mode: str = "inline"
 

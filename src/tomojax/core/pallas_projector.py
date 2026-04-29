@@ -162,7 +162,7 @@ def pallas_projector_variant_metadata(
     *,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
@@ -188,7 +188,7 @@ def pallas_projector_actual_variant_metadata(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
@@ -221,7 +221,7 @@ def pallas_projector_actual_sinogram_variant_metadata(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
@@ -638,7 +638,7 @@ def pallas_projector_unsupported_reason(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> str | None:
@@ -679,7 +679,7 @@ def pallas_projector_sinogram_unsupported_reason(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> str | None:
@@ -1277,7 +1277,7 @@ def prepare_forward_project_view_T_pallas_state(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
 ) -> PallasForwardProjectorTraversalState:
     """Prepare fixed-geometry traversal state for the experimental cached Pallas path."""
@@ -1463,7 +1463,7 @@ def bind_forward_project_view_T_pallas(
     interpret: bool = False,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     block_state: bool = True,
 ) -> BoundForwardProjectViewTPallas:
@@ -1655,7 +1655,7 @@ def forward_project_view_T_pallas(
     interpret: bool = False,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> jnp.ndarray:
@@ -1771,7 +1771,7 @@ def forward_project_views_T_pallas(
     interpret: bool = False,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> jnp.ndarray:
@@ -1867,7 +1867,7 @@ def forward_project_residual_sse_T_pallas(
     interpret: bool = False,
     tile_shape: tuple[int, int] = (8, 16),
     num_warps: int = 4,
-    kernel_variant: str = "generic",
+    kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
 ) -> jnp.ndarray:

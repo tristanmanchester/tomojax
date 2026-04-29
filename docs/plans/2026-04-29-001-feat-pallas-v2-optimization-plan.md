@@ -417,6 +417,24 @@ path.
 - `stress` should show the high-ray cases clearly faster and no lower-workload
   regression large enough to erase geomean improvement.
 
+**Result, 2026-04-29:** Accepted `kernel_variant="auto"` as the experimental
+default. On the RTX 4070 Laptop GPU, the variant sweep compared `generic`,
+`auto`, and explicit `z_integer4` across `quick`, `confirm`, `stress`,
+`sinogram`, and `residual`. All completed rows were eligible and parity-clean.
+`generic` remained mixed: `quick` `1.2344x`, `confirm` `0.9940x` geomean with
+worst case `0.8788x`, and `stress` `0.9785x` geomean with worst case
+`0.9054x`. `auto` selected the safe z-integer four-load path for the benchmark
+geometry and moved the single-view suites into clear win territory: `quick`
+`1.5713x`, `confirm` `1.2588x` geomean with worst case `1.0977x`, and
+`stress` `1.2550x` geomean with worst case `1.1298x`. Explicit `z_integer4`
+was similar, with slightly lower `confirm` geomean (`1.2400x`) but slightly
+higher `stress` geomean (`1.2648x`) and worst case (`1.1503x`). The default is
+`auto`, not explicit `z_integer4`, because unsupported geometry must fall back
+inside Pallas to the generic eight-load body instead of raising or requiring
+callers to classify geometry manually. Sinogram and residual still do not clear
+workflow-level gates: even with `auto`/`z_integer4`, the geomeans remain below
+`0.5x` because small cases lose badly while high-ray cases win.
+
 ---
 
 - U4. **Add Tile, Layout, and Warp Autotuning**
