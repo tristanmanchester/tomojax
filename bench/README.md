@@ -162,9 +162,10 @@ failures before wiring the kernel into workflow profiles. The stress suite runs 
 still a forward-only kernel benchmark, not an end-to-end reconstruction or alignment claim.
 Use `--suite sinogram` for the full volume-to-projection-stack tier. It runs `sinogram-64`,
 `sinogram-128`, and `high-ray-sinogram-128`, measuring a JAX single-view loop, a JAX `vmap`
-baseline across all views, and the requested Pallas single-view loop. Requested Pallas results are
-compared against the best JAX warm median, not just the loop baseline, so the suite cannot claim a
-workflow-relevant speedup by beating a weaker dispatch shape.
+baseline across all views, the requested Pallas single-view loop, and the requested batched-view
+Pallas sinogram kernel. Requested Pallas results are compared against the best JAX warm median, not
+just the loop baseline, so the suite cannot claim a workflow-relevant speedup by beating a weaker
+dispatch shape.
 
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline

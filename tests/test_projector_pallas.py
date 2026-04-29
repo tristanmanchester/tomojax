@@ -9,6 +9,7 @@ from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
+    forward_project_views_T_pallas,
     pallas_projector_actual_variant_metadata,
     pallas_projector_traversal_metadata,
     pallas_projector_variant_metadata,
@@ -210,6 +211,58 @@ def test_pallas_forward_project_precompute_inclusive_mode_matches_jax() -> None:
     oracle = forward_project_view_T(T, grid, detector, volume)
 
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_forward_project_views_matches_jax_loop() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+
+    candidate = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    oracle = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume) for T in poses],
+        axis=0,
+    )
+
+    assert candidate.shape == (3, 7, 9)
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_forward_project_views_one_view_matches_single_view_pallas() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(37.0, grid=grid, detector=detector)
+    volume = jnp.ones((8, 8, 8), dtype=jnp.float32)
+
+    batched = forward_project_views_T_pallas(
+        T[jnp.newaxis, :, :],
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        kernel_variant="auto",
+    )
+    single = forward_project_view_T_pallas(
+        T,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        kernel_variant="auto",
+    )
+
+    assert batched.shape == (1, 8, 8)
+    np.testing.assert_allclose(np.asarray(batched[0]), np.asarray(single), atol=1e-4, rtol=1e-4)
 
 
 def test_pallas_forward_project_transposed_layout_handles_tile_remainder() -> None:

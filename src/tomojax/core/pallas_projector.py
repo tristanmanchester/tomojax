@@ -17,6 +17,7 @@ from .projector import _build_detector_grid, _projector_traversal_state, _resolv
 from .validation import (
     validate_detector,
     validate_detector_grid,
+    validate_pose_stack,
     validate_pose_matrix,
     validate_volume,
 )
@@ -211,6 +212,39 @@ def pallas_projector_actual_variant_metadata(
     return metadata
 
 
+def pallas_projector_actual_sinogram_variant_metadata(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    *,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    tile_shape: tuple[int, int] = (8, 16),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    state_mode: str = "inline",
+    gather_dtype: str = "fp32",
+) -> dict[str, Any]:
+    """Return normalized metadata for the selected batched-sinogram Pallas variant."""
+    requested_kernel_variant = _normalize_kernel_variant(kernel_variant)
+    metadata = pallas_projector_variant_metadata(
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode=state_mode,
+        gather_dtype=gather_dtype,
+    )
+    metadata["kernel_variant"] = _select_kernel_variant_for_stack(
+        T_stack,
+        grid,
+        detector,
+        det_grid,
+        requested_kernel_variant,
+    )
+    return metadata
+
+
 def pallas_projector_traversal_metadata(
     T: jnp.ndarray,
     grid: Grid,
@@ -227,6 +261,38 @@ def pallas_projector_traversal_metadata(
         step_size_value,
         resolved_n_steps,
     )
+    return {
+        "resolved_n_steps": int(resolved_n_steps),
+        "effective_pallas_n_steps": int(effective_n_steps),
+    }
+
+
+def pallas_projector_sinogram_traversal_metadata(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+) -> dict[str, int]:
+    """Return resolved and max effective traversal counts for a Pallas pose stack."""
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
+    resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
+    try:
+        T_host = np.asarray(T_stack, dtype=np.float32)
+    except Exception:
+        T_host = np.empty((0, 4, 4), dtype=np.float32)
+    if T_host.ndim != 3 or T_host.shape[1:] != (4, 4) or T_host.shape[0] == 0:
+        effective_n_steps = int(resolved_n_steps)
+    else:
+        effective_n_steps = max(
+            _resolve_effective_pallas_n_steps(
+                jnp.asarray(T_host[index]),
+                grid,
+                step_size_value,
+                resolved_n_steps,
+            )
+            for index in range(T_host.shape[0])
+        )
     return {
         "resolved_n_steps": int(resolved_n_steps),
         "effective_pallas_n_steps": int(effective_n_steps),
@@ -322,6 +388,42 @@ def _supports_z_integer4(
     iz0 = (t22 * first_z + tinv_z - float(_grid_volume_origin(grid)[2])) / float(grid.vz)
     diz_dv = t22 * float(detector.dv) / float(grid.vz)
     return abs(iz0 - round(iz0)) <= tol and abs(diz_dv - round(diz_dv)) <= tol
+
+
+def _select_kernel_variant_for_stack(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    requested_kernel_variant: str,
+) -> str:
+    if requested_kernel_variant == "generic":
+        return "generic"
+    try:
+        T_host = np.asarray(T_stack, dtype=np.float32)
+    except Exception:
+        if requested_kernel_variant == "auto":
+            return "generic"
+        raise PallasProjectorUnsupported(
+            _unsupported("kernel_variant='z_integer4' requires host-visible pose stack")
+        ) from None
+    if T_host.ndim != 3 or T_host.shape[1:] != (4, 4):
+        if requested_kernel_variant == "auto":
+            return "generic"
+        raise PallasProjectorUnsupported(
+            _unsupported("kernel_variant='z_integer4' requires pose stack shape (n_views, 4, 4)")
+        )
+    supports_all = all(
+        _supports_z_integer4(jnp.asarray(T_host[index]), grid, detector, det_grid)
+        for index in range(T_host.shape[0])
+    )
+    if requested_kernel_variant == "auto":
+        return "z_integer4" if supports_all else "generic"
+    if requested_kernel_variant == "z_integer4" and supports_all:
+        return "z_integer4"
+    raise PallasProjectorUnsupported(
+        _unsupported("kernel_variant='z_integer4' requires all views to use integer-z detector geometry")
+    )
 
 
 def _ensure_float32_volume(volume: jnp.ndarray) -> None:
@@ -431,6 +533,98 @@ def _validate_public_call(
     ), int(variant["num_warps"]), kernel_variant_id, layout_variant_id
 
 
+def _validate_public_sinogram_call(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    *,
+    step_size: float | None,
+    n_steps: int | None,
+    gather_dtype: str,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    interpret: bool,
+    tile_shape: tuple[int, int],
+    num_warps: int,
+    kernel_variant: str,
+    layout_variant: str,
+    state_mode: str,
+) -> tuple[int, int, int, int, int, int, int, float, int, int, tuple[int, int], int, int, int]:
+    nx, ny, nz = validate_volume(
+        volume,
+        grid,
+        context="forward_project_views_T_pallas",
+        name="volume",
+    )
+    nv, nu = validate_detector(detector, "forward_project_views_T_pallas")
+    shape = getattr(T_stack, "shape", None)
+    if shape is None or len(shape) != 3:
+        validate_pose_stack(T_stack, 0, context="forward_project_views_T_pallas")
+    n_views = int(shape[0])
+    if n_views <= 0:
+        raise PallasProjectorUnsupported(_unsupported("pose stack must contain at least one view"))
+    validate_pose_stack(T_stack, n_views, context="forward_project_views_T_pallas")
+    _ensure_float32_volume(volume)
+    _ensure_canonical_detector_grid(detector, det_grid)
+    variant = pallas_projector_actual_sinogram_variant_metadata(
+        T_stack,
+        grid,
+        detector,
+        det_grid=det_grid,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode=state_mode,
+        gather_dtype=gather_dtype,
+    )
+    if variant["state_mode"] != "inline":
+        raise PallasProjectorUnsupported(
+            _unsupported("batched sinogram Pallas supports state_mode='inline' only")
+        )
+    tile_v, tile_u = variant["tile_shape"]
+    if not interpret and jax.default_backend() == "cpu":
+        raise PallasProjectorUnsupported(
+            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        )
+
+    if step_size is None:
+        step_size_value = float(grid.vy)
+    else:
+        step_size_value = float(step_size)
+    n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
+    effective_n_steps_value = max(
+        1,
+        max(
+            _resolve_effective_pallas_n_steps(
+                T_stack[index],
+                grid,
+                step_size_value,
+                n_steps_value,
+            )
+            for index in range(n_views)
+        ),
+    )
+    kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
+    layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
+    return (
+        nx,
+        ny,
+        nz,
+        nv,
+        nu,
+        n_views,
+        nx * ny * nz,
+        step_size_value,
+        n_steps_value,
+        effective_n_steps_value,
+        (tile_v, tile_u),
+        int(variant["num_warps"]),
+        kernel_variant_id,
+        layout_variant_id,
+    )
+
+
 def pallas_projector_unsupported_reason(
     T: jnp.ndarray,
     grid: Grid,
@@ -451,6 +645,47 @@ def pallas_projector_unsupported_reason(
     try:
         _validate_public_call(
             T,
+            grid,
+            detector,
+            volume,
+            step_size=step_size,
+            n_steps=n_steps,
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+            interpret=False,
+            tile_shape=tile_shape,
+            num_warps=num_warps,
+            kernel_variant=kernel_variant,
+            layout_variant=layout_variant,
+            state_mode=state_mode,
+        )
+    except PallasProjectorUnsupported as exc:
+        return str(exc)
+    except ValueError as exc:
+        return _unsupported(str(exc))
+    return None
+
+
+def pallas_projector_sinogram_unsupported_reason(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    tile_shape: tuple[int, int] = (8, 16),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    state_mode: str = "inline",
+) -> str | None:
+    """Return a benchmark-friendly unsupported reason for batched sinogram Pallas."""
+    try:
+        _validate_public_sinogram_call(
+            T_stack,
             grid,
             detector,
             volume,
@@ -699,6 +934,162 @@ def _projector_kernel(
         out_ref[...] = acc.T.astype(jnp.float32)
     else:
         out_ref[...] = acc.astype(jnp.float32)
+
+
+def _projector_views_kernel(
+    T_ref: Any,
+    volume_ref: Any,
+    out_ref: Any,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    kernel_variant_id: int,
+    layout_variant_id: int,
+    unroll: int | None,
+) -> None:
+    view_idx = pl.program_id(0)
+    tile_v_start = pl.program_id(1) * tile_v
+    tile_u_start = pl.program_id(2) * tile_u
+    if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
+        det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[:, jnp.newaxis]
+        det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[jnp.newaxis, :]
+    else:
+        det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
+        det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+
+    xr = (
+        (det_u.astype(jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * jnp.float32(du)
+        + jnp.float32(det_center_x)
+    )
+    zr = (
+        (det_v.astype(jnp.float32) - jnp.float32(nv / 2.0 - 0.5)) * jnp.float32(dv)
+        + jnp.float32(det_center_z)
+    )
+
+    def tload(row: int, col: int):
+        return plt.load(T_ref.at[view_idx, row, col])
+
+    t00, t01, t02, t03 = tload(0, 0), tload(0, 1), tload(0, 2), tload(0, 3)
+    t10, t11, t12, t13 = tload(1, 0), tload(1, 1), tload(1, 2), tload(1, 3)
+    t20, t21, t22, t23 = tload(2, 0), tload(2, 1), tload(2, 2), tload(2, 3)
+    ey_x = t10
+    ey_y = t11
+    ey_z = t12
+    tinv_x = -(t00 * t03 + t10 * t13 + t20 * t23)
+    tinv_y = -(t01 * t03 + t11 * t13 + t21 * t23)
+    tinv_z = -(t02 * t03 + t12 * t13 + t22 * t23)
+    base_x = t00 * xr + t20 * zr + tinv_x
+    base_y = t01 * xr + t21 * zr + tinv_y
+    base_z = t02 * xr + t22 * zr + tinv_z
+
+    lower_x = jnp.float32(vol_origin_x - vx)
+    lower_y = jnp.float32(vol_origin_y - vy)
+    lower_z = jnp.float32(vol_origin_z - vz)
+    upper_x = jnp.float32(vol_origin_x + nx * vx)
+    upper_y = jnp.float32(vol_origin_y + ny * vy)
+    upper_z = jnp.float32(vol_origin_z + nz * vz)
+
+    def slab(base: jnp.ndarray, denom: jnp.ndarray, lower: jnp.ndarray, upper: jnp.ndarray):
+        eps = jnp.float32(1e-8)
+        parallel = jnp.abs(denom) < eps
+        safe_denom = jnp.where(parallel, jnp.float32(1.0), denom)
+        t1 = (lower - base) / safe_denom
+        t2 = (upper - base) / safe_denom
+        lo = jnp.minimum(t1, t2)
+        hi = jnp.maximum(t1, t2)
+        inside = (base >= lower) & (base <= upper)
+        inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
+        neg_inf = jnp.asarray(float("-inf"), dtype=jnp.float32)
+        lo = jnp.where(parallel, jnp.where(inside, neg_inf, inf), lo)
+        hi = jnp.where(parallel, jnp.where(inside, inf, neg_inf), hi)
+        return lo, hi
+
+    lo_x, hi_x = slab(base_x, ey_x, lower_x, upper_x)
+    lo_y, hi_y = slab(base_y, ey_y, lower_y, upper_y)
+    lo_z, hi_z = slab(base_z, ey_z, lower_z, upper_z)
+    y_entry = jnp.maximum(jnp.maximum(lo_x, lo_y), lo_z)
+    y_exit = jnp.minimum(jnp.minimum(hi_x, hi_y), hi_z)
+    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
+    valid_rays = path_length > jnp.float32(0.0)
+    y_start = jnp.where(valid_rays, y_entry, jnp.float32(0.0))
+    step_size32 = jnp.float32(step_size)
+    n_steps_ray = jnp.where(
+        valid_rays,
+        jnp.ceil(path_length / step_size32).astype(jnp.int32),
+        jnp.int32(0),
+    )
+
+    q0_x = base_x + y_start * ey_x
+    q0_y = base_y + y_start * ey_y
+    q0_z = base_z + y_start * ey_z
+    ix0 = (q0_x - jnp.float32(vol_origin_x)) / jnp.float32(vx)
+    iy0 = (q0_y - jnp.float32(vol_origin_y)) / jnp.float32(vy)
+    iz0 = (q0_z - jnp.float32(vol_origin_z)) / jnp.float32(vz)
+    dix = step_size32 * ey_x / jnp.float32(vx)
+    diy = step_size32 * ey_y / jnp.float32(vy)
+    diz = step_size32 * ey_z / jnp.float32(vz)
+
+    def body(step_idx, carry):
+        acc, ix, iy, iz = carry
+        active = step_idx < n_steps_ray
+        if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
+            sample = _trilinear_load_z_integer(
+                volume_ref,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+            )
+        else:
+            sample = _trilinear_load(
+                volume_ref,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+            )
+        return (
+            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
+            ix + dix,
+            iy + diy,
+            iz + diz,
+        )
+
+    init = (
+        jnp.zeros_like(ix0, dtype=jnp.float32),
+        ix0,
+        iy0,
+        iz0,
+    )
+    if unroll is None:
+        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+    else:
+        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
+    if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
+        out_ref[0, :, :] = acc.T.astype(jnp.float32)
+    else:
+        out_ref[0, :, :] = acc.astype(jnp.float32)
 
 
 def prepare_forward_project_view_T_pallas_state(
@@ -1068,5 +1459,100 @@ def forward_project_view_T_pallas(
         name="tomojax_forward_project_view_T_pallas",
     )(
         jnp.asarray(T, dtype=jnp.float32),
+        jnp.ravel(volume, order="C"),
+    )
+
+
+def forward_project_views_T_pallas(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool = False,
+    tile_shape: tuple[int, int] = (8, 16),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    state_mode: str = "inline",
+) -> jnp.ndarray:
+    """Forward project a stack of views using one experimental batched Pallas launch."""
+    (
+        nx,
+        ny,
+        nz,
+        nv,
+        nu,
+        n_views,
+        _volume_size,
+        step_size_value,
+        _n_steps_value,
+        effective_n_steps_value,
+        (tile_v, tile_u),
+        num_warps_value,
+        kernel_variant_id,
+        layout_variant_id,
+    ) = _validate_public_sinogram_call(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        step_size=step_size,
+        n_steps=n_steps,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        interpret=interpret,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode=state_mode,
+    )
+    vol_origin = _grid_volume_origin(grid)
+    kernel = functools.partial(
+        _projector_views_kernel,
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nu=nu,
+        nv=nv,
+        du=float(detector.du),
+        dv=float(detector.dv),
+        det_center_x=float(detector.det_center[0]),
+        det_center_z=float(detector.det_center[1]),
+        vol_origin_x=float(vol_origin[0]),
+        vol_origin_y=float(vol_origin[1]),
+        vol_origin_z=float(vol_origin[2]),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        step_size=float(step_size_value),
+        n_steps=int(effective_n_steps_value),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        kernel_variant_id=int(kernel_variant_id),
+        layout_variant_id=int(layout_variant_id),
+        unroll=unroll,
+    )
+    grid_shape = (n_views, math.ceil(nv / tile_v), math.ceil(nu / tile_u))
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((n_views, nv, nu), jnp.float32),
+        grid=grid_shape,
+        in_specs=[
+            pl.no_block_spec,
+            pl.no_block_spec,
+        ],
+        out_specs=pl.BlockSpec((1, tile_v, tile_u), lambda view, pv, pu: (view, pv, pu)),
+        interpret=interpret,
+        compiler_params=plt.CompilerParams(num_warps=num_warps_value),
+        name="tomojax_forward_project_views_T_pallas",
+    )(
+        jnp.asarray(T_stack, dtype=jnp.float32),
         jnp.ravel(volume, order="C"),
     )

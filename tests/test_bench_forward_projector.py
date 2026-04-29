@@ -291,8 +291,10 @@ def test_sinogram_mode_reports_vmap_and_loop_parity(monkeypatch: pytest.MonkeyPa
     assert result["max_abs_error"] == pytest.approx(0.0)
 
 
+@pytest.mark.parametrize("mode", ["pallas_loop", "pallas_batched"])
 def test_sinogram_mode_records_pallas_variant_metadata(
     monkeypatch: pytest.MonkeyPatch,
+    mode: str,
 ) -> None:
     base_fixture = make_forward_projector_fixture(
         ForwardProjectorBenchmarkConfig(nx=2, ny=2, nz=2, nu=2, nv=2)
@@ -302,7 +304,7 @@ def test_sinogram_mode_records_pallas_variant_metadata(
         grid = base_fixture.grid
         detector = base_fixture.detector
         det_grid = base_fixture.det_grid
-        T_stack = [base_fixture.T, base_fixture.T]
+        T_stack = jnp.stack([base_fixture.T, base_fixture.T], axis=0)
 
     config = ForwardSinogramBenchmarkConfig(
         nx=2,
@@ -316,8 +318,8 @@ def test_sinogram_mode_records_pallas_variant_metadata(
         pallas_num_warps=2,
     )
 
-    def fake_make_callable(_requested_mode, _fixture, _config):
-        return lambda: jnp.ones((2, 2, 2), dtype=jnp.float32), "pallas_loop", None
+    def fake_make_callable(requested_mode, _fixture, _config):
+        return lambda: jnp.ones((2, 2, 2), dtype=jnp.float32), requested_mode, None
 
     monkeypatch.setattr(
         "tomojax.bench.forward_projector._make_sinogram_callable",
@@ -325,7 +327,7 @@ def test_sinogram_mode_records_pallas_variant_metadata(
     )
 
     result, _ = benchmark_sinogram_mode(
-        "pallas_loop",
+        mode,  # type: ignore[arg-type]
         FakeFixture(),  # type: ignore[arg-type]
         config,
         oracle=jnp.ones((2, 2, 2), dtype=jnp.float32),
@@ -442,6 +444,16 @@ def test_forward_sinogram_suite_reports_cases_and_summary(
                     "max_abs_error": 0.0,
                     "max_relative_error": 0.0,
                 },
+                {
+                    "requested_mode": "pallas_batched",
+                    "actual_mode": "pallas_batched",
+                    "eligible_for_speed_claim": True,
+                    "warm_seconds_median": 1.2,
+                    "speedup_vs_best_jax_warm_median": 1.5,
+                    "finite": True,
+                    "max_abs_error": 0.0,
+                    "max_relative_error": 0.0,
+                },
             ],
         }
 
@@ -460,11 +472,11 @@ def test_forward_sinogram_suite_reports_cases_and_summary(
     assert calls == [(90, 2, True), (180, 2, True), (90, 2, True)]
     assert metrics["summary"] == {
         "cases_total": 3,
-        "cases_with_requested_pallas": 3,
-        "cases_pallas_eligible": 3,
-        "cases_parity_passed": 3,
-        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(2.0),
-        "worst_case_speedup_vs_best_jax_warm_median": 2.0,
+        "cases_with_requested_pallas": 6,
+        "cases_pallas_eligible": 6,
+        "cases_parity_passed": 6,
+        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(3 ** 0.5),
+        "worst_case_speedup_vs_best_jax_warm_median": 1.5,
         "best_case_speedup_vs_best_jax_warm_median": 2.0,
     }
 

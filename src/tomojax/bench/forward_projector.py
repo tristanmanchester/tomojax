@@ -16,7 +16,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import _resolve_n_steps, forward_project_view_T, get_detector_grid_device
 
 BackendName = Literal["jax", "pallas"]
-SinogramModeName = Literal["jax_loop", "jax_vmap", "pallas_loop"]
+SinogramModeName = Literal["jax_loop", "jax_vmap", "pallas_loop", "pallas_batched"]
 SuiteName = Literal["quick", "confirm", "stress", "sinogram"]
 PRESET_NAMES = (
     "tiny",
@@ -442,6 +442,36 @@ def _pallas_unsupported_reason(
         return f"pallas_support_check_failed: {exc}"
 
 
+def _pallas_sinogram_unsupported_reason(
+    fixture: ForwardSinogramFixture,
+    config: ForwardSinogramBenchmarkConfig,
+) -> str | None:
+    module, fallback_reason = _resolve_pallas_module()
+    if module is None:
+        return fallback_reason
+    support_fn = getattr(module, "pallas_projector_sinogram_unsupported_reason", None)
+    if support_fn is None:
+        return _pallas_unsupported_reason(fixture, config)
+    try:
+        return support_fn(
+            fixture.T_stack,
+            fixture.grid,
+            fixture.detector,
+            fixture.volume,
+            step_size=config.step_size,
+            n_steps=config.n_steps,
+            gather_dtype=config.gather_dtype,
+            det_grid=fixture.det_grid,
+            tile_shape=config.pallas_tile_shape,
+            num_warps=config.pallas_num_warps,
+            kernel_variant=config.pallas_kernel_variant,
+            layout_variant=config.pallas_layout_variant,
+            state_mode=config.pallas_state_mode,
+        )
+    except Exception as exc:
+        return f"pallas_sinogram_support_check_failed: {exc}"
+
+
 def _pallas_requested_variant_metadata(
     config: ForwardProjectorBenchmarkConfig | ForwardSinogramBenchmarkConfig,
 ) -> dict[str, Any]:
@@ -460,16 +490,30 @@ def _pallas_actual_variant_metadata(
     config: ForwardProjectorBenchmarkConfig | ForwardSinogramBenchmarkConfig,
     actual_backend_or_mode: str,
 ) -> dict[str, Any] | None:
-    if actual_backend_or_mode not in {"pallas", "pallas_loop"}:
+    if actual_backend_or_mode not in {"pallas", "pallas_loop", "pallas_batched"}:
         return None
     module, fallback_reason = _resolve_pallas_module()
     if module is None:
         return {"metadata_error": fallback_reason}
-    metadata_fn = getattr(module, "pallas_projector_actual_variant_metadata", None)
-    traversal_metadata_fn = getattr(module, "pallas_projector_traversal_metadata", None)
+    metadata_fn = (
+        getattr(module, "pallas_projector_actual_sinogram_variant_metadata", None)
+        if actual_backend_or_mode == "pallas_batched"
+        else getattr(module, "pallas_projector_actual_variant_metadata", None)
+    )
+    traversal_metadata_fn = (
+        getattr(module, "pallas_projector_sinogram_traversal_metadata", None)
+        if actual_backend_or_mode == "pallas_batched"
+        else getattr(module, "pallas_projector_traversal_metadata", None)
+    )
     if metadata_fn is None:
         return {"metadata_error": "pallas_actual_variant_metadata_missing"}
-    T = fixture.T if isinstance(fixture, ForwardProjectorFixture) else fixture.T_stack[0]
+    T = (
+        fixture.T
+        if isinstance(fixture, ForwardProjectorFixture)
+        else fixture.T_stack
+        if actual_backend_or_mode == "pallas_batched"
+        else fixture.T_stack[0]
+    )
     try:
         metadata = metadata_fn(
             T,
@@ -672,11 +716,40 @@ def _make_sinogram_callable(
         return _make_jax_sinogram_vmap_callable(fixture, config), "jax_vmap", None
 
     pallas_fn, fallback_reason = _resolve_pallas_callable()
+    pallas_module, module_reason = _resolve_pallas_module()
+    if requested_mode == "pallas_batched":
+        pallas_fn = getattr(pallas_module, "forward_project_views_T_pallas", None) if pallas_module else None
+        fallback_reason = module_reason if pallas_module is None else "pallas_batched_callable_missing"
     if pallas_fn is None:
         return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", fallback_reason
-    unsupported_reason = _pallas_unsupported_reason(fixture, config)
+    unsupported_reason = (
+        _pallas_sinogram_unsupported_reason(fixture, config)
+        if requested_mode == "pallas_batched"
+        else _pallas_unsupported_reason(fixture, config)
+    )
     if unsupported_reason:
         return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", unsupported_reason
+
+    if requested_mode == "pallas_batched":
+        def call_pallas_batched() -> jnp.ndarray:
+            return pallas_fn(
+                fixture.T_stack,
+                fixture.grid,
+                fixture.detector,
+                fixture.volume,
+                step_size=config.step_size,
+                n_steps=config.n_steps,
+                unroll=config.unroll,
+                gather_dtype=config.gather_dtype,
+                det_grid=fixture.det_grid,
+                tile_shape=config.pallas_tile_shape,
+                num_warps=config.pallas_num_warps,
+                kernel_variant=config.pallas_kernel_variant,
+                layout_variant=config.pallas_layout_variant,
+                state_mode=config.pallas_state_mode,
+            )
+
+        return call_pallas_batched, "pallas_batched", None
 
     def call_pallas_loop() -> jnp.ndarray:
         images = [
@@ -814,7 +887,7 @@ def benchmark_sinogram_mode(
         **_timing_summary(warm_seconds),
         **_error_metrics(warm_output, reference),
     }
-    if requested_mode == "pallas_loop":
+    if requested_mode in {"pallas_loop", "pallas_batched"}:
         result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
         result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
             fixture,
@@ -826,7 +899,7 @@ def benchmark_sinogram_mode(
             baseline=best_jax_median,
             candidate=result["warm_seconds_median"],
         )
-        if requested_mode == actual_mode and requested_mode == "pallas_loop"
+        if requested_mode == actual_mode and requested_mode in {"pallas_loop", "pallas_batched"}
         else None
     )
     return result, first_output
@@ -878,14 +951,21 @@ def run_forward_sinogram_benchmark(
     )
     results = [jax_loop_result, jax_vmap_result]
     if config.include_pallas:
-        pallas_result, _ = benchmark_sinogram_mode(
+        pallas_loop_result, _ = benchmark_sinogram_mode(
             "pallas_loop",
             fixture,
             config,
             oracle=oracle,
             best_jax_median=best_jax_median,
         )
-        results.append(pallas_result)
+        pallas_batched_result, _ = benchmark_sinogram_mode(
+            "pallas_batched",
+            fixture,
+            config,
+            oracle=oracle,
+            best_jax_median=best_jax_median,
+        )
+        results.extend([pallas_loop_result, pallas_batched_result])
 
     return {
         "benchmark": "forward_sinogram",
@@ -968,7 +1048,7 @@ def _sinogram_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
         row
         for case in cases
         for row in case.get("results", [])
-        if row.get("requested_mode") == "pallas_loop"
+        if row.get("requested_mode") in {"pallas_loop", "pallas_batched"}
     ]
     speedups = [
         float(row["speedup_vs_best_jax_warm_median"])
