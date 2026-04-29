@@ -144,6 +144,11 @@ Pallas experiment controls are benchmark-only and are recorded in each requested
 `--pallas-num-warps`, `--pallas-kernel-variant`, `--pallas-layout-variant`, and
 `--pallas-state-mode` to make variant runs reproducible without changing product projector APIs.
 Unsupported variants fall back with a `fallback_reason` and remain ineligible for speed claims.
+The current experimental Pallas default is `--pallas-kernel-variant auto`,
+`--pallas-layout-variant detector_vu`, `--pallas-tile-shape 8x16`, and
+`--pallas-num-warps 4`. U4 autotuning on the RTX 4070 Laptop GPU selected this default over
+the previous `8x8` tile because it improved the confirmation geomean and held up on stress
+without material regressions.
 Use `high-ray-count-128` as the first go/no-go benchmark for detector-tiled Pallas kernels; it
 keeps the volume at `128^3`, raises the detector to `256x256` rays, and uses a half-voxel step
 size so output tiling and traversal work matter. Use `noncubic-align-128` to check an

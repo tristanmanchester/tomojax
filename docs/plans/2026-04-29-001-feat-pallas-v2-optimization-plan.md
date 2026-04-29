@@ -470,6 +470,23 @@ than the current hand-picked `8x8` tile.
 - Reject variants that improve one high-ray case but regress ordinary profile
   cases enough to keep `confirm` geomean below `1.05x`.
 
+**Result, 2026-04-29:** Accepted `detector_vu`, tile `8x16`, `num_warps=4` as
+the tuned experimental default. Quick autotune tested 24 variants across
+`detector_vu` / `detector_uv`, `8x8` / `8x16` / `16x8` / `16x16`, and
+`num_warps` `2` / `4` / `8`; all were eligible and parity-clean. Confirm then
+compared the leading candidates against the previous `detector_vu 8x8
+num_warps=4` default. The accepted candidate improved confirm geomean from
+`1.2722x` to `1.3128x`, improved the worst confirm case from `1.1326x` to
+`1.1637x`, and improved every confirm case. Stress compared the accepted
+candidate, the previous default, and `detector_vu 8x8 num_warps=2`; the accepted
+candidate kept parity, improved stress geomean from `1.3180x` to `1.3318x`,
+and improved the worst stress case from `1.2036x` to `1.2250x`. The slight
+stress dip on `large-cubic-192` versus the previous default (`1.2250x` vs
+`1.2332x`) was treated as non-material because the aggregate and worst-case
+stress metrics improved. `detector_uv` was rejected for now: its best confirm
+candidate, `8x8 num_warps=2`, reached only `1.2154x` geomean and trailed the
+`detector_vu` candidates.
+
 ---
 
 - U5. **Evaluate Cached Traversal State**
