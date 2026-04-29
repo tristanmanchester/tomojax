@@ -106,8 +106,8 @@ microbenchmark-only wins remain inconclusive.
   forward-image and batched-sinogram results justify deeper investment.
 - Pallas custom VJP/JVP or differentiated alignment support: separate
   derivative-design plan.
-- Native `bf16` / `fp16` Pallas gather modes: separate precision-support unit
-  after V2 fp32 performance is understood.
+- Native `bf16` / `fp16` Pallas gather modes: attempted after V2 fp32
+  performance was understood; see the mixed-precision result below.
 - Lower-level Mosaic GPU pipelining or `core_map`: defer unless Triton-backed
   Pallas hits a proven ceiling that the current benchmark suite can expose.
 
@@ -830,6 +830,65 @@ results, accepted defaults, rejected candidates, and the next gate.
 **Verification:**
 - A future implementer can tell which Pallas variant is the default, why it was
   selected, which variants were rejected, and which benchmark gate comes next.
+
+---
+
+- U9. **Evaluate Mixed-Precision Pallas Gather**
+
+**Goal:** Test whether loading the Pallas volume in `bf16` or `fp16`, while
+retaining fp32 accumulation and fp32 outputs, reduces memory traffic enough to
+improve the retained Pallas kernels.
+
+**Requirements:** R1, R2, R3, R4, R11, R12
+
+**Dependencies:** U3, U4, U6, U7
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Test: `tests/test_projector_pallas.py`
+
+**Approach:**
+- Keep the public Pallas input volume contract at fp32, then cast the flattened
+  gather volume to the requested gather dtype before passing it to
+  `pallas_call`.
+- Preserve fp32 accumulation, fp32 outputs, and the same JAX gather dtype as
+  the parity oracle.
+- Thread the selected gather dtype through cached traversal state and the bound
+  fixed-geometry callable so fixed-geometry benchmarking does not silently drop
+  the precision mode.
+- Keep `fp32` as the default unless lower precision clears a measured
+  performance gate.
+
+**Verification gate:**
+- Lower-precision gather must preserve parity versus the same JAX gather dtype.
+- It must improve geomean versus fp32 Pallas by at least `1.05x` on at least
+  one important suite or mode.
+- It must avoid material regressions on ordinary cases.
+
+**Result, 2026-04-29:** Rejected as a performance optimization, but retained
+as controlled experimental API support. Commit `f5f4a5c` added Pallas
+`gather_dtype` support for `bf16`, `fp16`, aliases such as `bfloat16` and
+`half`, and `auto`, with CPU `interpret=True` parity tests against the same JAX
+gather dtype. The full vivobook sweep on the RTX 4070 Laptop GPU was archived
+at `/home/tristan/projects/tomojax-benchmark-archive/pallas/pallas-mixed-gather-20260429T122458Z`.
+All `fp32`, `bf16`, and `fp16` rows completed with exit code `0`, Pallas
+eligibility, and parity.
+
+The lower-precision modes did not clear the speed gate. On single-view suites,
+`bf16` reached `1.0179x` versus fp32 Pallas on `quick`, but regressed to
+`0.9705x` on `confirm` and `0.9663x` on `stress`. `fp16` reached `0.9877x` on
+`quick`, `0.9717x` on `confirm`, and `0.9578x` on `stress`. Sinogram dispatch
+also favored fp32: `pallas_dispatch` geomean was `1.4929x` for fp32,
+`1.4558x` for `bf16`, and `1.4865x` for `fp16` versus best JAX. Residual
+dispatch was similar: fp32 `1.5560x`, `bf16` `1.5318x`, and `fp16` `1.5442x`
+versus JAX materialized. Materialized and fused residual modes also regressed
+under lower precision.
+
+Decision: keep the dtype support because it is correct, explicit, and useful
+for future memory-pressure experiments, but do not change defaults or claim a
+mixed-precision performance win. The result suggests the current Pallas body is
+not memory-bandwidth limited in a way that lower-precision volume loads can
+exploit on this GPU; conversion and/or vectorization effects likely dominate.
 
 ---
 
