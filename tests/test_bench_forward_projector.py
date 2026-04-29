@@ -475,9 +475,27 @@ def test_forward_sinogram_suite_reports_cases_and_summary(
         "cases_with_requested_pallas": 6,
         "cases_pallas_eligible": 6,
         "cases_parity_passed": 6,
-        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(3 ** 0.5),
+        "pallas_modes": {
+            "pallas_loop": {
+                "cases_with_requested_pallas": 3,
+                "cases_pallas_eligible": 3,
+                "cases_parity_passed": 3,
+                "geomean_speedup_vs_best_jax_warm_median": pytest.approx(2.0),
+                "worst_case_speedup_vs_best_jax_warm_median": 2.0,
+                "best_case_speedup_vs_best_jax_warm_median": 2.0,
+            },
+            "pallas_batched": {
+                "cases_with_requested_pallas": 3,
+                "cases_pallas_eligible": 3,
+                "cases_parity_passed": 3,
+                "geomean_speedup_vs_best_jax_warm_median": pytest.approx(1.5),
+                "worst_case_speedup_vs_best_jax_warm_median": 1.5,
+                "best_case_speedup_vs_best_jax_warm_median": 1.5,
+            },
+        },
+        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(1.5),
         "worst_case_speedup_vs_best_jax_warm_median": 1.5,
-        "best_case_speedup_vs_best_jax_warm_median": 2.0,
+        "best_case_speedup_vs_best_jax_warm_median": 1.5,
     }
 
 

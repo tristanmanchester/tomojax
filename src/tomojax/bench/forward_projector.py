@@ -1044,25 +1044,51 @@ def _suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _sinogram_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    pallas_modes = ("pallas_loop", "pallas_batched")
+
+    def summarize_mode(mode: str) -> dict[str, Any]:
+        rows = [
+            row
+            for case in cases
+            for row in case.get("results", [])
+            if row.get("requested_mode") == mode
+        ]
+        speedups = [
+            float(row["speedup_vs_best_jax_warm_median"])
+            for row in rows
+            if row.get("speedup_vs_best_jax_warm_median") is not None
+        ]
+        return {
+            "cases_with_requested_pallas": len(rows),
+            "cases_pallas_eligible": sum(1 for row in rows if row.get("eligible_for_speed_claim")),
+            "cases_parity_passed": sum(1 for row in rows if _parity_passed(row)),
+            "geomean_speedup_vs_best_jax_warm_median": _geomean(speedups),
+            "worst_case_speedup_vs_best_jax_warm_median": min(speedups) if speedups else None,
+            "best_case_speedup_vs_best_jax_warm_median": max(speedups) if speedups else None,
+        }
+
+    mode_summaries = {mode: summarize_mode(mode) for mode in pallas_modes}
     pallas_rows = [
         row
         for case in cases
         for row in case.get("results", [])
-        if row.get("requested_mode") in {"pallas_loop", "pallas_batched"}
-    ]
-    speedups = [
-        float(row["speedup_vs_best_jax_warm_median"])
-        for row in pallas_rows
-        if row.get("speedup_vs_best_jax_warm_median") is not None
+        if row.get("requested_mode") in pallas_modes
     ]
     return {
         "cases_total": len(cases),
         "cases_with_requested_pallas": len(pallas_rows),
         "cases_pallas_eligible": sum(1 for row in pallas_rows if row.get("eligible_for_speed_claim")),
         "cases_parity_passed": sum(1 for row in pallas_rows if _parity_passed(row)),
-        "geomean_speedup_vs_best_jax_warm_median": _geomean(speedups),
-        "worst_case_speedup_vs_best_jax_warm_median": min(speedups) if speedups else None,
-        "best_case_speedup_vs_best_jax_warm_median": max(speedups) if speedups else None,
+        "pallas_modes": mode_summaries,
+        "geomean_speedup_vs_best_jax_warm_median": mode_summaries["pallas_batched"][
+            "geomean_speedup_vs_best_jax_warm_median"
+        ],
+        "worst_case_speedup_vs_best_jax_warm_median": mode_summaries["pallas_batched"][
+            "worst_case_speedup_vs_best_jax_warm_median"
+        ],
+        "best_case_speedup_vs_best_jax_warm_median": mode_summaries["pallas_batched"][
+            "best_case_speedup_vs_best_jax_warm_median"
+        ],
     }
 
 

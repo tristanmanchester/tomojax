@@ -621,6 +621,28 @@ useful.
 - If it only beats JAX loop and still loses to JAX `vmap`, record it as a
   dispatch improvement but not a workflow-relevant win.
 
+**Result, 2026-04-29:** Rejected as a workflow-relevant replacement for JAX
+`vmap`, but retained as useful dispatch evidence. The U6 implementation adds a
+single batched Pallas launch over `(view, detector_v_tile, detector_u_tile)` and
+the benchmark now reports both `pallas_loop` and `pallas_batched` against the
+best JAX median. CPU `interpret=True` tests covered multi-view parity,
+single-view equivalence, and sinogram benchmark metadata.
+
+Laptop verification on the RTX 4070 Laptop GPU was parity-clean and eligible
+for all three sinogram cases. `pallas_batched` was dramatically better than the
+old Python `pallas_loop`, but it did not clear the U6 gate versus JAX `vmap`:
+`sinogram-64` reached only `0.0290x` versus best JAX, `sinogram-128` reached
+`0.7617x`, and `high-ray-sinogram-128` reached `2.8135x`. The batched-mode
+geomean was therefore about `0.3960x`, with two individual cases below `1.00x`.
+The result is important because high-ray full-sinogram work can benefit from
+batched Pallas dispatch, but ordinary sinogram workloads remain better served
+by JAX `vmap`.
+
+Decision: do not promote U6 as workflow-relevant. Keep `pallas_batched` as an
+experimental benchmark mode and use it as evidence that future Pallas work
+should focus on higher arithmetic intensity, fused scoring, or high-ray
+workloads rather than a generic forward-sinogram replacement.
+
 ---
 
 - U7. **Plan and Spike Fused Residual Reduction**
