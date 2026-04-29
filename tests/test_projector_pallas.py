@@ -34,6 +34,7 @@ def _assert_matches_jax(
     step_size: float | None = None,
     n_steps: int | None = None,
     det_grid=None,
+    gather_dtype: str = "fp32",
     atol: float = 1e-4,
     rtol: float = 1e-4,
 ) -> None:
@@ -45,6 +46,7 @@ def _assert_matches_jax(
         step_size=step_size,
         n_steps=n_steps,
         det_grid=det_grid,
+        gather_dtype=gather_dtype,
     )
     candidate = forward_project_view_T_pallas(
         T,
@@ -54,6 +56,7 @@ def _assert_matches_jax(
         step_size=step_size,
         n_steps=n_steps,
         det_grid=det_grid,
+        gather_dtype=gather_dtype,
         interpret=True,
     )
     assert candidate.shape == oracle.shape == (detector.nv, detector.nu)
@@ -410,6 +413,29 @@ def test_pallas_variant_metadata_normalizes_auto_to_generic() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("gather_dtype", "canonical"),
+    [
+        ("bfloat16", "bf16"),
+        ("half", "fp16"),
+    ],
+)
+def test_pallas_variant_metadata_normalizes_lower_precision_gather_dtype(
+    gather_dtype: str,
+    canonical: str,
+) -> None:
+    metadata = pallas_projector_variant_metadata(
+        tile_shape=(4, 8),
+        num_warps=1,
+        kernel_variant="generic",
+        layout_variant="detector_vu",
+        state_mode="inline",
+        gather_dtype=gather_dtype,
+    )
+
+    assert metadata["gather_dtype"] == canonical
+
+
 def test_pallas_actual_variant_metadata_selects_z_integer_for_auto() -> None:
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
@@ -446,13 +472,40 @@ def test_pallas_tightened_traversal_matches_jax_for_uniform_volume() -> None:
 
 
 @pytest.mark.parametrize("gather_dtype", ["bf16", "fp16"])
-def test_pallas_forward_project_rejects_unsupported_gather_dtype(gather_dtype: str) -> None:
+def test_pallas_forward_project_lower_precision_gather_matches_jax(gather_dtype: str) -> None:
+    grid = Grid(
+        nx=8,
+        ny=8,
+        nz=8,
+        vx=1.0,
+        vy=1.0,
+        vz=1.0,
+        vol_center=(0.0, 0.0, 0.25),
+    )
+    detector = Detector(nu=7, nv=5, du=0.75, dv=0.75, det_center=(0.0, 0.0))
+    T = _pose(23.0, grid=grid, detector=detector)
+    rng = np.random.default_rng(0)
+    volume = jnp.asarray(rng.normal(size=(8, 8, 8)).astype(np.float32))
+
+    _assert_matches_jax(
+        T,
+        grid,
+        detector,
+        volume,
+        gather_dtype=gather_dtype,
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+
+@pytest.mark.parametrize("gather_dtype", ["float64", "unknown", ""])
+def test_pallas_forward_project_rejects_invalid_gather_dtype(gather_dtype: str) -> None:
     grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
     T = _pose(grid=grid, detector=detector)
     volume = jnp.ones((4, 4, 4), dtype=jnp.float32)
 
-    with pytest.raises(PallasProjectorUnsupported, match="fp32 only"):
+    with pytest.raises(PallasProjectorUnsupported, match="gather_dtype"):
         forward_project_view_T_pallas(
             T,
             grid,

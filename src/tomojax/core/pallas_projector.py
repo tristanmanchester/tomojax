@@ -32,6 +32,16 @@ _SUPPORTED_NUM_WARPS = frozenset({1, 2, 4, 8})
 _SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic", "z_integer4"})
 _SUPPORTED_LAYOUT_VARIANTS = frozenset({"detector_uv", "detector_vu"})
 _SUPPORTED_STATE_MODES = frozenset({"cached", "inline", "precompute_inclusive"})
+_GATHER_DTYPE_ALIASES = {
+    "fp32": "fp32",
+    "float32": "fp32",
+    "single": "fp32",
+    "bf16": "bf16",
+    "bfloat16": "bf16",
+    "fp16": "fp16",
+    "float16": "fp16",
+    "half": "fp16",
+}
 _KERNEL_VARIANT_IDS = {"generic": 0, "z_integer4": 1}
 _LAYOUT_VARIANT_IDS = {"detector_vu": 0, "detector_uv": 1}
 
@@ -59,6 +69,7 @@ class PallasForwardProjectorTraversalState:
     num_warps: int
     kernel_variant: str
     kernel_variant_id: int
+    gather_dtype: str
 
 
 def _unsupported(message: str) -> str:
@@ -71,11 +82,40 @@ def _normalize_gather_dtype(gather_dtype: str) -> str:
             _unsupported(f"gather_dtype must be a string; got {type(gather_dtype).__name__}")
         )
     gd = gather_dtype.lower()
-    if gd not in {"fp32", "float32", "single"}:
+    if gd == "auto":
+        try:
+            platform = jax.devices()[0].platform if jax.devices() else "cpu"
+        except Exception:
+            platform = "cpu"
+        if platform == "tpu":
+            return "bf16"
+        if platform == "gpu":
+            return "fp16"
+        return "fp32"
+    if gd not in _GATHER_DTYPE_ALIASES:
         raise PallasProjectorUnsupported(
-            _unsupported(f"gather_dtype={gather_dtype!r}; v1 supports fp32 only")
+            _unsupported(
+                "gather_dtype must be one of 'auto', 'fp32', 'float32', 'single', "
+                "'bf16', 'bfloat16', 'fp16', 'float16', or 'half'; "
+                f"got {gather_dtype!r}"
+            )
         )
-    return "fp32"
+    return _GATHER_DTYPE_ALIASES[gd]
+
+
+def _pallas_gather_jnp_dtype(gather_dtype: str) -> jnp.dtype:
+    normalized = _normalize_gather_dtype(gather_dtype)
+    if normalized == "bf16":
+        return jnp.bfloat16
+    if normalized == "fp16":
+        return jnp.float16
+    return jnp.float32
+
+
+def _prepare_volume_for_pallas_gather(volume: jnp.ndarray, gather_dtype: str) -> jnp.ndarray:
+    target = _pallas_gather_jnp_dtype(gather_dtype)
+    vol_cast = volume if volume.dtype == target else volume.astype(target)
+    return jnp.ravel(vol_cast, order="C")
 
 
 def _normalize_tile_shape(tile_shape: tuple[int, int]) -> tuple[int, int]:
@@ -1269,7 +1309,7 @@ def prepare_forward_project_view_T_pallas_state(
     """Prepare fixed-geometry traversal state for the experimental cached Pallas path."""
     nv, nu = validate_detector(detector, "prepare_forward_project_view_T_pallas_state")
     validate_pose_matrix(T, context="prepare_forward_project_view_T_pallas_state")
-    _normalize_gather_dtype(gather_dtype)
+    normalized_gather_dtype = _normalize_gather_dtype(gather_dtype)
     _ensure_canonical_detector_grid(detector, det_grid)
     variant = pallas_projector_actual_variant_metadata(
         T,
@@ -1343,6 +1383,7 @@ def prepare_forward_project_view_T_pallas_state(
         num_warps=int(variant["num_warps"]),
         kernel_variant=str(variant["kernel_variant"]),
         kernel_variant_id=_KERNEL_VARIANT_IDS[str(variant["kernel_variant"])],
+        gather_dtype=normalized_gather_dtype,
     )
 
 
@@ -1432,7 +1473,7 @@ class BoundForwardProjectViewTPallas:
             self.state.iy0,
             self.state.iz0,
             self.state.n_steps_ray,
-            jnp.ravel(volume, order="C"),
+            _prepare_volume_for_pallas_gather(volume, self.state.gather_dtype),
         )
 
 
@@ -1621,7 +1662,7 @@ def forward_project_view_T_pallas_with_state(
         state.iy0,
         state.iz0,
         state.n_steps_ray,
-        jnp.ravel(volume, order="C"),
+        _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
     )
 
 
@@ -1737,7 +1778,7 @@ def forward_project_view_T_pallas(
         name="tomojax_forward_project_view_T_pallas",
     )(
         jnp.asarray(T, dtype=jnp.float32),
-        jnp.ravel(volume, order="C"),
+        _prepare_volume_for_pallas_gather(volume, gather_dtype),
     )
 
 
@@ -1832,7 +1873,7 @@ def forward_project_views_T_pallas(
         name="tomojax_forward_project_views_T_pallas",
     )(
         jnp.asarray(T_stack, dtype=jnp.float32),
-        jnp.ravel(volume, order="C"),
+        _prepare_volume_for_pallas_gather(volume, gather_dtype),
     )
 
 
@@ -1942,7 +1983,7 @@ def forward_project_residual_sse_T_pallas(
         name="tomojax_forward_project_residual_sse_T_pallas",
     )(
         jnp.asarray(T_stack, dtype=jnp.float32),
-        jnp.ravel(volume, order="C"),
+        _prepare_volume_for_pallas_gather(volume, gather_dtype),
         jnp.asarray(target, dtype=jnp.float32),
     )
     return jnp.sum(partials, dtype=jnp.float32)
