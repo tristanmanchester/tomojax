@@ -697,6 +697,7 @@ cuda12 = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "psutil" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -722,6 +723,7 @@ provides-extras = ["bench", "cpu", "cuda12"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "psutil", specifier = ">=7.0.0,<8" },
     { name = "pytest", specifier = ">=8,<9" },
     { name = "ruff", specifier = ">=0.11,<0.12" },
 ]

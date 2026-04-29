@@ -50,6 +50,7 @@ tomojax-test-cpu = "tomojax.cli.runtime_checks:test_cpu_main"
 
 [dependency-groups]
 dev = [
+    "psutil>=7.0.0,<8",
     "pytest>=8,<9",
     "ruff>=0.11,<0.12",
 ]
