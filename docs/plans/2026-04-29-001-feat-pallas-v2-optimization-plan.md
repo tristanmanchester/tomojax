@@ -925,9 +925,9 @@ specialized forward kernel.
 Decision: do not implement a column-sum or axis-y-only forward fast path for
 the current benchmark suite. The useful analytic specialization remains the
 already accepted `z_integer4` path. The next broader candidate should be
-designed separately, with voxel-owned backprojection as the likely next
-planning target because it addresses the adjoint/reconstruction side rather
-than another low-coverage forward-projector special case.
+designed separately, with backprojection as the likely next planning target
+because it addresses the adjoint/reconstruction side rather than another
+low-coverage forward-projector special case.
 
 **Follow-up plan, 2026-04-29:** Created
 `docs/plans/2026-04-29-002-feat-pallas-backprojection-plan.md`. The first
