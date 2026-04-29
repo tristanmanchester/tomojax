@@ -16,7 +16,8 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import _resolve_n_steps, forward_project_view_T, get_detector_grid_device
 
 BackendName = Literal["jax", "pallas"]
-SuiteName = Literal["quick", "confirm", "stress"]
+SinogramModeName = Literal["jax_loop", "jax_vmap", "pallas_loop"]
+SuiteName = Literal["quick", "confirm", "stress", "sinogram"]
 PRESET_NAMES = (
     "tiny",
     "smoke",
@@ -28,7 +29,9 @@ PRESET_NAMES = (
     "thin-noncubic-192",
     "fine-step-128",
 )
-SUITE_NAMES = ("quick", "confirm", "stress")
+FORWARD_SUITE_NAMES = ("quick", "confirm", "stress")
+SINOGRAM_SUITE_NAMES = ("sinogram",)
+SUITE_NAMES = FORWARD_SUITE_NAMES + SINOGRAM_SUITE_NAMES
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,39 @@ class ForwardProjectorFixture:
 class ForwardProjectorSuiteCase:
     name: str
     config: ForwardProjectorBenchmarkConfig
+
+
+@dataclass(frozen=True)
+class ForwardSinogramBenchmarkConfig:
+    nx: int = 64
+    ny: int = 64
+    nz: int = 64
+    nu: int = 64
+    nv: int = 64
+    n_views: int = 90
+    n_steps: int | None = None
+    step_size: float | None = None
+    seed: int = 0
+    warm_runs: int = 5
+    gather_dtype: str = "fp32"
+    unroll: int | None = None
+    use_checkpoint: bool = True
+    include_pallas: bool = True
+
+
+@dataclass(frozen=True)
+class ForwardSinogramFixture:
+    grid: Grid
+    detector: Detector
+    T_stack: jnp.ndarray
+    volume: jnp.ndarray
+    det_grid: tuple[jnp.ndarray, jnp.ndarray]
+
+
+@dataclass(frozen=True)
+class ForwardSinogramSuiteCase:
+    name: str
+    config: ForwardSinogramBenchmarkConfig
 
 
 def preset_config(name: str) -> ForwardProjectorBenchmarkConfig:
@@ -170,7 +206,52 @@ def suite_cases(name: str) -> tuple[ForwardProjectorSuiteCase, ...]:
                 preset_config("high-ray-count-192"),
             ),
         )
-    raise ValueError(f"suite must be one of: {', '.join(SUITE_NAMES)}")
+    raise ValueError(f"suite must be one of: {', '.join(FORWARD_SUITE_NAMES)}")
+
+
+def sinogram_suite_cases(name: str) -> tuple[ForwardSinogramSuiteCase, ...]:
+    """Return the named full volume-to-sinogram suite."""
+    if name != "sinogram":
+        raise ValueError(f"sinogram suite must be one of: {', '.join(SINOGRAM_SUITE_NAMES)}")
+    return (
+        ForwardSinogramSuiteCase(
+            "sinogram-64",
+            ForwardSinogramBenchmarkConfig(
+                nx=64,
+                ny=64,
+                nz=64,
+                nu=64,
+                nv=64,
+                n_views=90,
+                warm_runs=5,
+            ),
+        ),
+        ForwardSinogramSuiteCase(
+            "sinogram-128",
+            ForwardSinogramBenchmarkConfig(
+                nx=128,
+                ny=128,
+                nz=128,
+                nu=128,
+                nv=128,
+                n_views=180,
+                warm_runs=5,
+            ),
+        ),
+        ForwardSinogramSuiteCase(
+            "high-ray-sinogram-128",
+            ForwardSinogramBenchmarkConfig(
+                nx=128,
+                ny=128,
+                nz=128,
+                nu=256,
+                nv=256,
+                n_views=90,
+                step_size=0.5,
+                warm_runs=5,
+            ),
+        ),
+    )
 
 
 def make_forward_projector_fixture(
@@ -201,6 +282,42 @@ def make_forward_projector_fixture(
         grid=grid,
         detector=detector,
         T=jnp.asarray(geometry.pose_for_view(0), dtype=jnp.float32),
+        volume=jnp.asarray(volume_np, dtype=jnp.float32),
+        det_grid=get_detector_grid_device(detector),
+    )
+
+
+def make_forward_sinogram_fixture(
+    config: ForwardSinogramBenchmarkConfig,
+) -> ForwardSinogramFixture:
+    """Build a deterministic multi-view fixture for full sinogram benchmarking."""
+    grid = Grid(
+        nx=int(config.nx),
+        ny=int(config.ny),
+        nz=int(config.nz),
+        vx=1.0,
+        vy=1.0,
+        vz=1.0,
+    )
+    detector = Detector(
+        nu=int(config.nu),
+        nv=int(config.nv),
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    thetas = np.linspace(0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32)
+    geometry = ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
+    rng = np.random.default_rng(int(config.seed))
+    volume_np = np.abs(rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32))
+    T_stack = jnp.asarray(
+        np.stack([np.asarray(geometry.pose_for_view(i), dtype=np.float32) for i in range(len(thetas))]),
+        dtype=jnp.float32,
+    )
+    return ForwardSinogramFixture(
+        grid=grid,
+        detector=detector,
+        T_stack=T_stack,
         volume=jnp.asarray(volume_np, dtype=jnp.float32),
         det_grid=get_detector_grid_device(detector),
     )
@@ -246,6 +363,26 @@ def _fixture_metadata(
     }
 
 
+def _sinogram_fixture_metadata(
+    fixture: ForwardSinogramFixture,
+    config: ForwardSinogramBenchmarkConfig,
+) -> dict[str, Any]:
+    step_size = float(config.step_size if config.step_size is not None else fixture.grid.vy)
+    resolved_n_steps = _resolve_n_steps(fixture.grid, step_size, config.n_steps)
+    n_rays_per_view = int(fixture.detector.nu) * int(fixture.detector.nv)
+    n_views = int(config.n_views)
+    return {
+        "volume_shape": [int(fixture.grid.nx), int(fixture.grid.ny), int(fixture.grid.nz)],
+        "detector_shape": [int(fixture.detector.nv), int(fixture.detector.nu)],
+        "n_views": n_views,
+        "n_rays_per_view": n_rays_per_view,
+        "n_rays_total": int(n_rays_per_view * n_views),
+        "step_size": step_size,
+        "resolved_n_steps": int(resolved_n_steps),
+        "total_ray_steps": int(n_rays_per_view * n_views * resolved_n_steps),
+    }
+
+
 def _resolve_pallas_callable() -> tuple[Callable[..., jnp.ndarray] | None, str | None]:
     try:
         module = importlib.import_module("tomojax.core.pallas_projector")
@@ -275,6 +412,50 @@ def _call_jax(
     )
 
 
+def _call_jax_sinogram_loop(
+    fixture: ForwardSinogramFixture,
+    config: ForwardSinogramBenchmarkConfig,
+) -> jnp.ndarray:
+    images = [
+        forward_project_view_T(
+            fixture.T_stack[index],
+            fixture.grid,
+            fixture.detector,
+            fixture.volume,
+            step_size=config.step_size,
+            n_steps=config.n_steps,
+            use_checkpoint=config.use_checkpoint,
+            unroll=config.unroll,
+            gather_dtype=config.gather_dtype,
+            det_grid=fixture.det_grid,
+        )
+        for index in range(int(config.n_views))
+    ]
+    return jnp.stack(images, axis=0)
+
+
+def _make_jax_sinogram_vmap_callable(
+    fixture: ForwardSinogramFixture,
+    config: ForwardSinogramBenchmarkConfig,
+) -> Callable[[], jnp.ndarray]:
+    def project_one(T: jnp.ndarray) -> jnp.ndarray:
+        return forward_project_view_T(
+            T,
+            fixture.grid,
+            fixture.detector,
+            fixture.volume,
+            step_size=config.step_size,
+            n_steps=config.n_steps,
+            use_checkpoint=config.use_checkpoint,
+            unroll=config.unroll,
+            gather_dtype=config.gather_dtype,
+            det_grid=fixture.det_grid,
+        )
+
+    project_all = jax.jit(jax.vmap(project_one))
+    return lambda: project_all(fixture.T_stack)
+
+
 def _make_backend_callable(
     requested_backend: BackendName,
     fixture: ForwardProjectorFixture,
@@ -301,6 +482,40 @@ def _make_backend_callable(
         )
 
     return call_pallas, "pallas", None
+
+
+def _make_sinogram_callable(
+    requested_mode: SinogramModeName,
+    fixture: ForwardSinogramFixture,
+    config: ForwardSinogramBenchmarkConfig,
+) -> tuple[Callable[[], jnp.ndarray], str, str | None]:
+    if requested_mode == "jax_loop":
+        return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", None
+    if requested_mode == "jax_vmap":
+        return _make_jax_sinogram_vmap_callable(fixture, config), "jax_vmap", None
+
+    pallas_fn, fallback_reason = _resolve_pallas_callable()
+    if pallas_fn is None:
+        return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", fallback_reason
+
+    def call_pallas_loop() -> jnp.ndarray:
+        images = [
+            pallas_fn(
+                fixture.T_stack[index],
+                fixture.grid,
+                fixture.detector,
+                fixture.volume,
+                step_size=config.step_size,
+                n_steps=config.n_steps,
+                unroll=config.unroll,
+                gather_dtype=config.gather_dtype,
+                det_grid=fixture.det_grid,
+            )
+            for index in range(int(config.n_views))
+        ]
+        return jnp.stack(images, axis=0)
+
+    return call_pallas_loop, "pallas_loop", None
 
 
 def _time_blocked_call(fn: Callable[[], Any]) -> tuple[float, Any]:
@@ -374,6 +589,45 @@ def benchmark_backend(
     return result, first_output
 
 
+def benchmark_sinogram_mode(
+    requested_mode: SinogramModeName,
+    fixture: ForwardSinogramFixture,
+    config: ForwardSinogramBenchmarkConfig,
+    *,
+    oracle: jnp.ndarray | None = None,
+    best_jax_median: float | None = None,
+) -> tuple[dict[str, Any], jnp.ndarray]:
+    """Run first-call and warm-call timings for one full-sinogram mode."""
+    call, actual_mode, fallback_reason = _make_sinogram_callable(requested_mode, fixture, config)
+    first_seconds, first_output = _time_blocked_call(call)
+
+    warm_seconds: list[float] = []
+    warm_output = first_output
+    for _ in range(max(0, int(config.warm_runs))):
+        seconds, warm_output = _time_blocked_call(call)
+        warm_seconds.append(float(seconds))
+
+    reference = first_output if oracle is None else oracle
+    result = {
+        "requested_mode": requested_mode,
+        "actual_mode": actual_mode,
+        "fallback_reason": fallback_reason,
+        "eligible_for_speed_claim": bool(requested_mode == actual_mode),
+        "first_call_seconds": float(first_seconds),
+        **_timing_summary(warm_seconds),
+        **_error_metrics(warm_output, reference),
+    }
+    result["speedup_vs_best_jax_warm_median"] = (
+        _speedup(
+            baseline=best_jax_median,
+            candidate=result["warm_seconds_median"],
+        )
+        if requested_mode == actual_mode and requested_mode == "pallas_loop"
+        else None
+    )
+    return result, first_output
+
+
 def run_forward_projector_benchmark(
     config: ForwardProjectorBenchmarkConfig,
 ) -> dict[str, Any]:
@@ -403,6 +657,43 @@ def run_forward_projector_benchmark(
     }
 
 
+def run_forward_sinogram_benchmark(
+    config: ForwardSinogramBenchmarkConfig,
+) -> dict[str, Any]:
+    """Compare full volume-to-sinogram forward projection modes."""
+    fixture = make_forward_sinogram_fixture(config)
+    jax_loop_result, oracle = benchmark_sinogram_mode("jax_loop", fixture, config)
+    jax_vmap_result, _ = benchmark_sinogram_mode("jax_vmap", fixture, config, oracle=oracle)
+    best_jax_median = min(
+        value
+        for value in (
+            jax_loop_result["warm_seconds_median"],
+            jax_vmap_result["warm_seconds_median"],
+        )
+        if value is not None
+    )
+    results = [jax_loop_result, jax_vmap_result]
+    if config.include_pallas:
+        pallas_result, _ = benchmark_sinogram_mode(
+            "pallas_loop",
+            fixture,
+            config,
+            oracle=oracle,
+            best_jax_median=best_jax_median,
+        )
+        results.append(pallas_result)
+
+    return {
+        "benchmark": "forward_sinogram",
+        "fixture_backend": "jax_loop",
+        "config": asdict(config),
+        "fixture": _sinogram_fixture_metadata(fixture, config),
+        "device": _device_metadata(),
+        "best_jax_warm_seconds_median": float(best_jax_median),
+        "results": results,
+    }
+
+
 def run_forward_projector_suite(
     name: str,
     *,
@@ -420,6 +711,27 @@ def run_forward_projector_suite(
         "suite": name,
         "device": _device_metadata(),
         "summary": _suite_summary(case_metrics),
+        "cases": case_metrics,
+    }
+
+
+def run_forward_sinogram_suite(
+    name: str = "sinogram",
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run full volume-to-sinogram benchmark cases."""
+    case_metrics: list[dict[str, Any]] = []
+    for case in sinogram_suite_cases(name):
+        config = replace(case.config, **(overrides or {}))
+        metrics = run_forward_sinogram_benchmark(config)
+        metrics["case_name"] = case.name
+        case_metrics.append(metrics)
+    return {
+        "benchmark": "forward_sinogram_suite",
+        "suite": name,
+        "device": _device_metadata(),
+        "summary": _sinogram_suite_summary(case_metrics),
         "cases": case_metrics,
     }
 
@@ -444,6 +756,29 @@ def _suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "geomean_speedup_vs_jax_warm_median": _geomean(speedups),
         "worst_case_speedup_vs_jax_warm_median": min(speedups) if speedups else None,
         "best_case_speedup_vs_jax_warm_median": max(speedups) if speedups else None,
+    }
+
+
+def _sinogram_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    pallas_rows = [
+        row
+        for case in cases
+        for row in case.get("results", [])
+        if row.get("requested_mode") == "pallas_loop"
+    ]
+    speedups = [
+        float(row["speedup_vs_best_jax_warm_median"])
+        for row in pallas_rows
+        if row.get("speedup_vs_best_jax_warm_median") is not None
+    ]
+    return {
+        "cases_total": len(cases),
+        "cases_with_requested_pallas": len(pallas_rows),
+        "cases_pallas_eligible": sum(1 for row in pallas_rows if row.get("eligible_for_speed_claim")),
+        "cases_parity_passed": sum(1 for row in pallas_rows if _parity_passed(row)),
+        "geomean_speedup_vs_best_jax_warm_median": _geomean(speedups),
+        "worst_case_speedup_vs_best_jax_warm_median": min(speedups) if speedups else None,
+        "best_case_speedup_vs_best_jax_warm_median": max(speedups) if speedups else None,
     }
 
 

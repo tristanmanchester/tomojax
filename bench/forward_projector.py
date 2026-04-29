@@ -11,6 +11,7 @@ from tomojax.bench.forward_projector import (
     PRESET_NAMES,
     SUITE_NAMES,
     preset_config,
+    run_forward_sinogram_suite,
     run_forward_projector_benchmark,
     run_forward_projector_suite,
     write_benchmark_json,
@@ -100,7 +101,9 @@ def _suite_overrides_from_args(args: argparse.Namespace) -> dict[str, object]:
 def main() -> None:
     args = _parse_args()
     metrics = (
-        run_forward_projector_suite(args.suite, overrides=_suite_overrides_from_args(args))
+        run_forward_sinogram_suite(args.suite, overrides=_suite_overrides_from_args(args))
+        if args.suite == "sinogram"
+        else run_forward_projector_suite(args.suite, overrides=_suite_overrides_from_args(args))
         if args.suite
         else run_forward_projector_benchmark(_config_from_args(args))
     )

@@ -133,6 +133,7 @@ uv run python bench/forward_projector.py --preset high-ray-count-128 --out bench
 uv run python bench/forward_projector.py --suite quick --out bench/out/forward_projector_quick.json
 uv run python bench/forward_projector.py --suite confirm --out bench/out/forward_projector_confirm.json
 uv run python bench/forward_projector.py --suite stress --out bench/out/forward_projector_stress.json
+uv run python bench/forward_projector.py --suite sinogram --out bench/out/forward_projector_sinogram.json
 ```
 
 The forward-projector benchmark always builds the fixture with the current JAX projector as the
@@ -149,6 +150,11 @@ Use `--suite stress` after a promising confirmation run to catch scaling and sha
 failures before wiring the kernel into workflow profiles. The stress suite runs `large-cubic-192`,
 `thin-noncubic-192`, `fine-step-128`, and `high-ray-count-192` with 15 warm repeats each. It is
 still a forward-only kernel benchmark, not an end-to-end reconstruction or alignment claim.
+Use `--suite sinogram` for the full volume-to-projection-stack tier. It runs `sinogram-64`,
+`sinogram-128`, and `high-ray-sinogram-128`, measuring a JAX single-view loop, a JAX `vmap`
+baseline across all views, and the requested Pallas single-view loop. Requested Pallas results are
+compared against the best JAX warm median, not just the loop baseline, so the suite cannot claim a
+workflow-relevant speedup by beating a weaker dispatch shape.
 
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline

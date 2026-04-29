@@ -7,17 +7,23 @@ import jax.numpy as jnp
 import pytest
 
 from tomojax.bench.forward_projector import (
+    FORWARD_SUITE_NAMES,
     ForwardProjectorBenchmarkConfig,
+    ForwardSinogramBenchmarkConfig,
     PRESET_NAMES,
+    SINOGRAM_SUITE_NAMES,
     SUITE_NAMES,
-    _geomean,
     _block_tree_ready,
+    _geomean,
     _time_blocked_call,
     benchmark_backend,
+    benchmark_sinogram_mode,
     make_forward_projector_fixture,
     preset_config,
+    run_forward_sinogram_suite,
     run_forward_projector_benchmark,
     run_forward_projector_suite,
+    sinogram_suite_cases,
     suite_cases,
     write_benchmark_json,
 )
@@ -31,6 +37,11 @@ def test_preset_config_rejects_unknown_name() -> None:
 def test_suite_cases_rejects_unknown_name() -> None:
     with pytest.raises(ValueError, match="suite must be one of"):
         suite_cases("unknown")
+
+
+def test_sinogram_suite_cases_rejects_unknown_name() -> None:
+    with pytest.raises(ValueError, match="sinogram suite must be one of"):
+        sinogram_suite_cases("unknown")
 
 
 @pytest.mark.parametrize("preset_name", PRESET_NAMES)
@@ -55,7 +66,7 @@ def test_preset_config_returns_named_workloads(preset_name: str) -> None:
         assert config.step_size == pytest.approx(0.25)
 
 
-@pytest.mark.parametrize("suite_name", SUITE_NAMES)
+@pytest.mark.parametrize("suite_name", FORWARD_SUITE_NAMES)
 def test_suite_cases_returns_named_workloads(suite_name: str) -> None:
     cases = suite_cases(suite_name)
 
@@ -80,6 +91,20 @@ def test_suite_cases_returns_named_workloads(suite_name: str) -> None:
         assert all(case.config.warm_runs == 15 for case in cases)
         assert any(case.config.step_size == 0.25 for case in cases)
         assert any(case.config.nu * case.config.nv > 100_000 for case in cases)
+
+
+@pytest.mark.parametrize("suite_name", SINOGRAM_SUITE_NAMES)
+def test_sinogram_suite_cases_returns_full_projection_workloads(suite_name: str) -> None:
+    cases = sinogram_suite_cases(suite_name)
+
+    assert [case.name for case in cases] == [
+        "sinogram-64",
+        "sinogram-128",
+        "high-ray-sinogram-128",
+    ]
+    assert all(case.config.n_views > 1 for case in cases)
+    assert any(case.config.n_views >= 180 for case in cases)
+    assert any(case.config.nu * case.config.nv > 60_000 for case in cases)
 
 
 def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
@@ -115,6 +140,42 @@ def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
         assert pallas_row["fallback_reason"]
         assert pallas_row["speedup_vs_jax_warm_median"] is None
     assert pallas_row["max_abs_error"] == pytest.approx(0.0)
+
+
+def test_sinogram_mode_reports_vmap_and_loop_parity(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakeFixture:
+        T_stack = [0, 1]
+
+    config = ForwardSinogramBenchmarkConfig(n_views=2, warm_runs=1)
+
+    def fake_make_callable(requested_mode, _fixture, _config):
+        def call():
+            calls.append(requested_mode)
+            return jnp.ones((2, 2, 2), dtype=jnp.float32)
+
+        return call, requested_mode, None
+
+    monkeypatch.setattr(
+        "tomojax.bench.forward_projector._make_sinogram_callable",
+        fake_make_callable,
+    )
+
+    result, output = benchmark_sinogram_mode(
+        "jax_vmap",
+        FakeFixture(),  # type: ignore[arg-type]
+        config,
+        oracle=jnp.ones((2, 2, 2), dtype=jnp.float32),
+    )
+
+    assert output.shape == (2, 2, 2)
+    assert calls == ["jax_vmap", "jax_vmap"]
+    assert result["requested_mode"] == "jax_vmap"
+    assert result["actual_mode"] == "jax_vmap"
+    assert result["eligible_for_speed_claim"] is True
+    assert result["warm_runs"] == 1
+    assert result["max_abs_error"] == pytest.approx(0.0)
 
 
 def test_forward_projector_suite_reports_cases_and_summary(
@@ -175,6 +236,80 @@ def test_forward_projector_suite_reports_cases_and_summary(
         "worst_case_speedup_vs_jax_warm_median": 2.0,
         "best_case_speedup_vs_jax_warm_median": 2.0,
     }
+
+
+def test_forward_sinogram_suite_reports_cases_and_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, int, bool]] = []
+
+    def fake_run(config: ForwardSinogramBenchmarkConfig) -> dict:
+        calls.append((config.n_views, config.warm_runs, config.include_pallas))
+        return {
+            "benchmark": "forward_sinogram",
+            "fixture_backend": "jax_loop",
+            "config": {"warm_runs": config.warm_runs, "n_views": config.n_views},
+            "fixture": {"total_ray_steps": 1},
+            "device": {},
+            "best_jax_warm_seconds_median": 2.0,
+            "results": [
+                {
+                    "requested_mode": "jax_loop",
+                    "actual_mode": "jax_loop",
+                    "eligible_for_speed_claim": True,
+                    "warm_seconds_median": 2.0,
+                    "finite": True,
+                    "max_abs_error": 0.0,
+                    "max_relative_error": 0.0,
+                },
+                {
+                    "requested_mode": "jax_vmap",
+                    "actual_mode": "jax_vmap",
+                    "eligible_for_speed_claim": True,
+                    "warm_seconds_median": 1.5,
+                    "finite": True,
+                    "max_abs_error": 0.0,
+                    "max_relative_error": 0.0,
+                },
+                {
+                    "requested_mode": "pallas_loop",
+                    "actual_mode": "pallas_loop",
+                    "eligible_for_speed_claim": True,
+                    "warm_seconds_median": 1.0,
+                    "speedup_vs_best_jax_warm_median": 2.0,
+                    "finite": True,
+                    "max_abs_error": 0.0,
+                    "max_relative_error": 0.0,
+                },
+            ],
+        }
+
+    monkeypatch.setattr("tomojax.bench.forward_projector.run_forward_sinogram_benchmark", fake_run)
+    monkeypatch.setattr("tomojax.bench.forward_projector._device_metadata", lambda: {"test": True})
+
+    metrics = run_forward_sinogram_suite("sinogram", overrides={"warm_runs": 2})
+
+    assert metrics["benchmark"] == "forward_sinogram_suite"
+    assert metrics["suite"] == "sinogram"
+    assert [case["case_name"] for case in metrics["cases"]] == [
+        "sinogram-64",
+        "sinogram-128",
+        "high-ray-sinogram-128",
+    ]
+    assert calls == [(90, 2, True), (180, 2, True), (90, 2, True)]
+    assert metrics["summary"] == {
+        "cases_total": 3,
+        "cases_with_requested_pallas": 3,
+        "cases_pallas_eligible": 3,
+        "cases_parity_passed": 3,
+        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(2.0),
+        "worst_case_speedup_vs_best_jax_warm_median": 2.0,
+        "best_case_speedup_vs_best_jax_warm_median": 2.0,
+    }
+
+
+def test_public_suite_names_include_sinogram() -> None:
+    assert "sinogram" in SUITE_NAMES
 
 
 def test_geomean_returns_none_for_empty_or_invalid_values() -> None:
