@@ -594,6 +594,20 @@ until there is a separate API decision about state lifetime and invalidation.
 U6 remains the next workflow-relevance step because cached single-view calls do
 not address the Python-loop-vs-`vmap` sinogram gap by themselves.
 
+**Follow-up result, 2026-04-29:** Accepted a bound fixed-geometry callable for
+the repeated-volume form of cached state. The first cached implementation still
+rebuilt the `pallas_call` wrapper on every timed call, so it mixed useful kernel
+work with Python/Pallas call construction overhead. The bound callable prepares
+the traversal state and the Pallas callable once, then projects each new volume
+through the same fixed-geometry launch. A sanity check on the RTX 4070 Laptop
+GPU verified that output changes when the volume changes, parity remains exact,
+and the bound call removes the wrapper overhead: for a `128^3` confirm-like
+case, bound cached median time was about `0.00027s`, compared with `0.055s` for
+the older `with_state` helper and `0.098s` for the JAX oracle. The queued
+confirm/stress bound-cached sweep was also parity-clean. This is not a general
+single-call projector claim; it is evidence that fixed-geometry iterative
+workflows should bind once and reuse the callable for repeated volumes.
+
 ---
 
 - U6. **Add Batched-View Pallas Sinogram Mode**
