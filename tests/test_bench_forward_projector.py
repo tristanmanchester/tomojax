@@ -186,7 +186,7 @@ def test_benchmark_backend_records_pallas_variant_metadata(
     assert result["actual_pallas_variant"] == {
         "tile_shape": [4, 8],
         "num_warps": 1,
-        "kernel_variant": "generic",
+        "kernel_variant": "z_integer4",
         "layout_variant": "detector_vu",
         "state_mode": "inline",
         "gather_dtype": "fp32",
@@ -203,7 +203,7 @@ def test_forward_projector_benchmark_records_invalid_pallas_variant_fallback() -
         nu=2,
         nv=2,
         warm_runs=1,
-        pallas_kernel_variant="z_integer4",
+        pallas_kernel_variant="z_locked8",
     )
 
     metrics = run_forward_projector_benchmark(config)
@@ -212,7 +212,7 @@ def test_forward_projector_benchmark_records_invalid_pallas_variant_fallback() -
     assert pallas_row["actual_backend"] == "jax"
     assert pallas_row["eligible_for_speed_claim"] is False
     assert "kernel_variant" in pallas_row["fallback_reason"]
-    assert pallas_row["requested_pallas_variant"]["kernel_variant"] == "z_integer4"
+    assert pallas_row["requested_pallas_variant"]["kernel_variant"] == "z_locked8"
     assert pallas_row["actual_pallas_variant"] is None
 
 
@@ -255,11 +255,15 @@ def test_sinogram_mode_reports_vmap_and_loop_parity(monkeypatch: pytest.MonkeyPa
 def test_sinogram_mode_records_pallas_variant_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    base_fixture = make_forward_projector_fixture(
+        ForwardProjectorBenchmarkConfig(nx=2, ny=2, nz=2, nu=2, nv=2)
+    )
+
     class FakeFixture:
-        grid = make_forward_projector_fixture(
-            ForwardProjectorBenchmarkConfig(nx=2, ny=2, nz=2, nu=2, nv=2)
-        ).grid
-        T_stack = [0, 1]
+        grid = base_fixture.grid
+        detector = base_fixture.detector
+        det_grid = base_fixture.det_grid
+        T_stack = [base_fixture.T, base_fixture.T]
 
     config = ForwardSinogramBenchmarkConfig(
         nx=2,

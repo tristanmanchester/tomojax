@@ -465,12 +465,17 @@ def _pallas_actual_variant_metadata(
     module, fallback_reason = _resolve_pallas_module()
     if module is None:
         return {"metadata_error": fallback_reason}
-    metadata_fn = getattr(module, "pallas_projector_variant_metadata", None)
+    metadata_fn = getattr(module, "pallas_projector_actual_variant_metadata", None)
     traversal_metadata_fn = getattr(module, "pallas_projector_traversal_metadata", None)
     if metadata_fn is None:
-        return {"metadata_error": "pallas_variant_metadata_missing"}
+        return {"metadata_error": "pallas_actual_variant_metadata_missing"}
+    T = fixture.T if isinstance(fixture, ForwardProjectorFixture) else fixture.T_stack[0]
     try:
         metadata = metadata_fn(
+            T,
+            fixture.grid,
+            fixture.detector,
+            det_grid=fixture.det_grid,
             tile_shape=config.pallas_tile_shape,
             num_warps=config.pallas_num_warps,
             kernel_variant=config.pallas_kernel_variant,
@@ -480,7 +485,6 @@ def _pallas_actual_variant_metadata(
         )
     except Exception as exc:
         return {"metadata_error": f"pallas_variant_metadata_failed: {exc}"}
-    T = fixture.T if isinstance(fixture, ForwardProjectorFixture) else fixture.T_stack[0]
     if traversal_metadata_fn is None:
         step_size = float(config.step_size if config.step_size is not None else fixture.grid.vy)
         resolved_n_steps = _resolve_n_steps(fixture.grid, step_size, config.n_steps)

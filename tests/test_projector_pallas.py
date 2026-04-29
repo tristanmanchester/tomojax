@@ -8,6 +8,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     forward_project_view_T_pallas,
+    pallas_projector_actual_variant_metadata,
     pallas_projector_traversal_metadata,
     pallas_projector_variant_metadata,
 )
@@ -162,6 +163,25 @@ def test_pallas_forward_project_accepts_explicit_supported_variant_controls() ->
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
 
 
+def test_pallas_forward_project_z_integer_variant_matches_jax() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(37.0, grid=grid, detector=detector)
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+
+    _assert_matches_jax(T, grid, detector, volume)
+    explicit = forward_project_view_T_pallas(
+        T,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        kernel_variant="z_integer4",
+    )
+    oracle = forward_project_view_T(T, grid, detector, volume)
+    np.testing.assert_allclose(np.asarray(explicit), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
 def test_pallas_variant_metadata_normalizes_auto_to_generic() -> None:
     metadata = pallas_projector_variant_metadata(
         tile_shape=(4, 8),
@@ -180,6 +200,21 @@ def test_pallas_variant_metadata_normalizes_auto_to_generic() -> None:
         "state_mode": "inline",
         "gather_dtype": "fp32",
     }
+
+
+def test_pallas_actual_variant_metadata_selects_z_integer_for_auto() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(37.0, grid=grid, detector=detector)
+
+    metadata = pallas_projector_actual_variant_metadata(
+        T,
+        grid,
+        detector,
+        kernel_variant="auto",
+    )
+
+    assert metadata["kernel_variant"] == "z_integer4"
 
 
 def test_pallas_traversal_metadata_tightens_default_diagonal_bound() -> None:
@@ -224,7 +259,7 @@ def test_pallas_forward_project_rejects_unsupported_gather_dtype(gather_dtype: s
     ("kwargs", "message"),
     [
         ({"num_warps": 3}, "num_warps"),
-        ({"kernel_variant": "z_integer4"}, "kernel_variant"),
+        ({"kernel_variant": "z_locked8"}, "kernel_variant"),
         ({"layout_variant": "detector_uv"}, "layout_variant"),
         ({"state_mode": "cached"}, "state_mode"),
     ],
@@ -246,6 +281,23 @@ def test_pallas_forward_project_rejects_unsupported_variant_controls(
             volume,
             interpret=True,
             **kwargs,
+        )
+
+
+def test_pallas_forward_project_rejects_z_integer_when_detector_is_not_aligned() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0, vol_center=(0.0, 0.0, 0.25))
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(grid=grid, detector=detector)
+    volume = jnp.ones((8, 8, 8), dtype=jnp.float32)
+
+    with pytest.raises(PallasProjectorUnsupported, match="z_integer4"):
+        forward_project_view_T_pallas(
+            T,
+            grid,
+            detector,
+            volume,
+            interpret=True,
+            kernel_variant="z_integer4",
         )
 
 
