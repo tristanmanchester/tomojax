@@ -1,0 +1,792 @@
+---
+title: feat: Optimize Pallas Forward Projector V2
+type: feat
+status: active
+date: 2026-04-29
+origin: docs/brainstorms/2026-04-27-pallas-forward-projector-requirements.md
+---
+
+# feat: Optimize Pallas Forward Projector V2
+
+## Summary
+
+Build the next Pallas forward-projector iteration as a gated optimization series:
+first strengthen benchmark controls and metadata, then reduce generic per-view
+work, then add geometry-specific fast paths and tuning, and only then attempt
+batched sinogram or fused residual kernels. The default JAX projector remains
+the oracle and fallback throughout.
+
+---
+
+## Problem Frame
+
+The first experimental Pallas kernel proved the basic bet only for high-ray
+single-view cases: it ran real Pallas on the RTX 4070 Laptop GPU, matched JAX
+exactly, and reached about `1.24x` on `quick`, but `confirm` and `stress`
+geomeans stayed below `1.0x`. The full sinogram suite also showed that a
+Python loop over single-view Pallas calls is not workflow-relevant against JAX
+`vmap`.
+
+V2 should therefore change the kernel work, not just tune the current `8x8`
+Triton tile indefinitely. The plan preserves the original spike boundaries
+while sequencing the improvements so each one can be accepted, rejected, or
+rolled back independently.
+
+---
+
+## Requirements
+
+- R1. Preserve the original experimental contract: Pallas remains opt-in,
+  JAX remains the default projector, and JAX remains the correctness oracle
+  (see origin: `docs/brainstorms/2026-04-27-pallas-forward-projector-requirements.md`).
+- R2. Preserve the current geometry contract for `T` as `world_from_object`,
+  world `+y` rays, object-frame sampling, detector orientation, volume origin,
+  support bounds, flat volume layout, and `(nv, nu)` output shape.
+- R3. Keep all Pallas benchmark speed claims gated by actual backend
+  eligibility, finite outputs, parity, and same-fixture JAX comparison.
+- R4. Record enough Pallas variant metadata to make benchmark results
+  reproducible: tile shape, layout variant, kernel variant, `num_warps`,
+  resolved JAX traversal count, effective Pallas traversal count, and support
+  or fallback reason.
+- R5. Improve the generic per-view kernel first by eliminating provably zero
+  loop work and masking inactive loads before introducing geometry-specific
+  fast paths.
+- R6. Add conservative geometry-specific fast paths only when a host-side
+  predicate proves they preserve the JAX oracle semantics; unsupported geometry
+  must fall back to the generic Pallas kernel, not silently switch to JAX.
+- R7. Add benchmark-controlled tuning knobs so tile shape, layout orientation,
+  `num_warps`, kernel variant, and state mode can be measured without manual
+  code edits.
+- R8. Treat cached traversal state as a separate benchmark mode with inclusive
+  and cached timings, not as a hidden drop-in speed claim.
+- R9. Add a batched-view Pallas sinogram path only after the per-view body is
+  faster on `confirm` and `stress`; judge batched sinogram only against the
+  best JAX sinogram median, not against the weaker JAX loop.
+- R10. Keep fused residual/reduction work separate from the forward-image API
+  and require its own benchmark evidence before it is used for workflow claims.
+- R11. Add or extend CPU `interpret=True` tests for each Pallas variant and
+  benchmark-harness tests for every new metadata field or mode.
+- R12. Preserve the original non-goals: no Pallas default backend, no
+  backprojection replacement, no custom VJP/JVP, no differentiated alignment
+  hot-path claims, and no broad geometry support before one common profile-like
+  shape is clearly faster.
+
+**Origin actors:** A1 TomoJAX developer, A2 benchmark harness, A3 existing JAX
+projector, A4 Pallas runtime/backend.
+
+**Origin flows:** F1 forward-kernel parity check, F2 quick microbenchmark, F3
+profile-level benchmark.
+
+**Origin acceptance examples:** AE1 parity on a small uniform fixture, AE2 clean
+fallback on unsupported hardware, AE3 benchmark metadata and timings, AE4
+microbenchmark-only wins remain inconclusive.
+
+---
+
+## Scope Boundaries
+
+- Do not replace `forward_project_view_T`, `backproject_view_T`,
+  `_trilinear_scatter_add`, or `sum_backproject_views_T`.
+- Do not make Pallas the default backend.
+- Do not claim a full sinogram or workflow speedup from `pallas_loop`; only a
+  batched-view Pallas mode can compete with JAX `vmap`.
+- Do not hide cached-state preparation cost inside a generic Pallas result.
+- Do not support arbitrary calibrated or traced detector grids in fast paths
+  unless a support predicate proves they are equivalent to the current oracle
+  semantics.
+- Do not broaden `gather_dtype` support beyond `fp32` in this plan unless a
+  later implementation unit explicitly adds tests and benchmark gates for it.
+- Do not introduce custom derivative support or use Pallas in differentiated
+  alignment objectives.
+- Do not fold fused residual/reduction work into the forward-image API.
+
+### Deferred to Follow-Up Work
+
+- Pallas backprojection kernels and adjoint parity: separate plan after the
+  forward-image and batched-sinogram results justify deeper investment.
+- Pallas custom VJP/JVP or differentiated alignment support: separate
+  derivative-design plan.
+- Native `bf16` / `fp16` Pallas gather modes: separate precision-support unit
+  after V2 fp32 performance is understood.
+- Lower-level Mosaic GPU pipelining or `core_map`: defer unless Triton-backed
+  Pallas hits a proven ceiling that the current benchmark suite can expose.
+
+---
+
+## Context & Research
+
+### Relevant Code and Patterns
+
+- `src/tomojax/core/projector.py` is the geometry and numerical oracle.
+  `_projector_traversal_state`, `_resolve_n_steps`, and `_trilinear_gather`
+  define traversal bounds, sample counts, flat indexing, clipped loads, and
+  masks.
+- `src/tomojax/core/pallas_projector.py` currently implements the experimental
+  single-view Pallas path with Pallas Triton `plt.load(...)`, an `8x8` default
+  tile, `fp32`-only support, CPU `interpret=True` tests, and CPU fallback for
+  real Pallas lowering.
+- `src/tomojax/bench/forward_projector.py` owns `quick`, `confirm`, `stress`,
+  and `sinogram` suites plus backend fallback and parity metadata.
+- `bench/forward_projector.py` is the CLI wrapper around the shared benchmark
+  helpers. New benchmark modes should be exposed here only after the reusable
+  config and runner support exists under `src/tomojax/bench/`.
+- `tests/test_projector_pallas.py` contains the Pallas parity surface. It
+  should grow by variant and mode rather than duplicating broad projector tests.
+- `tests/test_bench_forward_projector.py` owns benchmark-harness regressions
+  for suite structure, metadata, fallback behavior, and summaries.
+- The v1 laptop measurements are the baseline for V2 decisions:
+  - `quick`: exact parity, Pallas eligible, `1.24x` on `high-ray-count-128`.
+  - `confirm`: exact parity, Pallas eligible for all cases, geomean about
+    `0.96x`, with smaller/profile cases slower.
+  - `stress`: exact parity, Pallas eligible for all cases, geomean about
+    `0.97x`, with only `high-ray-count-192` faster.
+  - `sinogram`: exact parity and eligibility, but `pallas_loop` loses badly to
+    JAX `vmap`; high-ray sinogram was about `0.049x` versus best JAX median.
+
+### Institutional Learnings
+
+- `docs/solutions/architecture-patterns/reuse-align-multires-for-geometry-calibration-2026-04-25.md`
+  shows that optimization work should preserve streamed/chunked caller
+  contracts, report solver/backend provenance, and avoid self-consistent local
+  wins that fail at workflow scale.
+- The same learning applies here: Pallas variant metadata and actual-backend
+  fields are correctness evidence, not reporting polish.
+
+### External References
+
+- Official JAX Pallas `pallas_call` documentation for refs, `BlockSpec`,
+  `grid`, `interpret`, and backend compiler params.
+- Official JAX Pallas Grid/BlockSpec documentation for program grids and
+  block ownership.
+- Oracle kernel-candidate review from this planning session, which ranked
+  tighter loop bounds, z-locked fast paths, tile/layout autotuning, batched
+  sinogram, cached traversal state, and fused residual/reduction in that order.
+
+---
+
+## Key Technical Decisions
+
+- **Use gated optimization units rather than one broad rewrite.** Each V2
+  candidate should produce a benchmarkable diff with an explicit keep/reject
+  criterion.
+- **Keep the generic Pallas kernel as the fallback inside Pallas.** Geometry
+  fast paths should fall back to generic Pallas when unsupported, while direct
+  Pallas eligibility checks still control JAX fallback for unsupported devices
+  or public-call options.
+- **Record variant metadata before trusting speed numbers.** The benchmark JSON
+  must identify which Pallas body actually ran so later tuning does not compare
+  unlike kernels.
+- **Prefer host-side support classification for v2.** `T`, `Grid`, `Detector`,
+  and canonical detector-grid checks are already Python-bound in the public
+  wrapper; v2 fast-path predicates should stay outside JAX transforms and avoid
+  traced dynamic control.
+- **Treat JAX `vmap` as the sinogram bar.** Beating the JAX loop is not enough;
+  the sinogram suite already defines workflow relevance as beating the best JAX
+  warm median.
+- **Keep fused residual/reduction out of the projector API.** It may be useful,
+  but it answers a different product question than forward-image projection.
+
+---
+
+## Open Questions
+
+### Resolved During Planning
+
+- **Should V2 keep tuning the current `8x8` kernel only?** No. The measured
+  mixed results and Oracle review both point to reducing work and adding
+  geometry-specific kernels before further broad tuning.
+- **Should batched sinogram be next?** No. The single-view body should first
+  pass `confirm` and `stress` as a general win; otherwise batching a slow body
+  risks building a larger dispatch shape around the wrong kernel.
+- **Should cached traversal state be hidden inside the main Pallas timing?** No.
+  Cached-state prep changes benchmark semantics and must be reported separately.
+
+### Deferred to Implementation
+
+- **Exact guard for tightened loop bounds:** Choose the smallest guard that
+  preserves parity across CPU tests and GPU `stress`; the plan requires a guard
+  but leaves the value to implementation evidence.
+- **Exact z-integer tolerance:** Determine the alignment tolerance from
+  detector/grid fp32 behavior during variant tests.
+- **Winning tile/layout defaults:** Select from benchmarked variants after U4
+  records reproducible metadata.
+- **Whether cached traversal state is worth carrying:** Decide from U5 inclusive
+  and cached benchmarks, not from planning intuition.
+
+---
+
+## High-Level Technical Design
+
+> *This illustrates the intended approach and is directional guidance for
+> review, not implementation specification. The implementing agent should treat
+> it as context, not code to reproduce.*
+
+```mermaid
+flowchart TB
+    U1["U1 Benchmark Controls"]
+    U2["U2 Generic Kernel Work Reduction"]
+    U3["U3 Geometry Fast Paths"]
+    U4["U4 Tile/Layout Autotuning"]
+    U5["U5 Cached Traversal State"]
+    U6["U6 Batched Sinogram"]
+    U7["U7 Fused Residual Spike"]
+    U8["U8 Docs and Decision Record"]
+
+    U1 --> U2
+    U2 --> U3
+    U2 --> U4
+    U3 --> U4
+    U4 --> U5
+    U4 --> U6
+    U6 --> U7
+    U2 --> U8
+    U4 --> U8
+    U6 --> U8
+```
+
+The plan intentionally makes U6 and U7 gated follow-ons. U6 starts only after
+the per-view body is faster enough to justify competing with JAX `vmap`. U7
+starts only if forward-image and/or batched sinogram evidence shows
+materialization or downstream reduction is the next bottleneck.
+
+---
+
+## Implementation Units
+
+- U1. **Add Pallas Variant Controls and Benchmark Metadata**
+
+**Goal:** Make every later kernel experiment reproducible and comparable by
+threading Pallas tuning controls through the benchmark config and reporting the
+actual Pallas variant that ran.
+
+**Requirements:** R3, R4, R7, R11
+
+**Dependencies:** None
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/bench/forward_projector.py`
+- Modify: `bench/forward_projector.py`
+- Test: `tests/test_bench_forward_projector.py`
+- Test: `tests/test_projector_pallas.py`
+
+**Approach:**
+- Add benchmark-visible Pallas controls for tile shape, `num_warps`, kernel
+  variant, layout variant, and state mode while keeping public JAX projector
+  APIs unchanged.
+- Extend the Pallas support checker so unsupported controls return a fallback
+  reason before timing begins.
+- Record requested and actual Pallas variant metadata in benchmark rows and
+  fixture metadata where appropriate.
+- Keep CLI additions focused on benchmark-only controls; product APIs should not
+  gain tuning flags unless a later unit proves they are needed outside the
+  benchmark harness.
+
+**Patterns to follow:**
+- Existing `ForwardProjectorBenchmarkConfig` and suite summary fields in
+  `src/tomojax/bench/forward_projector.py`.
+- Existing Pallas fallback handling in `_pallas_unsupported_reason`.
+- Existing CLI override pattern in `bench/forward_projector.py`.
+
+**Test scenarios:**
+- Happy path: a benchmark config with explicit Pallas tile shape and `num_warps`
+  records those values in the Pallas result row.
+- Happy path: default benchmark config records the same default Pallas variant
+  currently used by `forward_project_view_T_pallas`.
+- Error path: unsupported tile shape, invalid state mode, or unknown kernel
+  variant produces a controlled fallback reason and does not mark the row
+  eligible for a Pallas speed claim.
+- Integration: suite summaries still count Pallas eligibility and parity from
+  result rows after new metadata fields are added.
+
+**Verification:**
+- Benchmark JSON is sufficient to reproduce which Pallas variant was measured.
+- Existing JAX-only benchmark behavior remains unchanged.
+
+---
+
+- U2. **Tighten Generic Kernel Loop Work**
+
+**Goal:** Improve the generic Pallas body by reducing provably inactive
+iterations and avoiding inactive memory loads while preserving the current
+eight-load trilinear semantics.
+
+**Requirements:** R1, R2, R3, R5, R11
+
+**Dependencies:** U1
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/bench/forward_projector.py`
+- Test: `tests/test_projector_pallas.py`
+- Test: `tests/test_bench_forward_projector.py`
+
+**Approach:**
+- Compute an effective Pallas loop bound from the support width along the
+  object-frame ray direction, clamped by the current `_resolve_n_steps` result.
+- Keep explicit positive `n_steps` semantics conservative: the generic Pallas
+  path may reduce work only when skipped steps are guaranteed inactive for every
+  ray in the tile.
+- Pass per-step activity into the trilinear load mask so inactive rays avoid
+  unnecessary neighbour loads where the Pallas backend honors masks.
+- Record both the oracle resolved traversal count and the effective Pallas
+  traversal count in benchmark metadata.
+
+**Execution note:** Start with CPU `interpret=True` parity tests before running
+GPU quick/confirm. The core risk is a boundary miss that only appears at
+rotated or remainder-tile edges.
+
+**Patterns to follow:**
+- `_resolve_n_steps` and `_projector_traversal_state` in
+  `src/tomojax/core/projector.py`.
+- Current `_trilinear_load` mask structure in `src/tomojax/core/pallas_projector.py`.
+
+**Test scenarios:**
+- Happy path: identity pose on a uniform `16^3` volume still returns the same
+  path-length image after tightening the loop bound.
+- Happy path: `step_size=0.5` with explicit `n_steps` still matches
+  `forward_project_view_T`.
+- Edge case: rotated non-cubic volume with detector dimensions not divisible by
+  tile shape matches the JAX oracle.
+- Edge case: fine-step fixture with long resolved JAX traversal count records a
+  smaller or equal effective Pallas count without parity drift.
+- Error path: non-finite or non-positive `step_size` remains rejected before
+  Pallas lowering.
+
+**Verification:**
+- `quick` should improve on the current Pallas median by at least 10% while
+  retaining exact or existing-threshold parity.
+- `confirm` should move `profile-128` and `noncubic-align-128` toward at least
+  parity with JAX; if it does not, the plan proceeds to U3 rather than trying
+  arbitrary loop-bound tuning.
+
+---
+
+- U3. **Add z-Locked Fast Paths**
+
+**Goal:** Add conservative Pallas variants for canonical parallel geometry that
+avoid unnecessary z-neighbour work, including a high-upside z-integer four-load
+path when detector rows align with voxel z centres.
+
+**Requirements:** R2, R3, R6, R11, R12
+
+**Dependencies:** U1, U2
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/bench/forward_projector.py`
+- Test: `tests/test_projector_pallas.py`
+- Test: `tests/test_bench_forward_projector.py`
+
+**Approach:**
+- Add host-side classification for generic eight-load, z-constant eight-load,
+  and z-integer four-load variants.
+- Require canonical detector grid, host-convertible pose, stable z mapping, and
+  strict voxel-centre alignment before selecting the four-load path.
+- Keep `kernel_variant="auto"` as the normal Pallas path and expose explicit
+  variant requests only for tests and benchmarks.
+- Fall back from unsupported fast-path variants to generic Pallas when `auto`
+  is requested; explicit unsupported fast-path requests should return a clear
+  fallback or unsupported reason.
+- Preserve flat volume indexing and explicit in-bounds zeroing.
+
+**Execution note:** Implement the support predicate and its tests before adding
+the optimized load body. This prevents accidentally benchmarking an unsafe fast
+path.
+
+**Patterns to follow:**
+- Canonical detector-grid validation in `_ensure_canonical_detector_grid`.
+- Localized voxel and `vol_center` parity tests in `tests/test_projector_pallas.py`.
+
+**Test scenarios:**
+- Happy path: canonical identity geometry classifies as a z-locked variant and
+  matches the JAX oracle.
+- Happy path: canonical rotated z-axis parallel geometry selects the fast path
+  when z is invariant along the ray and still matches JAX.
+- Edge case: detector rows outside the volume support produce zeros matching
+  the JAX oracle.
+- Edge case: `Grid.vol_center` shifts z alignment and still either selects a
+  safe fast path or falls back to generic Pallas with parity.
+- Error path: a shifted noncanonical detector grid cannot select the
+  z-integer fast path.
+- Integration: benchmark JSON records both requested and actual kernel variant.
+
+**Verification:**
+- `confirm` should pass all parity checks and reach at least `1.05x` on each
+  case before the fast path is considered a general win.
+- `stress` should show the high-ray cases clearly faster and no lower-workload
+  regression large enough to erase geomean improvement.
+
+---
+
+- U4. **Add Tile, Layout, and Warp Autotuning**
+
+**Goal:** Make tile orientation and Pallas Triton compiler parameters
+benchmarkable so the chosen default follows observed workload behavior rather
+than the current hand-picked `8x8` tile.
+
+**Requirements:** R4, R7, R11
+
+**Dependencies:** U1, U2, U3
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/bench/forward_projector.py`
+- Modify: `bench/forward_projector.py`
+- Test: `tests/test_projector_pallas.py`
+- Test: `tests/test_bench_forward_projector.py`
+- Modify: `bench/README.md`
+
+**Approach:**
+- Add benchmark modes for current `v,u` internal layout and a transposed
+  `u,v` internal compute layout that stores back to `(nv, nu)`.
+- Restrict tuning presets to power-of-two operation sizes that are reasonable
+  for Pallas Triton loads and stores.
+- Let benchmark config select `num_warps`, layout variant, and tile shape; keep
+  defaults conservative until the suite chooses a better winner.
+- Add an aggregate comparison helper or report section that identifies the best
+  variant per suite without hiding individual case regressions.
+
+**Patterns to follow:**
+- Existing suite summary functions in `src/tomojax/bench/forward_projector.py`.
+- Benchmark ownership guidance in `bench/README.md`.
+
+**Test scenarios:**
+- Happy path: benchmark config can request a non-default tile and layout
+  variant and records it in result rows.
+- Happy path: transposed internal layout returns output with the same `(nv, nu)`
+  shape and matches the JAX oracle.
+- Edge case: remainder detector dimensions still store correctly for both
+  layout variants.
+- Error path: invalid or non-power-of-two tuning presets are rejected or marked
+  unsupported with clear fallback metadata.
+- Integration: suite summaries remain stable when multiple Pallas variants are
+  measured or compared.
+
+**Verification:**
+- Keep a tuned default only if it improves the best U2/U3 kernel by at least 5%
+  on `quick` or 3% geomean on `confirm` without materially worsening the worst
+  case.
+- Reject variants that improve one high-ray case but regress ordinary profile
+  cases enough to keep `confirm` geomean below `1.05x`.
+
+---
+
+- U5. **Evaluate Cached Traversal State**
+
+**Goal:** Determine whether precomputing traversal state is useful for
+fixed-geometry iterative workflows without conflating cached timing with
+single-call projector timing.
+
+**Requirements:** R3, R4, R8, R11
+
+**Dependencies:** U1, U2, U4
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/core/projector.py` or create: `src/tomojax/core/projector_state.py`
+- Modify: `src/tomojax/bench/forward_projector.py`
+- Modify: `bench/forward_projector.py`
+- Test: `tests/test_projector_pallas.py`
+- Test: `tests/test_projector.py`
+- Test: `tests/test_bench_forward_projector.py`
+
+**Approach:**
+- Add a reusable traversal-state representation for per-ray initial voxel
+  coordinates, increments, step counts, and shape metadata.
+- Add two benchmark modes: one that includes state preparation in timing and
+  one that prepares state outside warm repeats for fixed-geometry workflows.
+- Keep state objects tied to grid, detector, pose, and traversal controls so
+  they cannot be reused silently with incompatible volumes or detectors.
+- Do not replace the inline Pallas path unless cached-state results prove a
+  broad enough win.
+
+**Patterns to follow:**
+- `_projector_traversal_state` in `src/tomojax/core/projector.py`.
+- Existing benchmark distinction between first-call and warm-call timing.
+
+**Test scenarios:**
+- Happy path: state-prepared Pallas output matches `forward_project_view_T` for
+  identity and rotated non-cubic fixtures.
+- Edge case: explicit `step_size` and explicit `n_steps` are represented in the
+  state and match the JAX oracle.
+- Error path: using state with a mismatched volume shape or detector metadata
+  raises a controlled error.
+- Integration: benchmark JSON distinguishes inline, precompute-inclusive, and
+  cached-state modes and does not mark cached timing as generic projector
+  timing.
+
+**Verification:**
+- Keep cached state only if `cached_state` improves ordinary `confirm` cases
+  without hiding large preparation cost in inclusive timing.
+- Treat this as optional if U2-U4 already make the inline kernel a strong
+  general win.
+
+---
+
+- U6. **Add Batched-View Pallas Sinogram Mode**
+
+**Goal:** Replace the Python loop over single-view Pallas calls with a
+view-batched Pallas sinogram kernel that can fairly compete with JAX `vmap`.
+
+**Requirements:** R3, R4, R9, R11, R12
+
+**Dependencies:** U1, U2, U3, U4
+
+**Files:**
+- Modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/bench/forward_projector.py`
+- Modify: `bench/forward_projector.py`
+- Test: `tests/test_projector_pallas.py`
+- Test: `tests/test_bench_forward_projector.py`
+- Modify: `bench/README.md`
+
+**Approach:**
+- Add a batched Pallas function that takes a stack of poses and writes a
+  `(n_views, nv, nu)` output stack.
+- Use a Pallas grid with an explicit view dimension plus detector tile
+  dimensions, reusing the best per-view body from U2-U4.
+- Keep `pallas_loop` in the benchmark as a control mode and add a new
+  batched-mode result row with its own eligibility and fallback metadata.
+- Support chunking by view count at the Python wrapper level if output memory
+  or compile behavior becomes problematic.
+
+**Execution note:** Do not start this unit until U2-U4 have a per-view body that
+is a credible general win. A batched dispatch shape around a slow body is not
+useful.
+
+**Patterns to follow:**
+- JAX `vmap` sinogram callable in `_make_jax_sinogram_vmap_callable`.
+- Existing sinogram suite summary and best-JAX comparison fields.
+
+**Test scenarios:**
+- Happy path: small pose stack returns `(n_views, nv, nu)` and matches the JAX
+  loop oracle.
+- Edge case: one view behaves identically to single-view Pallas for the same
+  pose and fixture.
+- Edge case: detector remainder dimensions and multiple views store all output
+  planes without overlap.
+- Error path: unsupported pose stack shape or unsupported Pallas options
+  produce fallback metadata.
+- Integration: sinogram suite reports JAX loop, JAX vmap, Pallas loop, and
+  Pallas batched modes without changing the best-JAX comparison semantics.
+
+**Verification:**
+- Accept only if `pallas_batched` passes parity and reaches at least `1.10x`
+  geomean versus best JAX median on the sinogram suite, with no individual
+  sinogram case below `1.00x`.
+- If it only beats JAX loop and still loses to JAX `vmap`, record it as a
+  dispatch improvement but not a workflow-relevant win.
+
+---
+
+- U7. **Plan and Spike Fused Residual Reduction**
+
+**Goal:** Explore a separate Pallas kernel for non-differentiated residual or
+loss reductions only if forward-image and/or batched-sinogram evidence shows
+projection materialization is the next bottleneck.
+
+**Requirements:** R1, R3, R10, R12
+
+**Dependencies:** U4, U6
+
+**Files:**
+- Create or modify: `src/tomojax/core/pallas_projector.py`
+- Modify: `src/tomojax/bench/forward_projector.py` or create a dedicated
+  benchmark helper under `src/tomojax/bench/`
+- Modify: `bench/forward_projector.py` or create a dedicated benchmark entry
+  under `bench/`
+- Test: `tests/test_projector_pallas.py`
+- Test: `tests/test_bench_forward_projector.py`
+
+**Approach:**
+- Keep fused residual/reduction as an explicitly experimental API separate from
+  `forward_project_view_T_pallas`.
+- Start with non-differentiated scoring only, such as scalar residual sums or
+  simple weighted reductions, not alignment gradient objectives.
+- Define a benchmark that compares end-to-end residual/reduction timing against
+  materialized projection plus JAX reduction.
+- Preserve provenance fields showing whether the call used fused Pallas,
+  forward-image Pallas, or JAX fallback.
+
+**Execution note:** Treat this as a gated follow-up. If U6 fails to get near
+JAX `vmap`, fused residual may still be useful, but it should get its own small
+requirements pass before implementation expands.
+
+**Patterns to follow:**
+- Existing forward-projector benchmark fixture creation and parity reporting.
+- Loss-adapter and alignment provenance lessons from `docs/solutions/`.
+
+**Test scenarios:**
+- Happy path: fused residual over a small fixed image equals materialized
+  Pallas or JAX projection followed by the same reduction.
+- Edge case: zero residual and all-zero target produce the expected scalar.
+- Error path: differentiated caller paths remain JAX-only or explicitly
+  unsupported.
+- Integration: benchmark metadata distinguishes fused residual from
+  forward-image projection timing.
+
+**Verification:**
+- Keep only if it reduces the relevant non-differentiated objective timing by
+  at least 10% while preserving parity and provenance.
+- Do not use it to claim alignment hot-path speedup without a separate
+  derivative design.
+
+---
+
+- U8. **Document Results and Promotion Criteria**
+
+**Goal:** Keep the Pallas optimization line auditable by documenting variant
+results, accepted defaults, rejected candidates, and the next gate.
+
+**Requirements:** R3, R4, R11, R12
+
+**Dependencies:** U2, U4; U6 when batched sinogram is attempted
+
+**Files:**
+- Modify: `bench/README.md`
+- Modify or create: `docs/plans/2026-04-29-001-feat-pallas-v2-optimization-plan.md`
+- Modify or create: `docs/solutions/architecture-patterns/`
+- Test expectation: none -- documentation and planning artifact updates only.
+
+**Approach:**
+- Update benchmark docs when new modes or metadata fields are added.
+- Record accepted and rejected Pallas variants with device, suite, parity, and
+  speedup summaries in a durable doc or plan update.
+- Keep promotion language honest: per-view wins, sinogram wins, and workflow
+  wins are different claims.
+
+**Patterns to follow:**
+- Benchmark reporting language in `bench/README.md`.
+- Existing `docs/solutions/` frontmatter and lesson style.
+
+**Test scenarios:**
+- Test expectation: none -- this unit updates documentation and planning
+  artifacts rather than feature-bearing runtime code.
+
+**Verification:**
+- A future implementer can tell which Pallas variant is the default, why it was
+  selected, which variants were rejected, and which benchmark gate comes next.
+
+---
+
+## System-Wide Impact
+
+- **Interaction graph:** The work touches only the experimental Pallas module,
+  forward-projector benchmark harness, and Pallas parity tests unless a gated
+  later unit adds batched sinogram or fused residual surfaces.
+- **Error propagation:** Unsupported Pallas variants should surface as
+  controlled unsupported or fallback reasons before benchmark timing. Direct
+  Pallas calls may raise `PallasProjectorUnsupported`; benchmark routes should
+  record fallback metadata.
+- **State lifecycle risks:** Cached traversal state introduces reuse hazards.
+  State objects must be tied to shape and metadata, and cached timings must not
+  be confused with single-call timings.
+- **API surface parity:** `forward_project_view_T` and existing JAX projector
+  callers remain unchanged. New Pallas controls belong to the experimental
+  function and benchmark configs.
+- **Integration coverage:** Unit parity tests prove small CPU semantics; GPU
+  quick/confirm/stress/sinogram suite JSON proves actual backend eligibility,
+  performance, and parity.
+- **Unchanged invariants:** JAX remains the oracle, default backend, and
+  differentiated path. Pallas remains opt-in and benchmark-proven before any
+  workflow claim.
+
+---
+
+## Risks & Dependencies
+
+| Risk | Mitigation |
+|------|------------|
+| A fast path silently changes interpolation semantics | Use host-side support predicates, CPU parity tests, and JAX oracle comparison for every variant. |
+| Tuning produces a high-ray win while ordinary cases regress | Require `confirm` and `stress` geomean and worst-case gates, not only `quick`. |
+| Benchmark metadata becomes insufficient to reproduce results | Add variant metadata before new kernels, and include actual versus requested variant in result rows. |
+| Cached traversal state creates misleading speed claims | Report inclusive and cached timings separately and keep state mode in result metadata. |
+| Batched Pallas still loses to JAX `vmap` | Treat this as a reject signal for workflow relevance; keep the result as evidence, not a claim. |
+| Pallas API instability across JAX versions | Keep backend-specific code localized in `pallas_projector.py` and preserve JAX fallback. |
+
+---
+
+## Alternative Approaches Considered
+
+- **Continue tuning only tile shape and warps:** Rejected as the primary path.
+  The v1 `8x8` tuning already found a high-ray win, but ordinary `confirm` and
+  `stress` cases remain slower; changing the work is more likely to move
+  geomean.
+- **Build batched sinogram immediately:** Rejected for sequencing. The current
+  per-view body is not a general win, and JAX `vmap` is very strong.
+- **Jump straight to fused residual/loss:** Deferred. It may be useful, but it
+  is not a forward-image projector replacement and should not be mixed into the
+  projector API.
+- **Use lower-level Mosaic GPU APIs now:** Deferred. Earlier Mosaic attempts hit
+  shared-memory and layout constraints; Triton-backed Pallas currently compiles
+  and provides a known baseline.
+
+---
+
+## Success Metrics
+
+- U2 success: `quick` remains eligible and parity-passing, current Pallas median
+  improves by at least 10%, and `confirm` ordinary cases move toward JAX parity.
+- U3/U4 success: `confirm` geomean reaches at least `1.05x`, no confirm case is
+  below `1.00x`, and `stress` has no material worst-case regression.
+- U6 success: batched Pallas sinogram reaches at least `1.10x` geomean versus
+  best JAX median, with no individual sinogram case below `1.00x`.
+- U7 success: fused residual/reduction reduces a non-differentiated objective
+  timing by at least 10% versus materialized projection plus reduction.
+- Overall success: every retained optimization has exact or thresholded parity,
+  actual Pallas eligibility, and reproducible metadata in benchmark JSON.
+
+---
+
+## Phased Delivery
+
+### Phase 1: Measurement and Generic Kernel Work
+
+- U1 establishes benchmark controls and metadata.
+- U2 tightens loop bounds and masks inactive loads.
+
+### Phase 2: Per-View Kernel Specialization
+
+- U3 adds z-locked and z-integer fast paths.
+- U4 tunes tile, layout, and warp defaults.
+- U5 evaluates cached traversal state only if inline per-view results remain
+  mixed or fixed-geometry workflow evidence warrants it.
+
+### Phase 3: Sinogram Relevance
+
+- U6 adds batched-view Pallas only after the per-view body clears the single-view
+  gates.
+
+### Phase 4: Workflow-Specific Escape Hatch
+
+- U7 explores fused residual/reduction only if forward-image work shows the
+  next bottleneck is materialization or downstream reduction.
+- U8 documents accepted defaults, rejected variants, and promotion criteria
+  throughout the sequence.
+
+---
+
+## Documentation / Operational Notes
+
+- Keep benchmark JSON artifacts from `vivobook` or other GPU machines outside
+  the repository unless a small summary is intentionally promoted into docs.
+- Record device kind, JAX/JAXLIB versions, and actual backend in any
+  performance note.
+- Do not update product-facing docs until Pallas has a stable supported
+  contract beyond benchmark-only usage.
+
+---
+
+## Sources & References
+
+- **Origin document:** `docs/brainstorms/2026-04-27-pallas-forward-projector-requirements.md`
+- Prior plan: `docs/plans/2026-04-27-002-feat-pallas-forward-projector-plan.md`
+- Current Pallas implementation: `src/tomojax/core/pallas_projector.py`
+- JAX projector oracle: `src/tomojax/core/projector.py`
+- Benchmark harness: `src/tomojax/bench/forward_projector.py`
+- Benchmark CLI and docs: `bench/forward_projector.py`, `bench/README.md`
+- Pallas parity tests: `tests/test_projector_pallas.py`
+- Benchmark tests: `tests/test_bench_forward_projector.py`
+- Institutional learning: `docs/solutions/architecture-patterns/reuse-align-multires-for-geometry-calibration-2026-04-25.md`
+- External docs: [JAX Pallas `pallas_call`](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.pallas_call.html), [JAX Pallas Grid and BlockSpec](https://docs.jax.dev/en/latest/pallas/grid_blockspec.html)

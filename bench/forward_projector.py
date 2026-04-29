@@ -18,6 +18,20 @@ from tomojax.bench.forward_projector import (
 )
 
 
+def _parse_tile_shape(value: str) -> tuple[int, int]:
+    separator = "x" if "x" in value else ","
+    parts = value.lower().split(separator)
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("expected TILE_VxTILE_U, for example 8x8")
+    try:
+        tile_v, tile_u = (int(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("tile shape values must be integers") from exc
+    if tile_v <= 0 or tile_u <= 0:
+        raise argparse.ArgumentTypeError("tile shape values must be positive")
+    return tile_v, tile_u
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark single-view forward projection.")
     parser.add_argument(
@@ -44,6 +58,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--gather-dtype", default=None, help="Projector gather dtype.")
     parser.add_argument("--unroll", type=int, help="JAX scan unroll.")
     parser.add_argument(
+        "--pallas-tile-shape",
+        type=_parse_tile_shape,
+        help="Requested Pallas detector tile shape as TILE_VxTILE_U, for example 8x8.",
+    )
+    parser.add_argument("--pallas-num-warps", type=int, help="Requested Pallas num_warps.")
+    parser.add_argument("--pallas-kernel-variant", help="Requested Pallas kernel variant.")
+    parser.add_argument("--pallas-layout-variant", help="Requested Pallas layout variant.")
+    parser.add_argument("--pallas-state-mode", help="Requested Pallas state mode.")
+    parser.add_argument(
         "--jax-only",
         action="store_true",
         help="Only run the JAX baseline; skip requested-Pallas fallback/provenance.",
@@ -65,6 +88,11 @@ def _config_from_args(args: argparse.Namespace) -> ForwardProjectorBenchmarkConf
         "seed": args.seed,
         "gather_dtype": args.gather_dtype,
         "unroll": args.unroll,
+        "pallas_tile_shape": args.pallas_tile_shape,
+        "pallas_num_warps": args.pallas_num_warps,
+        "pallas_kernel_variant": args.pallas_kernel_variant,
+        "pallas_layout_variant": args.pallas_layout_variant,
+        "pallas_state_mode": args.pallas_state_mode,
     }
     concrete_updates = {key: value for key, value in updates.items() if value is not None}
     if args.jax_only:
@@ -89,6 +117,11 @@ def _suite_overrides_from_args(args: argparse.Namespace) -> dict[str, object]:
         "seed": args.seed,
         "gather_dtype": args.gather_dtype,
         "unroll": args.unroll,
+        "pallas_tile_shape": args.pallas_tile_shape,
+        "pallas_num_warps": args.pallas_num_warps,
+        "pallas_kernel_variant": args.pallas_kernel_variant,
+        "pallas_layout_variant": args.pallas_layout_variant,
+        "pallas_state_mode": args.pallas_state_mode,
     }
     concrete_updates: dict[str, object] = {
         key: value for key, value in updates.items() if value is not None

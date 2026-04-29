@@ -142,6 +142,80 @@ def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
     assert pallas_row["max_abs_error"] == pytest.approx(0.0)
 
 
+def test_benchmark_backend_records_pallas_variant_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ForwardProjectorBenchmarkConfig(
+        nx=2,
+        ny=2,
+        nz=2,
+        nu=2,
+        nv=2,
+        warm_runs=1,
+        pallas_tile_shape=(4, 8),
+        pallas_num_warps=1,
+        pallas_kernel_variant="auto",
+        pallas_layout_variant="detector_vu",
+        pallas_state_mode="inline",
+    )
+    fixture = make_forward_projector_fixture(config)
+
+    def fake_make_callable(_requested_backend, _fixture, _config):
+        return lambda: jnp.ones((2, 2), dtype=jnp.float32), "pallas", None
+
+    monkeypatch.setattr(
+        "tomojax.bench.forward_projector._make_backend_callable",
+        fake_make_callable,
+    )
+
+    result, _ = benchmark_backend(
+        "pallas",
+        fixture,
+        config,
+        oracle=jnp.ones((2, 2), dtype=jnp.float32),
+    )
+
+    assert result["requested_pallas_variant"] == {
+        "tile_shape": [4, 8],
+        "num_warps": 1,
+        "kernel_variant": "auto",
+        "layout_variant": "detector_vu",
+        "state_mode": "inline",
+        "gather_dtype": "fp32",
+    }
+    assert result["actual_pallas_variant"] == {
+        "tile_shape": [4, 8],
+        "num_warps": 1,
+        "kernel_variant": "generic",
+        "layout_variant": "detector_vu",
+        "state_mode": "inline",
+        "gather_dtype": "fp32",
+        "resolved_n_steps": 6,
+        "effective_pallas_n_steps": 6,
+    }
+
+
+def test_forward_projector_benchmark_records_invalid_pallas_variant_fallback() -> None:
+    config = ForwardProjectorBenchmarkConfig(
+        nx=2,
+        ny=2,
+        nz=2,
+        nu=2,
+        nv=2,
+        warm_runs=1,
+        pallas_kernel_variant="z_integer4",
+    )
+
+    metrics = run_forward_projector_benchmark(config)
+    pallas_row = next(row for row in metrics["results"] if row["requested_backend"] == "pallas")
+
+    assert pallas_row["actual_backend"] == "jax"
+    assert pallas_row["eligible_for_speed_claim"] is False
+    assert "kernel_variant" in pallas_row["fallback_reason"]
+    assert pallas_row["requested_pallas_variant"]["kernel_variant"] == "z_integer4"
+    assert pallas_row["actual_pallas_variant"] is None
+
+
 def test_sinogram_mode_reports_vmap_and_loop_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
@@ -176,6 +250,50 @@ def test_sinogram_mode_reports_vmap_and_loop_parity(monkeypatch: pytest.MonkeyPa
     assert result["eligible_for_speed_claim"] is True
     assert result["warm_runs"] == 1
     assert result["max_abs_error"] == pytest.approx(0.0)
+
+
+def test_sinogram_mode_records_pallas_variant_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeFixture:
+        grid = make_forward_projector_fixture(
+            ForwardProjectorBenchmarkConfig(nx=2, ny=2, nz=2, nu=2, nv=2)
+        ).grid
+        T_stack = [0, 1]
+
+    config = ForwardSinogramBenchmarkConfig(
+        nx=2,
+        ny=2,
+        nz=2,
+        nu=2,
+        nv=2,
+        n_views=2,
+        warm_runs=1,
+        pallas_tile_shape=(4, 4),
+        pallas_num_warps=2,
+    )
+
+    def fake_make_callable(_requested_mode, _fixture, _config):
+        return lambda: jnp.ones((2, 2, 2), dtype=jnp.float32), "pallas_loop", None
+
+    monkeypatch.setattr(
+        "tomojax.bench.forward_projector._make_sinogram_callable",
+        fake_make_callable,
+    )
+
+    result, _ = benchmark_sinogram_mode(
+        "pallas_loop",
+        FakeFixture(),  # type: ignore[arg-type]
+        config,
+        oracle=jnp.ones((2, 2, 2), dtype=jnp.float32),
+        best_jax_median=2.0,
+    )
+
+    assert result["requested_pallas_variant"]["tile_shape"] == [4, 4]
+    assert result["actual_pallas_variant"]["tile_shape"] == [4, 4]
+    assert result["actual_pallas_variant"]["num_warps"] == 2
+    assert result["actual_pallas_variant"]["effective_pallas_n_steps"] == 6
+    assert result["speedup_vs_best_jax_warm_median"] is not None
 
 
 def test_forward_projector_suite_reports_cases_and_summary(

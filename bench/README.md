@@ -139,6 +139,11 @@ uv run python bench/forward_projector.py --suite sinogram --out bench/out/forwar
 The forward-projector benchmark always builds the fixture with the current JAX projector as the
 oracle, records first-call and warm-call timings separately, and marks requested Pallas runs as
 ineligible for speed claims if they fall back to JAX.
+Pallas experiment controls are benchmark-only and are recorded in each requested Pallas result as
+`requested_pallas_variant` and `actual_pallas_variant`. Use `--pallas-tile-shape`,
+`--pallas-num-warps`, `--pallas-kernel-variant`, `--pallas-layout-variant`, and
+`--pallas-state-mode` to make variant runs reproducible without changing product projector APIs.
+Unsupported variants fall back with a `fallback_reason` and remain ineligible for speed claims.
 Use `high-ray-count-128` as the first go/no-go benchmark for detector-tiled Pallas kernels; it
 keeps the volume at `128^3`, raises the detector to `256x256` rays, and uses a half-voxel step
 size so output tiling and traversal work matter. Use `noncubic-align-128` to check an

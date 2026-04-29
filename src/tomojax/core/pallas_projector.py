@@ -25,6 +25,12 @@ class PallasProjectorUnsupported(ValueError):
     """Raised when the experimental Pallas projector cannot handle a call."""
 
 
+_SUPPORTED_NUM_WARPS = frozenset({1, 2, 4, 8})
+_SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic"})
+_SUPPORTED_LAYOUT_VARIANTS = frozenset({"detector_vu"})
+_SUPPORTED_STATE_MODES = frozenset({"inline"})
+
+
 def _unsupported(message: str) -> str:
     return f"pallas_projector_unsupported: {message}"
 
@@ -55,6 +61,93 @@ def _normalize_tile_shape(tile_shape: tuple[int, int]) -> tuple[int, int]:
             _unsupported(f"tile_shape must be two positive integers; got {tile_shape!r}")
         )
     return int(tile_v), int(tile_u)
+
+
+def _normalize_num_warps(num_warps: int) -> int:
+    try:
+        value = operator.index(num_warps)
+    except Exception as exc:
+        raise PallasProjectorUnsupported(
+            _unsupported(f"num_warps must be one of {sorted(_SUPPORTED_NUM_WARPS)}; got {num_warps!r}")
+        ) from exc
+    if value not in _SUPPORTED_NUM_WARPS:
+        raise PallasProjectorUnsupported(
+            _unsupported(f"num_warps must be one of {sorted(_SUPPORTED_NUM_WARPS)}; got {num_warps!r}")
+        )
+    return int(value)
+
+
+def _normalize_kernel_variant(kernel_variant: str) -> str:
+    if not isinstance(kernel_variant, str):
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                f"kernel_variant must be a string; got {type(kernel_variant).__name__}"
+            )
+        )
+    value = kernel_variant.lower()
+    if value not in _SUPPORTED_KERNEL_VARIANTS:
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                "kernel_variant must be one of "
+                f"{sorted(_SUPPORTED_KERNEL_VARIANTS)}; got {kernel_variant!r}"
+            )
+        )
+    return "generic"
+
+
+def _normalize_layout_variant(layout_variant: str) -> str:
+    if not isinstance(layout_variant, str):
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                f"layout_variant must be a string; got {type(layout_variant).__name__}"
+            )
+        )
+    value = layout_variant.lower()
+    if value not in _SUPPORTED_LAYOUT_VARIANTS:
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                "layout_variant must be one of "
+                f"{sorted(_SUPPORTED_LAYOUT_VARIANTS)}; got {layout_variant!r}"
+            )
+        )
+    return value
+
+
+def _normalize_state_mode(state_mode: str) -> str:
+    if not isinstance(state_mode, str):
+        raise PallasProjectorUnsupported(
+            _unsupported(f"state_mode must be a string; got {type(state_mode).__name__}")
+        )
+    value = state_mode.lower()
+    if value not in _SUPPORTED_STATE_MODES:
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                f"state_mode must be one of {sorted(_SUPPORTED_STATE_MODES)}; got {state_mode!r}"
+            )
+        )
+    return value
+
+
+def pallas_projector_variant_metadata(
+    *,
+    tile_shape: tuple[int, int] = (8, 8),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    state_mode: str = "inline",
+    gather_dtype: str = "fp32",
+) -> dict[str, Any]:
+    """Return normalized metadata for the Pallas variant this module can run."""
+    tile_v, tile_u = _normalize_tile_shape(tile_shape)
+    actual_kernel_variant = _normalize_kernel_variant(kernel_variant)
+    return {
+        "tile_shape": [tile_v, tile_u],
+        "num_warps": _normalize_num_warps(num_warps),
+        "kernel_variant": actual_kernel_variant,
+        "layout_variant": _normalize_layout_variant(layout_variant),
+        "state_mode": _normalize_state_mode(state_mode),
+        "gather_dtype": _normalize_gather_dtype(gather_dtype),
+    }
 
 
 def _ensure_float32_volume(volume: jnp.ndarray) -> None:
@@ -108,7 +201,11 @@ def _validate_public_call(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     interpret: bool,
     tile_shape: tuple[int, int],
-) -> tuple[int, int, int, int, int, int, float, int, tuple[int, int]]:
+    num_warps: int,
+    kernel_variant: str,
+    layout_variant: str,
+    state_mode: str,
+) -> tuple[int, int, int, int, int, int, float, int, tuple[int, int], int]:
     nx, ny, nz = validate_volume(
         volume,
         grid,
@@ -117,10 +214,17 @@ def _validate_public_call(
     )
     nv, nu = validate_detector(detector, "forward_project_view_T_pallas")
     validate_pose_matrix(T, context="forward_project_view_T_pallas")
-    _normalize_gather_dtype(gather_dtype)
+    variant = pallas_projector_variant_metadata(
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode=state_mode,
+        gather_dtype=gather_dtype,
+    )
     _ensure_float32_volume(volume)
     _ensure_canonical_detector_grid(detector, det_grid)
-    tile_v, tile_u = _normalize_tile_shape(tile_shape)
+    tile_v, tile_u = variant["tile_shape"]
     if not interpret and jax.default_backend() == "cpu":
         raise PallasProjectorUnsupported(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
@@ -134,7 +238,7 @@ def _validate_public_call(
     return nx, ny, nz, nv, nu, nx * ny * nz, step_size_value, n_steps_value, (
         tile_v,
         tile_u,
-    )
+    ), int(variant["num_warps"])
 
 
 def pallas_projector_unsupported_reason(
@@ -148,6 +252,10 @@ def pallas_projector_unsupported_reason(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     tile_shape: tuple[int, int] = (8, 8),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    state_mode: str = "inline",
 ) -> str | None:
     """Return a benchmark-friendly unsupported reason, or ``None`` if eligible."""
     try:
@@ -162,6 +270,10 @@ def pallas_projector_unsupported_reason(
             det_grid=det_grid,
             interpret=False,
             tile_shape=tile_shape,
+            num_warps=num_warps,
+            kernel_variant=kernel_variant,
+            layout_variant=layout_variant,
+            state_mode=state_mode,
         )
     except PallasProjectorUnsupported as exc:
         return str(exc)
@@ -361,9 +473,24 @@ def forward_project_view_T_pallas(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     interpret: bool = False,
     tile_shape: tuple[int, int] = (8, 8),
+    num_warps: int = 4,
+    kernel_variant: str = "generic",
+    layout_variant: str = "detector_vu",
+    state_mode: str = "inline",
 ) -> jnp.ndarray:
     """Forward project one view using the experimental detector-tiled Pallas path."""
-    nx, ny, nz, nv, nu, volume_size, step_size_value, n_steps_value, (tile_v, tile_u) = (
+    (
+        nx,
+        ny,
+        nz,
+        nv,
+        nu,
+        volume_size,
+        step_size_value,
+        n_steps_value,
+        (tile_v, tile_u),
+        num_warps_value,
+    ) = (
         _validate_public_call(
             T,
             grid,
@@ -375,6 +502,10 @@ def forward_project_view_T_pallas(
             det_grid=det_grid,
             interpret=interpret,
             tile_shape=tile_shape,
+            num_warps=num_warps,
+            kernel_variant=kernel_variant,
+            layout_variant=layout_variant,
+            state_mode=state_mode,
         )
     )
     vol_origin = _grid_volume_origin(grid)
@@ -412,7 +543,7 @@ def forward_project_view_T_pallas(
         ],
         out_specs=pl.BlockSpec((tile_v, tile_u), lambda pv, pu: (pv, pu)),
         interpret=interpret,
-        compiler_params=plt.CompilerParams(num_warps=4),
+        compiler_params=plt.CompilerParams(num_warps=num_warps_value),
         name="tomojax_forward_project_view_T_pallas",
     )(
         jnp.asarray(T, dtype=jnp.float32),

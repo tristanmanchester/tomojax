@@ -8,6 +8,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     forward_project_view_T_pallas,
+    pallas_projector_variant_metadata,
 )
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 
@@ -137,6 +138,49 @@ def test_pallas_forward_project_accepts_canonical_detector_grid() -> None:
     _assert_matches_jax(T, grid, detector, volume, det_grid=det_grid)
 
 
+def test_pallas_forward_project_accepts_explicit_supported_variant_controls() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(grid=grid, detector=detector)
+    volume = jnp.ones((8, 8, 8), dtype=jnp.float32)
+
+    oracle = forward_project_view_T(T, grid, detector, volume)
+    candidate = forward_project_view_T_pallas(
+        T,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+        num_warps=1,
+        kernel_variant="auto",
+        layout_variant="detector_vu",
+        state_mode="inline",
+    )
+
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_variant_metadata_normalizes_auto_to_generic() -> None:
+    metadata = pallas_projector_variant_metadata(
+        tile_shape=(4, 8),
+        num_warps=1,
+        kernel_variant="auto",
+        layout_variant="detector_vu",
+        state_mode="inline",
+        gather_dtype="float32",
+    )
+
+    assert metadata == {
+        "tile_shape": [4, 8],
+        "num_warps": 1,
+        "kernel_variant": "generic",
+        "layout_variant": "detector_vu",
+        "state_mode": "inline",
+        "gather_dtype": "fp32",
+    }
+
+
 @pytest.mark.parametrize("gather_dtype", ["bf16", "fp16"])
 def test_pallas_forward_project_rejects_unsupported_gather_dtype(gather_dtype: str) -> None:
     grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
@@ -152,6 +196,35 @@ def test_pallas_forward_project_rejects_unsupported_gather_dtype(gather_dtype: s
             volume,
             gather_dtype=gather_dtype,
             interpret=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"num_warps": 3}, "num_warps"),
+        ({"kernel_variant": "z_integer4"}, "kernel_variant"),
+        ({"layout_variant": "detector_uv"}, "layout_variant"),
+        ({"state_mode": "cached"}, "state_mode"),
+    ],
+)
+def test_pallas_forward_project_rejects_unsupported_variant_controls(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(grid=grid, detector=detector)
+    volume = jnp.ones((4, 4, 4), dtype=jnp.float32)
+
+    with pytest.raises(PallasProjectorUnsupported, match=message):
+        forward_project_view_T_pallas(
+            T,
+            grid,
+            detector,
+            volume,
+            interpret=True,
+            **kwargs,
         )
 
 

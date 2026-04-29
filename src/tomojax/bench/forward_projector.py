@@ -50,6 +50,11 @@ class ForwardProjectorBenchmarkConfig:
     unroll: int | None = None
     use_checkpoint: bool = True
     include_pallas: bool = True
+    pallas_tile_shape: tuple[int, int] = (8, 8)
+    pallas_num_warps: int = 4
+    pallas_kernel_variant: str = "generic"
+    pallas_layout_variant: str = "detector_vu"
+    pallas_state_mode: str = "inline"
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,11 @@ class ForwardSinogramBenchmarkConfig:
     unroll: int | None = None
     use_checkpoint: bool = True
     include_pallas: bool = True
+    pallas_tile_shape: tuple[int, int] = (8, 8)
+    pallas_num_warps: int = 4
+    pallas_kernel_variant: str = "generic"
+    pallas_layout_variant: str = "detector_vu"
+    pallas_state_mode: str = "inline"
 
 
 @dataclass(frozen=True)
@@ -422,9 +432,58 @@ def _pallas_unsupported_reason(
             n_steps=config.n_steps,
             gather_dtype=config.gather_dtype,
             det_grid=fixture.det_grid,
+            tile_shape=config.pallas_tile_shape,
+            num_warps=config.pallas_num_warps,
+            kernel_variant=config.pallas_kernel_variant,
+            layout_variant=config.pallas_layout_variant,
+            state_mode=config.pallas_state_mode,
         )
     except Exception as exc:
         return f"pallas_support_check_failed: {exc}"
+
+
+def _pallas_requested_variant_metadata(
+    config: ForwardProjectorBenchmarkConfig | ForwardSinogramBenchmarkConfig,
+) -> dict[str, Any]:
+    return {
+        "tile_shape": list(config.pallas_tile_shape),
+        "num_warps": int(config.pallas_num_warps),
+        "kernel_variant": str(config.pallas_kernel_variant),
+        "layout_variant": str(config.pallas_layout_variant),
+        "state_mode": str(config.pallas_state_mode),
+        "gather_dtype": str(config.gather_dtype),
+    }
+
+
+def _pallas_actual_variant_metadata(
+    fixture: ForwardProjectorFixture | ForwardSinogramFixture,
+    config: ForwardProjectorBenchmarkConfig | ForwardSinogramBenchmarkConfig,
+    actual_backend_or_mode: str,
+) -> dict[str, Any] | None:
+    if actual_backend_or_mode not in {"pallas", "pallas_loop"}:
+        return None
+    module, fallback_reason = _resolve_pallas_module()
+    if module is None:
+        return {"metadata_error": fallback_reason}
+    metadata_fn = getattr(module, "pallas_projector_variant_metadata", None)
+    if metadata_fn is None:
+        return {"metadata_error": "pallas_variant_metadata_missing"}
+    try:
+        metadata = metadata_fn(
+            tile_shape=config.pallas_tile_shape,
+            num_warps=config.pallas_num_warps,
+            kernel_variant=config.pallas_kernel_variant,
+            layout_variant=config.pallas_layout_variant,
+            state_mode=config.pallas_state_mode,
+            gather_dtype=config.gather_dtype,
+        )
+    except Exception as exc:
+        return {"metadata_error": f"pallas_variant_metadata_failed: {exc}"}
+    step_size = float(config.step_size if config.step_size is not None else fixture.grid.vy)
+    resolved_n_steps = _resolve_n_steps(fixture.grid, step_size, config.n_steps)
+    metadata["resolved_n_steps"] = int(resolved_n_steps)
+    metadata["effective_pallas_n_steps"] = int(resolved_n_steps)
+    return metadata
 
 
 def _call_jax(
@@ -515,6 +574,11 @@ def _make_backend_callable(
             unroll=config.unroll,
             gather_dtype=config.gather_dtype,
             det_grid=fixture.det_grid,
+            tile_shape=config.pallas_tile_shape,
+            num_warps=config.pallas_num_warps,
+            kernel_variant=config.pallas_kernel_variant,
+            layout_variant=config.pallas_layout_variant,
+            state_mode=config.pallas_state_mode,
         )
 
     return call_pallas, "pallas", None
@@ -549,6 +613,11 @@ def _make_sinogram_callable(
                 unroll=config.unroll,
                 gather_dtype=config.gather_dtype,
                 det_grid=fixture.det_grid,
+                tile_shape=config.pallas_tile_shape,
+                num_warps=config.pallas_num_warps,
+                kernel_variant=config.pallas_kernel_variant,
+                layout_variant=config.pallas_layout_variant,
+                state_mode=config.pallas_state_mode,
             )
             for index in range(int(config.n_views))
         ]
@@ -625,6 +694,13 @@ def benchmark_backend(
         **timings,
         **_error_metrics(warm_output, reference),
     }
+    if requested_backend == "pallas":
+        result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
+        result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
+            fixture,
+            config,
+            actual_backend,
+        )
     return result, first_output
 
 
@@ -656,6 +732,13 @@ def benchmark_sinogram_mode(
         **_timing_summary(warm_seconds),
         **_error_metrics(warm_output, reference),
     }
+    if requested_mode == "pallas_loop":
+        result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
+        result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
+            fixture,
+            config,
+            actual_mode,
+        )
     result["speedup_vs_best_jax_warm_median"] = (
         _speedup(
             baseline=best_jax_median,
