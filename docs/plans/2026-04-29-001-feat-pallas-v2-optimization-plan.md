@@ -539,6 +539,32 @@ single-call projector timing.
 - Treat this as optional if U2-U4 already make the inline kernel a strong
   general win.
 
+**Result, 2026-04-29:** Accepted cached traversal state as a retained
+benchmark-controlled mode for fixed-geometry reuse, but not as the public Pallas
+default. The implementation adds `precompute_inclusive` and `cached`
+`state_mode` variants, reuses the existing JAX traversal-state helper as the
+oracle for prepared per-ray state, and restricts cached state to the tuned
+`detector_vu` layout. CPU `interpret=True` tests cover cached-state parity, and
+benchmark JSON records `pallas_state_timing_mode` plus cached setup cost.
+
+Laptop verification on the RTX 4070 Laptop GPU used the current tuned
+`detector_vu 8x16 num_warps=4` kernel. On `confirm`, inline Pallas stayed mixed
+at `0.9885x` geomean versus JAX with worst case `0.8788x`. The
+precompute-inclusive cached path reached `1.3232x` geomean, worst case
+`1.1551x`, and best case `1.6104x`. The cached-only fixed-geometry path reached
+`1.4448x` geomean, worst case `1.2612x`, and best case `1.8121x`, with mean
+state setup cost about `0.0199s` per case. On `stress`, inline Pallas reached
+`1.0059x` geomean with worst case `0.9025x`; precompute-inclusive cached state
+reached `1.3360x` geomean, worst case `1.2156x`; cached-only reached `1.4835x`
+geomean, worst case `1.3323x`, with mean setup cost about `0.0213s`.
+
+Decision: carry U5 forward as an explicit fixed-geometry mode and use it when
+the caller can prepare traversal once and project repeated volumes with the same
+pose/grid/detector/traversal controls. Do not replace `inline` as the default
+until there is a separate API decision about state lifetime and invalidation.
+U6 remains the next workflow-relevance step because cached single-view calls do
+not address the Python-loop-vs-`vmap` sinogram gap by themselves.
+
 ---
 
 - U6. **Add Batched-View Pallas Sinogram Mode**
