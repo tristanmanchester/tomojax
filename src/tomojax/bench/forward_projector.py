@@ -16,9 +16,19 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import _resolve_n_steps, forward_project_view_T, get_detector_grid_device
 
 BackendName = Literal["jax", "pallas"]
-SuiteName = Literal["quick", "confirm"]
-PRESET_NAMES = ("tiny", "smoke", "profile-128", "noncubic-align-128", "high-ray-count-128")
-SUITE_NAMES = ("quick", "confirm")
+SuiteName = Literal["quick", "confirm", "stress"]
+PRESET_NAMES = (
+    "tiny",
+    "smoke",
+    "profile-128",
+    "noncubic-align-128",
+    "high-ray-count-128",
+    "large-cubic-192",
+    "high-ray-count-192",
+    "thin-noncubic-192",
+    "fine-step-128",
+)
+SUITE_NAMES = ("quick", "confirm", "stress")
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,48 @@ def preset_config(name: str) -> ForwardProjectorBenchmarkConfig:
             step_size=0.5,
             warm_runs=7,
         )
+    if name == "large-cubic-192":
+        return ForwardProjectorBenchmarkConfig(
+            nx=192,
+            ny=192,
+            nz=192,
+            nu=192,
+            nv=192,
+            view_angle_deg=29.0,
+            warm_runs=15,
+        )
+    if name == "high-ray-count-192":
+        return ForwardProjectorBenchmarkConfig(
+            nx=192,
+            ny=192,
+            nz=192,
+            nu=320,
+            nv=320,
+            view_angle_deg=37.0,
+            step_size=0.5,
+            warm_runs=15,
+        )
+    if name == "thin-noncubic-192":
+        return ForwardProjectorBenchmarkConfig(
+            nx=192,
+            ny=192,
+            nz=128,
+            nu=192,
+            nv=128,
+            view_angle_deg=53.0,
+            warm_runs=15,
+        )
+    if name == "fine-step-128":
+        return ForwardProjectorBenchmarkConfig(
+            nx=128,
+            ny=128,
+            nz=128,
+            nu=128,
+            nv=128,
+            view_angle_deg=41.0,
+            step_size=0.25,
+            warm_runs=15,
+        )
     raise ValueError(f"preset must be one of: {', '.join(PRESET_NAMES)}")
 
 
@@ -103,6 +155,19 @@ def suite_cases(name: str) -> tuple[ForwardProjectorSuiteCase, ...]:
             ForwardProjectorSuiteCase(
                 "high-ray-count-128",
                 replace(preset_config("high-ray-count-128"), warm_runs=25),
+            ),
+        )
+    if name == "stress":
+        return (
+            ForwardProjectorSuiteCase("large-cubic-192", preset_config("large-cubic-192")),
+            ForwardProjectorSuiteCase(
+                "thin-noncubic-192",
+                preset_config("thin-noncubic-192"),
+            ),
+            ForwardProjectorSuiteCase("fine-step-128", preset_config("fine-step-128")),
+            ForwardProjectorSuiteCase(
+                "high-ray-count-192",
+                preset_config("high-ray-count-192"),
             ),
         )
     raise ValueError(f"suite must be one of: {', '.join(SUITE_NAMES)}")

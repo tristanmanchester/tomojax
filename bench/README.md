@@ -132,6 +132,7 @@ uv run python bench/forward_projector.py --preset profile-128 --out bench/out/fo
 uv run python bench/forward_projector.py --preset high-ray-count-128 --out bench/out/forward_projector_high_ray_128.json
 uv run python bench/forward_projector.py --suite quick --out bench/out/forward_projector_quick.json
 uv run python bench/forward_projector.py --suite confirm --out bench/out/forward_projector_confirm.json
+uv run python bench/forward_projector.py --suite stress --out bench/out/forward_projector_stress.json
 ```
 
 The forward-projector benchmark always builds the fixture with the current JAX projector as the
@@ -144,6 +145,10 @@ alignment-like `128x128x96` shape. Use `--suite quick` for inner-loop kernel wor
 `--suite confirm` before making a Pallas performance claim; the confirmation suite runs
 `profile-128`, `noncubic-align-128`, and `high-ray-count-128` with 25 warm repeats each and
 reports aggregate speedup and parity fields.
+Use `--suite stress` after a promising confirmation run to catch scaling and shape-specific
+failures before wiring the kernel into workflow profiles. The stress suite runs `large-cubic-192`,
+`thin-noncubic-192`, `fine-step-128`, and `high-ray-count-192` with 15 warm repeats each. It is
+still a forward-only kernel benchmark, not an end-to-end reconstruction or alignment claim.
 
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline

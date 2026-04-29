@@ -44,8 +44,15 @@ def test_preset_config_returns_named_workloads(preset_name: str) -> None:
     assert config.nv > 0
     if preset_name == "high-ray-count-128":
         assert config.nu * config.nv > config.nx * config.nz
+    if preset_name == "high-ray-count-192":
+        assert config.nu * config.nv > config.nx * config.nz
+        assert config.step_size == pytest.approx(0.5)
     if preset_name == "noncubic-align-128":
         assert config.nz != config.nx
+    if preset_name == "thin-noncubic-192":
+        assert config.nz != config.nx
+    if preset_name == "fine-step-128":
+        assert config.step_size == pytest.approx(0.25)
 
 
 @pytest.mark.parametrize("suite_name", SUITE_NAMES)
@@ -63,6 +70,16 @@ def test_suite_cases_returns_named_workloads(suite_name: str) -> None:
             "high-ray-count-128",
         ]
         assert all(case.config.warm_runs == 25 for case in cases)
+    if suite_name == "stress":
+        assert [case.name for case in cases] == [
+            "large-cubic-192",
+            "thin-noncubic-192",
+            "fine-step-128",
+            "high-ray-count-192",
+        ]
+        assert all(case.config.warm_runs == 15 for case in cases)
+        assert any(case.config.step_size == 0.25 for case in cases)
+        assert any(case.config.nu * case.config.nv > 100_000 for case in cases)
 
 
 def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
