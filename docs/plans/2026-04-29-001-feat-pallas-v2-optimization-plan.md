@@ -697,6 +697,32 @@ requirements pass before implementation expands.
 - Do not use it to claim alignment hot-path speedup without a separate
   derivative design.
 
+**Result, 2026-04-29:** Rejected as a fused-reduction optimization, but kept as
+benchmark evidence. The U7 spike added a separate forward-residual benchmark
+that compares JAX materialized projection plus SSE reduction, Pallas batched
+materialized projection plus SSE reduction, and a fused Pallas SSE kernel that
+writes per-tile partial reductions instead of materializing the projection
+stack. CPU `interpret=True` tests covered parity against materialized JAX
+projection and benchmark metadata.
+
+Laptop verification on the RTX 4070 Laptop GPU was parity-clean and eligible
+for all residual cases. On `residual-64`, JAX materialized took `0.00452s`,
+Pallas materialized took `0.13024s` (`0.0347x`), and fused Pallas took
+`0.13939s` (`0.0325x`). On `residual-128`, JAX materialized took `0.17498s`,
+Pallas materialized took `0.17727s` (`0.9871x`), and fused Pallas took
+`0.21950s` (`0.7972x`). On `high-ray-residual-128`, JAX materialized took
+`0.70930s`, Pallas materialized took `0.20298s` (`3.4944x`), and fused Pallas
+took `0.23148s` (`3.0641x`). The fused-mode geomean was only `0.4296x`, with
+two ordinary cases far below `1.00x`.
+
+Decision: do not promote the fused SSE kernel. The high-ray residual result
+confirms that Pallas remains valuable for high-ray projection-heavy objectives,
+but the first fused reduction is slower than materializing the batched Pallas
+projection and reducing in JAX. The final JAX reduction is not the bottleneck in
+this benchmark; the next useful direction is improving the projection body or
+specializing for high-ray workloads, not carrying this fused-reduction variant
+as a performance path.
+
 ---
 
 - U8. **Document Results and Promotion Criteria**
