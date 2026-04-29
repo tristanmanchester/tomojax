@@ -24,8 +24,14 @@ from tomojax.bench.forward_projector import (
 )
 from tomojax.core.projector import forward_project_view_T
 
-ResidualModeName = Literal["jax_materialized", "pallas_materialized", "pallas_fused"]
+ResidualModeName = Literal[
+    "jax_materialized",
+    "pallas_materialized",
+    "pallas_fused",
+    "pallas_dispatch",
+]
 RESIDUAL_SUITE_NAMES = ("residual",)
+PALLAS_DISPATCH_RAY_STEP_THRESHOLD = 1_000_000_000
 
 
 @dataclass(frozen=True)
@@ -229,6 +235,16 @@ def _make_residual_callable(
             None,
         )
 
+    if (
+        requested_mode == "pallas_dispatch"
+        and residual_dispatch_selected_mode(config) == "jax_materialized"
+    ):
+        return (
+            lambda: jnp.sum((jax_project() - target) ** 2, dtype=jnp.float32),
+            "pallas_dispatch",
+            None,
+        )
+
     module, fallback_reason = _resolve_pallas_module()
     if module is None:
         return (
@@ -244,7 +260,7 @@ def _make_residual_callable(
             unsupported_reason,
         )
 
-    if requested_mode == "pallas_materialized":
+    if requested_mode in {"pallas_materialized", "pallas_dispatch"}:
         pallas_project = getattr(module, "forward_project_views_T_pallas", None)
         if pallas_project is None:
             return (
@@ -272,7 +288,7 @@ def _make_residual_callable(
             )
             return jnp.sum((projection - target) ** 2, dtype=jnp.float32)
 
-        return call_pallas_materialized, "pallas_materialized", None
+        return call_pallas_materialized, requested_mode, None
 
     pallas_fused = getattr(module, "forward_project_residual_sse_T_pallas", None)
     if pallas_fused is None:
@@ -302,6 +318,32 @@ def _make_residual_callable(
         )
 
     return call_pallas_fused, "pallas_fused", None
+
+
+def residual_dispatch_estimated_ray_steps(config: ForwardResidualBenchmarkConfig) -> int:
+    """Return a static workload estimate used by the benchmark-only dispatch probe."""
+    n_steps = int(
+        np.ceil(np.sqrt(config.nx * config.nx + config.ny * config.ny + config.nz * config.nz))
+        if config.n_steps is None
+        else config.n_steps
+    )
+    if config.step_size is not None and config.n_steps is None:
+        n_steps = int(
+            np.ceil(
+                np.sqrt(config.nx * config.nx + config.ny * config.ny + config.nz * config.nz)
+                / float(config.step_size)
+            )
+        )
+    return int(config.n_views) * int(config.nu) * int(config.nv) * max(1, n_steps)
+
+
+def residual_dispatch_selected_mode(config: ForwardResidualBenchmarkConfig) -> str:
+    """Select the residual backend for the benchmark-only high-ray dispatch probe."""
+    return (
+        "pallas_materialized"
+        if residual_dispatch_estimated_ray_steps(config) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+        else "jax_materialized"
+    )
 
 
 def _time_blocked_call(fn: Callable[[], Any]) -> tuple[float, Any]:
@@ -372,19 +414,27 @@ def benchmark_residual_mode(
         **_timing_summary(warm_seconds),
         **_scalar_error_metrics(warm_output, reference),
     }
-    if requested_mode in {"pallas_materialized", "pallas_fused"}:
+    if requested_mode == "pallas_dispatch":
+        result["dispatch_selected_mode"] = residual_dispatch_selected_mode(config)
+        result["dispatch_estimated_ray_steps"] = residual_dispatch_estimated_ray_steps(config)
+        result["dispatch_threshold_ray_steps"] = PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+    if requested_mode in {"pallas_materialized", "pallas_fused", "pallas_dispatch"}:
         result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
         result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
             fixture,
             config,
-            actual_mode,
+            "pallas_materialized"
+            if requested_mode == "pallas_dispatch"
+            and result.get("dispatch_selected_mode") == "pallas_materialized"
+            else actual_mode,
         )
     result["speedup_vs_jax_materialized_warm_median"] = (
         _speedup(
             baseline=jax_median,
             candidate=result["warm_seconds_median"],
         )
-        if requested_mode == actual_mode and requested_mode in {"pallas_materialized", "pallas_fused"}
+        if requested_mode == actual_mode
+        and requested_mode in {"pallas_materialized", "pallas_fused", "pallas_dispatch"}
         else None
     )
     return result, first_output
@@ -413,7 +463,14 @@ def run_forward_residual_benchmark(
             oracle=oracle,
             jax_median=jax_median,
         )
-        results.extend([pallas_materialized_result, pallas_fused_result])
+        pallas_dispatch_result, _ = benchmark_residual_mode(
+            "pallas_dispatch",
+            fixture,
+            config,
+            oracle=oracle,
+            jax_median=jax_median,
+        )
+        results.extend([pallas_materialized_result, pallas_fused_result, pallas_dispatch_result])
 
     return {
         "benchmark": "forward_residual",
@@ -448,7 +505,7 @@ def run_forward_residual_suite(
 
 def _residual_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
     mode_summaries: dict[str, dict[str, Any]] = {}
-    for mode in ("pallas_materialized", "pallas_fused"):
+    for mode in ("pallas_materialized", "pallas_fused", "pallas_dispatch"):
         rows = [
             row
             for case in cases
