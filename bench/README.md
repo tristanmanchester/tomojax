@@ -129,11 +129,16 @@ For isolated forward-projector kernel work, use the single-view microbenchmark:
 ```bash
 uv run python bench/forward_projector.py --preset smoke --out bench/out/forward_projector_smoke.json
 uv run python bench/forward_projector.py --preset profile-128 --out bench/out/forward_projector_128.json
+uv run python bench/forward_projector.py --preset high-ray-count-128 --out bench/out/forward_projector_high_ray_128.json
 ```
 
 The forward-projector benchmark always builds the fixture with the current JAX projector as the
 oracle, records first-call and warm-call timings separately, and marks requested Pallas runs as
 ineligible for speed claims if they fall back to JAX.
+Use `high-ray-count-128` as the first go/no-go benchmark for detector-tiled Pallas kernels; it
+keeps the volume at `128^3`, raises the detector to `256x256` rays, and uses a half-voxel step
+size so output tiling and traversal work matter. Use `noncubic-align-128` to check an
+alignment-like `128x128x96` shape.
 
 Representative alignment profiles write a compact PNG summary next to the metrics JSON. The image
 shows central `xy`/`xz`/`yz` slices for the ground-truth volume, a nominal-geometry FBP baseline

@@ -8,6 +8,7 @@ import pytest
 
 from tomojax.bench.forward_projector import (
     ForwardProjectorBenchmarkConfig,
+    PRESET_NAMES,
     _block_tree_ready,
     _time_blocked_call,
     benchmark_backend,
@@ -21,6 +22,21 @@ from tomojax.bench.forward_projector import (
 def test_preset_config_rejects_unknown_name() -> None:
     with pytest.raises(ValueError, match="preset must be one of"):
         preset_config("unknown")
+
+
+@pytest.mark.parametrize("preset_name", PRESET_NAMES)
+def test_preset_config_returns_named_workloads(preset_name: str) -> None:
+    config = preset_config(preset_name)
+
+    assert config.nx > 0
+    assert config.ny > 0
+    assert config.nz > 0
+    assert config.nu > 0
+    assert config.nv > 0
+    if preset_name == "high-ray-count-128":
+        assert config.nu * config.nv > config.nx * config.nz
+    if preset_name == "noncubic-align-128":
+        assert config.nz != config.nx
 
 
 def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
@@ -39,6 +55,11 @@ def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
     assert metrics["benchmark"] == "forward_projector"
     assert metrics["fixture_backend"] == "jax"
     assert metrics["config"]["nx"] == 4
+    assert metrics["fixture"]["volume_shape"] == [4, 4, 4]
+    assert metrics["fixture"]["detector_shape"] == [4, 4]
+    assert metrics["fixture"]["n_rays"] == 16
+    assert metrics["fixture"]["resolved_n_steps"] > 0
+    assert metrics["fixture"]["total_ray_steps"] > 16
     assert [row["requested_backend"] for row in metrics["results"]] == ["jax", "pallas"]
     jax_row, pallas_row = metrics["results"]
     assert jax_row["actual_backend"] == "jax"
@@ -49,6 +70,7 @@ def test_forward_projector_benchmark_reports_jax_and_pallas_fallback() -> None:
     if pallas_row["actual_backend"] == "jax":
         assert pallas_row["eligible_for_speed_claim"] is False
         assert pallas_row["fallback_reason"]
+        assert pallas_row["speedup_vs_jax_warm_median"] is None
     assert pallas_row["max_abs_error"] == pytest.approx(0.0)
 
 

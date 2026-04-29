@@ -13,9 +13,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
-from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.core.projector import _resolve_n_steps, forward_project_view_T, get_detector_grid_device
 
 BackendName = Literal["jax", "pallas"]
+PRESET_NAMES = ("tiny", "smoke", "profile-128", "noncubic-align-128", "high-ray-count-128")
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,28 @@ def preset_config(name: str) -> ForwardProjectorBenchmarkConfig:
         return ForwardProjectorBenchmarkConfig(nx=64, ny=64, nz=64, nu=64, nv=64, warm_runs=5)
     if name == "profile-128":
         return ForwardProjectorBenchmarkConfig(nx=128, ny=128, nz=128, nu=128, nv=128, warm_runs=7)
-    raise ValueError("preset must be one of: tiny, smoke, profile-128")
+    if name == "noncubic-align-128":
+        return ForwardProjectorBenchmarkConfig(
+            nx=128,
+            ny=128,
+            nz=96,
+            nu=128,
+            nv=96,
+            view_angle_deg=37.0,
+            warm_runs=7,
+        )
+    if name == "high-ray-count-128":
+        return ForwardProjectorBenchmarkConfig(
+            nx=128,
+            ny=128,
+            nz=128,
+            nu=256,
+            nv=256,
+            view_angle_deg=37.0,
+            step_size=0.5,
+            warm_runs=7,
+        )
+    raise ValueError(f"preset must be one of: {', '.join(PRESET_NAMES)}")
 
 
 def make_forward_projector_fixture(
@@ -109,6 +131,23 @@ def _device_metadata() -> dict[str, Any]:
             }
             for device in devices
         ],
+    }
+
+
+def _fixture_metadata(
+    fixture: ForwardProjectorFixture,
+    config: ForwardProjectorBenchmarkConfig,
+) -> dict[str, Any]:
+    step_size = float(config.step_size if config.step_size is not None else fixture.grid.vy)
+    resolved_n_steps = _resolve_n_steps(fixture.grid, step_size, config.n_steps)
+    n_rays = int(fixture.detector.nu) * int(fixture.detector.nv)
+    return {
+        "volume_shape": [int(fixture.grid.nx), int(fixture.grid.ny), int(fixture.grid.nz)],
+        "detector_shape": [int(fixture.detector.nv), int(fixture.detector.nu)],
+        "n_rays": n_rays,
+        "step_size": step_size,
+        "resolved_n_steps": int(resolved_n_steps),
+        "total_ray_steps": int(n_rays * resolved_n_steps),
     }
 
 
@@ -249,9 +288,13 @@ def run_forward_projector_benchmark(
     results = [jax_result]
     if config.include_pallas:
         pallas_result, _ = benchmark_backend("pallas", fixture, config, oracle=oracle)
-        pallas_result["speedup_vs_jax_warm_median"] = _speedup(
-            baseline=jax_result["warm_seconds_median"],
-            candidate=pallas_result["warm_seconds_median"],
+        pallas_result["speedup_vs_jax_warm_median"] = (
+            _speedup(
+                baseline=jax_result["warm_seconds_median"],
+                candidate=pallas_result["warm_seconds_median"],
+            )
+            if pallas_result["eligible_for_speed_claim"]
+            else None
         )
         results.append(pallas_result)
 
@@ -259,6 +302,7 @@ def run_forward_projector_benchmark(
         "benchmark": "forward_projector",
         "fixture_backend": "jax",
         "config": asdict(config),
+        "fixture": _fixture_metadata(fixture, config),
         "device": _device_metadata(),
         "results": results,
     }

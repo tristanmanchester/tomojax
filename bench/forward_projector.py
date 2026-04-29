@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tomojax.bench.forward_projector import (
     ForwardProjectorBenchmarkConfig,
+    PRESET_NAMES,
     preset_config,
     run_forward_projector_benchmark,
     write_benchmark_json,
@@ -18,7 +19,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark single-view forward projection.")
     parser.add_argument(
         "--preset",
-        choices=["tiny", "smoke", "profile-128"],
+        choices=PRESET_NAMES,
         default="smoke",
         help="Named benchmark size.",
     )
