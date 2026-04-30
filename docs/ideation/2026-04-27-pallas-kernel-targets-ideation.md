@@ -170,7 +170,7 @@ External grounding: the current JAX Pallas docs describe Pallas as an experiment
 | # | Idea | Reason Rejected |
 |---|------|-----------------|
 | 1 | Detector-tile trilinear interpolation microkernel | Duplicates the stronger forward-projector target; too narrow to prove end-to-end improvement alone. |
-| 2 | Explicit ray-driven scatter backprojection | High atomic/write-conflict risk; voxel-driven owner-computes backprojection is a stronger formulation. |
+| 2 | Explicit ray-driven scatter backprojection | Reconsidered; see `docs/plans/2026-04-29-002-feat-pallas-backprojection-plan.md` for ray-owned atomic-scatter prototype as first candidate. |
 | 3 | Two-phase tiled ray backprojection | Plausible fallback, but more complex and less clean than voxel-driven first. |
 | 4 | FBP-only filtered-backprojection kernel | Valuable only through backprojection; covered by the more general voxel/chunked backprojection idea. |
 | 5 | Pose-derivative projection kernel | Too ambitious before projection/residual kernels are proven; derivative surface is high risk. |
