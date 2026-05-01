@@ -112,7 +112,7 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
 
     @jax.jit
     def run():
-        return fista_tv_core_arrays(
+        result = fista_tv_core_arrays(
             x0=x0,
             T_all=fixture.T_stack,
             det_grid=fixture.det_grid,
@@ -120,6 +120,13 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
             grid=fixture.grid,
             detector=fixture.detector,
             cfg=cfg,
+        )
+        return (
+            result.x,
+            result.loss,
+            result.data_loss,
+            result.regulariser_value,
+            result.effective_iters,
         )
 
     fixture_meta = {
@@ -157,8 +164,8 @@ def run_fista_iteration_benchmark(config: FistaIterationBenchmarkConfig) -> dict
     for _ in range(max(0, int(config.warm_runs))):
         seconds, warm = _time_blocked_call(call)
         warm_seconds.append(float(seconds))
-    first_x = np.asarray(first.x)
-    warm_x = np.asarray(warm.x)
+    first_x = np.asarray(first[0])
+    warm_x = np.asarray(warm[0])
     denom = float(np.linalg.norm(first_x.ravel())) or 1.0
     return {
         "benchmark": "fista_iteration",
@@ -171,9 +178,10 @@ def run_fista_iteration_benchmark(config: FistaIterationBenchmarkConfig) -> dict
         "quality": {
             "finite": bool(np.isfinite(warm_x).all()),
             "repeat_rel_l2_vs_first": float(np.linalg.norm((warm_x - first_x).ravel()) / denom),
-            "loss": [float(v) for v in np.asarray(warm.loss).ravel()],
-            "data_loss": float(np.asarray(warm.data_loss)),
-            "regulariser_value": float(np.asarray(warm.regulariser_value)),
+            "loss": [float(v) for v in np.asarray(warm[1]).ravel()],
+            "data_loss": float(np.asarray(warm[2])),
+            "regulariser_value": float(np.asarray(warm[3])),
+            "effective_iters": int(np.asarray(warm[4])),
         },
     }
 
