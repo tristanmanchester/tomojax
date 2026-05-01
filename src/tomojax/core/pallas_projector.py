@@ -72,6 +72,33 @@ class PallasForwardProjectorTraversalState:
     gather_dtype: str
 
 
+@dataclass(frozen=True)
+class PallasForwardProjectorStackTraversalState:
+    """Prepared per-ray traversal state for fixed pose-stack Pallas benchmarking."""
+
+    ix0: jnp.ndarray
+    iy0: jnp.ndarray
+    iz0: jnp.ndarray
+    n_steps_ray: jnp.ndarray
+    dix: jnp.ndarray
+    diy: jnp.ndarray
+    diz: jnp.ndarray
+    step_size: float
+    n_steps: int
+    resolved_n_steps: int
+    nx: int
+    ny: int
+    nz: int
+    nv: int
+    nu: int
+    n_views: int
+    tile_shape: tuple[int, int]
+    num_warps: int
+    kernel_variant: str
+    kernel_variant_id: int
+    gather_dtype: str
+
+
 def _unsupported(message: str) -> str:
     return f"pallas_projector_unsupported: {message}"
 
@@ -734,9 +761,9 @@ def _validate_public_sinogram_call(
         state_mode=state_mode,
         gather_dtype=gather_dtype,
     )
-    if variant["state_mode"] != "inline":
+    if variant["state_mode"] != "inline" and variant["layout_variant"] != "detector_vu":
         raise PallasProjectorUnsupported(
-            _unsupported("batched sinogram Pallas supports state_mode='inline' only")
+            _unsupported("cached traversal state currently supports layout_variant='detector_vu' only")
         )
     tile_v, tile_u = variant["tile_shape"]
     if variant["kernel_variant"] == "generic" and int(tile_u) > 8:
@@ -2023,6 +2050,382 @@ def forward_project_view_T_pallas(
     )
 
 
+def prepare_forward_project_views_T_pallas_state(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    tile_shape: tuple[int, int] = (8, 16),
+    num_warps: int = 4,
+    kernel_variant: str = "auto",
+    layout_variant: str = "detector_vu",
+) -> PallasForwardProjectorStackTraversalState:
+    """Prepare fixed pose-stack traversal state for repeated Pallas sinogram calls."""
+    (
+        nx,
+        ny,
+        nz,
+        nv,
+        nu,
+        n_views,
+        _volume_size,
+        step_size_value,
+        resolved_n_steps,
+        effective_n_steps,
+        (tile_v, tile_u),
+        num_warps_value,
+        kernel_variant_id,
+        layout_variant_id,
+    ) = _validate_public_sinogram_call(
+        T_stack,
+        grid,
+        detector,
+        jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+        step_size=step_size,
+        n_steps=n_steps,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        interpret=True,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+        state_mode="cached",
+    )
+    if layout_variant_id != _LAYOUT_VARIANT_IDS["detector_vu"]:
+        raise PallasProjectorUnsupported(
+            _unsupported("cached pose-stack traversal state supports detector_vu only")
+        )
+    if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]:
+        effective_n_steps = resolved_n_steps
+
+    T = jnp.asarray(T_stack, dtype=jnp.float32)
+    ix_all: list[jnp.ndarray] = []
+    iy_all: list[jnp.ndarray] = []
+    iz_all: list[jnp.ndarray] = []
+    n_steps_ray_all: list[jnp.ndarray] = []
+    dix_all: list[jnp.ndarray] = []
+    diy_all: list[jnp.ndarray] = []
+    diz_all: list[jnp.ndarray] = []
+    for view in range(int(n_views)):
+        ix0, iy0, iz0, dix, diy, diz, n_steps_ray, _step32, _resolved, n_rays = (
+            _projector_traversal_state(
+                T[view],
+                grid,
+                detector,
+                step_size=step_size_value,
+                n_steps=n_steps,
+                det_grid=det_grid,
+            )
+        )
+        expected_rays = int(nv) * int(nu)
+        if int(n_rays) != expected_rays:
+            raise PallasProjectorUnsupported(
+                _unsupported(f"cached traversal state expected {expected_rays} rays; got {n_rays}")
+            )
+        ix_all.append(jnp.ravel(jnp.asarray(ix0, dtype=jnp.float32), order="C"))
+        iy_all.append(jnp.ravel(jnp.asarray(iy0, dtype=jnp.float32), order="C"))
+        iz_all.append(jnp.ravel(jnp.asarray(iz0, dtype=jnp.float32), order="C"))
+        n_steps_ray_all.append(jnp.ravel(jnp.asarray(n_steps_ray, dtype=jnp.int32), order="C"))
+        dix_all.append(jnp.ravel(jnp.asarray(dix, dtype=jnp.float32), order="C")[0])
+        diy_all.append(jnp.ravel(jnp.asarray(diy, dtype=jnp.float32), order="C")[0])
+        diz_all.append(jnp.ravel(jnp.asarray(diz, dtype=jnp.float32), order="C")[0])
+
+    return PallasForwardProjectorStackTraversalState(
+        ix0=jnp.concatenate(ix_all, axis=0),
+        iy0=jnp.concatenate(iy_all, axis=0),
+        iz0=jnp.concatenate(iz_all, axis=0),
+        n_steps_ray=jnp.concatenate(n_steps_ray_all, axis=0),
+        dix=jnp.asarray(dix_all, dtype=jnp.float32),
+        diy=jnp.asarray(diy_all, dtype=jnp.float32),
+        diz=jnp.asarray(diz_all, dtype=jnp.float32),
+        step_size=float(step_size_value),
+        n_steps=int(effective_n_steps),
+        resolved_n_steps=int(resolved_n_steps),
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nv=int(nv),
+        nu=int(nu),
+        n_views=int(n_views),
+        tile_shape=(int(tile_v), int(tile_u)),
+        num_warps=int(num_warps_value),
+        kernel_variant="generic"
+        if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]
+        else "z_integer4",
+        kernel_variant_id=int(kernel_variant_id),
+        gather_dtype=_normalize_gather_dtype(gather_dtype),
+    )
+
+
+def block_forward_project_views_T_pallas_state(
+    state: PallasForwardProjectorStackTraversalState,
+) -> PallasForwardProjectorStackTraversalState:
+    """Block until prepared stack traversal-state arrays are materialized."""
+    jax.block_until_ready((state.ix0, state.iy0, state.iz0, state.n_steps_ray, state.dix))
+    return state
+
+
+def _projector_views_kernel_cached(
+    ix0_ref: Any,
+    iy0_ref: Any,
+    iz0_ref: Any,
+    n_steps_ray_ref: Any,
+    dix_ref: Any,
+    diy_ref: Any,
+    diz_ref: Any,
+    volume_ref: Any,
+    out_ref: Any,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    n_views: int,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    kernel_variant_id: int,
+    unroll: int | None,
+) -> None:
+    view_idx = pl.program_id(0)
+    tile_v_start = pl.program_id(1) * tile_v
+    tile_u_start = pl.program_id(2) * tile_u
+    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
+    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
+    state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
+
+    ix0 = plt.load(ix0_ref.at[state_idx], mask=in_detector, other=0.0)
+    iy0 = plt.load(iy0_ref.at[state_idx], mask=in_detector, other=0.0)
+    iz0 = plt.load(iz0_ref.at[state_idx], mask=in_detector, other=0.0)
+    n_steps_ray = plt.load(n_steps_ray_ref.at[state_idx], mask=in_detector, other=0)
+    dix = plt.load(dix_ref.at[view_idx])
+    diy = plt.load(diy_ref.at[view_idx])
+    diz = plt.load(diz_ref.at[view_idx])
+    step_size32 = jnp.float32(step_size)
+
+    def body(step_idx, carry):
+        acc, ix, iy, iz = carry
+        active = step_idx < n_steps_ray
+        if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
+            sample = _trilinear_load_z_integer(
+                volume_ref,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+            )
+        else:
+            sample = _trilinear_load(
+                volume_ref,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+            )
+        return (
+            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
+            ix + dix,
+            iy + diy,
+            iz + diz,
+        )
+
+    init = (
+        jnp.zeros_like(ix0, dtype=jnp.float32),
+        ix0,
+        iy0,
+        iz0,
+    )
+    if unroll is None:
+        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+    else:
+        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
+    out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_projector_views_state_pallas_call(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nv: int,
+    nu: int,
+    n_views: int,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    num_warps: int,
+    kernel_variant_id: int,
+    unroll: int | None,
+    interpret: bool,
+) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+    kernel = functools.partial(
+        _projector_views_kernel_cached,
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nu=int(nu),
+        nv=int(nv),
+        n_views=int(n_views),
+        step_size=float(step_size),
+        n_steps=int(n_steps),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        kernel_variant_id=int(kernel_variant_id),
+        unroll=unroll,
+    )
+    grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((int(n_views), int(nv), int(nu)), jnp.float32),
+        grid=grid_shape,
+        in_specs=[
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+        ],
+        out_specs=pl.BlockSpec(
+            (1, int(tile_v), int(tile_u)),
+            lambda view, pv, pu: (view, pv, pu),
+        ),
+        interpret=bool(interpret),
+        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
+        name="tomojax_forward_project_views_T_pallas_cached_state",
+    )
+
+
+def forward_project_views_T_pallas_with_state(
+    state: PallasForwardProjectorStackTraversalState,
+    volume: jnp.ndarray,
+    *,
+    interpret: bool = False,
+    unroll: int | None = None,
+) -> jnp.ndarray:
+    """Forward project a stack with prepared traversal state."""
+    nx, ny, nz = validate_volume(
+        volume,
+        Grid(nx=state.nx, ny=state.ny, nz=state.nz, vx=1.0, vy=1.0, vz=1.0),
+        context="forward_project_views_T_pallas_with_state",
+        name="volume",
+    )
+    _ensure_float32_volume(volume)
+    if (nx, ny, nz) != (state.nx, state.ny, state.nz):
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                "volume shape does not match cached traversal state: "
+                f"got {(nx, ny, nz)}, expected {(state.nx, state.ny, state.nz)}"
+            )
+        )
+    if not interpret and jax.default_backend() == "cpu":
+        raise PallasProjectorUnsupported(
+            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        )
+    tile_v, tile_u = state.tile_shape
+    call = _cached_projector_views_state_pallas_call(
+        nx=int(state.nx),
+        ny=int(state.ny),
+        nz=int(state.nz),
+        nv=int(state.nv),
+        nu=int(state.nu),
+        n_views=int(state.n_views),
+        step_size=float(state.step_size),
+        n_steps=int(state.n_steps),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        num_warps=int(state.num_warps),
+        kernel_variant_id=int(state.kernel_variant_id),
+        unroll=unroll,
+        interpret=bool(interpret),
+    )
+    return call(
+        state.ix0,
+        state.iy0,
+        state.iz0,
+        state.n_steps_ray,
+        state.dix,
+        state.diy,
+        state.diz,
+        _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
+    )
+
+
+class BoundForwardProjectViewsTPallas:
+    """Fixed pose-stack Pallas projector callable for repeated-volume workflows."""
+
+    def __init__(
+        self,
+        state: PallasForwardProjectorStackTraversalState,
+        *,
+        interpret: bool = False,
+        unroll: int | None = None,
+    ) -> None:
+        self.state = state
+        self.interpret = bool(interpret)
+        self.unroll = unroll
+
+    def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
+        return forward_project_views_T_pallas_with_state(
+            self.state,
+            volume,
+            interpret=self.interpret,
+            unroll=self.unroll,
+        )
+
+
+def bind_forward_project_views_T_pallas(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool = False,
+    tile_shape: tuple[int, int] = (8, 16),
+    num_warps: int = 4,
+    kernel_variant: str = "auto",
+    layout_variant: str = "detector_vu",
+    block_state: bool = True,
+) -> BoundForwardProjectViewsTPallas:
+    """Bind fixed pose-stack traversal state once and return a sinogram callable."""
+    state = prepare_forward_project_views_T_pallas_state(
+        T_stack,
+        grid,
+        detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant=kernel_variant,
+        layout_variant=layout_variant,
+    )
+    if block_state:
+        block_forward_project_views_T_pallas_state(state)
+    return BoundForwardProjectViewsTPallas(state, interpret=interpret, unroll=unroll)
+
+
 def forward_project_views_T_pallas(
     T_stack: jnp.ndarray,
     grid: Grid,
@@ -2073,6 +2476,26 @@ def forward_project_views_T_pallas(
         layout_variant=layout_variant,
         state_mode=state_mode,
     )
+    if _normalize_state_mode(state_mode) != "inline":
+        state = prepare_forward_project_views_T_pallas_state(
+            T_stack,
+            grid,
+            detector,
+            step_size=step_size,
+            n_steps=n_steps,
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+            tile_shape=tile_shape,
+            num_warps=num_warps,
+            kernel_variant=kernel_variant,
+            layout_variant=layout_variant,
+        )
+        return forward_project_views_T_pallas_with_state(
+            state,
+            volume,
+            interpret=interpret,
+            unroll=unroll,
+        )
     vol_origin = _grid_volume_origin(grid)
     call = _cached_projector_views_pallas_call(
         nx=nx,

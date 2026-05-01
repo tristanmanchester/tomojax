@@ -47,6 +47,7 @@ def test_general_pose_residual_suite_uses_general_5d_poses() -> None:
         "general-pose-residual-64",
     ]
     assert all(case.config.pose_mode == "general_5d" for case in cases)
+    assert all(case.config.pallas_state_mode == "cached" for case in cases)
 
 
 def test_forward_residual_benchmark_reports_jax_and_pallas_fallback() -> None:

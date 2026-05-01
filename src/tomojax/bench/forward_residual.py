@@ -66,6 +66,7 @@ def residual_suite_cases(name: str = "residual") -> tuple[ForwardResidualSuiteCa
                     n_views=24,
                     warm_runs=7,
                     pose_mode="general_5d",
+                    pallas_state_mode="cached",
                 ),
             ),
             ForwardResidualSuiteCase(
@@ -79,6 +80,7 @@ def residual_suite_cases(name: str = "residual") -> tuple[ForwardResidualSuiteCa
                     n_views=90,
                     warm_runs=7,
                     pose_mode="general_5d",
+                    pallas_state_mode="cached",
                 ),
             ),
         )
@@ -297,24 +299,52 @@ def _make_residual_callable(
                 "jax_materialized",
                 "pallas_batched_callable_missing",
             )
-
-        def call_pallas_materialized() -> jnp.ndarray:
-            projection = pallas_project(
+        bound_pallas_project = None
+        if config.pallas_state_mode == "cached":
+            bind_project = getattr(module, "bind_forward_project_views_T_pallas", None)
+            if bind_project is None:
+                return (
+                    lambda: jnp.sum((jax_project() - target) ** 2, dtype=jnp.float32),
+                    "jax_materialized",
+                    "pallas_batched_cached_callable_missing",
+                )
+            bound_pallas_project = bind_project(
                 sf.T_stack,
                 sf.grid,
                 sf.detector,
-                sf.volume,
                 step_size=config.step_size,
                 n_steps=config.n_steps,
                 unroll=config.unroll,
                 gather_dtype=config.gather_dtype,
                 det_grid=sf.det_grid,
+                interpret=False,
                 tile_shape=config.pallas_tile_shape,
                 num_warps=config.pallas_num_warps,
                 kernel_variant=config.pallas_kernel_variant,
                 layout_variant=config.pallas_layout_variant,
-                state_mode=config.pallas_state_mode,
+                block_state=True,
             )
+
+        def call_pallas_materialized() -> jnp.ndarray:
+            if bound_pallas_project is None:
+                projection = pallas_project(
+                    sf.T_stack,
+                    sf.grid,
+                    sf.detector,
+                    sf.volume,
+                    step_size=config.step_size,
+                    n_steps=config.n_steps,
+                    unroll=config.unroll,
+                    gather_dtype=config.gather_dtype,
+                    det_grid=sf.det_grid,
+                    tile_shape=config.pallas_tile_shape,
+                    num_warps=config.pallas_num_warps,
+                    kernel_variant=config.pallas_kernel_variant,
+                    layout_variant=config.pallas_layout_variant,
+                    state_mode=config.pallas_state_mode,
+                )
+            else:
+                projection = bound_pallas_project(sf.volume)
             return jnp.sum((projection - target) ** 2, dtype=jnp.float32)
 
         return call_pallas_materialized, requested_mode, None

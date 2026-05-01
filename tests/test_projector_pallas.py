@@ -10,6 +10,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     bind_forward_project_view_T_pallas,
+    bind_forward_project_views_T_pallas,
     forward_project_parallel_z_views_pallas,
     forward_project_residual_sse_T_pallas,
     forward_project_view_T_pallas_with_state,
@@ -20,6 +21,7 @@ from tomojax.core.pallas_projector import (
     pallas_projector_traversal_metadata,
     pallas_projector_variant_metadata,
     prepare_forward_project_view_T_pallas_state,
+    prepare_forward_project_views_T_pallas_state,
 )
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.bench.forward_projector import (
@@ -648,6 +650,54 @@ def test_pallas_forward_project_views_one_view_matches_single_view_pallas() -> N
 
     assert batched.shape == (1, 8, 8)
     np.testing.assert_allclose(np.asarray(batched[0]), np.asarray(single), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_forward_project_views_cached_state_matches_inline_generic() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+
+    inline = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+    )
+    state = prepare_forward_project_views_T_pallas_state(
+        T_stack,
+        grid,
+        detector,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+    )
+    bound = bind_forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+    )
+    cached = bound(volume)
+    state_cached = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+        state_mode="cached",
+    )
+
+    assert state.ix0.shape == (3 * detector.nv * detector.nu,)
+    np.testing.assert_allclose(np.asarray(cached), np.asarray(inline), atol=1e-4, rtol=1e-4)
+    np.testing.assert_allclose(np.asarray(state_cached), np.asarray(inline), atol=1e-4, rtol=1e-4)
 
 
 def test_pallas_forward_project_residual_sse_matches_materialized_jax() -> None:

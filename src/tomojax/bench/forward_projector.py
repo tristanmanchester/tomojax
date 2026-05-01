@@ -805,6 +805,36 @@ def _make_sinogram_callable(
         return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", unsupported_reason
 
     if requested_mode in {"pallas_batched", "pallas_dispatch"}:
+        if config.pallas_state_mode == "cached":
+            bind_fn = getattr(pallas_module, "bind_forward_project_views_T_pallas", None)
+            if bind_fn is None:
+                return (
+                    lambda: _call_jax_sinogram_loop(fixture, config),
+                    "jax_loop",
+                    "pallas_batched_cached_callable_missing",
+                )
+            bound_pallas = bind_fn(
+                fixture.T_stack,
+                fixture.grid,
+                fixture.detector,
+                step_size=config.step_size,
+                n_steps=config.n_steps,
+                unroll=config.unroll,
+                gather_dtype=config.gather_dtype,
+                det_grid=fixture.det_grid,
+                interpret=False,
+                tile_shape=config.pallas_tile_shape,
+                num_warps=config.pallas_num_warps,
+                kernel_variant=config.pallas_kernel_variant,
+                layout_variant=config.pallas_layout_variant,
+                block_state=True,
+            )
+
+            def call_cached_pallas_batched() -> jnp.ndarray:
+                return bound_pallas(fixture.volume)
+
+            return call_cached_pallas_batched, requested_mode, None
+
         def call_pallas_batched() -> jnp.ndarray:
             return pallas_fn(
                 fixture.T_stack,
