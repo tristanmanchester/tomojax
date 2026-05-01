@@ -912,6 +912,10 @@ def benchmark_backend(
         **_error_metrics(warm_output, reference),
     }
     if requested_backend == "pallas":
+        result["eligible_for_speed_claim"] = bool(result["eligible_for_speed_claim"]) and (
+            oracle is None or _parity_passed(result)
+        )
+    if requested_backend == "pallas":
         result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
         result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
             fixture,
@@ -978,6 +982,10 @@ def benchmark_sinogram_mode(
         **_timing_summary(warm_seconds),
         **_error_metrics(warm_output, reference),
     }
+    if requested_mode in {"pallas_loop", "pallas_batched", "pallas_dispatch"}:
+        result["eligible_for_speed_claim"] = bool(result["eligible_for_speed_claim"]) and (
+            oracle is None or _parity_passed(result)
+        )
     if requested_mode == "pallas_dispatch":
         result["dispatch_selected_mode"] = sinogram_dispatch_selected_mode(config)
         result["dispatch_estimated_ray_steps"] = sinogram_dispatch_estimated_ray_steps(config)
@@ -997,7 +1005,7 @@ def benchmark_sinogram_mode(
             baseline=best_jax_median,
             candidate=result["warm_seconds_median"],
         )
-        if requested_mode == actual_mode
+        if result["eligible_for_speed_claim"]
         and requested_mode in {"pallas_loop", "pallas_batched", "pallas_dispatch"}
         else None
     )

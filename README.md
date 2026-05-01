@@ -130,6 +130,7 @@ for the HDF5/NXtomo schema used by the CLIs.
 | [Reconstruction](docs/concepts/reconstruction.md) | FBP, FISTA-TV, SPDHG-TV |
 | **CLI reference** | |
 | [CLI overview](docs/cli/index.md) | All 11 commands, config files, env vars |
+| [ASTRA benchmark](docs/benchmarks/astra-comparison.md) | Parallel-beam ASTRA comparison policy |
 | **Reference** | |
 | [Data format](docs/reference/data-format.md) | NXtomo HDF5 schema |
 | [Loss functions](docs/reference/loss-functions.md) | Available losses and schedules |

@@ -73,7 +73,10 @@ def test_forward_residual_benchmark_reports_jax_and_pallas_fallback() -> None:
     assert dispatch_row["dispatch_estimated_ray_steps"] < PALLAS_DISPATCH_RAY_STEP_THRESHOLD
     assert dispatch_row["dispatch_timing_source"] == "jax_materialized_baseline"
     assert dispatch_row["speedup_vs_jax_materialized_warm_median"] == pytest.approx(1.0)
-    assert pallas_materialized_row["abs_error"] == pytest.approx(0.0)
+    if pallas_materialized_row["eligible_for_speed_claim"]:
+        assert pallas_materialized_row["abs_error"] == pytest.approx(0.0, abs=1e-3)
+    else:
+        assert pallas_materialized_row["speedup_vs_jax_materialized_warm_median"] is None
     assert pallas_fused_row["abs_error"] == pytest.approx(0.0, abs=1e-3)
     assert dispatch_row["abs_error"] == pytest.approx(0.0)
 

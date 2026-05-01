@@ -444,20 +444,9 @@ def fbp(
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
 
-    if _can_use_direct_parallel_fbp(geometry, det_grid):
-        acc = _run_parallel_fbp_direct_jit(
-            T_all,
-            proj,
-            grid=grid,
-            detector=detector,
-            filter_name=cfg.filter_name,
-        )
-        acc.block_until_ready()
-        for _ in range(n_views):
-            next(view_progress, None)
-    else:
+    def run_generic_path() -> jnp.ndarray:
         try:
-            acc = _run_fbp_fast_path(
+            generic_acc = _run_fbp_fast_path(
                 T_all,
                 proj,
                 batch_size=b,
@@ -469,13 +458,13 @@ def fbp(
                 gather_dtype=cfg.gather_dtype,
                 det_grid=det_grid,
             )
-            acc.block_until_ready()
             for _ in range(n_views):
                 next(view_progress, None)
+            return generic_acc
         except Exception as exc:
             if not _is_fbp_oom_error(exc):
                 raise
-            acc = _run_fbp_with_backoff(
+            return _run_fbp_with_backoff(
                 T_all,
                 proj,
                 batch_size=b,
@@ -488,6 +477,24 @@ def fbp(
                 det_grid=det_grid,
                 view_progress=view_progress,
             )
+
+    if _can_use_direct_parallel_fbp(geometry, det_grid):
+        try:
+            acc = _run_parallel_fbp_direct_jit(
+                T_all,
+                proj,
+                grid=grid,
+                detector=detector,
+                filter_name=cfg.filter_name,
+            )
+            for _ in range(n_views):
+                next(view_progress, None)
+        except Exception as exc:
+            if not _is_fbp_oom_error(exc):
+                raise
+            acc = run_generic_path()
+    else:
+        acc = run_generic_path()
 
     if cfg.scale is None:
         acc = acc * _default_fbp_scale(n_views)

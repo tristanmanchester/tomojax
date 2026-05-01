@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 bench = [
+    "astra-toolbox>=2.4.1,<3",
     "matplotlib>=3.10.5,<4",
     "nvidia-ml-py>=13.580.82,<14",
     "psutil>=7.0.0,<8",
@@ -47,6 +48,10 @@ tomojax-inspect = "tomojax.cli.inspect:main"
 tomojax-loss-bench = "tomojax.cli.loss_bench:main"
 tomojax-test-gpu = "tomojax.cli.runtime_checks:test_gpu_main"
 tomojax-test-cpu = "tomojax.cli.runtime_checks:test_cpu_main"
+tomojax-astra-parallel-bench = "tomojax.bench.astra_parallel:main"
+tomojax-benchmark-suite = "tomojax.bench.benchmark_suite:main"
+tomojax-alignment-smoke-bench = "tomojax.bench.alignment_smoke:main"
+tomojax-pallas-sanity = "tomojax.bench.pallas_sanity:main"
 
 [dependency-groups]
 dev = [

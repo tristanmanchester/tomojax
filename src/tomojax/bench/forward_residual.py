@@ -443,6 +443,10 @@ def benchmark_residual_mode(
         **_timing_summary(warm_seconds),
         **_scalar_error_metrics(warm_output, reference),
     }
+    if requested_mode in {"pallas_materialized", "pallas_fused", "pallas_dispatch"}:
+        result["eligible_for_speed_claim"] = bool(result["eligible_for_speed_claim"]) and (
+            oracle is None or _parity_passed(result)
+        )
     if requested_mode == "pallas_dispatch":
         result["dispatch_selected_mode"] = residual_dispatch_selected_mode(config)
         result["dispatch_estimated_ray_steps"] = residual_dispatch_estimated_ray_steps(config)
@@ -462,7 +466,7 @@ def benchmark_residual_mode(
             baseline=jax_median,
             candidate=result["warm_seconds_median"],
         )
-        if requested_mode == actual_mode
+        if result["eligible_for_speed_claim"]
         and requested_mode in {"pallas_materialized", "pallas_fused", "pallas_dispatch"}
         else None
     )

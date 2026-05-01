@@ -66,9 +66,12 @@ Each case reports:
 - ASTRA `parallel3d` forward median/mean/min/max runtime
 - TomoJAX FBP median/mean/min/max runtime
 - ASTRA slice-wise `FBP_CUDA` median/mean/min/max runtime
+- cold/first-call wall time separately from warm steady-state timing for each backend where
+  compilation, setup, or cached-call construction can affect the first call
 - GPU memory peak and peak delta where NVML is available
 - Pallas-vs-JAX forward relative L2 and max error
 - ASTRA-vs-JAX forward relative L2 and max error
+- TomoJAX direct FBP vs TomoJAX generic-adjoint FBP relative L2 and max error
 - TomoJAX FBP MSE/RMSE/PSNR against the phantom
 - ASTRA FBP MSE/RMSE/PSNR against the phantom
 
@@ -81,6 +84,10 @@ Each case reports:
 - Do not use ASTRA inside TomoJAX code paths.
 - Do not claim pose recovery accuracy from the alignment smoke; use it as a workflow guard.
 - Do not claim publication-grade evidence from quick or guard mode.
+- Label quick and guard artifacts as optimization guards, and label publication artifacts as
+  evidence for the recorded machine/environment only.
+- Synchronize JAX work at benchmark timing boundaries with `block_until_ready()` or an equivalent,
+  not inside reusable library functions.
 
 ## Acceptance Examples
 
@@ -90,6 +97,8 @@ Each case reports:
   ~/tomojax-bench/run_tomojax_benchmark_suite.sh` and get a multi-case publication bundle.
 - Pallas changed-input sanity fails if the output does not change when the input volume or pose
   changes.
+- FBP changed-input or direct-vs-generic sanity fails if reconstruction output is reused or if the
+  direct path diverges from the generic path beyond the declared tolerance.
 - Optional alignment smoke records wall time, recon time, align time, loss drop, and MSE
   improvement in the suite summary.
 

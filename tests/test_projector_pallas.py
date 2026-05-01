@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
@@ -383,6 +384,126 @@ def test_pallas_forward_project_views_cached_call_handles_static_config_changes(
     assert candidate_b.shape == (3, 7, 9)
     np.testing.assert_allclose(np.asarray(candidate_a), np.asarray(oracle_a), atol=1e-4, rtol=1e-4)
     np.testing.assert_allclose(np.asarray(candidate_b), np.asarray(oracle_b), atol=1e-4, rtol=1e-4)
+
+
+@pytest.mark.parametrize(
+    ("first_dtype", "second_dtype"),
+    [
+        ("fp32", "bf16"),
+        ("bf16", "fp32"),
+        ("fp32", "fp16"),
+    ],
+)
+def test_pallas_forward_project_views_cached_call_handles_gather_dtype_changes(
+    first_dtype: str,
+    second_dtype: str,
+) -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=7, nv=5, du=0.75, dv=0.75, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 23.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    rng = np.random.default_rng(0)
+    volume = jnp.asarray(rng.normal(size=(8, 8, 8)).astype(np.float32))
+
+    _ = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        gather_dtype=first_dtype,
+        interpret=True,
+        tile_shape=(4, 4),
+        kernel_variant="auto",
+    )
+    candidate = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        gather_dtype=second_dtype,
+        interpret=True,
+        tile_shape=(4, 4),
+        kernel_variant="auto",
+    )
+    oracle = jnp.stack(
+        [
+            forward_project_view_T(
+                T,
+                grid,
+                detector,
+                volume,
+                gather_dtype=second_dtype,
+            )
+            for T in poses
+        ],
+        axis=0,
+    )
+
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_forward_project_views_cached_call_uses_runtime_inputs_on_gpu() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume_a = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+    volume_b = jnp.flip(volume_a, axis=0).at[1:4, 2:6, 3:5].add(3.0)
+
+    base = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume_a,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    changed_volume = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume_b,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    shifted_pose = forward_project_views_T_pallas(
+        T_stack.at[:, 0, 3].add(0.25),
+        grid,
+        detector,
+        volume_a,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+
+    base.block_until_ready()
+    changed_volume.block_until_ready()
+    shifted_pose.block_until_ready()
+    assert _relative_l2(changed_volume, base) > 1e-3
+    assert _relative_l2(shifted_pose, base) > 1e-3
+
+
+@pytest.mark.parametrize(
+    "pose_stack",
+    [
+        jnp.eye(4, dtype=jnp.float32),
+        jnp.zeros((0, 4, 4), dtype=jnp.float32),
+        jnp.zeros((2, 3, 4), dtype=jnp.float32),
+    ],
+)
+def test_pallas_forward_project_views_rejects_invalid_pose_stack_shapes(pose_stack) -> None:
+    grid = Grid(nx=4, ny=4, nz=4, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=4, nv=4, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    volume = jnp.ones((4, 4, 4), dtype=jnp.float32)
+
+    with pytest.raises((ValueError, PallasProjectorUnsupported), match="pose|stack|shape|view"):
+        forward_project_views_T_pallas(
+            pose_stack,
+            grid,
+            detector,
+            volume,
+            interpret=True,
+        )
 
 
 def test_parallel_geometry_stack_view_poses_matches_per_view_poses() -> None:
