@@ -31,7 +31,7 @@ ResidualModeName = Literal[
     "pallas_dispatch",
 ]
 RESIDUAL_SUITE_NAMES = ("residual", "general_pose")
-PALLAS_DISPATCH_RAY_STEP_THRESHOLD = 1_000_000_000
+PALLAS_DISPATCH_RAY_STEP_THRESHOLD = 500_000
 
 
 @dataclass(frozen=True)

@@ -128,8 +128,18 @@ def test_residual_mode_records_pallas_variant_metadata(monkeypatch: pytest.Monke
     assert result["speedup_vs_jax_materialized_warm_median"] is not None
 
 
-def test_residual_dispatch_selects_only_high_ray_materialized_workloads() -> None:
-    low = ForwardResidualBenchmarkConfig(nx=64, ny=64, nz=64, nu=64, nv=64, n_views=90)
+def test_residual_dispatch_uses_pallas_for_material_general_workloads() -> None:
+    tiny = ForwardResidualBenchmarkConfig(nx=4, ny=4, nz=4, nu=4, nv=4, n_views=2)
+    general_24 = ForwardResidualBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="general_5d",
+    )
+    general_64 = ForwardResidualBenchmarkConfig(nx=64, ny=64, nz=64, nu=64, nv=64, n_views=90)
     high = ForwardResidualBenchmarkConfig(
         nx=128,
         ny=128,
@@ -140,9 +150,13 @@ def test_residual_dispatch_selects_only_high_ray_materialized_workloads() -> Non
         step_size=0.5,
     )
 
-    assert residual_dispatch_selected_mode(low) == "jax_materialized"
+    assert residual_dispatch_selected_mode(tiny) == "jax_materialized"
+    assert residual_dispatch_selected_mode(general_24) == "pallas_materialized"
+    assert residual_dispatch_selected_mode(general_64) == "pallas_materialized"
     assert residual_dispatch_selected_mode(high) == "pallas_materialized"
-    assert residual_dispatch_estimated_ray_steps(low) < PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+    assert residual_dispatch_estimated_ray_steps(tiny) < PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+    assert residual_dispatch_estimated_ray_steps(general_24) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+    assert residual_dispatch_estimated_ray_steps(general_64) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
     assert residual_dispatch_estimated_ray_steps(high) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
 
 
