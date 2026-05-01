@@ -326,6 +326,7 @@ volume, params5, info = align(geom, grid, det, projections, cfg=cfg)
 | `pose_model` | `str` | `"per_view"` | `"per_view"`, `"spline"`, `"polynomial"` |
 | `gauge_fix` | `str` | `"mean_translation"` | `"mean_translation"` or `"none"` |
 | `early_stop` | `bool` | `True` | Stop on plateau |
+| `early_stop_profile` | `str` | `"compute_saving"` | `"compute_saving"`, `"robust"`, or `"off"` |
 | `early_stop_rel_impr` | `float` | `1e-3` | Minimum relative improvement |
 | `early_stop_patience` | `int` | `2` | Patience iterations |
 | `schedule` | `str \| AlignmentSchedule \| None` | `None` | Executable preset such as `"cor"`, `"setup_safe"`, or `"pose_only"` |
