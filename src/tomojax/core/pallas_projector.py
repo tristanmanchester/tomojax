@@ -29,7 +29,7 @@ class PallasProjectorUnsupported(ValueError):
 
 
 _SUPPORTED_NUM_WARPS = frozenset({1, 2, 4, 8})
-_SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic", "z_integer4", "parallel_z"})
+_SUPPORTED_KERNEL_VARIANTS = frozenset({"auto", "generic", "z_integer4"})
 _SUPPORTED_LAYOUT_VARIANTS = frozenset({"detector_uv", "detector_vu"})
 _SUPPORTED_STATE_MODES = frozenset({"cached", "inline", "precompute_inclusive"})
 _GATHER_DTYPE_ALIASES = {
@@ -42,7 +42,7 @@ _GATHER_DTYPE_ALIASES = {
     "float16": "fp16",
     "half": "fp16",
 }
-_KERNEL_VARIANT_IDS = {"generic": 0, "z_integer4": 1, "parallel_z": 2}
+_KERNEL_VARIANT_IDS = {"generic": 0, "z_integer4": 1}
 _LAYOUT_VARIANT_IDS = {"detector_vu": 0, "detector_uv": 1}
 
 
@@ -383,10 +383,6 @@ def _select_kernel_variant(
 ) -> str:
     if requested_kernel_variant == "generic":
         return "generic"
-    if requested_kernel_variant == "parallel_z":
-        raise PallasProjectorUnsupported(
-            _unsupported("kernel_variant='parallel_z' is only supported by batched sinogram projection")
-        )
     supports_z_integer = _supports_z_integer4(T, grid, detector, det_grid)
     if requested_kernel_variant == "auto":
         return "z_integer4" if supports_z_integer else "generic"
@@ -435,34 +431,6 @@ def _supports_z_integer4(
     return abs(iz0 - round(iz0)) <= tol and abs(diz_dv - round(diz_dv)) <= tol
 
 
-def _supports_parallel_z(
-    T: jnp.ndarray,
-    grid: Grid,
-    detector: Detector,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
-) -> bool:
-    if not _supports_z_integer4(T, grid, detector, det_grid):
-        return False
-    try:
-        T_host = np.asarray(T, dtype=np.float64)
-    except Exception:
-        return False
-    if T_host.shape != (4, 4) or not np.isfinite(T_host).all():
-        return False
-
-    tol = 1e-5
-    R = T_host[:3, :3]
-    t = T_host[:3, 3]
-    if np.max(np.abs(t)) > tol:
-        return False
-    if abs(R[0, 2]) > tol or abs(R[1, 2]) > tol or abs(R[2, 0]) > tol or abs(R[2, 1]) > tol:
-        return False
-    if abs(R[2, 2] - 1.0) > tol:
-        return False
-    xy = R[:2, :2]
-    return bool(np.allclose(xy.T @ xy, np.eye(2), atol=tol, rtol=0.0) and abs(np.linalg.det(xy) - 1.0) <= tol)
-
-
 def _select_kernel_variant_for_stack(
     T_stack: jnp.ndarray,
     grid: Grid,
@@ -485,18 +453,6 @@ def _select_kernel_variant_for_stack(
             return "generic"
         raise PallasProjectorUnsupported(
             _unsupported("kernel_variant='z_integer4' requires pose stack shape (n_views, 4, 4)")
-        )
-    supports_parallel_z_all = all(
-        _supports_parallel_z(jnp.asarray(T_host[index]), grid, detector, det_grid)
-        for index in range(T_host.shape[0])
-    )
-    if requested_kernel_variant == "auto" and supports_parallel_z_all:
-        return "parallel_z"
-    if requested_kernel_variant == "parallel_z" and supports_parallel_z_all:
-        return "parallel_z"
-    if requested_kernel_variant == "parallel_z":
-        raise PallasProjectorUnsupported(
-            _unsupported("kernel_variant='parallel_z' requires all views to use canonical z-axis ParallelGeometry poses")
         )
     supports_all = all(
         _supports_z_integer4(jnp.asarray(T_host[index]), grid, detector, det_grid)
@@ -1175,130 +1131,6 @@ def _projector_views_kernel(
         out_ref[0, :, :] = acc.T.astype(jnp.float32)
     else:
         out_ref[0, :, :] = acc.astype(jnp.float32)
-
-
-def _projector_views_parallel_z_kernel(
-    T_ref: Any,
-    volume_ref: Any,
-    out_ref: Any,
-    *,
-    nx: int,
-    ny: int,
-    nz: int,
-    nu: int,
-    nv: int,
-    du: float,
-    dv: float,
-    det_center_x: float,
-    det_center_z: float,
-    vol_origin_x: float,
-    vol_origin_y: float,
-    vol_origin_z: float,
-    vx: float,
-    vy: float,
-    vz: float,
-    step_size: float,
-    n_steps: int,
-    tile_v: int,
-    tile_u: int,
-    unroll: int | None,
-) -> None:
-    view_idx = pl.program_id(0)
-    tile_v_start = pl.program_id(1) * tile_v
-    tile_u_start = pl.program_id(2) * tile_u
-    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)
-    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)
-    in_detector = (det_u[jnp.newaxis, :] < nu) & (det_v[:, jnp.newaxis] < nv)
-
-    xr = (
-        (det_u.astype(jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * jnp.float32(du)
-        + jnp.float32(det_center_x)
-    )
-    zr = (
-        (det_v.astype(jnp.float32) - jnp.float32(nv / 2.0 - 0.5)) * jnp.float32(dv)
-        + jnp.float32(det_center_z)
-    )
-
-    c = plt.load(T_ref.at[view_idx, 0, 0])
-    s = plt.load(T_ref.at[view_idx, 1, 0])
-    ey_x = s
-    ey_y = c
-    base_x = c * xr
-    base_y = -s * xr
-
-    lower_x = jnp.float32(vol_origin_x - vx)
-    lower_y = jnp.float32(vol_origin_y - vy)
-    upper_x = jnp.float32(vol_origin_x + nx * vx)
-    upper_y = jnp.float32(vol_origin_y + ny * vy)
-
-    def slab(base: jnp.ndarray, denom: jnp.ndarray, lower: jnp.ndarray, upper: jnp.ndarray):
-        eps = jnp.float32(1e-8)
-        parallel = jnp.abs(denom) < eps
-        safe_denom = jnp.where(parallel, jnp.float32(1.0), denom)
-        t1 = (lower - base) / safe_denom
-        t2 = (upper - base) / safe_denom
-        lo = jnp.minimum(t1, t2)
-        hi = jnp.maximum(t1, t2)
-        inside = (base >= lower) & (base <= upper)
-        inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
-        neg_inf = jnp.asarray(float("-inf"), dtype=jnp.float32)
-        lo = jnp.where(parallel, jnp.where(inside, neg_inf, inf), lo)
-        hi = jnp.where(parallel, jnp.where(inside, inf, neg_inf), hi)
-        return lo, hi
-
-    lo_x, hi_x = slab(base_x, ey_x, lower_x, upper_x)
-    lo_y, hi_y = slab(base_y, ey_y, lower_y, upper_y)
-    y_entry = jnp.maximum(lo_x, lo_y)
-    y_exit = jnp.minimum(hi_x, hi_y)
-    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
-    valid_rays_u = path_length > jnp.float32(0.0)
-    y_start = jnp.where(valid_rays_u, y_entry, jnp.float32(0.0))
-    step_size32 = jnp.float32(step_size)
-    n_steps_ray_u = jnp.where(
-        valid_rays_u,
-        jnp.ceil(path_length / step_size32).astype(jnp.int32),
-        jnp.int32(0),
-    )
-
-    ix0_u = (base_x + y_start * ey_x - jnp.float32(vol_origin_x)) / jnp.float32(vx)
-    iy0_u = (base_y + y_start * ey_y - jnp.float32(vol_origin_y)) / jnp.float32(vy)
-    iz = jnp.floor((zr - jnp.float32(vol_origin_z)) / jnp.float32(vz) + jnp.float32(0.5)).astype(jnp.int32)
-    dix = step_size32 * ey_x / jnp.float32(vx)
-    diy = step_size32 * ey_y / jnp.float32(vy)
-
-    ix0 = ix0_u[jnp.newaxis, :]
-    iy0 = iy0_u[jnp.newaxis, :]
-    iz_tile = iz[:, jnp.newaxis]
-    n_steps_ray = n_steps_ray_u[jnp.newaxis, :]
-
-    def body(step_idx, carry):
-        acc, ix, iy = carry
-        active = (step_idx < n_steps_ray) & in_detector
-        sample = _trilinear_load_z_integer(
-            volume_ref,
-            ix,
-            iy,
-            iz_tile,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-        )
-        return (
-            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
-            ix + dix,
-            iy + diy,
-        )
-
-    init = (
-        jnp.zeros((tile_v, tile_u), dtype=jnp.float32),
-        ix0,
-        iy0,
-    )
-    if unroll is None:
-        acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
-    else:
-        acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
-    out_ref[0, :, :] = acc.astype(jnp.float32)
 
 
 def _projector_residual_sse_kernel(
@@ -2001,56 +1833,31 @@ def forward_project_views_T_pallas(
         state_mode=state_mode,
     )
     vol_origin = _grid_volume_origin(grid)
-    if int(kernel_variant_id) == _KERNEL_VARIANT_IDS["parallel_z"]:
-        kernel = functools.partial(
-            _projector_views_parallel_z_kernel,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            nu=nu,
-            nv=nv,
-            du=float(detector.du),
-            dv=float(detector.dv),
-            det_center_x=float(detector.det_center[0]),
-            det_center_z=float(detector.det_center[1]),
-            vol_origin_x=float(vol_origin[0]),
-            vol_origin_y=float(vol_origin[1]),
-            vol_origin_z=float(vol_origin[2]),
-            vx=float(grid.vx),
-            vy=float(grid.vy),
-            vz=float(grid.vz),
-            step_size=float(step_size_value),
-            n_steps=int(effective_n_steps_value),
-            tile_v=int(tile_v),
-            tile_u=int(tile_u),
-            unroll=unroll,
-        )
-    else:
-        kernel = functools.partial(
-            _projector_views_kernel,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            nu=nu,
-            nv=nv,
-            du=float(detector.du),
-            dv=float(detector.dv),
-            det_center_x=float(detector.det_center[0]),
-            det_center_z=float(detector.det_center[1]),
-            vol_origin_x=float(vol_origin[0]),
-            vol_origin_y=float(vol_origin[1]),
-            vol_origin_z=float(vol_origin[2]),
-            vx=float(grid.vx),
-            vy=float(grid.vy),
-            vz=float(grid.vz),
-            step_size=float(step_size_value),
-            n_steps=int(effective_n_steps_value),
-            tile_v=int(tile_v),
-            tile_u=int(tile_u),
-            kernel_variant_id=int(kernel_variant_id),
-            layout_variant_id=int(layout_variant_id),
-            unroll=unroll,
-        )
+    kernel = functools.partial(
+        _projector_views_kernel,
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nu=nu,
+        nv=nv,
+        du=float(detector.du),
+        dv=float(detector.dv),
+        det_center_x=float(detector.det_center[0]),
+        det_center_z=float(detector.det_center[1]),
+        vol_origin_x=float(vol_origin[0]),
+        vol_origin_y=float(vol_origin[1]),
+        vol_origin_z=float(vol_origin[2]),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        step_size=float(step_size_value),
+        n_steps=int(effective_n_steps_value),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        kernel_variant_id=int(kernel_variant_id),
+        layout_variant_id=int(layout_variant_id),
+        unroll=unroll,
+    )
     grid_shape = (n_views, math.ceil(nv / tile_v), math.ceil(nu / tile_u))
     return pl.pallas_call(
         kernel,
