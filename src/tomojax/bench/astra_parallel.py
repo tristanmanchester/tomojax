@@ -344,6 +344,8 @@ def _cached_tomojax_pallas_forward_callable(
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_deg)
     poses = stack_view_poses(geom, len(thetas_deg))
     det_grid = get_detector_grid_device(det)
+    tile_shape = (16, 4) if max(int(nu), int(nv)) <= 64 else (8, 4)
+    num_warps = 2 if tile_shape == (16, 4) else 1
 
     @jax.jit
     def project(vol_in: jnp.ndarray) -> jnp.ndarray:
@@ -354,8 +356,8 @@ def _cached_tomojax_pallas_forward_callable(
             vol_in,
             gather_dtype="fp32",
             det_grid=det_grid,
-            tile_shape=(8, 4),
-            num_warps=1,
+            tile_shape=tile_shape,
+            num_warps=num_warps,
             kernel_variant="auto",
             layout_variant="detector_vu",
             state_mode="inline",
@@ -415,6 +417,8 @@ def _make_tomojax_pallas_forward_runner(
     )
 
     def run(volume: Any) -> jnp.ndarray:
+        if getattr(volume, "dtype", None) == jnp.dtype(jnp.float32):
+            return project(volume)
         return project(jnp.asarray(volume, dtype=jnp.float32))
 
     return run
