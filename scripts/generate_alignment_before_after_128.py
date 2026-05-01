@@ -117,6 +117,7 @@ class RunProfile:
     views_per_batch: int
     gather_dtype: str
     early_stop: bool
+    early_stop_profile: str
     early_stop_rel_impr: float
     early_stop_patience: int
 
@@ -164,6 +165,7 @@ def docs_profile() -> RunProfile:
         views_per_batch=1,
         gather_dtype="bf16",
         early_stop=True,
+        early_stop_profile="compute_saving",
         early_stop_rel_impr=1e-3,
         early_stop_patience=2,
     )
@@ -181,6 +183,7 @@ def smoke_profile() -> RunProfile:
         views_per_batch=1,
         gather_dtype="fp32",
         early_stop=False,
+        early_stop_profile="compute_saving",
         early_stop_rel_impr=1e-3,
         early_stop_patience=2,
     )
@@ -278,6 +281,7 @@ def profile_from_args(args: argparse.Namespace) -> RunProfile:
         ),
         gather_dtype=str(args.gather_dtype or base.gather_dtype),
         early_stop=bool(args.early_stop if args.early_stop is not None else base.early_stop),
+        early_stop_profile=str(args.early_stop_profile or base.early_stop_profile),
         early_stop_rel_impr=float(
             args.early_stop_rel_impr
             if args.early_stop_rel_impr is not None
@@ -538,6 +542,7 @@ def _run_geometry_alignment(
             optimise_dofs=optimise_dofs,
             freeze_dofs=(),
             early_stop=bool(profile.early_stop),
+            early_stop_profile=str(profile.early_stop_profile),
             early_stop_rel_impr=float(profile.early_stop_rel_impr),
             early_stop_patience=int(profile.early_stop_patience),
             gather_dtype=profile.gather_dtype,
@@ -909,6 +914,7 @@ def _visual_profile(profile: RunProfile) -> VisualProfile:
         levels=tuple(int(v) for v in profile.levels),
         outer_iters=int(profile.outer_iters),
         early_stop=bool(profile.early_stop),
+        early_stop_profile=str(profile.early_stop_profile),
     )
 
 
@@ -1468,6 +1474,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     early_stop = parser.add_mutually_exclusive_group()
     early_stop.add_argument("--early-stop", dest="early_stop", action="store_true", default=None)
     early_stop.add_argument("--no-early-stop", dest="early_stop", action="store_false")
+    parser.add_argument("--early-stop-profile", default=None)
     parser.add_argument("--early-stop-rel-impr", type=float, default=None)
     parser.add_argument("--early-stop-patience", type=int, default=None)
     parser.add_argument("--gather-dtype", default=None, choices=["fp32", "bf16", "fp16"])

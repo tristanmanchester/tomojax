@@ -57,6 +57,7 @@ def test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract(tm
     assert tuple(manifest["profile"]["levels"]) == (8, 4, 2, 1)
     assert manifest["profile"]["outer_iters"] == 16
     assert manifest["profile"]["early_stop"] is True
+    assert manifest["profile"]["early_stop_profile"] == "compute_saving"
     assert manifest["profile"]["early_stop_rel_impr"] == 1e-3
     assert manifest["profile"]["early_stop_patience"] == 2
     assert manifest["profile"]["views_per_batch"] == 1
@@ -175,6 +176,7 @@ def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monke
     def fake_align_multires(*args, **kwargs):
         cfg = kwargs["cfg"]
         captured["early_stop"] = cfg.early_stop
+        captured["early_stop_profile"] = cfg.early_stop_profile
         captured["early_stop_rel_impr"] = cfg.early_stop_rel_impr
         captured["early_stop_patience"] = cfg.early_stop_patience
         captured["schedule"] = cfg.schedule
@@ -210,6 +212,7 @@ def test_geometry_block_taxonomy_passes_profile_early_stop_to_align_config(monke
 
     assert captured == {
         "early_stop": True,
+        "early_stop_profile": "compute_saving",
         "early_stop_rel_impr": 1e-3,
         "early_stop_patience": 2,
         "schedule": "cor",

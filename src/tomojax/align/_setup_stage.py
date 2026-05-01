@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -19,6 +18,13 @@ from .geometry.geometry_applier import (
     materialize_setup_geometry,
 )
 from .objectives.loss_adapters import build_loss_adapter
+from .early_stop import (
+    EarlyStopState,
+    annotate_stat_with_early_stop,
+    evaluate_early_stop,
+    resolve_early_stop_policy,
+    setup_evidence_from_stat,
+)
 from .optimizers import ValidationLmConfig, run_active_validation_lm
 from .model.schedules import ResolvedAlignmentStage
 from .model.state import AlignmentState, PoseState, SetupGeometryState
@@ -377,7 +383,14 @@ def _optimize_setup_geometry_bilevel_for_level(
 
     setup_state = alignment_state
     setup_stats: list[OuterStat] = []
-    last_loss = math.inf
+    prev_loss_after: float | None = None
+    early_stop_state = EarlyStopState()
+    early_stop_policy = resolve_early_stop_policy(
+        enabled=bool(cfg.early_stop),
+        profile=getattr(cfg, "early_stop_profile", "compute_saving"),
+        rel_impr_threshold=float(cfg.early_stop_rel_impr),
+        patience=int(cfg.early_stop_patience),
+    )
     outer_limit = max(1, int(stage.maxiter if stage is not None else cfg.outer_iters))
     for outer_idx in range(1, outer_limit + 1):
         objective_result = _run_setup_validation_objective(
@@ -397,7 +410,6 @@ def _optimize_setup_geometry_bilevel_for_level(
         )
         opt_result = objective_result.opt_result
         setup_state = opt_result.state
-        last_loss = float(opt_result.loss)
         stat = _build_geometry_stage_stat(
             objective_result=objective_result,
             active_view=active_view,
@@ -410,12 +422,23 @@ def _optimize_setup_geometry_bilevel_for_level(
             outer_idx=outer_idx,
             init_x=init_x,
         )
+        evidence = setup_evidence_from_stat(
+            stat,
+            active_dofs=tuple(active_geometry_dofs),
+            prev_loss_after=prev_loss_after,
+        )
+        decision = evaluate_early_stop(
+            evidence=evidence,
+            policy=early_stop_policy,
+            state=early_stop_state,
+            outer_idx=outer_idx,
+        )
+        annotate_stat_with_early_stop(stat, decision)
+        early_stop_state = decision.state
+        prev_loss_after = evidence.loss_after
         setup_stats.append(stat)
-        if bool(cfg.early_stop) and outer_idx > 1:
-            prev = float(setup_stats[-2].get("geometry_loss_after", math.inf))
-            impr = (prev - last_loss) / max(abs(prev), 1e-6)
-            if impr < float(cfg.early_stop_rel_impr):
-                break
+        if decision.should_stop:
+            break
 
     x_next = _refresh_setup_reconstruction(
         geometry=geometry,

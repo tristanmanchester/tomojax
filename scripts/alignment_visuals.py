@@ -30,6 +30,7 @@ class VisualProfile:
     levels: tuple[int, ...]
     outer_iters: int
     early_stop: bool
+    early_stop_profile: str = "compute_saving"
 
 
 @dataclass(frozen=True)
@@ -231,7 +232,7 @@ def diagnostics_panel(
         f"status: {status or 'control'}",
         f"span/views: {theta_span:g} deg / {profile.views}",
         f"levels: {' '.join(str(v) for v in profile.levels)}",
-        f"iters/early: {profile.outer_iters} / {profile.early_stop}",
+        f"iters/early: {profile.outer_iters} / {profile.early_stop} ({profile.early_stop_profile})",
         "",
         "hidden",
         f"det_u={hidden['det_u_px']:.3g} det_v={hidden['det_v_px']:.3g}",

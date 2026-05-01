@@ -8,6 +8,7 @@ import pytest
 
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import parse_loss_spec
+from tomojax.align.pipeline import AlignConfig
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 
 
@@ -42,6 +43,19 @@ def test_pipeline_compatibility_symbols_remain_importable(symbol: str) -> None:
     pipeline = importlib.import_module("tomojax.align.pipeline")
 
     assert hasattr(pipeline, symbol)
+
+
+def test_align_config_normalizes_early_stop_profile_aliases() -> None:
+    cfg = AlignConfig(early_stop_profile="compute-saving")
+    robust = AlignConfig(early_stop_profile="conservative")
+
+    assert cfg.early_stop_profile == "compute_saving"
+    assert robust.early_stop_profile == "robust"
+
+
+def test_align_config_rejects_invalid_early_stop_profile() -> None:
+    with pytest.raises(ValueError, match="early_stop_profile"):
+        AlignConfig(early_stop_profile="forever")
 
 
 @pytest.mark.parametrize(

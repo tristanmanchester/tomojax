@@ -48,6 +48,7 @@ def _metadata(
     prev_factor: int | None = None,
     L_prev: float | None = None,
     small_impr_streak: int = 0,
+    early_stop_state: dict[str, object] | None = None,
     elapsed_offset: float = 0.0,
     level_complete: bool = False,
     run_complete: bool = False,
@@ -77,6 +78,7 @@ def _metadata(
                 prev_factor=prev_factor,
                 L_prev=L_prev,
                 small_impr_streak=small_impr_streak,
+                early_stop_state=early_stop_state,
                 elapsed_offset=elapsed_offset,
                 level_complete=level_complete,
                 run_complete=run_complete,
@@ -119,6 +121,7 @@ def _resume_single_from_checkpoint(
         outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
         L=meta.get("L_prev"),
         small_impr_streak=int(meta.get("small_impr_streak", 0)),
+        early_stop_state=dict(meta.get("early_stop_state", {}) or {}),
         elapsed_offset=float(meta.get("elapsed_offset", 0.0)),
     )
 
@@ -147,6 +150,7 @@ def _resume_multires_from_checkpoint(
         outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
         L=meta.get("L_prev"),
         small_impr_streak=int(meta.get("small_impr_streak", 0)),
+        early_stop_state=dict(meta.get("early_stop_state", {}) or {}),
         elapsed_offset=float(meta.get("elapsed_offset", 0.0)),
         level_complete=bool(meta.get("level_complete", False)),
         run_complete=bool(meta.get("run_complete", False)),
@@ -236,6 +240,41 @@ def test_alignment_checkpoint_round_trips_arrays_and_metadata(tmp_path):
     assert checkpoint.loss_history == [3.0, 2.0]
     assert checkpoint.outer_stats[0]["outer_idx"] == 1
     assert checkpoint.metadata["completed_outer_iters_in_level"] == 1
+    assert checkpoint.metadata["early_stop_state"] == {}
+
+
+def test_alignment_checkpoint_round_trips_early_stop_state(tmp_path):
+    grid = Grid(nx=3, ny=3, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=3, nv=2, du=1.0, dv=1.0)
+    projections = jnp.zeros((4, 2, 3), dtype=jnp.float32)
+    cfg = AlignConfig(outer_iters=2, recon_iters=1)
+    early_stop_state = {"gain_streak": 2, "step_streak": 1, "rejected_streak": 0}
+    metadata = _metadata(
+        cfg=cfg,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        completed_outer_iters_in_level=1,
+        global_outer_iters_completed=1,
+        early_stop_state=early_stop_state,
+    )
+
+    path = tmp_path / "align_checkpoint.npz"
+    save_alignment_checkpoint(
+        path,
+        x=np.ones((3, 3, 2), dtype=np.float32),
+        params5=np.zeros((4, 5), dtype=np.float32),
+        loss_history=[3.0],
+        outer_stats=[{"outer_idx": 1}],
+        metadata=metadata,
+    )
+
+    checkpoint = load_alignment_checkpoint(path)
+    validate_alignment_checkpoint(checkpoint, metadata)
+    resumed = _resume_single_from_checkpoint(path, metadata)
+
+    assert checkpoint.metadata["early_stop_state"] == early_stop_state
+    assert resumed.early_stop_state == early_stop_state
 
 
 def test_alignment_checkpoint_records_optional_schedule_metadata(tmp_path):

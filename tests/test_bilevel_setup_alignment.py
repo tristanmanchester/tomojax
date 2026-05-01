@@ -193,6 +193,9 @@ def test_product_setup_path_uses_validation_lm_not_active_lbfgs(monkeypatch):
     assert setup_stats
     assert setup_stats[0]["active_gradient_mode"] == "validation_residual_jvp"
     assert setup_stats[0]["schedule_stage_name"] == "direct_setup"
+    assert setup_stats[0]["early_stop_profile"] == "compute_saving"
+    assert setup_stats[0]["early_stop_decision"] in {"continue", "stop"}
+    assert "accepted_rel_impr" in setup_stats[0]
 
 
 def test_setup_execution_rejects_non_validation_lm_stage_before_running():

@@ -5,6 +5,7 @@ from typing import Literal, Mapping, TypeAlias, cast
 
 from ..core.geometry.base import Geometry
 from ..recon.types import Regulariser
+from .early_stop import EarlyStopProfile, normalize_early_stop_profile
 from .objectives.loss_specs import AlignmentLossConfig, L2OtsuLossSpec
 from .model.diagnostics import GaugePolicy
 from .model.dofs import (
@@ -154,6 +155,7 @@ class AlignConfig:
     recon_L: float | None = None
     # Early stopping across outers (alignment phase)
     early_stop: bool = True
+    early_stop_profile: EarlyStopProfile = "compute_saving"
     early_stop_rel_impr: float = 1e-3  # stop if (before-after)/before < this
     early_stop_patience: int = 2
     # Accept GN steps only when they improve the loss, up to gn_accept_tol.
@@ -235,6 +237,11 @@ class AlignConfig:
                 bounds_lower=bounds_lower,
                 bounds_upper=bounds_upper,
             )
+        self.early_stop_profile = normalize_early_stop_profile(self.early_stop_profile)
+        if float(self.early_stop_rel_impr) < 0.0:
+            raise ValueError("early_stop_rel_impr must be >= 0")
+        if int(self.early_stop_patience) < 1:
+            raise ValueError("early_stop_patience must be >= 1")
 
 
 

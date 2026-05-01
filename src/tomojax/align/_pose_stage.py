@@ -39,6 +39,13 @@ from ._observer import (
 )
 from ._reconstruction_stage import _run_reconstruction_step
 from ._results import AlignCheckpointCallback, AlignInfo, AlignResumeState, _set_float_stat
+from .early_stop import (
+    EarlyStopState,
+    annotate_stat_with_early_stop,
+    evaluate_early_stop,
+    pose_evidence_from_stat,
+    resolve_early_stop_policy,
+)
 from .model.dofs import bounds_vectors
 from .model.gauge import (
     GaugeFixMode,
@@ -1464,6 +1471,17 @@ def align(
     # Reuse measured Lipschitz across outer iterations to avoid repeated power-method
     L_prev = resume_state.L if resume_state is not None else cfg.recon_L
     small_impr_streak = int(resume_state.small_impr_streak) if resume_state is not None else 0
+    early_stop_state = (
+        EarlyStopState.from_mapping(resume_state.early_stop_state)
+        if resume_state is not None
+        else EarlyStopState()
+    )
+    early_stop_policy = resolve_early_stop_policy(
+        enabled=bool(cfg.early_stop),
+        profile=getattr(cfg, "early_stop_profile", "compute_saving"),
+        rel_impr_threshold=float(cfg.early_stop_rel_impr),
+        patience=int(cfg.early_stop_patience),
+    )
     opt_mode = str(cfg.opt_method).lower()
     outer_stats: list[OuterStat] = (
         [dict(stat) for stat in resume_state.outer_stats] if resume_state is not None else []
@@ -1485,6 +1503,7 @@ def align(
                 outer_stats=[dict(stat) for stat in outer_stats],
                 L=(float(L_prev) if L_prev is not None else None),
                 small_impr_streak=int(small_impr_streak),
+                early_stop_state=early_stop_state.to_dict(),
                 elapsed_offset=float(time.perf_counter() - wall_start),
             )
         )
@@ -1561,6 +1580,19 @@ def align(
         )
         loss_hist.append(total_loss)
         stat.update(align_stat)
+        early_evidence = pose_evidence_from_stat(
+            stat,
+            active_dofs=tuple(motion_model.active_names),
+        )
+        early_decision = evaluate_early_stop(
+            evidence=early_evidence,
+            policy=early_stop_policy,
+            state=early_stop_state,
+            outer_idx=outer_idx,
+        )
+        annotate_stat_with_early_stop(stat, early_decision)
+        early_stop_state = early_decision.state
+        small_impr_streak = int(early_stop_state.gain_streak)
 
         outer_time = time.perf_counter() - outer_start
         stat["outer_time"] = outer_time
@@ -1579,28 +1611,19 @@ def align(
                 stopped_by_observer = observer_action == "stop_run"
                 should_break = True
 
-        # Early stopping based on alignment improvement during GN/GD step
-        if cfg.early_stop and (rel_impr is not None):
-            rel_for_patience = rel_impr
-            if (not math.isfinite(rel_for_patience)) or (rel_for_patience < 0.0):
-                rel_for_patience = 0.0
-            if rel_for_patience < float(cfg.early_stop_rel_impr):
-                small_impr_streak += 1
-            else:
-                small_impr_streak = 0
-            if small_impr_streak >= int(cfg.early_stop_patience):
-                if cfg.log_summary:
-                    logging.info(
-                        "Early stop after %d outer iters (%s elapsed): rel_impr=%.3e < %.3e for %d consecutive outers",
-                        outer_idx,
-                        format_duration(stat.get("cumulative_time")),
-                        float(rel_impr),
-                        float(cfg.early_stop_rel_impr),
-                        int(cfg.early_stop_patience),
-                    )
-                should_break = True
-        elif cfg.early_stop:
-            small_impr_streak = 0
+        if early_decision.should_stop:
+            if cfg.log_summary:
+                logging.info(
+                    "Early stop after %d outer iters (%s elapsed): %s "
+                    "(profile=%s, gain_streak=%d, step_streak=%d)",
+                    outer_idx,
+                    format_duration(stat.get("cumulative_time")),
+                    early_decision.reason,
+                    early_decision.policy.profile,
+                    early_decision.state.gain_streak,
+                    early_decision.state.step_streak,
+                )
+            should_break = True
 
         _emit_checkpoint_state()
         if should_break:
@@ -1674,6 +1697,7 @@ def align(
         else str(cfg.opt_method),
         "completed_outer_iters": len(outer_stats),
         "small_impr_streak": int(small_impr_streak),
+        "early_stop_state": early_stop_state.to_dict(),
         "motion_coeffs": motion_coeffs,
         "gauge_fix": constraint_ctx.gauge_fix,
         "gauge_fix_dofs": list(constraint_ctx.gauge_dofs),

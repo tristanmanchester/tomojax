@@ -35,6 +35,7 @@ class AlignInfo(TypedDict):
     optimizer_kind: str
     completed_outer_iters: int
     small_impr_streak: int
+    early_stop_state: MetadataDict | None
     motion_coeffs: jnp.ndarray | None
     gauge_fix: str
     gauge_fix_dofs: list[str]
@@ -72,6 +73,7 @@ class AlignMultiresInfo(TypedDict):
     geometry_dofs: list[str]
     geometry_calibration_state: MetadataDict | None
     geometry_calibration_diagnostics: MetadataDict | None
+    early_stop_state: MetadataDict | None
 
 
 @dataclass
@@ -84,6 +86,7 @@ class AlignResumeState:
     outer_stats: list[OuterStat] = field(default_factory=list)
     L: float | None = None
     small_impr_streak: int = 0
+    early_stop_state: dict[str, object] = field(default_factory=dict)
     elapsed_offset: float = 0.0
 
 
@@ -101,6 +104,7 @@ class AlignMultiresResumeState:
     outer_stats: list[OuterStat] = field(default_factory=list)
     L: float | None = None
     small_impr_streak: int = 0
+    early_stop_state: dict[str, object] = field(default_factory=dict)
     elapsed_offset: float = 0.0
     level_complete: bool = False
     run_complete: bool = False
