@@ -251,36 +251,6 @@ def test_pose_lbfgs_rejects_non_improving_candidate():
     np.testing.assert_array_equal(np.asarray(result.params5), np.asarray(params0))
 
 
-def test_pose_lbfgs_reuses_initial_value_and_grad_for_first_iteration():
-    params0 = jnp.zeros((1, 5), dtype=jnp.float32)
-    bounds_lower = jnp.full((5,), -jnp.inf, dtype=jnp.float32)
-    bounds_upper = jnp.full((5,), jnp.inf, dtype=jnp.float32)
-    calls = {"objective": 0}
-
-    def objective(params):
-        calls["objective"] += 1
-        return jnp.sum((params[:, 3] - 1.0) ** 2)
-
-    run_pose_lbfgs(
-        params5_in=params0,
-        motion_coeffs_in=None,
-        loss_before_value=5.0,
-        objective_fn=objective,
-        eval_loss_fn=lambda params, _label: float(jnp.sum((params[:, 3] - 1.0) ** 2)),
-        is_expected_failure=lambda _exc: False,
-        cfg=_lbfgs_config(maxiter=1, maxls=1),
-        context=_pose_context(
-            frozen_params5=params0,
-            active_cols=np.asarray([3], dtype=np.int32),
-            bounds_lower=bounds_lower,
-            bounds_upper=bounds_upper,
-            apply_param_constraints=lambda params: params,
-        ),
-    )
-
-    assert calls["objective"] == 1
-
-
 def test_active_lbfgs_updates_setup_state_without_pose_special_case():
     state = AlignmentState(setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1))
     view = ActiveParameterView.from_dofs(("det_u_px",))

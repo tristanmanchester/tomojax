@@ -332,10 +332,7 @@ def _run_pose_lbfgs_optax_loop(
         for iteration in range(int(cfg.maxiter)):
             if success:
                 break
-            if iteration == 0:
-                value, grad = initial_value_jax, initial_grad
-            else:
-                value, grad = value_and_grad(z, state=opt_state)
+            value, grad = value_and_grad(z, state=opt_state)
             value_f = float(value)
             grad_norm = float(jnp.linalg.norm(grad))
             if not math.isfinite(value_f) or not math.isfinite(grad_norm):
