@@ -275,12 +275,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Projector gather dtype (auto: bf16 on GPU/TPU, else fp32)",
     )
-    p.add_argument(
-        "--projector-unroll",
-        type=int,
-        default=1,
-        help="Projector scan unroll factor for reconstruction and alignment objectives",
-    )
     ck = p.add_mutually_exclusive_group()
     ck.add_argument("--checkpoint-projector", dest="checkpoint_projector", action="store_true")
     ck.add_argument("--no-checkpoint-projector", dest="checkpoint_projector", action="store_false")
@@ -606,7 +600,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "views_per_batch": int(args.views_per_batch),
         "spdhg_seed": int(args.spdhg_seed),
         "recon_positivity": bool(args.recon_positivity),
-        "projector_unroll": int(args.projector_unroll),
+        "projector_unroll": 1,
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
@@ -854,7 +848,7 @@ def _build_align_cli_run_plan(
         lr_rot=args.lr_rot,
         lr_trans=args.lr_trans,
         views_per_batch=int(args.views_per_batch),
-        projector_unroll=int(args.projector_unroll),
+        projector_unroll=1,
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=gather_dtype,
         opt_method=str(args.opt_method),
@@ -1289,7 +1283,7 @@ def _build_alignment_manifest_payload_from_result(
         "views_per_batch": int(args.views_per_batch),
         "spdhg_seed": int(args.spdhg_seed),
         "recon_positivity": bool(args.recon_positivity),
-        "projector_unroll": int(args.projector_unroll),
+        "projector_unroll": 1,
         "checkpoint_projector": bool(args.checkpoint_projector),
         "transfer_guard": str(args.transfer_guard),
         "levels": plan.run_levels,
