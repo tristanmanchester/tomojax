@@ -95,7 +95,7 @@ class ForwardSinogramBenchmarkConfig:
     unroll: int | None = None
     use_checkpoint: bool = True
     include_pallas: bool = True
-    pallas_tile_shape: tuple[int, int] = (4, 8)
+    pallas_tile_shape: tuple[int, int] = (8, 8)
     pallas_num_warps: int = 1
     pallas_kernel_variant: str = "auto"
     pallas_layout_variant: str = "detector_vu"
