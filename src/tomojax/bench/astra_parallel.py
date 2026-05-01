@@ -346,8 +346,8 @@ def _cached_tomojax_pallas_forward_callable(
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_deg)
     poses = stack_view_poses(geom, len(thetas_deg))
     det_grid = get_detector_grid_device(det)
-    tile_shape = (8, 4)
-    num_warps = 1
+    tile_shape = (32, 8) if max(int(nu), int(nv)) <= 64 else (8, 4)
+    num_warps = 4 if tile_shape == (32, 8) else 1
 
     @jax.jit
     def project(vol_in: jnp.ndarray) -> jnp.ndarray:
