@@ -106,6 +106,13 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
         ],
         "pallas_sanity": None,
         "alignment_smoke": None,
+        "alignment_objective": {
+            "summary": {
+                "no_checkpoint_speedup_vs_checkpointed": 2.0,
+                "checkpointed_warm_seconds_median": 0.2,
+                "no_checkpoint_warm_seconds_median": 0.1,
+            }
+        },
     }
     path = tmp_path / "summary.md"
 
@@ -116,6 +123,8 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
     assert "optimization guard, not publication evidence" in text
     assert "Specialized FBP warm" in text
     assert "Direct/Generic FBP L2" in text
+    assert "## Alignment Objective" in text
+    assert "Value+grad no-checkpoint speedup vs checkpointed: `2.0000x`" in text
 
 
 def test_suite_json_can_round_trip_evidence_class(tmp_path) -> None:

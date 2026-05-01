@@ -247,6 +247,24 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
             ]
         )
 
+    alignment_objective = suite.get("alignment_objective")
+    if alignment_objective:
+        summary = alignment_objective["summary"]
+        lines.extend(
+            [
+                "",
+                "## Alignment Objective",
+                "",
+                "- Suite: `alignment_objective`",
+                "- Value+grad no-checkpoint speedup vs checkpointed: "
+                f"`{_fmt(summary['no_checkpoint_speedup_vs_checkpointed'])}x`",
+                "- Checkpointed warm median: "
+                f"`{_fmt(summary['checkpointed_warm_seconds_median'])}` sec",
+                "- No-checkpoint warm median: "
+                f"`{_fmt(summary['no_checkpoint_warm_seconds_median'])}` sec",
+            ]
+        )
+
     residual = suite.get("forward_residual")
     if residual:
         fused = residual["summary"]["pallas_modes"]["pallas_fused"]
@@ -287,6 +305,7 @@ def main() -> None:
     parser.add_argument("--git-branch", default="")
     parser.add_argument("--git-commit", default="")
     parser.add_argument("--include-alignment", action="store_true")
+    parser.add_argument("--include-alignment-objective", action="store_true")
     parser.add_argument("--include-forward-residual", action="store_true")
     parser.add_argument("--include-fista-iteration", action="store_true")
     parser.add_argument("--include-pallas-sanity", action="store_true", default=True)
@@ -412,6 +431,16 @@ def main() -> None:
         alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
         alignment["artifacts"]["slice_png"] = str(alignment_png.relative_to(args.out_dir))
 
+    alignment_objective = None
+    if args.include_alignment_objective:
+        from tomojax.bench.alignment_objective import (
+            run_alignment_objective_suite,
+            write_benchmark_json,
+        )
+
+        alignment_objective = run_alignment_objective_suite("alignment_objective")
+        write_benchmark_json(alignment_objective, args.out_dir / "alignment_objective.json")
+
     forward_residual = None
     if args.include_forward_residual:
         from tomojax.bench.forward_residual import (
@@ -444,6 +473,7 @@ def main() -> None:
         "case_summaries": case_summaries,
         "pallas_sanity": pallas_sanity,
         "alignment_smoke": alignment,
+        "alignment_objective": alignment_objective,
         "forward_residual": forward_residual,
         "fista_iteration": fista_iteration,
     }
