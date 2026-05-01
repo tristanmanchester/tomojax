@@ -1,5 +1,6 @@
 import numpy as np
 import jax.numpy as jnp
+import pytest
 from importlib import import_module
 
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
@@ -20,9 +21,17 @@ def make_case(
     du=1.0,
     dv=1.0,
     det_center=(0.0, 0.0),
+    nu=None,
+    nv=None,
 ):
     grid = Grid(nx=nx, ny=ny, nz=nz, vx=vx, vy=vy, vz=vz)
-    det = Detector(nu=nx, nv=nz, du=du, dv=dv, det_center=det_center)
+    det = Detector(
+        nu=nx if nu is None else nu,
+        nv=nz if nv is None else nv,
+        du=du,
+        dv=dv,
+        det_center=det_center,
+    )
     thetas = np.linspace(0, 180, n_views, endpoint=False)
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32).at[
@@ -44,16 +53,17 @@ def assert_direct_parallel_fbp_matches_generic(
     geom,
     projs,
     *,
+    filter_name="ramp",
     max_relative_l2=0.04,
     max_abs=0.06,
 ):
-    direct = fbp(geom, grid, det, projs, filter_name="ramp", views_per_batch=0)
+    direct = fbp(geom, grid, det, projs, filter_name=filter_name, views_per_batch=0)
     generic = fbp(
         geom,
         grid,
         det,
         projs,
-        filter_name="ramp",
+        filter_name=filter_name,
         views_per_batch=0,
         det_grid=get_detector_grid_device(det),
     )
@@ -72,6 +82,13 @@ def test_direct_parallel_fbp_matches_generic_path_on_small_fixture():
     assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs)
 
 
+@pytest.mark.parametrize("filter_name", ["ramp", "shepp", "hann"])
+def test_direct_parallel_fbp_matches_generic_for_filters(filter_name):
+    grid, det, geom, vol, projs = make_case(10, 10, 10, 10)
+
+    assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs, filter_name=filter_name)
+
+
 def test_direct_parallel_fbp_matches_generic_with_nonzero_detector_center():
     grid, det, geom, vol, projs = make_case(10, 10, 10, 10, det_center=(0.25, -0.5))
 
@@ -84,12 +101,25 @@ def test_direct_parallel_fbp_matches_generic_with_nonunit_spacing():
         10,
         10,
         10,
-        vx=1.25,
+        vx=1.0,
         vy=1.25,
-        vz=1.25,
-        du=1.25,
-        dv=1.25,
+        vz=0.75,
+        du=1.0,
+        dv=0.75,
     )
+
+    assert_direct_parallel_fbp_matches_generic(
+        grid,
+        det,
+        geom,
+        projs,
+        max_relative_l2=0.07,
+        max_abs=0.12,
+    )
+
+
+def test_direct_parallel_fbp_matches_generic_with_nonsquare_detector():
+    grid, det, geom, vol, projs = make_case(10, 8, 6, 10, nu=12, nv=7)
 
     assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs)
 
@@ -119,6 +149,39 @@ def test_non_parallel_geometry_uses_generic_fbp_path(monkeypatch):
     monkeypatch.setattr(fbp_mod, "_run_fbp_fast_path", fake_fast_path)
 
     rec = fbp_mod.fbp(geom, grid, det, projs, filter_name="ramp", views_per_batch=2, scale=1.0)
+
+    assert calls == ["generic"]
+    np.testing.assert_allclose(np.asarray(rec), np.ones((grid.nx, grid.ny, grid.nz)))
+
+
+def test_parallel_geometry_with_explicit_detector_grid_uses_generic_fbp_path(monkeypatch):
+    fbp_mod = import_module("tomojax.recon.fbp")
+    grid = Grid(nx=6, ny=6, nz=6, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=6, nv=6, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 30.0])
+    projs = jnp.ones((2, det.nv, det.nu), dtype=jnp.float32)
+    calls = []
+
+    def fail_direct(*args, **kwargs):
+        raise AssertionError("direct parallel FBP should not run with explicit det_grid")
+
+    def fake_fast_path(*args, **kwargs):
+        calls.append("generic")
+        return jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    monkeypatch.setattr(fbp_mod, "_run_parallel_fbp_direct_jit", fail_direct)
+    monkeypatch.setattr(fbp_mod, "_run_fbp_fast_path", fake_fast_path)
+
+    rec = fbp_mod.fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        filter_name="ramp",
+        views_per_batch=2,
+        det_grid=get_detector_grid_device(det),
+        scale=1.0,
+    )
 
     assert calls == ["generic"]
     np.testing.assert_allclose(np.asarray(rec), np.ones((grid.nx, grid.ny, grid.nz)))

@@ -64,6 +64,14 @@ def _assert_matches_jax(
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=atol, rtol=rtol)
 
 
+def _relative_l2(candidate: jnp.ndarray, reference: jnp.ndarray) -> float:
+    reference_np = np.asarray(reference)
+    denom = float(np.linalg.norm(reference_np.ravel()))
+    if denom == 0.0:
+        denom = 1.0
+    return float(np.linalg.norm((np.asarray(candidate) - reference_np).ravel()) / denom)
+
+
 def test_pallas_forward_project_uniform_volume_returns_path_length() -> None:
     grid = Grid(nx=16, ny=16, nz=16, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=16, nv=16, du=1.0, dv=1.0, det_center=(0.0, 0.0))
@@ -266,6 +274,115 @@ def test_pallas_forward_project_views_matches_jax_loop() -> None:
 
     assert candidate.shape == (3, 7, 9)
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_forward_project_views_cached_call_uses_runtime_volume_and_pose() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume_a = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+    volume_b = jnp.flip(volume_a, axis=0).at[1:4, 2:6, 3:5].add(3.0)
+
+    base = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume_a,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    changed_volume = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume_b,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    shifted_stack = T_stack.at[:, 0, 3].add(0.25)
+    changed_pose = forward_project_views_T_pallas(
+        shifted_stack,
+        grid,
+        detector,
+        volume_a,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+
+    oracle_changed_volume = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume_b) for T in poses],
+        axis=0,
+    )
+    oracle_changed_pose = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume_a) for T in shifted_stack],
+        axis=0,
+    )
+
+    assert _relative_l2(changed_volume, base) > 1e-3
+    assert _relative_l2(changed_pose, base) > 1e-3
+    np.testing.assert_allclose(
+        np.asarray(changed_volume),
+        np.asarray(oracle_changed_volume),
+        atol=1e-4,
+        rtol=1e-4,
+    )
+    np.testing.assert_allclose(
+        np.asarray(changed_pose),
+        np.asarray(oracle_changed_pose),
+        atol=1e-4,
+        rtol=1e-4,
+    )
+
+
+def test_pallas_forward_project_views_cached_call_handles_static_config_changes() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector_a = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    detector_b = Detector(nu=9, nv=7, du=0.75, dv=1.25, det_center=(0.25, -0.5))
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+    stack_a = jnp.stack(
+        [_pose(theta, grid=grid, detector=detector_a) for theta in (0.0, 45.0)],
+        axis=0,
+    )
+    stack_b = jnp.stack(
+        [_pose(theta, grid=grid, detector=detector_b) for theta in (0.0, 45.0, 90.0)],
+        axis=0,
+    )
+
+    candidate_a = forward_project_views_T_pallas(
+        stack_a,
+        grid,
+        detector_a,
+        volume,
+        interpret=True,
+        tile_shape=(4, 4),
+        kernel_variant="auto",
+    )
+    candidate_b = forward_project_views_T_pallas(
+        stack_b,
+        grid,
+        detector_b,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+        kernel_variant="auto",
+    )
+    oracle_a = jnp.stack(
+        [forward_project_view_T(T, grid, detector_a, volume) for T in stack_a],
+        axis=0,
+    )
+    oracle_b = jnp.stack(
+        [forward_project_view_T(T, grid, detector_b, volume) for T in stack_b],
+        axis=0,
+    )
+
+    assert candidate_a.shape == (2, 8, 8)
+    assert candidate_b.shape == (3, 7, 9)
+    np.testing.assert_allclose(np.asarray(candidate_a), np.asarray(oracle_a), atol=1e-4, rtol=1e-4)
+    np.testing.assert_allclose(np.asarray(candidate_b), np.asarray(oracle_b), atol=1e-4, rtol=1e-4)
 
 
 def test_parallel_geometry_stack_view_poses_matches_per_view_poses() -> None:
