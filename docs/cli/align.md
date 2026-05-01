@@ -270,6 +270,8 @@ stalls, saving time on converged runs.
 
 - `--early-stop` / `--no-early-stop` -- enable or disable early
   stopping (default: on)
+- `--early-stop-profile` -- policy profile: `compute_saving`
+  (default), `robust`, or `off`
 - `--early-stop-rel` -- relative improvement threshold
   (default: 1e-3)
 - `--early-stop-patience` -- consecutive outers below threshold
