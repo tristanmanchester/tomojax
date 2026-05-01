@@ -1147,6 +1147,7 @@ def _run_alignment_step(
     stat["optimizer_kind"] = step_kind
     stat["loss_after_step"] = loss_after
 
+    params5_before_final_gauge = params5_out
     params5_out, gauge_stats = ctx.apply_full_constraints_with_stats(params5_out)
     if ctx.use_smooth_pose_model:
         motion_coeffs_out = fit_motion_coefficients(ctx.motion_model, params5_out)
@@ -1171,11 +1172,15 @@ def _run_alignment_step(
         final_loss_fallback = loss_before
     if final_loss_fallback is None and loss_hist:
         final_loss_fallback = loss_hist[-1]
-    total_loss_eval = _evaluate_align_loss(
-        lambda: ctx.align_loss_jit(params5_out, vol),
-        fallback=final_loss_fallback,
-        context="Using fallback for final alignment loss bookkeeping",
-    )
+    gauge_delta = jnp.max(jnp.abs(params5_out - params5_before_final_gauge))
+    if loss_after is not None and float(gauge_delta) <= 1e-6:
+        total_loss_eval = loss_after
+    else:
+        total_loss_eval = _evaluate_align_loss(
+            lambda: ctx.align_loss_jit(params5_out, vol),
+            fallback=final_loss_fallback,
+            context="Using fallback for final alignment loss bookkeeping",
+        )
     total_loss = float(total_loss_eval) if total_loss_eval is not None else math.nan
     stat["loss_after"] = total_loss
 
