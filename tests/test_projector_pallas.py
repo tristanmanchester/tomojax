@@ -16,11 +16,16 @@ from tomojax.core.pallas_projector import (
     forward_project_view_T_pallas,
     forward_project_views_T_pallas,
     pallas_projector_actual_variant_metadata,
+    pallas_projector_sinogram_traversal_metadata,
     pallas_projector_traversal_metadata,
     pallas_projector_variant_metadata,
     prepare_forward_project_view_T_pallas_state,
 )
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.bench.forward_projector import (
+    ForwardSinogramBenchmarkConfig,
+    make_forward_sinogram_fixture,
+)
 
 
 def _pose(theta_deg: float = 0.0, *, grid: Grid, detector: Detector) -> jnp.ndarray:
@@ -276,6 +281,61 @@ def test_pallas_forward_project_views_matches_jax_loop() -> None:
 
     assert candidate.shape == (3, 7, 9)
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_general_pose_stack_uses_full_traversal_bound() -> None:
+    fixture = make_forward_sinogram_fixture(
+        ForwardSinogramBenchmarkConfig(
+            nx=24,
+            ny=24,
+            nz=24,
+            nu=24,
+            nv=24,
+            n_views=24,
+            pose_mode="general_5d",
+        )
+    )
+
+    metadata = pallas_projector_sinogram_traversal_metadata(
+        fixture.T_stack,
+        fixture.grid,
+    )
+
+    assert metadata["effective_pallas_n_steps"] == metadata["resolved_n_steps"]
+
+
+def test_pallas_general_pose_stack_real_lowering_matches_jax() -> None:
+    if jax.default_backend() != "gpu":
+        pytest.skip("real Pallas lowering requires GPU")
+    fixture = make_forward_sinogram_fixture(
+        ForwardSinogramBenchmarkConfig(
+            nx=24,
+            ny=24,
+            nz=24,
+            nu=24,
+            nv=24,
+            n_views=24,
+            pose_mode="general_5d",
+        )
+    )
+
+    candidate = forward_project_views_T_pallas(
+        fixture.T_stack,
+        fixture.grid,
+        fixture.detector,
+        fixture.volume,
+        tile_shape=(8, 16),
+        kernel_variant="generic",
+    )
+    oracle = jnp.stack(
+        [
+            forward_project_view_T(T, fixture.grid, fixture.detector, fixture.volume)
+            for T in fixture.T_stack
+        ],
+        axis=0,
+    )
+
+    assert _relative_l2(candidate, oracle) <= 1e-5
 
 
 def test_pallas_parallel_z_views_specialization_matches_jax_loop() -> None:

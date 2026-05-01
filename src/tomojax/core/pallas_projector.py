@@ -283,6 +283,8 @@ def pallas_projector_actual_sinogram_variant_metadata(
         det_grid,
         requested_kernel_variant,
     )
+    if metadata["kernel_variant"] == "generic" and int(metadata["tile_shape"][1]) > 8:
+        metadata["tile_shape"] = [int(metadata["tile_shape"][0]), 8]
     return metadata
 
 
@@ -354,6 +356,8 @@ def _resolve_effective_pallas_n_steps(
         return int(resolved_n_steps)
 
     ray_dir = T_host[:3, :3].T[:, 1]
+    if abs(float(ray_dir[2])) > 1e-8:
+        return int(resolved_n_steps)
     support_lengths = np.asarray(
         [
             (int(grid.nx) + 1) * float(grid.vx),
@@ -388,6 +392,8 @@ def _resolve_effective_pallas_n_steps_for_stack(
         return int(resolved_n_steps)
 
     ray_dirs = T_host[:, 1, :3].astype(np.float64)
+    if np.any(np.abs(ray_dirs[:, 2]) > 1e-8):
+        return int(resolved_n_steps)
     support_lengths = np.asarray(
         [
             (int(grid.nx) + 1) * float(grid.vx),
@@ -674,6 +680,8 @@ def _validate_public_call(
         n_steps_value,
     )
     kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
+    if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]:
+        effective_n_steps_value = n_steps_value
     layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return nx, ny, nz, nv, nu, nx * ny * nz, step_size_value, n_steps_value, effective_n_steps_value, (
         tile_v,
@@ -731,6 +739,8 @@ def _validate_public_sinogram_call(
             _unsupported("batched sinogram Pallas supports state_mode='inline' only")
         )
     tile_v, tile_u = variant["tile_shape"]
+    if variant["kernel_variant"] == "generic" and int(tile_u) > 8:
+        tile_u = 8
     if not interpret and jax.default_backend() == "cpu":
         raise PallasProjectorUnsupported(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
@@ -748,6 +758,8 @@ def _validate_public_sinogram_call(
         n_steps_value,
     )
     kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
+    if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]:
+        effective_n_steps_value = n_steps_value
     layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return (
         nx,
@@ -1229,9 +1241,9 @@ def _projector_views_kernel(
     else:
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
-        out_ref[0, :, :] = acc.T.astype(jnp.float32)
+        out_ref[...] = acc.T[jnp.newaxis, :, :].astype(jnp.float32)
     else:
-        out_ref[0, :, :] = acc.astype(jnp.float32)
+        out_ref[...] = acc[jnp.newaxis, :, :].astype(jnp.float32)
 
 
 def _projector_parallel_z_views_kernel(
@@ -1357,7 +1369,7 @@ def _projector_parallel_z_views_kernel(
         acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
     else:
         acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
-    out_ref[0, :, :] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)
+    out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
 
 
 def _projector_residual_sse_kernel(
@@ -1566,6 +1578,8 @@ def prepare_forward_project_view_T_pallas_state(
         step_size_value,
         resolved_n_steps,
     )
+    if str(variant["kernel_variant"]) == "generic":
+        effective_n_steps = resolved_n_steps
     (
         ix0,
         iy0,
