@@ -125,3 +125,6 @@ results/
 .factory/
 scorecard.png
 .agents/skills/desloppify/SKILL.md
+
+# Internal documentation
+docs/tomojax_article_roadmap.md
