@@ -17,8 +17,8 @@ CASE_PRESETS: dict[str, list[dict[str, Any]]] = {
         {"name": "quick_64", "size": 64, "detector": 64, "views": 90, "warmup": 1, "repeat": 1},
     ],
     "guard": [
-        {"name": "headline_128", "size": 128, "detector": 128, "views": 180, "warmup": 1, "repeat": 3},
-        {"name": "sanity_64", "size": 64, "detector": 64, "views": 90, "warmup": 1, "repeat": 2},
+        {"name": "headline_128", "size": 128, "detector": 128, "views": 180, "warmup": 1, "repeat": 7},
+        {"name": "sanity_64", "size": 64, "detector": 64, "views": 90, "warmup": 1, "repeat": 7},
     ],
     "publication": [
         {"name": "scale_64", "size": 64, "detector": 64, "views": 90, "warmup": 3, "repeat": 10},
