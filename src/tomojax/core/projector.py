@@ -443,7 +443,7 @@ def sum_backproject_views_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Sum explicit mixed-precision adjoints over a fixed chunk without stacking volumes."""
+    """Sum explicit mixed-precision adjoints over a fixed chunk."""
     n_views, _, _ = validate_projection_stack(
         images,
         detector,
@@ -454,9 +454,8 @@ def sum_backproject_views_T(
     validate_grid(grid, "sum_backproject_views_T")
     img = jnp.asarray(images, dtype=jnp.float32)
 
-    def body(accum, inputs):
-        T_i, img_i = inputs
-        bp = backproject_view_T(
+    def backproject_one(T_i: jnp.ndarray, img_i: jnp.ndarray) -> jnp.ndarray:
+        return backproject_view_T(
             T_i,
             grid,
             detector,
@@ -467,11 +466,10 @@ def sum_backproject_views_T(
             gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
-        return accum + bp, None
 
-    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    acc, _ = jax.lax.scan(body, init, (T_all, img))
-    return acc
+    if int(n_views) == 1:
+        return backproject_one(T_all[0], img[0])
+    return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
 
 
 def forward_project_view(

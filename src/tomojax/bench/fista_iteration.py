@@ -28,7 +28,7 @@ FISTA_ITERATION_SUITE_NAMES = ("fista_iteration",)
 class FistaIterationBenchmarkConfig(ForwardSinogramBenchmarkConfig):
     lambda_tv: float = 0.001
     L: float = 5000.0
-    views_per_batch: int = 1
+    views_per_batch: int = 0
     regulariser: str = "huber_tv"
 
 
@@ -54,6 +54,7 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 nv=24,
                 n_views=24,
                 warm_runs=7,
+                unroll=4,
                 pose_mode="general_5d",
             ),
         ),
@@ -67,6 +68,7 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 nv=64,
                 n_views=90,
                 warm_runs=5,
+                unroll=4,
                 pose_mode="general_5d",
             ),
         ),
