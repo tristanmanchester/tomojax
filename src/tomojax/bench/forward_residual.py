@@ -30,7 +30,7 @@ ResidualModeName = Literal[
     "pallas_fused",
     "pallas_dispatch",
 ]
-RESIDUAL_SUITE_NAMES = ("residual",)
+RESIDUAL_SUITE_NAMES = ("residual", "general_pose")
 PALLAS_DISPATCH_RAY_STEP_THRESHOLD = 1_000_000_000
 
 
@@ -53,6 +53,35 @@ class ForwardResidualSuiteCase:
 
 def residual_suite_cases(name: str = "residual") -> tuple[ForwardResidualSuiteCase, ...]:
     """Return fixed objective workloads for fused residual benchmarking."""
+    if name == "general_pose":
+        return (
+            ForwardResidualSuiteCase(
+                "general-pose-residual-24",
+                ForwardResidualBenchmarkConfig(
+                    nx=24,
+                    ny=24,
+                    nz=24,
+                    nu=24,
+                    nv=24,
+                    n_views=24,
+                    warm_runs=7,
+                    pose_mode="general_5d",
+                ),
+            ),
+            ForwardResidualSuiteCase(
+                "general-pose-residual-64",
+                ForwardResidualBenchmarkConfig(
+                    nx=64,
+                    ny=64,
+                    nz=64,
+                    nu=64,
+                    nv=64,
+                    n_views=90,
+                    warm_runs=7,
+                    pose_mode="general_5d",
+                ),
+            ),
+        )
     if name != "residual":
         raise ValueError(f"residual suite must be one of: {', '.join(RESIDUAL_SUITE_NAMES)}")
     return (

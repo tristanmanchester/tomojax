@@ -247,6 +247,29 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
             ]
         )
 
+    residual = suite.get("forward_residual")
+    if residual:
+        fused = residual["summary"]["pallas_modes"]["pallas_fused"]
+        lines.extend(
+            [
+                "",
+                "## Forward Residual",
+                "",
+                f"- Suite: `{residual['suite']}`",
+                "- Pallas fused geomean speedup vs JAX materialized: "
+                f"`{_fmt(fused['geomean_speedup_vs_jax_materialized_warm_median'])}x`",
+            ]
+        )
+
+    fista = suite.get("fista_iteration")
+    if fista:
+        lines.extend(["", "## FISTA Iteration", ""])
+        for case in fista["cases"]:
+            lines.append(
+                f"- `{case['case_name']}`: warm median "
+                f"`{_fmt(case['warm_seconds_median'])}` sec"
+            )
+
     lines.extend(["", "## Artifacts", ""])
     for row in suite["case_summaries"]:
         lines.append(f"- `{row['case']}`: `{row['markdown']}`")
@@ -264,6 +287,8 @@ def main() -> None:
     parser.add_argument("--git-branch", default="")
     parser.add_argument("--git-commit", default="")
     parser.add_argument("--include-alignment", action="store_true")
+    parser.add_argument("--include-forward-residual", action="store_true")
+    parser.add_argument("--include-fista-iteration", action="store_true")
     parser.add_argument("--include-pallas-sanity", action="store_true", default=True)
     parser.add_argument("--no-pallas-sanity", dest="include_pallas_sanity", action="store_false")
     args = parser.parse_args()
@@ -387,6 +412,26 @@ def main() -> None:
         alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
         alignment["artifacts"]["slice_png"] = str(alignment_png.relative_to(args.out_dir))
 
+    forward_residual = None
+    if args.include_forward_residual:
+        from tomojax.bench.forward_residual import (
+            run_forward_residual_suite,
+            write_benchmark_json,
+        )
+
+        forward_residual = run_forward_residual_suite("general_pose")
+        write_benchmark_json(forward_residual, args.out_dir / "forward_residual_general_pose.json")
+
+    fista_iteration = None
+    if args.include_fista_iteration:
+        from tomojax.bench.fista_iteration import (
+            run_fista_iteration_suite,
+            write_benchmark_json,
+        )
+
+        fista_iteration = run_fista_iteration_suite("fista_iteration")
+        write_benchmark_json(fista_iteration, args.out_dir / "fista_iteration.json")
+
     suite = {
         "benchmark": "tomojax_benchmark_suite",
         "mode": args.mode,
@@ -399,6 +444,8 @@ def main() -> None:
         "case_summaries": case_summaries,
         "pallas_sanity": pallas_sanity,
         "alignment_smoke": alignment,
+        "forward_residual": forward_residual,
+        "fista_iteration": fista_iteration,
     }
     (args.out_dir / "suite.json").write_text(json.dumps(suite, indent=2) + "\n", encoding="utf-8")
     _write_csv(args.out_dir / "cases.csv", case_summaries)

@@ -39,6 +39,16 @@ def test_residual_suite_cases_returns_fixed_workloads() -> None:
     assert any(case.config.nu * case.config.nv > 60_000 for case in cases)
 
 
+def test_general_pose_residual_suite_uses_general_5d_poses() -> None:
+    cases = residual_suite_cases("general_pose")
+
+    assert [case.name for case in cases] == [
+        "general-pose-residual-24",
+        "general-pose-residual-64",
+    ]
+    assert all(case.config.pose_mode == "general_5d" for case in cases)
+
+
 def test_forward_residual_benchmark_reports_jax_and_pallas_fallback() -> None:
     config = ForwardResidualBenchmarkConfig(
         nx=4,
@@ -240,7 +250,7 @@ def test_forward_residual_suite_reports_cases_and_summary(
 
 
 def test_public_residual_suite_names() -> None:
-    assert RESIDUAL_SUITE_NAMES == ("residual",)
+    assert RESIDUAL_SUITE_NAMES == ("residual", "general_pose")
 
 
 def test_geomean_alias_available() -> None:

@@ -100,6 +100,7 @@ class ForwardSinogramBenchmarkConfig:
     pallas_kernel_variant: str = "auto"
     pallas_layout_variant: str = "detector_vu"
     pallas_state_mode: str = "inline"
+    pose_mode: Literal["z_axis", "general_5d"] = "z_axis"
 
 
 @dataclass(frozen=True)
@@ -327,10 +328,15 @@ def make_forward_sinogram_fixture(
     geometry = ParallelGeometry(grid=grid, detector=detector, thetas_deg=thetas)
     rng = np.random.default_rng(int(config.seed))
     volume_np = np.abs(rng.normal(size=(grid.nx, grid.ny, grid.nz)).astype(np.float32))
-    T_stack = jnp.asarray(
-        np.stack([np.asarray(geometry.pose_for_view(i), dtype=np.float32) for i in range(len(thetas))]),
-        dtype=jnp.float32,
-    )
+    if config.pose_mode == "z_axis":
+        poses_np = np.stack(
+            [np.asarray(geometry.pose_for_view(i), dtype=np.float32) for i in range(len(thetas))]
+        )
+    elif config.pose_mode == "general_5d":
+        poses_np = _general_5d_pose_stack(thetas, seed=int(config.seed))
+    else:
+        raise ValueError("pose_mode must be 'z_axis' or 'general_5d'")
+    T_stack = jnp.asarray(poses_np, dtype=jnp.float32)
     return ForwardSinogramFixture(
         grid=grid,
         detector=detector,
@@ -338,6 +344,38 @@ def make_forward_sinogram_fixture(
         volume=jnp.asarray(volume_np, dtype=jnp.float32),
         det_grid=get_detector_grid_device(detector),
     )
+
+
+def _general_5d_pose_stack(thetas_deg: np.ndarray, *, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed + 137)
+    n = int(len(thetas_deg))
+    alpha = rng.uniform(-5.0, 5.0, size=n).astype(np.float32) * np.float32(np.pi / 180.0)
+    beta = rng.uniform(-5.0, 5.0, size=n).astype(np.float32) * np.float32(np.pi / 180.0)
+    phi = thetas_deg.astype(np.float32) * np.float32(np.pi / 180.0)
+    dx = rng.uniform(-2.0, 2.0, size=n).astype(np.float32)
+    dz = rng.uniform(-2.0, 2.0, size=n).astype(np.float32)
+    poses = np.zeros((n, 4, 4), dtype=np.float32)
+    poses[:, 3, 3] = 1.0
+    for i in range(n):
+        ca, sa = np.cos(alpha[i]), np.sin(alpha[i])
+        cb, sb = np.cos(beta[i]), np.sin(beta[i])
+        cp, sp = np.cos(phi[i]), np.sin(phi[i])
+        rx = np.asarray(
+            [[1.0, 0.0, 0.0], [0.0, ca, -sa], [0.0, sa, ca]],
+            dtype=np.float32,
+        )
+        ry = np.asarray(
+            [[cb, 0.0, sb], [0.0, 1.0, 0.0], [-sb, 0.0, cb]],
+            dtype=np.float32,
+        )
+        rz = np.asarray(
+            [[cp, -sp, 0.0], [sp, cp, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+        poses[i, :3, :3] = rz @ ry @ rx
+        poses[i, 0, 3] = dx[i]
+        poses[i, 2, 3] = dz[i]
+    return poses
 
 
 def _block_tree_ready(value: Any) -> Any:
@@ -392,6 +430,7 @@ def _sinogram_fixture_metadata(
         "volume_shape": [int(fixture.grid.nx), int(fixture.grid.ny), int(fixture.grid.nz)],
         "detector_shape": [int(fixture.detector.nv), int(fixture.detector.nu)],
         "n_views": n_views,
+        "pose_mode": config.pose_mode,
         "n_rays_per_view": n_rays_per_view,
         "n_rays_total": int(n_rays_per_view * n_views),
         "step_size": step_size,
