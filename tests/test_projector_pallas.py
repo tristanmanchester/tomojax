@@ -5,6 +5,7 @@ import pytest
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
+from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     bind_forward_project_view_T_pallas,
@@ -265,6 +266,21 @@ def test_pallas_forward_project_views_matches_jax_loop() -> None:
 
     assert candidate.shape == (3, 7, 9)
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_parallel_geometry_stack_view_poses_matches_per_view_poses() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(grid=grid, detector=detector, thetas_deg=[0.0, 31.0, 73.0])
+
+    stacked = stack_view_poses(geom, 3)
+    expected = jnp.stack(
+        [jnp.asarray(geom.pose_for_view(i), dtype=jnp.float32) for i in range(3)],
+        axis=0,
+    )
+
+    assert stacked.shape == (3, 4, 4)
+    np.testing.assert_allclose(np.asarray(stacked), np.asarray(expected), atol=1e-7, rtol=1e-7)
 
 
 def test_pallas_forward_project_views_one_view_matches_single_view_pallas() -> None:
