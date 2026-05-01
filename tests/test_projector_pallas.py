@@ -12,6 +12,7 @@ from tomojax.core.pallas_projector import (
     forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
     forward_project_views_T_pallas,
+    pallas_projector_actual_sinogram_variant_metadata,
     pallas_projector_actual_variant_metadata,
     pallas_projector_traversal_metadata,
     pallas_projector_variant_metadata,
@@ -449,6 +450,39 @@ def test_pallas_actual_variant_metadata_selects_z_integer_for_auto() -> None:
     )
 
     assert metadata["kernel_variant"] == "z_integer4"
+
+
+def test_pallas_actual_sinogram_variant_metadata_selects_parallel_z_for_auto() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T_stack = jnp.stack(
+        [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 37.0)],
+        axis=0,
+    )
+
+    metadata = pallas_projector_actual_sinogram_variant_metadata(
+        T_stack,
+        grid,
+        detector,
+        kernel_variant="auto",
+    )
+
+    assert metadata["kernel_variant"] == "parallel_z"
+
+
+def test_pallas_sinogram_parallel_z_rejects_translated_pose_stack() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T = _pose(37.0, grid=grid, detector=detector).at[0, 3].set(jnp.float32(0.25))
+    T_stack = T[jnp.newaxis, :, :]
+
+    with pytest.raises(PallasProjectorUnsupported, match="parallel_z"):
+        pallas_projector_actual_sinogram_variant_metadata(
+            T_stack,
+            grid,
+            detector,
+            kernel_variant="parallel_z",
+        )
 
 
 def test_pallas_traversal_metadata_tightens_default_diagonal_bound() -> None:
