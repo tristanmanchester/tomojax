@@ -304,7 +304,7 @@ def main() -> None:
     parser.add_argument("--schedule", default="pose_only")
     parser.add_argument("--lambda-tv", type=float, default=0.001)
     parser.add_argument("--recon-L", type=float, default=5000.0)
-    parser.add_argument("--views-per-batch", type=int, default=0)
+    parser.add_argument("--views-per-batch", type=int, default=1)
     args = parser.parse_args()
 
     env = dict(os.environ)
