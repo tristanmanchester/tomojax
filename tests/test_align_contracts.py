@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig
+from tomojax.cli.align import _checkpoint_cli_options
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 
 
@@ -56,6 +58,30 @@ def test_align_config_normalizes_early_stop_profile_aliases() -> None:
 def test_align_config_rejects_invalid_early_stop_profile() -> None:
     with pytest.raises(ValueError, match="early_stop_profile"):
         AlignConfig(early_stop_profile="forever")
+
+
+def test_checkpoint_cli_options_canonicalize_early_stop_profile_alias() -> None:
+    args = SimpleNamespace(
+        roi="auto",
+        grid=None,
+        gather_dtype="auto",
+        recon_algo="fista-tv",
+        views_per_batch=8,
+        spdhg_seed=0,
+        recon_positivity=False,
+        checkpoint_projector=False,
+        mask_vol="off",
+        gauge_fix="auto",
+        gauge_policy="stage",
+        optimise_dofs=["dx", "dz"],
+        freeze_dofs=[],
+        schedule="pose",
+        early_stop_profile="compute-saving",
+    )
+
+    options = _checkpoint_cli_options(args, gather_dtype="float32")
+
+    assert options["early_stop_profile"] == "compute_saving"
 
 
 @pytest.mark.parametrize(

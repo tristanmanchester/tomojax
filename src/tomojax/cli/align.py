@@ -16,6 +16,7 @@ from ..align.model.dofs import (
     normalize_alignment_dofs,
     normalize_bounds,
 )
+from ..align.early_stop import normalize_early_stop_profile
 from ..align.objectives.loss_specs import (
     AlignmentLossConfig,
     parse_loss_schedule,
@@ -613,7 +614,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "optimise_dofs": list(args.optimise_dofs or []),
         "freeze_dofs": list(args.freeze_dofs or []),
         "schedule": args.schedule,
-        "early_stop_profile": str(args.early_stop_profile),
+        "early_stop_profile": normalize_early_stop_profile(args.early_stop_profile),
     }
 
 
