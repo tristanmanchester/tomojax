@@ -6,8 +6,10 @@ from importlib import import_module
 
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
+from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view, get_detector_grid_device
-from tomojax.recon.fbp import FBPConfig, _fft_filter_rows, fbp
+from tomojax.data.simulate import SimConfig, make_phantom
+from tomojax.recon.fbp import FBPConfig, _default_fbp_scale, _fft_filter_rows, fbp
 from tomojax.recon.filters import get_filter_np
 
 
@@ -352,6 +354,88 @@ def test_fbp_direct_path_jit_smoke():
     value = loss(projs)
 
     assert bool(jnp.isfinite(value))
+
+
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_parallel_fbp_helper_matches_generic_on_guard_geometry():
+    fbp_mod = import_module("tomojax.recon.fbp")
+    size = 64
+    views = 90
+    cfg = SimConfig(
+        nx=size,
+        ny=size,
+        nz=size,
+        nu=size,
+        nv=size,
+        n_views=views,
+        rotation_deg=180.0,
+        geometry="parallel",
+        phantom="random_shapes",
+        n_cubes=8,
+        n_spheres=7,
+        min_size=4,
+        max_size=32,
+        seed=42,
+    )
+    grid = Grid(size, size, size, 1.0, 1.0, 1.0)
+    det = Detector(size, size, 1.0, 1.0, det_center=(0.0, 0.0))
+    geom = ParallelGeometry(
+        grid=grid,
+        detector=det,
+        thetas_deg=np.linspace(0.0, 180.0, views, endpoint=False).astype(np.float32),
+    )
+    volume = jnp.asarray(make_phantom(cfg), dtype=jnp.float32)
+    projs = jnp.stack(
+        [
+            forward_project_view(geom, grid, det, volume, view_index=i)
+            for i in range(views)
+        ],
+        axis=0,
+    )
+    poses = stack_view_poses(geom, views)
+
+    pallas = fbp_mod._run_parallel_fbp_direct_pallas(
+        poses,
+        projs,
+        grid=grid,
+        detector=det,
+        filter_name="ramp",
+    ) * jnp.float32(_default_fbp_scale(views))
+    generic = fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        filter_name="ramp",
+        det_grid=get_detector_grid_device(det),
+    )
+
+    assert _relative_l2(pallas, generic) <= 0.02
+    assert np.max(np.abs(np.asarray(pallas) - np.asarray(generic))) <= 0.03
+
+
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_parallel_fbp_helper_changes_with_projection_input():
+    fbp_mod = import_module("tomojax.recon.fbp")
+    grid, det, geom, vol, projs = make_case(32, 32, 32, 32, asymmetric=True)
+    poses = stack_view_poses(geom, int(projs.shape[0]))
+
+    base = fbp_mod._run_parallel_fbp_direct_pallas(
+        poses,
+        projs,
+        grid=grid,
+        detector=det,
+        filter_name="ramp",
+    )
+    changed = fbp_mod._run_parallel_fbp_direct_pallas(
+        poses,
+        projs.at[:, :, projs.shape[-1] // 2].add(jnp.float32(0.01)),
+        grid=grid,
+        detector=det,
+        filter_name="ramp",
+    )
+
+    assert _relative_l2(changed, base) > 1e-5
 
 
 def test_fbp_batch_equivalence():

@@ -442,7 +442,7 @@ def _tomojax_fbp(
     geom: ParallelGeometry,
     views_per_batch: int,
 ) -> jnp.ndarray:
-    if jax.default_backend() == "gpu" and _supports_parallel_fbp_z_integer(grid, det):
+    if _use_specialized_pallas_fbp(grid, det):
         poses = stack_view_poses(geom, int(projections.shape[0]))
         return _run_parallel_fbp_direct_pallas(
             poses,
@@ -461,6 +461,28 @@ def _tomojax_fbp(
         gather_dtype="fp32",
     )
     return recon
+
+
+def _use_specialized_pallas_fbp(grid: Grid, det: Detector) -> bool:
+    return jax.default_backend() == "gpu" and _supports_parallel_fbp_z_integer(grid, det)
+
+
+def _fbp_path_metadata(grid: Grid, det: Detector) -> dict[str, Any]:
+    specialized = _use_specialized_pallas_fbp(grid, det)
+    return {
+        "timed_fbp_path": (
+            "specialized_pallas_parallel_z_helper" if specialized else "public_fbp"
+        ),
+        "public_fbp_timed": not specialized,
+        "specialized_pallas_fbp_timed": specialized,
+        "differentiability_required_for_timed_fbp": False,
+        "public_fbp_differentiability_guarded": True,
+        "geometry_contract": (
+            "regular parallel z-axis geometry with integer detector-v alignment"
+            if specialized
+            else "public fbp() supported geometry"
+        ),
+    }
 
 
 def _rotz_jax(theta: jnp.ndarray) -> jnp.ndarray:
@@ -610,6 +632,12 @@ def _write_npz(path: Path, **arrays: np.ndarray) -> None:
 
 
 def _operation_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    fbp_path = report.get("fbp_path", {})
+    fbp_method = (
+        "specialized Pallas parallel-z helper"
+        if fbp_path.get("specialized_pallas_fbp_timed")
+        else "public fbp()"
+    )
     labels = {
         "tomojax_forward": ("Forward projection", "TomoJAX", "3D parallel JAX"),
         "tomojax_pallas_forward": (
@@ -618,7 +646,11 @@ def _operation_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "batched Pallas sinogram",
         ),
         "astra_parallel3d_forward": ("Forward projection", "ASTRA", "parallel3d CUDA"),
-        "tomojax_fbp": ("FBP reconstruction", "TomoJAX", "3D adjoint FBP"),
+        "tomojax_fbp": (
+            "FBP reconstruction",
+            "TomoJAX",
+            fbp_method,
+        ),
         "astra_slice_fbp": ("FBP reconstruction", "ASTRA", "slice-wise FBP_CUDA"),
     }
     rows: list[dict[str, Any]] = []
@@ -647,6 +679,11 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     forward = report["forward_projection"]["astra_parallel3d_vs_tomojax"]
     pallas = report["forward_projection"].get("tomojax_pallas_vs_tomojax")
     recon = report["reconstruction"]
+    fbp_name = (
+        "TomoJAX specialized Pallas FBP helper"
+        if (report.get("fbp_path") or {}).get("specialized_pallas_fbp_timed")
+        else "TomoJAX public fbp()"
+    )
     rows = [
         {
             "comparison": "TomoJAX Pallas forward vs TomoJAX JAX forward",
@@ -665,7 +702,7 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "max_abs": forward["max_abs_vs_tomojax"],
         },
         {
-            "comparison": "TomoJAX FBP vs phantom",
+            "comparison": f"{fbp_name} vs phantom",
             "mse": recon["tomojax_fbp_vs_truth"]["mse"],
             "rmse": recon["tomojax_fbp_vs_truth"]["rmse"],
             "psnr_db": recon["tomojax_fbp_vs_truth"]["psnr_db"],
@@ -681,7 +718,7 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "max_abs": None,
         },
         {
-            "comparison": "ASTRA slice FBP vs TomoJAX FBP",
+            "comparison": f"ASTRA slice FBP vs {fbp_name}",
             "mse": recon["astra_slice_fbp_vs_tomojax_fbp"]["mse"],
             "rmse": recon["astra_slice_fbp_vs_tomojax_fbp"]["rmse"],
             "psnr_db": recon["astra_slice_fbp_vs_tomojax_fbp"]["psnr_db"],
@@ -689,7 +726,7 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "max_abs": None,
         },
         {
-            "comparison": "TomoJAX direct FBP vs TomoJAX generic FBP",
+            "comparison": f"{fbp_name} vs TomoJAX generic FBP",
             "mse": recon["tomojax_direct_fbp_vs_generic_fbp"]["mse_vs_tomojax"],
             "rmse": recon["tomojax_direct_fbp_vs_generic_fbp"]["rmse_vs_tomojax"],
             "psnr_db": None,
@@ -742,6 +779,8 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Measured repeats: `{config['repeat']}`",
         f"- ASTRA forward: `parallel3d` CUDA",
         f"- ASTRA FBP: slice-wise `FBP_CUDA`",
+        f"- Timed TomoJAX FBP path: `{report['fbp_path']['timed_fbp_path']}`",
+        f"- Public `fbp()` timed: `{report['fbp_path']['public_fbp_timed']}`",
         f"- FDK: intentionally unused",
         "",
         "## Speedups",
@@ -751,7 +790,7 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"| ASTRA forward vs TomoJAX forward | {_fmt(speedups['astra_forward_vs_tomojax_forward_median'])}x |",
         f"| Pallas forward vs TomoJAX JAX forward | {_fmt(speedups['pallas_forward_vs_tomojax_forward_median'])}x |",
         f"| ASTRA forward vs Pallas forward | {_fmt(speedups['astra_forward_vs_pallas_forward_median'])}x |",
-        f"| ASTRA slice FBP vs TomoJAX FBP | {_fmt(speedups['astra_slice_fbp_vs_tomojax_fbp_median'])}x |",
+        f"| ASTRA slice FBP vs specialized Pallas FBP helper | {_fmt(speedups['astra_slice_fbp_vs_tomojax_fbp_median'])}x |",
         "",
         "## Timing And Memory",
         "",
@@ -1013,6 +1052,7 @@ def main() -> None:
         "gpu_memory_summary_mb": gpu_memory_summary,
         "speedups": speedups,
         "differentiability_guard": differentiability_guard,
+        "fbp_path": _fbp_path_metadata(grid, det),
         "forward_projection": {
             "tomojax": _projection_metrics(tomojax_proj, tomojax_proj),
             "tomojax_pallas_vs_tomojax": (

@@ -32,6 +32,11 @@ def _case_report() -> dict:
             "astra_forward_vs_pallas_forward_median": 2.0,
             "astra_slice_fbp_vs_tomojax_fbp_median": 0.5,
         },
+        "fbp_path": {
+            "timed_fbp_path": "specialized_pallas_parallel_z_helper",
+            "public_fbp_timed": False,
+            "specialized_pallas_fbp_timed": True,
+        },
         "forward_projection": {
             "tomojax_pallas_vs_tomojax": {"relative_l2_vs_tomojax": 0.0},
             "astra_parallel3d_vs_tomojax": {"relative_l2_vs_tomojax": 0.1},
@@ -66,6 +71,8 @@ def test_case_summary_includes_cold_and_direct_generic_metrics() -> None:
     )
 
     assert summary["evidence_class"] == "guard_invalid_for_claims"
+    assert summary["timed_fbp_path"] == "specialized_pallas_parallel_z_helper"
+    assert summary["public_fbp_timed"] is False
     assert summary["tomojax_forward_cold_sec"] == 10.0
     assert summary["tomojax_direct_vs_generic_fbp_rel_l2"] == 0.02
 
@@ -107,6 +114,7 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
     text = path.read_text(encoding="utf-8")
     assert "guard_invalid_for_claims" in text
     assert "optimization guard, not publication evidence" in text
+    assert "Specialized FBP warm" in text
     assert "Direct/Generic FBP L2" in text
 
 

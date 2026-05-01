@@ -35,13 +35,20 @@ Each case reports:
 
 - Pallas forward vs TomoJAX JAX forward relative L2 and max absolute error
 - ASTRA `parallel3d` forward vs TomoJAX JAX forward relative L2 and max absolute error
-- TomoJAX direct FBP vs TomoJAX generic-adjoint FBP relative L2 and max absolute error
-- TomoJAX FBP MSE/RMSE/PSNR against the phantom
+- the exact timed FBP path: public `fbp()` or the specialized Pallas parallel-z helper
+- specialized/direct TomoJAX FBP vs TomoJAX generic-adjoint FBP relative L2 and max
+  absolute error
+- specialized/direct TomoJAX FBP MSE/RMSE/PSNR against the phantom
 - ASTRA slice-wise `FBP_CUDA` MSE/RMSE/PSNR against the phantom
 
 Direct voxel-domain FBP and generic ray-walking adjoint FBP are not required to match at machine
 precision for every discretization. Their difference must be measured and bounded explicitly so a
 speedup cannot silently change semantics.
+
+The specialized Pallas FBP helper is not the default public `fbp()` differentiable path. It targets
+regular parallel z-axis geometry with detector rows aligned to volume z and integer detector-v
+mapping. Benchmark claims that use this helper must be labeled as specialized-helper/backend
+results, not as evidence that all public FBP calls have the same performance characteristics.
 
 ## Sanity Guards
 

@@ -32,6 +32,11 @@ def _sample_report() -> dict:
             "astra_forward_vs_pallas_forward_median": 2.0,
             "astra_slice_fbp_vs_tomojax_fbp_median": 0.5,
         },
+        "fbp_path": {
+            "timed_fbp_path": "specialized_pallas_parallel_z_helper",
+            "public_fbp_timed": False,
+            "specialized_pallas_fbp_timed": True,
+        },
         "forward_projection": {
             "tomojax_pallas_vs_tomojax": {
                 "mse_vs_tomojax": 0.0,
@@ -88,7 +93,7 @@ def test_astra_parallel_rows_include_cold_timing_and_direct_generic_quality() ->
 
     assert op_rows[0]["cold_sec"] == pytest.approx(0.1)
     assert any(
-        row["comparison"] == "TomoJAX direct FBP vs TomoJAX generic FBP"
+        row["comparison"] == "TomoJAX specialized Pallas FBP helper vs TomoJAX generic FBP"
         and row["relative_l2"] == pytest.approx(0.03)
         for row in quality_rows
     )
@@ -101,7 +106,8 @@ def test_astra_parallel_markdown_includes_cold_and_direct_generic_quality(tmp_pa
 
     text = path.read_text(encoding="utf-8")
     assert "Cold sec" in text
-    assert "TomoJAX direct FBP vs TomoJAX generic FBP" in text
+    assert "Timed TomoJAX FBP path" in text
+    assert "TomoJAX specialized Pallas FBP helper vs TomoJAX generic FBP" in text
 
 
 def test_astra_parallel_main_reports_missing_astra(monkeypatch, tmp_path) -> None:

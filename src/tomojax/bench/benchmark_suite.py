@@ -103,6 +103,7 @@ def _case_summary(case: dict[str, Any], report: dict[str, Any], artifact_rel: di
     speedups = report["speedups"]
     forward = report["forward_projection"]
     recon = report["reconstruction"]
+    fbp_path = report.get("fbp_path", {})
     return {
         "case": case["name"],
         "size": case["size"],
@@ -111,6 +112,9 @@ def _case_summary(case: dict[str, Any], report: dict[str, Any], artifact_rel: di
         "warmup": case["warmup"],
         "repeat": case["repeat"],
         "evidence_class": EVIDENCE_CLASS.get(str(report.get("suite_mode", "")), ""),
+        "timed_fbp_path": fbp_path.get("timed_fbp_path"),
+        "public_fbp_timed": fbp_path.get("public_fbp_timed"),
+        "specialized_pallas_fbp_timed": fbp_path.get("specialized_pallas_fbp_timed"),
         "tomojax_forward_cold_sec": (cold.get("tomojax_forward") or {}).get("seconds"),
         "tomojax_pallas_forward_cold_sec": (cold.get("tomojax_pallas_forward") or {}).get(
             "seconds"
@@ -172,12 +176,12 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
         "",
         "## Cases",
         "",
-        "| Case | Size | Views | JAX Fwd warm | Pallas Fwd warm | ASTRA Fwd warm | TomoJAX FBP warm | ASTRA FBP warm | Pallas vs JAX | ASTRA vs Pallas | FBP: ASTRA vs TomoJAX | Pallas rel L2 | Direct/Generic FBP L2 | FBP PSNR |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Case | Size | Views | JAX Fwd warm | Pallas Fwd warm | ASTRA Fwd warm | Specialized FBP warm | FBP path | ASTRA FBP warm | Pallas vs JAX | ASTRA vs Pallas | FBP: ASTRA vs Specialized | Pallas rel L2 | Direct/Generic FBP L2 | FBP PSNR |",
+        "|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in suite["case_summaries"]:
         lines.append(
-            "| {case} | {size} | {views} | {jax} | {pallas} | {astra} | {tfbp} | {afbp} | {pallas_speed}x | {astra_pallas}x | {fbp_speed}x | {pallas_l2} | {direct_generic_l2} | {psnr} |".format(
+            "| {case} | {size} | {views} | {jax} | {pallas} | {astra} | {tfbp} | {fbp_path} | {afbp} | {pallas_speed}x | {astra_pallas}x | {fbp_speed}x | {pallas_l2} | {direct_generic_l2} | {psnr} |".format(
                 case=row["case"],
                 size=row["size"],
                 views=row["views"],
@@ -185,6 +189,7 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
                 pallas=_fmt(row["tomojax_pallas_forward_median_sec"]),
                 astra=_fmt(row["astra_forward_median_sec"]),
                 tfbp=_fmt(row["tomojax_fbp_median_sec"]),
+                fbp_path=_fmt(row.get("timed_fbp_path")),
                 afbp=_fmt(row["astra_slice_fbp_median_sec"]),
                 pallas_speed=_fmt(row["pallas_forward_vs_tomojax_forward"]),
                 astra_pallas=_fmt(row["astra_forward_vs_pallas_forward"]),
