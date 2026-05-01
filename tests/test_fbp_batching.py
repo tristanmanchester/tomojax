@@ -3,13 +3,26 @@ import jax.numpy as jnp
 from importlib import import_module
 
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
-from tomojax.core.projector import forward_project_view
+from tomojax.core.geometry.lamino import LaminographyGeometry
+from tomojax.core.projector import forward_project_view, get_detector_grid_device
 from tomojax.recon.fbp import FBPConfig, fbp
 
 
-def make_case(nx=12, ny=12, nz=12, n_views=12):
-    grid = Grid(nx=nx, ny=ny, nz=nz, vx=1.0, vy=1.0, vz=1.0)
-    det = Detector(nu=nx, nv=nz, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+def make_case(
+    nx=12,
+    ny=12,
+    nz=12,
+    n_views=12,
+    *,
+    vx=1.0,
+    vy=1.0,
+    vz=1.0,
+    du=1.0,
+    dv=1.0,
+    det_center=(0.0, 0.0),
+):
+    grid = Grid(nx=nx, ny=ny, nz=nz, vx=vx, vy=vy, vz=vz)
+    det = Detector(nu=nx, nv=nz, du=du, dv=dv, det_center=det_center)
     thetas = np.linspace(0, 180, n_views, endpoint=False)
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32).at[
@@ -23,6 +36,92 @@ def make_case(nx=12, ny=12, nz=12, n_views=12):
         axis=0,
     )
     return grid, det, geom, vol, projs
+
+
+def assert_direct_parallel_fbp_matches_generic(
+    grid,
+    det,
+    geom,
+    projs,
+    *,
+    max_relative_l2=0.04,
+    max_abs=0.06,
+):
+    direct = fbp(geom, grid, det, projs, filter_name="ramp", views_per_batch=0)
+    generic = fbp(
+        geom,
+        grid,
+        det,
+        projs,
+        filter_name="ramp",
+        views_per_batch=0,
+        det_grid=get_detector_grid_device(det),
+    )
+
+    direct_np = np.asarray(direct)
+    generic_np = np.asarray(generic)
+    diff = direct_np - generic_np
+    relative_l2 = np.linalg.norm(diff.ravel()) / np.linalg.norm(generic_np.ravel())
+    assert relative_l2 <= max_relative_l2
+    assert np.max(np.abs(diff)) <= max_abs
+
+
+def test_direct_parallel_fbp_matches_generic_path_on_small_fixture():
+    grid, det, geom, vol, projs = make_case(10, 10, 10, 10)
+
+    assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs)
+
+
+def test_direct_parallel_fbp_matches_generic_with_nonzero_detector_center():
+    grid, det, geom, vol, projs = make_case(10, 10, 10, 10, det_center=(0.25, -0.5))
+
+    assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs)
+
+
+def test_direct_parallel_fbp_matches_generic_with_nonunit_spacing():
+    grid, det, geom, vol, projs = make_case(
+        10,
+        10,
+        10,
+        10,
+        vx=1.25,
+        vy=1.25,
+        vz=1.25,
+        du=1.25,
+        dv=1.25,
+    )
+
+    assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs)
+
+
+def test_direct_parallel_fbp_matches_generic_on_noncubic_grid():
+    grid, det, geom, vol, projs = make_case(10, 8, 6, 10)
+
+    assert_direct_parallel_fbp_matches_generic(grid, det, geom, projs)
+
+
+def test_non_parallel_geometry_uses_generic_fbp_path(monkeypatch):
+    fbp_mod = import_module("tomojax.recon.fbp")
+    grid = Grid(nx=6, ny=6, nz=6, vx=1.0, vy=1.0, vz=1.0)
+    det = Detector(nu=6, nv=6, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=[0.0, 30.0], tilt_deg=15.0)
+    projs = jnp.ones((2, det.nv, det.nu), dtype=jnp.float32)
+    calls = []
+
+    def fail_direct(*args, **kwargs):
+        raise AssertionError("direct parallel FBP should not run for non-ParallelGeometry")
+
+    def fake_fast_path(*args, **kwargs):
+        calls.append("generic")
+        return jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    monkeypatch.setattr(fbp_mod, "_run_parallel_fbp_direct_jit", fail_direct)
+    monkeypatch.setattr(fbp_mod, "_run_fbp_fast_path", fake_fast_path)
+
+    rec = fbp_mod.fbp(geom, grid, det, projs, filter_name="ramp", views_per_batch=2, scale=1.0)
+
+    assert calls == ["generic"]
+    np.testing.assert_allclose(np.asarray(rec), np.ones((grid.nx, grid.ny, grid.nz)))
 
 
 def test_fbp_batch_equivalence():

@@ -8,7 +8,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry.base import Grid, Detector, Geometry
+from ..core.geometry.base import Grid, Detector, Geometry, _grid_volume_origin
+from ..core.geometry.parallel import ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import backproject_view_T
 from ..core.validation import (
@@ -168,6 +169,97 @@ _bp_batch_sum_jit = jax.jit(
         "gather_dtype",
     ),
 )
+
+
+def _run_parallel_fbp_direct(
+    T_all: jnp.ndarray,
+    proj: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    filter_name: str,
+) -> jnp.ndarray:
+    """Run parallel-beam FBP with direct voxel-domain backprojection.
+
+    The generic adjoint in ``projector.py`` backprojects by walking detector rays
+    through the volume, which is necessary for arbitrary posed ray models.  For
+    ``ParallelGeometry`` every voxel maps to one detector coordinate per view, so
+    FBP can use the standard slice-wise parallel-beam backprojection directly.
+    """
+    n_views, nv, nu = map(int, proj.shape)
+    origin_x, origin_y, origin_z = _grid_volume_origin(grid)
+    x = jnp.arange(int(grid.nx), dtype=jnp.float32) * jnp.float32(grid.vx) + jnp.float32(origin_x)
+    y = jnp.arange(int(grid.ny), dtype=jnp.float32) * jnp.float32(grid.vy) + jnp.float32(origin_y)
+    z = jnp.arange(int(grid.nz), dtype=jnp.float32) * jnp.float32(grid.vz) + jnp.float32(origin_z)
+
+    X = x[:, None]
+    Y = y[None, :]
+    Z = z
+    u_offset = jnp.float32(float(detector.nu) / 2.0 - 0.5)
+    v_offset = jnp.float32(float(detector.nv) / 2.0 - 0.5)
+    inv_du = jnp.float32(1.0 / float(detector.du))
+    inv_dv = jnp.float32(1.0 / float(detector.dv))
+    det_cx = jnp.float32(float(detector.det_center[0]))
+    det_cz = jnp.float32(float(detector.det_center[1]))
+    step_weight = jnp.float32(float(grid.vy))
+
+    rows = proj.reshape((n_views * nv, nu))
+    rows_f = _fft_filter_rows_jit(rows, du=float(detector.du), filter_name=filter_name)
+    filt = rows_f.reshape((n_views, nv, nu))
+
+    def gather2(image: jnp.ndarray, iu: jnp.ndarray, iv: jnp.ndarray) -> jnp.ndarray:
+        iu0 = jnp.floor(iu).astype(jnp.int32)
+        iv0 = jnp.floor(iv).astype(jnp.int32)
+        iu1 = iu0 + 1
+        iv1 = iv0 + 1
+        wu1 = iu - iu0.astype(jnp.float32)
+        wv1 = iv - iv0.astype(jnp.float32)
+        wu0 = jnp.float32(1.0) - wu1
+        wv0 = jnp.float32(1.0) - wv1
+        flat = image.reshape((-1,))
+
+        def take(iv_idx: jnp.ndarray, iu_idx: jnp.ndarray) -> jnp.ndarray:
+            inb = (
+                (iu_idx[:, :, None] >= 0)
+                & (iu_idx[:, :, None] < int(detector.nu))
+                & (iv_idx[None, None, :] >= 0)
+                & (iv_idx[None, None, :] < int(detector.nv))
+            )
+            idx = iv_idx[None, None, :] * int(detector.nu) + iu_idx[:, :, None]
+            values = jnp.take(flat, jnp.clip(idx, 0, int(detector.nu * detector.nv) - 1))
+            return jnp.where(inb, values, jnp.float32(0.0))
+
+        c00 = take(iv0, iu0) * wu0[:, :, None] * wv0[None, None, :]
+        c01 = take(iv1, iu0) * wu0[:, :, None] * wv1[None, None, :]
+        c10 = take(iv0, iu1) * wu1[:, :, None] * wv0[None, None, :]
+        c11 = take(iv1, iu1) * wu1[:, :, None] * wv1[None, None, :]
+        return c00 + c01 + c10 + c11
+
+    def body(accum: jnp.ndarray, inputs: tuple[jnp.ndarray, jnp.ndarray]) -> tuple[jnp.ndarray, None]:
+        T, image = inputs
+        x_world = T[0, 0] * X + T[0, 1] * Y + T[0, 3]
+        z_world = T[2, 2] * Z + T[2, 3]
+        iu = (x_world - det_cx) * inv_du + u_offset
+        iv = (z_world - det_cz) * inv_dv + v_offset
+        return accum + gather2(image, iu, iv) * step_weight, None
+
+    init = jnp.zeros((int(grid.nx), int(grid.ny), int(grid.nz)), dtype=jnp.float32)
+    acc, _ = jax.lax.scan(body, init, (T_all, filt))
+    return acc
+
+
+_run_parallel_fbp_direct_jit = jax.jit(
+    _run_parallel_fbp_direct,
+    static_argnames=("grid", "detector", "filter_name"),
+)
+
+
+def _can_use_direct_parallel_fbp(
+    geometry: Geometry,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> bool:
+    """Return true only for the built-in z-axis ``ParallelGeometry`` convention."""
+    return type(geometry) is ParallelGeometry and det_grid is None
 
 
 def _is_fbp_oom_error(exc: Exception) -> bool:
@@ -352,38 +444,50 @@ def fbp(
     b = max(1, min(requested_b, n_views))
     view_progress = iter(progress_iter(range(n_views), total=n_views, desc="FBP: views"))
 
-    try:
-        acc = _run_fbp_fast_path(
+    if _can_use_direct_parallel_fbp(geometry, det_grid):
+        acc = _run_parallel_fbp_direct_jit(
             T_all,
             proj,
-            batch_size=b,
             grid=grid,
             detector=detector,
             filter_name=cfg.filter_name,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
         )
         acc.block_until_ready()
         for _ in range(n_views):
             next(view_progress, None)
-    except Exception as exc:
-        if not _is_fbp_oom_error(exc):
-            raise
-        acc = _run_fbp_with_backoff(
-            T_all,
-            proj,
-            batch_size=b,
-            grid=grid,
-            detector=detector,
-            filter_name=cfg.filter_name,
-            projector_unroll=cfg.projector_unroll,
-            checkpoint_projector=cfg.checkpoint_projector,
-            gather_dtype=cfg.gather_dtype,
-            det_grid=det_grid,
-            view_progress=view_progress,
-        )
+    else:
+        try:
+            acc = _run_fbp_fast_path(
+                T_all,
+                proj,
+                batch_size=b,
+                grid=grid,
+                detector=detector,
+                filter_name=cfg.filter_name,
+                projector_unroll=cfg.projector_unroll,
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=cfg.gather_dtype,
+                det_grid=det_grid,
+            )
+            acc.block_until_ready()
+            for _ in range(n_views):
+                next(view_progress, None)
+        except Exception as exc:
+            if not _is_fbp_oom_error(exc):
+                raise
+            acc = _run_fbp_with_backoff(
+                T_all,
+                proj,
+                batch_size=b,
+                grid=grid,
+                detector=detector,
+                filter_name=cfg.filter_name,
+                projector_unroll=cfg.projector_unroll,
+                checkpoint_projector=cfg.checkpoint_projector,
+                gather_dtype=cfg.gather_dtype,
+                det_grid=det_grid,
+                view_progress=view_progress,
+            )
 
     if cfg.scale is None:
         acc = acc * _default_fbp_scale(n_views)
