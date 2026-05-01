@@ -67,6 +67,7 @@ def residual_suite_cases(name: str = "residual") -> tuple[ForwardResidualSuiteCa
                     warm_runs=7,
                     pose_mode="general_5d",
                     pallas_state_mode="cached",
+                    pallas_tile_shape=(8, 8),
                 ),
             ),
             ForwardResidualSuiteCase(
@@ -81,6 +82,7 @@ def residual_suite_cases(name: str = "residual") -> tuple[ForwardResidualSuiteCa
                     warm_runs=7,
                     pose_mode="general_5d",
                     pallas_state_mode="cached",
+                    pallas_tile_shape=(8, 8),
                 ),
             ),
         )
