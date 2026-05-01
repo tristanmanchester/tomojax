@@ -16,6 +16,7 @@ from ..align.model.dofs import (
     normalize_alignment_dofs,
     normalize_bounds,
 )
+from ..align.early_stop import normalize_early_stop_profile
 from ..align.objectives.loss_specs import (
     AlignmentLossConfig,
     parse_loss_schedule,
@@ -521,6 +522,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Relative improvement threshold for early stop (default 1e-3)",
     )
     p.add_argument(
+        "--early-stop-profile",
+        default="compute_saving",
+        help="Early-stop policy profile: compute_saving (default), robust, or off",
+    )
+    p.add_argument(
         "--early-stop-patience",
         type=int,
         default=None,
@@ -608,6 +614,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "optimise_dofs": list(args.optimise_dofs or []),
         "freeze_dofs": list(args.freeze_dofs or []),
         "schedule": args.schedule,
+        "early_stop_profile": normalize_early_stop_profile(args.early_stop_profile),
     }
 
 
@@ -630,6 +637,7 @@ def _checkpoint_metadata(
     prev_factor: int | None,
     L_prev: float | None,
     small_impr_streak: int,
+    early_stop_state: dict[str, object] | None,
     elapsed_offset: float,
     level_complete: bool,
     run_complete: bool,
@@ -664,6 +672,7 @@ def _checkpoint_metadata(
                 current_inner_iteration=0,
                 L_prev=L_prev,
                 small_impr_streak=small_impr_streak,
+                early_stop_state=early_stop_state,
                 elapsed_offset=elapsed_offset,
                 level_complete=level_complete,
                 run_complete=run_complete,
@@ -714,6 +723,7 @@ def _resume_state_from_checkpoint(
             outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
             L=metadata.get("L_prev"),
             small_impr_streak=int(metadata.get("small_impr_streak", 0)),
+            early_stop_state=dict(metadata.get("early_stop_state", {}) or {}),
             elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
             level_complete=bool(metadata.get("level_complete", False)),
             run_complete=bool(metadata.get("run_complete", False)),
@@ -746,6 +756,7 @@ def _resume_state_from_checkpoint(
         outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
         L=metadata.get("L_prev"),
         small_impr_streak=int(metadata.get("small_impr_streak", 0)),
+        early_stop_state=dict(metadata.get("early_stop_state", {}) or {}),
         elapsed_offset=float(metadata.get("elapsed_offset", 0.0)),
     )
 
@@ -876,6 +887,7 @@ def _build_align_cli_run_plan(
         log_compact=bool(args.log_compact),
         recon_L=(float(args.recon_L) if args.recon_L is not None else None),
         early_stop=bool(args.early_stop),
+        early_stop_profile=str(args.early_stop_profile),
         early_stop_rel_impr=(
             float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3
         ),
@@ -927,6 +939,7 @@ def _build_align_cli_run_plan(
         prev_factor=None,
         L_prev=None,
         small_impr_streak=0,
+        early_stop_state={},
         elapsed_offset=0.0,
         level_complete=False,
         run_complete=False,
@@ -1015,6 +1028,7 @@ def _make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheck
             prev_factor=None,
             L_prev=state.L,
             small_impr_streak=int(state.small_impr_streak),
+            early_stop_state=dict(state.early_stop_state),
             elapsed_offset=float(state.elapsed_offset),
             level_complete=run_complete or completed >= int(plan.cfg.outer_iters),
             run_complete=run_complete,
@@ -1065,6 +1079,7 @@ def _make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheck
             prev_factor=state.prev_factor,
             L_prev=state.L,
             small_impr_streak=int(state.small_impr_streak),
+            early_stop_state=dict(state.early_stop_state),
             elapsed_offset=float(state.elapsed_offset),
             level_complete=bool(state.level_complete),
             run_complete=bool(state.run_complete),
@@ -1153,6 +1168,7 @@ def _execute_alignment_plan(
                 outer_stats=[dict(stat) for stat in info_dict.get("outer_stats", [])],
                 L=info_dict.get("L"),
                 small_impr_streak=int(info_dict.get("small_impr_streak", 0)),
+                early_stop_state=dict(info_dict.get("early_stop_state", {}) or {}),
                 elapsed_offset=float(info_dict.get("wall_time_total", 0.0)),
             ),
             run_complete=True,

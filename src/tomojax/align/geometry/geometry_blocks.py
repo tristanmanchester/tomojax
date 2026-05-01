@@ -329,6 +329,9 @@ def summarize_geometry_calibration_stats(
                 "loss_before": loss_before,
                 "loss_after": loss_after,
                 "loss_drop": loss_drop,
+                "early_stop_profile": last.get("early_stop_profile"),
+                "early_stop_decision": last.get("early_stop_decision"),
+                "early_stop_reason": last.get("early_stop_reason"),
                 "status": status,
             }
         )

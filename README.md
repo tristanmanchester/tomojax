@@ -33,6 +33,8 @@ verification utilities, and troubleshooting.
   with Gauss-Newton, gradient descent, or L-BFGS optimisers
 - **Multi-resolution alignment** with coarse-to-fine pyramid
   (e.g. 4x, 2x, 1x) and alternating reconstruct/align steps
+- **Profiled alignment early stopping** with compute-saving defaults
+  and a conservative `robust` profile for final real-data runs
 - **Three reconstruction algorithms**: FBP, FISTA-TV, and SPDHG-TV
   with automatic Lipschitz estimation and TV proximal operators
 - **Laminography support** with tilted rotation-axis geometry,

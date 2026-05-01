@@ -27,6 +27,7 @@ _ALIGN_CONFIG_COMPAT_DEFAULTS = {
     "schedule": None,
     "gauge_policy": "reject",
     "gauge_priors": None,
+    "early_stop_profile": "compute_saving",
 }
 _ALIGN_CLI_COMPAT_DEFAULTS = {
     "recon_algo": "fista",
@@ -37,6 +38,7 @@ _ALIGN_CLI_COMPAT_DEFAULTS = {
     "gauge_policy": "reject",
     "optimise_dofs": [],
     "freeze_dofs": [],
+    "early_stop_profile": "compute_saving",
 }
 
 
@@ -67,6 +69,7 @@ class CheckpointMetadata(TypedDict, total=False):
     prev_factor: int | None
     L_prev: float | None
     small_impr_streak: int
+    early_stop_state: dict[str, Any]
     elapsed_offset: float
     config: Required[Any]
     cli_options: Required[dict[str, Any]]
@@ -117,6 +120,7 @@ class AlignmentCheckpointProgress:
     current_inner_iteration: int = 0
     L_prev: float | None = None
     small_impr_streak: int = 0
+    early_stop_state: Mapping[str, Any] | None = None
     elapsed_offset: float = 0.0
     level_complete: bool = False
     run_complete: bool = False
@@ -203,6 +207,7 @@ def build_alignment_checkpoint_metadata_from_input(
         "prev_factor": None if progress.prev_factor is None else int(progress.prev_factor),
         "L_prev": None if progress.L_prev is None else float(progress.L_prev),
         "small_impr_streak": int(progress.small_impr_streak),
+        "early_stop_state": _normalize_json_object(progress.early_stop_state),
         "elapsed_offset": float(progress.elapsed_offset),
         "config": normalize_json(metadata_input.config),
         "cli_options": _normalize_json_object(metadata_input.cli_options),
@@ -239,6 +244,7 @@ def build_alignment_checkpoint_metadata(
     current_inner_iteration: int = 0,
     L_prev: float | None = None,
     small_impr_streak: int = 0,
+    early_stop_state: Mapping[str, Any] | None = None,
     elapsed_offset: float = 0.0,
     random_state: Mapping[str, Any] | None = None,
     schedule_metadata: Mapping[str, Any] | None = None,
@@ -273,6 +279,7 @@ def build_alignment_checkpoint_metadata(
                 current_inner_iteration=current_inner_iteration,
                 L_prev=L_prev,
                 small_impr_streak=small_impr_streak,
+                early_stop_state=early_stop_state,
                 elapsed_offset=elapsed_offset,
                 level_complete=level_complete,
                 run_complete=run_complete,

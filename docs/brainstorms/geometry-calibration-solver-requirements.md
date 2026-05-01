@@ -1,6 +1,6 @@
 ---
 date: 2026-04-24
-last_updated: 2026-04-27
+last_updated: 2026-05-01
 topic: unified-alignment-state-geometry-calibration
 ---
 
@@ -238,6 +238,10 @@ The branch now has the production shape described above:
   `optimizer_kind="validation_lm"`, `recon_sensitivity="stopped"`,
   `fold_eval_mode="stopped_train_recon_validation_lm"`, and
   `active_gradient_mode="validation_residual_jvp"`.
+- Alignment early stopping now resolves through shared policy profiles:
+  `compute_saving` is the default, `robust` is the conservative opt-in, and
+  setup stages stop on accepted validation-LM step evidence rather than
+  cross-outer reconstruction/loss drift.
 - Direct mixed setup+pose active DOF sets reject by default unless an explicit
   expert gauge policy is supplied.
 - CLI, API, checkpoint metadata, and the canonical evidence generator record the

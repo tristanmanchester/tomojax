@@ -34,6 +34,13 @@ from tomojax.align.geometry.geometry_blocks import (
     level_detector_grid,
 )
 from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
+from tomojax.align.early_stop import (
+    EarlyStopState,
+    annotate_stat_with_early_stop,
+    evaluate_early_stop,
+    resolve_early_stop_policy,
+    setup_evidence_from_stat,
+)
 from tomojax.align.pipeline import (
     AlignConfig,
     align,
@@ -545,6 +552,7 @@ def _make_cfg(
         recon_positivity=bool(args.recon_positivity),
         seed_translations=False,
         early_stop=bool(args.early_stop),
+        early_stop_profile=str(args.early_stop_profile),
         early_stop_rel_impr=float(args.early_stop_rel),
         early_stop_patience=int(args.early_stop_patience),
         log_summary=True,
@@ -658,8 +666,14 @@ def run_setup_stage(
             x_level = upsample_volume(jnp.asarray(x_init), prev_factor // factor, (g.nx, g.ny, g.nz))
         else:
             x_level = None
-        last_loss = math.inf
-        stale = 0
+        prev_loss_after: float | None = None
+        early_stop_state = EarlyStopState()
+        early_stop_policy = resolve_early_stop_policy(
+            enabled=bool(ctx.args.early_stop),
+            profile=str(ctx.args.early_stop_profile),
+            rel_impr_threshold=float(ctx.args.early_stop_rel),
+            patience=int(ctx.args.early_stop_patience),
+        )
         for outer in range(1, int(ctx.args.outer_iters) + 1):
             _status(
                 ctx.status_path,
@@ -716,6 +730,20 @@ def run_setup_stage(
                     "setup_bounds_clipped": clipped,
                 }
             )
+            evidence = setup_evidence_from_stat(
+                stat,
+                active_dofs=active_setup,
+                prev_loss_after=prev_loss_after,
+            )
+            decision = evaluate_early_stop(
+                evidence=evidence,
+                policy=early_stop_policy,
+                state=early_stop_state,
+                outer_idx=int(outer),
+            )
+            annotate_stat_with_early_stop(stat, decision)
+            early_stop_state = decision.state
+            prev_loss_after = evidence.loss_after
             stage_stats.append(stat)
             stem = f"outer_{len(stage_stats):03d}_level{factor:02d}_iter{outer:02d}"
             preview_dir = stage_dir / "timeline_z"
@@ -750,14 +778,19 @@ def run_setup_stage(
                 "geometry_status",
                 "optimizer_selected_scale",
                 "optimizer_condition_number",
+                "accepted_rel_impr",
+                "loss_drift_from_prev_after",
+                "early_stop_profile",
+                "early_stop_decision",
+                "early_stop_reason",
+                "early_stop_gain_streak",
+                "early_stop_step_streak",
+                "early_stop_rejected_streak",
+                "early_stop_unhealthy_streak",
                 "elapsed_seconds",
             ]
             _append_csv(stage_dir / "stage_summary.csv", stat, fields)
-            loss_after = float(stat.get("geometry_loss_after", last_loss))
-            rel = (last_loss - loss_after) / max(abs(last_loss), 1e-6) if math.isfinite(last_loss) else math.inf
-            stale = stale + 1 if rel < float(ctx.args.early_stop_rel) else 0
-            last_loss = loss_after
-            if bool(ctx.args.early_stop) and stale >= int(ctx.args.early_stop_patience):
+            if decision.should_stop:
                 break
         x_init = np.asarray(x_level, dtype=np.float32)
         prev_factor = int(factor)
@@ -1062,6 +1095,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--gn-damping", type=float, default=1e-3)
     parser.add_argument("--filter", dest="filter_name", default="ramp")
     parser.add_argument("--early-stop", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--early-stop-profile", default="compute_saving")
     parser.add_argument("--early-stop-rel", type=float, default=1e-3)
     parser.add_argument("--early-stop-patience", type=int, default=2)
     parser.add_argument("--snapshot-max-cols", type=int, default=6)
@@ -1184,6 +1218,7 @@ def main() -> int:
                 "pose_schedule": pose_schedule,
                 "early_stop": {
                     "enabled": bool(args.early_stop),
+                    "profile": str(args.early_stop_profile),
                     "rel_impr": float(args.early_stop_rel),
                     "patience": int(args.early_stop_patience),
                 },

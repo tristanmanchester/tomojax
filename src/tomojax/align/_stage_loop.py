@@ -183,6 +183,7 @@ class StageRuntime:
                     outer_stats=self.stats_before_level + self.level_stats + enriched_stats,
                     L=state.L,
                     small_impr_streak=int(state.small_impr_streak),
+                    early_stop_state=dict(state.early_stop_state),
                     elapsed_offset=float(self.global_elapsed_offset + state.elapsed_offset),
                     level_complete=False,
                     run_complete=False,
@@ -290,6 +291,7 @@ def _run_multires_level_stages(
         "active_dofs": [],
         "completed_outer_iters": 0,
         "small_impr_streak": 0,
+        "early_stop_state": {},
         "motion_coeffs": None,
         "gauge_fix": final_gauge_fix,
         "gauge_fix_dofs": final_gauge_fix_dofs,
@@ -396,6 +398,7 @@ def _run_multires_level_stages(
                 outer_stats=[dict(stat) for stat in level_resume.resume_stage_stats],
                 L=resume_state.L,
                 small_impr_streak=int(resume_state.small_impr_streak),
+                early_stop_state=dict(resume_state.early_stop_state),
                 elapsed_offset=float(resume_state.elapsed_offset - global_elapsed_offset),
             )
             stage_resume_consumed = True
@@ -590,6 +593,7 @@ def _build_multires_checkpoint_state(
     outer_stats: list[OuterStat],
     L: object,
     small_impr_streak: int,
+    early_stop_state: Mapping[str, object] | None,
     elapsed_offset: float,
     level_complete: bool,
     run_complete: bool,
@@ -612,6 +616,7 @@ def _build_multires_checkpoint_state(
         outer_stats=[dict(stat) for stat in outer_stats],
         L=L,
         small_impr_streak=int(small_impr_streak),
+        early_stop_state=dict(early_stop_state or {}),
         elapsed_offset=float(elapsed_offset),
         level_complete=bool(level_complete),
         run_complete=bool(run_complete),
@@ -666,6 +671,7 @@ def _emit_level_completion_checkpoint(
             outer_stats=[dict(stat) for stat in global_outer_stats],
             L=info.get("L"),
             small_impr_streak=int(info.get("small_impr_streak", 0)),
+            early_stop_state=dict(info.get("early_stop_state", {}) or {}),
             elapsed_offset=float(global_elapsed_offset),
             level_complete=level_complete,
             run_complete=False,
@@ -710,6 +716,7 @@ def _emit_run_completion_checkpoint(
             outer_stats=[dict(stat) for stat in global_outer_stats],
             L=None,
             small_impr_streak=0,
+            early_stop_state={},
             elapsed_offset=float(global_elapsed_offset),
             level_complete=True,
             run_complete=True,
@@ -763,6 +770,20 @@ def _final_align_multires_info(
         ),
         None,
     )
+    early_stop_state = next(
+        (
+            {
+                "gain_streak": stat.get("early_stop_gain_streak", 0),
+                "step_streak": stat.get("early_stop_step_streak", 0),
+                "rejected_streak": stat.get("early_stop_rejected_streak", 0),
+                "unhealthy_streak": stat.get("early_stop_unhealthy_streak", 0),
+                "nonfinite_streak": stat.get("early_stop_nonfinite_streak", 0),
+            }
+            for stat in reversed(global_outer_stats)
+            if isinstance(stat, Mapping) and stat.get("early_stop_profile") is not None
+        ),
+        {},
+    )
 
     return {
         "loss": loss_hist,
@@ -799,6 +820,7 @@ def _final_align_multires_info(
             else None
         ),
         "geometry_calibration_diagnostics": geometry_calibration_diagnostics,
+        "early_stop_state": early_stop_state,
     }
 
 
