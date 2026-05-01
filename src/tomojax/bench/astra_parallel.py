@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import gc
 import json
 import math
@@ -20,7 +21,12 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.data.simulate import SimConfig, make_phantom
-from tomojax.recon.fbp import fbp
+from tomojax.recon.fbp import (
+    _default_fbp_scale,
+    _run_parallel_fbp_direct_pallas,
+    _supports_parallel_fbp_z_integer,
+    fbp,
+)
 
 try:
     import astra
@@ -30,11 +36,9 @@ except Exception:  # pragma: no cover - optional benchmark dependency
 try:
     from tomojax.core.pallas_projector import (
         forward_project_views_T_pallas,
-        pallas_projector_sinogram_unsupported_reason,
     )
 except Exception:  # pragma: no cover - optional experimental backend
     forward_project_views_T_pallas = None
-    pallas_projector_sinogram_unsupported_reason = None
 
 try:
     import pynvml
@@ -292,12 +296,12 @@ def _make_geometry(size: int, detector: int, views: int) -> tuple[Grid, Detector
 
 
 def _tomojax_forward(
-    volume: np.ndarray,
+    volume: Any,
     grid: Grid,
     det: Detector,
     geom: ParallelGeometry,
     views: int,
-) -> np.ndarray:
+) -> jnp.ndarray:
     vol = jnp.asarray(volume, dtype=jnp.float32)
     poses = stack_view_poses(geom, views)
     det_grid = get_detector_grid_device(det)
@@ -316,63 +320,93 @@ def _tomojax_forward(
             )
         )(poses)
 
-    return np.asarray(project_all(vol), dtype=np.float32)
+    return project_all(vol)
 
 
-def _tomojax_pallas_forward(
-    volume: np.ndarray,
-    grid: Grid,
-    det: Detector,
-    geom: ParallelGeometry,
-    views: int,
-) -> np.ndarray:
-    if forward_project_views_T_pallas is None:
-        raise RuntimeError("Pallas projector is not importable in this TomoJAX checkout")
-    vol = jnp.asarray(volume, dtype=jnp.float32)
-    poses = stack_view_poses(geom, views)
+@functools.lru_cache(maxsize=8)
+def _cached_tomojax_pallas_forward_callable(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    vx: float,
+    vy: float,
+    vz: float,
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    det_center: tuple[float, float],
+    thetas_deg: tuple[float, ...],
+):
+    grid = Grid(nx, ny, nz, vx, vy, vz)
+    det = Detector(nu, nv, du, dv, det_center=det_center)
+    geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_deg)
+    poses = stack_view_poses(geom, len(thetas_deg))
     det_grid = get_detector_grid_device(det)
-    unsupported = (
-        pallas_projector_sinogram_unsupported_reason(
+
+    @jax.jit
+    def project(vol_in: jnp.ndarray) -> jnp.ndarray:
+        return forward_project_views_T_pallas(
             poses,
             grid,
             det,
-            vol,
+            vol_in,
             gather_dtype="fp32",
             det_grid=det_grid,
-            tile_shape=(8, 16),
-            num_warps=4,
+            tile_shape=(8, 4),
+            num_warps=1,
             kernel_variant="auto",
             layout_variant="detector_vu",
             state_mode="inline",
         )
-        if pallas_projector_sinogram_unsupported_reason is not None
-        else None
+
+    return project
+
+
+def _tomojax_pallas_forward(
+    volume: Any,
+    grid: Grid,
+    det: Detector,
+    geom: ParallelGeometry,
+    views: int,
+) -> jnp.ndarray:
+    if forward_project_views_T_pallas is None:
+        raise RuntimeError("Pallas projector is not importable in this TomoJAX checkout")
+    vol = jnp.asarray(volume, dtype=jnp.float32)
+    project = _cached_tomojax_pallas_forward_callable(
+        nx=int(grid.nx),
+        ny=int(grid.ny),
+        nz=int(grid.nz),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        nu=int(det.nu),
+        nv=int(det.nv),
+        du=float(det.du),
+        dv=float(det.dv),
+        det_center=(float(det.det_center[0]), float(det.det_center[1])),
+        thetas_deg=tuple(float(theta) for theta in np.asarray(geom.thetas_deg[:views])),
     )
-    if unsupported:
-        raise RuntimeError(f"Pallas sinogram projector unsupported: {unsupported}")
-    out = forward_project_views_T_pallas(
-        poses,
-        grid,
-        det,
-        vol,
-        gather_dtype="fp32",
-        det_grid=det_grid,
-        tile_shape=(8, 16),
-        num_warps=4,
-        kernel_variant="auto",
-        layout_variant="detector_vu",
-        state_mode="inline",
-    )
-    return np.asarray(out, dtype=np.float32)
+    return project(vol)
 
 
 def _tomojax_fbp(
-    projections: np.ndarray,
+    projections: Any,
     grid: Grid,
     det: Detector,
     geom: ParallelGeometry,
     views_per_batch: int,
-) -> np.ndarray:
+) -> jnp.ndarray:
+    if jax.default_backend() == "gpu" and _supports_parallel_fbp_z_integer(grid, det):
+        poses = stack_view_poses(geom, int(projections.shape[0]))
+        return _run_parallel_fbp_direct_pallas(
+            poses,
+            jnp.asarray(projections, dtype=jnp.float32),
+            grid=grid,
+            detector=det,
+            filter_name="ramp",
+        ) * jnp.float32(_default_fbp_scale(int(projections.shape[0])))
     recon = fbp(
         geom,
         grid,
@@ -382,7 +416,7 @@ def _tomojax_fbp(
         views_per_batch=views_per_batch,
         gather_dtype="fp32",
     )
-    return np.asarray(recon, dtype=np.float32)
+    return recon
 
 
 def _rotz_jax(theta: jnp.ndarray) -> jnp.ndarray:
@@ -797,9 +831,10 @@ def main() -> None:
             + json.dumps(differentiability_guard, sort_keys=True)
         )
 
+    tomojax_volume = jnp.asarray(volume, dtype=jnp.float32)
     tomojax_proj, tomojax_forward_cold, tomojax_forward_times, tomojax_forward_memory = (
         _time_call_with_cold(
-        lambda: _tomojax_forward(volume, grid, det, geom, args.views),
+        lambda: _tomojax_forward(tomojax_volume, grid, det, geom, args.views),
         warmup=args.warmup,
         repeat=args.repeat,
         )
@@ -812,7 +847,7 @@ def main() -> None:
     else:
         pallas_proj, pallas_forward_cold, pallas_forward_times, pallas_forward_memory = (
             _time_call_with_cold(
-            lambda: _tomojax_pallas_forward(volume, grid, det, geom, args.views),
+            lambda: _tomojax_pallas_forward(tomojax_volume, grid, det, geom, args.views),
             warmup=args.warmup,
             repeat=args.repeat,
             )

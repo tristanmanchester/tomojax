@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from typing import Any, Iterator, Tuple
+import functools
+import math
+from typing import Any, Callable, Iterator, Tuple
 
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import triton as plt
 
 from ..core.geometry.base import Grid, Detector, Geometry, _grid_volume_origin
 from ..core.geometry.parallel import ParallelGeometry
@@ -252,6 +256,180 @@ _run_parallel_fbp_direct_jit = jax.jit(
     _run_parallel_fbp_direct,
     static_argnames=("grid", "detector", "filter_name"),
 )
+
+
+def _parallel_fbp_z_integer_kernel(
+    T_ref: Any,
+    filt_ref: Any,
+    out_ref: Any,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    n_views: int,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    tile_x: int,
+    tile_y: int,
+    tile_z: int,
+) -> None:
+    tile_x_start = pl.program_id(0) * tile_x
+    tile_y_start = pl.program_id(1) * tile_y
+    tile_z_start = pl.program_id(2) * tile_z
+    ix = tile_x_start + jnp.arange(tile_x, dtype=jnp.int32)[:, jnp.newaxis, jnp.newaxis]
+    iy = tile_y_start + jnp.arange(tile_y, dtype=jnp.int32)[jnp.newaxis, :, jnp.newaxis]
+    iz = tile_z_start + jnp.arange(tile_z, dtype=jnp.int32)[jnp.newaxis, jnp.newaxis, :]
+    in_volume = (ix < nx) & (iy < ny) & (iz < nz)
+
+    x = ix.astype(jnp.float32) * jnp.float32(vx) + jnp.float32(vol_origin_x)
+    y = iy.astype(jnp.float32) * jnp.float32(vy) + jnp.float32(vol_origin_y)
+    z = iz.astype(jnp.float32) * jnp.float32(vz) + jnp.float32(vol_origin_z)
+    u_offset = jnp.float32(nu / 2.0 - 0.5)
+    v_offset = jnp.float32(nv / 2.0 - 0.5)
+    iv = jnp.floor(
+        (z - jnp.float32(det_center_z)) / jnp.float32(dv) + v_offset + jnp.float32(0.5)
+    ).astype(jnp.int32)
+    valid_z = (iv >= 0) & (iv < nv)
+
+    def body(view_idx: jnp.ndarray, accum: jnp.ndarray) -> jnp.ndarray:
+        t00 = plt.load(T_ref.at[view_idx, 0, 0])
+        t01 = plt.load(T_ref.at[view_idx, 0, 1])
+        t03 = plt.load(T_ref.at[view_idx, 0, 3])
+        iu = (
+            (t00 * x + t01 * y + t03 - jnp.float32(det_center_x)) / jnp.float32(du)
+            + u_offset
+        )
+        iu0 = jnp.floor(iu).astype(jnp.int32)
+        iu1 = iu0 + 1
+        wu1 = iu - iu0.astype(jnp.float32)
+        wu0 = jnp.float32(1.0) - wu1
+        in0 = (iu0 >= 0) & (iu0 < nu) & valid_z & in_volume
+        in1 = (iu1 >= 0) & (iu1 < nu) & valid_z & in_volume
+        v0 = plt.load(filt_ref.at[view_idx, iv, iu0], mask=in0, other=0.0)
+        v1 = plt.load(filt_ref.at[view_idx, iv, iu1], mask=in1, other=0.0)
+        return accum + (v0 * wu0 + v1 * wu1) * jnp.float32(vy)
+
+    acc = jnp.zeros((tile_x, tile_y, tile_z), dtype=jnp.float32)
+    acc = jax.lax.fori_loop(0, n_views, body, acc)
+    out_ref[...] = jnp.where(in_volume, acc, jnp.float32(0.0))
+
+
+@functools.lru_cache(maxsize=16)
+def _cached_parallel_fbp_z_integer_pallas_call(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    n_views: int,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    tile_shape: tuple[int, int, int],
+    num_warps: int,
+) -> Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+    tile_x, tile_y, tile_z = tile_shape
+    kernel = functools.partial(
+        _parallel_fbp_z_integer_kernel,
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nu=int(nu),
+        nv=int(nv),
+        n_views=int(n_views),
+        vol_origin_x=float(vol_origin_x),
+        vol_origin_y=float(vol_origin_y),
+        vol_origin_z=float(vol_origin_z),
+        vx=float(vx),
+        vy=float(vy),
+        vz=float(vz),
+        du=float(du),
+        dv=float(dv),
+        det_center_x=float(det_center_x),
+        det_center_z=float(det_center_z),
+        tile_x=int(tile_x),
+        tile_y=int(tile_y),
+        tile_z=int(tile_z),
+    )
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((int(nx), int(ny), int(nz)), jnp.float32),
+        grid=(
+            math.ceil(int(nx) / int(tile_x)),
+            math.ceil(int(ny) / int(tile_y)),
+            math.ceil(int(nz) / int(tile_z)),
+        ),
+        in_specs=[pl.no_block_spec, pl.no_block_spec],
+        out_specs=pl.BlockSpec(
+            (int(tile_x), int(tile_y), int(tile_z)),
+            lambda px, py, pz: (px, py, pz),
+        ),
+        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
+        name="tomojax_parallel_fbp_z_integer_pallas",
+    )
+
+
+def _supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
+    tol = 1e-5
+    origin_z = float(_grid_volume_origin(grid)[2])
+    first = (origin_z - float(detector.det_center[1])) / float(detector.dv)
+    first += float(detector.nv) / 2.0 - 0.5
+    step = float(grid.vz) / float(detector.dv)
+    return abs(first - round(first)) <= tol and abs(step - round(step)) <= tol
+
+
+def _run_parallel_fbp_direct_pallas(
+    T_all: jnp.ndarray,
+    proj: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    filter_name: str,
+) -> jnp.ndarray:
+    n_views, nv, nu = map(int, proj.shape)
+    rows = proj.reshape((n_views * nv, nu))
+    rows_f = _fft_filter_rows_jit(rows, du=float(detector.du), filter_name=filter_name)
+    filt = rows_f.reshape((n_views, nv, nu))
+    vol_origin = _grid_volume_origin(grid)
+    call = _cached_parallel_fbp_z_integer_pallas_call(
+        nx=int(grid.nx),
+        ny=int(grid.ny),
+        nz=int(grid.nz),
+        nu=int(detector.nu),
+        nv=int(detector.nv),
+        n_views=int(n_views),
+        vol_origin_x=float(vol_origin[0]),
+        vol_origin_y=float(vol_origin[1]),
+        vol_origin_z=float(vol_origin[2]),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        du=float(detector.du),
+        dv=float(detector.dv),
+        det_center_x=float(detector.det_center[0]),
+        det_center_z=float(detector.det_center[1]),
+        tile_shape=(16, 8, 2),
+        num_warps=4,
+    )
+    return call(jnp.asarray(T_all, dtype=jnp.float32), jnp.asarray(filt, dtype=jnp.float32))
 
 
 def _can_use_direct_parallel_fbp(
