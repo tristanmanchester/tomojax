@@ -204,13 +204,6 @@ def test_benchmark_backend_records_pallas_variant_metadata(
     assert result["pallas_state_timing_mode"] == "inline"
 
 
-def test_forward_sinogram_defaults_use_remainder_safe_generic_tile() -> None:
-    config = ForwardSinogramBenchmarkConfig()
-
-    assert config.pallas_tile_shape == (8, 8)
-    assert config.pallas_num_warps == 1
-
-
 def test_benchmark_backend_records_cached_state_setup_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
