@@ -543,6 +543,37 @@ def _select_kernel_variant_for_stack(
     )
 
 
+def _supports_parallel_z_rotation_stack(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> bool:
+    if not _supports_z_integer4_for_stack(T_stack, grid, detector, det_grid):
+        return False
+    try:
+        T_host = np.asarray(T_stack, dtype=np.float64)
+    except Exception:
+        return False
+    if T_host.ndim != 3 or T_host.shape[1:] != (4, 4):
+        return False
+    tol = 1e-5
+    c = T_host[:, 0, 0]
+    s = T_host[:, 1, 0]
+    return bool(
+        np.all(np.abs(T_host[:, 0, 1] + s) <= tol)
+        and np.all(np.abs(T_host[:, 1, 1] - c) <= tol)
+        and np.all(np.abs(T_host[:, 0, 2]) <= tol)
+        and np.all(np.abs(T_host[:, 1, 2]) <= tol)
+        and np.all(np.abs(T_host[:, 2, 0]) <= tol)
+        and np.all(np.abs(T_host[:, 2, 1]) <= tol)
+        and np.all(np.abs(T_host[:, 2, 2] - 1.0) <= tol)
+        and np.all(np.abs(T_host[:, :3, 3]) <= tol)
+        and np.all(np.abs(T_host[:, 3, :3]) <= tol)
+        and np.all(np.abs(T_host[:, 3, 3] - 1.0) <= tol)
+    )
+
+
 def _ensure_float32_volume(volume: jnp.ndarray) -> None:
     dtype = getattr(volume, "dtype", None)
     if dtype != jnp.dtype(jnp.float32):
@@ -1201,6 +1232,132 @@ def _projector_views_kernel(
         out_ref[0, :, :] = acc.T.astype(jnp.float32)
     else:
         out_ref[0, :, :] = acc.astype(jnp.float32)
+
+
+def _projector_parallel_z_views_kernel(
+    cos_ref: Any,
+    sin_ref: Any,
+    volume_ref: Any,
+    out_ref: Any,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    unroll: int | None,
+) -> None:
+    view_idx = pl.program_id(0)
+    tile_v_start = pl.program_id(1) * tile_v
+    tile_u_start = pl.program_id(2) * tile_u
+    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
+    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    in_detector = (det_u < nu) & (det_v < nv)
+
+    xr = (
+        (det_u.astype(jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * jnp.float32(du)
+        + jnp.float32(det_center_x)
+    )
+    zr = (
+        (det_v.astype(jnp.float32) - jnp.float32(nv / 2.0 - 0.5)) * jnp.float32(dv)
+        + jnp.float32(det_center_z)
+    )
+    c = plt.load(cos_ref.at[view_idx])
+    s = plt.load(sin_ref.at[view_idx])
+
+    base_x = c * xr
+    base_y = -s * xr
+    base_z = zr
+    ey_x = s
+    ey_y = c
+
+    lower_x = jnp.float32(vol_origin_x - vx)
+    lower_y = jnp.float32(vol_origin_y - vy)
+    lower_z = jnp.float32(vol_origin_z - vz)
+    upper_x = jnp.float32(vol_origin_x + nx * vx)
+    upper_y = jnp.float32(vol_origin_y + ny * vy)
+    upper_z = jnp.float32(vol_origin_z + nz * vz)
+
+    def slab(base: jnp.ndarray, denom: jnp.ndarray, lower: jnp.ndarray, upper: jnp.ndarray):
+        eps = jnp.float32(1e-8)
+        parallel = jnp.abs(denom) < eps
+        safe_denom = jnp.where(parallel, jnp.float32(1.0), denom)
+        t1 = (lower - base) / safe_denom
+        t2 = (upper - base) / safe_denom
+        lo = jnp.minimum(t1, t2)
+        hi = jnp.maximum(t1, t2)
+        inside = (base >= lower) & (base <= upper)
+        inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
+        neg_inf = jnp.asarray(float("-inf"), dtype=jnp.float32)
+        lo = jnp.where(parallel, jnp.where(inside, neg_inf, inf), lo)
+        hi = jnp.where(parallel, jnp.where(inside, inf, neg_inf), hi)
+        return lo, hi
+
+    lo_x, hi_x = slab(base_x, ey_x, lower_x, upper_x)
+    lo_y, hi_y = slab(base_y, ey_y, lower_y, upper_y)
+    z_inside = (base_z >= lower_z) & (base_z <= upper_z)
+    y_entry = jnp.maximum(lo_x, lo_y)
+    y_exit = jnp.minimum(hi_x, hi_y)
+    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
+    valid_rays = z_inside & (path_length > jnp.float32(0.0))
+    y_start = jnp.where(valid_rays, y_entry, jnp.float32(0.0))
+    step_size32 = jnp.float32(step_size)
+    n_steps_ray = jnp.where(
+        valid_rays,
+        jnp.ceil(path_length / step_size32).astype(jnp.int32),
+        jnp.int32(0),
+    )
+
+    q0_x = base_x + y_start * ey_x
+    q0_y = base_y + y_start * ey_y
+    ix0 = (q0_x - jnp.float32(vol_origin_x)) / jnp.float32(vx)
+    iy0 = (q0_y - jnp.float32(vol_origin_y)) / jnp.float32(vy)
+    iz0 = (base_z - jnp.float32(vol_origin_z)) / jnp.float32(vz)
+    dix = step_size32 * ey_x / jnp.float32(vx)
+    diy = step_size32 * ey_y / jnp.float32(vy)
+
+    def body(step_idx, carry):
+        acc, ix, iy = carry
+        active = step_idx < n_steps_ray
+        sample = _trilinear_load_z_integer(
+            volume_ref,
+            ix,
+            iy,
+            iz0,
+            nx=nx,
+            ny=ny,
+            nz=nz,
+        )
+        return (
+            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
+            ix + dix,
+            iy + diy,
+        )
+
+    init = (
+        jnp.zeros_like(ix0, dtype=jnp.float32),
+        ix0,
+        iy0,
+    )
+    if unroll is None:
+        acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+    else:
+        acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
+    out_ref[0, :, :] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)
 
 
 def _projector_residual_sse_kernel(
@@ -2007,6 +2164,162 @@ def _cached_projector_views_pallas_call(
         compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
         name="tomojax_forward_project_views_T_pallas",
     )
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_parallel_z_views_pallas_call(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nv: int,
+    nu: int,
+    n_views: int,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    num_warps: int,
+    unroll: int | None,
+    interpret: bool,
+) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+    kernel = functools.partial(
+        _projector_parallel_z_views_kernel,
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nu=int(nu),
+        nv=int(nv),
+        du=float(du),
+        dv=float(dv),
+        det_center_x=float(det_center_x),
+        det_center_z=float(det_center_z),
+        vol_origin_x=float(vol_origin_x),
+        vol_origin_y=float(vol_origin_y),
+        vol_origin_z=float(vol_origin_z),
+        vx=float(vx),
+        vy=float(vy),
+        vz=float(vz),
+        step_size=float(step_size),
+        n_steps=int(n_steps),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        unroll=unroll,
+    )
+    grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((int(n_views), int(nv), int(nu)), jnp.float32),
+        grid=grid_shape,
+        in_specs=[
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+        ],
+        out_specs=pl.BlockSpec(
+            (1, int(tile_v), int(tile_u)),
+            lambda view, pv, pu: (view, pv, pu),
+        ),
+        interpret=bool(interpret),
+        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
+        name="tomojax_forward_project_parallel_z_views_pallas",
+    )
+
+
+def forward_project_parallel_z_views_pallas(
+    T_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool = False,
+    tile_shape: tuple[int, int] = (8, 4),
+    num_warps: int = 1,
+) -> jnp.ndarray:
+    """Specialized stack projector for ParallelGeometry z-axis rotations only."""
+    (
+        nx,
+        ny,
+        nz,
+        nv,
+        nu,
+        n_views,
+        _volume_size,
+        step_size_value,
+        _n_steps_value,
+        effective_n_steps_value,
+        (tile_v, tile_u),
+        num_warps_value,
+        _kernel_variant_id,
+        _layout_variant_id,
+    ) = _validate_public_sinogram_call(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        step_size=step_size,
+        n_steps=n_steps,
+        gather_dtype=gather_dtype,
+        det_grid=det_grid,
+        interpret=interpret,
+        tile_shape=tile_shape,
+        num_warps=num_warps,
+        kernel_variant="z_integer4",
+        layout_variant="detector_vu",
+        state_mode="inline",
+    )
+    if not _supports_parallel_z_rotation_stack(T_stack, grid, detector, det_grid):
+        raise PallasProjectorUnsupported(
+            _unsupported(
+                "parallel z-axis specialization requires zero-translation ParallelGeometry poses"
+            )
+        )
+
+    T = jnp.asarray(T_stack, dtype=jnp.float32)
+    cos = T[:, 0, 0]
+    sin = T[:, 1, 0]
+    vol_origin = _grid_volume_origin(grid)
+    call = _cached_parallel_z_views_pallas_call(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nv=nv,
+        nu=nu,
+        n_views=n_views,
+        du=float(detector.du),
+        dv=float(detector.dv),
+        det_center_x=float(detector.det_center[0]),
+        det_center_z=float(detector.det_center[1]),
+        vol_origin_x=float(vol_origin[0]),
+        vol_origin_y=float(vol_origin[1]),
+        vol_origin_z=float(vol_origin[2]),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        step_size=float(step_size_value),
+        n_steps=int(effective_n_steps_value),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        num_warps=int(num_warps_value),
+        unroll=unroll,
+        interpret=bool(interpret),
+    )
+    return call(cos, sin, _prepare_volume_for_pallas_gather(volume, gather_dtype))
 
 
 def forward_project_residual_sse_T_pallas(

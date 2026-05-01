@@ -10,6 +10,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
     bind_forward_project_view_T_pallas,
+    forward_project_parallel_z_views_pallas,
     forward_project_residual_sse_T_pallas,
     forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
@@ -275,6 +276,47 @@ def test_pallas_forward_project_views_matches_jax_loop() -> None:
 
     assert candidate.shape == (3, 7, 9)
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_parallel_z_views_specialization_matches_jax_loop() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=9, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
+    T_stack = jnp.stack(poses, axis=0)
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+
+    candidate = forward_project_parallel_z_views_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        interpret=True,
+        tile_shape=(4, 8),
+    )
+    oracle = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume) for T in poses],
+        axis=0,
+    )
+
+    assert candidate.shape == (3, 8, 9)
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+def test_pallas_parallel_z_views_specialization_rejects_translated_pose() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=8, nv=8, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T_stack = jnp.stack([_pose(0.0, grid=grid, detector=detector)], axis=0)
+    T_stack = T_stack.at[0, 0, 3].set(0.25)
+    volume = jnp.ones((8, 8, 8), dtype=jnp.float32)
+
+    with pytest.raises(PallasProjectorUnsupported, match="z-axis specialization"):
+        forward_project_parallel_z_views_pallas(
+            T_stack,
+            grid,
+            detector,
+            volume,
+            interpret=True,
+        )
 
 
 def test_pallas_forward_project_views_cached_call_uses_runtime_volume_and_pose() -> None:

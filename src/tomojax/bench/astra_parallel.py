@@ -35,9 +35,11 @@ except Exception:  # pragma: no cover - optional benchmark dependency
 
 try:
     from tomojax.core.pallas_projector import (
+        forward_project_parallel_z_views_pallas,
         forward_project_views_T_pallas,
     )
 except Exception:  # pragma: no cover - optional experimental backend
+    forward_project_parallel_z_views_pallas = None
     forward_project_views_T_pallas = None
 
 try:
@@ -344,11 +346,22 @@ def _cached_tomojax_pallas_forward_callable(
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_deg)
     poses = stack_view_poses(geom, len(thetas_deg))
     det_grid = get_detector_grid_device(det)
-    tile_shape = (16, 4) if max(int(nu), int(nv)) <= 64 else (8, 4)
-    num_warps = 2 if tile_shape == (16, 4) else 1
+    tile_shape = (8, 8) if max(int(nu), int(nv)) <= 64 else (8, 4)
+    num_warps = 1
 
     @jax.jit
     def project(vol_in: jnp.ndarray) -> jnp.ndarray:
+        if forward_project_parallel_z_views_pallas is not None:
+            return forward_project_parallel_z_views_pallas(
+                poses,
+                grid,
+                det,
+                vol_in,
+                gather_dtype="fp32",
+                det_grid=det_grid,
+                tile_shape=tile_shape,
+                num_warps=num_warps,
+            )
         return forward_project_views_T_pallas(
             poses,
             grid,
