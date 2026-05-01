@@ -73,6 +73,19 @@ class EarlyStopState:
             nonfinite_streak=_coerce_int(value.get("nonfinite_streak")),
         )
 
+    @classmethod
+    def from_resume(
+        cls,
+        value: Mapping[str, object] | None,
+        *,
+        legacy_gain_streak: int = 0,
+    ) -> "EarlyStopState":
+        """Restore early-stop state, preserving pre-structured checkpoint streaks."""
+
+        if value:
+            return cls.from_mapping(value)
+        return cls(gain_streak=max(0, int(legacy_gain_streak)))
+
     def to_dict(self) -> dict[str, int]:
         return asdict(self)
 

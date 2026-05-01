@@ -1472,7 +1472,10 @@ def align(
     L_prev = resume_state.L if resume_state is not None else cfg.recon_L
     small_impr_streak = int(resume_state.small_impr_streak) if resume_state is not None else 0
     early_stop_state = (
-        EarlyStopState.from_mapping(resume_state.early_stop_state)
+        EarlyStopState.from_resume(
+            resume_state.early_stop_state,
+            legacy_gain_streak=small_impr_streak,
+        )
         if resume_state is not None
         else EarlyStopState()
     )

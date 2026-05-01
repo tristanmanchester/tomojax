@@ -49,6 +49,25 @@ def test_compute_saving_setup_continues_for_meaningful_accepted_step():
     assert decision.telemetry()["accepted_rel_impr"] == 0.01
 
 
+def test_resume_state_seeds_gain_streak_from_legacy_small_improvement_streak():
+    resumed = EarlyStopState.from_resume(None, legacy_gain_streak=3)
+
+    assert resumed.gain_streak == 3
+    assert resumed.step_streak == 0
+    assert resumed.rejected_streak == 0
+
+
+def test_resume_state_prefers_structured_early_stop_state_over_legacy_streak():
+    resumed = EarlyStopState.from_resume(
+        {"gain_streak": 1, "step_streak": 2, "rejected_streak": 0},
+        legacy_gain_streak=5,
+    )
+
+    assert resumed.gain_streak == 1
+    assert resumed.step_streak == 2
+    assert resumed.rejected_streak == 0
+
+
 def test_compute_saving_stops_tiny_accepted_setup_gain_and_step_despite_loss_drift():
     policy = resolve_early_stop_policy(
         enabled=True,
