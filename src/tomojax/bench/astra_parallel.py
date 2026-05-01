@@ -429,10 +429,8 @@ def _make_tomojax_pallas_forward_runner(
         thetas_deg=tuple(float(theta) for theta in np.asarray(geom.thetas_deg[:views])),
     )
 
-    def run(volume: Any) -> jnp.ndarray:
-        if getattr(volume, "dtype", None) == jnp.dtype(jnp.float32):
-            return project(volume)
-        return project(jnp.asarray(volume, dtype=jnp.float32))
+    def run(volume: jnp.ndarray) -> jnp.ndarray:
+        return project(volume)
 
     return run
 
