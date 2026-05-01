@@ -356,8 +356,36 @@ def _make_residual_callable(
             "jax_materialized",
             "pallas_fused_residual_callable_missing",
         )
+    bound_pallas_fused = None
+    if config.pallas_state_mode == "cached":
+        bind_fused = getattr(module, "bind_forward_project_residual_sse_T_pallas", None)
+        if bind_fused is None:
+            return (
+                lambda: jnp.sum((jax_project() - target) ** 2, dtype=jnp.float32),
+                "jax_materialized",
+                "pallas_fused_cached_callable_missing",
+            )
+        bound_pallas_fused = bind_fused(
+            sf.T_stack,
+            sf.grid,
+            sf.detector,
+            target,
+            step_size=config.step_size,
+            n_steps=config.n_steps,
+            unroll=config.unroll,
+            gather_dtype=config.gather_dtype,
+            det_grid=sf.det_grid,
+            interpret=False,
+            tile_shape=config.pallas_tile_shape,
+            num_warps=config.pallas_num_warps,
+            kernel_variant=config.pallas_kernel_variant,
+            layout_variant=config.pallas_layout_variant,
+            block_state=True,
+        )
 
     def call_pallas_fused() -> jnp.ndarray:
+        if bound_pallas_fused is not None:
+            return bound_pallas_fused(sf.volume)
         return pallas_fused(
             sf.T_stack,
             sf.grid,
