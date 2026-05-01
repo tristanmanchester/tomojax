@@ -391,6 +391,35 @@ def _tomojax_pallas_forward(
     return project(vol)
 
 
+def _make_tomojax_pallas_forward_runner(
+    grid: Grid,
+    det: Detector,
+    geom: ParallelGeometry,
+    views: int,
+):
+    if forward_project_views_T_pallas is None:
+        raise RuntimeError("Pallas projector is not importable in this TomoJAX checkout")
+    project = _cached_tomojax_pallas_forward_callable(
+        nx=int(grid.nx),
+        ny=int(grid.ny),
+        nz=int(grid.nz),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        nu=int(det.nu),
+        nv=int(det.nv),
+        du=float(det.du),
+        dv=float(det.dv),
+        det_center=(float(det.det_center[0]), float(det.det_center[1])),
+        thetas_deg=tuple(float(theta) for theta in np.asarray(geom.thetas_deg[:views])),
+    )
+
+    def run(volume: Any) -> jnp.ndarray:
+        return project(jnp.asarray(volume, dtype=jnp.float32))
+
+    return run
+
+
 def _tomojax_fbp(
     projections: Any,
     grid: Grid,
@@ -845,9 +874,12 @@ def main() -> None:
         pallas_forward_times: list[float] = []
         pallas_forward_memory: list[dict[str, Any]] = []
     else:
+        tomojax_pallas_forward = _make_tomojax_pallas_forward_runner(
+            grid, det, geom, args.views
+        )
         pallas_proj, pallas_forward_cold, pallas_forward_times, pallas_forward_memory = (
             _time_call_with_cold(
-            lambda: _tomojax_pallas_forward(tomojax_volume, grid, det, geom, args.views),
+            lambda: tomojax_pallas_forward(tomojax_volume),
             warmup=args.warmup,
             repeat=args.repeat,
             )
