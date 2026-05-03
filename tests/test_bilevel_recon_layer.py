@@ -184,6 +184,38 @@ def test_fista_core_reports_final_data_loss_not_objective():
     )
 
 
+def test_fista_core_can_skip_final_data_loss_diagnostic():
+    grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    effective = apply_alignment_state(base, state)
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    cfg = FistaCoreConfig(
+        iters=2,
+        lambda_tv=0.01,
+        L=100.0,
+        checkpoint_projector=False,
+        compute_final_data_loss=False,
+    )
+
+    result = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(result.data_loss),
+        np.asarray(result.loss[-1]),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
 @pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
 def test_fista_core_pallas_backprojector_matches_jax_backprojector():
     grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
