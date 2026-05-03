@@ -152,6 +152,54 @@ def _make_value_and_grad_callable(
     return lambda: value_and_grad(fixture.initial_params5)
 
 
+def _make_manual_value_and_grad_callable(
+    fixture: AlignmentObjectiveFixture,
+    config: AlignmentObjectiveBenchmarkConfig,
+) -> Callable[[], tuple[jnp.ndarray, jnp.ndarray]]:
+    loss_adapter = build_loss_adapter(L2LossSpec(), fixture.target)
+
+    def one_view_loss(
+        params5: jnp.ndarray,
+        nominal_pose: jnp.ndarray,
+        target: jnp.ndarray,
+        view_index: jnp.ndarray,
+    ) -> jnp.ndarray:
+        pred = forward_project_view_T(
+            nominal_pose @ se3_from_5d(params5),
+            fixture.grid,
+            fixture.detector,
+            fixture.volume,
+            use_checkpoint=bool(config.checkpoint_projector),
+            unroll=int(config.projector_unroll),
+            gather_dtype=str(config.gather_dtype),
+            det_grid=fixture.det_grid,
+        )
+        losses = loss_adapter.per_view_loss(
+            pred[None, ...],
+            target[None, ...],
+            None,
+            view_indices=jnp.asarray(view_index, dtype=jnp.int32)[None],
+        )
+        return losses[0]
+
+    per_view_value_and_grad = jax.vmap(
+        jax.value_and_grad(one_view_loss),
+        in_axes=(0, 0, 0, 0),
+    )
+
+    @jax.jit
+    def run(params5: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        values, grads = per_view_value_and_grad(
+            params5,
+            fixture.nominal_pose_stack,
+            fixture.target,
+            jnp.arange(int(config.n_views), dtype=jnp.int32),
+        )
+        return jnp.sum(values), grads
+
+    return lambda: run(fixture.initial_params5)
+
+
 def _time_blocked_call(fn: Callable[[], Any]) -> tuple[float, Any]:
     start = time.perf_counter()
     output = fn()
@@ -182,9 +230,16 @@ def _timing_summary(values: list[float]) -> dict[str, Any]:
 def benchmark_alignment_objective_variant(
     name: str,
     config: AlignmentObjectiveBenchmarkConfig,
+    *,
+    implementation: str = "stacked",
 ) -> dict[str, Any]:
     fixture = make_alignment_objective_fixture(config)
-    call = _make_value_and_grad_callable(fixture, config)
+    if implementation == "stacked":
+        call = _make_value_and_grad_callable(fixture, config)
+    elif implementation == "manual_per_view":
+        call = _make_manual_value_and_grad_callable(fixture, config)
+    else:
+        raise ValueError("alignment objective implementation must be 'stacked' or 'manual_per_view'")
     first_seconds, first_output = _time_blocked_call(call)
     warm_seconds: list[float] = []
     warm_output = first_output
@@ -197,6 +252,7 @@ def benchmark_alignment_objective_variant(
         "benchmark": "alignment_objective_value_and_grad",
         "case_name": name,
         "api_surface": "internal_fixed_volume_alignment_objective",
+        "implementation": implementation,
         "config": asdict(config),
         "device": _device_metadata(),
         "first_call_seconds": float(first_seconds),
@@ -223,12 +279,23 @@ def run_alignment_objective_suite(
     cases = [
         benchmark_alignment_objective_variant("checkpointed", checkpointed),
         benchmark_alignment_objective_variant("no_checkpoint", no_checkpoint),
+        benchmark_alignment_objective_variant(
+            "manual_per_view",
+            checkpointed,
+            implementation="manual_per_view",
+        ),
     ]
     baseline = cases[0]["warm_seconds_median"]
     candidate = cases[1]["warm_seconds_median"]
+    manual = cases[2]["warm_seconds_median"]
     speedup = (
         float(baseline) / float(candidate)
         if baseline is not None and candidate is not None and float(candidate) > 0.0
+        else None
+    )
+    manual_speedup = (
+        float(baseline) / float(manual)
+        if baseline is not None and manual is not None and float(manual) > 0.0
         else None
     )
     return {
@@ -238,6 +305,8 @@ def run_alignment_objective_suite(
             "checkpointed_warm_seconds_median": baseline,
             "no_checkpoint_warm_seconds_median": candidate,
             "no_checkpoint_speedup_vs_checkpointed": speedup,
+            "manual_per_view_warm_seconds_median": manual,
+            "manual_per_view_speedup_vs_checkpointed": manual_speedup,
             "cases_total": len(cases),
         },
         "device": _device_metadata(),
