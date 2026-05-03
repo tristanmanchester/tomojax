@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import logging
 import math
 import os
 import re
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +41,50 @@ def _run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Comple
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=True,
+    )
+
+
+def _run_align_in_process(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run tomojax-align in this process while preserving CLI outputs."""
+    from tomojax.cli import align as align_cli
+
+    old_argv = sys.argv
+    sys.argv = ["tomojax-align", *argv]
+    log_stream = io.StringIO()
+    handler = logging.StreamHandler(log_stream)
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    root = logging.getLogger()
+    old_level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    try:
+        parser = align_cli._build_parser()
+        args, config_metadata = align_cli.parse_args_with_config(
+            parser,
+            argv,
+            required=("data", "out"),
+        )
+        align_cli.log_jax_env()
+        align_cli._init_jax_compilation_cache()
+        if args.progress:
+            os.environ["TOMOJAX_PROGRESS"] = "1"
+        plan = align_cli._build_align_cli_run_plan(parser, args, config_metadata)
+        checkpoint_callbacks = align_cli._make_align_cli_checkpoint_callbacks(plan)
+        execution = align_cli._execute_alignment_plan(
+            plan,
+            single_checkpoint_callback=checkpoint_callbacks.single,
+            multires_checkpoint_callback=checkpoint_callbacks.multires,
+        )
+        align_cli._write_alignment_outputs(plan, execution)
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(old_level)
+        sys.argv = old_argv
+    return subprocess.CompletedProcess(
+        args=["tomojax-align", *argv],
+        returncode=0,
+        stdout=log_stream.getvalue(),
+        stderr="",
     )
 
 
@@ -321,44 +368,40 @@ def main() -> None:
     misaligned_recon_manifest = stem.with_name(stem.name + "_misaligned_recon_manifest.json")
 
     start = time.perf_counter()
-    align_result = _run(
-        [
-            *_python_module_cmd(env, "tomojax.cli.align"),
-            "--data",
-            str(fixture["misaligned"]),
-            "--levels",
-            *[str(level) for level in args.levels],
-            "--outer-iters",
-            str(args.outer_iters),
-            "--recon-iters",
-            str(args.recon_iters),
-            "--recon-L",
-            str(args.recon_L),
-            "--lambda-tv",
-            str(args.lambda_tv),
-            "--regulariser",
-            args.regulariser,
-            "--huber-delta",
-            str(args.huber_delta),
-            "--views-per-batch",
-            str(args.views_per_batch),
-            "--schedule",
-            args.schedule,
-            "--loss",
-            args.loss,
-            "--no-early-stop",
-            "--no-log-compact",
-            "--log-summary",
-            "--out",
-            str(aligned),
-            "--save-params-json",
-            str(params_json),
-            "--save-manifest",
-            str(manifest_json),
-        ],
-        cwd=args.tomojax_dir,
-        env=env,
-    )
+    align_argv = [
+        "--data",
+        str(fixture["misaligned"]),
+        "--levels",
+        *[str(level) for level in args.levels],
+        "--outer-iters",
+        str(args.outer_iters),
+        "--recon-iters",
+        str(args.recon_iters),
+        "--recon-L",
+        str(args.recon_L),
+        "--lambda-tv",
+        str(args.lambda_tv),
+        "--regulariser",
+        args.regulariser,
+        "--huber-delta",
+        str(args.huber_delta),
+        "--views-per-batch",
+        str(args.views_per_batch),
+        "--schedule",
+        args.schedule,
+        "--loss",
+        args.loss,
+        "--no-early-stop",
+        "--no-log-compact",
+        "--log-summary",
+        "--out",
+        str(aligned),
+        "--save-params-json",
+        str(params_json),
+        "--save-manifest",
+        str(manifest_json),
+    ]
+    align_result = _run_align_in_process(align_argv)
     wall_sec = time.perf_counter() - start
 
     _run(
