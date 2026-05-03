@@ -25,6 +25,7 @@ SinogramModeName = Literal[
 ]
 SuiteName = Literal["quick", "confirm", "stress", "sinogram"]
 PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD = 1_000_000_000
+PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD = 500_000
 PRESET_NAMES = (
     "tiny",
     "smoke",
@@ -242,7 +243,7 @@ def sinogram_suite_cases(name: str) -> tuple[ForwardSinogramSuiteCase, ...]:
                     n_views=24,
                     warm_runs=7,
                     pose_mode="general_5d",
-                    pallas_tile_shape=(8, 4),
+                    pallas_tile_shape=(16, 4),
                     pallas_state_mode="cached",
                 ),
             ),
@@ -257,7 +258,7 @@ def sinogram_suite_cases(name: str) -> tuple[ForwardSinogramSuiteCase, ...]:
                     n_views=90,
                     warm_runs=7,
                     pose_mode="general_5d",
-                    pallas_tile_shape=(8, 4),
+                    pallas_tile_shape=(16, 4),
                     pallas_state_mode="cached",
                 ),
             ),
@@ -932,11 +933,24 @@ def sinogram_dispatch_estimated_ray_steps(config: ForwardSinogramBenchmarkConfig
 
 def sinogram_dispatch_selected_mode(config: ForwardSinogramBenchmarkConfig) -> str:
     """Select the sinogram backend for the benchmark-only high-ray dispatch probe."""
+    threshold = (
+        PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD
+        if config.pose_mode == "general_5d"
+        else PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
+    )
     return (
         "pallas_batched"
-        if sinogram_dispatch_estimated_ray_steps(config)
-        >= PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
+        if sinogram_dispatch_estimated_ray_steps(config) >= threshold
         else "jax_vmap"
+    )
+
+
+def sinogram_dispatch_ray_step_threshold(config: ForwardSinogramBenchmarkConfig) -> int:
+    """Return the configured benchmark-only dispatch threshold for this pose family."""
+    return (
+        PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD
+        if config.pose_mode == "general_5d"
+        else PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
     )
 
 
@@ -1057,7 +1071,7 @@ def benchmark_sinogram_mode(
             **_error_metrics(oracle, oracle),
             "dispatch_selected_mode": "jax_vmap",
             "dispatch_estimated_ray_steps": sinogram_dispatch_estimated_ray_steps(config),
-            "dispatch_threshold_ray_steps": PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD,
+            "dispatch_threshold_ray_steps": sinogram_dispatch_ray_step_threshold(config),
             "dispatch_timing_source": "best_jax_baseline",
             "requested_pallas_variant": _pallas_requested_variant_metadata(config),
             "actual_pallas_variant": None,
@@ -1091,7 +1105,7 @@ def benchmark_sinogram_mode(
     if requested_mode == "pallas_dispatch":
         result["dispatch_selected_mode"] = sinogram_dispatch_selected_mode(config)
         result["dispatch_estimated_ray_steps"] = sinogram_dispatch_estimated_ray_steps(config)
-        result["dispatch_threshold_ray_steps"] = PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
+        result["dispatch_threshold_ray_steps"] = sinogram_dispatch_ray_step_threshold(config)
     if requested_mode in {"pallas_loop", "pallas_batched", "pallas_dispatch"}:
         result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
         result["actual_pallas_variant"] = _pallas_actual_variant_metadata(

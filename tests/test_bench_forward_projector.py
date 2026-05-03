@@ -10,6 +10,7 @@ from tomojax.bench.forward_projector import (
     FORWARD_SUITE_NAMES,
     ForwardProjectorBenchmarkConfig,
     ForwardSinogramBenchmarkConfig,
+    PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD,
     PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD,
     PRESET_NAMES,
     SINOGRAM_SUITE_NAMES,
@@ -24,6 +25,7 @@ from tomojax.bench.forward_projector import (
     run_forward_sinogram_suite,
     run_forward_projector_benchmark,
     run_forward_projector_suite,
+    sinogram_dispatch_ray_step_threshold,
     sinogram_dispatch_estimated_ray_steps,
     sinogram_dispatch_selected_mode,
     sinogram_suite_cases,
@@ -107,6 +109,7 @@ def test_sinogram_suite_cases_returns_full_projection_workloads(suite_name: str)
         ]
         assert all(case.config.pose_mode == "general_5d" for case in cases)
         assert all(case.config.pallas_state_mode == "cached" for case in cases)
+        assert all(case.config.pallas_tile_shape == (16, 4) for case in cases)
         return
 
     assert [case.name for case in cases] == ["sinogram-64", "sinogram-128", "high-ray-sinogram-128"]
@@ -366,8 +369,37 @@ def test_sinogram_dispatch_selects_only_high_ray_batched_workloads() -> None:
 
     assert sinogram_dispatch_selected_mode(low) == "jax_vmap"
     assert sinogram_dispatch_selected_mode(high) == "pallas_batched"
+    assert sinogram_dispatch_ray_step_threshold(low) == PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
     assert sinogram_dispatch_estimated_ray_steps(low) < PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
     assert sinogram_dispatch_estimated_ray_steps(high) >= PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
+
+
+def test_sinogram_dispatch_uses_lower_threshold_for_general_pose_workloads() -> None:
+    general_24 = ForwardSinogramBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="general_5d",
+    )
+    regular_24 = ForwardSinogramBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="z_axis",
+    )
+
+    assert (
+        sinogram_dispatch_ray_step_threshold(general_24)
+        == PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD
+    )
+    assert sinogram_dispatch_selected_mode(general_24) == "pallas_batched"
+    assert sinogram_dispatch_selected_mode(regular_24) == "jax_vmap"
 
 
 def test_forward_projector_suite_reports_cases_and_summary(
