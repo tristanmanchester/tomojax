@@ -65,6 +65,7 @@ def fista_tv_core_arrays(
     grid: Grid,
     detector: Detector,
     cfg: FistaCoreConfig,
+    L_override: jnp.ndarray | float | None = None,
     view_weights: jnp.ndarray | None = None,
 ) -> FistaCoreResult:
     """Array-level unrolled FISTA/HUBER-TV core.
@@ -76,7 +77,8 @@ def fista_tv_core_arrays(
     x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
     z_init = x_init
     t_init = jnp.float32(1.0)
-    L = jnp.maximum(jnp.asarray(cfg.L, dtype=jnp.float32), jnp.float32(1e-6))
+    L_raw = cfg.L if L_override is None else L_override
+    L = jnp.maximum(jnp.asarray(L_raw, dtype=jnp.float32), jnp.float32(1e-6))
     lam = jnp.asarray(cfg.lambda_tv, dtype=jnp.float32)
     weights = _sqrt_view_weights(projections, view_weights)
 

@@ -359,7 +359,7 @@ def _run_multires_level_stages(
             opt_method=str(pose_optimizer),
             outer_iters=int(stage.maxiter),
             early_stop=bool(stage.early_stop),
-            recon_L=cfg.recon_L if int(level_factor) == 1 else None,
+            recon_L=None,
             loss=active_loss_spec,
             gauge_fix=pose_gauge_fix,
         )

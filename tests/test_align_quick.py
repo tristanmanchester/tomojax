@@ -612,58 +612,6 @@ def test_align_multires_uses_scheduled_loss_by_level(monkeypatch):
     ]
 
 
-def test_align_multires_preserves_native_level_recon_l(monkeypatch):
-    grid, det, geom, _, projs, _ = make_misaligned_case(8, 8, 8, 4, 9)
-    observed = []
-
-    def fake_align(
-        _geometry,
-        level_grid,
-        _detector,
-        level_projections,
-        *,
-        cfg,
-        init_x=None,
-        init_params5=None,
-        **_kwargs,
-    ):
-        observed.append((int(level_grid.nx), cfg.recon_L))
-        x = (
-            jnp.zeros((level_grid.nx, level_grid.ny, level_grid.nz), dtype=jnp.float32)
-            if init_x is None
-            else jnp.asarray(init_x, dtype=jnp.float32)
-        )
-        params = (
-            jnp.zeros((level_projections.shape[0], 5), dtype=jnp.float32)
-            if init_params5 is None
-            else jnp.asarray(init_params5, dtype=jnp.float32)
-        )
-        return x, params, {
-            "loss": [1.0],
-            "loss_kind": "l2",
-            "outer_stats": [{"outer_idx": 1, "loss_kind": "l2", "loss_after": 1.0}],
-            "stopped_by_observer": False,
-            "observer_action": "continue",
-            "wall_time_total": 0.0,
-            "pose_model": "per_view",
-            "pose_model_variables": int(level_projections.shape[0] * 5),
-            "per_view_variables": 5,
-            "pose_model_basis_shape": [int(level_projections.shape[0]), 1],
-            "active_dofs": ["alpha", "beta", "phi", "dx", "dz"],
-            "completed_outer_iters": 1,
-            "small_impr_streak": 0,
-            "motion_coeffs": None,
-            "L": cfg.recon_L,
-        }
-
-    monkeypatch.setattr(stage_loop, "align", fake_align)
-    cfg = AlignConfig(outer_iters=1, recon_iters=1, recon_L=123.0, early_stop=False)
-
-    align_pipeline.align_multires(geom, grid, det, projs, factors=[2, 1], cfg=cfg)
-
-    assert observed == [(4, None), (8, 123.0)]
-
-
 def test_align_multires_resume_uses_checkpointed_stage_counter(monkeypatch):
     grid, det, geom, _, projs, _ = make_misaligned_case(6, 6, 6, 4, 3)
     schedule = AlignmentSchedule(

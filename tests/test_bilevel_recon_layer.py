@@ -68,6 +68,41 @@ def test_fista_core_arrays_matches_public_fista_for_small_fixed_l_case():
     np.testing.assert_allclose(np.asarray(core.x), np.asarray(public), atol=1e-5, rtol=1e-5)
 
 
+def test_fista_core_dynamic_l_override_matches_static_l():
+    grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    effective = apply_alignment_state(base, state)
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    static = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=FistaCoreConfig(iters=2, lambda_tv=0.0, L=75.0, checkpoint_projector=False),
+    )
+    dynamic = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=FistaCoreConfig(iters=2, lambda_tv=0.0, L=1.0, checkpoint_projector=False),
+        L_override=jnp.asarray(75.0, dtype=jnp.float32),
+    )
+
+    np.testing.assert_allclose(np.asarray(dynamic.x), np.asarray(static.x), atol=1e-6, rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(dynamic.loss),
+        np.asarray(static.loss),
+        atol=1e-5,
+        rtol=1e-6,
+    )
+
+
 def test_fista_core_views_per_batch_preserves_reconstruction_values():
     grid, detector, geometry, _volume, projections = _case(n_views=6)
     base = BaseGeometryArrays.from_geometry(geometry, detector)

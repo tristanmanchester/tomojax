@@ -26,6 +26,7 @@ def _run_huber_fista_core_jit(
     det_u: jnp.ndarray,
     det_v: jnp.ndarray,
     projections: jnp.ndarray,
+    L_value: jnp.ndarray,
     *,
     grid: Grid,
     detector: Detector,
@@ -39,6 +40,7 @@ def _run_huber_fista_core_jit(
         grid=grid,
         detector=detector,
         cfg=cfg,
+        L_override=L_value,
     )
     return (
         result.x,
@@ -129,7 +131,7 @@ def _run_reconstruction_step(
             lambda_tv=float(cfg.lambda_tv),
             regulariser="huber_tv",
             huber_delta=float(cfg.huber_delta),
-            L=float(L_prev),
+            L=1.0,
             checkpoint_projector=bool(cfg.checkpoint_projector),
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
@@ -142,6 +144,7 @@ def _run_reconstruction_step(
             det_grid[0],
             det_grid[1],
             projections,
+            jnp.asarray(L_prev, dtype=jnp.float32),
             grid=grid,
             detector=detector,
             cfg=core_cfg,
