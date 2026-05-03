@@ -152,7 +152,6 @@ def _run_reconstruction_step(
             T_all = nominal @ jax.vmap(se3_from_5d)(recon_geometry.params5)
         else:
             T_all = stack_view_poses(recon_geometry, n_views)
-        projector_backend = "pallas" if jax.default_backend() == "gpu" else "jax"
         core_cfg = FistaCoreConfig(
             iters=int(cfg.recon_iters),
             lambda_tv=float(cfg.lambda_tv),
@@ -163,8 +162,6 @@ def _run_reconstruction_step(
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
             views_per_batch=int(cfg.views_per_batch),
-            forward_projector=projector_backend,
-            backprojector=projector_backend,
         )
 
         x_core, loss, data_loss, regulariser_value, effective_iters = _run_huber_fista_core_jit(
