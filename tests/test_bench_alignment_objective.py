@@ -35,13 +35,13 @@ def test_alignment_objective_variant_reports_value_and_grad_metrics() -> None:
     assert metrics["grad_norm"] > 0.0
 
 
-def test_alignment_objective_suite_compares_checkpoint_modes(
+def test_alignment_objective_suite_compares_checkpoint_modes_and_batches_all_views(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[bool] = []
+    calls: list[tuple[bool, int]] = []
 
     def fake_benchmark(name, config):
-        calls.append(bool(config.checkpoint_projector))
+        calls.append((bool(config.checkpoint_projector), int(config.views_per_batch)))
         return {
             "benchmark": "alignment_objective_value_and_grad",
             "case_name": name,
@@ -58,7 +58,7 @@ def test_alignment_objective_suite_compares_checkpoint_modes(
 
     assert metrics["benchmark"] == "alignment_objective_suite"
     assert metrics["suite"] == "alignment_objective"
-    assert calls == [True, False]
+    assert calls == [(True, 0), (False, 0)]
     assert [case["case_name"] for case in metrics["cases"]] == [
         "checkpointed",
         "no_checkpoint",

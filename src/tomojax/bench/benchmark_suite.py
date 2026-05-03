@@ -426,6 +426,8 @@ def main() -> None:
             "l2",
             "--schedule",
             "pose_only",
+            "--views-per-batch",
+            "0",
         ]
         _run(cmd, cwd=args.tomojax_dir, env=env, log=logs_dir / "alignment_smoke.log")
         alignment = json.loads(alignment_path.read_text(encoding="utf-8"))

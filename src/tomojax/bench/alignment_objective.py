@@ -31,7 +31,7 @@ class AlignmentObjectiveBenchmarkConfig:
     n_views: int = 24
     seed: int = 0
     warm_runs: int = 7
-    views_per_batch: int = 1
+    views_per_batch: int = 0
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "bf16"
