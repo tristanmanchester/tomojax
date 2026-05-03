@@ -623,10 +623,15 @@ def _build_pose_objective_bundle(
             r = _pred_flat(T_i, vol) - y_i.ravel()
             return w_i.ravel() * r
 
-        r, jvp_fn = jax.linearize(f, p5_i)
+        r = f(p5_i)
+        _, vjp = jax.vjp(f, p5_i)
+        g = vjp(r)[0]
         eye5 = jnp.eye(5, dtype=jnp.float32)
-        cols = jax.vmap(jvp_fn)(eye5)
-        g = cols @ r
+
+        def jvp_col(v):
+            return jax.jvp(f, (p5_i,), (v,))[1]
+
+        cols = jax.vmap(jvp_col)(eye5)
         H = cols @ cols.T
         lam = jnp.float32(cfg.gn_damping)
         active = active_mask.astype(H.dtype)
