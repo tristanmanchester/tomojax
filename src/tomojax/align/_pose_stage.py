@@ -445,7 +445,7 @@ class PoseObjectiveBundle:
     align_loss: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
     align_loss_jit: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
     loss_and_grad_manual: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
-    gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    gn_update_all: Callable[[jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
 
 
 def _build_pose_objective_bundle(
@@ -487,6 +487,12 @@ def _build_pose_objective_bundle(
     def _apply_vol_mask(vol: jnp.ndarray) -> jnp.ndarray:
         return vol * vol_mask if vol_mask is not None else vol
 
+    def _smoothness_loss(params5: jnp.ndarray) -> jnp.ndarray:
+        if int(params5.shape[0]) < 3:
+            return jnp.asarray(0.0, dtype=jnp.float32)
+        d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
+        return jnp.sum((d2 * W_weights) ** 2)
+
     def align_loss(params5: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
         T_aug = T_nom_all @ jax.vmap(se3_from_5d)(params5)
         loss_tot = project_and_score_stack(
@@ -503,11 +509,7 @@ def _build_pose_objective_bundle(
             gather_dtype=cfg.gather_dtype,
             view_indices=jnp.arange(n_views, dtype=jnp.int32),
         )
-        loss = loss_tot
-        if int(params5.shape[0]) >= 3:
-            d2 = params5[:-2] - 2.0 * params5[1:-1] + params5[2:]
-            loss = loss + jnp.sum((d2 * W_weights) ** 2)
-        return loss
+        return loss_tot + _smoothness_loss(params5)
 
     align_loss_jit = jax.jit(align_loss)
 
@@ -624,6 +626,7 @@ def _build_pose_objective_bundle(
             return w_i.ravel() * r
 
         r = f(p5_i)
+        loss = jnp.float32(0.5) * jnp.vdot(r, r).real
         _, vjp = jax.vjp(f, p5_i)
         g = vjp(r)[0]
         eye5 = jnp.eye(5, dtype=jnp.float32)
@@ -640,7 +643,7 @@ def _build_pose_objective_bundle(
         system = H_active + lam * jnp.diag(active) + jnp.diag(inactive)
         rhs = -g * active
         dp = jnp.linalg.solve(system, rhs)
-        return dp * active
+        return dp * active, loss
 
     gn_update_batch = jax.jit(jax.vmap(_gn_update_one, in_axes=(0, 0, 0, None, 0)))
 
@@ -650,7 +653,8 @@ def _build_pose_objective_bundle(
     def gn_update_all(params5: jnp.ndarray, vol: jnp.ndarray):
         masked_vol = _apply_vol_mask(vol)
 
-        def body(dp_acc, i):
+        def body(carry, i):
+            dp_acc, loss_acc = carry
             start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
             params_chunk = jax.lax.dynamic_slice(
                 params5,
@@ -667,7 +671,7 @@ def _build_pose_objective_bundle(
                 (start_shifted, 0, 0),
                 (chunk_size, nv, nu),
             )
-            dp_chunk = gn_update_batch(
+            dp_chunk, loss_chunk = gn_update_batch(
                 params_chunk,
                 T_chunk,
                 y_chunk,
@@ -675,11 +679,16 @@ def _build_pose_objective_bundle(
                 _ls_weight_chunk(y_chunk, _loss_mask_chunk(start_shifted)),
             )
             dp_acc = dp_acc.at[view_idx_chunk].add(dp_chunk * vmask[:, None])
-            return dp_acc, None
+            loss_acc = loss_acc + jnp.sum(loss_chunk * vmask)
+            return (dp_acc, loss_acc), None
 
         dp0 = jnp.zeros_like(params5)
-        dp_all, _ = jax.lax.scan(body, dp0, jnp.arange(num_chunks, dtype=jnp.int32))
-        return dp_all
+        (dp_all, data_loss), _ = jax.lax.scan(
+            body,
+            (dp0, jnp.asarray(0.0, dtype=jnp.float32)),
+            jnp.arange(num_chunks, dtype=jnp.int32),
+        )
+        return dp_all, data_loss + _smoothness_loss(params5)
 
     return PoseObjectiveBundle(
         align_loss=align_loss,
@@ -1034,12 +1043,6 @@ def _run_alignment_step(
     cfg = ctx.cfg
     align_start = time.perf_counter()
     stat: OuterStat = {}
-    loss_before = _evaluate_align_loss(
-        lambda: ctx.align_loss_jit(params5_in, vol),
-        fallback=None,
-        context="Skipping pre-step alignment loss evaluation",
-    )
-    stat["loss_before"] = loss_before
 
     if ctx.opt_mode == "gn" and ctx.ls_like:
         step_kind = "gn"
@@ -1055,12 +1058,26 @@ def _run_alignment_step(
     else:
         step_kind = "gd"
 
+    loss_before = None
+    if step_kind != "gn" or ctx.active_loss_name != "l2":
+        loss_before = _evaluate_align_loss(
+            lambda: ctx.align_loss_jit(params5_in, vol),
+            fallback=None,
+            context="Skipping pre-step alignment loss evaluation",
+        )
+    stat["loss_before"] = loss_before
+
     params5_out = params5_in
     motion_coeffs_out = motion_coeffs_in
     loss_after = None
     if step_kind == "gn":
         params5_prev = params5_in
-        dp_all = ctx.gn_update_all(params5_prev, vol) * ctx.active_mask
+        dp_all_raw, gn_loss_before = ctx.gn_update_all(params5_prev, vol)
+        dp_all = dp_all_raw * ctx.active_mask
+        if loss_before is None and ctx.active_loss_name == "l2":
+            loss_before = float(gn_loss_before)
+            stat["loss_before"] = loss_before
+            stat["loss_before_source"] = "gn_residual"
         constrain_candidate = (
             ctx.project_params_to_smooth
             if ctx.use_smooth_pose_model
