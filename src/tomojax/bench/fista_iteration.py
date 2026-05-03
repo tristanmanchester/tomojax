@@ -33,6 +33,7 @@ class FistaIterationBenchmarkConfig(ForwardSinogramBenchmarkConfig):
     forward_projector: str = "pallas"
     backprojector: str = "pallas"
     compute_final_data_loss: bool = False
+    compute_final_regulariser_value: bool = False
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,7 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
         pallas_tile_shape=tuple(config.pallas_tile_shape),
         pallas_num_warps=int(config.pallas_num_warps),
         compute_final_data_loss=bool(config.compute_final_data_loss),
+        compute_final_regulariser_value=bool(config.compute_final_regulariser_value),
     )
 
     @jax.jit
@@ -149,6 +151,7 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
         "forward_projector": str(config.forward_projector),
         "backprojector": str(config.backprojector),
         "compute_final_data_loss": bool(config.compute_final_data_loss),
+        "compute_final_regulariser_value": bool(config.compute_final_regulariser_value),
     }
     return run, fixture_meta
 
@@ -197,6 +200,7 @@ def run_fista_iteration_benchmark(config: FistaIterationBenchmarkConfig) -> dict
             "data_loss": float(np.asarray(warm[2])),
             "data_loss_is_final": bool(config.compute_final_data_loss),
             "regulariser_value": float(np.asarray(warm[3])),
+            "regulariser_value_is_final": bool(config.compute_final_regulariser_value),
             "effective_iters": int(np.asarray(warm[4])),
         },
     }

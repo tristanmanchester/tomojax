@@ -31,6 +31,7 @@ class FistaCoreConfig:
     pallas_tile_shape: tuple[int, int] = (16, 4)
     pallas_num_warps: int = 1
     compute_final_data_loss: bool = True
+    compute_final_regulariser_value: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +161,11 @@ def fista_tv_core_arrays(
         jnp.arange(n_iters, dtype=jnp.int32),
     )
     data_final = data_loss_fn(x_final) if cfg.compute_final_data_loss else loss[-1]
-    reg_final = regulariser_value(x_final)
+    reg_final = (
+        regulariser_value(x_final)
+        if cfg.compute_final_regulariser_value
+        else jnp.zeros((), dtype=jnp.float32)
+    )
     return FistaCoreResult(
         x=x_final,
         loss=loss,
