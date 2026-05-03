@@ -256,6 +256,21 @@ def test_align_gn_chunking_matches_streamed_reference(monkeypatch):
     assert info_chunked["loss"][-1] == pytest.approx(info_stream["loss"][-1], rel=1e-5, abs=1e-6)
 
 
+def test_align_gn_reuses_validated_candidate_loss_for_bookkeeping(monkeypatch):
+    _, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="gn",
+        views_per_batch=4,
+        loss_name="l2",
+    )
+
+    stat = info["outer_stats"][0]
+    assert stat["step_kind"] == "gn"
+    assert stat["loss_after_reused"] is True
+    assert stat["loss_after"] == pytest.approx(stat["loss_after_step"])
+    assert info["loss"][-1] == pytest.approx(stat["loss_after"])
+
+
 def test_align_lbfgs_decreases_fixed_volume_loss(monkeypatch):
     _, info = _run_fixed_volume_alignment(
         monkeypatch,

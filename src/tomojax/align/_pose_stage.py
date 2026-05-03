@@ -1171,12 +1171,26 @@ def _run_alignment_step(
         final_loss_fallback = loss_before
     if final_loss_fallback is None and loss_hist:
         final_loss_fallback = loss_hist[-1]
-    total_loss_eval = _evaluate_align_loss(
-        lambda: ctx.align_loss_jit(params5_out, vol),
-        fallback=final_loss_fallback,
-        context="Using fallback for final alignment loss bookkeeping",
+    can_reuse_validated_gn_loss = (
+        step_kind == "gn"
+        and not ctx.use_smooth_pose_model
+        and loss_after is not None
+        and math.isfinite(float(loss_after))
     )
-    total_loss = float(total_loss_eval) if total_loss_eval is not None else math.nan
+    if can_reuse_validated_gn_loss:
+        # The per-view GN candidate path evaluates the loss after applying the
+        # same full constraints used below. Avoid a duplicate full projection
+        # pass for bookkeeping in that narrow case.
+        total_loss = float(loss_after)
+        stat["loss_after_reused"] = True
+    else:
+        total_loss_eval = _evaluate_align_loss(
+            lambda: ctx.align_loss_jit(params5_out, vol),
+            fallback=final_loss_fallback,
+            context="Using fallback for final alignment loss bookkeeping",
+        )
+        total_loss = float(total_loss_eval) if total_loss_eval is not None else math.nan
+        stat["loss_after_reused"] = False
     stat["loss_after"] = total_loss
 
     if loss_before is not None:
