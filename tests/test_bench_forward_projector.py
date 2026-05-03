@@ -109,7 +109,7 @@ def test_sinogram_suite_cases_returns_full_projection_workloads(suite_name: str)
         ]
         assert all(case.config.pose_mode == "general_5d" for case in cases)
         assert all(case.config.pallas_state_mode == "cached" for case in cases)
-        assert all(case.config.pallas_tile_shape == (16, 4) for case in cases)
+        assert all(case.config.pallas_tile_shape == (8, 4) for case in cases)
         return
 
     assert [case.name for case in cases] == ["sinogram-64", "sinogram-128", "high-ray-sinogram-128"]
