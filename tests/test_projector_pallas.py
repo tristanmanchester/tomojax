@@ -800,51 +800,6 @@ def test_pallas_forward_project_residual_sse_cached_state_matches_inline() -> No
     np.testing.assert_allclose(np.asarray(bound_cached), np.asarray(inline), atol=1e-4, rtol=1e-4)
 
 
-def test_pallas_forward_project_residual_sse_gpu_atomic_matches_materialized_jax() -> None:
-    if jax.default_backend() != "gpu":
-        pytest.skip("real Pallas atomic lowering requires a GPU backend")
-
-    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
-    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0, 73.0)]
-    T_stack = jnp.stack(poses, axis=0)
-    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
-    oracle_projection = jnp.stack(
-        [forward_project_view_T(T, grid, detector, volume) for T in poses],
-        axis=0,
-    )
-    target = oracle_projection + jnp.linspace(
-        0.0,
-        0.01,
-        oracle_projection.size,
-        dtype=jnp.float32,
-    ).reshape(oracle_projection.shape)
-
-    inline = forward_project_residual_sse_T_pallas(
-        T_stack,
-        grid,
-        detector,
-        volume,
-        target,
-        tile_shape=(4, 8),
-        kernel_variant="generic",
-    )
-    cached = forward_project_residual_sse_T_pallas(
-        T_stack,
-        grid,
-        detector,
-        volume,
-        target,
-        tile_shape=(4, 8),
-        kernel_variant="generic",
-        state_mode="cached",
-    )
-    expected = jnp.sum((oracle_projection - target) ** 2, dtype=jnp.float32)
-
-    np.testing.assert_allclose(np.asarray(inline), np.asarray(expected), atol=5e-4, rtol=5e-4)
-    np.testing.assert_allclose(np.asarray(cached), np.asarray(expected), atol=5e-4, rtol=5e-4)
-
-
 def test_pallas_forward_project_residual_sse_zero_target_matches_materialized_jax() -> None:
     grid = Grid(nx=6, ny=6, nz=6, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=6, nv=5, du=1.0, dv=1.0, det_center=(0.0, 0.0))

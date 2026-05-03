@@ -1399,7 +1399,7 @@ def _projector_parallel_z_views_kernel(
     out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
 
 
-def _projector_residual_sse_kernel_impl(
+def _projector_residual_sse_kernel(
     T_ref: Any,
     volume_ref: Any,
     target_ref: Any,
@@ -1427,7 +1427,6 @@ def _projector_residual_sse_kernel_impl(
     kernel_variant_id: int,
     layout_variant_id: int,
     unroll: int | None,
-    atomic_reduction: bool,
 ) -> None:
     view_idx = pl.program_id(0)
     tile_v_idx = pl.program_id(1)
@@ -1556,46 +1555,7 @@ def _projector_residual_sse_kernel_impl(
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
     residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
-    tile_sse = jnp.sum(residual * residual).astype(jnp.float32)
-    if atomic_reduction:
-        plt.atomic_add(out_ref, (), tile_sse)
-    else:
-        out_ref[0, 0, 0] = tile_sse
-
-
-def _projector_residual_sse_kernel(
-    T_ref: Any,
-    volume_ref: Any,
-    target_ref: Any,
-    out_ref: Any,
-    **kwargs: Any,
-) -> None:
-    _projector_residual_sse_kernel_impl(
-        T_ref,
-        volume_ref,
-        target_ref,
-        out_ref,
-        atomic_reduction=False,
-        **kwargs,
-    )
-
-
-def _projector_residual_sse_atomic_kernel(
-    T_ref: Any,
-    volume_ref: Any,
-    target_ref: Any,
-    _neutral_ref: Any,
-    out_ref: Any,
-    **kwargs: Any,
-) -> None:
-    _projector_residual_sse_kernel_impl(
-        T_ref,
-        volume_ref,
-        target_ref,
-        out_ref,
-        atomic_reduction=True,
-        **kwargs,
-    )
+    out_ref[0, 0, 0] = jnp.sum(residual * residual).astype(jnp.float32)
 
 
 def prepare_forward_project_view_T_pallas_state(
@@ -2294,7 +2254,7 @@ def _projector_views_kernel_cached(
     out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
 
 
-def _projector_residual_sse_kernel_cached_impl(
+def _projector_residual_sse_kernel_cached(
     ix0_ref: Any,
     iy0_ref: Any,
     iz0_ref: Any,
@@ -2318,7 +2278,6 @@ def _projector_residual_sse_kernel_cached_impl(
     tile_u: int,
     kernel_variant_id: int,
     unroll: int | None,
-    atomic_reduction: bool,
 ) -> None:
     view_idx = pl.program_id(0)
     tile_v_start = pl.program_id(1) * tile_v
@@ -2379,70 +2338,7 @@ def _projector_residual_sse_kernel_cached_impl(
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
     residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
-    tile_sse = jnp.sum(residual * residual).astype(jnp.float32)
-    if atomic_reduction:
-        plt.atomic_add(out_ref, (), tile_sse)
-    else:
-        out_ref[0, 0, 0] = tile_sse
-
-
-def _projector_residual_sse_kernel_cached(
-    ix0_ref: Any,
-    iy0_ref: Any,
-    iz0_ref: Any,
-    n_steps_ray_ref: Any,
-    dix_ref: Any,
-    diy_ref: Any,
-    diz_ref: Any,
-    volume_ref: Any,
-    target_ref: Any,
-    out_ref: Any,
-    **kwargs: Any,
-) -> None:
-    _projector_residual_sse_kernel_cached_impl(
-        ix0_ref,
-        iy0_ref,
-        iz0_ref,
-        n_steps_ray_ref,
-        dix_ref,
-        diy_ref,
-        diz_ref,
-        volume_ref,
-        target_ref,
-        out_ref,
-        atomic_reduction=False,
-        **kwargs,
-    )
-
-
-def _projector_residual_sse_atomic_kernel_cached(
-    ix0_ref: Any,
-    iy0_ref: Any,
-    iz0_ref: Any,
-    n_steps_ray_ref: Any,
-    dix_ref: Any,
-    diy_ref: Any,
-    diz_ref: Any,
-    volume_ref: Any,
-    target_ref: Any,
-    _neutral_ref: Any,
-    out_ref: Any,
-    **kwargs: Any,
-) -> None:
-    _projector_residual_sse_kernel_cached_impl(
-        ix0_ref,
-        iy0_ref,
-        iz0_ref,
-        n_steps_ray_ref,
-        dix_ref,
-        diy_ref,
-        diz_ref,
-        volume_ref,
-        target_ref,
-        out_ref,
-        atomic_reduction=True,
-        **kwargs,
-    )
+    out_ref[0, 0, 0] = jnp.sum(residual * residual).astype(jnp.float32)
 
 
 @functools.lru_cache(maxsize=32)
@@ -2575,76 +2471,6 @@ def _cached_projector_residual_sse_state_pallas_call(
     )
 
 
-@functools.lru_cache(maxsize=32)
-def _cached_projector_residual_sse_state_atomic_pallas_call(
-    *,
-    nx: int,
-    ny: int,
-    nz: int,
-    nv: int,
-    nu: int,
-    n_views: int,
-    step_size: float,
-    n_steps: int,
-    tile_v: int,
-    tile_u: int,
-    num_warps: int,
-    kernel_variant_id: int,
-    unroll: int | None,
-) -> Callable[
-    [
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-        jnp.ndarray,
-    ],
-    jnp.ndarray,
-]:
-    kernel = functools.partial(
-        _projector_residual_sse_atomic_kernel_cached,
-        nx=int(nx),
-        ny=int(ny),
-        nz=int(nz),
-        nu=int(nu),
-        nv=int(nv),
-        n_views=int(n_views),
-        step_size=float(step_size),
-        n_steps=int(n_steps),
-        tile_v=int(tile_v),
-        tile_u=int(tile_u),
-        kernel_variant_id=int(kernel_variant_id),
-        unroll=unroll,
-    )
-    grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        grid=grid_shape,
-        in_specs=[
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-            pl.no_block_spec,
-        ],
-        out_specs=pl.no_block_spec,
-        input_output_aliases={9: 0},
-        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
-        name="tomojax_forward_project_residual_sse_T_pallas_cached_state_atomic",
-    )
-
-
 def forward_project_views_T_pallas_with_state(
     state: PallasForwardProjectorStackTraversalState,
     volume: jnp.ndarray,
@@ -2736,34 +2562,6 @@ def forward_project_residual_sse_T_pallas_with_state(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
         )
     tile_v, tile_u = state.tile_shape
-    if not interpret:
-        call = _cached_projector_residual_sse_state_atomic_pallas_call(
-            nx=int(state.nx),
-            ny=int(state.ny),
-            nz=int(state.nz),
-            nv=int(state.nv),
-            nu=int(state.nu),
-            n_views=int(state.n_views),
-            step_size=float(state.step_size),
-            n_steps=int(state.n_steps),
-            tile_v=int(tile_v),
-            tile_u=int(tile_u),
-            num_warps=int(state.num_warps),
-            kernel_variant_id=int(state.kernel_variant_id),
-            unroll=unroll,
-        )
-        return call(
-            state.ix0,
-            state.iy0,
-            state.iz0,
-            state.n_steps_ray,
-            state.dix,
-            state.diy,
-            state.diz,
-            _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
-            jnp.asarray(target, dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-        )
     call = _cached_projector_residual_sse_state_pallas_call(
         nx=int(state.nx),
         ny=int(state.ny),
@@ -3379,52 +3177,6 @@ def forward_project_residual_sse_T_pallas(
     )
     tile_grid_v = math.ceil(nv / tile_v)
     tile_grid_u = math.ceil(nu / tile_u)
-    if not interpret:
-        atomic_kernel = functools.partial(
-            _projector_residual_sse_atomic_kernel,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            nu=nu,
-            nv=nv,
-            du=float(detector.du),
-            dv=float(detector.dv),
-            det_center_x=float(detector.det_center[0]),
-            det_center_z=float(detector.det_center[1]),
-            vol_origin_x=float(vol_origin[0]),
-            vol_origin_y=float(vol_origin[1]),
-            vol_origin_z=float(vol_origin[2]),
-            vx=float(grid.vx),
-            vy=float(grid.vy),
-            vz=float(grid.vz),
-            step_size=float(step_size_value),
-            n_steps=int(effective_n_steps_value),
-            tile_v=int(tile_v),
-            tile_u=int(tile_u),
-            kernel_variant_id=int(kernel_variant_id),
-            layout_variant_id=int(layout_variant_id),
-            unroll=unroll,
-        )
-        return pl.pallas_call(
-            atomic_kernel,
-            out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-            grid=(n_views, tile_grid_v, tile_grid_u),
-            in_specs=[
-                pl.no_block_spec,
-                pl.no_block_spec,
-                pl.no_block_spec,
-                pl.no_block_spec,
-            ],
-            out_specs=pl.no_block_spec,
-            input_output_aliases={3: 0},
-            compiler_params=plt.CompilerParams(num_warps=num_warps_value),
-            name="tomojax_forward_project_residual_sse_T_pallas_atomic",
-        )(
-            jnp.asarray(T_stack, dtype=jnp.float32),
-            _prepare_volume_for_pallas_gather(volume, gather_dtype),
-            jnp.asarray(target, dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-        )
     partials = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((n_views, tile_grid_v, tile_grid_u), jnp.float32),
