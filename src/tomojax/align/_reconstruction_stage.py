@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import time
 from typing import Mapping
@@ -15,6 +16,36 @@ from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ._observer import OuterStat
 from ._results import record_reconstruction_info as _record_reconstruction_info
 from .objectives.recon_layer import PoseAdjustedGeometry
+
+
+@functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
+def _run_huber_fista_core_jit(
+    x0: jnp.ndarray,
+    T_all: jnp.ndarray,
+    det_u: jnp.ndarray,
+    det_v: jnp.ndarray,
+    projections: jnp.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    cfg: FistaCoreConfig,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    result = fista_tv_core_arrays(
+        x0=x0,
+        T_all=T_all,
+        det_grid=(det_u, det_v),
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=cfg,
+    )
+    return (
+        result.x,
+        result.loss,
+        result.data_loss,
+        result.regulariser_value,
+        result.effective_iters,
+    )
 
 
 def _run_reconstruction_step(
@@ -100,26 +131,16 @@ def _run_reconstruction_step(
             views_per_batch=int(cfg.views_per_batch),
         )
 
-        @jax.jit
-        def run(x_in, T_in):
-            result = fista_tv_core_arrays(
-                x0=x_in,
-                T_all=T_in,
-                det_grid=det_grid,
-                projections=projections,
-                grid=grid,
-                detector=detector,
-                cfg=core_cfg,
-            )
-            return (
-                result.x,
-                result.loss,
-                result.data_loss,
-                result.regulariser_value,
-                result.effective_iters,
-            )
-
-        x_core, loss, data_loss, regulariser_value, effective_iters = run(x, T_all)
+        x_core, loss, data_loss, regulariser_value, effective_iters = _run_huber_fista_core_jit(
+            x,
+            T_all,
+            det_grid[0],
+            det_grid[1],
+            projections,
+            grid=grid,
+            detector=detector,
+            cfg=core_cfg,
+        )
         info = {
             "loss": [float(v) for v in list(loss)],
             "effective_iters": int(effective_iters),
