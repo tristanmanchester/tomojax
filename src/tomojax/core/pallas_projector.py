@@ -3609,6 +3609,211 @@ def _cached_loss_grad_pallas_call(
     )
 
 
+def _projector_loss_grad_kernel_cached(
+    ix0_ref: Any,
+    iy0_ref: Any,
+    iz0_ref: Any,
+    n_steps_ray_ref: Any,
+    dix_ref: Any,
+    diy_ref: Any,
+    diz_ref: Any,
+    volume_ref: Any,
+    target_ref: Any,
+    weights_ref: Any,
+    _grad_init_ref: Any,
+    loss_ref: Any,
+    grad_ref: Any,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    n_views: int,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    kernel_variant_id: int,
+    unroll: int | None,
+) -> None:
+    view_idx = pl.program_id(0)
+    tile_v_start = pl.program_id(1) * tile_v
+    tile_u_start = pl.program_id(2) * tile_u
+    det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
+    det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    in_detector = (det_u < nu) & (det_v < nv) & (view_idx < n_views)
+    state_idx = view_idx * jnp.int32(nv * nu) + jnp.clip(det_v * nu + det_u, 0, (nu * nv) - 1)
+
+    ix0 = plt.load(ix0_ref.at[state_idx], mask=in_detector, other=0.0)
+    iy0 = plt.load(iy0_ref.at[state_idx], mask=in_detector, other=0.0)
+    iz0 = plt.load(iz0_ref.at[state_idx], mask=in_detector, other=0.0)
+    n_steps_ray = plt.load(n_steps_ray_ref.at[state_idx], mask=in_detector, other=0)
+    dix = plt.load(dix_ref.at[view_idx])
+    diy = plt.load(diy_ref.at[view_idx])
+    diz = plt.load(diz_ref.at[view_idx])
+    step_size32 = jnp.float32(step_size)
+
+    def fwd_body(step_idx, carry):
+        acc, ix, iy, iz = carry
+        active = step_idx < n_steps_ray
+        if kernel_variant_id == _KERNEL_VARIANT_IDS["z_integer4"]:
+            sample = _trilinear_load_z_integer(
+                volume_ref,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+            )
+        else:
+            sample = _trilinear_load(
+                volume_ref,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+            )
+        return (
+            acc + sample.astype(jnp.float32) * active.astype(jnp.float32) * step_size32,
+            ix + dix,
+            iy + diy,
+            iz + diz,
+        )
+
+    init = (
+        jnp.zeros_like(ix0, dtype=jnp.float32),
+        ix0,
+        iy0,
+        iz0,
+    )
+    if unroll is None:
+        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, fwd_body, init)
+    else:
+        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, fwd_body, init, unroll=unroll)
+
+    target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
+    weight = plt.load(weights_ref.at[view_idx, 0, 0])
+    raw_residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
+    weighted_residual = raw_residual * weight
+    loss_ref[0, 0, 0] = (
+        jnp.float32(0.5) * jnp.sum(weighted_residual * weighted_residual).astype(jnp.float32)
+    )
+    grad_residual = raw_residual * weight * weight * step_size32
+
+    last_step = jnp.float32(max(n_steps - 1, 0))
+
+    def bwd_body(s, carry):
+        ix, iy, iz = carry
+        original_step = jnp.int32(n_steps - 1) - s
+        active = in_detector & (original_step < n_steps_ray)
+        _trilinear_atomic_add(
+            grad_ref,
+            grad_residual,
+            ix,
+            iy,
+            iz,
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            active=active,
+        )
+        return ix - dix, iy - diy, iz - diz
+
+    bwd_init = (
+        ix0 + dix * last_step,
+        iy0 + diy * last_step,
+        iz0 + diz * last_step,
+    )
+    if unroll is None:
+        jax.lax.fori_loop(0, n_steps, bwd_body, bwd_init)
+    else:
+        jax.lax.fori_loop(0, n_steps, bwd_body, bwd_init, unroll=unroll)
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_loss_grad_state_pallas_call(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nv: int,
+    nu: int,
+    n_views: int,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    num_warps: int,
+    kernel_variant_id: int,
+    unroll: int | None,
+    interpret: bool,
+) -> Callable[
+    [
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+    ],
+    tuple[jnp.ndarray, jnp.ndarray],
+]:
+    kernel = functools.partial(
+        _projector_loss_grad_kernel_cached,
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nu=int(nu),
+        nv=int(nv),
+        n_views=int(n_views),
+        step_size=float(step_size),
+        n_steps=int(n_steps),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        kernel_variant_id=int(kernel_variant_id),
+        unroll=unroll,
+    )
+    grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
+    return pl.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct(grid_shape, jnp.float32),
+            jax.ShapeDtypeStruct((int(nx) * int(ny) * int(nz),), jnp.float32),
+        ),
+        grid=grid_shape,
+        in_specs=[
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+        ],
+        out_specs=(
+            pl.BlockSpec((1, 1, 1), lambda view, pv, pu: (view, pv, pu)),
+            pl.no_block_spec,
+        ),
+        input_output_aliases={10: 1},
+        interpret=bool(interpret),
+        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
+        name="tomojax_forward_loss_grad_T_pallas_cached_state",
+    )
+
+
 def forward_project_loss_and_grad_T_pallas(
     T_all: jnp.ndarray,
     grid: Grid,
@@ -3639,64 +3844,54 @@ def forward_project_loss_and_grad_T_pallas(
     )
     validate_pose_stack(T_all, n_views, context="forward_project_loss_and_grad_T_pallas")
     _ensure_canonical_detector_grid(detector, det_grid)
-    variant = pallas_projector_actual_sinogram_variant_metadata(
+    state = prepare_forward_project_views_T_pallas_state(
         T_all,
         grid,
         detector,
+        step_size=step_size,
+        n_steps=n_steps,
+        gather_dtype=gather_dtype,
         det_grid=det_grid,
         tile_shape=tile_shape,
         num_warps=num_warps,
         kernel_variant=kernel_variant,
         layout_variant=layout_variant,
-        state_mode="cached",
-        gather_dtype=gather_dtype,
     )
-    tile_v, tile_u = (int(v) for v in variant["tile_shape"])
-    num_warps_value = _normalize_num_warps(num_warps)
-    kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
-    layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     if not interpret and jax.default_backend() == "cpu":
         raise PallasProjectorUnsupported(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
         )
-    step_size_value = float(grid.vy) if step_size is None else float(step_size)
-    n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
-    vol_origin = _grid_volume_origin(grid)
     if weights is None:
         weights_arr = jnp.ones((int(n_views), 1, 1), dtype=jnp.float32)
     else:
         weights_arr = jnp.asarray(weights, dtype=jnp.float32).reshape((int(n_views), 1, 1))
     grad_init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
-    call = _cached_loss_grad_pallas_call(
+    tile_v, tile_u = state.tile_shape
+    call = _cached_loss_grad_state_pallas_call(
         nx=int(nx),
         ny=int(ny),
         nz=int(nz),
         nv=int(detector.nv),
         nu=int(detector.nu),
         n_views=int(n_views),
-        du=float(detector.du),
-        dv=float(detector.dv),
-        det_center_x=float(detector.det_center[0]),
-        det_center_z=float(detector.det_center[1]),
-        vol_origin_x=float(vol_origin[0]),
-        vol_origin_y=float(vol_origin[1]),
-        vol_origin_z=float(vol_origin[2]),
-        vx=float(grid.vx),
-        vy=float(grid.vy),
-        vz=float(grid.vz),
-        step_size=float(step_size_value),
-        n_steps=int(n_steps_value),
+        step_size=float(state.step_size),
+        n_steps=int(state.n_steps),
         tile_v=int(tile_v),
         tile_u=int(tile_u),
-        num_warps=int(num_warps_value),
-        kernel_variant_id=int(kernel_variant_id),
-        layout_variant_id=int(layout_variant_id),
+        num_warps=int(state.num_warps),
+        kernel_variant_id=int(state.kernel_variant_id),
         unroll=unroll,
         interpret=bool(interpret),
     )
     partial_loss, grad_flat = call(
-        jnp.asarray(T_all, dtype=jnp.float32),
-        _prepare_volume_for_pallas_gather(vol, str(variant["gather_dtype"])),
+        state.ix0,
+        state.iy0,
+        state.iz0,
+        state.n_steps_ray,
+        state.dix,
+        state.diy,
+        state.diz,
+        _prepare_volume_for_pallas_gather(vol, state.gather_dtype),
         jnp.asarray(target, dtype=jnp.float32),
         weights_arr,
         grad_init,
