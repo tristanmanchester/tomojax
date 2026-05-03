@@ -50,11 +50,10 @@ def _run_huber_fista_core_jit(
     detector: Detector,
     cfg: FistaCoreConfig,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    det_grid = None if cfg.forward_projector == "pallas" else (det_u, det_v)
     result = fista_tv_core_arrays(
         x0=x0,
         T_all=T_all,
-        det_grid=det_grid,
+        det_grid=(det_u, det_v),
         projections=projections,
         grid=grid,
         detector=detector,
