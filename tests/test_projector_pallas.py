@@ -14,6 +14,7 @@ from tomojax.core.pallas_projector import (
     bind_forward_project_view_T_pallas,
     bind_forward_project_views_T_pallas,
     forward_project_parallel_z_views_pallas,
+    forward_project_loss_and_grad_T_pallas,
     forward_project_residual_sse_T_pallas,
     forward_project_residual_sse_T_pallas_with_state,
     forward_project_view_T_pallas_with_state,
@@ -27,7 +28,12 @@ from tomojax.core.pallas_projector import (
     prepare_forward_project_view_T_pallas_state,
     prepare_forward_project_views_T_pallas_state,
 )
-from tomojax.core.projector import backproject_view_T, forward_project_view_T, get_detector_grid_device
+from tomojax.core.projector import (
+    backproject_view_T,
+    forward_project_view_T,
+    get_detector_grid_device,
+    sum_backproject_views_T,
+)
 from tomojax.bench.forward_projector import (
     ForwardSinogramBenchmarkConfig,
     make_forward_sinogram_fixture,
@@ -655,6 +661,53 @@ def test_pallas_backproject_view_matches_jax_on_general_geometry() -> None:
     assert candidate.shape == oracle.shape == (6, 5, 4)
     assert _relative_l2(candidate, oracle) < 1e-5
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_forward_loss_grad_matches_jax_explicit_adjoint() -> None:
+    grid = Grid(nx=6, ny=5, nz=4, vx=1.2, vy=0.9, vz=1.1)
+    detector = Detector(nu=7, nv=5, du=0.8, dv=1.3, det_center=(0.4, -0.2))
+    poses = jnp.stack([_pose(theta, grid=grid, detector=detector) for theta in (0.0, 17.0, 41.0)])
+    volume = jnp.arange(grid.nx * grid.ny * grid.nz, dtype=jnp.float32).reshape(
+        grid.nx, grid.ny, grid.nz
+    ) / 100.0
+    target = jnp.stack(
+        [
+            forward_project_view_T(T, grid, detector, volume * 1.1, step_size=0.45)
+            for T in poses
+        ],
+        axis=0,
+    )
+    pred = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume, step_size=0.45) for T in poses],
+        axis=0,
+    )
+    weights = jnp.asarray([1.0, 0.5, 0.25], dtype=jnp.float32)[:, None, None]
+    raw_resid = (pred - target).astype(jnp.float32)
+    weighted_resid = raw_resid * weights
+    oracle_loss = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
+    oracle_grad = sum_backproject_views_T(
+        poses,
+        grid,
+        detector,
+        raw_resid * weights * weights,
+        step_size=0.45,
+    )
+
+    loss, grad = forward_project_loss_and_grad_T_pallas(
+        poses,
+        grid,
+        detector,
+        volume,
+        target,
+        weights=weights,
+        step_size=0.45,
+        tile_shape=(5, 7),
+    )
+
+    np.testing.assert_allclose(np.asarray(loss), np.asarray(oracle_loss), atol=1e-4, rtol=1e-5)
+    assert _relative_l2(grad, oracle_grad) < 1e-5
+    np.testing.assert_allclose(np.asarray(grad), np.asarray(oracle_grad), atol=1e-4, rtol=1e-4)
 
 
 @pytest.mark.parametrize(

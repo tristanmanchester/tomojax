@@ -436,33 +436,50 @@ def _projection_loss_and_explicit_grad(
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
         w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
-        pred = _project_chunk(
-            T_chunk=T_chunk,
-            grid=grid,
-            detector=detector,
-            volume=volume,
-            det_grid=det_grid,
-            checkpoint_projector=checkpoint_projector,
-            projector_unroll=projector_unroll,
-            gather_dtype=gather_dtype,
-            forward_projector=forward_projector,
-            pallas_tile_shape=pallas_tile_shape,
-            pallas_num_warps=pallas_num_warps,
-        )
-        raw_resid = (pred - y_chunk).astype(jnp.float32)
         valid = valid_mask[:, None, None]
-        weighted_resid = raw_resid * w_chunk * valid
-        loss_batch = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
-        grad_resid = raw_resid * (w_chunk * w_chunk) * valid
-        grad_batch = backproject_fn(
-            T_chunk,
-            grid,
-            detector,
-            grad_resid,
-            unroll=1 if backprojector == "pallas" else int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
+        if forward_projector == "pallas" and backprojector == "pallas":
+            from tomojax.core.pallas_projector import forward_project_loss_and_grad_T_pallas
+
+            loss_batch, grad_batch = forward_project_loss_and_grad_T_pallas(
+                T_chunk,
+                grid,
+                detector,
+                volume,
+                y_chunk,
+                weights=w_chunk * valid,
+                unroll=1,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                tile_shape=tuple(pallas_tile_shape),
+                num_warps=int(pallas_num_warps),
+            )
+        else:
+            pred = _project_chunk(
+                T_chunk=T_chunk,
+                grid=grid,
+                detector=detector,
+                volume=volume,
+                det_grid=det_grid,
+                checkpoint_projector=checkpoint_projector,
+                projector_unroll=projector_unroll,
+                gather_dtype=gather_dtype,
+                forward_projector=forward_projector,
+                pallas_tile_shape=pallas_tile_shape,
+                pallas_num_warps=pallas_num_warps,
+            )
+            raw_resid = (pred - y_chunk).astype(jnp.float32)
+            weighted_resid = raw_resid * w_chunk * valid
+            loss_batch = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
+            grad_resid = raw_resid * (w_chunk * w_chunk) * valid
+            grad_batch = backproject_fn(
+                T_chunk,
+                grid,
+                detector,
+                grad_resid,
+                unroll=1 if backprojector == "pallas" else int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
         return (loss_acc + loss_batch, grad_acc + grad_batch), None
 
     init = (jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume))
