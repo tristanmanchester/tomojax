@@ -30,6 +30,7 @@ class FistaIterationBenchmarkConfig(ForwardSinogramBenchmarkConfig):
     L: float = 5000.0
     views_per_batch: int = 0
     regulariser: str = "huber_tv"
+    forward_projector: str = "pallas"
     backprojector: str = "pallas"
 
 
@@ -57,6 +58,7 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 warm_runs=7,
                 unroll=4,
                 pose_mode="general_5d",
+                pallas_tile_shape=(16, 4),
             ),
         ),
         FistaIterationSuiteCase(
@@ -71,6 +73,7 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 warm_runs=5,
                 unroll=4,
                 pose_mode="general_5d",
+                pallas_tile_shape=(16, 4),
             ),
         ),
     )
@@ -111,7 +114,10 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
         projector_unroll=1 if config.unroll is None else int(config.unroll),
         gather_dtype=str(config.gather_dtype),
         views_per_batch=int(config.views_per_batch),
+        forward_projector=str(config.forward_projector),
         backprojector=str(config.backprojector),
+        pallas_tile_shape=tuple(config.pallas_tile_shape),
+        pallas_num_warps=int(config.pallas_num_warps),
     )
 
     @jax.jit
@@ -138,6 +144,7 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
         "detector_shape": [int(fixture.detector.nv), int(fixture.detector.nu)],
         "n_views": int(config.n_views),
         "pose_mode": config.pose_mode,
+        "forward_projector": str(config.forward_projector),
         "backprojector": str(config.backprojector),
     }
     return run, fixture_meta

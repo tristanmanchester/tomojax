@@ -200,7 +200,9 @@ def test_fista_core_pallas_backprojector_matches_jax_backprojector():
             checkpoint_projector=False,
             projector_unroll=2,
             views_per_batch=0,
+            forward_projector=backprojector,
             backprojector=backprojector,
+            pallas_tile_shape=(16, 4),
         )
 
         @jax.jit
