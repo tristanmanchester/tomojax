@@ -258,9 +258,10 @@ def test_forward_residual_suite_reports_cases_and_summary(
                 "best_case_speedup_vs_jax_materialized_warm_median": 2.0,
             },
         },
-        "geomean_speedup_vs_jax_materialized_warm_median": pytest.approx(1.6),
-        "worst_case_speedup_vs_jax_materialized_warm_median": 1.6,
-        "best_case_speedup_vs_jax_materialized_warm_median": 1.6,
+        "primary_pallas_mode": "pallas_dispatch",
+        "geomean_speedup_vs_jax_materialized_warm_median": pytest.approx(2.0),
+        "worst_case_speedup_vs_jax_materialized_warm_median": 2.0,
+        "best_case_speedup_vs_jax_materialized_warm_median": 2.0,
     }
 
 

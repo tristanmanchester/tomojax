@@ -1304,19 +1304,21 @@ def _sinogram_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
         for row in case.get("results", [])
         if row.get("requested_mode") in pallas_modes
     ]
+    primary = mode_summaries["pallas_dispatch"]
     return {
         "cases_total": len(cases),
         "cases_with_requested_pallas": len(pallas_rows),
         "cases_pallas_eligible": sum(1 for row in pallas_rows if row.get("eligible_for_speed_claim")),
         "cases_parity_passed": sum(1 for row in pallas_rows if _parity_passed(row)),
         "pallas_modes": mode_summaries,
-        "geomean_speedup_vs_best_jax_warm_median": mode_summaries["pallas_batched"][
+        "primary_pallas_mode": "pallas_dispatch",
+        "geomean_speedup_vs_best_jax_warm_median": primary[
             "geomean_speedup_vs_best_jax_warm_median"
         ],
-        "worst_case_speedup_vs_best_jax_warm_median": mode_summaries["pallas_batched"][
+        "worst_case_speedup_vs_best_jax_warm_median": primary[
             "worst_case_speedup_vs_best_jax_warm_median"
         ],
-        "best_case_speedup_vs_best_jax_warm_median": mode_summaries["pallas_batched"][
+        "best_case_speedup_vs_best_jax_warm_median": primary[
             "best_case_speedup_vs_best_jax_warm_median"
         ],
     }

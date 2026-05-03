@@ -572,9 +572,10 @@ def test_forward_sinogram_suite_reports_cases_and_summary(
                 "best_case_speedup_vs_best_jax_warm_median": 2.0,
             },
         },
-        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(1.5),
-        "worst_case_speedup_vs_best_jax_warm_median": 1.5,
-        "best_case_speedup_vs_best_jax_warm_median": 1.5,
+        "primary_pallas_mode": "pallas_dispatch",
+        "geomean_speedup_vs_best_jax_warm_median": pytest.approx(2.0),
+        "worst_case_speedup_vs_best_jax_warm_median": 2.0,
+        "best_case_speedup_vs_best_jax_warm_median": 2.0,
     }
 
 

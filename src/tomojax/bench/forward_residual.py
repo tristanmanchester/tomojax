@@ -651,17 +651,18 @@ def _residual_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
             if speedups
             else None,
         }
-    fused = mode_summaries["pallas_fused"]
+    primary = mode_summaries["pallas_dispatch"]
     return {
         "cases_total": len(cases),
         "pallas_modes": mode_summaries,
-        "geomean_speedup_vs_jax_materialized_warm_median": fused[
+        "primary_pallas_mode": "pallas_dispatch",
+        "geomean_speedup_vs_jax_materialized_warm_median": primary[
             "geomean_speedup_vs_jax_materialized_warm_median"
         ],
-        "worst_case_speedup_vs_jax_materialized_warm_median": fused[
+        "worst_case_speedup_vs_jax_materialized_warm_median": primary[
             "worst_case_speedup_vs_jax_materialized_warm_median"
         ],
-        "best_case_speedup_vs_jax_materialized_warm_median": fused[
+        "best_case_speedup_vs_jax_materialized_warm_median": primary[
             "best_case_speedup_vs_jax_materialized_warm_median"
         ],
     }

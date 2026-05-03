@@ -267,31 +267,35 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
 
     general_forward = suite.get("forward_general_pose")
     if general_forward:
-        pallas_batched = general_forward["summary"]["pallas_modes"]["pallas_batched"]
+        primary_mode = general_forward["summary"].get("primary_pallas_mode", "pallas_dispatch")
+        pallas_primary = general_forward["summary"]["pallas_modes"][primary_mode]
         lines.extend(
             [
                 "",
                 "## General Pose Forward",
                 "",
                 f"- Suite: `{general_forward['suite']}`",
-                "- Pallas batched geomean speedup vs best JAX: "
-                f"`{_fmt(pallas_batched['geomean_speedup_vs_best_jax_warm_median'])}x`",
-                "- Pallas batched worst-case speedup vs best JAX: "
-                f"`{_fmt(pallas_batched['worst_case_speedup_vs_best_jax_warm_median'])}x`",
+                f"- Primary Pallas mode: `{primary_mode}`",
+                "- Pallas dispatch geomean speedup vs best JAX: "
+                f"`{_fmt(pallas_primary['geomean_speedup_vs_best_jax_warm_median'])}x`",
+                "- Pallas dispatch worst-case speedup vs best JAX: "
+                f"`{_fmt(pallas_primary['worst_case_speedup_vs_best_jax_warm_median'])}x`",
             ]
         )
 
     residual = suite.get("forward_residual")
     if residual:
-        fused = residual["summary"]["pallas_modes"]["pallas_fused"]
+        primary_mode = residual["summary"].get("primary_pallas_mode", "pallas_dispatch")
+        primary = residual["summary"]["pallas_modes"][primary_mode]
         lines.extend(
             [
                 "",
                 "## Forward Residual",
                 "",
                 f"- Suite: `{residual['suite']}`",
-                "- Pallas fused geomean speedup vs JAX materialized: "
-                f"`{_fmt(fused['geomean_speedup_vs_jax_materialized_warm_median'])}x`",
+                f"- Primary Pallas mode: `{primary_mode}`",
+                "- Pallas dispatch geomean speedup vs JAX materialized: "
+                f"`{_fmt(primary['geomean_speedup_vs_jax_materialized_warm_median'])}x`",
             ]
         )
 
