@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jnp
 
 from ..core.geometry.base import Detector, Geometry, Grid
+from ..core.geometry.views import stack_view_poses
+from ..recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ._observer import OuterStat
@@ -81,45 +83,96 @@ def _run_reconstruction_step(
             det_grid=det_grid,
         )
 
+    def _run_huber_fista_core():
+        if L_prev is None:
+            raise ValueError("array-level huber FISTA core requires an explicit L")
+        n_views = int(projections.shape[0])
+        T_all = stack_view_poses(recon_geometry, n_views)
+        core_cfg = FistaCoreConfig(
+            iters=int(cfg.recon_iters),
+            lambda_tv=float(cfg.lambda_tv),
+            regulariser="huber_tv",
+            huber_delta=float(cfg.huber_delta),
+            L=float(L_prev),
+            checkpoint_projector=bool(cfg.checkpoint_projector),
+            projector_unroll=int(cfg.projector_unroll),
+            gather_dtype=str(cfg.gather_dtype),
+            views_per_batch=int(cfg.views_per_batch),
+        )
+
+        @jax.jit
+        def run(x_in, T_in):
+            result = fista_tv_core_arrays(
+                x0=x_in,
+                T_all=T_in,
+                det_grid=det_grid,
+                projections=projections,
+                grid=grid,
+                detector=detector,
+                cfg=core_cfg,
+            )
+            return (
+                result.x,
+                result.loss,
+                result.data_loss,
+                result.regulariser_value,
+                result.effective_iters,
+            )
+
+        x_core, loss, data_loss, regulariser_value, effective_iters = run(x, T_all)
+        info = {
+            "loss": [float(v) for v in list(loss)],
+            "effective_iters": int(effective_iters),
+            "early_stop": False,
+            "regulariser": "huber_tv",
+            "huber_delta": float(cfg.huber_delta),
+            "data_loss": float(data_loss),
+            "regulariser_value": float(regulariser_value),
+        }
+        return x_core, info
+
     vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
     recon_retry = False
     recon_start = time.perf_counter()
     if recon_algo == "fista":
-        try:
-            x_out, info_rec = _run_fista(
-                vpb0,
-                int(cfg.projector_unroll),
-                cfg.gather_dtype,
-                "auto",
-            )
-        except Exception as e:
-            msg = str(e)
-            is_oom = (
-                ("RESOURCE_EXHAUSTED" in msg)
-                or ("Out of memory" in msg)
-                or ("Allocator" in msg)
-            )
-            if not is_oom:
-                raise
-            logging.warning(
-                "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
-            )
+        if str(cfg.regulariser) == "huber_tv" and L_prev is not None:
+            x_out, info_rec = _run_huber_fista_core()
+        else:
             try:
-                recon_retry = True
-                x_out, info_rec = _run_fista(1, 1, cfg.gather_dtype, "stream")
-            except Exception as e2:
-                msg2 = str(e2)
-                if (
-                    ("RESOURCE_EXHAUSTED" in msg2)
-                    or ("Out of memory" in msg2)
-                    or ("Allocator" in msg2)
-                ):
-                    logging.error(
-                        "FISTA still OOM at finest level. Reduce memory pressure "
-                        "(smaller problem size or lower internal batching), or "
-                        "provide --recon-L to skip power-method."
-                    )
-                raise
+                x_out, info_rec = _run_fista(
+                    vpb0,
+                    int(cfg.projector_unroll),
+                    cfg.gather_dtype,
+                    "auto",
+                )
+            except Exception as e:
+                msg = str(e)
+                is_oom = (
+                    ("RESOURCE_EXHAUSTED" in msg)
+                    or ("Out of memory" in msg)
+                    or ("Allocator" in msg)
+                )
+                if not is_oom:
+                    raise
+                logging.warning(
+                    "FISTA OOM detected; retrying with safer settings (vpb=1, unroll=1, stream)"
+                )
+                try:
+                    recon_retry = True
+                    x_out, info_rec = _run_fista(1, 1, cfg.gather_dtype, "stream")
+                except Exception as e2:
+                    msg2 = str(e2)
+                    if (
+                        ("RESOURCE_EXHAUSTED" in msg2)
+                        or ("Out of memory" in msg2)
+                        or ("Allocator" in msg2)
+                    ):
+                        logging.error(
+                            "FISTA still OOM at finest level. Reduce memory pressure "
+                            "(smaller problem size or lower internal batching), or "
+                            "provide --recon-L to skip power-method."
+                        )
+                    raise
     else:
         x_out, info_rec = _run_spdhg()
 
@@ -138,4 +191,3 @@ def _run_reconstruction_step(
         L_prev=L_prev,
     )
     return x_out, L_next, stat
-
