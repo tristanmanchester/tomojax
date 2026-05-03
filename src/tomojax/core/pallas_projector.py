@@ -174,6 +174,56 @@ def _normalize_num_warps(num_warps: int) -> int:
     return int(value)
 
 
+def _divisors_at_most(value: int, limit: int) -> tuple[int, ...]:
+    limit = max(1, min(int(value), int(limit)))
+    return tuple(candidate for candidate in range(limit, 0, -1) if int(value) % candidate == 0)
+
+
+def _is_power_of_two(value: int) -> bool:
+    value = int(value)
+    return value > 0 and (value & (value - 1)) == 0
+
+
+def _largest_power2_tile_divisors(
+    *,
+    nv: int,
+    nu: int,
+    tile_v: int,
+    tile_u: int,
+) -> list[int]:
+    best = (1, 1)
+    best_area = 1
+    for candidate_v in _divisors_at_most(nv, tile_v):
+        for candidate_u in _divisors_at_most(nu, tile_u):
+            area = int(candidate_v) * int(candidate_u)
+            if _is_power_of_two(area) and area > best_area:
+                best = (int(candidate_v), int(candidate_u))
+                best_area = int(area)
+                break
+    return [best[0], best[1]]
+
+
+def _safe_detector_tile_shape(
+    tile_shape: list[int],
+    detector: Detector,
+    *,
+    max_generic_tile_u: int | None = None,
+) -> list[int]:
+    """Resolve detector tiles to exact detector divisors for real Pallas lowering."""
+    tile_v = int(tile_shape[0])
+    tile_u = int(tile_shape[1])
+    if max_generic_tile_u is not None:
+        tile_u = min(tile_u, int(max_generic_tile_u))
+    # JAX Pallas Triton lowering checks load/store tensor sizes are powers of two
+    # (`jax/_src/pallas/triton/lowering.py::_check_tensor_size` in JAX 0.10.0).
+    return _largest_power2_tile_divisors(
+        nv=int(detector.nv),
+        nu=int(detector.nu),
+        tile_v=tile_v,
+        tile_u=tile_u,
+    )
+
+
 def _normalize_kernel_variant(kernel_variant: str) -> str:
     if not isinstance(kernel_variant, str):
         raise PallasProjectorUnsupported(
@@ -277,6 +327,11 @@ def pallas_projector_actual_variant_metadata(
         det_grid,
         requested_kernel_variant,
     )
+    metadata["tile_shape"] = _safe_detector_tile_shape(
+        metadata["tile_shape"],
+        detector,
+        max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
+    )
     return metadata
 
 
@@ -310,8 +365,11 @@ def pallas_projector_actual_sinogram_variant_metadata(
         det_grid,
         requested_kernel_variant,
     )
-    if metadata["kernel_variant"] == "generic" and int(metadata["tile_shape"][1]) > 8:
-        metadata["tile_shape"] = [int(metadata["tile_shape"][0]), 8]
+    metadata["tile_shape"] = _safe_detector_tile_shape(
+        metadata["tile_shape"],
+        detector,
+        max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
+    )
     return metadata
 
 
@@ -766,8 +824,6 @@ def _validate_public_sinogram_call(
             _unsupported("cached traversal state currently supports layout_variant='detector_vu' only")
         )
     tile_v, tile_u = variant["tile_shape"]
-    if variant["kernel_variant"] == "generic" and int(tile_u) > 8:
-        tile_u = 8
     if not interpret and jax.default_backend() == "cpu":
         raise PallasProjectorUnsupported(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")

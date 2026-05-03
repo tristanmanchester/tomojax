@@ -18,6 +18,7 @@ from tomojax.core.pallas_projector import (
     forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
     forward_project_views_T_pallas,
+    pallas_projector_actual_sinogram_variant_metadata,
     pallas_projector_actual_variant_metadata,
     pallas_projector_sinogram_traversal_metadata,
     pallas_projector_traversal_metadata,
@@ -339,6 +340,48 @@ def test_pallas_general_pose_stack_real_lowering_matches_jax() -> None:
         axis=0,
     )
 
+    assert _relative_l2(candidate, oracle) <= 1e-5
+
+
+def test_pallas_general_pose_stack_nondividing_tile_resolves_to_safe_divisor() -> None:
+    if jax.default_backend() != "gpu":
+        pytest.skip("real Pallas lowering requires GPU")
+    fixture = make_forward_sinogram_fixture(
+        ForwardSinogramBenchmarkConfig(
+            nx=24,
+            ny=24,
+            nz=24,
+            nu=24,
+            nv=24,
+            n_views=24,
+            pose_mode="general_5d",
+        )
+    )
+
+    metadata = pallas_projector_actual_sinogram_variant_metadata(
+        fixture.T_stack,
+        fixture.grid,
+        fixture.detector,
+        tile_shape=(16, 4),
+        kernel_variant="generic",
+    )
+    candidate = forward_project_views_T_pallas(
+        fixture.T_stack,
+        fixture.grid,
+        fixture.detector,
+        fixture.volume,
+        tile_shape=(16, 4),
+        kernel_variant="generic",
+    )
+    oracle = jnp.stack(
+        [
+            forward_project_view_T(T, fixture.grid, fixture.detector, fixture.volume)
+            for T in fixture.T_stack
+        ],
+        axis=0,
+    )
+
+    assert metadata["tile_shape"] == [8, 4]
     assert _relative_l2(candidate, oracle) <= 1e-5
 
 

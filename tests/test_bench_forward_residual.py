@@ -123,7 +123,7 @@ def test_residual_mode_records_pallas_variant_metadata(monkeypatch: pytest.Monke
     )
 
     assert result["requested_pallas_variant"]["tile_shape"] == [4, 4]
-    assert result["actual_pallas_variant"]["tile_shape"] == [4, 4]
+    assert result["actual_pallas_variant"]["tile_shape"] == [2, 2]
     assert result["actual_pallas_variant"]["num_warps"] == 2
     assert result["actual_pallas_variant"]["effective_pallas_n_steps"] == 5
     assert result["speedup_vs_jax_materialized_warm_median"] is not None

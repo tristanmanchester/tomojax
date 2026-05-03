@@ -109,7 +109,7 @@ def test_sinogram_suite_cases_returns_full_projection_workloads(suite_name: str)
         ]
         assert all(case.config.pose_mode == "general_5d" for case in cases)
         assert all(case.config.pallas_state_mode == "cached" for case in cases)
-        assert all(case.config.pallas_tile_shape == (8, 4) for case in cases)
+        assert all(case.config.pallas_tile_shape == (16, 4) for case in cases)
         return
 
     assert [case.name for case in cases] == ["sinogram-64", "sinogram-128", "high-ray-sinogram-128"]
@@ -200,7 +200,7 @@ def test_benchmark_backend_records_pallas_variant_metadata(
         "gather_dtype": "fp32",
     }
     assert result["actual_pallas_variant"] == {
-        "tile_shape": [4, 8],
+        "tile_shape": [2, 2],
         "num_warps": 1,
         "kernel_variant": "z_integer4",
         "layout_variant": "detector_vu",
@@ -349,7 +349,7 @@ def test_sinogram_mode_records_pallas_variant_metadata(
     )
 
     assert result["requested_pallas_variant"]["tile_shape"] == [4, 4]
-    assert result["actual_pallas_variant"]["tile_shape"] == [4, 4]
+    assert result["actual_pallas_variant"]["tile_shape"] == [2, 2]
     assert result["actual_pallas_variant"]["num_warps"] == 2
     assert result["actual_pallas_variant"]["effective_pallas_n_steps"] == 6
     assert result["speedup_vs_best_jax_warm_median"] is not None
