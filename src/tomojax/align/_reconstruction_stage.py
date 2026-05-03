@@ -13,6 +13,7 @@ from ..core.geometry.views import stack_view_poses
 from ..recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
+from .geometry.parametrizations import se3_from_5d
 from ._observer import OuterStat
 from ._results import record_reconstruction_info as _record_reconstruction_info
 from .objectives.recon_layer import PoseAdjustedGeometry
@@ -118,7 +119,11 @@ def _run_reconstruction_step(
         if L_prev is None:
             raise ValueError("array-level huber FISTA core requires an explicit L")
         n_views = int(projections.shape[0])
-        T_all = stack_view_poses(recon_geometry, n_views)
+        if isinstance(recon_geometry, PoseAdjustedGeometry):
+            nominal = stack_view_poses(recon_geometry.geometry, n_views)
+            T_all = nominal @ jax.vmap(se3_from_5d)(recon_geometry.params5)
+        else:
+            T_all = stack_view_poses(recon_geometry, n_views)
         core_cfg = FistaCoreConfig(
             iters=int(cfg.recon_iters),
             lambda_tv=float(cfg.lambda_tv),
