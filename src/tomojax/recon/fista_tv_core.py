@@ -253,8 +253,6 @@ def _project_stack(
             det_grid=det_grid,
         )
     )
-    if b == n_views:
-        return vm_project(T_all)
 
     def body(out, i):
         start_shifted, _valid_mask, view_idx = _chunk_schedule(
@@ -302,10 +300,6 @@ def _projection_loss(
             det_grid=det_grid,
         )
     )
-    if b == n_views:
-        pred = vm_project(T_all)
-        resid = (pred - projections).astype(jnp.float32) * weights
-        return jnp.float32(0.5) * jnp.vdot(resid, resid).real
 
     def body(loss_acc, i):
         start_shifted, valid_mask, _view_idx = _chunk_schedule(
@@ -373,22 +367,6 @@ def _projection_loss_and_explicit_grad(
             det_grid=det_grid,
         )
     )
-    if b == n_views:
-        pred = vm_project(T_all)
-        raw_resid = (pred - projections).astype(jnp.float32)
-        weighted_resid = raw_resid * weights
-        loss = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
-        grad_resid = raw_resid * (weights * weights)
-        grad = sum_backproject_views_T(
-            T_all,
-            grid,
-            detector,
-            grad_resid,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
-        return loss, grad
 
     def body(carry, i):
         loss_acc, grad_acc = carry
