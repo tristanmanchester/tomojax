@@ -37,7 +37,7 @@ PRESET_NAMES = (
     "fine-step-128",
 )
 FORWARD_SUITE_NAMES = ("quick", "confirm", "stress")
-SINOGRAM_SUITE_NAMES = ("sinogram",)
+SINOGRAM_SUITE_NAMES = ("sinogram", "general_pose")
 SUITE_NAMES = FORWARD_SUITE_NAMES + SINOGRAM_SUITE_NAMES
 
 
@@ -229,6 +229,39 @@ def suite_cases(name: str) -> tuple[ForwardProjectorSuiteCase, ...]:
 
 def sinogram_suite_cases(name: str) -> tuple[ForwardSinogramSuiteCase, ...]:
     """Return the named full volume-to-sinogram suite."""
+    if name == "general_pose":
+        return (
+            ForwardSinogramSuiteCase(
+                "general-pose-forward-24",
+                ForwardSinogramBenchmarkConfig(
+                    nx=24,
+                    ny=24,
+                    nz=24,
+                    nu=24,
+                    nv=24,
+                    n_views=24,
+                    warm_runs=7,
+                    pose_mode="general_5d",
+                    pallas_tile_shape=(8, 4),
+                    pallas_state_mode="cached",
+                ),
+            ),
+            ForwardSinogramSuiteCase(
+                "general-pose-forward-64",
+                ForwardSinogramBenchmarkConfig(
+                    nx=64,
+                    ny=64,
+                    nz=64,
+                    nu=64,
+                    nv=64,
+                    n_views=90,
+                    warm_runs=7,
+                    pose_mode="general_5d",
+                    pallas_tile_shape=(8, 4),
+                    pallas_state_mode="cached",
+                ),
+            ),
+        )
     if name != "sinogram":
         raise ValueError(f"sinogram suite must be one of: {', '.join(SINOGRAM_SUITE_NAMES)}")
     return (

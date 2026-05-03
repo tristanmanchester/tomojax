@@ -100,11 +100,16 @@ def test_suite_cases_returns_named_workloads(suite_name: str) -> None:
 def test_sinogram_suite_cases_returns_full_projection_workloads(suite_name: str) -> None:
     cases = sinogram_suite_cases(suite_name)
 
-    assert [case.name for case in cases] == [
-        "sinogram-64",
-        "sinogram-128",
-        "high-ray-sinogram-128",
-    ]
+    if suite_name == "general_pose":
+        assert [case.name for case in cases] == [
+            "general-pose-forward-24",
+            "general-pose-forward-64",
+        ]
+        assert all(case.config.pose_mode == "general_5d" for case in cases)
+        assert all(case.config.pallas_state_mode == "cached" for case in cases)
+        return
+
+    assert [case.name for case in cases] == ["sinogram-64", "sinogram-128", "high-ray-sinogram-128"]
     assert all(case.config.n_views > 1 for case in cases)
     assert any(case.config.n_views >= 180 for case in cases)
     assert any(case.config.nu * case.config.nv > 60_000 for case in cases)

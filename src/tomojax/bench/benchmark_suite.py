@@ -265,6 +265,22 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
             ]
         )
 
+    general_forward = suite.get("forward_general_pose")
+    if general_forward:
+        pallas_batched = general_forward["summary"]["pallas_modes"]["pallas_batched"]
+        lines.extend(
+            [
+                "",
+                "## General Pose Forward",
+                "",
+                f"- Suite: `{general_forward['suite']}`",
+                "- Pallas batched geomean speedup vs best JAX: "
+                f"`{_fmt(pallas_batched['geomean_speedup_vs_best_jax_warm_median'])}x`",
+                "- Pallas batched worst-case speedup vs best JAX: "
+                f"`{_fmt(pallas_batched['worst_case_speedup_vs_best_jax_warm_median'])}x`",
+            ]
+        )
+
     residual = suite.get("forward_residual")
     if residual:
         fused = residual["summary"]["pallas_modes"]["pallas_fused"]
@@ -446,12 +462,22 @@ def main() -> None:
         write_benchmark_json(alignment_objective, args.out_dir / "alignment_objective.json")
 
     forward_residual = None
+    forward_general_pose = None
     if args.include_forward_residual:
+        from tomojax.bench.forward_projector import (
+            run_forward_sinogram_suite,
+            write_benchmark_json as write_forward_benchmark_json,
+        )
         from tomojax.bench.forward_residual import (
             run_forward_residual_suite,
             write_benchmark_json,
         )
 
+        forward_general_pose = run_forward_sinogram_suite("general_pose")
+        write_forward_benchmark_json(
+            forward_general_pose,
+            args.out_dir / "forward_general_pose.json",
+        )
         forward_residual = run_forward_residual_suite("general_pose")
         write_benchmark_json(forward_residual, args.out_dir / "forward_residual_general_pose.json")
 
@@ -478,6 +504,7 @@ def main() -> None:
         "pallas_sanity": pallas_sanity,
         "alignment_smoke": alignment,
         "alignment_objective": alignment_objective,
+        "forward_general_pose": forward_general_pose,
         "forward_residual": forward_residual,
         "fista_iteration": fista_iteration,
     }
