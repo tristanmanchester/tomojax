@@ -44,6 +44,19 @@ def _freeze_reconstruction(monkeypatch):
     monkeypatch.setattr(reconstruction_stage, "fista_tv", fake_fista_tv)
 
 
+def test_huber_core_lipschitz_heuristic_scales_with_views_and_grid():
+    grid = Grid(nx=8, ny=10, nz=6, vx=1.0, vy=2.0, vz=1.0)
+
+    value = reconstruction_stage._heuristic_projection_lipschitz(
+        n_views=5,
+        grid=grid,
+        lambda_tv=0.01,
+        huber_delta=0.02,
+    )
+
+    assert value == pytest.approx(1.2 * 5 * 20.0 + 0.01 * 12.0 / 0.02)
+
+
 def _run_fixed_volume_alignment(
     monkeypatch,
     *,

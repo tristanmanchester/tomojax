@@ -19,6 +19,24 @@ from ._results import record_reconstruction_info as _record_reconstruction_info
 from .objectives.recon_layer import PoseAdjustedGeometry
 
 
+def _heuristic_projection_lipschitz(
+    *,
+    n_views: int,
+    grid: Grid,
+    lambda_tv: float,
+    huber_delta: float,
+) -> float:
+    min_voxel = max(min(float(grid.vx), float(grid.vy), float(grid.vz)), 1e-6)
+    max_extent = max(
+        float(grid.nx) * float(grid.vx),
+        float(grid.ny) * float(grid.vy),
+        float(grid.nz) * float(grid.vz),
+    )
+    projection_l = 1.2 * float(n_views) * max(max_extent / min_voxel, 1.0)
+    regulariser_l = float(lambda_tv) * 12.0 / max(float(huber_delta), 1e-6)
+    return max(projection_l + regulariser_l, 1e-6)
+
+
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
 def _run_huber_fista_core_jit(
     x0: jnp.ndarray,
@@ -118,9 +136,17 @@ def _run_reconstruction_step(
         )
 
     def _run_huber_fista_core():
-        if L_prev is None:
-            raise ValueError("array-level huber FISTA core requires an explicit L")
         n_views = int(projections.shape[0])
+        L_core = (
+            float(L_prev)
+            if L_prev is not None
+            else _heuristic_projection_lipschitz(
+                n_views=n_views,
+                grid=grid,
+                lambda_tv=float(cfg.lambda_tv),
+                huber_delta=float(cfg.huber_delta),
+            )
+        )
         if isinstance(recon_geometry, PoseAdjustedGeometry):
             nominal = stack_view_poses(recon_geometry.geometry, n_views)
             T_all = nominal @ jax.vmap(se3_from_5d)(recon_geometry.params5)
@@ -144,7 +170,7 @@ def _run_reconstruction_step(
             det_grid[0],
             det_grid[1],
             projections,
-            jnp.asarray(L_prev, dtype=jnp.float32),
+            jnp.asarray(L_core, dtype=jnp.float32),
             grid=grid,
             detector=detector,
             cfg=core_cfg,
@@ -157,6 +183,7 @@ def _run_reconstruction_step(
             "huber_delta": float(cfg.huber_delta),
             "data_loss": float(data_loss),
             "regulariser_value": float(regulariser_value),
+            "L": float(L_core / 1.2),
         }
         return x_core, info
 
@@ -164,7 +191,7 @@ def _run_reconstruction_step(
     recon_retry = False
     recon_start = time.perf_counter()
     if recon_algo == "fista":
-        if str(cfg.regulariser) == "huber_tv" and L_prev is not None:
+        if str(cfg.regulariser) == "huber_tv":
             x_out, info_rec = _run_huber_fista_core()
         else:
             try:
