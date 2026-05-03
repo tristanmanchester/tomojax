@@ -30,6 +30,7 @@ class FistaIterationBenchmarkConfig(ForwardSinogramBenchmarkConfig):
     L: float = 5000.0
     views_per_batch: int = 0
     regulariser: str = "huber_tv"
+    backprojector: str = "pallas"
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
         projector_unroll=1 if config.unroll is None else int(config.unroll),
         gather_dtype=str(config.gather_dtype),
         views_per_batch=int(config.views_per_batch),
+        backprojector=str(config.backprojector),
     )
 
     @jax.jit
@@ -136,6 +138,7 @@ def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[]
         "detector_shape": [int(fixture.detector.nv), int(fixture.detector.nu)],
         "n_views": int(config.n_views),
         "pose_mode": config.pose_mode,
+        "backprojector": str(config.backprojector),
     }
     return run, fixture_meta
 

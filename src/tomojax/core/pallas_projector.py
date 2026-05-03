@@ -17,6 +17,8 @@ from .projector import _build_detector_grid, _projector_traversal_state, _resolv
 from .validation import (
     validate_detector,
     validate_detector_grid,
+    validate_detector_image,
+    validate_grid,
     validate_pose_stack,
     validate_pose_matrix,
     validate_projection_stack,
@@ -1016,6 +1018,46 @@ def _trilinear_load_z_integer(
     return c00 + c01 + c10 + c11
 
 
+def _trilinear_atomic_add(
+    out_ref: Any,
+    ray_vals: jnp.ndarray,
+    ix_f: jnp.ndarray,
+    iy_f: jnp.ndarray,
+    iz_f: jnp.ndarray,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    active: jnp.ndarray,
+) -> None:
+    fx = jnp.floor(ix_f).astype(jnp.int32)
+    fy = jnp.floor(iy_f).astype(jnp.int32)
+    fz = jnp.floor(iz_f).astype(jnp.int32)
+    cx, cy, cz = fx + 1, fy + 1, fz + 1
+
+    wx1 = ix_f - fx.astype(jnp.float32)
+    wy1 = iy_f - fy.astype(jnp.float32)
+    wz1 = iz_f - fz.astype(jnp.float32)
+    wx0 = jnp.float32(1.0) - wx1
+    wy0 = jnp.float32(1.0) - wy1
+    wz0 = jnp.float32(1.0) - wz1
+
+    def add(ix: jnp.ndarray, iy: jnp.ndarray, iz: jnp.ndarray, weight: jnp.ndarray) -> None:
+        inb = active & (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny) & (iz >= 0) & (iz < nz)
+        idx = ix * (ny * nz) + iy * nz + iz
+        idx = jnp.clip(idx, 0, (nx * ny * nz) - 1)
+        plt.atomic_add(out_ref, (idx,), ray_vals * weight, mask=inb)
+
+    add(fx, fy, fz, wx0 * wy0 * wz0)
+    add(fx, fy, cz, wx0 * wy0 * wz1)
+    add(fx, cy, fz, wx0 * wy1 * wz0)
+    add(fx, cy, cz, wx0 * wy1 * wz1)
+    add(cx, fy, fz, wx1 * wy0 * wz0)
+    add(cx, fy, cz, wx1 * wy0 * wz1)
+    add(cx, cy, fz, wx1 * wy1 * wz0)
+    add(cx, cy, cz, wx1 * wy1 * wz1)
+
+
 def _projector_kernel(
     T_ref: Any,
     volume_ref: Any,
@@ -1171,6 +1213,146 @@ def _projector_kernel(
         out_ref[...] = acc.T.astype(jnp.float32)
     else:
         out_ref[...] = acc.astype(jnp.float32)
+
+
+def _backproject_kernel(
+    T_ref: Any,
+    image_ref: Any,
+    _init_ref: Any,
+    out_ref: Any,
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nu: int,
+    nv: int,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    layout_variant_id: int,
+    unroll: int | None,
+) -> None:
+    tile_v_start = pl.program_id(0) * tile_v
+    tile_u_start = pl.program_id(1) * tile_u
+    if layout_variant_id == _LAYOUT_VARIANT_IDS["detector_uv"]:
+        det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[:, jnp.newaxis]
+        det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[jnp.newaxis, :]
+    else:
+        det_u = tile_u_start + jnp.arange(tile_u, dtype=jnp.int32)[jnp.newaxis, :]
+        det_v = tile_v_start + jnp.arange(tile_v, dtype=jnp.int32)[:, jnp.newaxis]
+    in_detector = (det_u < nu) & (det_v < nv)
+
+    xr = (
+        (det_u.astype(jnp.float32) - jnp.float32(nu / 2.0 - 0.5)) * jnp.float32(du)
+        + jnp.float32(det_center_x)
+    )
+    zr = (
+        (det_v.astype(jnp.float32) - jnp.float32(nv / 2.0 - 0.5)) * jnp.float32(dv)
+        + jnp.float32(det_center_z)
+    )
+
+    def tload(row: int, col: int):
+        return plt.load(T_ref.at[row, col])
+
+    t00, t01, t02, t03 = tload(0, 0), tload(0, 1), tload(0, 2), tload(0, 3)
+    t10, t11, t12, t13 = tload(1, 0), tload(1, 1), tload(1, 2), tload(1, 3)
+    t20, t21, t22, t23 = tload(2, 0), tload(2, 1), tload(2, 2), tload(2, 3)
+    ey_x = t10
+    ey_y = t11
+    ey_z = t12
+    tinv_x = -(t00 * t03 + t10 * t13 + t20 * t23)
+    tinv_y = -(t01 * t03 + t11 * t13 + t21 * t23)
+    tinv_z = -(t02 * t03 + t12 * t13 + t22 * t23)
+    base_x = t00 * xr + t20 * zr + tinv_x
+    base_y = t01 * xr + t21 * zr + tinv_y
+    base_z = t02 * xr + t22 * zr + tinv_z
+
+    lower_x = jnp.float32(vol_origin_x - vx)
+    lower_y = jnp.float32(vol_origin_y - vy)
+    lower_z = jnp.float32(vol_origin_z - vz)
+    upper_x = jnp.float32(vol_origin_x + nx * vx)
+    upper_y = jnp.float32(vol_origin_y + ny * vy)
+    upper_z = jnp.float32(vol_origin_z + nz * vz)
+
+    def slab(base: jnp.ndarray, denom: jnp.ndarray, lower: jnp.ndarray, upper: jnp.ndarray):
+        eps = jnp.float32(1e-8)
+        parallel = jnp.abs(denom) < eps
+        safe_denom = jnp.where(parallel, jnp.float32(1.0), denom)
+        t1 = (lower - base) / safe_denom
+        t2 = (upper - base) / safe_denom
+        lo = jnp.minimum(t1, t2)
+        hi = jnp.maximum(t1, t2)
+        inside = (base >= lower) & (base <= upper)
+        inf = jnp.asarray(jnp.inf, dtype=jnp.float32)
+        neg_inf = jnp.asarray(float("-inf"), dtype=jnp.float32)
+        lo = jnp.where(parallel, jnp.where(inside, neg_inf, inf), lo)
+        hi = jnp.where(parallel, jnp.where(inside, inf, neg_inf), hi)
+        return lo, hi
+
+    lo_x, hi_x = slab(base_x, ey_x, lower_x, upper_x)
+    lo_y, hi_y = slab(base_y, ey_y, lower_y, upper_y)
+    lo_z, hi_z = slab(base_z, ey_z, lower_z, upper_z)
+    y_entry = jnp.maximum(jnp.maximum(lo_x, lo_y), lo_z)
+    y_exit = jnp.minimum(jnp.minimum(hi_x, hi_y), hi_z)
+    path_length = jnp.maximum(jnp.float32(0.0), y_exit - y_entry)
+    valid_rays = path_length > jnp.float32(0.0)
+    y_start = jnp.where(valid_rays, y_entry, jnp.float32(0.0))
+    step_size32 = jnp.float32(step_size)
+    n_steps_ray = jnp.where(
+        valid_rays,
+        jnp.ceil(path_length / step_size32).astype(jnp.int32),
+        jnp.int32(0),
+    )
+
+    q0_x = base_x + y_start * ey_x
+    q0_y = base_y + y_start * ey_y
+    q0_z = base_z + y_start * ey_z
+    ix0 = (q0_x - jnp.float32(vol_origin_x)) / jnp.float32(vx)
+    iy0 = (q0_y - jnp.float32(vol_origin_y)) / jnp.float32(vy)
+    iz0 = (q0_z - jnp.float32(vol_origin_z)) / jnp.float32(vz)
+    dix = step_size32 * ey_x / jnp.float32(vx)
+    diy = step_size32 * ey_y / jnp.float32(vy)
+    diz = step_size32 * ey_z / jnp.float32(vz)
+    last_step = jnp.float32(max(n_steps - 1, 0))
+    ray_vals = plt.load(image_ref.at[det_v, det_u], mask=in_detector, other=0.0) * step_size32
+
+    def body(s, carry):
+        ix, iy, iz = carry
+        original_step = jnp.int32(n_steps - 1) - s
+        active = in_detector & (original_step < n_steps_ray)
+        _trilinear_atomic_add(
+            out_ref,
+            ray_vals,
+            ix,
+            iy,
+            iz,
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            active=active,
+        )
+        return ix - dix, iy - diy, iz - diz
+
+    init = (
+        ix0 + dix * last_step,
+        iy0 + diy * last_step,
+        iz0 + diz * last_step,
+    )
+    if unroll is None:
+        jax.lax.fori_loop(0, n_steps, body, init)
+    else:
+        jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
 
 
 def _projector_views_kernel(
@@ -2962,6 +3144,192 @@ def _cached_projector_views_pallas_call(
         compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
         name="tomojax_forward_project_views_T_pallas",
     )
+
+
+@functools.lru_cache(maxsize=32)
+def _cached_backproject_view_pallas_call(
+    *,
+    nx: int,
+    ny: int,
+    nz: int,
+    nv: int,
+    nu: int,
+    du: float,
+    dv: float,
+    det_center_x: float,
+    det_center_z: float,
+    vol_origin_x: float,
+    vol_origin_y: float,
+    vol_origin_z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    step_size: float,
+    n_steps: int,
+    tile_v: int,
+    tile_u: int,
+    num_warps: int,
+    layout_variant_id: int,
+    unroll: int | None,
+    interpret: bool,
+) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+    kernel = functools.partial(
+        _backproject_kernel,
+        nx=int(nx),
+        ny=int(ny),
+        nz=int(nz),
+        nu=int(nu),
+        nv=int(nv),
+        du=float(du),
+        dv=float(dv),
+        det_center_x=float(det_center_x),
+        det_center_z=float(det_center_z),
+        vol_origin_x=float(vol_origin_x),
+        vol_origin_y=float(vol_origin_y),
+        vol_origin_z=float(vol_origin_z),
+        vx=float(vx),
+        vy=float(vy),
+        vz=float(vz),
+        step_size=float(step_size),
+        n_steps=int(n_steps),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        layout_variant_id=int(layout_variant_id),
+        unroll=unroll,
+    )
+    grid_shape = (math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((int(nx) * int(ny) * int(nz),), jnp.float32),
+        grid=grid_shape,
+        in_specs=[
+            pl.no_block_spec,
+            pl.no_block_spec,
+            pl.no_block_spec,
+        ],
+        out_specs=pl.no_block_spec,
+        input_output_aliases={2: 0},
+        interpret=bool(interpret),
+        compiler_params=plt.CompilerParams(num_warps=int(num_warps)),
+        name="tomojax_backproject_view_T_pallas",
+    )
+
+
+def backproject_view_T_pallas(
+    T: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    image: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    interpret: bool = False,
+    tile_shape: tuple[int, int] = (8, 4),
+    num_warps: int = 1,
+    layout_variant: str = "detector_vu",
+) -> jnp.ndarray:
+    """Backproject one view using an experimental atomic Pallas adjoint kernel."""
+    img = jnp.asarray(image, dtype=jnp.float32)
+    nx, ny, nz = validate_grid(grid, "backproject_view_T_pallas")
+    nv, nu = validate_detector(detector, "backproject_view_T_pallas")
+    validate_detector_image(img, detector, context="backproject_view_T_pallas", name="image")
+    validate_pose_matrix(T, context="backproject_view_T_pallas")
+    _ensure_canonical_detector_grid(detector, det_grid)
+    tile_v, tile_u = _safe_detector_tile_shape(
+        list(_normalize_tile_shape(tile_shape)),
+        detector,
+        max_generic_tile_u=8,
+    )
+    num_warps_value = _normalize_num_warps(num_warps)
+    layout_variant_id = _LAYOUT_VARIANT_IDS[_normalize_layout_variant(layout_variant)]
+    if not interpret and jax.default_backend() == "cpu":
+        raise PallasProjectorUnsupported(
+            _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
+        )
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
+    n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
+    vol_origin = _grid_volume_origin(grid)
+    call = _cached_backproject_view_pallas_call(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nv=nv,
+        nu=nu,
+        du=float(detector.du),
+        dv=float(detector.dv),
+        det_center_x=float(detector.det_center[0]),
+        det_center_z=float(detector.det_center[1]),
+        vol_origin_x=float(vol_origin[0]),
+        vol_origin_y=float(vol_origin[1]),
+        vol_origin_z=float(vol_origin[2]),
+        vx=float(grid.vx),
+        vy=float(grid.vy),
+        vz=float(grid.vz),
+        step_size=float(step_size_value),
+        n_steps=int(n_steps_value),
+        tile_v=int(tile_v),
+        tile_u=int(tile_u),
+        num_warps=int(num_warps_value),
+        layout_variant_id=int(layout_variant_id),
+        unroll=unroll,
+        interpret=bool(interpret),
+    )
+    init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
+    out = call(jnp.asarray(T, dtype=jnp.float32), img, init)
+    return out.reshape((int(nx), int(ny), int(nz)))
+
+
+def sum_backproject_views_T_pallas(
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    images: jnp.ndarray,
+    *,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+    unroll: int | None = None,
+    gather_dtype: str = "fp32",
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    tile_shape: tuple[int, int] = (8, 4),
+    num_warps: int = 1,
+    layout_variant: str = "detector_vu",
+) -> jnp.ndarray:
+    """Sum one-view Pallas adjoints over a view stack.
+
+    This is an internal reconstruction benchmark helper. It intentionally does
+    not replace the default JAX adjoint used by differentiable public paths.
+    """
+    del gather_dtype
+    n_views, _, _ = validate_projection_stack(
+        images,
+        detector,
+        context="sum_backproject_views_T_pallas",
+    )
+    validate_pose_stack(T_all, n_views, context="sum_backproject_views_T_pallas")
+    _ensure_canonical_detector_grid(detector, det_grid)
+    validate_grid(grid, "sum_backproject_views_T_pallas")
+    img = jnp.asarray(images, dtype=jnp.float32)
+
+    def backproject_one(T_i: jnp.ndarray, img_i: jnp.ndarray) -> jnp.ndarray:
+        return backproject_view_T_pallas(
+            T_i,
+            grid,
+            detector,
+            img_i,
+            step_size=step_size,
+            n_steps=n_steps,
+            unroll=unroll,
+            det_grid=det_grid,
+            tile_shape=tile_shape,
+            num_warps=num_warps,
+            layout_variant=layout_variant,
+        )
+
+    if int(n_views) == 1:
+        return backproject_one(T_all[0], img[0])
+    return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
 
 
 @functools.lru_cache(maxsize=32)

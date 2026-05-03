@@ -26,6 +26,7 @@ class FistaCoreConfig:
     gather_dtype: str = "fp32"
     views_per_batch: int = 1
     support: jnp.ndarray | None = None
+    backprojector: str = "jax"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,7 @@ def fista_tv_core_arrays(
             projector_unroll=cfg.projector_unroll,
             gather_dtype=cfg.gather_dtype,
             views_per_batch=cfg.views_per_batch,
+            backprojector=cfg.backprojector,
         )
         if cfg.support is not None:
             grad = grad * jnp.asarray(cfg.support, dtype=grad.dtype)
@@ -347,6 +349,7 @@ def _projection_loss_and_explicit_grad(
     projector_unroll: int,
     gather_dtype: str,
     views_per_batch: int,
+    backprojector: str,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -367,6 +370,7 @@ def _projection_loss_and_explicit_grad(
             det_grid=det_grid,
         )
     )
+    backproject_fn = _resolve_sum_backproject_views(backprojector)
 
     def body(carry, i):
         loss_acc, grad_acc = carry
@@ -382,12 +386,12 @@ def _projection_loss_and_explicit_grad(
         weighted_resid = raw_resid * w_chunk * valid
         loss_batch = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
         grad_resid = raw_resid * (w_chunk * w_chunk) * valid
-        grad_batch = sum_backproject_views_T(
+        grad_batch = backproject_fn(
             T_chunk,
             grid,
             detector,
             grad_resid,
-            unroll=int(projector_unroll),
+            unroll=1 if backprojector == "pallas" else int(projector_unroll),
             gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
@@ -400,6 +404,16 @@ def _projection_loss_and_explicit_grad(
         jnp.arange(num_chunks, dtype=jnp.int32),
     )
     return loss, grad
+
+
+def _resolve_sum_backproject_views(backprojector: str):
+    if backprojector == "jax":
+        return sum_backproject_views_T
+    if backprojector == "pallas":
+        from tomojax.core.pallas_projector import sum_backproject_views_T_pallas
+
+        return sum_backproject_views_T_pallas
+    raise ValueError("FistaCoreConfig.backprojector must be one of 'jax' or 'pallas'")
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:

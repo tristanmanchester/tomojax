@@ -20,6 +20,7 @@ def test_fista_iteration_suite_cases_are_general_pose() -> None:
     assert all(case.config.pose_mode == "general_5d" for case in cases)
     assert all(case.config.views_per_batch == 0 for case in cases)
     assert all(case.config.unroll == 4 for case in cases)
+    assert all(case.config.backprojector == "pallas" for case in cases)
 
 
 def test_fista_iteration_suite_rejects_unknown_name() -> None:

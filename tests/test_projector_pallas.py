@@ -9,6 +9,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.pallas_projector import (
     PallasProjectorUnsupported,
+    backproject_view_T_pallas,
     bind_forward_project_residual_sse_T_pallas,
     bind_forward_project_view_T_pallas,
     bind_forward_project_views_T_pallas,
@@ -26,7 +27,7 @@ from tomojax.core.pallas_projector import (
     prepare_forward_project_view_T_pallas_state,
     prepare_forward_project_views_T_pallas_state,
 )
-from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.core.projector import backproject_view_T, forward_project_view_T, get_detector_grid_device
 from tomojax.bench.forward_projector import (
     ForwardSinogramBenchmarkConfig,
     make_forward_sinogram_fixture,
@@ -630,6 +631,30 @@ def test_pallas_forward_project_views_cached_call_uses_runtime_inputs_on_gpu() -
     shifted_pose.block_until_ready()
     assert _relative_l2(changed_volume, base) > 1e-3
     assert _relative_l2(shifted_pose, base) > 1e-3
+
+
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_backproject_view_matches_jax_on_general_geometry() -> None:
+    grid = Grid(nx=6, ny=5, nz=4, vx=1.2, vy=0.9, vz=1.1)
+    detector = Detector(nu=7, nv=5, du=0.8, dv=1.3, det_center=(0.4, -0.2))
+    T = _pose(17.0, grid=grid, detector=detector)
+    image = jnp.arange(detector.nv * detector.nu, dtype=jnp.float32).reshape(
+        detector.nv, detector.nu
+    ) / 10.0
+
+    oracle = backproject_view_T(T, grid, detector, image, step_size=0.45)
+    candidate = backproject_view_T_pallas(
+        T,
+        grid,
+        detector,
+        image,
+        step_size=0.45,
+        tile_shape=(5, 7),
+    )
+
+    assert candidate.shape == oracle.shape == (6, 5, 4)
+    assert _relative_l2(candidate, oracle) < 1e-5
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
 
 
 @pytest.mark.parametrize(

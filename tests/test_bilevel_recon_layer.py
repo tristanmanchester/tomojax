@@ -184,6 +184,48 @@ def test_fista_core_reports_final_data_loss_not_objective():
     )
 
 
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_fista_core_pallas_backprojector_matches_jax_backprojector():
+    grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    effective = apply_alignment_state(base, state)
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    def reconstruct(backprojector: str):
+        cfg = FistaCoreConfig(
+            iters=1,
+            lambda_tv=0.001,
+            L=5000.0,
+            checkpoint_projector=False,
+            projector_unroll=2,
+            views_per_batch=0,
+            backprojector=backprojector,
+        )
+
+        @jax.jit
+        def run():
+            result = fista_tv_core_arrays(
+                x0=x0,
+                T_all=effective.pose_stack,
+                det_grid=effective.det_grid,
+                projections=projections,
+                grid=grid,
+                detector=detector,
+                cfg=cfg,
+            )
+            return result.x, result.loss, result.data_loss
+
+        return run()
+
+    jax_result = reconstruct("jax")
+    pallas_result = reconstruct("pallas")
+
+    np.testing.assert_allclose(np.asarray(pallas_result[1]), np.asarray(jax_result[1]))
+    np.testing.assert_allclose(np.asarray(pallas_result[2]), np.asarray(jax_result[2]))
+    np.testing.assert_allclose(np.asarray(pallas_result[0]), np.asarray(jax_result[0]), atol=1e-5, rtol=1e-5)
+
+
 def test_recon_layer_unrolled_mode_returns_diagnostics():
     grid, detector, geometry, _volume, projections = _case()
     base = BaseGeometryArrays.from_geometry(geometry, detector)
