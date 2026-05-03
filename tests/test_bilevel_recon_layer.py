@@ -140,8 +140,24 @@ def test_fista_core_views_per_batch_preserves_reconstruction_values():
             views_per_batch=6,
         ),
     )
+    unbatched = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=FistaCoreConfig(
+            iters=2,
+            lambda_tv=0.0,
+            L=100.0,
+            checkpoint_projector=False,
+            views_per_batch=0,
+        ),
+    )
 
     np.testing.assert_allclose(np.asarray(streamed.x), np.asarray(batched.x), atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(np.asarray(streamed.x), np.asarray(unbatched.x), atol=1e-5, rtol=1e-5)
 
 
 def test_fista_core_reports_final_data_loss_not_objective():
