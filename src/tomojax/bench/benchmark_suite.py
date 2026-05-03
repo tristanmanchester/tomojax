@@ -426,6 +426,8 @@ def main() -> None:
             "l2",
             "--schedule",
             "pose_only",
+            "--regulariser",
+            "huber_tv",
             "--views-per-batch",
             "0",
         ]

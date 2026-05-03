@@ -303,6 +303,8 @@ def main() -> None:
     parser.add_argument("--loss", default="l2")
     parser.add_argument("--schedule", default="pose_only")
     parser.add_argument("--lambda-tv", type=float, default=0.001)
+    parser.add_argument("--regulariser", choices=["tv", "huber_tv"], default="tv")
+    parser.add_argument("--huber-delta", type=float, default=1e-2)
     parser.add_argument("--recon-L", type=float, default=5000.0)
     parser.add_argument("--views-per-batch", type=int, default=1)
     args = parser.parse_args()
@@ -334,6 +336,10 @@ def main() -> None:
             str(args.recon_L),
             "--lambda-tv",
             str(args.lambda_tv),
+            "--regulariser",
+            args.regulariser,
+            "--huber-delta",
+            str(args.huber_delta),
             "--views-per-batch",
             str(args.views_per_batch),
             "--schedule",
@@ -368,6 +374,10 @@ def main() -> None:
             str(args.recon_L),
             "--lambda-tv",
             str(args.lambda_tv),
+            "--regulariser",
+            args.regulariser,
+            "--huber-delta",
+            str(args.huber_delta),
             "--views-per-batch",
             str(args.views_per_batch),
             "--out",
@@ -418,6 +428,8 @@ def main() -> None:
             "schedule": args.schedule,
             "loss": args.loss,
             "lambda_tv": args.lambda_tv,
+            "regulariser": args.regulariser,
+            "huber_delta": args.huber_delta,
             "recon_L": args.recon_L,
             "views_per_batch": args.views_per_batch,
         },
@@ -491,6 +503,7 @@ def main() -> None:
                 f"- Recon iterations per outer: `{args.recon_iters}`",
                 f"- Schedule: `{args.schedule}`",
                 f"- Loss: `{args.loss}`",
+                f"- Reconstruction regulariser: `{args.regulariser}`",
                 f"- Active DOFs: `{', '.join(report['resolved']['active_dofs'] or [])}`",
                 "",
                 "## Results",
