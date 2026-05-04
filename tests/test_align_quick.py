@@ -4,10 +4,9 @@ import jax.numpy as jnp
 
 import tomojax.align.pipeline as align_pipeline
 import tomojax.align._pose_stage as pose_stage
-import tomojax.align._reconstruction_stage as reconstruction_stage
 import tomojax.align._stage_loop as stage_loop
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
-from tomojax.core.projector import forward_project_view, get_detector_grid_device
+from tomojax.core.projector import forward_project_view
 from tomojax.align.objectives.loss_specs import loss_spec_name, parse_loss_schedule, parse_loss_spec
 from tomojax.align._observer import _normalize_observer_action, adapt_legacy_observer
 from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
@@ -212,53 +211,6 @@ def test_align_runs_with_cylindrical_volume_mask():
     assert np.isfinite(np.asarray(x)).all()
     assert np.isfinite(np.asarray(est_params)).all()
     assert np.isfinite(np.asarray(info["loss"])).all()
-
-
-def test_huber_alignment_recon_skips_final_core_diagnostics(monkeypatch):
-    grid, det, geom, vol, projs, _ = make_misaligned_case(4, 4, 4, 3, 11)
-    captured = {}
-
-    def fake_core(x0, T_all, det_u, det_v, projections, L_value, *, grid, detector, cfg):
-        del T_all, det_u, det_v, projections, L_value, grid, detector
-        captured["compute_final_data_loss"] = cfg.compute_final_data_loss
-        captured["compute_final_regulariser_value"] = cfg.compute_final_regulariser_value
-        return (
-            x0,
-            jnp.asarray([1.0, 0.5], dtype=jnp.float32),
-            jnp.asarray(0.5, dtype=jnp.float32),
-            jnp.asarray(0.0, dtype=jnp.float32),
-            jnp.asarray(2, dtype=jnp.int32),
-        )
-
-    monkeypatch.setattr(reconstruction_stage, "_run_huber_fista_core_jit", fake_core)
-    cfg = AlignConfig(
-        outer_iters=1,
-        recon_iters=2,
-        lambda_tv=0.001,
-        regulariser="huber_tv",
-        recon_L=100.0,
-    )
-
-    _x, _L_next, stat = reconstruction_stage._run_reconstruction_step(
-        geometry=geom,
-        grid=grid,
-        detector=det,
-        projections=projs,
-        det_grid=get_detector_grid_device(det),
-        params5=jnp.zeros((projs.shape[0], 5), dtype=jnp.float32),
-        x=vol,
-        cfg=cfg,
-        L_prev=100.0,
-        outer_idx=1,
-        recon_algo="fista",
-    )
-
-    assert captured == {
-        "compute_final_data_loss": False,
-        "compute_final_regulariser_value": False,
-    }
-    assert stat["recon_loss_first"] == pytest.approx(1.0)
-    assert stat["recon_loss_last"] == pytest.approx(0.5)
 
 
 def test_align_rejects_bad_init_params5_shape_with_expected_and_actual():

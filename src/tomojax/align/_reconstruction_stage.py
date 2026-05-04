@@ -162,8 +162,6 @@ def _run_reconstruction_step(
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
             views_per_batch=int(cfg.views_per_batch),
-            compute_final_data_loss=False,
-            compute_final_regulariser_value=False,
         )
 
         x_core, loss, data_loss, regulariser_value, effective_iters = _run_huber_fista_core_jit(
