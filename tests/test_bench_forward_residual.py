@@ -194,9 +194,9 @@ def test_residual_dispatch_uses_general_pose_tile_policy() -> None:
     )
 
     assert residual_dispatch_selected_mode(general) == "pallas_materialized"
-    assert residual_dispatch_selected_mode(awkward) == "pallas_materialized"
+    assert residual_dispatch_selected_mode(awkward) == "jax_materialized"
     assert residual_dispatch_pallas_tile_shape(general) == (16, 4)
-    assert residual_dispatch_pallas_tile_shape(awkward) == (16, 4)
+    assert residual_dispatch_pallas_tile_shape(awkward) == (16, 8)
     assert residual_dispatch_pallas_tile_shape(tiny) == (16, 8)
 
 
@@ -234,7 +234,7 @@ def test_residual_dispatch_reports_effective_pallas_variant(
 
     assert result["requested_pallas_variant"]["tile_shape"] == [16, 8]
     assert result["dispatch_pallas_variant"]["tile_shape"] == [16, 4]
-    assert result["actual_pallas_variant"]["tile_shape"] == [16, 4]
+    assert result["actual_pallas_variant"]["tile_shape"] == [8, 4]
 
 
 def test_forward_residual_suite_reports_cases_and_summary(

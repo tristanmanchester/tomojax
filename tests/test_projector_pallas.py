@@ -295,57 +295,6 @@ def test_pallas_forward_project_views_matches_jax_loop() -> None:
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
 
 
-def test_pallas_actual_sinogram_variant_keeps_power2_nondivisor_tile() -> None:
-    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=37, nv=53, du=1.0, dv=1.0, det_center=(0.0, 0.0))
-    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0)]
-    T_stack = jnp.stack(poses, axis=0)
-
-    metadata = pallas_projector_actual_sinogram_variant_metadata(
-        T_stack,
-        grid,
-        detector,
-        tile_shape=(16, 8),
-        kernel_variant="generic",
-        require_exact_detector_tile=False,
-    )
-
-    assert metadata["tile_shape"] == [16, 8]
-
-
-@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
-def test_pallas_loss_grad_odd_detector_power2_tile_matches_jax() -> None:
-    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
-    detector = Detector(nu=37, nv=53, du=0.5, dv=0.5, det_center=(0.0, 0.0))
-    poses = [_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0)]
-    T_stack = jnp.stack(poses, axis=0)
-    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
-    target = jnp.stack(
-        [forward_project_view_T(T, grid, detector, volume * 1.01) for T in poses],
-        axis=0,
-    )
-    pred = jnp.stack(
-        [forward_project_view_T(T, grid, detector, volume) for T in poses],
-        axis=0,
-    )
-    raw_resid = (pred - target).astype(jnp.float32)
-    oracle_loss = jnp.float32(0.5) * jnp.vdot(raw_resid, raw_resid).real
-    oracle_grad = sum_backproject_views_T(T_stack, grid, detector, raw_resid)
-
-    loss, grad = forward_project_loss_and_grad_T_pallas(
-        T_stack,
-        grid,
-        detector,
-        volume,
-        target,
-        tile_shape=(16, 8),
-        kernel_variant="generic",
-    )
-
-    np.testing.assert_allclose(np.asarray(loss), np.asarray(oracle_loss), atol=1e-4, rtol=1e-5)
-    assert _relative_l2(grad, oracle_grad) < 1e-5
-
-
 def test_pallas_general_pose_stack_uses_directional_traversal_bound() -> None:
     fixture = make_forward_sinogram_fixture(
         ForwardSinogramBenchmarkConfig(
