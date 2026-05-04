@@ -973,8 +973,13 @@ def _detector_tile_area(
     config: ForwardSinogramBenchmarkConfig,
     *,
     requested_tile_shape: tuple[int, int],
+    require_exact_divisor: bool = True,
 ) -> int:
-    tile_v, tile_u = _detector_tile_shape(config, requested_tile_shape=requested_tile_shape)
+    tile_v, tile_u = _detector_tile_shape(
+        config,
+        requested_tile_shape=requested_tile_shape,
+        require_exact_divisor=require_exact_divisor,
+    )
     return int(tile_v) * int(tile_u)
 
 
@@ -982,6 +987,7 @@ def _detector_tile_shape(
     config: ForwardSinogramBenchmarkConfig,
     *,
     requested_tile_shape: tuple[int, int],
+    require_exact_divisor: bool = True,
 ) -> tuple[int, int]:
     # Mirrors pallas_projector._safe_detector_tile_shape for dispatch decisions without
     # importing private core helpers into benchmark orchestration.
@@ -990,10 +996,10 @@ def _detector_tile_shape(
     max_v = max(1, int(requested_tile_shape[0]))
     max_u = max(1, min(int(requested_tile_shape[1]), 8))
     for candidate_v in range(min(int(config.nv), max_v), 0, -1):
-        if int(config.nv) % candidate_v != 0:
+        if require_exact_divisor and int(config.nv) % candidate_v != 0:
             continue
         for candidate_u in range(min(int(config.nu), max_u), 0, -1):
-            if int(config.nu) % candidate_u != 0:
+            if require_exact_divisor and int(config.nu) % candidate_u != 0:
                 continue
             area = int(candidate_v) * int(candidate_u)
             if area > best_area and area & (area - 1) == 0:

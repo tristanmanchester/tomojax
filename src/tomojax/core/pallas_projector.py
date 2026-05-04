@@ -176,14 +176,28 @@ def _normalize_num_warps(num_warps: int) -> int:
     return int(value)
 
 
-def _divisors_at_most(value: int, limit: int) -> tuple[int, ...]:
-    limit = max(1, min(int(value), int(limit)))
-    return tuple(candidate for candidate in range(limit, 0, -1) if int(value) % candidate == 0)
-
-
 def _is_power_of_two(value: int) -> bool:
     value = int(value)
     return value > 0 and (value & (value - 1)) == 0
+
+
+def _largest_power2_tile_at_most(
+    *,
+    nv: int,
+    nu: int,
+    tile_v: int,
+    tile_u: int,
+) -> list[int]:
+    best = (1, 1)
+    best_area = 1
+    for candidate_v in range(max(1, min(int(nv), int(tile_v))), 0, -1):
+        for candidate_u in range(max(1, min(int(nu), int(tile_u))), 0, -1):
+            area = int(candidate_v) * int(candidate_u)
+            if _is_power_of_two(area) and area > best_area:
+                best = (int(candidate_v), int(candidate_u))
+                best_area = int(area)
+                break
+    return [best[0], best[1]]
 
 
 def _largest_power2_tile_divisors(
@@ -195,8 +209,12 @@ def _largest_power2_tile_divisors(
 ) -> list[int]:
     best = (1, 1)
     best_area = 1
-    for candidate_v in _divisors_at_most(nv, tile_v):
-        for candidate_u in _divisors_at_most(nu, tile_u):
+    for candidate_v in range(max(1, min(int(nv), int(tile_v))), 0, -1):
+        if int(nv) % candidate_v != 0:
+            continue
+        for candidate_u in range(max(1, min(int(nu), int(tile_u))), 0, -1):
+            if int(nu) % candidate_u != 0:
+                continue
             area = int(candidate_v) * int(candidate_u)
             if _is_power_of_two(area) and area > best_area:
                 best = (int(candidate_v), int(candidate_u))
@@ -210,15 +228,23 @@ def _safe_detector_tile_shape(
     detector: Detector,
     *,
     max_generic_tile_u: int | None = None,
+    require_exact_divisor: bool = True,
 ) -> list[int]:
-    """Resolve detector tiles to exact detector divisors for real Pallas lowering."""
+    """Resolve detector tiles to power-of-two operation sizes for real Pallas lowering."""
     tile_v = int(tile_shape[0])
     tile_u = int(tile_shape[1])
     if max_generic_tile_u is not None:
         tile_u = min(tile_u, int(max_generic_tile_u))
     # JAX Pallas Triton lowering checks load/store tensor sizes are powers of two
     # (`jax/_src/pallas/triton/lowering.py::_check_tensor_size` in JAX 0.10.0).
-    return _largest_power2_tile_divisors(
+    # Kernels that write detector-block outputs must also use exact detector
+    # divisors; otherwise Pallas clamps the edge output block and overlaps writes.
+    resolver = (
+        _largest_power2_tile_divisors
+        if require_exact_divisor
+        else _largest_power2_tile_at_most
+    )
+    return resolver(
         nv=int(detector.nv),
         nu=int(detector.nu),
         tile_v=tile_v,
@@ -354,6 +380,7 @@ def pallas_projector_actual_variant_metadata(
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
+    require_exact_detector_tile: bool = True,
 ) -> dict[str, Any]:
     """Return normalized metadata for the selected Pallas variant."""
     requested_kernel_variant = _normalize_kernel_variant(kernel_variant)
@@ -376,6 +403,7 @@ def pallas_projector_actual_variant_metadata(
         metadata["tile_shape"],
         detector,
         max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
+        require_exact_divisor=bool(require_exact_detector_tile),
     )
     return metadata
 
@@ -392,6 +420,7 @@ def pallas_projector_actual_sinogram_variant_metadata(
     layout_variant: str = "detector_vu",
     state_mode: str = "inline",
     gather_dtype: str = "fp32",
+    require_exact_detector_tile: bool = True,
 ) -> dict[str, Any]:
     """Return normalized metadata for the selected batched-sinogram Pallas variant."""
     requested_kernel_variant = _normalize_kernel_variant(kernel_variant)
@@ -414,6 +443,7 @@ def pallas_projector_actual_sinogram_variant_metadata(
         metadata["tile_shape"],
         detector,
         max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
+        require_exact_divisor=bool(require_exact_detector_tile),
     )
     return metadata
 
@@ -3629,6 +3659,7 @@ def forward_project_loss_and_grad_T_pallas(
         layout_variant=layout_variant,
         state_mode="cached",
         gather_dtype=gather_dtype,
+        require_exact_detector_tile=False,
     )
     tile_v, tile_u = (int(v) for v in variant["tile_shape"])
     num_warps_value = _normalize_num_warps(num_warps)

@@ -15,14 +15,16 @@ import numpy as np
 from tomojax.bench.forward_projector import (
     ForwardSinogramBenchmarkConfig,
     ForwardSinogramFixture,
+    PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE,
+    PALLAS_GENERAL_POSE_MIN_DISPATCH_TILE_AREA,
     _block_tree_ready,
     _device_metadata,
+    _detector_tile_area,
     _geomean,
     _pallas_requested_variant_metadata,
     _sinogram_fixture_metadata,
     make_forward_sinogram_fixture,
     sinogram_dispatch_pallas_tile_shape,
-    sinogram_dispatch_selected_mode,
 )
 from tomojax.core.projector import forward_project_view_T
 
@@ -206,6 +208,7 @@ def _pallas_actual_variant_metadata(
             layout_variant=config.pallas_layout_variant,
             state_mode=config.pallas_state_mode,
             gather_dtype=config.gather_dtype,
+            require_exact_detector_tile=False,
         )
     except Exception as exc:
         return {"metadata_error": f"pallas_variant_metadata_failed: {exc}"}
@@ -431,7 +434,15 @@ def residual_dispatch_estimated_ray_steps(config: ForwardResidualBenchmarkConfig
 
 def residual_dispatch_selected_mode(config: ForwardResidualBenchmarkConfig) -> str:
     """Select the residual backend for the benchmark-only high-ray dispatch probe."""
-    if config.pose_mode == "general_5d" and sinogram_dispatch_selected_mode(config) != "pallas_batched":
+    if (
+        config.pose_mode == "general_5d"
+        and _detector_tile_area(
+            config,
+            requested_tile_shape=PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE,
+            require_exact_divisor=False,
+        )
+        < PALLAS_GENERAL_POSE_MIN_DISPATCH_TILE_AREA
+    ):
         return "jax_materialized"
     return (
         "pallas_materialized"
@@ -446,6 +457,8 @@ def residual_dispatch_pallas_tile_shape(
     """Return the Pallas tile used by residual dispatch for this workload family."""
     if residual_dispatch_selected_mode(config) != "pallas_materialized":
         return tuple(int(value) for value in config.pallas_tile_shape)
+    if config.pose_mode == "general_5d":
+        return PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE
     return sinogram_dispatch_pallas_tile_shape(config)
 
 
