@@ -241,6 +241,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Projection views per inner reconstruction batch/subset (default: 1)",
     )
     p.add_argument(
+        "--projector-unroll",
+        type=int,
+        default=1,
+        help="Projector loop unroll factor for differentiable alignment paths (default: 1)",
+    )
+    p.add_argument(
         "--spdhg-seed",
         type=int,
         default=0,
@@ -600,7 +606,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "views_per_batch": int(args.views_per_batch),
         "spdhg_seed": int(args.spdhg_seed),
         "recon_positivity": bool(args.recon_positivity),
-        "projector_unroll": 1,
+        "projector_unroll": int(args.projector_unroll),
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
@@ -848,7 +854,7 @@ def _build_align_cli_run_plan(
         lr_rot=args.lr_rot,
         lr_trans=args.lr_trans,
         views_per_batch=int(args.views_per_batch),
-        projector_unroll=1,
+        projector_unroll=int(args.projector_unroll),
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=gather_dtype,
         opt_method=str(args.opt_method),
@@ -1283,7 +1289,7 @@ def _build_alignment_manifest_payload_from_result(
         "views_per_batch": int(args.views_per_batch),
         "spdhg_seed": int(args.spdhg_seed),
         "recon_positivity": bool(args.recon_positivity),
-        "projector_unroll": 1,
+        "projector_unroll": int(args.projector_unroll),
         "checkpoint_projector": bool(args.checkpoint_projector),
         "transfer_guard": str(args.transfer_guard),
         "levels": plan.run_levels,

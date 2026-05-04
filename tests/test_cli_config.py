@@ -137,6 +137,7 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
                 'regulariser = "tv"',
                 "huber_delta = 0.2",
                 "levels = [4, 2, 1]",
+                "projector_unroll = 2",
                 "checkpoint_projector = false",
                 'checkpoint = "runs/align.ckpt.npz"',
                 "checkpoint_every = 2",
@@ -162,6 +163,8 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
             "2",
             "1",
             "--checkpoint-projector",
+            "--projector-unroll",
+            "4",
             "--checkpoint-every",
             "3",
             "--loss-param",
@@ -176,11 +179,13 @@ def test_align_cli_overrides_config_scalars_lists_booleans_and_append_values(tmp
     assert args.regulariser == "huber_tv"
     assert args.huber_delta == pytest.approx(0.04)
     assert args.levels == [2, 1]
+    assert args.projector_unroll == 4
     assert args.checkpoint_projector is True
     assert args.checkpoint == "runs/align.ckpt.npz"
     assert args.checkpoint_every == 3
     assert args.loss_param == ["eps=0.001"]
     assert metadata["config_file_values"]["levels"] == [4, 2, 1]
+    assert metadata["config_file_values"]["projector_unroll"] == 2
     assert metadata["config_file_values"]["checkpoint"] == "runs/align.ckpt.npz"
     assert metadata["config_file_values"]["checkpoint_every"] == 2
     assert metadata["config_file_values"]["regulariser"] == "tv"

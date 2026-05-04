@@ -354,6 +354,7 @@ def main() -> None:
     parser.add_argument("--huber-delta", type=float, default=1e-2)
     parser.add_argument("--recon-L", type=float, default=5000.0)
     parser.add_argument("--views-per-batch", type=int, default=1)
+    parser.add_argument("--projector-unroll", type=int, default=1)
     args = parser.parse_args()
 
     env = dict(os.environ)
@@ -387,6 +388,8 @@ def main() -> None:
         str(args.huber_delta),
         "--views-per-batch",
         str(args.views_per_batch),
+        "--projector-unroll",
+        str(args.projector_unroll),
         "--schedule",
         args.schedule,
         "--loss",
@@ -475,6 +478,7 @@ def main() -> None:
             "huber_delta": args.huber_delta,
             "recon_L": args.recon_L,
             "views_per_batch": args.views_per_batch,
+            "projector_unroll": args.projector_unroll,
         },
         "fixture": {
             "truth": str(fixture["truth"]),
