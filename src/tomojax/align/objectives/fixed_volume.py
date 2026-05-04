@@ -215,6 +215,11 @@ def project_and_score_stack(
         if view_mask is None
         else jnp.asarray(view_mask, dtype=jnp.float32).reshape((n_views,))
     )
+    use_plain_l2_fast_path = (
+        loss_adapter.name == "l2"
+        and view_mask is None
+        and loss_mask is None
+    )
 
     def body(loss_acc, i):
         start_shifted, valid_mask, _view_idx = _chunk_schedule(
@@ -237,8 +242,19 @@ def project_and_score_stack(
         )
         return loss_acc + jnp.sum(losses * valid_mask * weight_chunk), None
 
+    def body_l2(loss_acc, i):
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(
+            i, n_views=n_views, chunk_size=b
+        )
+        T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
+        y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
+        pred = vm_project(T_chunk)
+        residual = (pred - y_chunk).astype(jnp.float32)
+        losses = jnp.float32(0.5) * jnp.sum(residual * residual, axis=(1, 2))
+        return loss_acc + jnp.sum(losses * valid_mask), None
+
     loss, _ = jax.lax.scan(
-        body,
+        body_l2 if use_plain_l2_fast_path else body,
         jnp.asarray(0.0, dtype=jnp.float32),
         jnp.arange(num_chunks, dtype=jnp.int32),
     )

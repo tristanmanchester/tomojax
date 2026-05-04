@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import jax
 import jax.numpy as jnp
 
 from tomojax.align.model.dof_specs import ActiveParameterView
@@ -9,11 +10,12 @@ from tomojax.align.objectives.folds import FoldSpec
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align.objectives.fixed_volume import (
     FixedVolumeProjectionObjective,
+    project_and_score_stack,
     project_stack,
 )
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
-from tomojax.align.objectives.loss_specs import L2OtsuLossSpec
+from tomojax.align.objectives.loss_specs import L2LossSpec, L2OtsuLossSpec
 from tomojax.align.objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
@@ -113,6 +115,98 @@ def test_project_stack_honors_views_per_batch_without_changing_values():
 
     assert streamed.shape == batched.shape == (7, detector.nv, detector.nu)
     np.testing.assert_allclose(np.asarray(streamed), np.asarray(batched), atol=1e-5, rtol=1e-5)
+
+
+def test_project_and_score_stack_plain_l2_fast_path_matches_generic_path():
+    grid, detector, geometry, volume, projections = _case(n_views=5, hidden_det_u_px=0.0)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(5))
+    effective = apply_alignment_state(base, state)
+    adapter = build_loss_adapter(L2LossSpec(), projections)
+
+    fast = project_and_score_stack(
+        pose_stack=effective.pose_stack,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=effective.det_grid,
+        targets=projections,
+        loss_adapter=adapter,
+        views_per_batch=2,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+        view_indices=jnp.arange(5, dtype=jnp.int32),
+    )
+    generic = project_and_score_stack(
+        pose_stack=effective.pose_stack,
+        grid=grid,
+        detector=detector,
+        volume=volume,
+        det_grid=effective.det_grid,
+        targets=projections,
+        loss_adapter=adapter,
+        views_per_batch=2,
+        checkpoint_projector=False,
+        gather_dtype="fp32",
+        view_mask=jnp.ones((5,), dtype=jnp.float32),
+        view_indices=jnp.arange(5, dtype=jnp.int32),
+    )
+
+    assert float(fast) == pytest.approx(float(generic), abs=1e-5, rel=1e-5)
+
+
+def test_project_and_score_stack_plain_l2_fast_path_value_and_grad_matches_generic_path():
+    grid, detector, geometry, volume, projections = _case(n_views=4, hidden_det_u_px=0.0)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(4))
+    effective = apply_alignment_state(base, state)
+    adapter = build_loss_adapter(L2LossSpec(), projections)
+    perturb = jnp.linspace(-0.05, 0.05, effective.pose_stack.size, dtype=jnp.float32).reshape(
+        effective.pose_stack.shape
+    )
+    pose_stack = effective.pose_stack + perturb
+
+    def score_fast(poses):
+        return project_and_score_stack(
+            pose_stack=poses,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=effective.det_grid,
+            targets=projections,
+            loss_adapter=adapter,
+            views_per_batch=3,
+            checkpoint_projector=False,
+            gather_dtype="fp32",
+            view_indices=jnp.arange(4, dtype=jnp.int32),
+        )
+
+    def score_generic(poses):
+        return project_and_score_stack(
+            pose_stack=poses,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=effective.det_grid,
+            targets=projections,
+            loss_adapter=adapter,
+            views_per_batch=3,
+            checkpoint_projector=False,
+            gather_dtype="fp32",
+            view_mask=jnp.ones((4,), dtype=jnp.float32),
+            view_indices=jnp.arange(4, dtype=jnp.int32),
+        )
+
+    fast_value, fast_grad = jax.value_and_grad(score_fast)(pose_stack)
+    generic_value, generic_grad = jax.value_and_grad(score_generic)(pose_stack)
+
+    assert float(fast_value) == pytest.approx(float(generic_value), abs=1e-4, rel=1e-5)
+    np.testing.assert_allclose(
+        np.asarray(fast_grad),
+        np.asarray(generic_grad),
+        atol=2e-4,
+        rtol=2e-4,
+    )
 
 
 def test_stopped_validation_score_prefers_hidden_offset_without_candidate_enumeration():
