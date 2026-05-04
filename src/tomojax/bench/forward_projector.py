@@ -256,7 +256,7 @@ def sinogram_suite_cases(name: str) -> tuple[ForwardSinogramSuiteCase, ...]:
                     nu=64,
                     nv=64,
                     n_views=90,
-                    warm_runs=7,
+                    warm_runs=9,
                     pose_mode="general_5d",
                     pallas_tile_shape=(16, 4),
                     pallas_state_mode="cached",
