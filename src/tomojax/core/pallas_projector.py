@@ -443,8 +443,6 @@ def _resolve_effective_pallas_n_steps(
         return int(resolved_n_steps)
 
     ray_dir = T_host[:3, :3].T[:, 1]
-    if abs(float(ray_dir[2])) > 1e-8:
-        return int(resolved_n_steps)
     support_lengths = np.asarray(
         [
             (int(grid.nx) + 1) * float(grid.vx),
@@ -479,8 +477,6 @@ def _resolve_effective_pallas_n_steps_for_stack(
         return int(resolved_n_steps)
 
     ray_dirs = T_host[:, 1, :3].astype(np.float64)
-    if np.any(np.abs(ray_dirs[:, 2]) > 1e-8):
-        return int(resolved_n_steps)
     support_lengths = np.asarray(
         [
             (int(grid.nx) + 1) * float(grid.vx),

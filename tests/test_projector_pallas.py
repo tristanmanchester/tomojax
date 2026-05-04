@@ -295,7 +295,7 @@ def test_pallas_forward_project_views_matches_jax_loop() -> None:
     np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
 
 
-def test_pallas_general_pose_stack_uses_full_traversal_bound() -> None:
+def test_pallas_general_pose_stack_uses_directional_traversal_bound() -> None:
     fixture = make_forward_sinogram_fixture(
         ForwardSinogramBenchmarkConfig(
             nx=24,
@@ -313,7 +313,8 @@ def test_pallas_general_pose_stack_uses_full_traversal_bound() -> None:
         fixture.grid,
     )
 
-    assert metadata["effective_pallas_n_steps"] == metadata["resolved_n_steps"]
+    assert metadata["effective_pallas_n_steps"] == 38
+    assert metadata["effective_pallas_n_steps"] < metadata["resolved_n_steps"]
 
 
 def test_pallas_general_pose_stack_real_lowering_matches_jax() -> None:
