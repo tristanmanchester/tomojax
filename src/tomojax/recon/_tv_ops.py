@@ -110,14 +110,7 @@ def huber_tv_grad(u: jnp.ndarray, delta: float) -> jnp.ndarray:
     qx = gx / denom
     qy = gy / denom
     qz = gz / denom
-    out = jnp.zeros_like(u)
-    out = out.at[:-1, :, :].add(-qx[:-1, :, :])
-    out = out.at[1:, :, :].add(qx[:-1, :, :])
-    out = out.at[:, :-1, :].add(-qy[:, :-1, :])
-    out = out.at[:, 1:, :].add(qy[:, :-1, :])
-    out = out.at[:, :, :-1].add(-qz[:, :, :-1])
-    out = out.at[:, :, 1:].add(qz[:, :, :-1])
-    return out
+    return -div3(qx, qy, qz)
 
 
 def prox_huber_tv_conj(
