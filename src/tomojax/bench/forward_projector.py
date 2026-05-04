@@ -26,6 +26,8 @@ SinogramModeName = Literal[
 SuiteName = Literal["quick", "confirm", "stress", "sinogram"]
 PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD = 1_000_000_000
 PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD = 500_000
+PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE = (16, 4)
+PALLAS_GENERAL_POSE_MIN_DISPATCH_TILE_AREA = 4
 PRESET_NAMES = (
     "tiny",
     "smoke",
@@ -822,6 +824,7 @@ def _make_sinogram_callable(
         and sinogram_dispatch_selected_mode(config) == "jax_vmap"
     ):
         return _make_jax_sinogram_vmap_callable(fixture, config), "pallas_dispatch", None
+    dispatch_config = _sinogram_dispatch_effective_config(config, requested_mode)
 
     pallas_fn, fallback_reason = _resolve_pallas_callable()
     pallas_module, module_reason = _resolve_pallas_module()
@@ -851,16 +854,16 @@ def _make_sinogram_callable(
                 fixture.T_stack,
                 fixture.grid,
                 fixture.detector,
-                step_size=config.step_size,
-                n_steps=config.n_steps,
-                unroll=config.unroll,
-                gather_dtype=config.gather_dtype,
+                step_size=dispatch_config.step_size,
+                n_steps=dispatch_config.n_steps,
+                unroll=dispatch_config.unroll,
+                gather_dtype=dispatch_config.gather_dtype,
                 det_grid=fixture.det_grid,
                 interpret=False,
-                tile_shape=config.pallas_tile_shape,
-                num_warps=config.pallas_num_warps,
-                kernel_variant=config.pallas_kernel_variant,
-                layout_variant=config.pallas_layout_variant,
+                tile_shape=dispatch_config.pallas_tile_shape,
+                num_warps=dispatch_config.pallas_num_warps,
+                kernel_variant=dispatch_config.pallas_kernel_variant,
+                layout_variant=dispatch_config.pallas_layout_variant,
                 block_state=True,
             )
 
@@ -875,16 +878,16 @@ def _make_sinogram_callable(
                 fixture.grid,
                 fixture.detector,
                 fixture.volume,
-                step_size=config.step_size,
-                n_steps=config.n_steps,
-                unroll=config.unroll,
-                gather_dtype=config.gather_dtype,
+                step_size=dispatch_config.step_size,
+                n_steps=dispatch_config.n_steps,
+                unroll=dispatch_config.unroll,
+                gather_dtype=dispatch_config.gather_dtype,
                 det_grid=fixture.det_grid,
-                tile_shape=config.pallas_tile_shape,
-                num_warps=config.pallas_num_warps,
-                kernel_variant=config.pallas_kernel_variant,
-                layout_variant=config.pallas_layout_variant,
-                state_mode=config.pallas_state_mode,
+                tile_shape=dispatch_config.pallas_tile_shape,
+                num_warps=dispatch_config.pallas_num_warps,
+                kernel_variant=dispatch_config.pallas_kernel_variant,
+                layout_variant=dispatch_config.pallas_layout_variant,
+                state_mode=dispatch_config.pallas_state_mode,
             )
 
         return call_pallas_batched, requested_mode, None
@@ -938,11 +941,78 @@ def sinogram_dispatch_selected_mode(config: ForwardSinogramBenchmarkConfig) -> s
         if config.pose_mode == "general_5d"
         else PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
     )
+    if (
+        config.pose_mode == "general_5d"
+        and _detector_tile_area(
+            config,
+            requested_tile_shape=PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE,
+        )
+        < PALLAS_GENERAL_POSE_MIN_DISPATCH_TILE_AREA
+    ):
+        return "jax_vmap"
     return (
         "pallas_batched"
         if sinogram_dispatch_estimated_ray_steps(config) >= threshold
         else "jax_vmap"
     )
+
+
+def sinogram_dispatch_pallas_tile_shape(
+    config: ForwardSinogramBenchmarkConfig,
+) -> tuple[int, int]:
+    """Return the Pallas tile used by dispatch for this sinogram workload family."""
+    if (
+        config.pose_mode == "general_5d"
+        and sinogram_dispatch_selected_mode(config) == "pallas_batched"
+    ):
+        return PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE
+    return tuple(int(value) for value in config.pallas_tile_shape)
+
+
+def _detector_tile_area(
+    config: ForwardSinogramBenchmarkConfig,
+    *,
+    requested_tile_shape: tuple[int, int],
+) -> int:
+    tile_v, tile_u = _detector_tile_shape(config, requested_tile_shape=requested_tile_shape)
+    return int(tile_v) * int(tile_u)
+
+
+def _detector_tile_shape(
+    config: ForwardSinogramBenchmarkConfig,
+    *,
+    requested_tile_shape: tuple[int, int],
+) -> tuple[int, int]:
+    # Mirrors pallas_projector._safe_detector_tile_shape for dispatch decisions without
+    # importing private core helpers into benchmark orchestration.
+    best = (1, 1)
+    best_area = 1
+    max_v = max(1, int(requested_tile_shape[0]))
+    max_u = max(1, min(int(requested_tile_shape[1]), 8))
+    for candidate_v in range(min(int(config.nv), max_v), 0, -1):
+        if int(config.nv) % candidate_v != 0:
+            continue
+        for candidate_u in range(min(int(config.nu), max_u), 0, -1):
+            if int(config.nu) % candidate_u != 0:
+                continue
+            area = int(candidate_v) * int(candidate_u)
+            if area > best_area and area & (area - 1) == 0:
+                best = (int(candidate_v), int(candidate_u))
+                best_area = area
+                break
+    return best
+
+
+def _sinogram_dispatch_effective_config(
+    config: ForwardSinogramBenchmarkConfig,
+    requested_mode: SinogramModeName,
+) -> ForwardSinogramBenchmarkConfig:
+    if requested_mode != "pallas_dispatch":
+        return config
+    tile_shape = sinogram_dispatch_pallas_tile_shape(config)
+    if tile_shape == tuple(config.pallas_tile_shape):
+        return config
+    return replace(config, pallas_tile_shape=tile_shape)
 
 
 def sinogram_dispatch_ray_step_threshold(config: ForwardSinogramBenchmarkConfig) -> int:
@@ -1073,6 +1143,9 @@ def benchmark_sinogram_mode(
             "dispatch_estimated_ray_steps": sinogram_dispatch_estimated_ray_steps(config),
             "dispatch_threshold_ray_steps": sinogram_dispatch_ray_step_threshold(config),
             "dispatch_timing_source": "best_jax_baseline",
+            "dispatch_pallas_variant": _pallas_requested_variant_metadata(
+                _sinogram_dispatch_effective_config(config, requested_mode)
+            ),
             "requested_pallas_variant": _pallas_requested_variant_metadata(config),
             "actual_pallas_variant": None,
             "speedup_vs_best_jax_warm_median": 1.0,
@@ -1106,11 +1179,15 @@ def benchmark_sinogram_mode(
         result["dispatch_selected_mode"] = sinogram_dispatch_selected_mode(config)
         result["dispatch_estimated_ray_steps"] = sinogram_dispatch_estimated_ray_steps(config)
         result["dispatch_threshold_ray_steps"] = sinogram_dispatch_ray_step_threshold(config)
+        result["dispatch_pallas_variant"] = _pallas_requested_variant_metadata(
+            _sinogram_dispatch_effective_config(config, requested_mode)
+        )
     if requested_mode in {"pallas_loop", "pallas_batched", "pallas_dispatch"}:
+        actual_config = _sinogram_dispatch_effective_config(config, requested_mode)
         result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
         result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
             fixture,
-            config,
+            actual_config,
             "pallas_batched"
             if requested_mode == "pallas_dispatch"
             and result.get("dispatch_selected_mode") == "pallas_batched"

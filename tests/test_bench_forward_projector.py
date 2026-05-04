@@ -11,6 +11,7 @@ from tomojax.bench.forward_projector import (
     ForwardProjectorBenchmarkConfig,
     ForwardSinogramBenchmarkConfig,
     PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD,
+    PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE,
     PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD,
     PRESET_NAMES,
     SINOGRAM_SUITE_NAMES,
@@ -27,6 +28,7 @@ from tomojax.bench.forward_projector import (
     run_forward_projector_suite,
     sinogram_dispatch_ray_step_threshold,
     sinogram_dispatch_estimated_ray_steps,
+    sinogram_dispatch_pallas_tile_shape,
     sinogram_dispatch_selected_mode,
     sinogram_suite_cases,
     suite_cases,
@@ -400,6 +402,91 @@ def test_sinogram_dispatch_uses_lower_threshold_for_general_pose_workloads() -> 
     )
     assert sinogram_dispatch_selected_mode(general_24) == "pallas_batched"
     assert sinogram_dispatch_selected_mode(regular_24) == "jax_vmap"
+
+
+def test_sinogram_dispatch_uses_general_pose_tile_policy() -> None:
+    general = ForwardSinogramBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="general_5d",
+        pallas_tile_shape=(16, 8),
+    )
+    awkward = ForwardSinogramBenchmarkConfig(
+        nx=40,
+        ny=32,
+        nz=48,
+        nu=37,
+        nv=53,
+        n_views=41,
+        pose_mode="general_5d",
+        pallas_tile_shape=(16, 8),
+    )
+    regular = ForwardSinogramBenchmarkConfig(
+        nx=40,
+        ny=32,
+        nz=48,
+        nu=37,
+        nv=53,
+        n_views=41,
+        pose_mode="z_axis",
+        pallas_tile_shape=(16, 8),
+    )
+
+    assert sinogram_dispatch_selected_mode(general) == "pallas_batched"
+    assert sinogram_dispatch_selected_mode(awkward) == "jax_vmap"
+    assert sinogram_dispatch_pallas_tile_shape(general) == PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE
+    assert sinogram_dispatch_pallas_tile_shape(awkward) == (16, 8)
+    assert sinogram_dispatch_pallas_tile_shape(regular) == (16, 8)
+
+
+def test_sinogram_dispatch_reports_effective_pallas_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_fixture = make_forward_projector_fixture(
+        ForwardProjectorBenchmarkConfig(nx=2, ny=2, nz=2, nu=2, nv=2)
+    )
+
+    class FakeFixture:
+        grid = base_fixture.grid
+        detector = base_fixture.detector
+        det_grid = base_fixture.det_grid
+        T_stack = jnp.stack([base_fixture.T, base_fixture.T], axis=0)
+
+    config = ForwardSinogramBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="general_5d",
+        warm_runs=1,
+        pallas_tile_shape=(16, 8),
+    )
+
+    def fake_make_callable(requested_mode, _fixture, _config):
+        return lambda: jnp.ones((2, 2, 2), dtype=jnp.float32), requested_mode, None
+
+    monkeypatch.setattr(
+        "tomojax.bench.forward_projector._make_sinogram_callable",
+        fake_make_callable,
+    )
+
+    result, _ = benchmark_sinogram_mode(
+        "pallas_dispatch",
+        FakeFixture(),  # type: ignore[arg-type]
+        config,
+        oracle=jnp.ones((2, 2, 2), dtype=jnp.float32),
+        best_jax_median=2.0,
+    )
+
+    assert result["requested_pallas_variant"]["tile_shape"] == [16, 8]
+    assert result["dispatch_pallas_variant"]["tile_shape"] == [16, 4]
+    assert result["actual_pallas_variant"]["tile_shape"] == [2, 2]
 
 
 def test_forward_projector_suite_reports_cases_and_summary(

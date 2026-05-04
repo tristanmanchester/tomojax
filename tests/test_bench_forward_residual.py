@@ -14,6 +14,7 @@ from tomojax.bench.forward_residual import (
     benchmark_residual_mode,
     make_forward_residual_fixture,
     residual_dispatch_estimated_ray_steps,
+    residual_dispatch_pallas_tile_shape,
     residual_dispatch_selected_mode,
     residual_suite_cases,
     run_forward_residual_benchmark,
@@ -159,6 +160,81 @@ def test_residual_dispatch_uses_pallas_for_material_general_workloads() -> None:
     assert residual_dispatch_estimated_ray_steps(general_24) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
     assert residual_dispatch_estimated_ray_steps(general_64) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
     assert residual_dispatch_estimated_ray_steps(high) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+
+
+def test_residual_dispatch_uses_general_pose_tile_policy() -> None:
+    general = ForwardResidualBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="general_5d",
+        pallas_tile_shape=(16, 8),
+    )
+    awkward = ForwardResidualBenchmarkConfig(
+        nx=40,
+        ny=32,
+        nz=48,
+        nu=37,
+        nv=53,
+        n_views=41,
+        pose_mode="general_5d",
+        pallas_tile_shape=(16, 8),
+    )
+    tiny = ForwardResidualBenchmarkConfig(
+        nx=4,
+        ny=4,
+        nz=4,
+        nu=4,
+        nv=4,
+        n_views=2,
+        pallas_tile_shape=(16, 8),
+    )
+
+    assert residual_dispatch_selected_mode(general) == "pallas_materialized"
+    assert residual_dispatch_selected_mode(awkward) == "jax_materialized"
+    assert residual_dispatch_pallas_tile_shape(general) == (16, 4)
+    assert residual_dispatch_pallas_tile_shape(awkward) == (16, 8)
+    assert residual_dispatch_pallas_tile_shape(tiny) == (16, 8)
+
+
+def test_residual_dispatch_reports_effective_pallas_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = ForwardResidualBenchmarkConfig(
+        nx=24,
+        ny=24,
+        nz=24,
+        nu=24,
+        nv=24,
+        n_views=24,
+        pose_mode="general_5d",
+        warm_runs=1,
+        pallas_tile_shape=(16, 8),
+    )
+    fixture = make_forward_residual_fixture(config)
+
+    def fake_make_callable(requested_mode, _fixture, _config):
+        return lambda: jnp.asarray(1.0, dtype=jnp.float32), requested_mode, None
+
+    monkeypatch.setattr(
+        "tomojax.bench.forward_residual._make_residual_callable",
+        fake_make_callable,
+    )
+
+    result, _ = benchmark_residual_mode(
+        "pallas_dispatch",
+        fixture,
+        config,
+        oracle=jnp.asarray(1.0, dtype=jnp.float32),
+        jax_median=2.0,
+    )
+
+    assert result["requested_pallas_variant"]["tile_shape"] == [16, 8]
+    assert result["dispatch_pallas_variant"]["tile_shape"] == [16, 4]
+    assert result["actual_pallas_variant"]["tile_shape"] == [8, 4]
 
 
 def test_forward_residual_suite_reports_cases_and_summary(

@@ -21,6 +21,8 @@ from tomojax.bench.forward_projector import (
     _pallas_requested_variant_metadata,
     _sinogram_fixture_metadata,
     make_forward_sinogram_fixture,
+    sinogram_dispatch_pallas_tile_shape,
+    sinogram_dispatch_selected_mode,
 )
 from tomojax.core.projector import forward_project_view_T
 
@@ -301,6 +303,7 @@ def _make_residual_callable(
                 "jax_materialized",
                 "pallas_batched_callable_missing",
             )
+        dispatch_config = _residual_dispatch_effective_config(config, requested_mode)
         bound_pallas_project = None
         if config.pallas_state_mode == "cached":
             bind_project = getattr(module, "bind_forward_project_views_T_pallas", None)
@@ -314,16 +317,16 @@ def _make_residual_callable(
                 sf.T_stack,
                 sf.grid,
                 sf.detector,
-                step_size=config.step_size,
-                n_steps=config.n_steps,
-                unroll=config.unroll,
-                gather_dtype=config.gather_dtype,
+                step_size=dispatch_config.step_size,
+                n_steps=dispatch_config.n_steps,
+                unroll=dispatch_config.unroll,
+                gather_dtype=dispatch_config.gather_dtype,
                 det_grid=sf.det_grid,
                 interpret=False,
-                tile_shape=config.pallas_tile_shape,
-                num_warps=config.pallas_num_warps,
-                kernel_variant=config.pallas_kernel_variant,
-                layout_variant=config.pallas_layout_variant,
+                tile_shape=dispatch_config.pallas_tile_shape,
+                num_warps=dispatch_config.pallas_num_warps,
+                kernel_variant=dispatch_config.pallas_kernel_variant,
+                layout_variant=dispatch_config.pallas_layout_variant,
                 block_state=True,
             )
 
@@ -334,16 +337,16 @@ def _make_residual_callable(
                     sf.grid,
                     sf.detector,
                     sf.volume,
-                    step_size=config.step_size,
-                    n_steps=config.n_steps,
-                    unroll=config.unroll,
-                    gather_dtype=config.gather_dtype,
+                    step_size=dispatch_config.step_size,
+                    n_steps=dispatch_config.n_steps,
+                    unroll=dispatch_config.unroll,
+                    gather_dtype=dispatch_config.gather_dtype,
                     det_grid=sf.det_grid,
-                    tile_shape=config.pallas_tile_shape,
-                    num_warps=config.pallas_num_warps,
-                    kernel_variant=config.pallas_kernel_variant,
-                    layout_variant=config.pallas_layout_variant,
-                    state_mode=config.pallas_state_mode,
+                    tile_shape=dispatch_config.pallas_tile_shape,
+                    num_warps=dispatch_config.pallas_num_warps,
+                    kernel_variant=dispatch_config.pallas_kernel_variant,
+                    layout_variant=dispatch_config.pallas_layout_variant,
+                    state_mode=dispatch_config.pallas_state_mode,
                 )
             else:
                 projection = bound_pallas_project(sf.volume)
@@ -428,11 +431,34 @@ def residual_dispatch_estimated_ray_steps(config: ForwardResidualBenchmarkConfig
 
 def residual_dispatch_selected_mode(config: ForwardResidualBenchmarkConfig) -> str:
     """Select the residual backend for the benchmark-only high-ray dispatch probe."""
+    if config.pose_mode == "general_5d" and sinogram_dispatch_selected_mode(config) != "pallas_batched":
+        return "jax_materialized"
     return (
         "pallas_materialized"
         if residual_dispatch_estimated_ray_steps(config) >= PALLAS_DISPATCH_RAY_STEP_THRESHOLD
         else "jax_materialized"
     )
+
+
+def residual_dispatch_pallas_tile_shape(
+    config: ForwardResidualBenchmarkConfig,
+) -> tuple[int, int]:
+    """Return the Pallas tile used by residual dispatch for this workload family."""
+    if residual_dispatch_selected_mode(config) != "pallas_materialized":
+        return tuple(int(value) for value in config.pallas_tile_shape)
+    return sinogram_dispatch_pallas_tile_shape(config)
+
+
+def _residual_dispatch_effective_config(
+    config: ForwardResidualBenchmarkConfig,
+    requested_mode: ResidualModeName,
+) -> ForwardResidualBenchmarkConfig:
+    if requested_mode != "pallas_dispatch":
+        return config
+    tile_shape = residual_dispatch_pallas_tile_shape(config)
+    if tile_shape == tuple(config.pallas_tile_shape):
+        return config
+    return replace(config, pallas_tile_shape=tile_shape)
 
 
 def _time_blocked_call(fn: Callable[[], Any]) -> tuple[float, Any]:
@@ -507,6 +533,9 @@ def benchmark_residual_mode(
             "dispatch_estimated_ray_steps": residual_dispatch_estimated_ray_steps(config),
             "dispatch_threshold_ray_steps": PALLAS_DISPATCH_RAY_STEP_THRESHOLD,
             "dispatch_timing_source": "jax_materialized_baseline",
+            "dispatch_pallas_variant": _pallas_requested_variant_metadata(
+                _residual_dispatch_effective_config(config, requested_mode)
+            ),
             "requested_pallas_variant": _pallas_requested_variant_metadata(config),
             "actual_pallas_variant": None,
             "speedup_vs_jax_materialized_warm_median": 1.0,
@@ -540,11 +569,15 @@ def benchmark_residual_mode(
         result["dispatch_selected_mode"] = residual_dispatch_selected_mode(config)
         result["dispatch_estimated_ray_steps"] = residual_dispatch_estimated_ray_steps(config)
         result["dispatch_threshold_ray_steps"] = PALLAS_DISPATCH_RAY_STEP_THRESHOLD
+        result["dispatch_pallas_variant"] = _pallas_requested_variant_metadata(
+            _residual_dispatch_effective_config(config, requested_mode)
+        )
     if requested_mode in {"pallas_materialized", "pallas_fused", "pallas_dispatch"}:
+        actual_config = _residual_dispatch_effective_config(config, requested_mode)
         result["requested_pallas_variant"] = _pallas_requested_variant_metadata(config)
         result["actual_pallas_variant"] = _pallas_actual_variant_metadata(
             fixture,
-            config,
+            actual_config,
             "pallas_materialized"
             if requested_mode == "pallas_dispatch"
             and result.get("dispatch_selected_mode") == "pallas_materialized"
