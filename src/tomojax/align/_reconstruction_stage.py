@@ -162,6 +162,9 @@ def _run_reconstruction_step(
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
             views_per_batch=int(cfg.views_per_batch),
+            compute_iteration_loss=False,
+            compute_final_data_loss=False,
+            compute_final_regulariser_value=False,
         )
 
         x_core, loss, data_loss, regulariser_value, effective_iters = _run_huber_fista_core_jit(
@@ -176,13 +179,13 @@ def _run_reconstruction_step(
             cfg=core_cfg,
         )
         info = {
-            "loss": [float(v) for v in list(loss)],
+            "loss": [],
             "effective_iters": int(effective_iters),
             "early_stop": False,
             "regulariser": "huber_tv",
             "huber_delta": float(cfg.huber_delta),
-            "data_loss": float(data_loss),
-            "regulariser_value": float(regulariser_value),
+            "data_loss_computed": False,
+            "regulariser_value_computed": False,
             "L": float(L_core / 1.2),
         }
         return x_core, info

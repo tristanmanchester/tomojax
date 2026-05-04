@@ -133,6 +133,33 @@ def test_align_quick_recovers_small_misalignments():
     assert "recon_loss_first" in info["outer_stats"][0]
 
 
+def test_align_huber_reconstruction_skips_unused_diagnostics():
+    grid, det, geom, _vol, projs, _ = make_misaligned_case(5, 5, 5, 4, 11)
+    x, _est_params, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=AlignConfig(
+            outer_iters=1,
+            recon_iters=1,
+            lambda_tv=0.001,
+            regulariser="huber_tv",
+            huber_delta=0.01,
+            lr_rot=5e-3,
+            lr_trans=1e-1,
+            early_stop=False,
+        ),
+    )
+
+    stat = info["outer_stats"][0]
+    assert x.shape == (grid.nx, grid.ny, grid.nz)
+    assert stat["recon_algo"] == "fista"
+    assert stat["L_next"] > 0.0
+    assert "recon_loss_first" not in stat
+    assert "fista_first" not in stat
+
+
 def test_align_runs_with_spdhg_inner_reconstruction():
     grid, det, geom, vol, projs, _ = make_misaligned_case(4, 4, 4, 4, 7)
     cfg = AlignConfig(
