@@ -763,8 +763,6 @@ def _validate_public_call(
         n_steps_value,
     )
     kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
-    if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]:
-        effective_n_steps_value = n_steps_value
     layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return nx, ny, nz, nv, nu, nx * ny * nz, step_size_value, n_steps_value, effective_n_steps_value, (
         tile_v,
@@ -839,8 +837,6 @@ def _validate_public_sinogram_call(
         n_steps_value,
     )
     kernel_variant_id = _KERNEL_VARIANT_IDS[str(variant["kernel_variant"])]
-    if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]:
-        effective_n_steps_value = n_steps_value
     layout_variant_id = _LAYOUT_VARIANT_IDS[str(variant["layout_variant"])]
     return (
         nx,
@@ -2036,8 +2032,6 @@ def prepare_forward_project_view_T_pallas_state(
         step_size_value,
         resolved_n_steps,
     )
-    if str(variant["kernel_variant"]) == "generic":
-        effective_n_steps = resolved_n_steps
     (
         ix0,
         iy0,
@@ -2531,8 +2525,6 @@ def prepare_forward_project_views_T_pallas_state(
         raise PallasProjectorUnsupported(
             _unsupported("cached pose-stack traversal state supports detector_vu only")
         )
-    if kernel_variant_id == _KERNEL_VARIANT_IDS["generic"]:
-        effective_n_steps = resolved_n_steps
 
     T = jnp.asarray(T_stack, dtype=jnp.float32)
     ix_all: list[jnp.ndarray] = []

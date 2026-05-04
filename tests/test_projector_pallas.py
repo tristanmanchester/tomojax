@@ -317,6 +317,31 @@ def test_pallas_general_pose_stack_uses_directional_traversal_bound() -> None:
     assert metadata["effective_pallas_n_steps"] < metadata["resolved_n_steps"]
 
 
+def test_pallas_general_pose_cached_state_uses_directional_traversal_bound() -> None:
+    fixture = make_forward_sinogram_fixture(
+        ForwardSinogramBenchmarkConfig(
+            nx=24,
+            ny=24,
+            nz=24,
+            nu=24,
+            nv=24,
+            n_views=24,
+            pose_mode="general_5d",
+        )
+    )
+
+    state = prepare_forward_project_views_T_pallas_state(
+        fixture.T_stack,
+        fixture.grid,
+        fixture.detector,
+        tile_shape=(16, 4),
+        kernel_variant="generic",
+    )
+
+    assert state.n_steps == 38
+    assert state.n_steps < state.resolved_n_steps
+
+
 def test_pallas_general_pose_stack_real_lowering_matches_jax() -> None:
     if jax.default_backend() != "gpu":
         pytest.skip("real Pallas lowering requires GPU")
