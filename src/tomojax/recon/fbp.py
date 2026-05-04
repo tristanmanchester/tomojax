@@ -426,7 +426,7 @@ def _run_parallel_fbp_direct_pallas(
         dv=float(detector.dv),
         det_center_x=float(detector.det_center[0]),
         det_center_z=float(detector.det_center[1]),
-        tile_shape=(16, 8, 2),
+        tile_shape=(16, 16, 2),
         num_warps=4,
     )
     return call(jnp.asarray(T_all, dtype=jnp.float32), jnp.asarray(filt, dtype=jnp.float32))
