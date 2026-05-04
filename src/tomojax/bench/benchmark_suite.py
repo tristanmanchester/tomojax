@@ -305,7 +305,8 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
         for case in fista["cases"]:
             lines.append(
                 f"- `{case['case_name']}`: warm median "
-                f"`{_fmt(case['warm_seconds_median'])}` sec"
+                f"`{_fmt(case['warm_seconds_median'])}` sec, "
+                f"speedup vs JAX `{_fmt(case.get('speedup_vs_jax_warm_median'))}x`"
             )
 
     lines.extend(["", "## Artifacts", ""])

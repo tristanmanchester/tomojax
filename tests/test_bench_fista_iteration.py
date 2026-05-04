@@ -8,6 +8,7 @@ from tomojax.bench.fista_iteration import (
     FISTA_ITERATION_SUITE_NAMES,
     FistaIterationBenchmarkConfig,
     fista_iteration_suite_cases,
+    run_fista_iteration_case,
     run_fista_iteration_suite,
     write_benchmark_json,
 )
@@ -39,13 +40,14 @@ def test_fista_iteration_suite_reports_cases(monkeypatch: pytest.MonkeyPatch) ->
     def fake_run(config: FistaIterationBenchmarkConfig) -> dict:
         calls.append(config.n_views)
         return {
-            "benchmark": "fista_iteration",
+            "benchmark": "fista_iteration_comparison",
             "api_surface": "internal_fista_tv_core_arrays",
             "warm_seconds_median": float(config.n_views),
+            "speedup_vs_jax_warm_median": 2.0,
             "quality": {"finite": True, "repeat_rel_l2_vs_first": 0.0},
         }
 
-    monkeypatch.setattr("tomojax.bench.fista_iteration.run_fista_iteration_benchmark", fake_run)
+    monkeypatch.setattr("tomojax.bench.fista_iteration.run_fista_iteration_case", fake_run)
 
     metrics = run_fista_iteration_suite(overrides={"warm_runs": 2})
 
@@ -54,6 +56,7 @@ def test_fista_iteration_suite_reports_cases(monkeypatch: pytest.MonkeyPatch) ->
     assert [case["case_name"] for case in metrics["cases"]] == ["fista-iter-24", "fista-iter-64"]
     assert calls == [24, 90]
     assert metrics["summary"]["cases_total"] == 2
+    assert metrics["summary"]["worst_case_speedup_vs_jax_warm_median"] == pytest.approx(2.0)
 
 
 def test_fista_iteration_overrides_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,13 +71,14 @@ def test_fista_iteration_overrides_diagnostics(monkeypatch: pytest.MonkeyPatch) 
             )
         )
         return {
-            "benchmark": "fista_iteration",
+            "benchmark": "fista_iteration_comparison",
             "api_surface": "internal_fista_tv_core_arrays",
             "warm_seconds_median": 0.0,
+            "speedup_vs_jax_warm_median": None,
             "quality": {"finite": True, "repeat_rel_l2_vs_first": 0.0},
         }
 
-    monkeypatch.setattr("tomojax.bench.fista_iteration.run_fista_iteration_benchmark", fake_run)
+    monkeypatch.setattr("tomojax.bench.fista_iteration.run_fista_iteration_case", fake_run)
 
     run_fista_iteration_suite(
         overrides={
@@ -85,6 +89,34 @@ def test_fista_iteration_overrides_diagnostics(monkeypatch: pytest.MonkeyPatch) 
     )
 
     assert seen == [(True, True, True), (True, True, True)]
+
+
+def test_fista_iteration_case_compares_jax_and_pallas(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def fake_run(config: FistaIterationBenchmarkConfig) -> dict:
+        seen.append((config.forward_projector, config.backprojector))
+        warm = 4.0 if config.forward_projector == "jax" else 1.0
+        return {
+            "benchmark": "fista_iteration",
+            "api_surface": "internal_fista_tv_core_arrays",
+            "warm_seconds_median": warm,
+            "quality": {"finite": True, "repeat_rel_l2_vs_first": 0.0},
+        }
+
+    monkeypatch.setattr("tomojax.bench.fista_iteration.run_fista_iteration_benchmark", fake_run)
+    monkeypatch.setattr(
+        "tomojax.bench.fista_iteration._make_fista_call",
+        lambda config: (lambda: (0, (), (), (), ()), {}),
+    )
+    monkeypatch.setattr("tomojax.bench.fista_iteration._time_blocked_call", lambda fn: (0.0, fn()))
+
+    metrics = run_fista_iteration_case(FistaIterationBenchmarkConfig(warm_runs=1))
+
+    assert seen == [("jax", "jax"), ("pallas", "pallas")]
+    assert metrics["speedup_vs_jax_warm_median"] == pytest.approx(4.0)
+    assert metrics["baseline_mode"] == "jax"
+    assert metrics["candidate_mode"] == "pallas"
 
 
 def test_fista_iteration_public_suite_names() -> None:

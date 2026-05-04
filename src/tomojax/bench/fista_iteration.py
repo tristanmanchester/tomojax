@@ -213,6 +213,53 @@ def run_fista_iteration_benchmark(config: FistaIterationBenchmarkConfig) -> dict
     }
 
 
+def _speedup(baseline: float | None, candidate: float | None) -> float | None:
+    if baseline is None or candidate is None or float(candidate) <= 0.0:
+        return None
+    return float(baseline) / float(candidate)
+
+
+def _x_rel_l2(candidate: Any, baseline: Any) -> float:
+    cand = np.asarray(candidate[0], dtype=np.float64)
+    ref = np.asarray(baseline[0], dtype=np.float64)
+    denom = float(np.linalg.norm(ref.ravel())) or 1.0
+    return float(np.linalg.norm((cand - ref).ravel()) / denom)
+
+
+def run_fista_iteration_case(config: FistaIterationBenchmarkConfig) -> dict[str, Any]:
+    """Compare the internal Pallas one-iteration path with the JAX reference path."""
+    baseline_config = replace(config, forward_projector="jax", backprojector="jax")
+    candidate_config = replace(config, forward_projector="pallas", backprojector="pallas")
+    baseline = run_fista_iteration_benchmark(baseline_config)
+    candidate = run_fista_iteration_benchmark(candidate_config)
+    speedup = _speedup(
+        baseline.get("warm_seconds_median"),
+        candidate.get("warm_seconds_median"),
+    )
+    return {
+        "benchmark": "fista_iteration_comparison",
+        "api_surface": "internal_fista_tv_core_arrays",
+        "config": asdict(config),
+        "baseline_mode": "jax",
+        "candidate_mode": "pallas",
+        "baseline": baseline,
+        "candidate": candidate,
+        "warm_seconds_median": candidate.get("warm_seconds_median"),
+        "speedup_vs_jax_warm_median": speedup,
+        "quality": {
+            "candidate_finite": bool(candidate["quality"]["finite"]),
+            "baseline_finite": bool(baseline["quality"]["finite"]),
+            "candidate_repeat_rel_l2_vs_first": float(
+                candidate["quality"]["repeat_rel_l2_vs_first"]
+            ),
+            "candidate_rel_l2_vs_jax": _x_rel_l2(
+                _time_blocked_call(_make_fista_call(candidate_config)[0])[1],
+                _time_blocked_call(_make_fista_call(baseline_config)[0])[1],
+            ),
+        },
+    }
+
+
 def run_fista_iteration_suite(
     name: str = "fista_iteration",
     *,
@@ -221,9 +268,14 @@ def run_fista_iteration_suite(
     cases = []
     for case in fista_iteration_suite_cases(name):
         config = replace(case.config, **(overrides or {}))
-        metrics = run_fista_iteration_benchmark(config)
+        metrics = run_fista_iteration_case(config)
         metrics["case_name"] = case.name
         cases.append(metrics)
+    speedups = [
+        float(case["speedup_vs_jax_warm_median"])
+        for case in cases
+        if case.get("speedup_vs_jax_warm_median") is not None
+    ]
     return {
         "benchmark": "fista_iteration_suite",
         "suite": name,
@@ -234,6 +286,13 @@ def run_fista_iteration_suite(
             "warm_seconds_median_by_case": {
                 case["case_name"]: case["warm_seconds_median"] for case in cases
             },
+            "speedup_vs_jax_warm_median_by_case": {
+                case["case_name"]: case["speedup_vs_jax_warm_median"] for case in cases
+            },
+            "geomean_speedup_vs_jax_warm_median": (
+                float(np.exp(np.mean(np.log(speedups)))) if speedups else None
+            ),
+            "worst_case_speedup_vs_jax_warm_median": min(speedups) if speedups else None,
         },
     }
 
