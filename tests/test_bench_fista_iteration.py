@@ -20,10 +20,10 @@ def test_fista_iteration_suite_cases_are_general_pose() -> None:
     assert [case.name for case in cases] == ["fista-iter-24", "fista-iter-64"]
     assert all(case.config.pose_mode == "general_5d" for case in cases)
     assert all(case.config.views_per_batch == 0 for case in cases)
-    assert all(case.config.unroll == 4 for case in cases)
+    assert all(case.config.unroll is None for case in cases)
     assert all(case.config.forward_projector == "pallas" for case in cases)
     assert all(case.config.backprojector == "pallas" for case in cases)
-    assert all(case.config.pallas_tile_shape == (8, 4) for case in cases)
+    assert [case.config.pallas_tile_shape for case in cases] == [(4, 8), (8, 4)]
     assert all(not case.config.compute_iteration_loss for case in cases)
     assert all(not case.config.compute_final_data_loss for case in cases)
     assert all(not case.config.compute_final_regulariser_value for case in cases)
