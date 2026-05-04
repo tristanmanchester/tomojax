@@ -99,6 +99,11 @@ def test_astra_parallel_rows_include_cold_timing_and_direct_generic_quality() ->
     )
 
 
+def test_parallel_z_pallas_tile_config_uses_wide_exact_divisor_tile() -> None:
+    assert astra_parallel._parallel_z_pallas_tile_config(nu=64, nv=64) == ((64, 4), 8)
+    assert astra_parallel._parallel_z_pallas_tile_config(nu=128, nv=128) == ((64, 4), 8)
+
+
 def test_astra_parallel_markdown_includes_cold_and_direct_generic_quality(tmp_path) -> None:
     path = tmp_path / "summary.md"
 
