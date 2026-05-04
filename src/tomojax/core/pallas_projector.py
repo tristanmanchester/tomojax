@@ -3772,7 +3772,7 @@ def forward_project_parallel_z_views_pallas(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     interpret: bool = False,
-    tile_shape: tuple[int, int] = (8, 4),
+    tile_shape: tuple[int, int] = (16, 4),
     num_warps: int = 1,
 ) -> jnp.ndarray:
     """Specialized stack projector for ParallelGeometry z-axis rotations only."""
