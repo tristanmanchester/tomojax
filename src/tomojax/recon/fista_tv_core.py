@@ -30,6 +30,7 @@ class FistaCoreConfig:
     backprojector: str = "jax"
     pallas_tile_shape: tuple[int, int] = (16, 4)
     pallas_num_warps: int = 1
+    compute_iteration_loss: bool = True
     compute_final_data_loss: bool = True
     compute_final_regulariser_value: bool = True
 
@@ -136,7 +137,7 @@ def fista_tv_core_arrays(
         return isotropic_tv_value(x)
 
     def body(carry, k):
-        x_prev, z_prev, t_prev, loss_arr = carry
+        x_prev, z_prev, t_prev, loss_arr, last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
         if cfg.regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta))
@@ -148,19 +149,24 @@ def fista_tv_core_arrays(
         t_next = jnp.float32(0.5) * (jnp.float32(1.0) + jnp.sqrt(jnp.float32(1.0) + 4.0 * t_prev * t_prev))
         z_next = x_next + ((t_prev - jnp.float32(1.0)) / t_next) * (x_next - x_prev)
         z_next = _project_constraints(z_next, cfg)
-        loss_arr = loss_arr.at[k].set(
-            (data_loss + lam * regulariser_value(z_prev)).astype(jnp.float32)
-        )
-        return (x_next, z_next, t_next, loss_arr), None
+        if cfg.compute_iteration_loss:
+            loss_arr = loss_arr.at[k].set(
+                (data_loss + lam * regulariser_value(z_prev)).astype(jnp.float32)
+            )
+        return (x_next, z_next, t_next, loss_arr, data_loss.astype(jnp.float32)), None
 
     n_iters = int(cfg.iters)
     loss0 = jnp.zeros((n_iters,), dtype=jnp.float32)
-    (x_final, _, _, loss), _ = jax.lax.scan(
+    (x_final, _, _, loss, last_data_loss), _ = jax.lax.scan(
         body,
-        (x_init, z_init, t_init, loss0),
+        (x_init, z_init, t_init, loss0, jnp.asarray(0.0, dtype=jnp.float32)),
         jnp.arange(n_iters, dtype=jnp.int32),
     )
-    data_final = data_loss_fn(x_final) if cfg.compute_final_data_loss else loss[-1]
+    data_final = (
+        data_loss_fn(x_final)
+        if cfg.compute_final_data_loss
+        else (loss[-1] if cfg.compute_iteration_loss else last_data_loss)
+    )
     reg_final = (
         regulariser_value(x_final)
         if cfg.compute_final_regulariser_value

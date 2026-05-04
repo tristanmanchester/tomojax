@@ -23,6 +23,7 @@ def test_fista_iteration_suite_cases_are_general_pose() -> None:
     assert all(case.config.forward_projector == "pallas" for case in cases)
     assert all(case.config.backprojector == "pallas" for case in cases)
     assert all(case.config.pallas_tile_shape == (16, 4) for case in cases)
+    assert all(not case.config.compute_iteration_loss for case in cases)
     assert all(not case.config.compute_final_data_loss for case in cases)
     assert all(not case.config.compute_final_regulariser_value for case in cases)
 
@@ -55,11 +56,17 @@ def test_fista_iteration_suite_reports_cases(monkeypatch: pytest.MonkeyPatch) ->
     assert metrics["summary"]["cases_total"] == 2
 
 
-def test_fista_iteration_overrides_final_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[bool, bool]] = []
+def test_fista_iteration_overrides_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[bool, bool, bool]] = []
 
     def fake_run(config: FistaIterationBenchmarkConfig) -> dict:
-        seen.append((config.compute_final_data_loss, config.compute_final_regulariser_value))
+        seen.append(
+            (
+                config.compute_iteration_loss,
+                config.compute_final_data_loss,
+                config.compute_final_regulariser_value,
+            )
+        )
         return {
             "benchmark": "fista_iteration",
             "api_surface": "internal_fista_tv_core_arrays",
@@ -70,10 +77,14 @@ def test_fista_iteration_overrides_final_diagnostics(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("tomojax.bench.fista_iteration.run_fista_iteration_benchmark", fake_run)
 
     run_fista_iteration_suite(
-        overrides={"compute_final_data_loss": True, "compute_final_regulariser_value": True}
+        overrides={
+            "compute_iteration_loss": True,
+            "compute_final_data_loss": True,
+            "compute_final_regulariser_value": True,
+        }
     )
 
-    assert seen == [(True, True), (True, True)]
+    assert seen == [(True, True, True), (True, True, True)]
 
 
 def test_fista_iteration_public_suite_names() -> None:

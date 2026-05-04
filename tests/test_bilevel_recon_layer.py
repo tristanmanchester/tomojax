@@ -216,6 +216,52 @@ def test_fista_core_can_skip_final_data_loss_diagnostic():
     )
 
 
+def test_fista_core_can_skip_iteration_loss_trace_without_changing_reconstruction():
+    grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    effective = apply_alignment_state(base, state)
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+    base_cfg = FistaCoreConfig(
+        iters=2,
+        lambda_tv=0.01,
+        L=100.0,
+        checkpoint_projector=False,
+        compute_final_data_loss=False,
+        compute_final_regulariser_value=False,
+    )
+    traced = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=base_cfg,
+    )
+    untraced = fista_tv_core_arrays(
+        x0=x0,
+        T_all=effective.pose_stack,
+        det_grid=effective.det_grid,
+        projections=projections,
+        grid=grid,
+        detector=detector,
+        cfg=FistaCoreConfig(
+            iters=base_cfg.iters,
+            lambda_tv=base_cfg.lambda_tv,
+            L=base_cfg.L,
+            checkpoint_projector=base_cfg.checkpoint_projector,
+            compute_iteration_loss=False,
+            compute_final_data_loss=base_cfg.compute_final_data_loss,
+            compute_final_regulariser_value=base_cfg.compute_final_regulariser_value,
+        ),
+    )
+
+    np.testing.assert_allclose(np.asarray(untraced.x), np.asarray(traced.x), atol=1e-6, rtol=1e-6)
+    assert np.isfinite(np.asarray(untraced.data_loss))
+    np.testing.assert_allclose(np.asarray(untraced.loss), np.zeros((2,), dtype=np.float32))
+
+
 def test_fista_core_can_skip_final_regulariser_diagnostic():
     grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
     base = BaseGeometryArrays.from_geometry(geometry, detector)
