@@ -2740,7 +2740,11 @@ def _projector_residual_sse_kernel_cached(
         iz0,
     )
     if unroll is None:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
     else:
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
