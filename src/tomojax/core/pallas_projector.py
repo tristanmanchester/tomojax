@@ -3655,6 +3655,12 @@ def forward_project_loss_and_grad_T_pallas(
     else:
         weights_arr = jnp.asarray(weights, dtype=jnp.float32).reshape((int(n_views), 1, 1))
     grad_init = jnp.zeros((int(nx) * int(ny) * int(nz),), dtype=jnp.float32)
+    effective_n_steps_value = _resolve_effective_pallas_n_steps_for_stack(
+        T_all,
+        grid,
+        step_size_value,
+        n_steps_value,
+    )
     call = _cached_loss_grad_pallas_call(
         nx=int(nx),
         ny=int(ny),
@@ -3673,7 +3679,7 @@ def forward_project_loss_and_grad_T_pallas(
         vy=float(grid.vy),
         vz=float(grid.vz),
         step_size=float(step_size_value),
-        n_steps=int(n_steps_value),
+        n_steps=int(effective_n_steps_value),
         tile_v=int(tile_v),
         tile_u=int(tile_u),
         num_warps=int(num_warps_value),

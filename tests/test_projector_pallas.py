@@ -736,6 +736,65 @@ def test_pallas_forward_loss_grad_matches_jax_explicit_adjoint() -> None:
     np.testing.assert_allclose(np.asarray(grad), np.asarray(oracle_grad), atol=1e-4, rtol=1e-4)
 
 
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_forward_loss_grad_general_pose_matches_jax_explicit_adjoint() -> None:
+    fixture = make_forward_sinogram_fixture(
+        ForwardSinogramBenchmarkConfig(
+            nx=8,
+            ny=8,
+            nz=8,
+            nu=8,
+            nv=8,
+            n_views=4,
+            pose_mode="general_5d",
+        )
+    )
+    volume = fixture.volume
+    target = jnp.stack(
+        [
+            forward_project_view_T(T, fixture.grid, fixture.detector, volume * 1.05)
+            for T in fixture.T_stack
+        ],
+        axis=0,
+    )
+    pred = jnp.stack(
+        [
+            forward_project_view_T(T, fixture.grid, fixture.detector, volume)
+            for T in fixture.T_stack
+        ],
+        axis=0,
+    )
+    weights = jnp.linspace(0.5, 1.25, int(fixture.T_stack.shape[0]), dtype=jnp.float32)[
+        :, None, None
+    ]
+    raw_resid = (pred - target).astype(jnp.float32)
+    weighted_resid = raw_resid * weights
+    oracle_loss = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
+    oracle_grad = sum_backproject_views_T(
+        fixture.T_stack,
+        fixture.grid,
+        fixture.detector,
+        raw_resid * weights * weights,
+        det_grid=fixture.det_grid,
+    )
+
+    loss, grad = forward_project_loss_and_grad_T_pallas(
+        fixture.T_stack,
+        fixture.grid,
+        fixture.detector,
+        volume,
+        target,
+        weights=weights,
+        det_grid=fixture.det_grid,
+        tile_shape=(8, 4),
+        kernel_variant="generic",
+    )
+
+    np.testing.assert_allclose(np.asarray(loss), np.asarray(oracle_loss), atol=1e-4, rtol=1e-5)
+    assert _relative_l2(grad, oracle_grad) < 1e-5
+    np.testing.assert_allclose(np.asarray(grad), np.asarray(oracle_grad), atol=1e-4, rtol=1e-4)
+
+
 @pytest.mark.parametrize(
     "pose_stack",
     [
