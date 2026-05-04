@@ -1835,6 +1835,7 @@ def _projector_loss_grad_kernel(
     kernel_variant_id: int,
     layout_variant_id: int,
     unroll: int | None,
+    compute_loss: bool,
 ) -> None:
     view_idx = pl.program_id(0)
     tile_v_idx = pl.program_id(1)
@@ -1957,9 +1958,12 @@ def _projector_loss_grad_kernel(
     weight = plt.load(weights_ref.at[view_idx, 0, 0])
     raw_residual = jnp.where(in_detector, acc.astype(jnp.float32) - target.astype(jnp.float32), 0.0)
     weighted_residual = raw_residual * weight
-    loss_ref[0, 0, 0] = (
-        jnp.float32(0.5) * jnp.sum(weighted_residual * weighted_residual).astype(jnp.float32)
-    )
+    if compute_loss:
+        loss_ref[0, 0, 0] = (
+            jnp.float32(0.5) * jnp.sum(weighted_residual * weighted_residual).astype(jnp.float32)
+        )
+    else:
+        loss_ref[0, 0, 0] = jnp.float32(0.0)
     grad_residual = raw_residual * weight * weight * step_size32
 
     last_step = jnp.float32(max(n_steps - 1, 0))
@@ -3524,6 +3528,7 @@ def _cached_loss_grad_pallas_call(
     kernel_variant_id: int,
     layout_variant_id: int,
     unroll: int | None,
+    compute_loss: bool,
     interpret: bool,
 ) -> Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
     kernel = functools.partial(
@@ -3550,6 +3555,7 @@ def _cached_loss_grad_pallas_call(
         kernel_variant_id=int(kernel_variant_id),
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
+        compute_loss=bool(compute_loss),
     )
     grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
     return pl.pallas_call(
@@ -3595,6 +3601,7 @@ def forward_project_loss_and_grad_T_pallas(
     num_warps: int = 1,
     kernel_variant: str = "auto",
     layout_variant: str = "detector_vu",
+    compute_loss: bool = True,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return projection loss and explicit gradient using one Pallas kernel."""
     vol = jnp.asarray(volume)
@@ -3666,6 +3673,7 @@ def forward_project_loss_and_grad_T_pallas(
         kernel_variant_id=int(kernel_variant_id),
         layout_variant_id=int(layout_variant_id),
         unroll=unroll,
+        compute_loss=bool(compute_loss),
         interpret=bool(interpret),
     )
     partial_loss, grad_flat = call(

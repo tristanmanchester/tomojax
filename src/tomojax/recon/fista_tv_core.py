@@ -126,6 +126,7 @@ def fista_tv_core_arrays(
             backprojector=cfg.backprojector,
             pallas_tile_shape=cfg.pallas_tile_shape,
             pallas_num_warps=cfg.pallas_num_warps,
+            compute_loss=bool(cfg.compute_iteration_loss or cfg.compute_final_data_loss),
         )
         if cfg.support is not None:
             grad = grad * jnp.asarray(cfg.support, dtype=grad.dtype)
@@ -430,6 +431,7 @@ def _projection_loss_and_explicit_grad(
     backprojector: str,
     pallas_tile_shape: tuple[int, int],
     pallas_num_warps: int,
+    compute_loss: bool = True,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -464,6 +466,7 @@ def _projection_loss_and_explicit_grad(
                 det_grid=det_grid,
                 tile_shape=tuple(pallas_tile_shape),
                 num_warps=int(pallas_num_warps),
+                compute_loss=bool(compute_loss),
             )
         else:
             pred = _project_chunk(
@@ -481,7 +484,11 @@ def _projection_loss_and_explicit_grad(
             )
             raw_resid = (pred - y_chunk).astype(jnp.float32)
             weighted_resid = raw_resid * w_chunk * valid
-            loss_batch = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
+            loss_batch = (
+                jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
+                if compute_loss
+                else jnp.asarray(0.0, dtype=jnp.float32)
+            )
             grad_resid = raw_resid * (w_chunk * w_chunk) * valid
             grad_batch = backproject_fn(
                 T_chunk,

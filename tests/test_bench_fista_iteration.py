@@ -8,6 +8,7 @@ from tomojax.bench.fista_iteration import (
     FISTA_ITERATION_SUITE_NAMES,
     FistaIterationBenchmarkConfig,
     fista_iteration_suite_cases,
+    run_fista_iteration_benchmark,
     run_fista_iteration_case,
     run_fista_iteration_suite,
     write_benchmark_json,
@@ -117,6 +118,36 @@ def test_fista_iteration_case_compares_jax_and_pallas(monkeypatch: pytest.Monkey
     assert metrics["speedup_vs_jax_warm_median"] == pytest.approx(4.0)
     assert metrics["baseline_mode"] == "jax"
     assert metrics["candidate_mode"] == "pallas"
+
+
+def test_fista_iteration_quality_marks_data_loss_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_make_call(config: FistaIterationBenchmarkConfig):
+        del config
+        return (
+            lambda: (
+                0,
+                [0.0],
+                0.0,
+                0.0,
+                1,
+            ),
+            {},
+        )
+
+    monkeypatch.setattr("tomojax.bench.fista_iteration._make_fista_call", fake_make_call)
+    monkeypatch.setattr("tomojax.bench.fista_iteration._time_blocked_call", lambda fn: (0.0, fn()))
+
+    metrics = run_fista_iteration_benchmark(
+        FistaIterationBenchmarkConfig(
+            warm_runs=1,
+            compute_iteration_loss=False,
+            compute_final_data_loss=False,
+        )
+    )
+
+    assert metrics["quality"]["data_loss_computed"] is False
+    assert metrics["quality"]["data_loss_is_final"] is False
+    assert metrics["quality"]["data_loss_is_last_gradient_point"] is False
 
 
 def test_fista_iteration_public_suite_names() -> None:

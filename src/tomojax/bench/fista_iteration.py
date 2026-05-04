@@ -202,9 +202,12 @@ def run_fista_iteration_benchmark(config: FistaIterationBenchmarkConfig) -> dict
             "loss": [float(v) for v in np.asarray(warm[1]).ravel()],
             "loss_is_iteration_objective": bool(config.compute_iteration_loss),
             "data_loss": float(np.asarray(warm[2])),
+            "data_loss_computed": bool(
+                config.compute_final_data_loss or config.compute_iteration_loss
+            ),
             "data_loss_is_final": bool(config.compute_final_data_loss),
             "data_loss_is_last_gradient_point": bool(
-                not config.compute_final_data_loss and not config.compute_iteration_loss
+                not config.compute_final_data_loss and config.compute_iteration_loss
             ),
             "regulariser_value": float(np.asarray(warm[3])),
             "regulariser_value_is_final": bool(config.compute_final_regulariser_value),

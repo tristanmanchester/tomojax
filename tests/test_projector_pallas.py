@@ -795,6 +795,52 @@ def test_pallas_forward_loss_grad_general_pose_matches_jax_explicit_adjoint() ->
     np.testing.assert_allclose(np.asarray(grad), np.asarray(oracle_grad), atol=1e-4, rtol=1e-4)
 
 
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_forward_loss_grad_can_skip_loss_without_changing_gradient() -> None:
+    grid = Grid(nx=5, ny=4, nz=3, vx=1.1, vy=0.9, vz=1.2)
+    detector = Detector(nu=5, nv=4, du=0.8, dv=1.3, det_center=(0.25, -0.2))
+    poses = jnp.stack(
+        [
+            _pose(0.0, grid=grid, detector=detector),
+            _pose(35.0, grid=grid, detector=detector),
+        ],
+        axis=0,
+    )
+    volume = jnp.arange(grid.nx * grid.ny * grid.nz, dtype=jnp.float32).reshape(
+        (grid.nx, grid.ny, grid.nz)
+    )
+    target = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume * 0.95) for T in poses],
+        axis=0,
+    )
+    weights = jnp.asarray([1.0, 0.5], dtype=jnp.float32)[:, None, None]
+
+    loss_with, grad_with = forward_project_loss_and_grad_T_pallas(
+        poses,
+        grid,
+        detector,
+        volume,
+        target,
+        weights=weights,
+        tile_shape=(3, 4),
+        compute_loss=True,
+    )
+    loss_without, grad_without = forward_project_loss_and_grad_T_pallas(
+        poses,
+        grid,
+        detector,
+        volume,
+        target,
+        weights=weights,
+        tile_shape=(3, 4),
+        compute_loss=False,
+    )
+
+    assert float(np.asarray(loss_with)) > 0.0
+    np.testing.assert_allclose(np.asarray(loss_without), np.asarray(0.0, dtype=np.float32))
+    np.testing.assert_allclose(np.asarray(grad_without), np.asarray(grad_with), atol=1e-5, rtol=1e-5)
+
+
 @pytest.mark.parametrize(
     "pose_stack",
     [
