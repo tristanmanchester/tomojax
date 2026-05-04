@@ -58,10 +58,10 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 nu=24,
                 nv=24,
                 n_views=24,
-                warm_runs=7,
+                warm_runs=11,
                 unroll=None,
                 pose_mode="general_5d",
-                pallas_tile_shape=(4, 8),
+                pallas_tile_shape=(16, 4),
             ),
         ),
         FistaIterationSuiteCase(
