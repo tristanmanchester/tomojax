@@ -293,6 +293,8 @@ def _project_stack(
         return out.at[view_idx].set(pred), None
 
     init = jnp.zeros((n_views, detector.nv, detector.nu), dtype=jnp.float32)
+    if num_chunks == 1:
+        return body(init, jnp.asarray(0, dtype=jnp.int32))[0]
     out, _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
     return out
 
@@ -393,11 +395,10 @@ def _projection_loss(
         resid = resid * valid_mask[:, None, None]
         return loss_acc + jnp.float32(0.5) * jnp.vdot(resid, resid).real, None
 
-    loss, _ = jax.lax.scan(
-        body,
-        jnp.asarray(0.0, dtype=jnp.float32),
-        jnp.arange(num_chunks, dtype=jnp.int32),
-    )
+    init = jnp.asarray(0.0, dtype=jnp.float32)
+    if num_chunks == 1:
+        return body(init, jnp.asarray(0, dtype=jnp.int32))[0]
+    loss, _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
     return loss
 
 
@@ -502,6 +503,8 @@ def _projection_loss_and_explicit_grad(
         return (loss_acc + loss_batch, grad_acc + grad_batch), None
 
     init = (jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume))
+    if num_chunks == 1:
+        return body(init, jnp.asarray(0, dtype=jnp.int32))[0]
     (loss, grad), _ = jax.lax.scan(
         body,
         init,
