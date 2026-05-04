@@ -309,6 +309,59 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
                 f"speedup vs JAX `{_fmt(case.get('speedup_vs_jax_warm_median'))}x`"
             )
 
+    sampled = suite.get("sampled_representative")
+    if sampled:
+        summary = sampled["summary"]
+        lines.extend(
+            [
+                "",
+                "## Sampled Representative",
+                "",
+                f"- Suite seed: `{sampled['suite_seed']}`",
+                f"- Sampler version: `{sampled['sampler_version']}`",
+                "- General-pose forward dispatch geomean speedup vs best JAX: "
+                f"`{_fmt(summary['general_forward_dispatch_geomean_speedup_vs_best_jax'])}x`",
+                "- General-pose forward dispatch worst-case speedup vs best JAX: "
+                f"`{_fmt(summary['general_forward_dispatch_worst_speedup_vs_best_jax'])}x`",
+                "- Forward residual dispatch geomean speedup vs JAX: "
+                f"`{_fmt(summary['forward_residual_dispatch_geomean_speedup_vs_jax'])}x`",
+                "- FISTA geomean speedup vs JAX: "
+                f"`{_fmt(summary['fista_geomean_speedup_vs_jax'])}x`",
+                "",
+                "| Case | Family | Seed | Shape | Views |",
+                "|---|---|---:|---|---:|",
+            ]
+        )
+        for case in sampled["sampled_cases"]:
+            config = case["config"]
+            shape = f"{config.get('nx')}x{config.get('ny')}x{config.get('nz')}"
+            lines.append(
+                f"| `{case['case_name']}` | `{case['family']}` | {case['seed']} | "
+                f"`{shape}` | {config.get('n_views', '-')} |"
+            )
+
+    targets = suite.get("benchmark_targets")
+    if targets:
+        lines.extend(
+            [
+                "",
+                "## 2x Targets",
+                "",
+                f"- Source commit: `{targets['source_commit']}`",
+                f"- Source artifact: `{targets['source_artifact']}`",
+                f"- Policy: {targets['target_policy']}",
+                "",
+                "| Metric | Current best | 2x target | Direction |",
+                "|---|---:|---:|---|",
+            ]
+        )
+        for target in targets["targets"]:
+            lines.append(
+                f"| `{target['metric']}` | {_fmt(target['baseline_value'])} "
+                f"{target['unit']} | {_fmt(target['target_value'])} {target['unit']} | "
+                f"`{target['direction']}` |"
+            )
+
     lines.extend(["", "## Artifacts", ""])
     for row in suite["case_summaries"]:
         lines.append(f"- `{row['case']}`: `{row['markdown']}`")
@@ -329,6 +382,15 @@ def main() -> None:
     parser.add_argument("--include-alignment-objective", action="store_true")
     parser.add_argument("--include-forward-residual", action="store_true")
     parser.add_argument("--include-fista-iteration", action="store_true")
+    parser.add_argument("--include-sampled-representative", action="store_true")
+    parser.add_argument("--sampled-seed", type=int, default=20260504)
+    parser.add_argument("--sampled-cases-per-family", type=int, default=1)
+    parser.add_argument("--include-benchmark-targets", action="store_true", default=True)
+    parser.add_argument(
+        "--no-benchmark-targets",
+        dest="include_benchmark_targets",
+        action="store_false",
+    )
     parser.add_argument("--include-pallas-sanity", action="store_true", default=True)
     parser.add_argument("--no-pallas-sanity", dest="include_pallas_sanity", action="store_false")
     args = parser.parse_args()
@@ -496,6 +558,28 @@ def main() -> None:
         fista_iteration = run_fista_iteration_suite("fista_iteration")
         write_benchmark_json(fista_iteration, args.out_dir / "fista_iteration.json")
 
+    sampled_representative = None
+    if args.include_sampled_representative:
+        from tomojax.bench.sampled import (
+            run_sampled_representative_suite,
+            write_benchmark_json,
+        )
+
+        sampled_representative = run_sampled_representative_suite(
+            suite_seed=int(args.sampled_seed),
+            cases_per_family=int(args.sampled_cases_per_family),
+        )
+        write_benchmark_json(
+            sampled_representative,
+            args.out_dir / "sampled_representative.json",
+        )
+
+    benchmark_targets = None
+    if args.include_benchmark_targets:
+        from tomojax.bench.benchmark_targets import benchmark_targets_report
+
+        benchmark_targets = benchmark_targets_report()
+
     suite = {
         "benchmark": "tomojax_benchmark_suite",
         "mode": args.mode,
@@ -512,6 +596,8 @@ def main() -> None:
         "forward_general_pose": forward_general_pose,
         "forward_residual": forward_residual,
         "fista_iteration": fista_iteration,
+        "sampled_representative": sampled_representative,
+        "benchmark_targets": benchmark_targets,
     }
     (args.out_dir / "suite.json").write_text(json.dumps(suite, indent=2) + "\n", encoding="utf-8")
     _write_csv(args.out_dir / "cases.csv", case_summaries)

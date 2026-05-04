@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from tomojax.bench.alignment_objective import (
+    AlignmentObjectiveBenchmarkConfig,
+    run_alignment_objective_suite,
+)
+from tomojax.bench.fista_iteration import (
+    FistaIterationBenchmarkConfig,
+    run_fista_iteration_case,
+)
+from tomojax.bench.forward_projector import (
+    ForwardSinogramBenchmarkConfig,
+    run_forward_sinogram_benchmark,
+)
+from tomojax.bench.forward_residual import (
+    ForwardResidualBenchmarkConfig,
+    run_forward_residual_benchmark,
+)
+
+
+@dataclass(frozen=True)
+class SampledCaseConfig:
+    case_name: str
+    family: str
+    seed: int
+    config: dict[str, Any]
+
+
+AWKWARD_SHAPES = (
+    (31, 37, 43, 29, 41, 47),
+    (40, 32, 48, 37, 53, 41),
+    (48, 40, 32, 41, 37, 47),
+    (56, 48, 40, 59, 43, 53),
+)
+
+GENERAL_SHAPES = (
+    (24, 24, 24, 24, 24, 24),
+    (32, 28, 36, 31, 37, 37),
+    (40, 32, 48, 41, 37, 47),
+    (64, 56, 48, 59, 53, 64),
+)
+
+ALIGNMENT_OBJECTIVE_SHAPES = (
+    (20, 20, 20, 20, 20, 18),
+    (24, 24, 24, 24, 24, 24),
+    (28, 28, 28, 31, 29, 32),
+    (32, 28, 36, 31, 37, 40),
+)
+
+FISTA_SHAPES = (
+    (24, 24, 24, 24, 24, 24),
+    (32, 28, 36, 31, 37, 37),
+    (48, 40, 32, 41, 37, 47),
+    (64, 64, 64, 64, 64, 90),
+)
+
+
+def _choice(rng: np.random.Generator, values: tuple[tuple[int, ...], ...]) -> tuple[int, ...]:
+    return values[int(rng.integers(0, len(values)))]
+
+
+def _sample_forward_config(rng: np.random.Generator, seed: int) -> ForwardSinogramBenchmarkConfig:
+    shape_pool = AWKWARD_SHAPES if bool(rng.integers(0, 2)) else GENERAL_SHAPES
+    nx, ny, nz, nu, nv, n_views = _choice(rng, shape_pool)
+    return ForwardSinogramBenchmarkConfig(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nu=nu,
+        nv=nv,
+        n_views=n_views,
+        seed=seed,
+        warm_runs=5,
+        gather_dtype="fp32",
+        pose_mode="general_5d",
+        pallas_state_mode="cached",
+        pallas_tile_shape=tuple(
+            (int(rng.choice([8, 12, 16, 24])), int(rng.choice([4, 8])))
+        ),
+        pallas_num_warps=1,
+    )
+
+
+def _sample_residual_config(
+    forward_config: ForwardSinogramBenchmarkConfig,
+) -> ForwardResidualBenchmarkConfig:
+    return ForwardResidualBenchmarkConfig(**asdict(forward_config), target_delta=0.01)
+
+
+def _sample_fista_config(rng: np.random.Generator, seed: int) -> FistaIterationBenchmarkConfig:
+    nx, ny, nz, nu, nv, n_views = _choice(rng, FISTA_SHAPES)
+    diagnostics = bool(rng.integers(0, 4) == 0)
+    return FistaIterationBenchmarkConfig(
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        nu=nu,
+        nv=nv,
+        n_views=n_views,
+        seed=seed,
+        warm_runs=5,
+        pose_mode="general_5d",
+        pallas_tile_shape=tuple((int(rng.choice([8, 12, 16])), int(rng.choice([4, 8])))),
+        pallas_num_warps=1,
+        compute_iteration_loss=diagnostics,
+        compute_final_data_loss=diagnostics,
+        compute_final_regulariser_value=diagnostics,
+    )
+
+
+def _sample_alignment_objective_overrides(
+    rng: np.random.Generator,
+    seed: int,
+) -> dict[str, Any]:
+    nx, ny, nz, nu, nv, n_views = _choice(rng, ALIGNMENT_OBJECTIVE_SHAPES)
+    return {
+        "nx": nx,
+        "ny": ny,
+        "nz": nz,
+        "nu": nu,
+        "nv": nv,
+        "n_views": n_views,
+        "seed": seed,
+        "warm_runs": 5,
+        "projector_unroll": int(rng.choice([1, 2, 4])),
+        "gather_dtype": str(rng.choice(["bf16", "fp32"])),
+    }
+
+
+def _requested_mode(results: list[dict[str, Any]], requested: str) -> dict[str, Any] | None:
+    for row in results:
+        if row.get("requested_mode") == requested:
+            return row
+    return None
+
+
+def run_sampled_representative_suite(
+    *,
+    suite_seed: int,
+    cases_per_family: int = 1,
+) -> dict[str, Any]:
+    """Run a seeded anti-overfitting panel of representative benchmark families."""
+    rng = np.random.default_rng(int(suite_seed))
+    sampled_cases: list[SampledCaseConfig] = []
+    forward_cases: list[dict[str, Any]] = []
+    residual_cases: list[dict[str, Any]] = []
+    fista_cases: list[dict[str, Any]] = []
+    alignment_objective_cases: list[dict[str, Any]] = []
+
+    for i in range(int(cases_per_family)):
+        case_seed = int(rng.integers(0, 2**31 - 1))
+        forward_config = _sample_forward_config(rng, case_seed)
+        sampled_cases.append(
+            SampledCaseConfig(
+                case_name=f"sampled-general-forward-{i}",
+                family="general_pose_forward",
+                seed=case_seed,
+                config=asdict(forward_config),
+            )
+        )
+        forward = run_forward_sinogram_benchmark(forward_config)
+        forward["case_name"] = f"sampled-general-forward-{i}"
+        forward_cases.append(forward)
+
+        residual_config = _sample_residual_config(forward_config)
+        sampled_cases.append(
+            SampledCaseConfig(
+                case_name=f"sampled-forward-residual-{i}",
+                family="forward_residual",
+                seed=case_seed,
+                config=asdict(residual_config),
+            )
+        )
+        residual = run_forward_residual_benchmark(residual_config)
+        residual["case_name"] = f"sampled-forward-residual-{i}"
+        residual_cases.append(residual)
+
+        fista_seed = int(rng.integers(0, 2**31 - 1))
+        fista_config = _sample_fista_config(rng, fista_seed)
+        sampled_cases.append(
+            SampledCaseConfig(
+                case_name=f"sampled-fista-{i}",
+                family="fista_iteration",
+                seed=fista_seed,
+                config=asdict(fista_config),
+            )
+        )
+        fista = run_fista_iteration_case(fista_config)
+        fista["case_name"] = f"sampled-fista-{i}"
+        fista_cases.append(fista)
+
+        objective_seed = int(rng.integers(0, 2**31 - 1))
+        objective_overrides = _sample_alignment_objective_overrides(rng, objective_seed)
+        sampled_cases.append(
+            SampledCaseConfig(
+                case_name=f"sampled-alignment-objective-{i}",
+                family="alignment_objective",
+                seed=objective_seed,
+                config=objective_overrides,
+            )
+        )
+        objective = run_alignment_objective_suite(
+            "alignment_objective",
+            overrides=objective_overrides,
+        )
+        objective["case_name"] = f"sampled-alignment-objective-{i}"
+        alignment_objective_cases.append(objective)
+
+    forward_speedups = [
+        float(row["speedup_vs_best_jax_warm_median"])
+        for case in forward_cases
+        for row in case["results"]
+        if row.get("requested_mode") == "pallas_dispatch"
+        and row.get("speedup_vs_best_jax_warm_median") is not None
+    ]
+    residual_speedups = [
+        float(row["speedup_vs_jax_materialized_warm_median"])
+        for case in residual_cases
+        for row in case["results"]
+        if row.get("requested_mode") == "pallas_dispatch"
+        and row.get("speedup_vs_jax_materialized_warm_median") is not None
+    ]
+    fista_speedups = [
+        float(case["speedup_vs_jax_warm_median"])
+        for case in fista_cases
+        if case.get("speedup_vs_jax_warm_median") is not None
+    ]
+
+    def geomean(values: list[float]) -> float | None:
+        return float(np.exp(np.mean(np.log(values)))) if values and min(values) > 0.0 else None
+
+    return {
+        "benchmark": "sampled_representative_suite",
+        "suite_seed": int(suite_seed),
+        "sampler_version": 1,
+        "cases_per_family": int(cases_per_family),
+        "sampling_policy": (
+            "Seeded random case generation. Artifacts record every sampled config so each "
+            "case is exactly reproducible."
+        ),
+        "sampled_cases": [asdict(case) for case in sampled_cases],
+        "summary": {
+            "general_forward_dispatch_geomean_speedup_vs_best_jax": geomean(forward_speedups),
+            "general_forward_dispatch_worst_speedup_vs_best_jax": min(forward_speedups)
+            if forward_speedups
+            else None,
+            "forward_residual_dispatch_geomean_speedup_vs_jax": geomean(residual_speedups),
+            "forward_residual_dispatch_worst_speedup_vs_jax": min(residual_speedups)
+            if residual_speedups
+            else None,
+            "fista_geomean_speedup_vs_jax": geomean(fista_speedups),
+            "fista_worst_speedup_vs_jax": min(fista_speedups) if fista_speedups else None,
+        },
+        "forward_cases": forward_cases,
+        "residual_cases": residual_cases,
+        "fista_cases": fista_cases,
+        "alignment_objective_cases": alignment_objective_cases,
+    }
+
+
+def write_benchmark_json(metrics: dict[str, Any], path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+

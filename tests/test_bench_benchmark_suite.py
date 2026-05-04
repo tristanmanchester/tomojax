@@ -113,6 +113,38 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
                 "no_checkpoint_warm_seconds_median": 0.1,
             }
         },
+        "sampled_representative": {
+            "suite_seed": 123,
+            "sampler_version": 1,
+            "summary": {
+                "general_forward_dispatch_geomean_speedup_vs_best_jax": 3.0,
+                "general_forward_dispatch_worst_speedup_vs_best_jax": 2.0,
+                "forward_residual_dispatch_geomean_speedup_vs_jax": 4.0,
+                "fista_geomean_speedup_vs_jax": 5.0,
+            },
+            "sampled_cases": [
+                {
+                    "case_name": "sampled-general-forward-0",
+                    "family": "general_pose_forward",
+                    "seed": 456,
+                    "config": {"nx": 31, "ny": 37, "nz": 43, "n_views": 47},
+                }
+            ],
+        },
+        "benchmark_targets": {
+            "source_commit": "abc123",
+            "source_artifact": "results/example/summary.md",
+            "target_policy": "double it",
+            "targets": [
+                {
+                    "metric": "alignment_smoke_wall_seconds",
+                    "baseline_value": 2.0,
+                    "target_value": 1.0,
+                    "direction": "lower_is_better",
+                    "unit": "seconds",
+                }
+            ],
+        },
     }
     path = tmp_path / "summary.md"
 
@@ -125,6 +157,10 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
     assert "Direct/Generic FBP L2" in text
     assert "## Alignment Objective" in text
     assert "Value+grad no-checkpoint speedup vs checkpointed: `2.0000x`" in text
+    assert "## Sampled Representative" in text
+    assert "sampled-general-forward-0" in text
+    assert "## 2x Targets" in text
+    assert "alignment_smoke_wall_seconds" in text
 
 
 def test_suite_json_can_round_trip_evidence_class(tmp_path) -> None:
