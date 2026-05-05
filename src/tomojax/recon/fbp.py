@@ -396,14 +396,6 @@ def _supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     return abs(first - round(first)) <= tol and abs(step - round(step)) <= tol
 
 
-def _parallel_fbp_z_integer_tile_config(
-    grid: Grid,
-    detector: Detector,
-) -> tuple[tuple[int, int, int], int]:
-    del grid, detector
-    return (16, 8, 4), 4
-
-
 def _run_parallel_fbp_direct_pallas(
     T_all: jnp.ndarray,
     proj: jnp.ndarray,
@@ -417,7 +409,6 @@ def _run_parallel_fbp_direct_pallas(
     rows_f = _fft_filter_rows_jit(rows, du=float(detector.du), filter_name=filter_name)
     filt = rows_f.reshape((n_views, nv, nu))
     vol_origin = _grid_volume_origin(grid)
-    tile_shape, num_warps = _parallel_fbp_z_integer_tile_config(grid, detector)
     call = _cached_parallel_fbp_z_integer_pallas_call(
         nx=int(grid.nx),
         ny=int(grid.ny),
@@ -435,8 +426,8 @@ def _run_parallel_fbp_direct_pallas(
         dv=float(detector.dv),
         det_center_x=float(detector.det_center[0]),
         det_center_z=float(detector.det_center[1]),
-        tile_shape=tile_shape,
-        num_warps=num_warps,
+        tile_shape=(16, 8, 2),
+        num_warps=4,
     )
     return call(jnp.asarray(T_all, dtype=jnp.float32), jnp.asarray(filt, dtype=jnp.float32))
 

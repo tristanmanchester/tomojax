@@ -414,14 +414,6 @@ def test_pallas_parallel_fbp_helper_matches_generic_on_guard_geometry():
     assert np.max(np.abs(np.asarray(pallas) - np.asarray(generic))) <= 0.03
 
 
-def test_pallas_parallel_fbp_helper_tile_config_is_explicit():
-    fbp_mod = import_module("tomojax.recon.fbp")
-    grid = Grid(128, 128, 128, 1.0, 1.0, 1.0)
-    det = Detector(128, 128, 1.0, 1.0, det_center=(0.0, 0.0))
-
-    assert fbp_mod._parallel_fbp_z_integer_tile_config(grid, det) == ((16, 8, 4), 4)
-
-
 @pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
 def test_pallas_parallel_fbp_helper_changes_with_projection_input():
     fbp_mod = import_module("tomojax.recon.fbp")
