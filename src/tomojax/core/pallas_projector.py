@@ -1365,7 +1365,6 @@ def _backproject_kernel(
     dix = step_size32 * ey_x / jnp.float32(vx)
     diy = step_size32 * ey_y / jnp.float32(vy)
     diz = step_size32 * ey_z / jnp.float32(vz)
-    last_step = jnp.float32(max(n_steps - 1, 0))
     ray_vals = plt.load(image_ref.at[det_v, det_u], mask=in_detector, other=0.0) * step_size32
 
     def body(s, carry):
@@ -1385,14 +1384,45 @@ def _backproject_kernel(
         )
         return ix - dix, iy - diy, iz - diz
 
-    init = (
-        ix0 + dix * last_step,
-        iy0 + diy * last_step,
-        iz0 + diz * last_step,
-    )
     if unroll is None:
-        jax.lax.fori_loop(0, n_steps, body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        tile_last_step = jnp.maximum(tile_steps - jnp.int32(1), jnp.int32(0)).astype(
+            jnp.float32
+        )
+
+        def tile_body(s, carry):
+            ix, iy, iz = carry
+            original_step = tile_steps - jnp.int32(1) - s
+            active = in_detector & (original_step < n_steps_ray)
+            _trilinear_atomic_add(
+                out_ref,
+                ray_vals,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+                active=active,
+            )
+            return ix - dix, iy - diy, iz - diz
+
+        tile_init = (
+            ix0 + dix * tile_last_step,
+            iy0 + diy * tile_last_step,
+            iz0 + diz * tile_last_step,
+        )
+        jax.lax.fori_loop(0, tile_steps, tile_body, tile_init)
     else:
+        last_step = jnp.float32(max(n_steps - 1, 0))
+        init = (
+            ix0 + dix * last_step,
+            iy0 + diy * last_step,
+            iz0 + diz * last_step,
+        )
         jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
 
 
@@ -1667,7 +1697,11 @@ def _projector_parallel_z_views_kernel(
         iy0,
     )
     if unroll is None:
-        acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        acc, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
     else:
         acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
@@ -1815,7 +1849,11 @@ def _projector_residual_sse_kernel(
         iz0,
     )
     if unroll is None:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
     else:
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     target = plt.load(target_ref.at[view_idx, det_v, det_u], mask=in_detector, other=0.0)
@@ -2337,7 +2375,11 @@ def _projector_kernel_cached(
         iz0,
     )
     if unroll is None:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
     else:
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     out_ref[...] = acc.astype(jnp.float32)
