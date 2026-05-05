@@ -3700,7 +3700,12 @@ def forward_project_loss_and_grad_T_pallas(
         weights_arr,
         grad_init,
     )
-    return jnp.sum(partial_loss, dtype=jnp.float32), grad_flat.reshape((int(nx), int(ny), int(nz)))
+    loss = (
+        jnp.sum(partial_loss, dtype=jnp.float32)
+        if compute_loss
+        else jnp.asarray(0.0, dtype=jnp.float32)
+    )
+    return loss, grad_flat.reshape((int(nx), int(ny), int(nz)))
 
 
 @functools.lru_cache(maxsize=32)
