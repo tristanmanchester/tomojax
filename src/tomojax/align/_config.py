@@ -119,7 +119,7 @@ class AlignConfig:
     lr_trans: float = 1e-1  # world units
     # Memory/throughput knobs
     views_per_batch: int = 1  # stream one view at a time
-    projector_unroll: int = 1
+    projector_unroll: int = 4
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
     # Solver and regularization

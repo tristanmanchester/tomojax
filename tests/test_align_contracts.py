@@ -20,6 +20,14 @@ def test_alignment_public_facade_stays_narrow() -> None:
     assert callable(align_api.align_multires)
 
 
+def test_alignment_default_projector_unroll_matches_cli_throughput_default() -> None:
+    pipeline = importlib.import_module("tomojax.align.pipeline")
+    align_cli = importlib.import_module("tomojax.cli.align")
+
+    assert pipeline.AlignConfig().projector_unroll == 4
+    assert align_cli._build_parser().parse_args(["--data", "in.nxs", "--out", "out.nxs"]).projector_unroll == 4
+
+
 @pytest.mark.parametrize(
     "symbol",
     [

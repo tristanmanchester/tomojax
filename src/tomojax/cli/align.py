@@ -243,8 +243,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--projector-unroll",
         type=int,
-        default=1,
-        help="Projector loop unroll factor for differentiable alignment paths (default: 1)",
+        default=4,
+        help="Projector loop unroll factor for differentiable alignment paths (default: 4)",
     )
     p.add_argument(
         "--spdhg-seed",
