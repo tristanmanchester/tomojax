@@ -10,8 +10,10 @@ retype every flag.
 Values are resolved in this order (later sources win):
 
 1. Built-in defaults (hardcoded in the CLI)
-2. TOML config file (`--config`)
-3. Explicit CLI flags
+2. Alignment profile defaults (`align_profile = "lightning"` or
+   `"tortoise"`)
+3. TOML config file (`--config`)
+4. Explicit CLI flags
 
 An explicit flag always overrides the matching TOML key:
 
@@ -93,8 +95,9 @@ out = "runs/align_from_config.nxs"
 outer_iters = 4
 recon_iters = 25
 recon_algo = "fista"
+align_profile = "lightning"
 lambda_tv = 0.003
-regulariser = "tv"
+regulariser = "huber_tv"
 levels = [4, 2, 1]
 opt_method = "gn"
 gn_damping = 0.001
@@ -117,6 +120,10 @@ optimise_dofs = ["dx", "dz"]
 
 # Executable setup/pose schedule. Mutually exclusive with optimise_dofs.
 # schedule = "setup_safe"
+
+# Reference/debug posture. This switches profile defaults toward JAX,
+# FP32, TV, per-view pose, and richer diagnostics unless overridden.
+# align_profile = "tortoise"
 
 # Loss schedule (per pyramid level)
 loss_schedule = "4:phasecorr,2:ssim,1:l2_otsu"

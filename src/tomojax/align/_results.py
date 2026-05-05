@@ -22,6 +22,10 @@ class AlignInfo(TypedDict):
     stopped_by_observer: bool
     observer_action: ObserverAction
     wall_time_total: float
+    align_profile: str
+    profile_policy: MetadataDict
+    quality_tier: str
+    fallback_policy: str
     pose_model: str
     pose_model_variables: int
     per_view_variables: int
@@ -52,6 +56,10 @@ class AlignMultiresInfo(TypedDict):
     observer_action: ObserverAction
     total_outer_iters: int
     wall_time_total: float
+    align_profile: str
+    profile_policy: MetadataDict
+    quality_tier: str
+    fallback_policy: str
     pose_model: str
     pose_model_variables: int | None
     per_view_variables: int | None
@@ -159,10 +167,12 @@ def record_reconstruction_info(
         try:
             lhist = list(losses)
             if lhist:
-                stat["recon_loss_first"] = float(lhist[0])
-                stat["recon_loss_last"] = float(lhist[-1])
-                stat["recon_loss_min"] = float(min(lhist))
-                if recon_algo == "fista":
+                loss_alias_only = bool(info_rec.get("loss_alias_only", False))
+                if not loss_alias_only:
+                    stat["recon_loss_first"] = float(lhist[0])
+                    stat["recon_loss_last"] = float(lhist[-1])
+                    stat["recon_loss_min"] = float(min(lhist))
+                if recon_algo == "fista" and not loss_alias_only:
                     stat["fista_first"] = float(lhist[0])
                     stat["fista_last"] = float(lhist[-1])
                     stat["fista_min"] = float(min(lhist))
@@ -209,6 +219,10 @@ def enrich_multires_stage_stat(
         enriched.setdefault("schedule_stage_index", int(stage.index))
         enriched.setdefault("schedule_stage_name", stage.name)
         enriched.setdefault("schedule_stage_active_dofs", ",".join(stage.active_dofs))
+        enriched.setdefault("schedule_stage_role", stage.stage_role)
+        enriched.setdefault("schedule_stage_quality_tier", stage.quality_tier)
+        enriched.setdefault("schedule_stage_differentiability", stage.differentiability)
+        enriched.setdefault("schedule_stage_speed_claim_eligible", stage.speed_claim_eligible)
         enriched.setdefault("gauge_policy", stage.gauge_policy)
         enriched.setdefault("gauge_status", stage.gauge_decision.status)
         enriched.setdefault("gauge_decision", stage.gauge_decision.to_dict())

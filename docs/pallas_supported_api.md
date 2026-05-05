@@ -1,22 +1,25 @@
 # Supported Pallas API Contract
 
-TomoJAX uses JAX as the default numerical and differentiability contract. Pallas
-accelerators are supported only where a caller explicitly requests them and the
-runtime support check accepts the geometry, dtype, and backend.
+TomoJAX alignment is now lightning-first. The `lightning` alignment profile
+requests Pallas for supported hot paths by default; `tortoise` keeps the older
+JAX/FP32/reference posture. Pallas support is still explicit at each API surface:
+the runtime support check must accept the geometry, detector grid, dtype, and
+backend before a Pallas path can be reported as the actual backend.
 
 ## Backend Selection
 
 Supported public backend values are:
 
-- `jax`: default reference implementation and gradient-safe alignment path.
-- `pallas`: opt-in accelerator request. Unsupported or gradient-critical uses
+- `jax`: reference implementation and gradient-safe fallback path.
+- `pallas`: accelerator request. Unsupported or gradient-critical uses
   fall back to `jax` or raise a documented validation error at the Python/API
   boundary.
 
 Alignment CLI usage:
 
 ```text
-tomojax-align --projector-backend jax
+tomojax-align --align-profile tortoise
+tomojax-align --align-profile lightning --projector-backend jax
 tomojax-align --projector-backend pallas
 ```
 
@@ -28,10 +31,11 @@ projector_backend = "pallas"
 
 ## Alignment-First Differentiability
 
-Alignment-critical paths must remain gradient-safe. When an alignment objective
-needs derivatives with respect to pose or setup geometry, a Pallas request uses
-JAX fallback unless the Pallas derivative path is explicitly supported and
-tested for that surface.
+Differentiability is a stage property, not a global lightning promise. When an
+alignment stage needs derivatives with respect to pose or setup geometry, a
+Pallas request uses JAX fallback unless the Pallas derivative path is explicitly
+supported and tested for that surface. Proposal and scoring stages may be
+performance-only when downstream refinement or verification accepts the result.
 
 This means a Pallas request may still report:
 

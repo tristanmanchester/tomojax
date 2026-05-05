@@ -42,6 +42,11 @@ from ..align.pipeline import (
     AlignResumeState,
     AlignMultiresResumeState,
 )
+from ..align._profiles import (
+    normalize_alignment_profile,
+    profile_policy_from_config,
+    resolve_profiled_cli_defaults,
+)
 from ..align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
 from ..calibration.manifest import build_calibrated_geometry_metadata_patch
 from ..utils.logging import setup_logging, log_jax_env
@@ -207,6 +212,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
     p.add_argument("--data", help="Input .nxs")
+    p.add_argument(
+        "--align-profile",
+        choices=["lightning", "tortoise"],
+        default="lightning",
+        help=(
+            "High-level alignment posture: lightning is the default aggressive path; "
+            "tortoise favors JAX/FP32/reference-oriented behavior"
+        ),
+    )
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
     p.add_argument(
@@ -607,6 +621,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> dict[str, object]:
     return {
+        "align_profile": str(args.align_profile),
         "roi": str(args.roi),
         "grid": args.grid,
         "requested_gather_dtype": str(args.gather_dtype),
@@ -617,6 +632,8 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "recon_positivity": bool(args.recon_positivity),
         "projector_unroll": int(args.projector_unroll),
         "projector_backend": str(args.projector_backend),
+        "quality_tier": str(getattr(args, "quality_tier", "")),
+        "fallback_policy": str(getattr(args, "fallback_policy", "")),
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
@@ -818,6 +835,53 @@ def _build_align_cli_run_plan(
         validate_loss_schedule_levels(loss_config, levels if levels is not None else [1])
     except ValueError as exc:
         parser.error(str(exc))
+    try:
+        args.align_profile = normalize_alignment_profile(args.align_profile)
+    except ValueError as exc:
+        parser.error(str(exc))
+    configured_keys = set(config_metadata.get("explicit_cli_keys", [])) | set(
+        config_metadata.get("config_file_values", {}).keys()
+    )
+    profile_options = resolve_profiled_cli_defaults(
+        align_profile=args.align_profile,
+        current={
+            "projector_backend": args.projector_backend,
+            "gather_dtype": args.gather_dtype,
+            "regulariser": args.regulariser,
+            "recon_algo": args.recon_algo,
+            "views_per_batch": args.views_per_batch,
+            "checkpoint_projector": args.checkpoint_projector,
+            "pose_model": args.pose_model,
+        },
+        configured_keys=configured_keys,
+    )
+    args.projector_backend = str(profile_options["projector_backend"])
+    args.gather_dtype = str(profile_options["gather_dtype"])
+    args.regulariser = str(profile_options["regulariser"])
+    args.recon_algo = str(profile_options["recon_algo"])
+    args.views_per_batch = int(profile_options["views_per_batch"])
+    args.checkpoint_projector = bool(profile_options["checkpoint_projector"])
+    args.pose_model = str(profile_options["pose_model"])
+    args.quality_tier = str(profile_options["quality_tier"])
+    args.fallback_policy = str(profile_options["fallback_policy"])
+    if "schedule" not in configured_keys and optimise_dofs is None:
+        args.schedule = "lightning_pose" if args.align_profile == "lightning" else "tortoise_pose"
+    config_metadata["profile_options"] = dict(profile_options)
+    effective_options = config_metadata.get("effective_options")
+    if isinstance(effective_options, dict):
+        for key in (
+            "align_profile",
+            "projector_backend",
+            "gather_dtype",
+            "regulariser",
+            "recon_algo",
+            "views_per_batch",
+            "checkpoint_projector",
+            "pose_model",
+            "quality_tier",
+            "fallback_policy",
+        ):
+            effective_options[key] = getattr(args, key)
 
     meta = load_nxtomo(args.data)
     geometry_meta = meta.geometry_inputs()
@@ -852,6 +916,7 @@ def _build_align_cli_run_plan(
         gather_dtype = _default_gather_dtype()
 
     cfg = AlignConfig(
+        align_profile=str(args.align_profile),
         outer_iters=args.outer_iters,
         recon_iters=args.recon_iters,
         recon_algo=str(args.recon_algo),
@@ -866,6 +931,8 @@ def _build_align_cli_run_plan(
         views_per_batch=int(args.views_per_batch),
         projector_unroll=int(args.projector_unroll),
         projector_backend=str(args.projector_backend),
+        quality_tier=str(args.quality_tier),
+        fallback_policy=str(args.fallback_policy),
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=gather_dtype,
         opt_method=str(args.opt_method),
@@ -901,6 +968,8 @@ def _build_align_cli_run_plan(
         ),
         mask_vol=str(args.mask_vol),
     )
+    if schedule_metadata is not None:
+        schedule_metadata["profile_policy"] = profile_policy_from_config(cfg).to_dict()
     recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
         grid,
         detector,
@@ -1286,6 +1355,8 @@ def _build_alignment_manifest_payload_from_result(
         "input_projection_shape": list(plan.meta.projections.shape),
         "reconstruction_grid": plan.recon_grid.to_dict(),
         "detector": plan.detector.to_dict(),
+        "align_profile": str(args.align_profile),
+        "profile_policy": profile_policy_from_config(plan.cfg).to_dict(),
         "roi": {
             "requested": str(args.roi),
             "is_parallel": bool(plan.meta.geometry_type == "parallel"),
@@ -1302,6 +1373,8 @@ def _build_alignment_manifest_payload_from_result(
         "recon_positivity": bool(args.recon_positivity),
         "projector_unroll": int(args.projector_unroll),
         "projector_backend": str(args.projector_backend),
+        "quality_tier": str(getattr(args, "quality_tier", "")),
+        "fallback_policy": str(getattr(args, "fallback_policy", "")),
         "checkpoint_projector": bool(args.checkpoint_projector),
         "transfer_guard": str(args.transfer_guard),
         "levels": plan.run_levels,

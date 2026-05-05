@@ -24,6 +24,7 @@ from ..core.validation import (
 from ..utils.fov import cylindrical_mask_xy
 from ..utils.logging import format_duration, progress_iter
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
+from ._profiles import profile_policy_from_config
 from .objectives.loss_adapters import LossAdapter, build_loss_adapter
 from .objectives.loss_specs import (
     loss_is_within_relative_tolerance,
@@ -1571,6 +1572,7 @@ def align(
         api_surface="alignment.pose_objective",
         gather_dtype=cfg.gather_dtype,
     ).to_dict()
+    profile_policy = profile_policy_from_config(cfg).to_dict()
 
     iter_range = range(start_outer_iter, int(cfg.outer_iters))
     for it in progress_iter(
@@ -1587,6 +1589,10 @@ def align(
             "objective_provenance": dict(active_objective_provenance),
             "backend_provenance": dict(backend_provenance),
             "outer_loss_kind": active_loss_name,
+            "align_profile": str(cfg.align_profile),
+            "quality_tier": str(cfg.quality_tier),
+            "fallback_policy": str(cfg.fallback_policy),
+            "profile_policy": dict(profile_policy),
         }
         outer_start = time.perf_counter()
 
@@ -1701,6 +1707,10 @@ def align(
         "stopped_by_observer": stopped_by_observer,
         "observer_action": observer_action,
         "wall_time_total": float(wall_total),
+        "align_profile": str(cfg.align_profile),
+        "profile_policy": dict(profile_policy),
+        "quality_tier": str(cfg.quality_tier),
+        "fallback_policy": str(cfg.fallback_policy),
         "pose_model": motion_model.name,
         "pose_model_variables": int(motion_model.variable_count),
         "per_view_variables": int(motion_model.per_view_variable_count),

@@ -1,7 +1,7 @@
 ---
 title: "feat: Build the lightning alignment engine"
 type: feat
-status: active
+status: completed
 date: 2026-05-05
 origin: docs/brainstorms/2026-05-05-lightning-alignment-engine-requirements.md
 ---

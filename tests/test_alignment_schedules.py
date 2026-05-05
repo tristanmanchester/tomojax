@@ -16,6 +16,23 @@ def test_pose_only_schedule_uses_fixed_volume_pose_stage():
     assert schedule.stages[0].objective_kind == "fixed_volume"
     assert schedule.stages[0].optimizer == "gn"
     assert schedule.stages[0].active_dofs == ("alpha", "beta", "phi", "dx", "dz")
+    assert schedule.stages[0].stage_role == "refine"
+
+
+def test_lightning_and_tortoise_pose_presets_record_profile_intent():
+    lightning = schedule_preset("lightning_pose")
+    tortoise = schedule_preset("tortoise_pose")
+
+    assert [stage.stage_role for stage in lightning.stages] == ["proposal", "refine"]
+    assert lightning.stages[0].differentiability == "performance_only"
+    assert lightning.stages[0].quality_tier == "fast"
+    assert lightning.stages[0].speed_claim_eligible is True
+    assert lightning.stages[1].differentiability == "gradient_safe"
+    assert lightning.stages[1].quality_tier == "fast"
+    assert lightning.stages[1].speed_claim_eligible is True
+    assert [stage.stage_role for stage in tortoise.stages] == ["refine"]
+    assert tortoise.stages[0].quality_tier == "reference"
+    assert tortoise.stages[0].speed_claim_eligible is False
 
 
 def test_pose_parity_stage_presets_use_fixed_volume_gn():
@@ -37,6 +54,7 @@ def test_cor_schedule_activates_only_detector_u_and_bilevel_cv():
     assert stage.active_dofs == ("det_u_px",)
     assert stage.objective_kind == "bilevel_cv"
     assert stage.optimizer == "validation_lm"
+    assert stage.stage_role == "setup"
 
 
 def test_setup_safe_stages_setup_then_pose_polish():
@@ -63,12 +81,15 @@ def test_resolved_setup_safe_executes_as_separate_stages():
         "pose_polish",
     ]
     assert resolved.stages[0].active_geometry_dofs == ("det_u_px",)
+    assert resolved.stages[0].stage_role == "setup"
     assert resolved.stages[1].active_geometry_dofs == ("detector_roll_deg",)
     assert resolved.stages[2].active_geometry_dofs == (
         "axis_rot_x_deg",
         "axis_rot_y_deg",
     )
     assert resolved.stages[3].active_pose_dofs == ("alpha", "beta", "phi", "dx", "dz")
+    assert resolved.stages[3].stage_role == "refine"
+    assert resolved.to_dict()["stages"][0]["stage_role"] == "setup"
     assert all(stage.maxiter == 3 for stage in resolved.stages)
     assert resolved.to_dict()["stages"][0]["gauge_decision"]["status"] == "ok"
 

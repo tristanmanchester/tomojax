@@ -6,6 +6,13 @@ from typing import Literal, Mapping, TypeAlias, cast
 from ..core.geometry.base import Geometry
 from ..core.backend_policy import ProjectorBackendInput, normalize_projector_backend
 from ..recon.types import Regulariser
+from ._profiles import (
+    AlignmentProfileInput,
+    FallbackPolicy,
+    QualityTier,
+    alignment_profile_policy,
+    normalize_alignment_profile,
+)
 from .objectives.loss_specs import AlignmentLossConfig, L2OtsuLossSpec
 from .model.diagnostics import GaugePolicy
 from .model.dofs import (
@@ -103,10 +110,11 @@ def _resolved_schedule_for_cfg(
 
 @dataclass
 class AlignConfig:
+    align_profile: AlignmentProfileInput = "lightning"
     outer_iters: int = 5
     recon_iters: int = 10
     lambda_tv: float = 0.005
-    regulariser: Regulariser = "tv"
+    regulariser: Regulariser = "huber_tv"
     huber_delta: float = 1e-2
     tv_prox_iters: int = 10
     recon_algo: ReconAlgoInput = "fista"
@@ -119,14 +127,16 @@ class AlignConfig:
     lr_rot: float = 1e-3  # radians
     lr_trans: float = 1e-1  # world units
     # Memory/throughput knobs
-    views_per_batch: int = 1  # stream one view at a time
+    views_per_batch: int = 0  # 0 means use the whole view stack when memory allows
     projector_unroll: int = 1
     checkpoint_projector: bool = True
-    gather_dtype: str = "fp32"
-    projector_backend: ProjectorBackendInput = "jax"
+    gather_dtype: str = "auto"
+    projector_backend: ProjectorBackendInput = "pallas"
+    quality_tier: QualityTier = "fast"
+    fallback_policy: FallbackPolicy = "fallback"
     # Solver and regularization
     opt_method: str = "gn"
-    gn_damping: float = 1e-6
+    gn_damping: float = 1e-3
     lbfgs_maxiter: int = 20
     lbfgs_ftol: float = 1e-6
     lbfgs_gtol: float = 1e-5
@@ -141,7 +151,7 @@ class AlignConfig:
     bounds: DofBounds | str | Mapping[str, object] = field(default_factory=tuple)
     gauge_policy: GaugePolicyInput = "reject"
     gauge_priors: Mapping[str, object] | None = None
-    pose_model: PoseModelInput = "per_view"
+    pose_model: PoseModelInput = "spline"
     knot_spacing: int = 8
     degree: int = 3
     gauge_fix: GaugeFixMode = "mean_translation"
@@ -165,6 +175,21 @@ class AlignConfig:
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
 
     def __post_init__(self) -> None:
+        self.align_profile = normalize_alignment_profile(self.align_profile)
+        profile_policy = alignment_profile_policy(self.align_profile)
+        if self.align_profile == "tortoise":
+            self.projector_backend = profile_policy.projector_backend
+            self.gather_dtype = profile_policy.gather_dtype
+            self.regulariser = profile_policy.regulariser
+            self.recon_algo = profile_policy.recon_algo  # type: ignore[assignment]
+            self.views_per_batch = int(profile_policy.views_per_batch)
+            self.checkpoint_projector = bool(profile_policy.checkpoint_projector)
+            self.pose_model = profile_policy.pose_model  # type: ignore[assignment]
+            self.quality_tier = profile_policy.quality_tier
+            self.fallback_policy = profile_policy.fallback_policy
+        else:
+            self.quality_tier = profile_policy.quality_tier
+            self.fallback_policy = profile_policy.fallback_policy
         recon_algo = str(self.recon_algo).strip().lower().replace("-", "_")
         if recon_algo in {"fista_tv"}:
             recon_algo = "fista"
@@ -174,6 +199,13 @@ class AlignConfig:
         if self.recon_algo not in {"fista", "spdhg"}:
             raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
         self.projector_backend = normalize_projector_backend(self.projector_backend)
+        self.gather_dtype = str(self.gather_dtype).strip().lower()
+        self.quality_tier = cast(QualityTier, str(self.quality_tier).strip().lower())
+        if self.quality_tier not in {"fast", "reference"}:
+            raise ValueError("quality_tier must be one of 'fast' or 'reference'")
+        self.fallback_policy = cast(FallbackPolicy, str(self.fallback_policy).strip().lower())
+        if self.fallback_policy not in {"fallback", "strict"}:
+            raise ValueError("fallback_policy must be one of 'fallback' or 'strict'")
         opt_method = str(self.opt_method).strip().lower().replace("-", "_")
         if opt_method in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
             opt_method = "lbfgs"

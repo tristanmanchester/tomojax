@@ -6,6 +6,12 @@ reconstruction with fixed-volume pose updates. Setup-geometry alignment
 uses executable validation-LM stages inside the same multiresolution
 workflow.
 
+Alignment defaults to the `lightning` profile. Lightning is aggressive:
+it prefers Pallas where supported, `huber_tv` inner reconstruction,
+automatic gather precision, smooth pose models, fast diagnostics, and
+stage-specific proposal/refinement behavior. Use `--align-profile
+tortoise` for the slower JAX/FP32/reference-oriented path.
+
 ```
 tomojax-align [--config <config.toml>] --data <in.nxs> \
   --out <out.nxs> [options...]
@@ -31,7 +37,8 @@ chosen loss. You control this alternation with these flags.
 - `--tv-prox-iters` -- inner TV proximal iterations for FISTA
   (default: 10). We recommend increasing to 20--30 for noisy data.
 - `--regulariser tv|huber_tv` -- regulariser for the inner
-  reconstruction (default: `tv`). `huber_tv` is smoother near zero
+  reconstruction (default under `lightning`: `huber_tv`; default under
+  `tortoise`: `tv`). `huber_tv` is smoother near zero
   gradients; tune `--huber-delta` (default: 0.01) to control the
   transition.
 - `--recon-positivity` / `--no-recon-positivity` -- positivity
@@ -103,16 +110,18 @@ selection flag.
 
 ## Pose models
 
-The default `per_view` model optimises one independent 5-DOF vector
-per view. Smooth models reduce the number of free parameters and
-are better for drift, stage sag, or thermal trends.
+The `lightning` profile defaults to a smooth pose model so early
+alignment spends fewer degrees of freedom before expanding or polishing.
+The `tortoise` profile defaults to `per_view`. Smooth models reduce the
+number of free parameters and are better for drift, stage sag, or thermal
+trends.
 
 - `--pose-model per_view` -- independent parameters per view
-  (default)
+  (reference/tortoise default)
 - `--pose-model polynomial` -- fit each active DOF as a
   low-degree polynomial over the scan coordinate
 - `--pose-model spline` -- optimise smooth knot trajectories and
-  expand them to per-view parameters
+  expand them to per-view parameters (lightning default)
 
 **Shared model flags:**
 

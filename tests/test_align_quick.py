@@ -129,8 +129,10 @@ def test_align_quick_recovers_small_misalignments():
     assert info["loss"][-1] <= info["loss"][0]
     assert info["recon_algo"] == "fista"
     assert info["outer_stats"][0]["recon_algo"] == "fista"
-    assert "fista_first" in info["outer_stats"][0]
-    assert "recon_loss_first" in info["outer_stats"][0]
+    assert info["outer_stats"][0]["regulariser"] == "huber_tv"
+    assert info["outer_stats"][0]["data_loss_computed"] is False
+    assert "fista_first" not in info["outer_stats"][0]
+    assert "recon_loss_first" not in info["outer_stats"][0]
 
 
 def test_align_huber_reconstruction_skips_unused_diagnostics():

@@ -18,9 +18,14 @@ ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
 OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm"]
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
 ScheduleSource = Literal["preset", "direct", "default", "expert"]
+StageRole = Literal["proposal", "setup", "reconstruction", "refine", "verify"]
+DifferentiabilityRequirement = Literal["gradient_safe", "performance_only", "not_required"]
+StageQualityTier = Literal["fast", "reference", "verify"]
 
 
 PUBLIC_SCHEDULE_PRESETS = (
+    "lightning_pose",
+    "tortoise_pose",
     "pose_only",
     "pose_phi_only",
     "pose_dx_dz_after_phi",
@@ -41,6 +46,10 @@ class AlignmentStage:
     gauge_policy: GaugePolicy = "reject"
     maxiter: int = 12
     early_stop: bool = True
+    stage_role: StageRole = "refine"
+    differentiability: DifferentiabilityRequirement = "gradient_safe"
+    quality_tier: StageQualityTier = "fast"
+    speed_claim_eligible: bool = True
 
     def active_view(self) -> ActiveParameterView:
         return ActiveParameterView.from_dofs(self.active_dofs)
@@ -93,6 +102,10 @@ class AlignmentSchedule:
                     "gauge_policy": stage.gauge_policy,
                     "maxiter": int(stage.maxiter),
                     "early_stop": bool(stage.early_stop),
+                    "stage_role": stage.stage_role,
+                    "differentiability": stage.differentiability,
+                    "quality_tier": stage.quality_tier,
+                    "speed_claim_eligible": bool(stage.speed_claim_eligible),
                 }
                 for stage in self.stages
             ],
@@ -113,6 +126,10 @@ class ResolvedAlignmentStage:
     gauge_decision: GaugeDecision
     maxiter: int
     early_stop: bool
+    stage_role: StageRole
+    differentiability: DifferentiabilityRequirement
+    quality_tier: StageQualityTier
+    speed_claim_eligible: bool
 
     @property
     def scoped_dofs(self) -> ScopedAlignmentDofs:
@@ -136,6 +153,10 @@ class ResolvedAlignmentStage:
             "gauge_decision": self.gauge_decision.to_dict(),
             "maxiter": int(self.maxiter),
             "early_stop": bool(self.early_stop),
+            "stage_role": self.stage_role,
+            "differentiability": self.differentiability,
+            "quality_tier": self.quality_tier,
+            "speed_claim_eligible": bool(self.speed_claim_eligible),
         }
 
 
@@ -189,6 +210,43 @@ class ResolvedAlignmentSchedule:
 
 
 _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
+    "lightning_pose": (
+        AlignmentStage(
+            name="lightning_pose_proposal",
+            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+            objective_kind="fixed_volume",
+            optimizer="gn",
+            gauge_policy="anchor_mean",
+            maxiter=1,
+            early_stop=False,
+            stage_role="proposal",
+            differentiability="performance_only",
+            quality_tier="fast",
+        ),
+        AlignmentStage(
+            name="lightning_pose_refine",
+            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+            objective_kind="fixed_volume",
+            optimizer="gn",
+            gauge_policy="anchor_mean",
+            stage_role="refine",
+            differentiability="gradient_safe",
+            quality_tier="fast",
+        ),
+    ),
+    "tortoise_pose": (
+        AlignmentStage(
+            name="tortoise_pose_refine",
+            active_dofs=("alpha", "beta", "phi", "dx", "dz"),
+            objective_kind="fixed_volume",
+            optimizer="gn",
+            gauge_policy="anchor_mean",
+            stage_role="refine",
+            differentiability="gradient_safe",
+            quality_tier="reference",
+            speed_claim_eligible=False,
+        ),
+    ),
     "pose_only": (
         AlignmentStage(
             name="pose_only",
@@ -221,6 +279,9 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             active_dofs=("det_u_px",),
             objective_kind="bilevel_cv",
             optimizer="validation_lm",
+            stage_role="setup",
+            differentiability="gradient_safe",
+            quality_tier="reference",
         ),
     ),
     "detector_roll": (
@@ -229,6 +290,9 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             active_dofs=("detector_roll_deg",),
             objective_kind="bilevel_cv",
             optimizer="validation_lm",
+            stage_role="setup",
+            differentiability="gradient_safe",
+            quality_tier="reference",
         ),
     ),
     "axis_direction": (
@@ -238,6 +302,9 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             objective_kind="bilevel_cv",
             optimizer="validation_lm",
             gauge_policy="diagnose_only",
+            stage_role="setup",
+            differentiability="gradient_safe",
+            quality_tier="reference",
         ),
     ),
     "lamino_tilt": (
@@ -247,15 +314,27 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             objective_kind="bilevel_cv",
             optimizer="validation_lm",
             gauge_policy="diagnose_only",
+            stage_role="setup",
+            differentiability="gradient_safe",
+            quality_tier="reference",
         ),
     ),
     "setup_safe": (
-        AlignmentStage("cor", ("det_u_px",), "bilevel_cv", "validation_lm"),
+        AlignmentStage(
+            "cor",
+            ("det_u_px",),
+            "bilevel_cv",
+            "validation_lm",
+            stage_role="setup",
+            quality_tier="reference",
+        ),
         AlignmentStage(
             "detector_roll",
             ("detector_roll_deg",),
             "bilevel_cv",
             "validation_lm",
+            stage_role="setup",
+            quality_tier="reference",
         ),
         AlignmentStage(
             "axis_direction",
@@ -263,6 +342,8 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             "bilevel_cv",
             "validation_lm",
             gauge_policy="diagnose_only",
+            stage_role="setup",
+            quality_tier="reference",
         ),
         AlignmentStage(
             "pose_polish",
@@ -270,6 +351,8 @@ _PUBLIC_PRESET_STAGES: dict[str, tuple[AlignmentStage, ...]] = {
             "fixed_volume",
             "gn",
             gauge_policy="anchor_mean",
+            stage_role="refine",
+            quality_tier="reference",
         ),
     ),
 }
@@ -300,6 +383,8 @@ def schedule_preset(
                     objective_kind="bilevel_cv",
                     optimizer="validation_lm",
                     gauge_policy=gauge_policy or "prior_required",
+                    stage_role="setup",
+                    quality_tier="reference",
                 ),
             ),
         ).validate()
@@ -371,6 +456,8 @@ def resolve_alignment_schedule(
                     objective_kind="bilevel_cv",
                     optimizer="validation_lm",
                     gauge_policy=gauge_policy,
+                    stage_role="setup",
+                    quality_tier="reference",
                 ),
                 AlignmentStage(
                     name="direct_pose",
@@ -378,6 +465,7 @@ def resolve_alignment_schedule(
                     objective_kind="fixed_volume",
                     optimizer=_normalize_pose_optimizer(opt_method),
                     gauge_policy=gauge_policy,
+                    stage_role="refine",
                 ),
             )
         elif scoped.active_geometry_dofs:
@@ -388,6 +476,8 @@ def resolve_alignment_schedule(
                     objective_kind="bilevel_cv",
                     optimizer="validation_lm",
                     gauge_policy=gauge_policy,
+                    stage_role="setup",
+                    quality_tier="reference",
                 ),
             )
         else:
@@ -398,6 +488,7 @@ def resolve_alignment_schedule(
                     objective_kind="fixed_volume",
                     optimizer=_normalize_pose_optimizer(opt_method),
                     gauge_policy=gauge_policy,
+                    stage_role="refine",
                 ),
             )
         base_schedule = AlignmentSchedule(name=name, stages=stages).validate()
@@ -453,6 +544,10 @@ def resolve_alignment_schedule(
                 gauge_decision=decision,
                 maxiter=maxiter,
                 early_stop=bool(stage.early_stop if early_stop is None else early_stop),
+                stage_role=stage.stage_role,
+                differentiability=stage.differentiability,
+                quality_tier=stage.quality_tier,
+                speed_claim_eligible=bool(stage.speed_claim_eligible),
             )
         )
     if not resolved_stages:

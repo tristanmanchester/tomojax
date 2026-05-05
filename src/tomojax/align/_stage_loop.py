@@ -26,11 +26,16 @@ from .model.gauge import (
     active_gauge_dofs,
     normalize_gauge_fix,
 )
-from .geometry.geometry_applier import BaseGeometryArrays, apply_setup_to_detector_grid
+from .geometry.geometry_applier import (
+    BaseGeometryArrays,
+    apply_alignment_state,
+    apply_setup_to_detector_grid,
+)
 from .model.schedules import (
     ResolvedAlignmentStage,
 )
 from .model.state import PoseState, alignment_state_from_checkpoint
+from .model.dofs import DOF_INDEX
 from .geometry.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
@@ -60,8 +65,19 @@ from ._config import (
     AlignConfig,
     _resolved_schedule_for_cfg,
 )
+from ._profiles import profile_policy_from_config
+from .objectives.loss_adapters import build_loss_adapter
+from .proposals import ProposalCandidate, score_pose_stack_candidates
 
 _SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
+
+_PROPOSAL_STEP_BY_DOF = {
+    "alpha": 0.01,
+    "beta": 0.01,
+    "phi": 0.02,
+    "dx": 1.0,
+    "dz": 1.0,
+}
 
 
 class MultiresLevel(TypedDict):
@@ -248,6 +264,116 @@ def _pose_stage_optimizer_or_raise(stage: ResolvedAlignmentStage) -> str:
     )
 
 
+def _proposal_candidates_for_pose_stage(
+    *,
+    stage: ResolvedAlignmentStage,
+    base: BaseGeometryArrays,
+    setup_alignment_state: object,
+    params5: jnp.ndarray,
+    volume: jnp.ndarray,
+) -> tuple[ProposalCandidate, ...]:
+    state = setup_alignment_state.replace(
+        pose=PoseState(params5),
+        volume=volume,
+    )
+    baseline = apply_alignment_state(base, state).pose_stack
+    candidates: list[ProposalCandidate] = [
+        ProposalCandidate(
+            "baseline",
+            baseline,
+            {
+                "kind": "baseline",
+                "active_pose_dofs": list(stage.active_pose_dofs),
+            },
+        )
+    ]
+    for dof in stage.active_pose_dofs:
+        col = DOF_INDEX.get(dof)
+        if col is None:
+            continue
+        step = float(_PROPOSAL_STEP_BY_DOF.get(dof, 0.0))
+        if step <= 0.0:
+            continue
+        for sign, label in ((-1.0, "minus"), (1.0, "plus")):
+            candidate_params = params5.at[:, col].add(jnp.float32(sign * step))
+            candidate_state = setup_alignment_state.replace(
+                pose=PoseState(candidate_params),
+                volume=volume,
+            )
+            candidates.append(
+                ProposalCandidate(
+                    f"{dof}_{label}",
+                    apply_alignment_state(base, candidate_state).pose_stack,
+                    {
+                        "kind": "uniform_pose_perturbation",
+                        "dof": dof,
+                        "delta": float(sign * step),
+                    },
+                )
+            )
+    return tuple(candidates)
+
+
+def _apply_pose_proposal_stage(
+    *,
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig,
+    stage: ResolvedAlignmentStage,
+    active_loss_spec: object,
+    setup_alignment_state: object,
+    level_factor: int,
+    x_lvl: jnp.ndarray,
+    params5: jnp.ndarray,
+) -> tuple[jnp.ndarray, dict[str, object]]:
+    if not stage.active_pose_dofs:
+        return params5, {
+            "proposal_status": "skipped",
+            "proposal_reason": "proposal stage has no active pose DOFs",
+        }
+    base = BaseGeometryArrays.from_geometry(
+        geometry,
+        detector,
+        level_factor=int(level_factor),
+    )
+    effective = apply_alignment_state(
+        base,
+        setup_alignment_state.replace(pose=PoseState(params5), volume=x_lvl),
+    )
+    adapter = build_loss_adapter(active_loss_spec, projections)
+    candidates = _proposal_candidates_for_pose_stage(
+        stage=stage,
+        base=base,
+        setup_alignment_state=setup_alignment_state,
+        params5=params5,
+        volume=x_lvl,
+    )
+    result = score_pose_stack_candidates(
+        candidates=candidates,
+        grid=grid,
+        detector=detector,
+        volume=x_lvl,
+        det_grid=effective.det_grid,
+        targets=projections,
+        loss_adapter=adapter,
+        projector_backend=cfg.projector_backend,
+        gather_dtype=cfg.gather_dtype,
+        views_per_batch=cfg.views_per_batch,
+        projector_unroll=cfg.projector_unroll,
+        checkpoint_projector=cfg.checkpoint_projector,
+    )
+    best_params = params5
+    if result.improved:
+        best_meta = result.candidate_metadata[result.best_index]
+        dof = best_meta.get("dof")
+        delta = best_meta.get("delta")
+        if isinstance(dof, str) and dof in DOF_INDEX and delta is not None:
+            best_params = params5.at[:, DOF_INDEX[dof]].add(jnp.float32(float(delta)))
+    return best_params, result.to_dict()
+
+
 def _run_multires_level_stages(
     *,
     geometry: Geometry,
@@ -283,6 +409,10 @@ def _run_multires_level_stages(
         "stopped_by_observer": False,
         "observer_action": "continue",
         "wall_time_total": 0.0,
+        "align_profile": str(cfg.align_profile),
+        "profile_policy": profile_policy_from_config(cfg).to_dict(),
+        "quality_tier": str(cfg.quality_tier),
+        "fallback_policy": str(cfg.fallback_policy),
         "pose_model": str(cfg.pose_model),
         "pose_model_variables": 0,
         "per_view_variables": 0,
@@ -306,6 +436,57 @@ def _run_multires_level_stages(
             if int(stage.index) == level_resume.resume_stage_index and level_resume.resume_stage_completed:
                 continue
         stage_global_start = level_resume.global_before_level + len(level_stats)
+        if stage.stage_role == "proposal":
+            proposal_start = time.perf_counter()
+            loss_before = float(level_losses[-1]) if level_losses else None
+            params5, proposal_info = _apply_pose_proposal_stage(
+                geometry=geometry,
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                cfg=cfg,
+                stage=stage,
+                active_loss_spec=active_loss_spec,
+                setup_alignment_state=setup_alignment_state,
+                level_factor=int(level_factor),
+                x_lvl=x_lvl,
+                params5=params5,
+            )
+            setup_alignment_state = setup_alignment_state.replace(
+                pose=PoseState(params5),
+                volume=x_lvl,
+            )
+            proposal_wall_time = time.perf_counter() - proposal_start
+            level_wall_time += proposal_wall_time
+            proposal_loss = proposal_info.get("best_value")
+            if proposal_loss is not None:
+                level_losses.append(float(proposal_loss))
+            stat: OuterStat = {
+                "outer_idx": 1,
+                "loss": float(proposal_loss) if proposal_loss is not None else None,
+                "loss_before": loss_before,
+                "loss_after": float(proposal_loss) if proposal_loss is not None else None,
+                "proposal_status": str(proposal_info.get("proposal_status") or "scored"),
+                "proposal_best_name": str(proposal_info.get("best_name") or ""),
+                "proposal_best_index": int(proposal_info.get("best_index") or 0),
+                "proposal_improved": bool(proposal_info.get("improved") or False),
+                "proposal_candidate_count": len(proposal_info.get("values") or []),
+                "proposal_backend_provenance": dict(
+                    proposal_info.get("backend_provenance") or {}
+                ),
+                "wall_time": float(proposal_wall_time),
+            }
+            enriched = stage_runtime.enrich_stats(
+                [stat],
+                stage=stage,
+                global_start=stage_global_start,
+            )
+            level_stats.extend(enriched)
+            info["wall_time_total"] = float(level_wall_time)
+            info["completed_outer_iters"] = len(level_stats)
+            info["proposal"] = dict(proposal_info)
+            continue
+
         if stage.active_geometry_dofs:
             cfg_stage = replace(
                 cfg,
@@ -777,6 +958,10 @@ def _final_align_multires_info(
         "factors": factors_list,
         "loss_kind": final_loss_kind,
         "recon_algo": str(cfg.recon_algo),
+        "align_profile": str(cfg.align_profile),
+        "profile_policy": profile_policy_from_config(cfg).to_dict(),
+        "quality_tier": str(cfg.quality_tier),
+        "fallback_policy": str(cfg.fallback_policy),
         "stopped_by_observer": stopped_by_observer,
         "observer_action": final_observer_action,
         "total_outer_iters": int(executed_outer_iters),

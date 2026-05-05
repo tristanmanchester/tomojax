@@ -60,6 +60,25 @@ The optional alignment smoke is a workflow and differentiability guard. It can s
 configured alignment path still produces finite gradients and a loss drop, but it is not a
 pose-recovery accuracy claim.
 
+## Alignment Workflow Targets
+
+Alignment benchmarks are the headline optimization surface for TomoJAX. Operator rows are useful
+only when they explain or guard a workflow result. Alignment benchmark rows should record:
+
+- `align_profile`
+- stage role and differentiability requirement
+- requested and actual backend
+- gather dtype and quality tier
+- verification status
+- whether the result is speed-claim eligible
+- alignment wall time, stage wall time, and memory
+- synthetic geometry recovery metrics when ground truth exists
+- reprojection or validation loss when ground truth does not exist
+
+`lightning` results can use performance-only proposal stages and fast inner reconstruction. Those
+rows are valid only when downstream refinement or verification accepts the geometry. `tortoise`
+rows are slower reference/debug comparisons.
+
 ## Entry Points
 
 The repo-owned entry points are:

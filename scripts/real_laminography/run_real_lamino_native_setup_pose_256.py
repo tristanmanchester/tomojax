@@ -371,6 +371,8 @@ def _status(path: Path, **updates: Any) -> None:
             current = json.loads(path.read_text())
         except Exception:
             current = {}
+    if "stage" in updates and "message" not in updates:
+        current.pop("message", None)
     current.update(updates)
     current["updated_at"] = time.time()
     _write_json(path, current)
@@ -500,6 +502,10 @@ def _schedule_dict(schedule: AlignmentSchedule) -> dict[str, Any]:
                 "gauge_policy": stage.gauge_policy,
                 "maxiter": int(stage.maxiter),
                 "early_stop": bool(stage.early_stop),
+                "stage_role": stage.stage_role,
+                "differentiability": stage.differentiability,
+                "quality_tier": stage.quality_tier,
+                "speed_claim_eligible": bool(stage.speed_claim_eligible),
             }
             for stage in schedule.stages
         ],
@@ -526,14 +532,19 @@ def _make_cfg(
 ) -> AlignConfig:
     cfg_bounds = "" if active_setup else bounds
     return AlignConfig(
+        align_profile=str(args.align_profile),
         outer_iters=int(args.outer_iters if outer_iters is None else outer_iters),
         recon_iters=int(args.recon_iters),
         lambda_tv=float(args.lambda_tv),
+        regulariser=str(args.regulariser),
         tv_prox_iters=int(args.tv_prox_iters),
         recon_algo="fista",
         views_per_batch=int(args.views_per_batch),
         checkpoint_projector=True,
         gather_dtype=str(args.gather_dtype),
+        projector_backend=str(args.projector_backend),
+        quality_tier=str(args.quality_tier),
+        fallback_policy=str(args.fallback_policy),
         opt_method="gn",
         gn_damping=float(args.gn_damping),
         optimise_dofs=active_pose or None,
@@ -880,7 +891,11 @@ def run_pose_stage(
             active_dofs=list(active_pose),
         )
         geom_eff = geometry_with_axis_state(geometry, g, d, setup_state)
-        det_grid = level_detector_grid(d, state=setup_state, factor=int(factor))
+        det_grid = (
+            None
+            if bool(ctx.args.canonical_det_grid)
+            else level_detector_grid(d, state=setup_state, factor=int(factor))
+        )
         cfg_level = replace(cfg_base, recon_L=None, loss=resolve_loss_for_level(cfg_base.loss, int(factor)))
         t0 = time.perf_counter()
         x_lvl, params_current, info = align(
@@ -952,7 +967,7 @@ def _final_reconstruct(
     stage_dir.mkdir(parents=True, exist_ok=True)
     _status(ctx.status_path, state="running", stage="05_final", message="final_fista_tv")
     geom_eff = geometry_with_axis_state(geometry, grid, detector, setup_state)
-    det_grid = level_detector_grid(detector, state=setup_state, factor=1)
+    det_grid = None if bool(ctx.args.canonical_det_grid) else level_detector_grid(detector, state=setup_state, factor=1)
     params_jax = jnp.asarray(params5, dtype=jnp.float32)
 
     class _PoseAugmentedGeometry:
@@ -972,8 +987,9 @@ def _final_reconstruct(
         config=FistaConfig(
             iters=max(1, int(ctx.args.recon_iters)),
             lambda_tv=float(ctx.args.lambda_tv),
+            regulariser=str(ctx.args.regulariser),
             tv_prox_iters=int(ctx.args.tv_prox_iters),
-            views_per_batch=max(1, int(ctx.args.views_per_batch)),
+            views_per_batch=None if int(ctx.args.views_per_batch) == 0 else max(1, int(ctx.args.views_per_batch)),
             checkpoint_projector=True,
             gather_dtype=str(ctx.args.gather_dtype),
             positivity=bool(ctx.args.recon_positivity),
@@ -1054,10 +1070,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--recon-iters", type=int, default=40)
     parser.add_argument("--tv-prox-iters", type=int, default=16)
     parser.add_argument("--lambda-tv", type=float, default=0.008)
+    parser.add_argument("--align-profile", choices=["lightning", "tortoise"], default="lightning")
+    parser.add_argument("--projector-backend", choices=["pallas", "jax"], default="pallas")
+    parser.add_argument("--regulariser", choices=["huber_tv", "tv"], default="huber_tv")
+    parser.add_argument("--quality-tier", choices=["fast", "reference"], default="fast")
+    parser.add_argument("--fallback-policy", choices=["fallback", "strict"], default="fallback")
+    parser.add_argument(
+        "--canonical-det-grid",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use the canonical detector grid in pose/final stages. This is a Pallas diagnostic "
+            "mode: it can ignore calibrated detector-grid offsets/roll in those stages."
+        ),
+    )
     parser.add_argument("--projection-background", choices=["none", "view_median", "edge_median"], default="edge_median")
     parser.add_argument("--background-edge-px", type=int, default=16)
     parser.add_argument("--recon-positivity", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--views-per-batch", type=int, default=1)
+    parser.add_argument("--views-per-batch", type=int, default=0)
     parser.add_argument("--gather-dtype", default="bf16")
     parser.add_argument("--gn-damping", type=float, default=1e-3)
     parser.add_argument("--filter", dest="filter_name", default="ramp")
@@ -1065,10 +1095,27 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--early-stop-rel", type=float, default=1e-3)
     parser.add_argument("--early-stop-patience", type=int, default=2)
     parser.add_argument("--snapshot-max-cols", type=int, default=6)
-    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run a reduced real-data diagnostic that still exercises setup, pose, and final reconstruction.",
+    )
     parser.add_argument("--skip-pose", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if bool(args.smoke):
+        args.slab_nz = min(int(args.slab_nz), 48)
+        args.levels_setup = [8]
+        args.levels_phi = [8]
+        args.levels_dx_dz = [8]
+        args.levels_polish = [8]
+        args.outer_iters = min(int(args.outer_iters), 1)
+        args.recon_iters = min(int(args.recon_iters), 3)
+        args.tv_prox_iters = min(int(args.tv_prox_iters), 2)
+        args.snapshot_max_cols = min(int(args.snapshot_max_cols), 4)
+        if int(args.views_per_batch) == 0:
+            args.views_per_batch = 16
+    return args
 
 
 def main() -> int:
@@ -1157,10 +1204,25 @@ def main() -> int:
                 "reconstruction": {
                     "algorithm": "fista_tv",
                     "lambda_tv": float(args.lambda_tv),
+                    "regulariser": str(args.regulariser),
                     "tv_prox_iters": int(args.tv_prox_iters),
                     "positivity": bool(args.recon_positivity),
                     "gather_dtype": str(args.gather_dtype),
                     "views_per_batch": int(args.views_per_batch),
+                    "canonical_det_grid": bool(args.canonical_det_grid),
+                },
+                "alignment_policy": {
+                    "align_profile": str(args.align_profile),
+                    "projector_backend_requested": str(args.projector_backend),
+                    "regulariser": str(args.regulariser),
+                    "quality_tier": str(args.quality_tier),
+                    "fallback_policy": str(args.fallback_policy),
+                    "gather_dtype": str(args.gather_dtype),
+                    "views_per_batch": int(args.views_per_batch),
+                    "canonical_det_grid": bool(args.canonical_det_grid),
+                    "smoke": bool(args.smoke),
+                    "speed_claim_requires_stage_actual_backend": True,
+                    "helper_only_timings_are_not_workflow_claims": True,
                 },
                 "worktree": _commit_info(Path.cwd()),
                 "backend": jax.default_backend(),

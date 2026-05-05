@@ -132,7 +132,7 @@ def test_align_gauge_fix_none_preserves_initial_translation_means():
     )
 
     assert info["gauge_fix"] == "none"
-    np.testing.assert_array_equal(np.asarray(params5), init_params5)
+    np.testing.assert_allclose(np.asarray(params5), init_params5, rtol=1e-6, atol=1e-7)
 
 
 @pytest.mark.parametrize(
@@ -262,6 +262,22 @@ def test_align_gn_reuses_validated_candidate_loss_for_bookkeeping(monkeypatch):
         opt_method="gn",
         views_per_batch=4,
         loss_name="l2",
+    )
+
+    stat = info["outer_stats"][0]
+    assert stat["step_kind"] == "gn"
+    assert stat["loss_after_reused"] is False
+    assert stat["loss_after"] == pytest.approx(stat["loss_after_step"])
+    assert info["loss"][-1] == pytest.approx(stat["loss_after"])
+
+
+def test_align_gn_reuses_validated_candidate_loss_for_per_view_bookkeeping(monkeypatch):
+    _, info = _run_fixed_volume_alignment(
+        monkeypatch,
+        opt_method="gn",
+        views_per_batch=4,
+        loss_name="l2",
+        pose_model="per_view",
     )
 
     stat = info["outer_stats"][0]

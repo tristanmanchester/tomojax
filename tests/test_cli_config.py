@@ -407,6 +407,32 @@ def test_align_config_accepts_projector_backend_from_toml_and_cli_override(tmp_p
     assert metadata["effective_options"]["projector_backend"] == "jax"
 
 
+def test_align_config_accepts_align_profile_from_toml_and_cli_override(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'align_profile = "tortoise"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path), "--align-profile", "lightning"],
+        required=("data", "out"),
+    )
+
+    assert args.align_profile == "lightning"
+    assert metadata["config_file_values"]["align_profile"] == "tortoise"
+    assert "align_profile" in metadata["explicit_cli_keys"]
+    assert metadata["effective_options"]["align_profile"] == "lightning"
+
+
 def test_align_cli_rejects_unknown_dof_name(capsys):
     parser = align_cli._build_parser()
     args, _ = parse_args_with_config(

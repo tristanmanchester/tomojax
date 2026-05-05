@@ -21,6 +21,8 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from tomojax.align.verification import verification_from_manifest
+
 
 _LOSS_RE = re.compile(
     r"Loss\s+([0-9.+\-eE]+)\s+->\s+([0-9.+\-eE]+)\s+\(.*?([-+][0-9.]+)%\)"
@@ -499,10 +501,11 @@ def main() -> None:
     parser.add_argument("--misalignment-trans-px", type=float, default=3.0)
     parser.add_argument("--misalignment-seed", type=int, default=8)
     parser.add_argument("--levels", nargs="+", type=int, default=[1])
+    parser.add_argument("--align-profile", choices=["lightning", "tortoise"], default="lightning")
     parser.add_argument("--outer-iters", type=int, default=3)
     parser.add_argument("--recon-iters", type=int, default=4)
     parser.add_argument("--loss", default="l2")
-    parser.add_argument("--schedule", default="pose_only")
+    parser.add_argument("--schedule", default=None)
     parser.add_argument("--lambda-tv", type=float, default=0.001)
     parser.add_argument("--regulariser", choices=["tv", "huber_tv"], default="tv")
     parser.add_argument("--huber-delta", type=float, default=1e-2)
@@ -526,6 +529,8 @@ def main() -> None:
     align_argv = [
         "--data",
         str(fixture["misaligned"]),
+        "--align-profile",
+        str(args.align_profile),
         "--levels",
         *[str(level) for level in args.levels],
         "--outer-iters",
@@ -544,8 +549,6 @@ def main() -> None:
         str(args.views_per_batch),
         "--projector-unroll",
         str(args.projector_unroll),
-        "--schedule",
-        args.schedule,
         "--loss",
         args.loss,
         "--no-early-stop",
@@ -558,6 +561,8 @@ def main() -> None:
         "--save-manifest",
         str(manifest_json),
     ]
+    if args.schedule:
+        align_argv.extend(["--schedule", str(args.schedule)])
     align_result = _run_align_in_process(align_argv)
     wall_sec = time.perf_counter() - start
 
@@ -630,6 +635,7 @@ def main() -> None:
             "misalignment_trans_px": args.misalignment_trans_px,
             "misalignment_seed": args.misalignment_seed,
             "levels": args.levels,
+            "align_profile": args.align_profile,
             "outer_iters": args.outer_iters,
             "recon_iters": args.recon_iters,
             "schedule": args.schedule,
@@ -695,6 +701,7 @@ def main() -> None:
         "stdout": align_result.stdout,
     }
     report["success"] = _success_flags(report)
+    report["verification"] = verification_from_manifest(report).to_dict()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

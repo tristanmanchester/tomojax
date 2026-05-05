@@ -8,6 +8,7 @@ from typing import Mapping
 import jax
 import jax.numpy as jnp
 
+from ..core.backend_policy import normalize_projector_backend
 from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.geometry.views import stack_view_poses
 from ..recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
@@ -16,6 +17,7 @@ from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from .geometry.parametrizations import se3_from_5d
 from ._observer import OuterStat
 from ._results import record_reconstruction_info as _record_reconstruction_info
+from ._quality_policy import reconstruction_quality_policy
 from .objectives.recon_layer import PoseAdjustedGeometry
 
 
@@ -37,12 +39,56 @@ def _heuristic_projection_lipschitz(
     return max(projection_l + regulariser_l, 1e-6)
 
 
+def _resolve_reconstruction_projector_backend(
+    *,
+    requested_backend: str,
+    T_all: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    gather_dtype: str,
+    fallback_policy: str,
+) -> tuple[str, str | None]:
+    requested = normalize_projector_backend(requested_backend)
+    if requested == "jax":
+        return "jax", None
+    try:
+        backend = jax.default_backend()
+    except Exception:
+        backend = "unknown"
+    if backend != "gpu":
+        reason = f"pallas alignment reconstruction requires gpu backend; got {backend}"
+        if str(fallback_policy) == "strict":
+            raise RuntimeError(reason)
+        return "jax", reason
+    try:
+        from ..core.pallas_projector import pallas_projector_sinogram_unsupported_reason
+
+        reason = pallas_projector_sinogram_unsupported_reason(
+            T_all,
+            grid,
+            detector,
+            volume,
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+            state_mode="cached",
+        )
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+    if reason:
+        if str(fallback_policy) == "strict":
+            raise RuntimeError(reason)
+        return "jax", reason
+    return "pallas", None
+
+
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
 def _run_huber_fista_core_jit(
     x0: jnp.ndarray,
     T_all: jnp.ndarray,
-    det_u: jnp.ndarray,
-    det_v: jnp.ndarray,
+    det_u: jnp.ndarray | None,
+    det_v: jnp.ndarray | None,
     projections: jnp.ndarray,
     L_value: jnp.ndarray,
     *,
@@ -50,10 +96,11 @@ def _run_huber_fista_core_jit(
     detector: Detector,
     cfg: FistaCoreConfig,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    det_grid = None if det_u is None or det_v is None else (det_u, det_v)
     result = fista_tv_core_arrays(
         x0=x0,
         T_all=T_all,
-        det_grid=(det_u, det_v),
+        det_grid=det_grid,
         projections=projections,
         grid=grid,
         detector=detector,
@@ -152,6 +199,18 @@ def _run_reconstruction_step(
             T_all = nominal @ jax.vmap(se3_from_5d)(recon_geometry.params5)
         else:
             T_all = stack_view_poses(recon_geometry, n_views)
+        requested_backend = str(getattr(cfg, "projector_backend", "jax"))
+        actual_backend, fallback_reason = _resolve_reconstruction_projector_backend(
+            requested_backend=requested_backend,
+            T_all=T_all,
+            grid=grid,
+            detector=detector,
+            volume=x,
+            det_grid=det_grid,
+            gather_dtype=str(cfg.gather_dtype),
+            fallback_policy=str(getattr(cfg, "fallback_policy", "fallback")),
+        )
+        quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
         core_cfg = FistaCoreConfig(
             iters=int(cfg.recon_iters),
             lambda_tv=float(cfg.lambda_tv),
@@ -162,18 +221,19 @@ def _run_reconstruction_step(
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
             views_per_batch=int(cfg.views_per_batch),
-            forward_projector=str(getattr(cfg, "projector_backend", "jax")),
-            backprojector=str(getattr(cfg, "projector_backend", "jax")),
-            compute_iteration_loss=False,
-            compute_final_data_loss=False,
-            compute_final_regulariser_value=False,
+            forward_projector=actual_backend,
+            backprojector=actual_backend,
+            compute_iteration_loss=bool(quality_policy.compute_iteration_loss),
+            compute_final_data_loss=bool(quality_policy.compute_final_data_loss),
+            compute_final_regulariser_value=bool(quality_policy.compute_final_regulariser_value),
         )
 
+        det_grid_for_core = None if actual_backend == "pallas" else det_grid
         x_core, loss, data_loss, regulariser_value, effective_iters = _run_huber_fista_core_jit(
             x,
             T_all,
-            det_grid[0],
-            det_grid[1],
+            None if det_grid_for_core is None else det_grid_for_core[0],
+            None if det_grid_for_core is None else det_grid_for_core[1],
             projections,
             jnp.asarray(L_core, dtype=jnp.float32),
             grid=grid,
@@ -181,14 +241,19 @@ def _run_reconstruction_step(
             cfg=core_cfg,
         )
         info = {
-            "loss": [],
+            "loss": loss,
+            "loss_alias_only": not bool(quality_policy.compute_iteration_loss),
             "effective_iters": int(effective_iters),
             "early_stop": False,
             "regulariser": "huber_tv",
             "huber_delta": float(cfg.huber_delta),
-            "data_loss_computed": False,
-            "regulariser_value_computed": False,
+            "data_loss_computed": bool(quality_policy.compute_final_data_loss),
+            "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
+            "quality_policy": quality_policy.to_dict(),
             "L": float(L_core / 1.2),
+            "requested_backend": requested_backend,
+            "actual_backend": actual_backend,
+            "fallback_reason": fallback_reason,
         }
         return x_core, info
 
@@ -238,19 +303,25 @@ def _run_reconstruction_step(
         x_out, info_rec = _run_spdhg()
 
     jax.block_until_ready(x_out)
+    info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
     requested_backend = str(getattr(cfg, "projector_backend", "jax"))
-    actual_recon_backend = (
-        requested_backend
-        if requested_backend == "pallas" and str(cfg.regulariser) == "huber_tv"
-        else "jax"
-    )
+    actual_recon_backend = str(info_mapping.get("actual_backend") or "jax")
+    fallback_reason = info_mapping.get("fallback_reason")
     stat: OuterStat = {
         "recon_time": time.perf_counter() - recon_start,
         "recon_retry": recon_retry,
         "recon_requested_backend": requested_backend,
         "recon_actual_backend": actual_recon_backend,
+        "recon_fallback_reason": str(fallback_reason) if fallback_reason else None,
+        "align_profile": str(getattr(cfg, "align_profile", "lightning")),
+        "quality_tier": str(getattr(cfg, "quality_tier", "")),
+        "fallback_policy": str(getattr(cfg, "fallback_policy", "")),
+        "regulariser": str(info_mapping.get("regulariser") or getattr(cfg, "regulariser", "")),
+        "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
+        "regulariser_value_computed": bool(
+            info_mapping.get("regulariser_value_computed", False)
+        ),
     }
-    info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
     L_next = _record_reconstruction_info(
         stat,
         info_rec=info_mapping,
