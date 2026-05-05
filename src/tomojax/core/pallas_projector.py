@@ -1961,7 +1961,11 @@ def _projector_loss_grad_kernel(
         iz0,
     )
     if unroll is None:
-        acc, _, _, _ = jax.lax.fori_loop(0, n_steps, fwd_body, init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        acc, _, _, _ = jax.lax.fori_loop(0, tile_steps, fwd_body, init)
     else:
         acc, _, _, _ = jax.lax.fori_loop(0, n_steps, fwd_body, init, unroll=unroll)
 
@@ -1977,11 +1981,9 @@ def _projector_loss_grad_kernel(
         loss_ref[0, 0, 0] = jnp.float32(0.0)
     grad_residual = raw_residual * weight * weight * step_size32
 
-    last_step = jnp.float32(max(n_steps - 1, 0))
-
     def bwd_body(s, carry):
         ix, iy, iz = carry
-        original_step = jnp.int32(n_steps - 1) - s
+        original_step = jnp.int32(max(n_steps - 1, 0)) - s
         active = in_detector & (original_step < n_steps_ray)
         _trilinear_atomic_add(
             grad_ref,
@@ -1996,14 +1998,45 @@ def _projector_loss_grad_kernel(
         )
         return ix - dix, iy - diy, iz - diz
 
-    bwd_init = (
-        ix0 + dix * last_step,
-        iy0 + diy * last_step,
-        iz0 + diz * last_step,
-    )
     if unroll is None:
-        jax.lax.fori_loop(0, n_steps, bwd_body, bwd_init)
+        tile_steps = jnp.minimum(
+            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
+            jnp.asarray(n_steps, dtype=jnp.int32),
+        )
+        tile_last_step = jnp.maximum(tile_steps - jnp.int32(1), jnp.int32(0)).astype(
+            jnp.float32
+        )
+
+        def bwd_tile_body(s, carry):
+            ix, iy, iz = carry
+            original_step = tile_steps - jnp.int32(1) - s
+            active = in_detector & (original_step < n_steps_ray)
+            _trilinear_atomic_add(
+                grad_ref,
+                grad_residual,
+                ix,
+                iy,
+                iz,
+                nx=nx,
+                ny=ny,
+                nz=nz,
+                active=active,
+            )
+            return ix - dix, iy - diy, iz - diz
+
+        bwd_tile_init = (
+            ix0 + dix * tile_last_step,
+            iy0 + diy * tile_last_step,
+            iz0 + diz * tile_last_step,
+        )
+        jax.lax.fori_loop(0, tile_steps, bwd_tile_body, bwd_tile_init)
     else:
+        last_step = jnp.float32(max(n_steps - 1, 0))
+        bwd_init = (
+            ix0 + dix * last_step,
+            iy0 + diy * last_step,
+            iz0 + diz * last_step,
+        )
         jax.lax.fori_loop(0, n_steps, bwd_body, bwd_init, unroll=unroll)
 
 
