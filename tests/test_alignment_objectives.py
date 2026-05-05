@@ -209,6 +209,59 @@ def test_project_and_score_stack_plain_l2_fast_path_value_and_grad_matches_gener
     )
 
 
+def test_project_and_score_stack_single_chunk_matches_chunked_value_and_grad():
+    grid, detector, geometry, volume, projections = _case(n_views=5, hidden_det_u_px=0.0)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(5))
+    effective = apply_alignment_state(base, state)
+    adapter = build_loss_adapter(L2LossSpec(), projections)
+    perturb = jnp.linspace(-0.03, 0.04, effective.pose_stack.size, dtype=jnp.float32).reshape(
+        effective.pose_stack.shape
+    )
+    pose_stack = effective.pose_stack + perturb
+
+    def score_single_chunk(poses):
+        return project_and_score_stack(
+            pose_stack=poses,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=effective.det_grid,
+            targets=projections,
+            loss_adapter=adapter,
+            views_per_batch=0,
+            checkpoint_projector=False,
+            gather_dtype="fp32",
+            view_indices=jnp.arange(5, dtype=jnp.int32),
+        )
+
+    def score_chunked(poses):
+        return project_and_score_stack(
+            pose_stack=poses,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=effective.det_grid,
+            targets=projections,
+            loss_adapter=adapter,
+            views_per_batch=2,
+            checkpoint_projector=False,
+            gather_dtype="fp32",
+            view_indices=jnp.arange(5, dtype=jnp.int32),
+        )
+
+    single_value, single_grad = jax.value_and_grad(score_single_chunk)(pose_stack)
+    chunked_value, chunked_grad = jax.value_and_grad(score_chunked)(pose_stack)
+
+    assert float(single_value) == pytest.approx(float(chunked_value), abs=1e-4, rel=1e-5)
+    np.testing.assert_allclose(
+        np.asarray(single_grad),
+        np.asarray(chunked_grad),
+        atol=2e-4,
+        rtol=2e-4,
+    )
+
+
 def test_stopped_validation_score_prefers_hidden_offset_without_candidate_enumeration():
     grid, detector, geometry, true_volume, projections = _case(hidden_det_u_px=2.0)
     base = BaseGeometryArrays.from_geometry(geometry, detector)

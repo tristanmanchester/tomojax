@@ -220,6 +220,19 @@ def project_and_score_stack(
         and view_mask is None
         and loss_mask is None
     )
+    if num_chunks == 1:
+        pred = vm_project(pose_stack)
+        if use_plain_l2_fast_path:
+            residual = (pred - targets).astype(jnp.float32)
+            losses = jnp.float32(0.5) * jnp.sum(residual * residual, axis=(1, 2))
+            return jnp.sum(losses, dtype=jnp.float32)
+        losses = loss_adapter.per_view_loss(
+            pred,
+            targets,
+            loss_mask,
+            view_indices=local_indices,
+        )
+        return jnp.sum(losses * per_view_weight, dtype=jnp.float32)
 
     def body(loss_acc, i):
         start_shifted, valid_mask, _view_idx = _chunk_schedule(
