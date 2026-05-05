@@ -13,6 +13,7 @@ from tomojax.bench.alignment_objective import (
 )
 from tomojax.bench.fista_iteration import (
     FistaIterationBenchmarkConfig,
+    fista_iteration_pallas_tile_shape,
     run_fista_iteration_case,
 )
 from tomojax.bench.forward_projector import (
@@ -107,7 +108,11 @@ def _sample_fista_config(rng: np.random.Generator, seed: int) -> FistaIterationB
         seed=seed,
         warm_runs=5,
         pose_mode="general_5d",
-        pallas_tile_shape=tuple((int(rng.choice([8, 12, 16])), int(rng.choice([4, 8])))),
+        pallas_tile_shape=fista_iteration_pallas_tile_shape(
+            nv=nv,
+            nu=nu,
+            n_views=n_views,
+        ),
         pallas_num_warps=1,
         compute_iteration_loss=diagnostics,
         compute_final_data_loss=diagnostics,
@@ -239,7 +244,7 @@ def run_sampled_representative_suite(
     return {
         "benchmark": "sampled_representative_suite",
         "suite_seed": int(suite_seed),
-        "sampler_version": 1,
+        "sampler_version": 2,
         "cases_per_family": int(cases_per_family),
         "sampling_policy": (
             "Seeded random case generation. Artifacts record every sampled config so each "
@@ -269,4 +274,3 @@ def write_benchmark_json(metrics: dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
-

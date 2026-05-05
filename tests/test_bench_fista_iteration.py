@@ -7,6 +7,7 @@ import pytest
 from tomojax.bench.fista_iteration import (
     FISTA_ITERATION_SUITE_NAMES,
     FistaIterationBenchmarkConfig,
+    fista_iteration_pallas_tile_shape,
     fista_iteration_suite_cases,
     run_fista_iteration_benchmark,
     run_fista_iteration_case,
@@ -28,6 +29,12 @@ def test_fista_iteration_suite_cases_are_general_pose() -> None:
     assert all(not case.config.compute_iteration_loss for case in cases)
     assert all(not case.config.compute_final_data_loss for case in cases)
     assert all(not case.config.compute_final_regulariser_value for case in cases)
+
+
+def test_fista_iteration_tile_policy_prefers_retiled_small_detector_case() -> None:
+    assert fista_iteration_pallas_tile_shape(nv=24, nu=24, n_views=24) == (12, 4)
+    assert fista_iteration_pallas_tile_shape(nv=64, nu=64, n_views=90) == (8, 4)
+    assert fista_iteration_pallas_tile_shape(nv=31, nu=37, n_views=37) == (8, 4)
 
 
 def test_fista_iteration_suite_rejects_unknown_name() -> None:

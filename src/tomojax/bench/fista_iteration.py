@@ -22,6 +22,8 @@ from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
 
 
 FISTA_ITERATION_SUITE_NAMES = ("fista_iteration",)
+FISTA_SMALL_PALLAS_TILE_SHAPE = (12, 4)
+FISTA_DEFAULT_PALLAS_TILE_SHAPE = (8, 4)
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,19 @@ class FistaIterationSuiteCase:
     config: FistaIterationBenchmarkConfig
 
 
+def fista_iteration_pallas_tile_shape(
+    *,
+    nv: int,
+    nu: int,
+    n_views: int,
+) -> tuple[int, int]:
+    """Return the benchmark Pallas tile policy for one-step FISTA cases."""
+    del n_views
+    if int(nv) <= 24 and int(nu) <= 24:
+        return FISTA_SMALL_PALLAS_TILE_SHAPE
+    return FISTA_DEFAULT_PALLAS_TILE_SHAPE
+
+
 def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIterationSuiteCase, ...]:
     if name != "fista_iteration":
         raise ValueError(
@@ -61,7 +76,11 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 warm_runs=11,
                 unroll=None,
                 pose_mode="general_5d",
-                pallas_tile_shape=(12, 4),
+                pallas_tile_shape=fista_iteration_pallas_tile_shape(
+                    nv=24,
+                    nu=24,
+                    n_views=24,
+                ),
             ),
         ),
         FistaIterationSuiteCase(
@@ -76,7 +95,11 @@ def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIte
                 warm_runs=5,
                 unroll=None,
                 pose_mode="general_5d",
-                pallas_tile_shape=(8, 4),
+                pallas_tile_shape=fista_iteration_pallas_tile_shape(
+                    nv=64,
+                    nu=64,
+                    n_views=90,
+                ),
             ),
         ),
     )

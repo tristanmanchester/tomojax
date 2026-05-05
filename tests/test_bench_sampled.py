@@ -67,7 +67,7 @@ def test_sampled_suite_records_reproducible_configs(monkeypatch: pytest.MonkeyPa
     metrics = sampled.run_sampled_representative_suite(suite_seed=1234, cases_per_family=2)
 
     assert metrics["suite_seed"] == 1234
-    assert metrics["sampler_version"] == 1
+    assert metrics["sampler_version"] == 2
     assert len(metrics["sampled_cases"]) == 8
     assert {case["family"] for case in metrics["sampled_cases"]} == {
         "alignment_objective",
@@ -88,4 +88,3 @@ def test_write_sampled_json(tmp_path) -> None:
     out = sampled.write_benchmark_json({"suite_seed": 1}, tmp_path / "sampled.json")
 
     assert json.loads(out.read_text()) == {"suite_seed": 1}
-
