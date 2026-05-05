@@ -82,6 +82,73 @@ def test_sampled_suite_records_reproducible_configs(monkeypatch: pytest.MonkeyPa
         pytest.approx(4.0)
     )
     assert metrics["summary"]["fista_geomean_speedup_vs_jax"] == pytest.approx(5.0)
+    assert metrics["summary"]["alignment_smoke_total_cases"] == 0
+
+
+def test_sampled_suite_records_alignment_smoke_success_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sampled,
+        "run_forward_sinogram_benchmark",
+        lambda config: {
+            "results": [
+                {
+                    "requested_mode": "pallas_dispatch",
+                    "speedup_vs_best_jax_warm_median": 3.0,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        sampled,
+        "run_forward_residual_benchmark",
+        lambda config: {
+            "results": [
+                {
+                    "requested_mode": "pallas_dispatch",
+                    "speedup_vs_jax_materialized_warm_median": 4.0,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        sampled,
+        "run_fista_iteration_case",
+        lambda config: {"speedup_vs_jax_warm_median": 5.0},
+    )
+    monkeypatch.setattr(
+        sampled,
+        "run_alignment_objective_suite",
+        lambda name, *, overrides=None: {"summary": {"overrides": overrides}},
+    )
+
+    def fake_alignment_smoke_case(**kwargs):
+        return {
+            "case_name": kwargs["case_name"],
+            "timing": {"wall_sec": 1.5},
+            "success": {"loss_decreased": True, "pose_metrics_finite": True},
+            "pose_recovery": {"rot_rmse_deg": 1.0, "trans_rmse_px": 0.25},
+            "projection_residual": {"rmse_per_ray": 0.1},
+        }
+
+    monkeypatch.setattr(sampled, "run_sampled_alignment_smoke_case", fake_alignment_smoke_case)
+
+    metrics = sampled.run_sampled_representative_suite(
+        suite_seed=1234,
+        cases_per_family=1,
+        tomojax_dir=tmp_path / "tomojax",
+        fixture_root=tmp_path / "fixtures",
+        out_dir=tmp_path / "out",
+    )
+
+    assert len(metrics["sampled_cases"]) == 5
+    assert "alignment_smoke" in {case["family"] for case in metrics["sampled_cases"]}
+    assert metrics["summary"]["alignment_smoke_median_wall_sec"] == pytest.approx(1.5)
+    assert metrics["summary"]["alignment_smoke_successful_cases"] == 1
+    assert metrics["summary"]["alignment_smoke_total_cases"] == 1
+    assert metrics["alignment_smoke_cases"][0]["success"]["pose_metrics_finite"] is True
 
 
 def test_write_sampled_json(tmp_path) -> None:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, replace
+import os
+from dataclasses import asdict, dataclass
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import numpy as np
@@ -54,6 +57,8 @@ ALIGNMENT_OBJECTIVE_SHAPES = (
     (28, 28, 28, 31, 29, 32),
     (32, 28, 36, 31, 37, 40),
 )
+
+ALIGNMENT_SMOKE_SHAPES = (20, 22, 24)
 
 FISTA_SHAPES = (
     (24, 24, 24, 24, 24, 24),
@@ -139,6 +144,101 @@ def _sample_alignment_objective_overrides(
     }
 
 
+def _sample_alignment_smoke_config(rng: np.random.Generator, seed: int) -> dict[str, Any]:
+    size = int(rng.choice(ALIGNMENT_SMOKE_SHAPES))
+    return {
+        "size": size,
+        "views": size,
+        "seed": seed,
+        "misalignment_seed": int(rng.integers(0, 2**31 - 1)),
+        "misalignment_rot_deg": float(rng.choice([3.0, 5.0, 7.0])),
+        "misalignment_trans_px": float(rng.choice([2.0, 3.0, 4.0])),
+        "outer_iters": 3,
+        "recon_iters": 4,
+        "levels": [1],
+        "loss": "l2",
+        "schedule": "pose_only",
+        "regulariser": "huber_tv",
+        "views_per_batch": 0,
+    }
+
+
+def run_sampled_alignment_smoke_case(
+    *,
+    case_name: str,
+    config: dict[str, Any],
+    tomojax_dir: Path,
+    fixture_root: Path,
+    out_dir: Path,
+) -> dict[str, Any]:
+    """Run one sampled full alignment smoke case and return its JSON report."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fixture_dir = fixture_root / case_name
+    out_json = out_dir / f"{case_name}.json"
+    summary_md = out_dir / f"{case_name}.md"
+    slice_png = out_dir / f"{case_name}_slices.png"
+    env = dict(os.environ)
+    env["PATH"] = f"{Path.home() / '.local/bin'}:{env.get('PATH', '')}"
+    src_path = str(tomojax_dir / "src")
+    env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}:{env['PYTHONPATH']}"
+    env.setdefault("TOMOJAX_BENCH_PYTHON", sys.executable)
+    cmd = [
+        sys.executable,
+        "-m",
+        "tomojax.bench.alignment_smoke",
+        "--tomojax-dir",
+        str(tomojax_dir),
+        "--fixture-dir",
+        str(fixture_dir),
+        "--out",
+        str(out_json),
+        "--summary-md",
+        str(summary_md),
+        "--slice-png",
+        str(slice_png),
+        "--size",
+        str(config["size"]),
+        "--views",
+        str(config["views"]),
+        "--seed",
+        str(config["seed"]),
+        "--misalignment-seed",
+        str(config["misalignment_seed"]),
+        "--misalignment-rot-deg",
+        str(config["misalignment_rot_deg"]),
+        "--misalignment-trans-px",
+        str(config["misalignment_trans_px"]),
+        "--levels",
+        *[str(level) for level in config["levels"]],
+        "--outer-iters",
+        str(config["outer_iters"]),
+        "--recon-iters",
+        str(config["recon_iters"]),
+        "--loss",
+        str(config["loss"]),
+        "--schedule",
+        str(config["schedule"]),
+        "--regulariser",
+        str(config["regulariser"]),
+        "--views-per-batch",
+        str(config["views_per_batch"]),
+    ]
+    subprocess.run(
+        cmd,
+        cwd=tomojax_dir,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    report["case_name"] = case_name
+    report["artifacts"]["json"] = str(out_json)
+    report["artifacts"]["summary_md"] = str(summary_md)
+    return report
+
+
 def _requested_mode(results: list[dict[str, Any]], requested: str) -> dict[str, Any] | None:
     for row in results:
         if row.get("requested_mode") == requested:
@@ -150,6 +250,9 @@ def run_sampled_representative_suite(
     *,
     suite_seed: int,
     cases_per_family: int = 1,
+    tomojax_dir: Path | None = None,
+    fixture_root: Path | None = None,
+    out_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run a seeded anti-overfitting panel of representative benchmark families."""
     rng = np.random.default_rng(int(suite_seed))
@@ -158,6 +261,7 @@ def run_sampled_representative_suite(
     residual_cases: list[dict[str, Any]] = []
     fista_cases: list[dict[str, Any]] = []
     alignment_objective_cases: list[dict[str, Any]] = []
+    alignment_smoke_cases: list[dict[str, Any]] = []
 
     for i in range(int(cases_per_family)):
         case_seed = int(rng.integers(0, 2**31 - 1))
@@ -218,6 +322,26 @@ def run_sampled_representative_suite(
         objective["case_name"] = f"sampled-alignment-objective-{i}"
         alignment_objective_cases.append(objective)
 
+        if tomojax_dir is not None and fixture_root is not None and out_dir is not None:
+            smoke_seed = int(rng.integers(0, 2**31 - 1))
+            smoke_config = _sample_alignment_smoke_config(rng, smoke_seed)
+            sampled_cases.append(
+                SampledCaseConfig(
+                    case_name=f"sampled-alignment-smoke-{i}",
+                    family="alignment_smoke",
+                    seed=smoke_seed,
+                    config=smoke_config,
+                )
+            )
+            smoke = run_sampled_alignment_smoke_case(
+                case_name=f"sampled-alignment-smoke-{i}",
+                config=smoke_config,
+                tomojax_dir=tomojax_dir,
+                fixture_root=fixture_root,
+                out_dir=out_dir / "alignment_smoke_cases",
+            )
+            alignment_smoke_cases.append(smoke)
+
     forward_speedups = [
         float(row["speedup_vs_best_jax_warm_median"])
         for case in forward_cases
@@ -236,6 +360,19 @@ def run_sampled_representative_suite(
         float(case["speedup_vs_jax_warm_median"])
         for case in fista_cases
         if case.get("speedup_vs_jax_warm_median") is not None
+    ]
+    alignment_smoke_wall_times = [
+        float(case["timing"]["wall_sec"])
+        for case in alignment_smoke_cases
+        if case.get("timing", {}).get("wall_sec") is not None
+    ]
+    alignment_smoke_success_counts = [
+        sum(bool(value) for value in case.get("success", {}).values())
+        for case in alignment_smoke_cases
+    ]
+    alignment_smoke_success_totals = [
+        len(case.get("success", {}))
+        for case in alignment_smoke_cases
     ]
 
     def geomean(values: list[float]) -> float | None:
@@ -262,11 +399,26 @@ def run_sampled_representative_suite(
             else None,
             "fista_geomean_speedup_vs_jax": geomean(fista_speedups),
             "fista_worst_speedup_vs_jax": min(fista_speedups) if fista_speedups else None,
+            "alignment_smoke_median_wall_sec": float(np.median(alignment_smoke_wall_times))
+            if alignment_smoke_wall_times
+            else None,
+            "alignment_smoke_successful_cases": int(
+                sum(
+                    count == total and total > 0
+                    for count, total in zip(
+                        alignment_smoke_success_counts,
+                        alignment_smoke_success_totals,
+                        strict=False,
+                    )
+                )
+            ),
+            "alignment_smoke_total_cases": len(alignment_smoke_cases),
         },
         "forward_cases": forward_cases,
         "residual_cases": residual_cases,
         "fista_cases": fista_cases,
         "alignment_objective_cases": alignment_objective_cases,
+        "alignment_smoke_cases": alignment_smoke_cases,
     }
 
 

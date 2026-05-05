@@ -121,6 +121,9 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
                 "general_forward_dispatch_worst_speedup_vs_best_jax": 2.0,
                 "forward_residual_dispatch_geomean_speedup_vs_jax": 4.0,
                 "fista_geomean_speedup_vs_jax": 5.0,
+                "alignment_smoke_median_wall_sec": 1.5,
+                "alignment_smoke_successful_cases": 1,
+                "alignment_smoke_total_cases": 1,
             },
             "sampled_cases": [
                 {
@@ -159,6 +162,8 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
     assert "Value+grad no-checkpoint speedup vs checkpointed: `2.0000x`" in text
     assert "## Sampled Representative" in text
     assert "sampled-general-forward-0" in text
+    assert "Alignment smoke median wall time" in text
+    assert "`1/1`" in text
     assert "## 2x Targets" in text
     assert "alignment_smoke_wall_seconds" in text
 

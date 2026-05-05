@@ -334,6 +334,11 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
                 f"`{_fmt(summary['forward_residual_dispatch_geomean_speedup_vs_jax'])}x`",
                 "- FISTA geomean speedup vs JAX: "
                 f"`{_fmt(summary['fista_geomean_speedup_vs_jax'])}x`",
+                "- Alignment smoke median wall time: "
+                f"`{_fmt(summary.get('alignment_smoke_median_wall_sec'))}` sec",
+                "- Alignment smoke success cases: "
+                f"`{summary.get('alignment_smoke_successful_cases', 0)}/"
+                f"{summary.get('alignment_smoke_total_cases', 0)}`",
                 "",
                 "| Case | Family | Seed | Shape | Views |",
                 "|---|---|---:|---|---:|",
@@ -575,6 +580,9 @@ def main() -> None:
         sampled_representative = run_sampled_representative_suite(
             suite_seed=int(args.sampled_seed),
             cases_per_family=int(args.sampled_cases_per_family),
+            tomojax_dir=args.tomojax_dir,
+            fixture_root=args.root / "alignment-fixtures" / "sampled",
+            out_dir=args.out_dir / "sampled_representative_artifacts",
         )
         write_benchmark_json(
             sampled_representative,
