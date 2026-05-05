@@ -517,7 +517,7 @@ def main() -> None:
             "--git-commit",
             args.git_commit,
             "--levels",
-            "2",
+            "1",
             "--outer-iters",
             "3",
             "--recon-iters",

@@ -155,7 +155,7 @@ def _sample_alignment_smoke_config(rng: np.random.Generator, seed: int) -> dict[
         "misalignment_trans_px": float(rng.choice([2.0, 3.0, 4.0])),
         "outer_iters": 3,
         "recon_iters": 4,
-        "levels": [2],
+        "levels": [1],
         "loss": "l2",
         "schedule": "pose_only",
         "regulariser": "huber_tv",
