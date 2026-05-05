@@ -508,7 +508,7 @@ def main() -> None:
     parser.add_argument("--huber-delta", type=float, default=1e-2)
     parser.add_argument("--recon-L", type=float, default=5000.0)
     parser.add_argument("--views-per-batch", type=int, default=1)
-    parser.add_argument("--projector-unroll", type=int, default=1)
+    parser.add_argument("--projector-unroll", type=int, default=4)
     args = parser.parse_args()
 
     env = dict(os.environ)
