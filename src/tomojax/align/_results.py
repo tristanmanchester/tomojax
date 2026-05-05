@@ -32,6 +32,7 @@ class AlignInfo(TypedDict):
     objective_kind: str
     objective_kinds: list[str]
     objective_provenance: MetadataDict | None
+    backend_provenance: MetadataDict | None
     optimizer_kind: str
     completed_outer_iters: int
     small_impr_streak: int
@@ -66,6 +67,7 @@ class AlignMultiresInfo(TypedDict):
     objective_kind: str | None
     objective_kinds: list[str]
     objective_provenance: MetadataDict | None
+    backend_provenance: MetadataDict | None
     gauge_fix: str
     gauge_fix_dofs: list[str]
     gauge_fix_final: GaugeFixSummary | None

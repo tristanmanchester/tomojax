@@ -162,6 +162,8 @@ def _run_reconstruction_step(
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
             views_per_batch=int(cfg.views_per_batch),
+            forward_projector=str(getattr(cfg, "projector_backend", "jax")),
+            backprojector=str(getattr(cfg, "projector_backend", "jax")),
             compute_iteration_loss=False,
             compute_final_data_loss=False,
             compute_final_regulariser_value=False,
@@ -236,9 +238,17 @@ def _run_reconstruction_step(
         x_out, info_rec = _run_spdhg()
 
     jax.block_until_ready(x_out)
+    requested_backend = str(getattr(cfg, "projector_backend", "jax"))
+    actual_recon_backend = (
+        requested_backend
+        if requested_backend == "pallas" and str(cfg.regulariser) == "huber_tv"
+        else "jax"
+    )
     stat: OuterStat = {
         "recon_time": time.perf_counter() - recon_start,
         "recon_retry": recon_retry,
+        "recon_requested_backend": requested_backend,
+        "recon_actual_backend": actual_recon_backend,
     }
     info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
     L_next = _record_reconstruction_info(

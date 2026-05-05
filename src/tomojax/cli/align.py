@@ -247,6 +247,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Projector loop unroll factor for differentiable alignment paths (default: 1)",
     )
     p.add_argument(
+        "--projector-backend",
+        choices=["jax", "pallas"],
+        default="jax",
+        help=(
+            "Alignment projector backend: jax is the default gradient-safe reference; "
+            "pallas requests supported accelerator paths with JAX fallback metadata"
+        ),
+    )
+    p.add_argument(
         "--spdhg-seed",
         type=int,
         default=0,
@@ -607,6 +616,7 @@ def _checkpoint_cli_options(args: argparse.Namespace, *, gather_dtype: str) -> d
         "spdhg_seed": int(args.spdhg_seed),
         "recon_positivity": bool(args.recon_positivity),
         "projector_unroll": int(args.projector_unroll),
+        "projector_backend": str(args.projector_backend),
         "checkpoint_projector": bool(args.checkpoint_projector),
         "mask_vol": str(args.mask_vol),
         "gauge_fix": str(args.gauge_fix),
@@ -855,6 +865,7 @@ def _build_align_cli_run_plan(
         lr_trans=args.lr_trans,
         views_per_batch=int(args.views_per_batch),
         projector_unroll=int(args.projector_unroll),
+        projector_backend=str(args.projector_backend),
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=gather_dtype,
         opt_method=str(args.opt_method),
@@ -1290,6 +1301,7 @@ def _build_alignment_manifest_payload_from_result(
         "spdhg_seed": int(args.spdhg_seed),
         "recon_positivity": bool(args.recon_positivity),
         "projector_unroll": int(args.projector_unroll),
+        "projector_backend": str(args.projector_backend),
         "checkpoint_projector": bool(args.checkpoint_projector),
         "transfer_guard": str(args.transfer_guard),
         "levels": plan.run_levels,
@@ -1304,6 +1316,7 @@ def _build_alignment_manifest_payload_from_result(
         "objective_kind": info.get("objective_kind"),
         "objective_kinds": list(info.get("objective_kinds", [])),
         "objective_provenance": info.get("objective_provenance"),
+        "backend_provenance": info.get("backend_provenance"),
         "gauge_policy": str(args.gauge_policy),
         "gauge_decision": info.get("gauge_decision"),
         "active_dofs": list(info.get("active_dofs", [])),

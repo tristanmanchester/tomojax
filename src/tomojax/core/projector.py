@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .backend_policy import ProjectorBackendInput, normalize_projector_backend
 from .geometry.base import Grid, Detector, Geometry, _grid_volume_origin
 from .validation import (
     validate_detector,
@@ -307,6 +308,7 @@ def forward_project_view_T(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    projector_backend: ProjectorBackendInput = "jax",
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
@@ -315,6 +317,24 @@ def forward_project_view_T(
     inv(T), then performs incremental stepping along the beam direction expressed
     in the object frame. This avoids a matmul per step and keeps gradients clean.
     """
+    backend = normalize_projector_backend(projector_backend)
+    if backend == "pallas":
+        try:
+            from tomojax.core.pallas_projector import forward_project_view_T_pallas
+
+            return forward_project_view_T_pallas(
+                T,
+                grid,
+                detector,
+                volume,
+                step_size=step_size,
+                n_steps=n_steps,
+                unroll=unroll,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
+        except Exception:
+            pass
     vol = volume
     nx, ny, nz = validate_volume(vol, grid, context="forward_project_view_T", name="volume")
     validate_detector(detector, "forward_project_view_T")
@@ -485,6 +505,7 @@ def forward_project_view(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    projector_backend: ProjectorBackendInput = "jax",
 ) -> jnp.ndarray:
     """Wrapper that fetches pose from geometry and calls the pose-aware variant.
 
@@ -503,6 +524,7 @@ def forward_project_view(
         unroll=unroll,
         gather_dtype=gather_dtype,
         det_grid=det_grid,
+        projector_backend=projector_backend,
     )
 
 

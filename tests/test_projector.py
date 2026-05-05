@@ -8,6 +8,7 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import (
     backproject_view,
     backproject_view_T,
+    forward_project_view_T,
     forward_project_view,
     get_detector_grid_device,
     sum_backproject_views_T,
@@ -51,6 +52,39 @@ def test_forward_project_uniform_volume_returns_path_length():
     proj = forward_project_view(geom, grid, det, vol, view_index=0)
     expected = grid.ny * grid.vy
     assert np.allclose(np.asarray(proj), expected, atol=1e-4)
+
+
+def test_forward_project_view_accepts_explicit_jax_backend():
+    grid, det, geom, vol = make_aligned_case(8, 8, 8)
+
+    default = forward_project_view(geom, grid, det, vol, view_index=0)
+    explicit = forward_project_view(
+        geom,
+        grid,
+        det,
+        vol,
+        view_index=0,
+        projector_backend="jax",
+    )
+
+    np.testing.assert_allclose(np.asarray(explicit), np.asarray(default), atol=1e-5)
+
+
+def test_forward_project_view_rejects_invalid_backend():
+    grid, det, geom, vol = make_aligned_case(8, 8, 8)
+
+    with pytest.raises(ValueError, match="projector_backend"):
+        forward_project_view(geom, grid, det, vol, view_index=0, projector_backend="astra")
+
+
+def test_forward_project_view_T_pallas_request_falls_back_on_unsupported_cpu():
+    grid, det, _geom, vol = make_aligned_case(8, 8, 8)
+    T = jnp.eye(4, dtype=jnp.float32)
+
+    default = forward_project_view_T(T, grid, det, vol)
+    requested = forward_project_view_T(T, grid, det, vol, projector_backend="pallas")
+
+    np.testing.assert_allclose(np.asarray(requested), np.asarray(default), atol=1e-5)
 
 
 def test_forward_project_rejects_bad_volume_shape_with_expected_and_actual():

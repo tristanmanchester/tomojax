@@ -6,6 +6,12 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.backend_policy import (
+    BackendProvenance,
+    ProjectorBackendInput,
+    backend_provenance,
+    normalize_projector_backend,
+)
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
@@ -68,6 +74,8 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
+    projector_backend: ProjectorBackendInput = "jax"
+    require_differentiable_projector: bool = True
     kind: ObjectiveKind = "fixed_volume"
 
     @classmethod
@@ -117,6 +125,19 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
             checkpoint_projector=self.checkpoint_projector,
             gather_dtype=self.gather_dtype,
             view_indices=jnp.arange(int(self.projections.shape[0]), dtype=jnp.int32),
+            projector_backend=self.projector_backend,
+            require_differentiable_projector=self.require_differentiable_projector,
+        )
+        backend_meta = alignment_projector_backend_provenance(
+            pose_stack=effective.pose_stack,
+            grid=self.grid,
+            detector=self.detector,
+            volume=self.volume,
+            det_grid=effective.det_grid,
+            projector_backend=self.projector_backend,
+            require_differentiable_projector=self.require_differentiable_projector,
+            gather_dtype=self.gather_dtype,
+            api_surface="alignment.fixed_volume_objective",
         )
         return ObjectiveResult(
             value=value,
@@ -124,6 +145,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
                 "objective_kind": self.kind,
                 "loss_kind": self.loss_adapter.name,
                 "objective_provenance": self.provenance.to_dict(),
+                "backend_provenance": backend_meta.to_dict(),
             },
         )
 
@@ -139,10 +161,28 @@ def project_stack(
     projector_unroll: int = 1,
     checkpoint_projector: bool = True,
     gather_dtype: str = "fp32",
+    projector_backend: ProjectorBackendInput = "jax",
+    require_differentiable_projector: bool = True,
 ) -> jnp.ndarray:
+    backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
+    if backend == "pallas" and not require_differentiable_projector:
+        try:
+            from tomojax.core.pallas_projector import forward_project_views_T_pallas
+
+            return forward_project_views_T_pallas(
+                pose_stack,
+                grid,
+                detector,
+                volume,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                state_mode="cached",
+            )
+        except Exception:
+            pass
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
     vm_project = jax.vmap(
@@ -184,7 +224,10 @@ def project_and_score_stack(
     gather_dtype: str = "fp32",
     view_mask: jnp.ndarray | None = None,
     view_indices: jnp.ndarray | None = None,
+    projector_backend: ProjectorBackendInput = "jax",
+    require_differentiable_projector: bool = True,
 ) -> jnp.ndarray:
+    backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32)
@@ -220,6 +263,22 @@ def project_and_score_stack(
         and view_mask is None
         and loss_mask is None
     )
+    if backend == "pallas" and use_plain_l2_fast_path and not require_differentiable_projector:
+        try:
+            from tomojax.core.pallas_projector import forward_project_residual_sse_T_pallas
+
+            return jnp.float32(0.5) * forward_project_residual_sse_T_pallas(
+                pose_stack,
+                grid,
+                detector,
+                volume,
+                targets,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                state_mode="cached",
+            )
+        except Exception:
+            pass
     if num_chunks == 1:
         pred = vm_project(pose_stack)
         if use_plain_l2_fast_path:
@@ -272,6 +331,57 @@ def project_and_score_stack(
         jnp.arange(num_chunks, dtype=jnp.int32),
     )
     return loss
+
+
+def alignment_projector_backend_provenance(
+    *,
+    pose_stack: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    projector_backend: ProjectorBackendInput,
+    require_differentiable_projector: bool,
+    api_surface: str,
+    gather_dtype: str = "fp32",
+) -> BackendProvenance:
+    requested = normalize_projector_backend(projector_backend)
+    if requested == "jax":
+        return backend_provenance(
+            requested_backend="jax",
+            actual_backend="jax",
+            api_surface=api_surface,
+            differentiability="gradient_safe",
+        )
+    if require_differentiable_projector:
+        return backend_provenance(
+            requested_backend="pallas",
+            actual_backend="jax",
+            api_surface=api_surface,
+            fallback_reason="alignment objectives require gradient-safe projector semantics",
+            differentiability="gradient_safe",
+        )
+    try:
+        from tomojax.core.pallas_projector import pallas_projector_sinogram_unsupported_reason
+
+        reason = pallas_projector_sinogram_unsupported_reason(
+            pose_stack,
+            grid,
+            detector,
+            volume,
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+            state_mode="cached",
+        )
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+    return backend_provenance(
+        requested_backend="pallas",
+        actual_backend=("jax" if reason else "pallas"),
+        api_surface=api_surface,
+        fallback_reason=reason,
+        differentiability="performance_only",
+    )
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:

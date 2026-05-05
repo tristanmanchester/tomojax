@@ -779,6 +779,7 @@ def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):
         outer_iters=1,
         recon_iters=1,
         lambda_tv=0.0,
+        opt_method="gd",
         lr_rot=5e-3,
         lr_trans=1e-1,
         early_stop=False,

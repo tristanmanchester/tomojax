@@ -8,6 +8,7 @@ import pytest
 
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import parse_loss_spec
+from tomojax.align.pipeline import AlignConfig
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 
 
@@ -42,6 +43,13 @@ def test_pipeline_compatibility_symbols_remain_importable(symbol: str) -> None:
     pipeline = importlib.import_module("tomojax.align.pipeline")
 
     assert hasattr(pipeline, symbol)
+
+
+def test_align_config_normalizes_projector_backend() -> None:
+    assert AlignConfig(projector_backend="pallas").projector_backend == "pallas"
+    assert AlignConfig(projector_backend="default").projector_backend == "jax"
+    with pytest.raises(ValueError, match="projector_backend"):
+        AlignConfig(projector_backend="astra")
 
 
 @pytest.mark.parametrize(

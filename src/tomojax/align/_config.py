@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Mapping, TypeAlias, cast
 
 from ..core.geometry.base import Geometry
+from ..core.backend_policy import ProjectorBackendInput, normalize_projector_backend
 from ..recon.types import Regulariser
 from .objectives.loss_specs import AlignmentLossConfig, L2OtsuLossSpec
 from .model.diagnostics import GaugePolicy
@@ -122,6 +123,7 @@ class AlignConfig:
     projector_unroll: int = 1
     checkpoint_projector: bool = True
     gather_dtype: str = "fp32"
+    projector_backend: ProjectorBackendInput = "jax"
     # Solver and regularization
     opt_method: str = "gn"
     gn_damping: float = 1e-6
@@ -171,6 +173,7 @@ class AlignConfig:
         self.recon_algo = cast(ReconAlgoInput, recon_algo)
         if self.recon_algo not in {"fista", "spdhg"}:
             raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
+        self.projector_backend = normalize_projector_backend(self.projector_backend)
         opt_method = str(self.opt_method).strip().lower().replace("-", "_")
         if opt_method in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
             opt_method = "lbfgs"

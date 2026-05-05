@@ -54,7 +54,11 @@ from .model.motion_models import (
     fit_motion_coefficients,
     scan_coordinate_from_geometry,
 )
-from .objectives.fixed_volume import ObjectiveProvenance, project_and_score_stack
+from .objectives.fixed_volume import (
+    ObjectiveProvenance,
+    alignment_projector_backend_provenance,
+    project_and_score_stack,
+)
 from .optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
 from .geometry.parametrizations import se3_from_5d
 
@@ -502,6 +506,8 @@ def _build_pose_objective_bundle(
             checkpoint_projector=cfg.checkpoint_projector,
             gather_dtype=cfg.gather_dtype,
             view_indices=jnp.arange(n_views, dtype=jnp.int32),
+            projector_backend=cfg.projector_backend,
+            require_differentiable_projector=True,
         )
         loss = loss_tot
         if int(params5.shape[0]) >= 3:
@@ -1554,6 +1560,18 @@ def align(
         gauge_dofs=tuple(constraint_ctx.gauge_dofs),
     )
 
+    backend_provenance = alignment_projector_backend_provenance(
+        pose_stack=runtime.pose_stack,
+        grid=grid,
+        detector=detector,
+        volume=x,
+        det_grid=det_grid,
+        projector_backend=cfg.projector_backend,
+        require_differentiable_projector=True,
+        api_surface="alignment.pose_objective",
+        gather_dtype=cfg.gather_dtype,
+    ).to_dict()
+
     iter_range = range(start_outer_iter, int(cfg.outer_iters))
     for it in progress_iter(
         iter_range,
@@ -1567,6 +1585,7 @@ def align(
             "recon_algo": recon_algo,
             "objective_kind": "fixed_volume",
             "objective_provenance": dict(active_objective_provenance),
+            "backend_provenance": dict(backend_provenance),
             "outer_loss_kind": active_loss_name,
         }
         outer_start = time.perf_counter()
@@ -1697,6 +1716,11 @@ def align(
         "objective_provenance": (
             dict(outer_stats[-1].get("objective_provenance", {}))
             if outer_stats and isinstance(outer_stats[-1].get("objective_provenance"), Mapping)
+            else None
+        ),
+        "backend_provenance": (
+            dict(outer_stats[-1].get("backend_provenance", {}))
+            if outer_stats and isinstance(outer_stats[-1].get("backend_provenance"), Mapping)
             else None
         ),
         "optimizer_kind": str(outer_stats[-1].get("optimizer_kind"))

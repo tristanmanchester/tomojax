@@ -381,6 +381,32 @@ def test_align_config_toml_accepts_dof_arrays(tmp_path):
     assert freeze_dofs == ("phi",)
 
 
+def test_align_config_accepts_projector_backend_from_toml_and_cli_override(tmp_path):
+    config_path = tmp_path / "align.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'data = "input.nxs"',
+                'out = "runs/align.nxs"',
+                'projector_backend = "pallas"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parser = align_cli._build_parser()
+    args, metadata = parse_args_with_config(
+        parser,
+        ["--config", str(config_path), "--projector-backend", "jax"],
+        required=("data", "out"),
+    )
+
+    assert args.projector_backend == "jax"
+    assert metadata["config_file_values"]["projector_backend"] == "pallas"
+    assert "projector_backend" in metadata["explicit_cli_keys"]
+    assert metadata["effective_options"]["projector_backend"] == "jax"
+
+
 def test_align_cli_rejects_unknown_dof_name(capsys):
     parser = align_cli._build_parser()
     args, _ = parse_args_with_config(

@@ -31,6 +31,8 @@ verification utilities, and troubleshooting.
   trilinear interpolation, and O(detector pixels) memory via `lax.scan`
 - **5-DOF rigid-body alignment** (`alpha`, `beta`, `phi`, `dx`, `dz`)
   with Gauss-Newton, gradient descent, or L-BFGS optimisers
+- **Opt-in Pallas accelerators** for selected alignment-oriented projector
+  paths, with JAX kept as the default gradient-safe reference backend
 - **Multi-resolution alignment** with coarse-to-fine pyramid
   (e.g. 4x, 2x, 1x) and alternating reconstruct/align steps
 - **Three reconstruction algorithms**: FBP, FISTA-TV, and SPDHG-TV
@@ -62,7 +64,9 @@ uv run tomojax-align \
 ```
 
 See the [quickstart guide](docs/quickstart.md) for a full walkthrough
-and the [CLI reference](docs/cli/index.md) for all commands.
+and the [CLI reference](docs/cli/index.md) for all commands. See
+[Supported Pallas API Contract](docs/pallas_supported_api.md) for the
+alignment-first backend contract and supported accelerator boundaries.
 
 
 ## Python API

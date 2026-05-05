@@ -160,6 +160,7 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
     assert "--pose-model" in captured.out
     assert "--recon-algo" in captured.out
     assert "--views-per-batch" in captured.out
+    assert "--projector-backend" in captured.out
     assert "--spdhg-seed" in captured.out
     assert "--no-recon-positivity" in captured.out
     assert "--checkpoint" in captured.out
@@ -647,6 +648,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     assert captured["align_cfg"].degree == 2
     assert captured["align_cfg"].recon_algo == "spdhg"
     assert captured["align_cfg"].views_per_batch == 2
+    assert captured["align_cfg"].projector_backend == "jax"
     assert captured["align_cfg"].spdhg_seed == 7
     assert captured["align_cfg"].recon_positivity is False
     assert captured["align_cfg"].lbfgs_memory_size == 9

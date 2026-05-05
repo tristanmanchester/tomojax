@@ -86,6 +86,33 @@ def test_fixed_volume_objective_scores_with_existing_l2_otsu_loss_adapter():
     assert float(result.value) == pytest.approx(0.0, abs=1e-5)
     assert result.aux["objective_kind"] == "fixed_volume"
     assert result.aux["loss_kind"] == "l2_otsu"
+    assert result.aux["backend_provenance"]["requested_backend"] == "jax"
+    assert result.aux["backend_provenance"]["actual_backend"] == "jax"
+
+
+def test_fixed_volume_objective_pallas_request_falls_back_for_gradient_contract():
+    grid, detector, geometry, volume, projections = _case(hidden_det_u_px=0.0)
+    base = BaseGeometryArrays.from_geometry(geometry, detector)
+    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
+    objective = FixedVolumeProjectionObjective.from_loss_spec(
+        base=base,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        volume=volume,
+        loss_spec=L2LossSpec(),
+        checkpoint_projector=False,
+        projector_backend="pallas",
+        require_differentiable_projector=True,
+    )
+
+    result = objective.evaluate(state)
+
+    assert float(result.value) == pytest.approx(0.0, abs=1e-5)
+    assert result.aux["backend_provenance"]["requested_backend"] == "pallas"
+    assert result.aux["backend_provenance"]["actual_backend"] == "jax"
+    assert result.aux["backend_provenance"]["status"] == "fallback"
+    assert "gradient-safe" in result.aux["backend_provenance"]["fallback_reason"]
 
 
 def test_project_stack_honors_views_per_batch_without_changing_values():

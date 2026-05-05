@@ -763,6 +763,14 @@ def _final_align_multires_info(
         ),
         None,
     )
+    backend_provenance = next(
+        (
+            dict(stat["backend_provenance"])
+            for stat in reversed(global_outer_stats)
+            if isinstance(stat, Mapping) and isinstance(stat.get("backend_provenance"), Mapping)
+        ),
+        None,
+    )
 
     return {
         "loss": loss_hist,
@@ -782,6 +790,7 @@ def _final_align_multires_info(
         "objective_kind": objective_kinds[-1] if objective_kinds else None,
         "objective_kinds": objective_kinds,
         "objective_provenance": objective_provenance,
+        "backend_provenance": backend_provenance,
         "pose_model": str(cfg.pose_model),
         "pose_model_variables": final_pose_model_variables,
         "per_view_variables": final_per_view_variables,

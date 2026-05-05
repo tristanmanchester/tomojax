@@ -144,6 +144,8 @@ Pallas experiment controls are benchmark-only and are recorded in each requested
 `--pallas-num-warps`, `--pallas-kernel-variant`, `--pallas-layout-variant`, and
 `--pallas-state-mode` to make variant runs reproducible without changing product projector APIs.
 Unsupported variants fall back with a `fallback_reason` and remain ineligible for speed claims.
+Product alignment backend selection is documented separately in
+`docs/pallas_supported_api.md`; benchmark tuning flags are not a stable user-facing API.
 The current experimental Pallas default is `--pallas-kernel-variant auto`,
 `--pallas-layout-variant detector_vu`, `--pallas-tile-shape 8x16`, and
 `--pallas-num-warps 4`. U4 autotuning on the RTX 4070 Laptop GPU selected this default over

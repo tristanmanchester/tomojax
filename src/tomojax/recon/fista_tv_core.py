@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.core.geometry import Detector, Grid
+from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 from tomojax.recon.types import Regulariser
@@ -33,6 +34,10 @@ class FistaCoreConfig:
     compute_iteration_loss: bool = True
     compute_final_data_loss: bool = True
     compute_final_regulariser_value: bool = True
+
+    def __post_init__(self) -> None:
+        normalize_projector_backend(self.forward_projector)
+        normalize_projector_backend(self.backprojector)
 
 
 @dataclass(frozen=True, slots=True)
