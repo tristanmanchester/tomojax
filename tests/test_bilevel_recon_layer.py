@@ -144,45 +144,6 @@ def test_fista_core_views_per_batch_preserves_reconstruction_values():
     np.testing.assert_allclose(np.asarray(streamed.x), np.asarray(batched.x), atol=1e-5, rtol=1e-5)
 
 
-def test_projection_loss_single_chunk_matches_chunked_value_and_grad():
-    grid, detector, geometry, volume, projections = _case(size=5, n_views=4)
-    base = BaseGeometryArrays.from_geometry(geometry, detector)
-    state = AlignmentState(setup=SetupGeometryState(), pose=PoseState.zeros(projections.shape[0]))
-    effective = apply_alignment_state(base, state)
-
-    def loss_for_views_per_batch(volume_arg, views_per_batch):
-        return projection_loss_arrays(
-            T_all=effective.pose_stack,
-            det_grid=effective.det_grid,
-            projections=projections,
-            grid=grid,
-            detector=detector,
-            volume=volume_arg,
-            cfg=FistaCoreConfig(
-                iters=1,
-                lambda_tv=0.0,
-                L=100.0,
-                checkpoint_projector=False,
-                views_per_batch=views_per_batch,
-            ),
-        )
-
-    single_value, single_grad = jax.value_and_grad(
-        lambda vol: loss_for_views_per_batch(vol, 0)
-    )(volume)
-    chunked_value, chunked_grad = jax.value_and_grad(
-        lambda vol: loss_for_views_per_batch(vol, 2)
-    )(volume)
-
-    assert float(single_value) == pytest.approx(float(chunked_value), abs=1e-4, rel=1e-5)
-    np.testing.assert_allclose(
-        np.asarray(single_grad),
-        np.asarray(chunked_grad),
-        atol=2e-4,
-        rtol=2e-4,
-    )
-
-
 def test_fista_core_reports_final_data_loss_not_objective():
     grid, detector, geometry, _volume, projections = _case(size=5, n_views=3)
     base = BaseGeometryArrays.from_geometry(geometry, detector)

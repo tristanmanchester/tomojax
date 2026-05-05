@@ -368,22 +368,6 @@ def _projection_loss(
     num_chunks = (n_views + b - 1) // b
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
-    if num_chunks == 1:
-        pred = _project_chunk(
-            T_chunk=T_all,
-            grid=grid,
-            detector=detector,
-            volume=volume,
-            det_grid=det_grid,
-            checkpoint_projector=checkpoint_projector,
-            projector_unroll=projector_unroll,
-            gather_dtype=gather_dtype,
-            forward_projector=forward_projector,
-            pallas_tile_shape=pallas_tile_shape,
-            pallas_num_warps=pallas_num_warps,
-        )
-        resid = (pred - projections).astype(jnp.float32) * weights
-        return jnp.float32(0.5) * jnp.vdot(resid, resid).real
 
     def body(loss_acc, i):
         start_shifted, valid_mask, _view_idx = _chunk_schedule(
@@ -457,55 +441,6 @@ def _projection_loss_and_explicit_grad(
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
     backproject_fn = _resolve_sum_backproject_views(backprojector)
-    if num_chunks == 1:
-        if forward_projector == "pallas" and backprojector == "pallas":
-            from tomojax.core.pallas_projector import forward_project_loss_and_grad_T_pallas
-
-            return forward_project_loss_and_grad_T_pallas(
-                T_all,
-                grid,
-                detector,
-                volume,
-                projections,
-                weights=weights,
-                unroll=1,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                tile_shape=tuple(pallas_tile_shape),
-                num_warps=int(pallas_num_warps),
-                compute_loss=bool(compute_loss),
-            )
-        pred = _project_chunk(
-            T_chunk=T_all,
-            grid=grid,
-            detector=detector,
-            volume=volume,
-            det_grid=det_grid,
-            checkpoint_projector=checkpoint_projector,
-            projector_unroll=projector_unroll,
-            gather_dtype=gather_dtype,
-            forward_projector=forward_projector,
-            pallas_tile_shape=pallas_tile_shape,
-            pallas_num_warps=pallas_num_warps,
-        )
-        raw_resid = (pred - projections).astype(jnp.float32)
-        weighted_resid = raw_resid * weights
-        loss = (
-            jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
-            if compute_loss
-            else jnp.asarray(0.0, dtype=jnp.float32)
-        )
-        grad_resid = raw_resid * (weights * weights)
-        grad = backproject_fn(
-            T_all,
-            grid,
-            detector,
-            grad_resid,
-            unroll=1 if backprojector == "pallas" else int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
-        return loss, grad
 
     def body(carry, i):
         loss_acc, grad_acc = carry
