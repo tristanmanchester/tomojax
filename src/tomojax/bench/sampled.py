@@ -170,6 +170,9 @@ def run_sampled_alignment_smoke_case(
     tomojax_dir: Path,
     fixture_root: Path,
     out_dir: Path,
+    note: str = "",
+    git_branch: str = "",
+    git_commit: str = "",
 ) -> dict[str, Any]:
     """Run one sampled full alignment smoke case and return its JSON report."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -196,6 +199,12 @@ def run_sampled_alignment_smoke_case(
         str(summary_md),
         "--slice-png",
         str(slice_png),
+        "--note",
+        note,
+        "--git-branch",
+        git_branch,
+        "--git-commit",
+        git_commit,
         "--size",
         str(config["size"]),
         "--views",
@@ -253,6 +262,9 @@ def run_sampled_representative_suite(
     tomojax_dir: Path | None = None,
     fixture_root: Path | None = None,
     out_dir: Path | None = None,
+    note: str = "",
+    git_branch: str = "",
+    git_commit: str = "",
 ) -> dict[str, Any]:
     """Run a seeded anti-overfitting panel of representative benchmark families."""
     rng = np.random.default_rng(int(suite_seed))
@@ -339,6 +351,9 @@ def run_sampled_representative_suite(
                 tomojax_dir=tomojax_dir,
                 fixture_root=fixture_root,
                 out_dir=out_dir / "alignment_smoke_cases",
+                note=note,
+                git_branch=git_branch,
+                git_commit=git_commit,
             )
             alignment_smoke_cases.append(smoke)
 

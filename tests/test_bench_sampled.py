@@ -125,6 +125,9 @@ def test_sampled_suite_records_alignment_smoke_success_flags(
     )
 
     def fake_alignment_smoke_case(**kwargs):
+        assert kwargs["note"] == "sampled note"
+        assert kwargs["git_branch"] == "bench/test"
+        assert kwargs["git_commit"] == "abc123"
         return {
             "case_name": kwargs["case_name"],
             "timing": {"wall_sec": 1.5},
@@ -141,6 +144,9 @@ def test_sampled_suite_records_alignment_smoke_success_flags(
         tomojax_dir=tmp_path / "tomojax",
         fixture_root=tmp_path / "fixtures",
         out_dir=tmp_path / "out",
+        note="sampled note",
+        git_branch="bench/test",
+        git_commit="abc123",
     )
 
     assert len(metrics["sampled_cases"]) == 5

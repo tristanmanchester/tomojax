@@ -131,6 +131,12 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
                     "family": "general_pose_forward",
                     "seed": 456,
                     "config": {"nx": 31, "ny": 37, "nz": 43, "n_views": 47},
+                },
+                {
+                    "case_name": "sampled-alignment-smoke-0",
+                    "family": "alignment_smoke",
+                    "seed": 789,
+                    "config": {"size": 24, "views": 24},
                 }
             ],
         },
@@ -162,6 +168,8 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
     assert "Value+grad no-checkpoint speedup vs checkpointed: `2.0000x`" in text
     assert "## Sampled Representative" in text
     assert "sampled-general-forward-0" in text
+    assert "sampled-alignment-smoke-0" in text
+    assert "`24x24x24` | 24" in text
     assert "Alignment smoke median wall time" in text
     assert "`1/1`" in text
     assert "## 2x Targets" in text

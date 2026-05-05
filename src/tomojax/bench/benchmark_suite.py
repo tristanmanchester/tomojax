@@ -346,10 +346,15 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
         )
         for case in sampled["sampled_cases"]:
             config = case["config"]
-            shape = f"{config.get('nx')}x{config.get('ny')}x{config.get('nz')}"
+            if "size" in config:
+                shape = f"{config['size']}x{config['size']}x{config['size']}"
+                views = config.get("views", "-")
+            else:
+                shape = f"{config.get('nx')}x{config.get('ny')}x{config.get('nz')}"
+                views = config.get("n_views", "-")
             lines.append(
                 f"| `{case['case_name']}` | `{case['family']}` | {case['seed']} | "
-                f"`{shape}` | {config.get('n_views', '-')} |"
+                f"`{shape}` | {views} |"
             )
 
     targets = suite.get("benchmark_targets")
@@ -583,6 +588,9 @@ def main() -> None:
             tomojax_dir=args.tomojax_dir,
             fixture_root=args.root / "alignment-fixtures" / "sampled",
             out_dir=args.out_dir / "sampled_representative_artifacts",
+            note=args.note,
+            git_branch=args.git_branch,
+            git_commit=args.git_commit,
         )
         write_benchmark_json(
             sampled_representative,
