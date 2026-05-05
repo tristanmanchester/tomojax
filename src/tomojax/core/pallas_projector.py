@@ -210,12 +210,18 @@ def _safe_detector_tile_shape(
     detector: Detector,
     *,
     max_generic_tile_u: int | None = None,
+    allow_remainder_tiles: bool = False,
 ) -> list[int]:
     """Resolve detector tiles to exact detector divisors for real Pallas lowering."""
     tile_v = int(tile_shape[0])
     tile_u = int(tile_shape[1])
     if max_generic_tile_u is not None:
         tile_u = min(tile_u, int(max_generic_tile_u))
+    if allow_remainder_tiles:
+        remainder_tile_v = max(1, min(int(detector.nv), int(tile_v)))
+        remainder_tile_u = max(1, min(int(detector.nu), int(tile_u)))
+        if _is_power_of_two(remainder_tile_v * remainder_tile_u):
+            return [remainder_tile_v, remainder_tile_u]
     # JAX Pallas Triton lowering checks load/store tensor sizes are powers of two
     # (`jax/_src/pallas/triton/lowering.py::_check_tensor_size` in JAX 0.10.0).
     return _largest_power2_tile_divisors(
@@ -414,6 +420,8 @@ def pallas_projector_actual_sinogram_variant_metadata(
         metadata["tile_shape"],
         detector,
         max_generic_tile_u=8 if metadata["kernel_variant"] == "generic" else None,
+        allow_remainder_tiles=metadata["state_mode"] == "cached"
+        and metadata["layout_variant"] == "detector_vu",
     )
     return metadata
 
@@ -2786,9 +2794,11 @@ def _cached_projector_views_state_pallas_call(
         unroll=unroll,
     )
     grid_shape = (int(n_views), math.ceil(int(nv) / int(tile_v)), math.ceil(int(nu) / int(tile_u)))
+    out_nv = int(grid_shape[1]) * int(tile_v)
+    out_nu = int(grid_shape[2]) * int(tile_u)
     return pl.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((int(n_views), int(nv), int(nu)), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((int(n_views), out_nv, out_nu), jnp.float32),
         grid=grid_shape,
         in_specs=[
             pl.no_block_spec,
@@ -2934,7 +2944,7 @@ def forward_project_views_T_pallas_with_state(
         state.diy,
         state.diz,
         _prepare_volume_for_pallas_gather(volume, state.gather_dtype),
-    )
+    )[:, : int(state.nv), : int(state.nu)]
 
 
 def forward_project_residual_sse_T_pallas_with_state(

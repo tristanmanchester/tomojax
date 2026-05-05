@@ -424,6 +424,7 @@ def test_sinogram_dispatch_uses_general_pose_tile_policy() -> None:
         n_views=41,
         pose_mode="general_5d",
         pallas_tile_shape=(16, 8),
+        pallas_state_mode="cached",
     )
     regular = ForwardSinogramBenchmarkConfig(
         nx=40,
@@ -437,9 +438,9 @@ def test_sinogram_dispatch_uses_general_pose_tile_policy() -> None:
     )
 
     assert sinogram_dispatch_selected_mode(general) == "pallas_batched"
-    assert sinogram_dispatch_selected_mode(awkward) == "jax_vmap"
+    assert sinogram_dispatch_selected_mode(awkward) == "pallas_batched"
     assert sinogram_dispatch_pallas_tile_shape(general) == PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE
-    assert sinogram_dispatch_pallas_tile_shape(awkward) == (16, 8)
+    assert sinogram_dispatch_pallas_tile_shape(awkward) == PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE
     assert sinogram_dispatch_pallas_tile_shape(regular) == (16, 8)
 
 

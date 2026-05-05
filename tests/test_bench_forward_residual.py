@@ -182,6 +182,7 @@ def test_residual_dispatch_uses_general_pose_tile_policy() -> None:
         n_views=41,
         pose_mode="general_5d",
         pallas_tile_shape=(16, 8),
+        pallas_state_mode="cached",
     )
     tiny = ForwardResidualBenchmarkConfig(
         nx=4,
@@ -194,9 +195,9 @@ def test_residual_dispatch_uses_general_pose_tile_policy() -> None:
     )
 
     assert residual_dispatch_selected_mode(general) == "pallas_materialized"
-    assert residual_dispatch_selected_mode(awkward) == "jax_materialized"
+    assert residual_dispatch_selected_mode(awkward) == "pallas_materialized"
     assert residual_dispatch_pallas_tile_shape(general) == (16, 4)
-    assert residual_dispatch_pallas_tile_shape(awkward) == (16, 8)
+    assert residual_dispatch_pallas_tile_shape(awkward) == (16, 4)
     assert residual_dispatch_pallas_tile_shape(tiny) == (16, 8)
 
 

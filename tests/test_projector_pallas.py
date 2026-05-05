@@ -954,6 +954,57 @@ def test_pallas_forward_project_views_cached_state_matches_inline_generic() -> N
     np.testing.assert_allclose(np.asarray(state_cached), np.asarray(inline), atol=1e-4, rtol=1e-4)
 
 
+def test_pallas_cached_sinogram_metadata_keeps_remainder_tile() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=11, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T_stack = jnp.stack([_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0)])
+
+    cached = pallas_projector_actual_sinogram_variant_metadata(
+        T_stack,
+        grid,
+        detector,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+        state_mode="cached",
+    )
+    inline = pallas_projector_actual_sinogram_variant_metadata(
+        T_stack,
+        grid,
+        detector,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+        state_mode="inline",
+    )
+
+    assert cached["tile_shape"] == [4, 8]
+    assert inline["tile_shape"] == [1, 1]
+
+
+@pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
+def test_pallas_cached_views_handles_remainder_detector_tiles() -> None:
+    grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=11, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T_stack = jnp.stack([_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0)])
+    volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8)) / 100.0
+    oracle = jnp.stack(
+        [forward_project_view_T(T, grid, detector, volume) for T in T_stack],
+        axis=0,
+    )
+
+    candidate = forward_project_views_T_pallas(
+        T_stack,
+        grid,
+        detector,
+        volume,
+        tile_shape=(4, 8),
+        kernel_variant="generic",
+        state_mode="cached",
+    )
+
+    assert candidate.shape == (2, 7, 11)
+    np.testing.assert_allclose(np.asarray(candidate), np.asarray(oracle), atol=1e-4, rtol=1e-4)
+
+
 def test_pallas_forward_project_residual_sse_matches_materialized_jax() -> None:
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
     detector = Detector(nu=9, nv=7, du=1.0, dv=1.0, det_center=(0.0, 0.0))
