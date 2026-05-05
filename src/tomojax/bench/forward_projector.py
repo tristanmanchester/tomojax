@@ -987,14 +987,6 @@ def _detector_tile_shape(
     # importing private core helpers into benchmark orchestration.
     max_v = max(1, int(requested_tile_shape[0]))
     max_u = max(1, min(int(requested_tile_shape[1]), 8))
-    if (
-        config.pallas_state_mode == "cached"
-        and config.pallas_layout_variant == "detector_vu"
-    ):
-        remainder = (max(1, min(int(config.nv), max_v)), max(1, min(int(config.nu), max_u)))
-        area = int(remainder[0]) * int(remainder[1])
-        if area > 0 and area & (area - 1) == 0:
-            return remainder
     best = (1, 1)
     best_area = 1
     for candidate_v in range(min(int(config.nv), max_v), 0, -1):
@@ -1008,6 +1000,16 @@ def _detector_tile_shape(
                 best = (int(candidate_v), int(candidate_u))
                 best_area = area
                 break
+    if best_area > 1:
+        return best
+    if (
+        config.pallas_state_mode == "cached"
+        and config.pallas_layout_variant == "detector_vu"
+    ):
+        remainder = (max(1, min(int(config.nv), max_v)), max(1, min(int(config.nu), max_u)))
+        area = int(remainder[0]) * int(remainder[1])
+        if area > 0 and area & (area - 1) == 0:
+            return remainder
     return best
 
 

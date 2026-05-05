@@ -217,6 +217,14 @@ def _safe_detector_tile_shape(
     tile_u = int(tile_shape[1])
     if max_generic_tile_u is not None:
         tile_u = min(tile_u, int(max_generic_tile_u))
+    exact = _largest_power2_tile_divisors(
+        nv=int(detector.nv),
+        nu=int(detector.nu),
+        tile_v=tile_v,
+        tile_u=tile_u,
+    )
+    if int(exact[0]) * int(exact[1]) > 1:
+        return exact
     if allow_remainder_tiles:
         remainder_tile_v = max(1, min(int(detector.nv), int(tile_v)))
         remainder_tile_u = max(1, min(int(detector.nu), int(tile_u)))
@@ -224,12 +232,7 @@ def _safe_detector_tile_shape(
             return [remainder_tile_v, remainder_tile_u]
     # JAX Pallas Triton lowering checks load/store tensor sizes are powers of two
     # (`jax/_src/pallas/triton/lowering.py::_check_tensor_size` in JAX 0.10.0).
-    return _largest_power2_tile_divisors(
-        nv=int(detector.nv),
-        nu=int(detector.nu),
-        tile_v=tile_v,
-        tile_u=tile_u,
-    )
+    return exact
 
 
 def _normalize_kernel_variant(kernel_variant: str) -> str:

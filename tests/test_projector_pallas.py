@@ -980,6 +980,23 @@ def test_pallas_cached_sinogram_metadata_keeps_remainder_tile() -> None:
     assert inline["tile_shape"] == [1, 1]
 
 
+def test_pallas_cached_sinogram_metadata_prefers_exact_divisor_tile() -> None:
+    grid = Grid(nx=24, ny=24, nz=24, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=24, nv=24, du=1.0, dv=1.0, det_center=(0.0, 0.0))
+    T_stack = jnp.stack([_pose(theta, grid=grid, detector=detector) for theta in (0.0, 31.0)])
+
+    metadata = pallas_projector_actual_sinogram_variant_metadata(
+        T_stack,
+        grid,
+        detector,
+        tile_shape=(16, 4),
+        kernel_variant="generic",
+        state_mode="cached",
+    )
+
+    assert metadata["tile_shape"] == [8, 4]
+
+
 @pytest.mark.skipif(jax.default_backend() != "gpu", reason="requires real Pallas lowering")
 def test_pallas_cached_views_handles_remainder_detector_tiles() -> None:
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
