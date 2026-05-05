@@ -30,6 +30,8 @@ _ALIGN_RE = re.compile(
     r"loss\s+([0-9.+\-eE]+)->([0-9.+\-eE]+).*?([-+][0-9.]+)%"
 )
 _RECON_RE = re.compile(r"Recon \(FISTA\)\s+\|\s+time\s+([0-9.+\-eE]+)s")
+_PARAMETER_ORDER = ("alpha", "beta", "phi", "dx", "dz")
+_ROTATION_DOFS = frozenset(("alpha", "beta", "phi"))
 
 
 def _run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -145,6 +147,158 @@ def _theta_stats(path: Path) -> dict[str, dict[str, float]]:
                 entry[f"{key}_deg"] = float(entry[key] * 180.0 / math.pi)
         stats[name] = entry
     return stats
+
+
+def _read_theta_array(path: Path) -> np.ndarray:
+    with h5py.File(path, "r") as handle:
+        theta = np.asarray(handle["entry/processing/tomojax/align/thetas"], dtype=np.float32)
+    if theta.ndim != 2 or theta.shape[1] != 5:
+        raise ValueError(f"alignment theta dataset must have shape (n_views, 5), got {theta.shape}")
+    return theta
+
+
+def _read_projection_shape(path: Path) -> tuple[int, ...]:
+    with h5py.File(path, "r") as handle:
+        return tuple(int(v) for v in handle["entry/data/projections"].shape)
+
+
+def _params_json_array(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    views = payload.get("views")
+    if not isinstance(views, list):
+        raise ValueError("alignment parameter JSON must contain a views list")
+    rows = []
+    for record in views:
+        rows.append(
+            [
+                float(record["alpha_rad"]),
+                float(record["beta_rad"]),
+                float(record["phi_rad"]),
+                float(record["dx_px"]),
+                float(record["dz_px"]),
+            ]
+        )
+    arr = np.asarray(rows, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] != 5:
+        raise ValueError(f"alignment parameter JSON must resolve to shape (n_views, 5), got {arr.shape}")
+    return arr, payload
+
+
+def _rmse(values: np.ndarray) -> float:
+    return float(math.sqrt(float(np.mean(np.square(values, dtype=np.float64)))))
+
+
+def _mae(values: np.ndarray) -> float:
+    return float(np.mean(np.abs(values), dtype=np.float64))
+
+
+def _max_abs(values: np.ndarray) -> float:
+    return float(np.max(np.abs(values)))
+
+
+def _pose_recovery_metrics(*, truth_path: Path, params_json: Path) -> dict[str, Any]:
+    """Compare recovered alignment parameters with fixture truth.
+
+    The fixture stores the synthetic per-view perturbation in
+    ``entry/processing/tomojax/align/thetas``. Exported alignment parameters use
+    the same five-column convention. Translation comparison applies the exported
+    mean-translation gauge to the fixture truth when that gauge was active.
+    """
+    truth = _read_theta_array(truth_path).astype(np.float64)
+    recovered, payload = _params_json_array(params_json)
+    recovered = recovered.astype(np.float64)
+    if recovered.shape != truth.shape:
+        raise ValueError(
+            "recovered alignment parameters and fixture truth have different shapes: "
+            f"{recovered.shape} vs {truth.shape}"
+        )
+
+    truth_for_compare = truth.copy()
+    gauge = payload.get("gauge_fix") or {}
+    gauge_mode = str(gauge.get("mode") or "none")
+    if gauge_mode == "mean_translation":
+        for idx in (3, 4):
+            truth_for_compare[:, idx] -= float(np.mean(truth_for_compare[:, idx]))
+
+    err = recovered - truth_for_compare
+    per_dof: dict[str, dict[str, float]] = {}
+    for idx, name in enumerate(_PARAMETER_ORDER):
+        values = err[:, idx]
+        entry = {
+            "rmse": _rmse(values),
+            "mae": _mae(values),
+            "max_abs": _max_abs(values),
+        }
+        if name in _ROTATION_DOFS:
+            deg = values * 180.0 / math.pi
+            entry.update(
+                {
+                    "rmse_deg": _rmse(deg),
+                    "mae_deg": _mae(deg),
+                    "max_abs_deg": _max_abs(deg),
+                }
+            )
+        per_dof[name] = entry
+
+    rot_err_deg = err[:, :3] * 180.0 / math.pi
+    trans_err_px = err[:, 3:5]
+    initial_truth = truth_for_compare
+    return {
+        "parameter_order": list(_PARAMETER_ORDER),
+        "comparison": "recovered_minus_fixture_truth",
+        "translation_gauge": gauge_mode,
+        "per_dof": per_dof,
+        "rot_rmse_deg": _rmse(rot_err_deg),
+        "trans_rmse_px": _rmse(trans_err_px),
+        "initial_rot_rmse_deg": _rmse(initial_truth[:, :3] * 180.0 / math.pi),
+        "initial_trans_rmse_px": _rmse(initial_truth[:, 3:5]),
+    }
+
+
+def _projection_residual_metrics(
+    *,
+    final_loss: float | None,
+    loss_kind: str | None,
+    projection_shape: tuple[int, ...],
+) -> dict[str, Any]:
+    n_rays = int(np.prod(projection_shape, dtype=np.int64))
+    out: dict[str, Any] = {
+        "loss_kind": loss_kind,
+        "final_loss": final_loss,
+        "projection_shape": list(projection_shape),
+        "n_rays": n_rays,
+        "rmse_per_ray": None,
+    }
+    if loss_kind == "l2" and final_loss is not None and n_rays > 0:
+        out["rmse_per_ray"] = float(math.sqrt(max(0.0, 2.0 * float(final_loss)) / n_rays))
+    return out
+
+
+def _success_flags(report: dict[str, Any]) -> dict[str, bool]:
+    loss = report["loss"]
+    quality = report["quality"]
+    pose = report["pose_recovery"]
+    initial_loss = loss.get("initial")
+    final_loss = loss.get("final")
+    misaligned_mse = quality["misaligned_recon_vs_truth"]["mse"]
+    aligned_mse = quality["aligned_recon_vs_truth"]["mse"]
+    return {
+        "finite_final_loss": final_loss is not None and math.isfinite(float(final_loss)),
+        "loss_decreased": (
+            initial_loss is not None
+            and final_loss is not None
+            and math.isfinite(float(initial_loss))
+            and math.isfinite(float(final_loss))
+            and float(final_loss) < float(initial_loss)
+        ),
+        "loss_drop_at_least_50_percent": (
+            loss.get("delta_percent") is not None and float(loss["delta_percent"]) <= -50.0
+        ),
+        "aligned_mse_improved_vs_misaligned": float(aligned_mse) < float(misaligned_mse),
+        "pose_metrics_finite": all(
+            math.isfinite(float(pose[key])) for key in ("rot_rmse_deg", "trans_rmse_px")
+        ),
+    }
 
 
 def _parse_alignment_log(log: str) -> dict[str, Any]:
@@ -439,6 +593,10 @@ def main() -> None:
     aligned_volume = _read_volume(aligned)
     misaligned_recon_volume = _read_volume(misaligned_recon)
     log_metrics = _parse_alignment_log(align_result.stdout)
+    pose_recovery = _pose_recovery_metrics(
+        truth_path=fixture["misaligned"],
+        params_json=params_json,
+    )
     slice_metrics = _write_png(
         args.slice_png,
         truth_path=fixture["truth"],
@@ -448,6 +606,9 @@ def main() -> None:
 
     manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
     resolved = manifest.get("resolved_config", {})
+    run_info = resolved.get("run_info") or {}
+    final_loss = run_info.get("final_loss")
+    loss_kind = run_info.get("loss_kind")
     report = {
         "benchmark": "tomojax_alignment_smoke",
         "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -505,13 +666,24 @@ def main() -> None:
             "delta_percent": log_metrics["delta_percent"],
             "level_summaries": log_metrics["level_summaries"],
             "align_steps": log_metrics["align_steps"],
-            "manifest_final_loss": (resolved.get("run_info") or {}).get("final_loss"),
-            "manifest_loss_count": (resolved.get("run_info") or {}).get("loss_count"),
-            "manifest_loss_kind": (resolved.get("run_info") or {}).get("loss_kind"),
+            "manifest_final_loss": final_loss,
+            "manifest_loss_count": run_info.get("loss_count"),
+            "manifest_loss_kind": loss_kind,
         },
+        "pose_recovery": pose_recovery,
+        "projection_residual": _projection_residual_metrics(
+            final_loss=final_loss,
+            loss_kind=loss_kind,
+            projection_shape=_read_projection_shape(fixture["misaligned"]),
+        ),
         "quality": {
             "misaligned_recon_vs_truth": _metrics(misaligned_recon_volume, truth),
             "aligned_recon_vs_truth": _metrics(aligned_volume, truth),
+            "reference_recon_vs_truth": None,
+            "reference_recon_note": (
+                "Not run in smoke benchmark; aligned_recon_vs_truth uses the configured "
+                "working FISTA reconstruction."
+            ),
             "slice_metrics": slice_metrics,
         },
         "resolved": {
@@ -522,6 +694,7 @@ def main() -> None:
         },
         "stdout": align_result.stdout,
     }
+    report["success"] = _success_flags(report)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -563,6 +736,9 @@ def main() -> None:
                 f"| Initial loss | {fmt(report['loss']['initial'])} |",
                 f"| Final loss | {fmt(report['loss']['final'])} |",
                 f"| Loss delta | {fmt(report['loss']['delta_percent'])}% |",
+                f"| Projection residual RMSE/ray | {fmt(report['projection_residual']['rmse_per_ray'])} |",
+                f"| Pose rotation RMSE | {fmt(report['pose_recovery']['rot_rmse_deg'])} deg |",
+                f"| Pose translation RMSE | {fmt(report['pose_recovery']['trans_rmse_px'])} px |",
                 f"| Misaligned FISTA MSE vs GT | {fmt(report['quality']['misaligned_recon_vs_truth']['mse'])} |",
                 f"| Aligned FISTA MSE vs GT | {fmt(report['quality']['aligned_recon_vs_truth']['mse'])} |",
                 f"| Aligned FISTA PSNR vs GT | {fmt(report['quality']['aligned_recon_vs_truth']['psnr_db'])} dB |",

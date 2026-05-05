@@ -163,6 +163,37 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
     assert "alignment_smoke_wall_seconds" in text
 
 
+def test_suite_summary_includes_alignment_geometry_metrics(tmp_path) -> None:
+    suite = {
+        "mode": "guard",
+        "evidence_class": "guard_invalid_for_claims",
+        "git_branch": "bench/astra-hardening",
+        "git_commit": "abc123",
+        "note": "test",
+        "created_at": "2026-05-01T00:00:00+00:00",
+        "case_summaries": [],
+        "pallas_sanity": None,
+        "alignment_smoke": {
+            "timing": {"wall_sec": 2.0},
+            "loss": {"initial": 10.0, "final": 4.0, "delta_percent": -60.0},
+            "pose_recovery": {"rot_rmse_deg": 1.25, "trans_rmse_px": 0.5},
+            "projection_residual": {"rmse_per_ray": 0.125},
+            "success": {"loss_decreased": True, "pose_metrics_finite": True},
+            "quality": {"aligned_recon_vs_truth": {"mse": 0.01}},
+            "artifacts": {"slice_png": "alignment_smoke_slices.png"},
+        },
+    }
+    path = tmp_path / "summary.md"
+
+    benchmark_suite._write_summary_md(path, suite)
+
+    text = path.read_text(encoding="utf-8")
+    assert "Projection residual RMSE/ray" in text
+    assert "Pose rotation RMSE" in text
+    assert "1.2500 deg" in text
+    assert "`2/2`" in text
+
+
 def test_suite_json_can_round_trip_evidence_class(tmp_path) -> None:
     payload = {
         "benchmark": "tomojax_benchmark_suite",

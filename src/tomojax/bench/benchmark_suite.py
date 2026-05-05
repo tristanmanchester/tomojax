@@ -231,6 +231,9 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
 
     alignment = suite.get("alignment_smoke")
     if alignment:
+        pose = alignment.get("pose_recovery") or {}
+        residual = alignment.get("projection_residual") or {}
+        success = alignment.get("success") or {}
         lines.extend(
             [
                 "",
@@ -242,6 +245,10 @@ def _write_summary_md(path: Path, suite: dict[str, Any]) -> None:
                 f"| Initial loss | {_fmt(alignment['loss']['initial'])} |",
                 f"| Final loss | {_fmt(alignment['loss']['final'])} |",
                 f"| Loss delta | {_fmt(alignment['loss']['delta_percent'])}% |",
+                f"| Projection residual RMSE/ray | {_fmt(residual.get('rmse_per_ray'))} |",
+                f"| Pose rotation RMSE | {_fmt(pose.get('rot_rmse_deg'))} deg |",
+                f"| Pose translation RMSE | {_fmt(pose.get('trans_rmse_px'))} px |",
+                f"| Success flags | `{sum(bool(v) for v in success.values())}/{len(success)}` |",
                 f"| Aligned MSE vs GT | {_fmt(alignment['quality']['aligned_recon_vs_truth']['mse'])} |",
                 f"| Slice PNG | `{alignment['artifacts']['slice_png']}` |",
             ]
