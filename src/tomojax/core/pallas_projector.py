@@ -1667,11 +1667,7 @@ def _projector_parallel_z_views_kernel(
         iy0,
     )
     if unroll is None:
-        tile_steps = jnp.minimum(
-            jnp.max(jnp.where(in_detector, n_steps_ray, 0)),
-            jnp.asarray(n_steps, dtype=jnp.int32),
-        )
-        acc, _, _ = jax.lax.fori_loop(0, tile_steps, body, init)
+        acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init)
     else:
         acc, _, _ = jax.lax.fori_loop(0, n_steps, body, init, unroll=unroll)
     out_ref[...] = jnp.where(in_detector, acc.astype(jnp.float32), 0.0)[jnp.newaxis, :, :]
