@@ -136,6 +136,9 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "true_det_u_px": sidecars.true_geometry.setup.det_u_px.value,
         "nominal_det_u_px": sidecars.nominal_geometry.setup.det_u_px.value,
         "corrupted_det_u_px": sidecars.corrupted_geometry.setup.det_u_px.value,
+        "volume": sidecars.volume.to_dict(),
+        "projections": sidecars.projections.to_dict(),
+        "mask": sidecars.mask.to_dict(),
     }
 
 

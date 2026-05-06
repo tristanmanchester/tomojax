@@ -4388,3 +4388,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Shape/dtype validation does not verify physical consistency between generated
   projections and v2 geometry sidecars. That remains a later solver-ingestion
   or reference-projector compatibility task.
+
+## 2026-05-06 — Phase 8 Align-Auto Synthetic Array Metadata
+
+### Summary
+
+- Extended `align-auto` sidecar readback payloads with loader-provided volume,
+  projection, and mask array metadata.
+- `verification.json` and `run_manifest.json` now include array path, shape, and
+  dtype metadata under `synthetic_dataset.sidecar_readback`.
+- `config_resolved.toml` now records compact projection shape and dtype fields
+  for generated synthetic sidecars.
+- Added focused CLI assertions for clean and nuisance-applied generated
+  sidecars.
+
+### Decisions
+
+- Keep array metadata under `sidecar_readback` to avoid implying generated
+  projections are solver inputs.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 3 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py tests/test_synthetic_datasets.py -q`
+  passed: 15 tests.
+- `just imports` passed.
+
+### Risks
+
+- This improves provenance/readback only. Solver ingestion still needs a
+  deliberate compatibility step because generated projections come from the
+  NumPy smoke projector.

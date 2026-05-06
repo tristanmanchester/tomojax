@@ -1534,9 +1534,18 @@ def _write_config_resolved(
             sidecar_payload = cast("dict[object, object]", sidecar_readback)
             validated = sidecar_payload.get("validated")
             n_views = sidecar_payload.get("n_views")
+            projections = sidecar_payload.get("projections")
             lines.append(f"synthetic_dataset_sidecars_validated = {str(bool(validated)).lower()}")
             if isinstance(n_views, int | float | str):
                 lines.append(f"synthetic_dataset_sidecar_views = {int(n_views)}")
+            if isinstance(projections, dict):
+                projection_payload = cast("dict[object, object]", projections)
+                shape = projection_payload.get("shape")
+                dtype = projection_payload.get("dtype")
+                if isinstance(shape, list):
+                    lines.append(f"synthetic_dataset_projection_shape = {shape!r}")
+                if isinstance(dtype, str):
+                    lines.append(f'synthetic_dataset_projection_dtype = "{dtype}"')
     lines.extend((f"level_factors = {list(schedule.level_factors)!r}", ""))
     _ = path.write_text(
         "\n".join(lines),

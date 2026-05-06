@@ -185,9 +185,24 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
             "corrupted_det_u_px": 0.0,
             "n_views": 4,
             "nominal_det_u_px": 0.0,
+            "mask": {
+                "dtype": "bool",
+                "path": str(dataset_dir / "mask.npy"),
+                "shape": [4, 40, 40],
+            },
+            "projections": {
+                "dtype": "float32",
+                "path": str(dataset_dir / "projections.npy"),
+                "shape": [4, 40, 40],
+            },
             "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
             "true_det_u_px": 14.5,
             "validated": True,
+            "volume": {
+                "dtype": "float32",
+                "path": str(dataset_dir / "ground_truth_volume.npy"),
+                "shape": [32, 32, 32],
+            },
         },
         "source": "synthetic128_spec",
     }
@@ -203,11 +218,16 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
     assert sidecar_readback["true_det_u_px"] == 14.5
+    projections = cast("dict[str, object]", sidecar_readback["projections"])
+    assert projections["shape"] == [4, 40, 40]
+    assert projections["dtype"] == "float32"
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert 'synthetic_dataset_name = "synth128_setup_global_tomo"' in config_text
     assert "synthetic_dataset_nuisance_applied = false" in config_text
     assert "synthetic_dataset_sidecars_validated = true" in config_text
     assert "synthetic_dataset_sidecar_views = 4" in config_text
+    assert "synthetic_dataset_projection_shape = [4, 40, 40]" in config_text
+    assert 'synthetic_dataset_projection_dtype = "float32"' in config_text
     nuisance = cast(
         "dict[str, object]",
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
@@ -245,6 +265,8 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     sidecar_readback = cast("dict[str, object]", synthetic_dataset["sidecar_readback"])
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
+    projections = cast("dict[str, object]", sidecar_readback["projections"])
+    assert projections["shape"] == [4, 48, 48]
     manifest = cast(
         "dict[str, object]",
         json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8")),
