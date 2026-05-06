@@ -55,6 +55,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32_after_accept_gate/benchmark_comparison.md`
   passed.
 - `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` on broad
+  pre-existing legacy Ruff debt after formatting 70 unrelated files; formatter
+  churn was reverted. Representative failures start in
+  `src/tomojax/align/model/schedules.py`,
+  `src/tomojax/align/model/state.py`, and legacy tests.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.

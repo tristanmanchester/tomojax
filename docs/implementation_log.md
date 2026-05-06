@@ -5528,3 +5528,41 @@ Recovery details:
   geometry timing for rejected Schur updates.
 - The stopped-reconstruction volume gauge problem remains; this slice only
   prevents rejected updates from being counted as verified.
+
+## 2026-05-06 — Broad Gate Audit
+
+### Summary
+
+- Ran `just check` after the Phase 8 benchmark and verification slices.
+- The gate failed at `uv run ruff check --fix src tests tools` on broad
+  pre-existing legacy Ruff debt.
+- `ruff format` reformatted 70 unrelated legacy files before the check failed;
+  that formatter churn was reverted.
+
+### Representative Failures
+
+- `src/tomojax/align/model/schedules.py`: missing public docstrings,
+  type-checking import placement, and branch-count issues.
+- `src/tomojax/align/model/state.py`: missing public docstrings and missing
+  pytree method type annotations.
+- `src/tomojax/align/objectives/fixed_volume.py`: missing docstrings,
+  type-checking import placement, and relative import style.
+- Legacy tests under `tests/` still have many Ruff issues such as `PTH118`,
+  `ARG001`, `PT018`, and old lambda/style violations.
+
+### Decisions
+
+- Do not weaken Ruff or clean broad legacy lint in this Phase 8 slice.
+- Revert unrelated formatter churn from the failed `just check` run.
+- Continue using focused validation plus `just imports` for scoped vertical
+  slices until old transitional code is deleted or migrated.
+
+### Validation
+
+- `just check` failed as described above.
+- `git restore src tests tools` restored the unrelated formatter changes.
+
+### Risks
+
+- `just check` remains blocked by legacy/transitional lint debt outside the
+  current Phase 8 vertical slice.
