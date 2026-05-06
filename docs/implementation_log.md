@@ -5756,3 +5756,53 @@ Recovery details:
 
 - Strong pose priors can bias pose-heavy synthetic cases; this slice only wires
   explicit knobs and leaves defaults unchanged.
+
+## 2026-05-06 — Phase 8 Multi-Case 32^3 Synthetic Benchmark Pass
+
+### Summary
+
+- Generated five deterministic 32^3 sidecar datasets from the planned
+  synthetic128 benchmark scenarios.
+- Ran `tomojax-align-auto-smoke` against each existing sidecar directory with
+  `--profile smoke32`, `--fit-gain-offset-nuisance`, and
+  `--fit-background-nuisance`.
+- Rendered the comparison report with `tomojax-synthetic-benchmark-compare`.
+- Committed a concise benchmark summary at
+  `docs/benchmark_runs/2026-05-06-phase8-multi-case-32.md`; generated arrays
+  and run artifacts remain under ignored `.artifacts/`.
+
+### Results
+
+| Benchmark | Status | Criteria | Geometry | Volume NMSE | Final Residual | Time To Verified (s) | Total Time (s) | Recovery |
+|---|---|---|---|---:|---:|---:|---:|---|
+| `synth128_setup_global_tomo` | failed | failed | failed | 0.693523 | 0 | n/a | 11.5794 | `det_u=3.625`, `det_v=0`, `theta=0.0218166` |
+| `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 0.662409 | 0.331717 | n/a | 13.3407 | `det_u=2.7415`, `det_v=2.5782`, `theta=0.2019` |
+| `synth128_lamino_axis_roll_pose` | failed | failed | failed | 0.635030 | 0.00978141 | n/a | 13.3946 | `det_u=2.2334`, `det_v=0.7336`, `theta=0.1598` |
+| `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 0.608258 | 0.000758991 | n/a | 13.5649 | `det_u=1.4893`, `det_v=0.0512`, `theta=0.0052336`; label `nuisance_residual_structure` |
+| `synth128_combined_nuisance_jumps` | failed | failed | failed | 0.700399 | 0.00567048 | n/a | 13.4880 | `det_u=3.8751`, `det_v=0.9955`, `theta=0.0309604` |
+
+### Commands
+
+- Generated sidecars with `uv run python` and
+  `tomojax.datasets.generate_synthetic_dataset(..., size=32, clean=False, views=4)`
+  under `.artifacts/phase8_multi_case_32_benchmark_pass/datasets`.
+- Ran five CPU smoke commands with `JAX_PLATFORM_NAME=cpu uv run
+  tomojax-align-auto-smoke --synthetic-dataset-dir ...`.
+- Rendered `.artifacts/phase8_multi_case_32_benchmark_pass/benchmark_comparison.md`
+  with `JAX_PLATFORM_NAME=cpu uv run tomojax-synthetic-benchmark-compare ...`.
+
+### Validation
+
+- Five `tomojax-align-auto-smoke` runs completed and wrote
+  `benchmark_result.json`.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-synthetic-benchmark-compare ... --out
+  .artifacts/phase8_multi_case_32_benchmark_pass/benchmark_comparison.md`
+  passed.
+
+### Risks
+
+- This is a baseline benchmark pass, not a successful recovery pass. The normal
+  stopped-reconstruction source still fails all five current 32^3 recovery
+  gates.
+- JAX emitted CUDA plugin warnings about missing cuSPARSE before CPU fallback;
+  all benchmark commands were run with `JAX_PLATFORM_NAME=cpu`.
