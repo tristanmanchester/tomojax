@@ -47,3 +47,29 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   preserve them as compatibility surfaces.
 - `just check` cannot pass until type errors in the existing implementation are
   removed or the old implementation is replaced by the v2 deep modules.
+
+## 2026-05-06 — Remove Stale Pre-v2 User Documentation
+
+### Summary
+
+- Removed stale pre-v2 user-facing archive docs to prevent agents from treating
+  old CLI, config, tutorial, and public API surfaces as current architecture.
+- Replaced the root README with a v2 rewrite README that points to
+  `docs/tomojax-v2/` as the canonical design source.
+
+### Decisions
+
+- Kept historical brainstorms, ideation notes, implementation plans, and
+  solution notes under `docs/archive/` for now because they may still contain
+  useful benchmark and implementation archaeology.
+- Deleted archived user-facing docs where Git history is a better archive than
+  a stale in-tree compatibility signal.
+
+### Validation
+
+- Checked current v2-facing docs and guardrail files for links to the removed
+  archive pages:
+  `README.md`, `AGENTS.md`, `.agent/PLANS.md`, `docs/implementation_log.md`,
+  `docs/tomojax-v2/`, `justfile`, and `pyproject.toml`.
+- No references to the removed archived install, quickstart, CLI, reference,
+  concepts, tutorials, or troubleshooting pages remain in those current files.
