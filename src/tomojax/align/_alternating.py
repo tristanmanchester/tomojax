@@ -256,6 +256,8 @@ def _run_alternating_solver_smoke_impl(
             final_geometry=geometry,
             truth_volume=truth,
             final_volume=volume,
+            observed=observed,
+            mask=mask,
             summaries=tuple(summaries),
             geometry_update_volume_source=config.geometry_update_volume_source,
             fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,

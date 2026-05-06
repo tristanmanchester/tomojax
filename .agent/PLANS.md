@@ -12,19 +12,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 alternating solver and continuation vertical slice
-- Goal: add an executable stopped-reconstruction sidecar contract and record
-  the remaining reconstruction-gauge recovery gap.
+- Goal: record reconstruction/volume gauge diagnostics for sidecar stopped
+  reconstruction runs.
 
 ### Scope
 
 - In scope:
-  - Quantify the current sidecar-backed 32^3 smoke run with the default
-    `stopped_reconstruction` update volume source.
-  - Preserve the fixed-truth sidecar Schur test as an isolating solver check.
-  - Add focused assertions that the stopped-reconstruction sidecar path uses the
-    real Schur update and improves projection residual/supported DOFs.
-  - Record that absolute detector-shift recovery still needs reconstruction
-    gauge handling.
+  - Add compact verification metrics that compare initial/final stopped-volume
+    projection losses under true and corrupted geometry for sidecar runs.
+  - Expose whether the stopped volume is closer to the corrupted gauge than the
+    true gauge.
+  - Add focused assertions for the current sidecar stopped-reconstruction gap.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -41,44 +39,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Identify why sidecar stopped-reconstruction recovery fails today.
-- [x] Add focused stopped-reconstruction sidecar assertions.
+- [x] Add stopped-volume gauge diagnostic payload.
+- [x] Add focused assertions for sidecar stopped-volume gauge evidence.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the stopped-reconstruction sidecar slice.
+- [ ] Commit the stopped-volume gauge diagnostic slice.
 
 ### Validation
 
-- `uv run ruff format tests/test_alternating_solver_smoke.py`
-  passed: 1 file left unchanged.
-- `uv run ruff check tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed: 3 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 10 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 16 tests.
 - `just imports` passed.
-- `just check` failed in legacy Ruff cleanup before typecheck/tests:
-  - `uv run ruff format src tests tools` reformatted 70 legacy files.
-  - `uv run ruff check --fix src tests tools` fixed 320 issues and left 1364
-    Ruff issues, starting in transitional `src/tomojax/align/model/schedules.py`
-    and `src/tomojax/align/model/state.py`.
-  - The unrelated formatter churn from this broad command was reverted.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Do not relax the fixed-truth recovery gate. The stopped-reconstruction test
-  records the current real-loop behavior separately until reconstruction gauge
-  handling is implemented.
+- Do not relax recovery tolerances. This slice is diagnostic evidence for the
+  next reconstruction-gauge fix.
 
 ### Risks
 
-- Finding: the current geometry-aware backprojection bakes detector shift into
-  the stopped volume. Schur improves residual, but absolute det_u recovery
-  remains outside the smoke tolerance.
-- Mitigation: keep the limitation executable and explicit; next slice should
-  address reconstruction/volume gauge handling rather than weakening recovery
-  checks.
+- Risk: diagnostics can turn into placeholder artifact polish.
+- Mitigation: add only metrics used by the focused sidecar regression test and
+  keep the next implementation target tied to those numbers.

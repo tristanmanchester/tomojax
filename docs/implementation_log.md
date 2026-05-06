@@ -4650,3 +4650,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The default stopped-reconstruction path improves but does not yet recover
   detector shift to tolerance because the current geometry-aware backprojection
   can bake detector shift into the latent volume.
+
+## 2026-05-06 — Phase 7 Stopped-Volume Gauge Diagnostics
+
+### Summary
+
+- Added `stopped_volume_gauge` to the alternating smoke verification payload.
+- The payload reports final stopped-volume projection losses under initial,
+  final, and true geometry, plus the nearest geometry label.
+- Added focused sidecar assertions showing the default stopped-reconstruction
+  volume is closer to the improved/final geometry than to true geometry, which
+  makes the remaining detector-shift recovery gap explicit.
+
+### Decisions
+
+- This is diagnostic evidence for the next reconstruction-gauge fix, not a
+  relaxation of recovery tolerances.
+- The fixed-truth sidecar Schur test remains the pass/fail recovery gate for
+  the supported solver update.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed: 3 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 16 tests.
+- `just imports` passed.
+
+### Risks
+
+- The diagnostic confirms the stopped volume gauge problem but does not solve it.
+  The next implementation slice should transfer or neutralise detector-shift
+  gauge between the latent volume and geometry rather than changing tolerances.

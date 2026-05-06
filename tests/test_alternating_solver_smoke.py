@@ -649,6 +649,16 @@ def test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap(
     assert result.levels[0].loss_after < result.levels[0].loss_before
     assert result.levels[0].schur_diagnostics is not None
     assert result.levels[0].schur_diagnostics.accepted is True
+    stopped_gauge = cast(
+        "dict[str, float | bool | str]", result.verification["stopped_volume_gauge"]
+    )
+    assert stopped_gauge["schema"] == "tomojax.stopped_volume_gauge.v1"
+    assert stopped_gauge["nearest_geometry"] == "final_geometry"
+    assert stopped_gauge["closer_to_initial_than_true"] is True
+    assert stopped_gauge["closer_to_final_than_true"] is True
+    assert cast("float", stopped_gauge["projection_loss_final_geometry"]) < cast(
+        "float", stopped_gauge["projection_loss_true_geometry"]
+    )
 
     schur_payload = cast(
         "dict[str, object]",

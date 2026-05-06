@@ -14,7 +14,7 @@ import numpy as np
 from tomojax.align._alternating_types import (
     _LevelVerificationChecks,
 )
-from tomojax.forward import project_parallel_reference
+from tomojax.forward import project_parallel_reference, residual_loss
 from tomojax.verify import residual_structure_summary
 
 if TYPE_CHECKING:
@@ -86,6 +86,8 @@ def _verification_payload(
     final_geometry: GeometryState,
     truth_volume: jax.Array,
     final_volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
@@ -155,6 +157,14 @@ def _verification_payload(
         },
         "geometry_recovery": geometry_recovery,
         "volume_recovery": volume_recovery,
+        "stopped_volume_gauge": _stopped_volume_gauge_payload(
+            final_volume=final_volume,
+            observed=observed,
+            mask=mask,
+            initial_geometry=initial_geometry,
+            final_geometry=final_geometry,
+            true_geometry=true_geometry,
+        ),
         "levels": [_summary_payload(summary) for summary in summaries],
     }
 
@@ -281,6 +291,47 @@ def _volume_recovery_payload(truth_volume: jax.Array, final_volume: jax.Array) -
         "nmse_passed": nmse <= nmse_limit,
         "passed": nmse <= nmse_limit,
     }
+
+
+def _stopped_volume_gauge_payload(
+    *,
+    final_volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
+    initial_geometry: GeometryState,
+    final_geometry: GeometryState,
+    true_geometry: GeometryState,
+) -> dict[str, object]:
+    initial_loss = _projection_loss_for_geometry(final_volume, observed, mask, initial_geometry)
+    final_loss = _projection_loss_for_geometry(final_volume, observed, mask, final_geometry)
+    true_loss = _projection_loss_for_geometry(final_volume, observed, mask, true_geometry)
+    nearest = min(
+        (
+            ("initial_geometry", initial_loss),
+            ("final_geometry", final_loss),
+            ("true_geometry", true_loss),
+        ),
+        key=lambda item: item[1],
+    )[0]
+    return {
+        "schema": "tomojax.stopped_volume_gauge.v1",
+        "projection_loss_initial_geometry": initial_loss,
+        "projection_loss_final_geometry": final_loss,
+        "projection_loss_true_geometry": true_loss,
+        "nearest_geometry": nearest,
+        "closer_to_initial_than_true": initial_loss < true_loss,
+        "closer_to_final_than_true": final_loss < true_loss,
+    }
+
+
+def _projection_loss_for_geometry(
+    volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
+    geometry: GeometryState,
+) -> float:
+    predicted = project_parallel_reference(volume, geometry)
+    return float(residual_loss(predicted, observed, mask=mask).loss)
 
 
 def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
