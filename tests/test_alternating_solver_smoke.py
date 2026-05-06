@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from tomojax.align.api import run_alternating_solver_smoke
+from tomojax.align.api import AlternatingAlignmentSolver, run_alternating_solver_smoke
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,3 +105,12 @@ def test_alternating_solver_smoke_is_deterministic(tmp_path: Path) -> None:
     np.testing.assert_allclose(first.final_volume, second.final_volume)
     np.testing.assert_allclose(first.final_geometry.pose.dx_px, second.final_geometry.pose.dx_px)
     assert first.verification == second.verification
+
+
+def test_alternating_alignment_solver_runs_smoke_profile(tmp_path: Path) -> None:
+    solver = AlternatingAlignmentSolver()
+
+    result = solver.run_smoke(tmp_path)
+
+    assert result.final_volume.shape == (32, 32, 32)
+    assert result.artifacts["verification_json"].exists()

@@ -2612,3 +2612,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The schedule presets are conservative defaults and have not yet been tuned
   against the full synthetic benchmark suite.
+
+## 2026-05-06 — Phase 7 Alternating Solver Entrypoint
+
+### Summary
+
+- Added the public `AlternatingAlignmentSolver` orchestration object.
+- Routed `run_alternating_solver_smoke` through `AlternatingAlignmentSolver`
+  so the function and solver class share one implementation path.
+- Exported and documented the solver entrypoint, and added a focused smoke test
+  for `AlternatingAlignmentSolver.run_smoke`.
+
+### Decisions
+
+- Kept the solver object intentionally thin and smoke-profile-specific in this
+  slice. A general dataset solver interface remains follow-up work.
+- Kept the legacy `tomojax.align` package facade unchanged; the new solver is
+  exported from `tomojax.align.api`.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py -q`
+  passed: 9 tests.
+- `just imports` passed.
+
+### Risks
+
+- `AlternatingAlignmentSolver` currently exposes only the deterministic
+  `run_smoke` method; production data loading and CLI integration are still
+  missing.

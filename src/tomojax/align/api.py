@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tomojax.align._alternating import (
+    AlternatingAlignmentSolver,
     AlternatingLevelSummary,
     AlternatingSmokeConfig,
     AlternatingSmokeResult,
@@ -33,6 +34,7 @@ from tomojax.align.pipeline import AlignConfig, align, align_multires
 __all__ = [
     "AlignConfig",
     "AlignmentSmokeReport",
+    "AlternatingAlignmentSolver",
     "AlternatingLevelSummary",
     "AlternatingSmokeConfig",
     "AlternatingSmokeResult",

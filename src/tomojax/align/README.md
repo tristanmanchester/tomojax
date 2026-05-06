@@ -14,6 +14,7 @@ delete or migrate internal owners.
 
 - `AlignConfig`
 - `AlignmentSmokeReport`
+- `AlternatingAlignmentSolver`
 - `AlternatingLevelSummary`
 - `AlternatingSmokeConfig`
 - `AlternatingSmokeResult`

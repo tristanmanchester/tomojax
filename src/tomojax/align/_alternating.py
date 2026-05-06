@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,13 +79,34 @@ class AlternatingSmokeResult:
     artifacts: Mapping[str, Path]
 
 
+@dataclass(frozen=True)
+class AlternatingAlignmentSolver:
+    """Phase 7 alternating alignment solver entrypoint."""
+
+    config: AlternatingSmokeConfig = field(default_factory=AlternatingSmokeConfig)
+
+    def run_smoke(self, output_dir: str | Path) -> AlternatingSmokeResult:
+        """Run the deterministic 32^3 smoke profile."""
+        return _run_alternating_solver_smoke_impl(output_dir, config=self.config)
+
+
 def run_alternating_solver_smoke(
     output_dir: str | Path,
     *,
     config: AlternatingSmokeConfig | None = None,
 ) -> AlternatingSmokeResult:
     """Run the smallest deterministic v2 alternating solver smoke slice."""
-    cfg = config or AlternatingSmokeConfig()
+    return AlternatingAlignmentSolver(config=config or AlternatingSmokeConfig()).run_smoke(
+        output_dir
+    )
+
+
+def _run_alternating_solver_smoke_impl(
+    output_dir: str | Path,
+    *,
+    config: AlternatingSmokeConfig,
+) -> AlternatingSmokeResult:
+    cfg = config
     schedule = cfg.schedule or reference_continuation_schedule()
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -598,6 +619,7 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
 
 
 __all__ = [
+    "AlternatingAlignmentSolver",
     "AlternatingLevelSummary",
     "AlternatingSmokeConfig",
     "AlternatingSmokeResult",

@@ -12,20 +12,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 — alternating solver and continuation
-- Goal: add Phase 7 continuation profile presets.
+- Goal: expose the Phase 7 `AlternatingAlignmentSolver` orchestration entrypoint.
 
 ### Scope
 
 - In scope:
-  - Add `lightning`, `balanced`, and `reference` continuation schedules.
-  - Keep `smoke32` as the deterministic test profile.
-  - Test profile level factors, ordering, conditional level-2 behavior, and
-    stricter reference iterations/geometry updates.
+  - Add a small `AlternatingAlignmentSolver` class owned by
+    `tomojax.align`.
+  - Route `run_alternating_solver_smoke` through the solver class.
+  - Export the solver from `tomojax.align.api` and document it in the align
+    README.
+  - Add focused tests that the class writes the same deterministic smoke
+    artifacts.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - CLI integration.
   - GPU/Pallas fast paths.
-  - Running the heavier production presets through the smoke test.
+  - A full general dataset solver interface beyond the deterministic smoke
+    vertical slice.
 - Deep module owner: `tomojax.align`.
 
 ### Design Sources
@@ -36,22 +40,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add continuation profile schedules.
-- [x] Add focused schedule contract tests.
+- [x] Add `AlternatingAlignmentSolver`.
+- [x] Route the smoke function through the solver.
+- [x] Export and document the solver.
+- [x] Extend focused tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the Phase 7 profile slice.
+- [x] Commit the Phase 7 solver entrypoint slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_continuation.py src/tomojax/align/api.py tests/test_continuation_schedules.py`
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run ruff check src/tomojax/align/_continuation.py src/tomojax/align/api.py tests/test_continuation_schedules.py`
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_continuation.py tests/test_continuation_schedules.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run pytest tests/test_continuation_schedules.py tests/test_alternating_solver_smoke.py -q`
-  passed: 8 tests.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py -q`
+  passed: 9 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -59,13 +65,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Profile schedules should be deterministic data only; do not start CLI or
-  runtime profile plumbing in this slice.
-- `reference` should be stricter than `balanced`, and `balanced` should be
-  stricter than `lightning` in reconstruction iterations and geometry updates.
+- The solver class should be a thin orchestration object over the existing
+  deterministic smoke runner, not a parallel code path.
+- Keep `tomojax.align.__all__` unchanged; expose the new solver from
+  `tomojax.align.api`.
 
 ### Risks
 
-- Risk: profile schedules are not yet empirically tuned.
-- Mitigation: encode conservative, monotonic presets and record tuning as a
-  follow-up risk.
+- Risk: the solver class is still smoke-profile-only.
+- Mitigation: name the method `run_smoke` and record the general dataset
+  interface as follow-up work.
