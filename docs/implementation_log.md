@@ -1505,6 +1505,17 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
   in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
   findings. Formatter-only churn from this command was reverted outside this
+  iteration-trace slice.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 150 tests.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  `uv run ruff format src tests tools`; current first failures include
+  `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
+  in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
+  findings. Formatter-only churn from this command was reverted outside this
   trust-radius-adaptation slice.
 
 ### Risks
@@ -1513,6 +1524,46 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - The policy still uses scalar setup/pose block radii. Per-DOF trust radii can
   be layered later from parameter metadata.
+- Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
+  separate milestone instead of mixing repository-wide lint churn into Phase 6
+  numerical solver work.
+
+## 2026-05-06 — Add Joint Schur Iteration Trace
+
+### Summary
+
+- Added `iteration_diagnostics` to `JointSchurLMResult`.
+- Updated `solve_joint_schur_lm` to retain the diagnostics from every solve
+  iteration, not only the final iteration.
+- Extended `normal_eq_summary.json` with `iteration_diagnostics`.
+- Added deterministic tests that verify trace length, final diagnostic
+  consistency, and artifact readback.
+
+### Decisions
+
+- Reused `JointSchurDiagnostics` for each trace row so the final summary and
+  per-iteration trace share one schema.
+- Kept the trace in JSON only for this slice. A CSV trace writer can be added
+  later when the Phase 6 solver is wired into a benchmark/alignment artifact
+  directory.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 8 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Artifact size grows with iteration count, but the reference solver currently
+  uses a small default iteration count and compact diagnostics.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   separate milestone instead of mixing repository-wide lint churn into Phase 6
   numerical solver work.

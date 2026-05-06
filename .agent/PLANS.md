@@ -12,18 +12,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 6 — Joint setup+pose Schur LM
-- Goal: add ratio-based trust-radius adaptation to the joint Schur reference
-  solver.
+- Goal: add per-iteration diagnostics trace artifacts to the joint Schur
+  reference solver.
 
 ### Scope
 
 - In scope:
-  - Add configurable shrink/expand thresholds and factors for existing setup
-    and pose trust radii.
-  - Adapt local trust radii after accepted/rejected steps using the recorded
-    actual/predicted reduction ratio.
-  - Record next setup/pose trust radii in diagnostics and artifacts.
-  - Add deterministic tests and artifact readback coverage.
+  - Preserve diagnostics for every joint Schur iteration, not only the final
+    iteration.
+  - Include the iteration trace in `normal_eq_summary.json`.
+  - Add deterministic tests for trace length, final-diagnostic consistency,
+    and artifact readback coverage.
 - Out of scope:
   - Prior terms and bounds.
   - Unsupported physical DOFs.
@@ -36,21 +35,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add trust-radius adaptation configuration.
-- [x] Apply ratio-based trust-radius adaptation inside the joint Schur loop.
-- [x] Record next setup/pose trust radii in diagnostics.
+- [x] Add iteration diagnostics to `JointSchurLMResult`.
+- [x] Collect diagnostics for each accepted/rejected solve iteration.
+- [x] Include the iteration trace in the normal-equation artifact.
 - [x] Add deterministic tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the trust-radius-adaptation slice if validations pass.
+- [ ] Commit the iteration-trace slice if validations pass.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
   passed with 0 errors and 0 warnings.
-- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
   passed.
 - `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
   passed: 8 tests.
@@ -71,18 +70,16 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: configured trust radii shrink on rejected, missing-ratio, or
-  low-ratio steps; they expand only when a step was clipped and the ratio is
-  high.
-- Deviation: this uses a single policy for setup and pose block radii rather
-  than per-DOF radii.
+- Decision: reuse `JointSchurDiagnostics` for each trace row so the final row
+  has the same schema as `diagnostics`.
+- Deviation: the trace is JSON artifact data only; no CSV writer exists yet for
+  the Phase 6 reference solver.
 
 ### Risks
 
-- Risk: simple ratio thresholds can overreact to tiny predicted reductions near
-  convergence.
-- Mitigation: treat a missing ratio as no radius expansion and shrink only on
-  rejected or clearly poor-ratio steps.
+- Risk: artifact size grows with iteration count.
+- Mitigation: this reference solver has a small default iteration count and
+  stores compact scalar/list diagnostics only.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   dedicated milestone rather than mixing repository-wide lint churn into Phase
   6 numerical solver slices.

@@ -232,6 +232,8 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     )
 
     assert result.final_loss < result.initial_loss
+    assert len(result.iteration_diagnostics) == result.iterations
+    assert result.iteration_diagnostics[-1] == result.diagnostics
     assert result.active_setup_parameters == ("theta_offset_rad", "det_u_px", "det_v_px")
     assert result.active_pose_dofs == ("phi_residual_rad", "dx_px", "dz_px")
     assert result.diagnostics.dense_step_difference_norm < 2e-4
@@ -291,6 +293,8 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert path.name == "normal_eq_summary.json"
     assert payload == summary
     assert payload["solver"] == "joint_schur_lm_reference"
+    assert len(payload["iteration_diagnostics"]) == result.iterations
+    assert payload["iteration_diagnostics"][-1] == payload["diagnostics"]
     assert payload["active_setup_parameters"] == ["theta_offset_rad", "det_u_px"]
     assert payload["active_pose_dofs"] == ["phi_residual_rad", "dx_px", "dz_px"]
     assert "schur_condition" in payload["diagnostics"]

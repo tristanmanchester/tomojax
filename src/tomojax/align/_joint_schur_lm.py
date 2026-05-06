@@ -110,6 +110,7 @@ class JointSchurLMResult:
     active_pose_dofs: tuple[str, ...]
     frozen_parameters: tuple[str, ...]
     diagnostics: JointSchurDiagnostics
+    iteration_diagnostics: tuple[JointSchurDiagnostics, ...]
 
 
 def solve_joint_schur_lm(
@@ -143,6 +144,7 @@ def solve_joint_schur_lm(
         pose_update_max_by_dof=(),
     )
     iterations = 0
+    iteration_diagnostics: list[JointSchurDiagnostics] = []
     damping = float(cfg.damping)
     setup_trust_radius = cfg.setup_trust_radius
     pose_trust_radius = cfg.pose_trust_radius
@@ -211,6 +213,7 @@ def solve_joint_schur_lm(
             next_setup_trust_radius=next_setup_trust_radius,
             next_pose_trust_radius=next_pose_trust_radius,
         )
+        iteration_diagnostics.append(diagnostics)
         damping = next_damping
         setup_trust_radius = next_setup_trust_radius
         pose_trust_radius = next_pose_trust_radius
@@ -230,6 +233,7 @@ def solve_joint_schur_lm(
         active_pose_dofs=("phi_residual_rad", "dx_px", "dz_px"),
         frozen_parameters=_frozen_parameters(geometry),
         diagnostics=diagnostics,
+        iteration_diagnostics=tuple(iteration_diagnostics),
     )
 
 
@@ -284,6 +288,9 @@ def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, objec
         "active_pose_dofs": list(result.active_pose_dofs),
         "frozen_parameters": list(result.frozen_parameters),
         "diagnostics": result.diagnostics.to_dict(),
+        "iteration_diagnostics": [
+            diagnostics.to_dict() for diagnostics in result.iteration_diagnostics
+        ],
     }
 
 
