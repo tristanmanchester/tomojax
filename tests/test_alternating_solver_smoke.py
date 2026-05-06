@@ -47,9 +47,17 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert result.verification["coarse_verified"] is True
     assert result.verification["level1_geometry_skipped"] is True
     assert result.verification["skipped_levels"] == [2]
+    thresholds = cast("dict[str, float]", result.verification["thresholds"])
+    assert thresholds["gauge_stability_tolerance"] == 1.0e-10
+    assert thresholds["parameter_update_tolerance"] == 2.0
     assert result.levels[0].geometry_updates == 1
     assert result.levels[0].executed_geometry_updates == 1
     assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
+    assert result.levels[0].loss_nonincreasing
+    assert result.levels[0].finite_loss
+    assert result.levels[0].gauge_stable
+    assert result.levels[0].parameter_update_small
+    assert result.levels[0].parameter_update_norm == 1.25
     assert result.levels[1].skipped_level is True
     assert result.levels[1].residual_filter_kinds == (
         "lowpass_gaussian",
@@ -105,6 +113,8 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
     assert rows[1]["residual_filter_kinds"] == ("lowpass_gaussian|bandpass_difference_of_gaussians")
     assert rows[1]["skipped_level"] == "True"
     assert rows[-1]["executed_geometry_updates"] == "0"
+    assert rows[0]["loss_nonincreasing"] == "True"
+    assert rows[0]["gauge_stable"] == "True"
 
 
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:
@@ -163,6 +173,7 @@ def _assert_residual_metrics(result: AlternatingSmokeResult) -> None:
     with result.artifacts["residual_metrics_csv"].open("r", newline="", encoding="utf-8") as fh:
         metric_rows = list(csv.DictReader(fh))
     assert [row["level_factor"] for row in metric_rows] == ["4", "2", "1"]
+    assert metric_rows[0]["parameter_update_small"] == "True"
 
 
 def test_alternating_solver_smoke_is_deterministic(tmp_path: Path) -> None:

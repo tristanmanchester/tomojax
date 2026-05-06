@@ -52,6 +52,8 @@ class AlternatingSmokeConfig:
     n_views: int = 4
     schedule: ContinuationSchedule | None = None
     verification_loss_tolerance: float = 1.0e-5
+    gauge_stability_tolerance: float = 1.0e-10
+    parameter_update_tolerance: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -66,10 +68,25 @@ class AlternatingLevelSummary:
     residual_filter_kinds: tuple[str, ...]
     loss_before: float
     loss_after: float
+    loss_nonincreasing: bool
+    finite_loss: bool
+    gauge_stable: bool
+    parameter_update_norm: float
+    parameter_update_small: bool
     verified: bool
     skipped_geometry: bool
     skipped_level: bool
     early_exit_reason: str | None
+
+
+@dataclass(frozen=True)
+class _LevelVerificationChecks:
+    loss_nonincreasing: bool
+    finite_loss: bool
+    gauge_stable: bool
+    parameter_update_norm: float
+    parameter_update_small: bool
+    verified: bool
 
 
 @dataclass(frozen=True)
@@ -158,13 +175,23 @@ def _run_alternating_solver_smoke_impl(
         loss_before = _projection_loss(volume, observed, geometry, mask, level)
         geometry_updates, early_exit_reason = _geometry_updates_for_level(level, coarse_verified)
         skipped_geometry = geometry_updates == 0
+        update_report = GaugeReport(())
         if geometry_updates > 0:
-            geometry, gauge_report = _run_geometry_updates(geometry, geometry_updates)
+            geometry, update_report = _run_geometry_updates(geometry, geometry_updates)
+            gauge_report = update_report
         loss_after = _projection_loss(volume, observed, geometry, mask, level)
-        verified = bool(loss_after <= loss_before + cfg.verification_loss_tolerance)
+        verification_checks = _level_verification_checks(
+            cfg=cfg,
+            geometry=geometry,
+            update_report=update_report,
+            loss_before=loss_before,
+            loss_after=loss_after,
+        )
         previous_loss = loss_after
         coarse_verified = coarse_verified or (
-            level.role == "preview" and level.skip_finer_if_verified and verified
+            level.role == "preview"
+            and level.skip_finer_if_verified
+            and verification_checks.verified
         )
         summaries.append(
             AlternatingLevelSummary(
@@ -176,7 +203,12 @@ def _run_alternating_solver_smoke_impl(
                 residual_filter_kinds=_residual_filter_kinds(level),
                 loss_before=loss_before,
                 loss_after=loss_after,
-                verified=verified,
+                loss_nonincreasing=verification_checks.loss_nonincreasing,
+                finite_loss=verification_checks.finite_loss,
+                gauge_stable=verification_checks.gauge_stable,
+                parameter_update_norm=verification_checks.parameter_update_norm,
+                parameter_update_small=verification_checks.parameter_update_small,
+                verified=verification_checks.verified,
                 skipped_geometry=skipped_geometry,
                 skipped_level=False,
                 early_exit_reason=early_exit_reason,
@@ -267,6 +299,11 @@ def _skipped_level_summary(
         residual_filter_kinds=_residual_filter_kinds(level),
         loss_before=loss,
         loss_after=loss,
+        loss_nonincreasing=True,
+        finite_loss=True,
+        gauge_stable=True,
+        parameter_update_norm=0.0,
+        parameter_update_small=True,
         verified=True,
         skipped_geometry=True,
         skipped_level=True,
@@ -276,6 +313,44 @@ def _skipped_level_summary(
 
 def _residual_filter_kinds(level: ContinuationLevel) -> tuple[str, ...]:
     return tuple(config.kind for config in level.residual_filters)
+
+
+def _level_verification_checks(
+    *,
+    cfg: AlternatingSmokeConfig,
+    geometry: GeometryState,
+    update_report: GaugeReport,
+    loss_before: float,
+    loss_after: float,
+) -> _LevelVerificationChecks:
+    loss_nonincreasing = bool(loss_after <= loss_before + cfg.verification_loss_tolerance)
+    finite_loss = bool(np.isfinite(loss_before) and np.isfinite(loss_after))
+    gauge_stable = _gauge_stable(geometry, tolerance=cfg.gauge_stability_tolerance)
+    parameter_update_norm = _parameter_update_norm(update_report)
+    parameter_update_small = bool(parameter_update_norm <= cfg.parameter_update_tolerance)
+    verified = loss_nonincreasing and finite_loss and gauge_stable and parameter_update_small
+    return _LevelVerificationChecks(
+        loss_nonincreasing=loss_nonincreasing,
+        finite_loss=finite_loss,
+        gauge_stable=gauge_stable,
+        parameter_update_norm=parameter_update_norm,
+        parameter_update_small=parameter_update_small,
+        verified=verified,
+    )
+
+
+def _gauge_stable(geometry: GeometryState, *, tolerance: float) -> bool:
+    return bool(
+        abs(float(np.mean(geometry.pose.dx_px))) <= tolerance
+        and abs(float(np.mean(geometry.pose.phi_residual_rad))) <= tolerance
+    )
+
+
+def _parameter_update_norm(report: GaugeReport) -> float:
+    applied = [abs(float(transfer.value)) for transfer in report.transfers if transfer.applied]
+    if not applied:
+        return 0.0
+    return float(max(applied))
 
 
 def _projection_loss(
@@ -325,6 +400,11 @@ def _verification_payload(
             for summary in summaries
             if summary.early_exit_reason is not None
         ],
+        "thresholds": {
+            "loss_tolerance": cfg.verification_loss_tolerance,
+            "gauge_stability_tolerance": cfg.gauge_stability_tolerance,
+            "parameter_update_tolerance": cfg.parameter_update_tolerance,
+        },
         "levels": [_summary_payload(summary) for summary in summaries],
     }
 
@@ -349,6 +429,11 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
         "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
         "loss_before": summary.loss_before,
         "loss_after": summary.loss_after,
+        "loss_nonincreasing": summary.loss_nonincreasing,
+        "finite_loss": summary.finite_loss,
+        "gauge_stable": summary.gauge_stable,
+        "parameter_update_norm": summary.parameter_update_norm,
+        "parameter_update_small": summary.parameter_update_small,
         "verified": summary.verified,
         "skipped_geometry": summary.skipped_geometry,
         "skipped_level": summary.skipped_level,
@@ -434,6 +519,11 @@ def _write_alignment_summary(
                 "residual_filter_kinds",
                 "loss_before",
                 "loss_after",
+                "loss_nonincreasing",
+                "finite_loss",
+                "gauge_stable",
+                "parameter_update_norm",
+                "parameter_update_small",
                 "verified",
                 "skipped_geometry",
                 "skipped_level",
@@ -459,6 +549,11 @@ def _write_residual_metrics(
                 "loss_after",
                 "absolute_improvement",
                 "residual_filter_kinds",
+                "loss_nonincreasing",
+                "finite_loss",
+                "gauge_stable",
+                "parameter_update_norm",
+                "parameter_update_small",
                 "skipped_level",
                 "early_exit_reason",
             ],
@@ -473,6 +568,11 @@ def _write_residual_metrics(
                     "loss_after": summary.loss_after,
                     "absolute_improvement": summary.loss_before - summary.loss_after,
                     "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
+                    "loss_nonincreasing": summary.loss_nonincreasing,
+                    "finite_loss": summary.finite_loss,
+                    "gauge_stable": summary.gauge_stable,
+                    "parameter_update_norm": summary.parameter_update_norm,
+                    "parameter_update_small": summary.parameter_update_small,
                     "skipped_level": summary.skipped_level,
                     "early_exit_reason": summary.early_exit_reason,
                 }

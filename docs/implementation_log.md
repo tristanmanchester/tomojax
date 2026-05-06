@@ -2790,3 +2790,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Custom schedule objects are represented by name and level factors only, not a
   complete per-level serialized schedule.
+
+## 2026-05-06 — Phase 7 Verification Predicate Bundle
+
+### Summary
+
+- Added per-level verification predicates for loss non-increase, finite loss,
+  gauge stability, and parameter-update size.
+- Gated smoke-level `verified` status on the full predicate bundle instead of
+  only loss non-increase.
+- Recorded predicate fields, thresholds, and measured update norm in
+  `verification.json`, `alignment_summary.csv`, and `residual_metrics.csv`.
+
+### Decisions
+
+- Kept the predicate thresholds smoke-profile local in
+  `AlternatingSmokeConfig`.
+- Did not add held-out residual checks in this slice; that remains a production
+  verification follow-up.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- `parameter_update_small` is a smoke-scale heuristic, not the final
+  trust-region update acceptance metric.

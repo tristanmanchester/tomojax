@@ -12,16 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 — alternating solver and continuation
-- Goal: record accurate continuation profile provenance in Phase 7 smoke artifacts.
+- Goal: add explicit verification predicates to the Phase 7 smoke early-exit logic.
 
 ### Scope
 
 - In scope:
-  - Thread the resolved `ContinuationSchedule` into run manifest and resolved
-    config artifact writing.
-  - Ensure non-default profiles record the requested profile instead of
-    hard-coded `smoke32`.
-  - Add focused tests for non-default profile provenance.
+  - Record loss, finite-loss, gauge-stability, and parameter-update checks per
+    continuation level.
+  - Gate smoke verification on those checks.
+  - Add focused tests for the richer verification payload.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -36,11 +35,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Thread schedule metadata into manifest/config artifacts.
-- [x] Test non-default profile artifact provenance.
+- [x] Add per-level verification predicate fields.
+- [x] Gate smoke verification on the predicate bundle.
+- [x] Extend focused tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the Phase 7 profile provenance slice.
+- [x] Commit the Phase 7 verification predicate slice.
 
 ### Validation
 
@@ -59,12 +59,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Profile provenance belongs in both `run_manifest.json` and
-  `config_resolved.toml`; both should be deterministic.
+- Keep the richer predicates deterministic and cheap for the smoke path.
+- Do not claim held-out residual support in this slice.
 
 ### Risks
 
-- Risk: custom schedule objects outside the named profiles have only a schedule
-  name, not a full serialized config.
-- Mitigation: include the schedule name and level factors now; fuller schedule
-  serialization can follow when needed.
+- Risk: parameter update checks are smoke-scale heuristics, not production
+  trust-region acceptance.
+- Mitigation: record the thresholds and measured norms in verification payloads.
