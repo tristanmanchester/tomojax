@@ -26,9 +26,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 _PROFILE_CHOICES = ("smoke32", "lightning", "balanced", "reference")
-_SYNTHETIC_SIZE_CHOICES = (32, 128)
+_SYNTHETIC_SIZE_CHOICES = (32, 64, 128)
 _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synthetic_truth")
-SyntheticSize = Literal[32, 128]
+SyntheticSize = Literal[32, 64, 128]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -219,9 +219,11 @@ def _sidecar_size_and_views(sidecars: SyntheticDatasetSidecars) -> tuple[Synthet
         raise ValueError("synthetic dataset sidecar manifest must contain integer views")
     if size == 32:
         return 32, views
+    if size == 64:
+        return 64, views
     if size == 128:
         return 128, views
-    raise ValueError("synthetic dataset sidecar size must be 32 or 128")
+    raise ValueError("synthetic dataset sidecar size must be 32, 64, or 128")
 
 
 def _sidecar_nuisance_applied(sidecars: SyntheticDatasetSidecars) -> bool:

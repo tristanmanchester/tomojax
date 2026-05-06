@@ -5806,3 +5806,77 @@ Recovery details:
   gates.
 - JAX emitted CUDA plugin warnings about missing cuSPARSE before CPU fallback;
   all benchmark commands were run with `JAX_PLATFORM_NAME=cpu`.
+
+## 2026-05-06 — Phase 8 Setup-Global GPU Memory Isolation And Ladder
+
+### Summary
+
+- Treated the 64^3/64-view setup-global OOM as a v2 JAX reference memory
+  regression, not a reason to shrink the benchmark.
+- Verified the laptop GPU path with JAX selecting `cuda:0`; the ambient CUDA
+  library path failed because the JAX CUDA plugin could not find cuSPARSE, while
+  the venv NVIDIA wheel library paths initialized GPU correctly.
+- Extended the synthetic sidecar writer and `align-auto` ingestion to accept
+  64^3 datasets and fixed the sidecar manifest detector shape to match the
+  current v2 smoke projector output.
+- Changed the shared finite-difference Jacobian helper from all-parameter
+  `vmap` to sequential column accumulation, avoiding materialization of
+  parameter x view x volume work arrays.
+- Added focused coverage for the finite-difference Jacobian and 64^3 sidecar
+  consistency.
+
+### Memory Isolation
+
+- Initial 64^3/64-view fixed-truth benchmark failed in Schur finite differences
+  with `RESOURCE_EXHAUSTED` while trying to allocate 12.14 GiB for an HLO shaped
+  like `f32[194,64,64,64,64]`.
+- After the column-accumulation change, component probes passed on GPU for
+  views 1/4/16/64:
+
+| Views | Projector | Backprojector | FISTA 1 Iter | Schur Fixed Truth | Schur Stopped Volume | Schur Fixed Truth + Nuisance |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.974s | 1.022s | 4.069s | 5.362s | 4.074s | 4.716s |
+| 4 | 1.016s | 1.199s | 4.337s | 6.484s | 4.890s | 5.488s |
+| 16 | 1.042s | 1.422s | 4.542s | 8.640s | 6.983s | 7.850s |
+| 64 | 1.066s | 2.130s | 5.287s | 18.062s | 15.870s | 17.672s |
+
+### 64^3/64-View GPU Benchmark Results
+
+Dataset: nuisance-free `synth128_setup_global_tomo`, 64^3 volume, 64 views.
+Mode: `balanced`, existing sidecar ingestion path, no nuisance fitting.
+
+| Mode | Status | Criteria | Geometry | det_u RMSE px | det_v RMSE px | theta RMSE rad | Final Residual | Volume NMSE | Schur Accepted | Total Time s |
+|---|---|---|---|---:|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth` | failed | failed | failed | 6.9338 | 0.00666 | 0.02211 | 0.856277 | 0.686109 | true | 37.5096 |
+| `stopped_reconstruction` | failed | failed | failed | 7.25 | 0 | 0.02182 | 0 | 0.686110 | true | 24.8489 |
+
+### Interpretation
+
+- Fixed-truth also fails, so the current blocker is setup/pose/theta coupling or
+  geometry convention mapping rather than stopped-reconstruction gauge handling
+  alone.
+- Stopped reconstruction still fails to improve `det_u`; fixed truth improves
+  it only slightly and remains far outside tolerance.
+- The 32^3/4-view smoke benchmark remains CI/wiring coverage only and is not
+  alignment-quality evidence.
+
+### Validation
+
+- `uv run ruff format ...` passed for touched source/tests.
+- `uv run ruff check ...` passed for touched source/tests.
+- `uv run basedpyright ...` passed for touched source/tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_lm_numerics.py
+  tests/test_synthetic_datasets.py tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py -q` passed: 29 tests.
+- `just imports` passed.
+- GPU probes and both 64^3/64-view benchmark modes completed with
+  `jax_default_backend = "gpu"` and `selected_jax_device = "cuda:0"` in
+  `benchmark_result.json`.
+
+### Risks
+
+- The sequential finite-difference Jacobian trades peak memory for more Python
+  dispatch and compilation overhead. It is acceptable for the reference path but
+  should be replaced by chunked or analytic reductions when optimizing speed.
+- 128^3/128-view was not attempted after fixed-truth failed at 64^3/64 views;
+  the next correctness step is geometry convention/coupling diagnosis.

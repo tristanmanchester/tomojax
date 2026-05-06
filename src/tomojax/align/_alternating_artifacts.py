@@ -892,6 +892,8 @@ def _benchmark_result_payload(
         "backend": {
             "requested": "jax_reference",
             "actual": "jax_reference",
+            "jax_default_backend": jax.default_backend(),
+            "selected_jax_device": _selected_jax_device(),
             "fallbacks": [],
         },
         "failure_labels": failed_gates,
@@ -902,6 +904,13 @@ def _benchmark_result_payload(
         ),
         "geometry_update_volume_source": geometry_update_volume_source,
     }
+
+
+def _selected_jax_device() -> str:
+    devices = cast("list[object]", jax.devices())
+    if not devices:
+        return "unavailable"
+    return str(devices[0])
 
 
 def _benchmark_manifest_evaluation(

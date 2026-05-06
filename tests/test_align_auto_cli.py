@@ -407,6 +407,10 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert geometry_recovery["supported_dofs_improved"] is True
     backend = cast("dict[str, object]", benchmark_result["backend"])
     assert backend["actual"] == "jax_reference"
+    assert all(
+        isinstance(backend[key], str) and backend[key]
+        for key in ("jax_default_backend", "selected_jax_device")
+    )
     benchmark_report = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
     assert "# Benchmark: synth128_thermal_object_drift" in benchmark_report
     assert "reimagined_align_auto_smoke" in benchmark_report

@@ -26,7 +26,7 @@ from tomojax.geometry import (
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-SyntheticSize = Literal[32, 128]
+SyntheticSize = Literal[32, 64, 128]
 
 
 @dataclass(frozen=True)
@@ -120,12 +120,8 @@ def generate_synthetic_dataset(
 
 
 def _detector_shape_for_size(spec: SyntheticDatasetSpec, size: int) -> tuple[int, int]:
-    if size == 32:
-        return (32, 32)
-    return (
-        max(16, spec.detector_shape[0] * size // 128),
-        max(16, spec.detector_shape[1] * size // 128),
-    )
+    _ = spec
+    return (int(size), int(size))
 
 
 def _project_v2_smoke(

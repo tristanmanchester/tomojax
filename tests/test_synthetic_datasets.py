@@ -185,6 +185,26 @@ def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) ->
     }
 
 
+def test_generate_64_synthetic_dataset_records_projected_detector_shape(
+    tmp_path: Path,
+) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path,
+        size=64,
+        clean=True,
+        views=64,
+    )
+
+    sidecars = load_synthetic_dataset_sidecars(paths.dataset_dir)
+
+    assert sidecars.manifest["volume_shape"] == [64, 64, 64]
+    assert sidecars.manifest["detector_shape"] == [64, 64]
+    assert sidecars.manifest["views"] == 64
+    assert sidecars.projections.shape == (64, 64, 64)
+    assert sidecars.consistency.passed is True
+
+
 def test_load_synthetic_dataset_sidecars_rejects_missing_artifact_map(tmp_path: Path) -> None:
     paths = generate_synthetic_dataset(
         "synth128_setup_global_tomo",
