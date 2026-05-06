@@ -1454,3 +1454,65 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   separate milestone instead of mixing repository-wide lint churn into Phase 6
   numerical solver work.
+
+## 2026-05-06 — Add Joint Schur Trust-Radius Adaptation
+
+### Summary
+
+- Added configurable ratio-based trust-radius adaptation for existing joint
+  Schur setup and pose block radii:
+  - `adapt_trust_radii`
+  - `trust_shrink_ratio`
+  - `trust_expand_ratio`
+  - `trust_shrink_factor`
+  - `trust_expand_factor`
+  - `min_trust_radius`
+  - `max_trust_radius`
+- Updated `solve_joint_schur_lm` to keep local setup and pose trust radii and
+  adapt them after each accepted or rejected candidate step.
+- Added `adapt_joint_schur_trust_radius` to the public alignment facade so the
+  trust-radius policy is testable without private imports.
+- Extended `JointSchurDiagnostics` and `normal_eq_summary.json` with:
+  - `next_setup_trust_radius`
+  - `next_pose_trust_radius`
+- Added deterministic tests for shrink, expand, clamp, disabled, and unset
+  trust-radius behavior plus artifact readback with configured radii.
+
+### Decisions
+
+- Rejected, missing-ratio, and low-ratio steps shrink configured trust radii.
+- High-ratio steps expand trust radii only when the step was clipped, matching
+  common trust-region behavior and avoiding unnecessary radius growth.
+- Unset trust radii remain `None`, preserving the existing full-step default.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 8 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 150 tests.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  `uv run ruff format src tests tools`; current first failures include
+  `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
+  in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
+  findings. Formatter-only churn from this command was reverted outside this
+  trust-radius-adaptation slice.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The policy still uses scalar setup/pose block radii. Per-DOF trust radii can
+  be layered later from parameter metadata.
+- Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
+  separate milestone instead of mixing repository-wide lint churn into Phase 6
+  numerical solver work.

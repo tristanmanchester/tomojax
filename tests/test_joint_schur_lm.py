@@ -11,6 +11,7 @@ import numpy as np
 from tomojax.align import (
     JointSchurLMConfig,
     adapt_joint_schur_damping,
+    adapt_joint_schur_trust_radius,
     joint_schur_normal_eq_summary,
     schur_step_from_jacobian,
     solve_joint_schur_lm,
@@ -39,6 +40,79 @@ def test_joint_schur_damping_policy_adapts_and_clamps() -> None:
     fixed = JointSchurLMConfig(adapt_damping=False)
     assert adapt_joint_schur_damping(1.0, accepted=True, config=fixed) == 1.0
     assert adapt_joint_schur_damping(1.0, accepted=False, config=fixed) == 1.0
+
+
+def test_joint_schur_trust_radius_policy_adapts_and_clamps() -> None:
+    config = JointSchurLMConfig(
+        trust_shrink_ratio=0.25,
+        trust_expand_ratio=0.75,
+        trust_shrink_factor=0.5,
+        trust_expand_factor=3.0,
+        min_trust_radius=0.1,
+        max_trust_radius=5.0,
+    )
+
+    assert (
+        adapt_joint_schur_trust_radius(
+            2.0,
+            accepted=True,
+            reduction_ratio=0.1,
+            clipped=False,
+            config=config,
+        )
+        == 1.0
+    )
+    assert (
+        adapt_joint_schur_trust_radius(
+            0.15,
+            accepted=False,
+            reduction_ratio=0.5,
+            clipped=False,
+            config=config,
+        )
+        == 0.1
+    )
+    assert (
+        adapt_joint_schur_trust_radius(
+            2.0,
+            accepted=True,
+            reduction_ratio=0.9,
+            clipped=True,
+            config=config,
+        )
+        == 5.0
+    )
+    assert (
+        adapt_joint_schur_trust_radius(
+            2.0,
+            accepted=True,
+            reduction_ratio=0.9,
+            clipped=False,
+            config=config,
+        )
+        == 2.0
+    )
+    assert (
+        adapt_joint_schur_trust_radius(
+            None,
+            accepted=False,
+            reduction_ratio=None,
+            clipped=True,
+            config=config,
+        )
+        is None
+    )
+    fixed = JointSchurLMConfig(adapt_trust_radii=False)
+    assert (
+        adapt_joint_schur_trust_radius(
+            2.0,
+            accepted=False,
+            reduction_ratio=None,
+            clipped=True,
+            config=fixed,
+        )
+        == 2.0
+    )
 
 
 def test_schur_step_matches_dense_normal_solve() -> None:
@@ -169,6 +243,8 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
         assert result.diagnostics.predicted_reduction <= 1e-12
     else:
         assert result.diagnostics.reduction_ratio >= 0.0
+    assert result.diagnostics.next_setup_trust_radius is None
+    assert result.diagnostics.next_pose_trust_radius is None
     canonical = result.canonicalized_geometry.state
     np.testing.assert_allclose(
         canonical.setup.theta_offset_rad.value + canonical.pose.phi_residual_rad,
@@ -200,7 +276,12 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
         volume,
         observed,
         nominal,
-        config=JointSchurLMConfig(max_iterations=4, damping=1e-3),
+        config=JointSchurLMConfig(
+            max_iterations=4,
+            damping=1e-3,
+            setup_trust_radius=0.05,
+            pose_trust_radius=0.05,
+        ),
     )
 
     summary = joint_schur_normal_eq_summary(result)
@@ -230,6 +311,10 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert "predicted_reduction" in payload["diagnostics"]
     assert "actual_reduction" in payload["diagnostics"]
     assert "reduction_ratio" in payload["diagnostics"]
+    assert "next_setup_trust_radius" in payload["diagnostics"]
+    assert "next_pose_trust_radius" in payload["diagnostics"]
+    assert payload["diagnostics"]["next_setup_trust_radius"] is not None
+    assert payload["diagnostics"]["next_pose_trust_radius"] is not None
     assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
     assert len(payload["diagnostics"]["setup_correlation_matrix"]) == 2
 

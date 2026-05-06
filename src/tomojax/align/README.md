@@ -22,6 +22,7 @@ delete or migrate internal owners.
 - `SetupOnlyLMConfig`
 - `SetupOnlyLMResult`
 - `adapt_joint_schur_damping`
+- `adapt_joint_schur_trust_radius`
 - `align`
 - `align_multires`
 - `joint_schur_normal_eq_summary`
@@ -65,8 +66,9 @@ Forbidden dependencies:
   active `det_v_px`; roll, axis rotation, and theta scale remain frozen until
   the reference projector models them.
 - `solve_joint_schur_lm` is the first reference Schur setup+pose slice for the
-  supported setup and pose DOFs. It has accepted/rejected damping adaptation
-  but is not yet the final trust-region engine.
+  supported setup and pose DOFs. It has accepted/rejected damping adaptation and
+  ratio-based trust-radius adaptation, but is not yet the final trust-region
+  engine.
 - `write_joint_schur_normal_eq_summary` writes the current Phase 6
   `normal_eq_summary.json` artifact.
 

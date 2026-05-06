@@ -31,6 +31,13 @@ class JointSchurLMConfig:
     damping_increase_factor: float = 2.0
     min_damping: float = 1e-6
     max_damping: float = 1e6
+    adapt_trust_radii: bool = True
+    trust_shrink_ratio: float = 0.25
+    trust_expand_ratio: float = 0.75
+    trust_shrink_factor: float = 0.5
+    trust_expand_factor: float = 2.0
+    min_trust_radius: float = 1e-6
+    max_trust_radius: float = 1e6
     sigma: float = 1.0
     delta: float = 1.0
     finite_difference_step: float = 1e-3
@@ -61,6 +68,8 @@ class JointSchurDiagnostics:
     predicted_reduction: float = float("nan")
     actual_reduction: float = float("nan")
     reduction_ratio: float | None = None
+    next_setup_trust_radius: float | None = None
+    next_pose_trust_radius: float | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -85,6 +94,8 @@ class JointSchurDiagnostics:
             "predicted_reduction": self.predicted_reduction,
             "actual_reduction": self.actual_reduction,
             "reduction_ratio": self.reduction_ratio,
+            "next_setup_trust_radius": self.next_setup_trust_radius,
+            "next_pose_trust_radius": self.next_pose_trust_radius,
         }
 
 
@@ -133,6 +144,8 @@ def solve_joint_schur_lm(
     )
     iterations = 0
     damping = float(cfg.damping)
+    setup_trust_radius = cfg.setup_trust_radius
+    pose_trust_radius = cfg.pose_trust_radius
 
     for _ in range(max(0, int(cfg.max_iterations))):
         residual = _residual_for_params(vol, obs, geometry, params, mask=mask, sigma=cfg.sigma)
@@ -158,8 +171,8 @@ def solve_joint_schur_lm(
             n_views=geometry.pose.n_views,
             pose_dim=_POSE_DIM,
             damping=damping,
-            setup_trust_radius=cfg.setup_trust_radius,
-            pose_trust_radius=cfg.pose_trust_radius,
+            setup_trust_radius=setup_trust_radius,
+            pose_trust_radius=pose_trust_radius,
         )
         candidate = params + schur.step
         candidate_loss = _loss_for_params(vol, obs, geometry, candidate, mask=mask, cfg=cfg)
@@ -170,6 +183,20 @@ def solve_joint_schur_lm(
         reduction_ratio = _reduction_ratio(actual_reduction, predicted_reduction)
         params = candidate if accepted else params
         next_damping = adapt_joint_schur_damping(damping, accepted=accepted, config=cfg)
+        next_setup_trust_radius = adapt_joint_schur_trust_radius(
+            setup_trust_radius,
+            accepted=accepted,
+            reduction_ratio=reduction_ratio,
+            clipped=schur.diagnostics.trust_clipped,
+            config=cfg,
+        )
+        next_pose_trust_radius = adapt_joint_schur_trust_radius(
+            pose_trust_radius,
+            accepted=accepted,
+            reduction_ratio=reduction_ratio,
+            clipped=schur.diagnostics.trust_clipped,
+            config=cfg,
+        )
         iterations += 1
         diagnostics = replace(
             schur.diagnostics,
@@ -181,8 +208,12 @@ def solve_joint_schur_lm(
             predicted_reduction=predicted_reduction,
             actual_reduction=actual_reduction,
             reduction_ratio=reduction_ratio,
+            next_setup_trust_radius=next_setup_trust_radius,
+            next_pose_trust_radius=next_pose_trust_radius,
         )
         damping = next_damping
+        setup_trust_radius = next_setup_trust_radius
+        pose_trust_radius = next_pose_trust_radius
         if float(jnp.linalg.norm(schur.step)) < 1e-5:
             break
 
@@ -215,6 +246,31 @@ def adapt_joint_schur_damping(
     factor = config.damping_decrease_factor if accepted else config.damping_increase_factor
     candidate = current * max(float(factor), 0.0)
     return min(max(candidate, float(config.min_damping)), float(config.max_damping))
+
+
+def adapt_joint_schur_trust_radius(
+    radius: float | None,
+    *,
+    accepted: bool,
+    reduction_ratio: float | None,
+    clipped: bool,
+    config: JointSchurLMConfig,
+) -> float | None:
+    """Return the next trust radius after evaluating a joint Schur candidate."""
+    if radius is None or not config.adapt_trust_radii:
+        return radius
+    current = float(radius)
+    if (
+        not accepted
+        or reduction_ratio is None
+        or reduction_ratio < float(config.trust_shrink_ratio)
+    ):
+        candidate = current * max(float(config.trust_shrink_factor), 0.0)
+    elif clipped and reduction_ratio > float(config.trust_expand_ratio):
+        candidate = current * max(float(config.trust_expand_factor), 0.0)
+    else:
+        candidate = current
+    return min(max(candidate, float(config.min_trust_radius)), float(config.max_trust_radius))
 
 
 def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, object]:
