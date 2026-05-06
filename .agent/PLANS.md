@@ -11,50 +11,66 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 2 — JAX reference forward model and residual loss
-- Goal: add a minimal JAX reference forward/residual slice for tiny smoke tests.
+- Phase: Minimal vertical-slice bridge across Phase 2 and Phase 3
+- Goal: add a tiny reconstruction/alignment smoke path using the new v2
+  geometry, forward, robust residual, and gauge APIs.
 
 ### Scope
 
 - In scope:
-  - Implement a small parallel-beam JAX reference projector for cubic volumes.
-  - Support per-view detector shifts through `PoseParameters.dx_px/dz_px`.
-  - Implement masked whitened residuals.
-  - Implement pseudo-Huber loss and IRLS weights.
-  - Add deterministic smoke tests for projection shape, shift effect, masking,
-    robust loss, and weight behavior.
+  - Make the minimal forward projector respect setup `det_u_px` and active
+    `det_v_px` so gauge canonicalisation preserves projections.
+  - Add a simple reference backprojection/preview reconstruction helper in
+    `tomojax.recon`.
+  - Add an alignment smoke report in `tomojax.align` that reconstructs a preview
+    volume, computes masked robust projection loss, canonicalises gauges, and
+    verifies the canonical projection loss is preserved.
+  - Add tests for gauge-equivalent projection preservation and the smoke report.
 - Out of scope:
-  - Full physical tomography/laminography ray geometry.
-  - Detector roll, axis rotations, theta scale, and finite-difference geometry
-    Jacobian tests.
-  - Reconstruction and alignment orchestration.
-- Deep module owner: `tomojax.forward`.
+  - FISTA/Huber-TV implementation.
+  - LM/GN geometry optimisation.
+  - Full physical projector support for detector roll, axis rotations, or
+    laminography.
+- Deep module owners: `tomojax.forward`, `tomojax.recon`, and `tomojax.align`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/02_loss_and_optimiser_spec.md`
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
+- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 
 ### Tasks
 
-- [x] Inspect current `tomojax.forward` skeleton and loss spec.
-- [x] Add minimal JAX reference projector.
-- [x] Add masked pseudo-Huber residual/loss helpers.
-- [x] Add forward/residual tests.
+- [x] Inspect current `recon` and `align` public facades.
+- [x] Update minimal forward projector for setup detector shifts.
+- [x] Add reference reconstruction smoke helper.
+- [x] Add alignment smoke report.
+- [x] Add tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the forward/residual slice if validations pass.
+- [ ] Commit the smoke vertical slice if validations pass.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/forward tests/test_forward_reference.py
-  tests/test_v2_module_skeleton.py` passes.
-- `uv run basedpyright src/tomojax/forward tests/test_forward_reference.py
-  tests/test_v2_module_skeleton.py` passes with 0 errors and 0 warnings.
-- `uv run pytest tests/test_forward_reference.py tests/test_v2_module_skeleton.py
-  -q` passes with 7 tests.
-- `uv run ruff format --check src/tomojax/forward
+- `uv run ruff check src/tomojax/forward src/tomojax/recon/_reference.py
+  src/tomojax/recon/api.py src/tomojax/recon/__init__.py
+  src/tomojax/align/_smoke.py src/tomojax/align/api.py
+  src/tomojax/align/__init__.py tests/test_vertical_smoke.py
   tests/test_forward_reference.py tests/test_v2_module_skeleton.py` passes.
+- `uv run basedpyright src/tomojax/forward src/tomojax/recon/_reference.py
+  src/tomojax/recon/api.py src/tomojax/recon/__init__.py
+  src/tomojax/align/_smoke.py src/tomojax/align/api.py
+  src/tomojax/align/__init__.py tests/test_vertical_smoke.py
+  tests/test_forward_reference.py tests/test_v2_module_skeleton.py` passes with
+  0 errors and 0 warnings.
+- `uv run pytest tests/test_vertical_smoke.py tests/test_forward_reference.py
+  tests/test_v2_module_skeleton.py -q` passes with 10 tests.
+- `uv run ruff format --check src/tomojax/forward
+  src/tomojax/recon/_reference.py src/tomojax/recon/api.py
+  src/tomojax/recon/__init__.py src/tomojax/align/_smoke.py
+  src/tomojax/align/api.py src/tomojax/align/__init__.py
+  tests/test_vertical_smoke.py tests/test_forward_reference.py
+  tests/test_v2_module_skeleton.py` passes.
 - `just imports` passes.
 - `uv run pytest tests/test_json_utils.py tests/test_manifest.py
   tests/test_align_checkpoint.py tests/test_axes_io.py
@@ -63,7 +79,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py
   tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py
   tests/test_geometry_gauges.py tests/test_geometry_serialization.py
-  tests/test_forward_reference.py -q` passes with 121 tests.
+  tests/test_forward_reference.py tests/test_vertical_smoke.py -q` passes with
+  124 tests.
+- A broad `uv run ruff format --check src/tomojax/forward src/tomojax/recon
+  src/tomojax/align ...` still reports 20 untouched transitional align/recon
+  files that would be reformatted. This is outside this slice and remains part
+  of the broader legacy cleanup.
 - `just check` remains blocked by broad transitional legacy Ruff failures
   recorded in the Milestone 0 cleanup log.
 
@@ -72,14 +93,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: keep this as a tiny JAX reference slice rather than adapting old
-  `tomojax.core.projector`.
-- Deviation: this first projector handles detector shifts and coarse theta
-  rotation via array operations only; full ray geometry remains in later Phase 2
-  work.
+- Decision: this smoke path is deliberately small and deterministic. It proves
+  module wiring and artifact-style reporting, not final numerical performance.
+- Deviation: reconstruction preview is average backprojection, not FISTA/TV.
+  The full reconstruction milestone remains open.
 
 ### Risks
 
-- Risk: the smoke projector may be mistaken for the final projector.
-- Mitigation: document it as minimal reference scaffolding and keep tests scoped
-  to contracts it actually implements.
+- Risk: smoke helpers can become accidental product APIs.
+- Mitigation: README/log must label them as reference smoke helpers and future
+  milestones should replace them with FISTA/LM defaults.

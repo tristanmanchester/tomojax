@@ -1,13 +1,13 @@
 """Public reconstruction API."""
+# pyright: reportAny=false
 
 from __future__ import annotations
 
 from types import ModuleType
 from typing import Any
 
-from . import fbp as _fbp_module
-from . import fista_tv as _fista_tv_module
-from . import spdhg_tv as _spdhg_tv_module
+from . import fbp as _fbp_module, fista_tv as _fista_tv_module, spdhg_tv as _spdhg_tv_module
+from ._reference import reconstruct_average_reference
 from .types import Regulariser
 
 
@@ -31,11 +31,12 @@ FistaConfig = _fista_tv_module.FistaConfig
 SPDHGConfig = _spdhg_tv_module.SPDHGConfig
 
 __all__ = [
-    "FistaConfig",
     "FBPConfig",
+    "FistaConfig",
     "Regulariser",
     "SPDHGConfig",
     "fbp",
     "fista_tv",
+    "reconstruct_average_reference",
     "spdhg_tv",
 ]

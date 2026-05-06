@@ -23,8 +23,12 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
         _project_one_view(
             vol,
             theta_rad=float(theta_i),
-            dx_px=float(geometry.pose.dx_px[idx]),
-            dz_px=float(geometry.pose.dz_px[idx]),
+            dx_px=geometry.setup.det_u_px.value + float(geometry.pose.dx_px[idx]),
+            dz_px=(
+                geometry.setup.det_v_px.value + float(geometry.pose.dz_px[idx])
+                if geometry.setup.det_v_px.active
+                else float(geometry.pose.dz_px[idx])
+            ),
         )
         for idx, theta_i in enumerate(theta)
     ]

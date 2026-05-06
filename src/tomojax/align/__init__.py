@@ -19,12 +19,11 @@ from __future__ import annotations
 
 import sys
 
-from .pipeline import AlignConfig, align, align_multires
-from .io import checkpoint as _checkpoint
-from .io import params_export as _params_export
-from .model import diagnostics as _diagnostics
-from .model import motion_models as _motion_models
+from ._smoke import AlignmentSmokeReport, run_alignment_smoke
+from .io import checkpoint as _checkpoint, params_export as _params_export
+from .model import diagnostics as _diagnostics, motion_models as _motion_models
 from .objectives import losses as _losses
+from .pipeline import AlignConfig, align, align_multires
 
 _LEGACY_COMPAT_MODULE_ALIASES = {
     "checkpoint": _checkpoint,
@@ -33,12 +32,14 @@ _LEGACY_COMPAT_MODULE_ALIASES = {
     "params_export": _params_export,
 }
 
-sys.modules.setdefault(f"{__name__}.losses", _losses)
+_ = sys.modules.setdefault(f"{__name__}.losses", _losses)
 for _legacy_name, _module in _LEGACY_COMPAT_MODULE_ALIASES.items():
-    sys.modules.setdefault(f"{__name__}.{_legacy_name}", _module)
+    _ = sys.modules.setdefault(f"{__name__}.{_legacy_name}", _module)
 
 __all__ = [
     "AlignConfig",
+    "AlignmentSmokeReport",
     "align",
     "align_multires",
+    "run_alignment_smoke",
 ]

@@ -13,8 +13,10 @@ delete or migrate internal owners.
 ## Public API
 
 - `AlignConfig`
+- `AlignmentSmokeReport`
 - `align`
 - `align_multires`
+- `run_alignment_smoke`
 
 ## Dependencies
 
@@ -40,6 +42,8 @@ Forbidden dependencies:
 - Default geometry optimisation must be gradient-first LM/GN, not grid search.
 - Geometry updates must emit artifact/provenance data.
 - Public imports should come through this package facade.
+- `run_alignment_smoke` is a tiny v2 wiring check. It is not the final
+  optimiser.
 
 ## Tests
 

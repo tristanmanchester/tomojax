@@ -18,6 +18,7 @@ forward model.
 - `SPDHGConfig`
 - `fbp`
 - `fista_tv`
+- `reconstruct_average_reference`
 - `spdhg_tv`
 
 ## Dependencies
@@ -40,6 +41,8 @@ Forbidden dependencies:
 - The default v2 reconstruction step is FISTA / Huber-TV FISTA.
 - Alignment must use stopped-gradient latent volumes.
 - Reconstruction traces must be suitable for artifact reports.
+- `reconstruct_average_reference` is a tiny smoke helper, not the final default
+  reconstruction algorithm.
 
 ## Tests
 

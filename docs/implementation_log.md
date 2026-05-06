@@ -622,3 +622,57 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - The minimal projector is not yet the final physical forward model. It should
   be expanded before geometry optimisation tests rely on physical accuracy.
+
+## 2026-05-06 — Add Tiny Reconstruction And Alignment Smoke Path
+
+### Summary
+
+- Updated the minimal forward projector so setup `det_u_px` and active
+  `det_v_px` contribute to detector shifts. This makes gauge canonicalisation
+  projection-preserving for the channels the smoke projector supports.
+- Added `tomojax.recon.reconstruct_average_reference`, a tiny deterministic
+  average-backprojection preview helper.
+- Added `tomojax.align.run_alignment_smoke`, which:
+  - reconstructs a stopped-gradient preview volume;
+  - computes masked robust projection loss;
+  - canonicalises geometry gauges;
+  - recomputes loss after canonicalisation;
+  - reports loss values, valid count, and the canonicalised geometry/report.
+- Added `tests/test_vertical_smoke.py` for gauge-equivalent projection
+  preservation, preview reconstruction shape, and alignment smoke report
+  invariants.
+
+### Decisions
+
+- Kept the smoke path as explicit reference scaffolding, not the product
+  optimiser. It wires the v2 modules together before FISTA and LM/GN land.
+- `reconstruct_average_reference` is not the default reconstruction algorithm.
+  It exists only to exercise the forward/residual/gauge path with a volume-like
+  object.
+
+### Validation
+
+- `uv run ruff check src/tomojax/forward src/tomojax/recon/_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py src/tomojax/align/_smoke.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_vertical_smoke.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/forward src/tomojax/recon/_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py src/tomojax/align/_smoke.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_vertical_smoke.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_vertical_smoke.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py -q`
+  passed: 10 tests.
+- `uv run ruff format --check src/tomojax/forward src/tomojax/recon/_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py src/tomojax/align/_smoke.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_vertical_smoke.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_vertical_smoke.py -q`
+  passed: 124 tests.
+
+### Risks
+
+- A broad `uv run ruff format --check src/tomojax/forward src/tomojax/recon src/tomojax/align ...`
+  still reports 20 untouched transitional align/recon files that would be
+  reformatted. This remains outside the current smoke slice.
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The smoke path does not perform optimisation. Pose-only LM/GN remains the next
+  major geometry milestone after the reference projector grows enough physical
+  fidelity for meaningful derivatives.
