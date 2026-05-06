@@ -572,3 +572,53 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - The serializer does not yet write full run artifact indexes or observability
   reports. Those remain part of later `tomojax.verify` and optimiser slices.
+
+## 2026-05-06 — Add Minimal Forward Reference And Robust Residuals
+
+### Summary
+
+- Added `tomojax.forward.project_parallel_reference`, a minimal JAX reference
+  projector for tiny cubic-volume smoke tests.
+- Added masked whitened residual helpers:
+  - `masked_whitened_residual`
+  - `pseudo_huber_loss`
+  - `pseudo_huber_weights`
+  - `residual_loss`
+  - `ResidualResult`
+- Added `tests/test_forward_reference.py` covering projection shape, per-view
+  detector shift, masking, pseudo-Huber robust behavior, valid counts, and IRLS
+  weight behavior.
+
+### Decisions
+
+- Kept this as a new `tomojax.forward` reference slice rather than adapting old
+  `tomojax.core.projector`.
+- The projector is intentionally minimal: it uses coarse array rotation and
+  detector shifts for smoke tests. Full ray geometry, laminography, detector
+  roll, axis rotations, theta-scale handling, and finite-difference geometry
+  checks remain future Phase 2 work.
+- Robust residuals follow the v2 loss spec: masked, whitened residuals with
+  pseudo-Huber loss and IRLS weights.
+
+### Validation
+
+- `uv run ruff check src/tomojax/forward tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/forward tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_forward_reference.py tests/test_v2_module_skeleton.py -q`
+  passed: 7 tests.
+- `uv run ruff format --check src/tomojax/forward tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py -q`
+  passed: 121 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The minimal projector is not yet the final physical forward model. It should
+  be expanded before geometry optimisation tests rely on physical accuracy.

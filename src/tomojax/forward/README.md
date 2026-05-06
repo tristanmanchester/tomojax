@@ -2,17 +2,22 @@
 
 ## Purpose
 
-`tomojax.forward` will own differentiable projection, backprojection,
-projection-domain residuals, and geometry-parameter reductions for the v2 JAX
-reference path.
+`tomojax.forward` owns differentiable projection, projection-domain residuals,
+and geometry-parameter reductions for the v2 JAX reference path.
 
-This package is currently a v2 skeleton facade. It intentionally exposes no
-public behavior until the reference forward-model milestone defines typed
-contracts.
+The current implementation is a minimal reference slice for tiny smoke tests:
+it supports a simple parallel-beam projection of cubic volumes plus per-view
+detector shifts. Full physical ray geometry, laminography, detector roll, axis
+rotations, and Jacobian checks remain future Phase 2 work.
 
 ## Public API
 
-No public names are exported yet.
+- `project_parallel_reference`
+- `masked_whitened_residual`
+- `pseudo_huber_loss`
+- `pseudo_huber_weights`
+- `residual_loss`
+- `ResidualResult`
 
 ## Dependencies
 
@@ -39,5 +44,6 @@ Forbidden dependencies:
 
 ## Tests
 
-- `tests/test_v2_module_skeleton.py` verifies this skeleton facade exists and
-  imports.
+- `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
+- `tests/test_forward_reference.py` covers the minimal projector and robust
+  residual contracts.

@@ -2,4 +2,20 @@
 
 from __future__ import annotations
 
-__all__: tuple[str, ...] = ()
+from tomojax.forward._projector import project_parallel_reference
+from tomojax.forward._residuals import (
+    ResidualResult,
+    masked_whitened_residual,
+    pseudo_huber_loss,
+    pseudo_huber_weights,
+    residual_loss,
+)
+
+__all__ = [
+    "ResidualResult",
+    "masked_whitened_residual",
+    "project_parallel_reference",
+    "pseudo_huber_loss",
+    "pseudo_huber_weights",
+    "residual_loss",
+]
