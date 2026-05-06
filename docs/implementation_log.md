@@ -4166,3 +4166,42 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Generated benchmark projections are still metadata-only for `align-auto`;
   the alternating solver does not yet consume them as its observed input.
+
+## 2026-05-06 — Phase 8 Align-Auto Dirty Synthetic Sidecars
+
+### Summary
+
+- Added `applied_to_projections` to synthetic `nuisance_truth.json` so clean
+  versus nuisance-applied generated datasets are explicit.
+- Added `--apply-synthetic-nuisance` to `align-auto`; named synthetic benchmark
+  sidecars remain clean by default and become dirty only with this flag.
+- Recorded `nuisance_applied_to_projections` in `verification.json`,
+  `run_manifest.json`, and `config_resolved.toml` through the existing
+  synthetic dataset payload.
+- Added focused dataset and CLI tests for the default clean path and opt-in
+  dirty sidecar path.
+
+### Decisions
+
+- Kept dirty sidecars opt-in. The generated synthetic dataset projector and
+  geometry artifact schema are not yet the same as the alternating solver's JAX
+  reference geometry path, so this slice records sidecar truth without claiming
+  solver ingestion.
+
+### Validation
+
+- `uv run ruff format src/tomojax/datasets/_writer.py src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+  passed: 5 files left unchanged.
+- `uv run ruff check src/tomojax/datasets/_writer.py src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets/_writer.py src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_align_auto_cli.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- This still does not make the alternating solver consume generated benchmark
+  projections. That requires a compatible generated-geometry loader or a
+  benchmark writer that emits `GeometryState` artifacts.

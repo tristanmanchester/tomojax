@@ -22,6 +22,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "verification artifacts" in captured.out
     assert "smoke32" in captured.out
     assert "--synthetic-dataset" in captured.out
+    assert "--apply-synthetic-nuisance" in captured.out
     assert "--fit-gain-offset-nuisance" in captured.out
     assert "--fit-background-nuisance" in captured.out
 
@@ -179,6 +180,7 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     assert verification["synthetic_dataset"] == {
         "artifact_dir": str(dataset_dir),
         "name": "synth128_setup_global_tomo",
+        "nuisance_applied_to_projections": False,
         "source": "synthetic128_spec",
     }
     manifest = cast(
@@ -188,7 +190,55 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     dataset = cast("dict[str, object]", manifest["dataset"])
     synthetic_benchmark = cast("dict[str, object]", dataset["synthetic128_benchmark"])
     assert synthetic_benchmark["name"] == "synth128_setup_global_tomo"
+    assert synthetic_benchmark["nuisance_applied_to_projections"] is False
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert 'synthetic_dataset_name = "synth128_setup_global_tomo"' in config_text
+    assert "synthetic_dataset_nuisance_applied = false" in config_text
+    nuisance = cast(
+        "dict[str, object]",
+        json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
+    )
+    assert nuisance["applied_to_projections"] is False
     captured = capsys.readouterr()
     assert "synthetic_dataset:" in captured.out
+
+
+def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "auto-dirty-benchmark"
+
+    exit_code = align_auto_cli.main(
+        [
+            "--out-dir",
+            str(out_dir),
+            "--synthetic-dataset",
+            "synth128_combined_nuisance_jumps",
+            "--apply-synthetic-nuisance",
+            "--views",
+            "4",
+        ]
+    )
+
+    assert exit_code == 0
+    dataset_dir = out_dir / "datasets" / "synth128_combined_nuisance_jumps_32"
+    verification = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "verification.json").read_text(encoding="utf-8")),
+    )
+    synthetic_dataset = cast("dict[str, object]", verification["synthetic_dataset"])
+    assert synthetic_dataset["nuisance_applied_to_projections"] is True
+    manifest = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8")),
+    )
+    dataset = cast("dict[str, object]", manifest["dataset"])
+    synthetic_benchmark = cast("dict[str, object]", dataset["synthetic128_benchmark"])
+    assert synthetic_benchmark["nuisance_applied_to_projections"] is True
+    config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
+    assert "synthetic_dataset_nuisance_applied = true" in config_text
+    nuisance = cast(
+        "dict[str, object]",
+        json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
+    )
+    assert nuisance["applied_to_projections"] is True

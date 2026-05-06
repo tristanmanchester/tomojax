@@ -129,6 +129,7 @@ def test_generate_synthetic_dataset_applies_gain_offset_nuisance(tmp_path: Path)
         json.loads(drifted.nuisance_truth.read_text(encoding="utf-8")),
     )
     assert nuisance["schema"] == "tomojax.synthetic_nuisance_truth.v1"
+    assert nuisance["applied_to_projections"] is True
     assert nuisance["applied_terms"] == {
         "gain": True,
         "offset": True,
@@ -169,6 +170,7 @@ def test_generate_clean_synthetic_dataset_records_but_skips_nuisance(tmp_path: P
         "dict[str, Any]",
         json.loads(clean.nuisance_truth.read_text(encoding="utf-8")),
     )
+    assert nuisance["applied_to_projections"] is False
     assert nuisance["applied_terms"] == {
         "gain": True,
         "offset": False,
@@ -200,6 +202,7 @@ def test_generate_synthetic_dataset_applies_vertical_background_nuisance(
         "dict[str, Any]",
         json.loads(drifted.nuisance_truth.read_text(encoding="utf-8")),
     )
+    assert nuisance["applied_to_projections"] is True
     assert nuisance["applied_terms"] == {
         "gain": True,
         "offset": False,
@@ -224,6 +227,7 @@ def test_generate_synthetic_dataset_applies_vertical_background_nuisance(
         "dict[str, Any]",
         json.loads(clean.nuisance_truth.read_text(encoding="utf-8")),
     )
+    assert clean_nuisance["applied_to_projections"] is False
     assert clean_nuisance["applied_terms"]["background_vertical_gradient"] is True
     np.testing.assert_array_equal(clean_projections, np.load(clean.projections))
 

@@ -59,6 +59,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory for generated synthetic benchmark artifacts. Defaults under --out-dir.",
     )
     _ = parser.add_argument(
+        "--apply-synthetic-nuisance",
+        action="store_true",
+        help="Apply nuisance terms from the named synthetic benchmark to generated projections.",
+    )
+    _ = parser.add_argument(
         "--fit-gain-offset-nuisance",
         action="store_true",
         help="Fit per-view gain/offset nuisance during Schur geometry updates.",
@@ -80,6 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     out_dir = Path(args.out_dir)
     dataset_name = None if args.synthetic_dataset is None else str(args.synthetic_dataset)
     dataset_dir: Path | None = None
+    synthetic_nuisance_applied = bool(args.apply_synthetic_nuisance)
     if dataset_name is not None:
         _ = synthetic128_spec(dataset_name)
         dataset_root = Path(args.dataset_out_dir) if args.dataset_out_dir else out_dir / "datasets"
@@ -87,7 +93,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset_name,
             dataset_root,
             size=size,
-            clean=True,
+            clean=not synthetic_nuisance_applied,
             views=int(args.views),
         )
         dataset_dir = dataset_paths.dataset_dir
@@ -101,6 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,
             synthetic_dataset_artifact_dir=dataset_dir,
+            synthetic_dataset_nuisance_applied=synthetic_nuisance_applied,
         )
     )
     result = solver.run_smoke(out_dir)

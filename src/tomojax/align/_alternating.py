@@ -74,6 +74,7 @@ class AlternatingSmokeConfig:
     fit_background_nuisance: bool = False
     synthetic_dataset_name: str | None = None
     synthetic_dataset_artifact_dir: Path | None = None
+    synthetic_dataset_nuisance_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -750,6 +751,7 @@ def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object]
     }
     if cfg.synthetic_dataset_artifact_dir is not None:
         payload["artifact_dir"] = str(cfg.synthetic_dataset_artifact_dir)
+    payload["nuisance_applied_to_projections"] = bool(cfg.synthetic_dataset_nuisance_applied)
     return payload
 
 
@@ -1520,6 +1522,10 @@ def _write_config_resolved(
             lines.append(f'synthetic_dataset_name = "{name}"')
         if isinstance(artifact_dir, str):
             lines.append(f'synthetic_dataset_artifact_dir = "{artifact_dir}"')
+        lines.append(
+            "synthetic_dataset_nuisance_applied = "
+            f"{str(bool(dataset_payload.get('nuisance_applied_to_projections'))).lower()}"
+        )
     lines.extend((f"level_factors = {list(schedule.level_factors)!r}", ""))
     _ = path.write_text(
         "\n".join(lines),

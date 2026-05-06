@@ -73,7 +73,7 @@ def generate_synthetic_dataset(
         theta_deg=theta,
         pose=true_pose,
     )
-    nuisance = _realize_nuisance(spec, n_views)
+    nuisance = _realize_nuisance(spec, n_views, applied_to_projections=not clean)
     if not clean:
         projections = _apply_nuisance(projections, nuisance)
     mask = np.ones(projections.shape, dtype=bool)
@@ -142,13 +142,19 @@ def _resize_nearest(image: NDArray[np.float32], shape: tuple[int, int]) -> NDArr
     return image[np.ix_(rows, cols)].astype(np.float32)
 
 
-def _realize_nuisance(spec: SyntheticDatasetSpec, n_views: int) -> dict[str, object]:
+def _realize_nuisance(
+    spec: SyntheticDatasetSpec,
+    n_views: int,
+    *,
+    applied_to_projections: bool,
+) -> dict[str, object]:
     gain = _gain_drift(spec.nuisance, n_views)
     offset = _background_offset(spec.nuisance, n_views)
     vertical_gradient = _background_vertical_gradient(spec.nuisance, n_views)
     return {
         "schema": "tomojax.synthetic_nuisance_truth.v1",
         "source": "benchmark_manifest",
+        "applied_to_projections": applied_to_projections,
         "spec": dict(spec.nuisance),
         "applied_terms": {
             "gain": gain is not None,
