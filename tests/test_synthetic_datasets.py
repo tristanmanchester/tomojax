@@ -13,6 +13,7 @@ from tomojax.datasets import (
     load_synthetic128_specs,
     make_benchmark_phantom,
 )
+from tomojax.geometry import read_geometry_json, read_pose_params_csv
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,6 +64,12 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
         first.true_geometry,
         first.true_pose,
         first.true_motion,
+        first.v2_nominal_geometry,
+        first.v2_corrupted_geometry,
+        first.v2_true_geometry,
+        first.v2_nominal_pose,
+        first.v2_corrupted_pose,
+        first.v2_true_pose,
         first.nuisance_truth,
         first.noise_truth,
     }
@@ -103,6 +110,18 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
         "dx_px",
         "dz_px",
     }
+
+    true_pose_params = read_pose_params_csv(first.v2_true_pose)
+    true_state = read_geometry_json(first.v2_true_geometry, true_pose_params)
+    assert true_state.pose.n_views == 16
+    assert true_state.setup.det_u_px.value == 14.5
+    np.testing.assert_allclose(true_state.setup.theta_offset_rad.value, np.deg2rad(1.25))
+    np.testing.assert_allclose(true_state.pose.phi_residual_rad, np.zeros(16))
+
+    nominal_pose_params = read_pose_params_csv(first.v2_nominal_pose)
+    nominal_state = read_geometry_json(first.v2_nominal_geometry, nominal_pose_params)
+    assert nominal_state.setup.det_u_px.value == 0.0
+    assert nominal_state.pose.n_views == 16
 
 
 def test_generate_synthetic_dataset_applies_gain_offset_nuisance(tmp_path: Path) -> None:

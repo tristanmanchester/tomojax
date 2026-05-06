@@ -12,26 +12,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: let `align-auto` generate nuisance-applied synthetic benchmark artifacts
-  on request.
+- Goal: emit `GeometryState`-compatible synthetic benchmark geometry sidecars.
 
 ### Scope
 
 - In scope:
-  - Record whether synthetic nuisance terms were applied to generated
-    projections in `nuisance_truth.json`.
-  - Add an `align-auto` flag to generate dirty synthetic benchmark projections.
-  - Record the applied/clean choice in smoke verification, manifest, and
-    resolved config artifacts.
-  - Add focused CLI/dataset tests for the default clean path and opt-in dirty
-    path.
+  - Add v2 `GeometryState` JSON sidecars for nominal, corrupted, and true
+    synthetic benchmark geometry.
+  - Add radian `pose_params.csv` sidecars matching the public geometry reader.
+  - Keep the existing manifest-spec geometry JSON and degree pose CSV files for
+    benchmark contract continuity.
+  - Add focused dataset tests proving the new geometry sidecars can be read
+    through public `tomojax.geometry` APIs.
 - Out of scope:
   - Alternating solver ingestion of generated benchmark projections.
   - Stripe/ring bias fields.
   - Changing align-auto defaults.
+  - Removing existing manifest-spec geometry artifacts.
   - Further legacy Ruff cleanup.
-- Deep module owners: `tomojax.datasets`, `tomojax.cli`, and `tomojax.align`
-  artifact plumbing.
+- Deep module owner: `tomojax.datasets`, consuming public `tomojax.geometry`.
 
 ### Design Sources
 
@@ -41,24 +40,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add synthetic nuisance applied/clean truth field.
-- [x] Add `align-auto --apply-synthetic-nuisance`.
-- [x] Record choice in run artifacts.
-- [x] Add focused CLI/dataset tests.
+- [x] Add v2 geometry state paths and writes.
+- [x] Add pose params CSV sidecars in radians.
+- [x] Add focused public geometry readback tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the align-auto dirty synthetic artifact slice.
+- [x] Commit the v2 geometry sidecar slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/datasets/_writer.py src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
-  passed: 5 files left unchanged.
-- `uv run ruff check src/tomojax/datasets/_writer.py src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `uv run basedpyright src/tomojax/datasets/_writer.py src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_align_auto_cli.py -q`
-  passed: 12 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
+  passed: 8 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -66,13 +64,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep the default synthetic benchmark generation clean. Dirty projections must
-  be explicit until the alternating solver can consume generated benchmark
-  geometry/projections through a compatible reference path.
+- Keep existing synthetic benchmark artifacts stable; add v2 sidecars rather
+  than changing the manifest-defined JSON schema in place.
 
 ### Risks
 
-- Risk: generated benchmark datasets still are metadata/artifact sidecars for
-  `align-auto`.
-- Mitigation: this slice makes clean versus nuisance-applied sidecars explicit
-  and testable, without pretending the solver has ingested them.
+- Risk: generated benchmark projections still use the NumPy smoke projector
+  rather than the JAX reference forward model.
+- Mitigation: this slice only creates a public geometry-format bridge for a
+  later ingestion step.

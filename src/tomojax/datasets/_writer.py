@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -14,6 +14,12 @@ import numpy as np
 
 from tomojax.datasets._phantoms import make_benchmark_phantom
 from tomojax.datasets._specs import SyntheticDatasetSpec, synthetic128_spec
+from tomojax.geometry import (
+    GeometryState,
+    PoseParameters,
+    write_geometry_json,
+    write_pose_params_csv,
+)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -33,6 +39,12 @@ class SyntheticArtifactPaths:
     true_geometry: Path
     true_pose: Path
     true_motion: Path
+    v2_nominal_geometry: Path
+    v2_corrupted_geometry: Path
+    v2_true_geometry: Path
+    v2_nominal_pose: Path
+    v2_corrupted_pose: Path
+    v2_true_pose: Path
     nuisance_truth: Path
     noise_truth: Path
 
@@ -88,6 +100,14 @@ def generate_synthetic_dataset(
     _write_json(paths.true_geometry, _true_geometry(spec, detector_shape, theta))
     _write_pose_csv(paths.true_pose, true_pose)
     _write_motion_csv(paths.true_motion, n_views)
+    nominal_state = _geometry_state_from_spec(spec, n_views=n_views, pose=None)
+    true_state = _geometry_state_from_spec(spec, n_views=n_views, pose=true_pose)
+    write_geometry_json(paths.v2_nominal_geometry, nominal_state)
+    write_geometry_json(paths.v2_corrupted_geometry, nominal_state)
+    write_geometry_json(paths.v2_true_geometry, true_state)
+    write_pose_params_csv(paths.v2_nominal_pose, nominal_state.pose)
+    write_pose_params_csv(paths.v2_corrupted_pose, nominal_state.pose)
+    write_pose_params_csv(paths.v2_true_pose, true_state.pose)
     _write_json(paths.nuisance_truth, nuisance)
     _write_json(paths.noise_truth, _noise_truth(spec))
     _write_json(paths.manifest, _dataset_manifest(spec, size, detector_shape, n_views))
@@ -106,6 +126,12 @@ def _paths(dataset_dir: Path) -> SyntheticArtifactPaths:
         true_geometry=dataset_dir / "true_geometry.json",
         true_pose=dataset_dir / "true_pose.csv",
         true_motion=dataset_dir / "true_motion.csv",
+        v2_nominal_geometry=dataset_dir / "v2_nominal_geometry.json",
+        v2_corrupted_geometry=dataset_dir / "v2_corrupted_geometry.json",
+        v2_true_geometry=dataset_dir / "v2_true_geometry.json",
+        v2_nominal_pose=dataset_dir / "v2_nominal_pose_params.csv",
+        v2_corrupted_pose=dataset_dir / "v2_corrupted_pose_params.csv",
+        v2_true_pose=dataset_dir / "v2_true_pose_params.csv",
         nuisance_truth=dataset_dir / "nuisance_truth.json",
         noise_truth=dataset_dir / "noise_truth.json",
     )
@@ -281,6 +307,80 @@ def _pose_component(
         parts = text.split("_")
         out = rng.normal(float(parts[1]), float(parts[2]), size=n_views).astype(np.float32)
     return out
+
+
+def _geometry_state_from_spec(
+    spec: SyntheticDatasetSpec,
+    *,
+    n_views: int,
+    pose: dict[str, NDArray[np.float32]] | None,
+) -> GeometryState:
+    state = GeometryState.zeros(n_views)
+    setup_values = spec.true_setup if pose is not None else {}
+    setup = state.setup
+    det_v_active = abs(float(spec.true_setup.get("det_v_px", 0.0))) > 0.0
+    setup = setup.replace_parameter(
+        "det_v_px",
+        replace(
+            setup.det_v_px.with_value(_setup_value(setup_values, "det_v_px")),
+            active=det_v_active,
+        ),
+    )
+    setup = setup.replace_parameter(
+        "det_u_px",
+        setup.det_u_px.with_value(_setup_value(setup_values, "det_u_px")),
+    )
+    setup = setup.replace_parameter(
+        "detector_roll_rad",
+        setup.detector_roll_rad.with_value(
+            np.deg2rad(_setup_value(setup_values, "detector_roll_deg"))
+        ),
+    )
+    setup = setup.replace_parameter(
+        "axis_rot_x_rad",
+        setup.axis_rot_x_rad.with_value(np.deg2rad(_setup_value(setup_values, "axis_rot_x_deg"))),
+    )
+    setup = setup.replace_parameter(
+        "axis_rot_y_rad",
+        setup.axis_rot_y_rad.with_value(np.deg2rad(_setup_value(setup_values, "axis_rot_y_deg"))),
+    )
+    setup = setup.replace_parameter(
+        "theta_offset_rad",
+        setup.theta_offset_rad.with_value(
+            np.deg2rad(_setup_value(setup_values, "theta_offset_deg"))
+        ),
+    )
+    setup = setup.replace_parameter(
+        "theta_scale",
+        setup.theta_scale.with_value(_setup_value(setup_values, "theta_scale", default=1.0)),
+    )
+    return GeometryState(setup=setup, pose=_pose_params_from_table(pose, n_views=n_views))
+
+
+def _setup_value(
+    values: dict[str, float | str],
+    name: str,
+    *,
+    default: float = 0.0,
+) -> float:
+    raw = values.get(name, default)
+    return float(raw) if isinstance(raw, int | float) else default
+
+
+def _pose_params_from_table(
+    pose: dict[str, NDArray[np.float32]] | None,
+    *,
+    n_views: int,
+) -> PoseParameters:
+    if pose is None:
+        return PoseParameters.zeros(n_views)
+    return PoseParameters(
+        alpha_rad=np.deg2rad(pose["alpha_deg"].astype(np.float64)),
+        beta_rad=np.deg2rad(pose["beta_deg"].astype(np.float64)),
+        phi_residual_rad=np.deg2rad(pose["phi_residual_deg"].astype(np.float64)),
+        dx_px=pose["dx_px"].astype(np.float64),
+        dz_px=pose["dz_px"].astype(np.float64),
+    )
 
 
 def _nominal_geometry(
