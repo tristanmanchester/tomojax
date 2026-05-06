@@ -1158,3 +1158,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - The joint Schur solver still lacks priors, trust radii, damping adaptation,
   detailed normal-equation artifact export, and unsupported physical DOFs.
+
+## 2026-05-06 — Add Joint Schur Normal-Equation Artifact
+
+### Summary
+
+- Added `joint_schur_normal_eq_summary`, a JSON-serializable Phase 6
+  normal-equation summary for `JointSchurLMResult`.
+- Added `write_joint_schur_normal_eq_summary`, writing
+  `normal_eq_summary.json`-style artifacts.
+- Added `JointSchurDiagnostics.to_dict` for stable diagnostics serialization.
+- Added a readback test covering solver label, active setup parameters, active
+  pose DOFs, and Schur diagnostic keys.
+
+### Decisions
+
+- Kept the artifact intentionally compact for this slice:
+  losses, iterations, active/frozen parameters, and current Schur diagnostics.
+  Richer eigenvalue and pose-block condition summaries remain future Phase 6
+  work.
+- Exposed the writer through `tomojax.align` so callers and tests do not import
+  private implementation files.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 5 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 147 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The artifact does not yet include eigenvalues, correlations, or pose-block
+  condition statistics required by the full Phase 6 diagnostics target.

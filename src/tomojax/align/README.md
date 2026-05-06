@@ -23,11 +23,13 @@ delete or migrate internal owners.
 - `SetupOnlyLMResult`
 - `align`
 - `align_multires`
+- `joint_schur_normal_eq_summary`
 - `run_alignment_smoke`
 - `schur_step_from_jacobian`
 - `solve_joint_schur_lm`
 - `solve_pose_only_lm`
 - `solve_setup_only_lm`
+- `write_joint_schur_normal_eq_summary`
 
 ## Dependencies
 
@@ -63,6 +65,8 @@ Forbidden dependencies:
   the reference projector models them.
 - `solve_joint_schur_lm` is the first reference Schur setup+pose slice for the
   supported setup and pose DOFs. It is not yet the final trust-region engine.
+- `write_joint_schur_normal_eq_summary` writes the current Phase 6
+  `normal_eq_summary.json` artifact.
 
 ## Tests
 

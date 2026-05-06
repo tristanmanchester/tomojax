@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -13,6 +15,9 @@ import numpy as np
 from tomojax.align._lm_numerics import finite_difference_jacobian
 from tomojax.forward import project_parallel_reference_arrays, pseudo_huber_weights, residual_loss
 from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_geometry_gauges
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _POSE_DIM = 3
 
@@ -32,6 +37,14 @@ class JointSchurDiagnostics:
     setup_update_norm: float
     pose_update_norm: float
     dense_step_difference_norm: float
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "schur_condition": self.schur_condition,
+            "setup_update_norm": self.setup_update_norm,
+            "pose_update_norm": self.pose_update_norm,
+            "dense_step_difference_norm": self.dense_step_difference_norm,
+        }
 
 
 @dataclass(frozen=True)
@@ -119,6 +132,33 @@ def solve_joint_schur_lm(
         frozen_parameters=_frozen_parameters(geometry),
         diagnostics=diagnostics,
     )
+
+
+def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, object]:
+    """Return the JSON-serializable normal-equation summary artifact."""
+    return {
+        "solver": "joint_schur_lm_reference",
+        "initial_loss": result.initial_loss,
+        "final_loss": result.final_loss,
+        "iterations": result.iterations,
+        "active_setup_parameters": list(result.active_setup_parameters),
+        "active_pose_dofs": list(result.active_pose_dofs),
+        "frozen_parameters": list(result.frozen_parameters),
+        "diagnostics": result.diagnostics.to_dict(),
+    }
+
+
+def write_joint_schur_normal_eq_summary(result: JointSchurLMResult, path: str | Path) -> Path:
+    """Write the Phase 6 normal-equation summary artifact as JSON."""
+    from pathlib import Path
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = output_path.write_text(
+        json.dumps(joint_schur_normal_eq_summary(result), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
 
 
 @dataclass(frozen=True)

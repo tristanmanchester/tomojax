@@ -2,13 +2,24 @@ from __future__ import annotations
 
 # pyright: reportAny=false, reportUnknownMemberType=false
 from dataclasses import replace
+import json
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align import JointSchurLMConfig, schur_step_from_jacobian, solve_joint_schur_lm
+from tomojax.align import (
+    JointSchurLMConfig,
+    joint_schur_normal_eq_summary,
+    schur_step_from_jacobian,
+    solve_joint_schur_lm,
+    write_joint_schur_normal_eq_summary,
+)
 from tomojax.forward import project_parallel_reference
 from tomojax.geometry import GeometryState
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_schur_step_matches_dense_normal_solve() -> None:
@@ -87,6 +98,34 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
         truth.setup.det_v_px.value + truth.pose.dz_px,
         atol=0.08,
     )
+
+
+def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(1)
+    truth_setup = nominal.setup.replace_parameter(
+        "theta_offset_rad",
+        nominal.setup.theta_offset_rad.with_value(0.04),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(max_iterations=4, damping=1e-3),
+    )
+
+    summary = joint_schur_normal_eq_summary(result)
+    path = write_joint_schur_normal_eq_summary(result, tmp_path / "normal_eq_summary.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.name == "normal_eq_summary.json"
+    assert payload == summary
+    assert payload["solver"] == "joint_schur_lm_reference"
+    assert payload["active_setup_parameters"] == ["theta_offset_rad", "det_u_px"]
+    assert payload["active_pose_dofs"] == ["phi_residual_rad", "dx_px", "dz_px"]
+    assert "schur_condition" in payload["diagnostics"]
 
 
 def _theta_asymmetric_volume() -> jnp.ndarray:

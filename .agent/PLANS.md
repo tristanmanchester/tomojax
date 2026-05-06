@@ -41,7 +41,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add deterministic recovery and Schur-vs-dense tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the joint Schur LM slice if validations pass.
+- [x] Commit the joint Schur LM slice if validations pass.
+
+### Follow-Up Slice
+
+- [x] Add `normal_eq_summary.json` artifact writer for joint Schur diagnostics.
+- [x] Add artifact readback test.
+- [x] Re-run validation commands for the artifact contract.
 
 ### Validation
 
@@ -57,7 +63,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - `uv run lint-imports --config .importlinter`
   - `uv run python tools/check_public_imports.py`
 - `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
-  passed: 146 tests.
+  passed: 147 tests.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
