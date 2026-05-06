@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from typing import TYPE_CHECKING
 
@@ -26,6 +26,11 @@ _POSE_DIM = 3
 class JointSchurLMConfig:
     max_iterations: int = 6
     damping: float = 1e-2
+    adapt_damping: bool = True
+    damping_decrease_factor: float = 0.5
+    damping_increase_factor: float = 2.0
+    min_damping: float = 1e-6
+    max_damping: float = 1e6
     sigma: float = 1.0
     delta: float = 1.0
     finite_difference_step: float = 1e-3
@@ -48,6 +53,11 @@ class JointSchurDiagnostics:
     trust_clipped: bool = False
     setup_update_by_parameter: tuple[float, ...] = ()
     pose_update_max_by_dof: tuple[float, ...] = ()
+    damping: float = float("nan")
+    next_damping: float = float("nan")
+    accepted: bool = False
+    current_loss: float = float("nan")
+    candidate_loss: float = float("nan")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -64,6 +74,11 @@ class JointSchurDiagnostics:
             "trust_clipped": self.trust_clipped,
             "setup_update_by_parameter": list(self.setup_update_by_parameter),
             "pose_update_max_by_dof": list(self.pose_update_max_by_dof),
+            "damping": self.damping,
+            "next_damping": self.next_damping,
+            "accepted": self.accepted,
+            "current_loss": self.current_loss,
+            "candidate_loss": self.candidate_loss,
         }
 
 
@@ -111,6 +126,7 @@ def solve_joint_schur_lm(
         pose_update_max_by_dof=(),
     )
     iterations = 0
+    damping = float(cfg.damping)
 
     for _ in range(max(0, int(cfg.max_iterations))):
         residual = _residual_for_params(vol, obs, geometry, params, mask=mask, sigma=cfg.sigma)
@@ -135,7 +151,7 @@ def solve_joint_schur_lm(
             n_setup=n_setup,
             n_views=geometry.pose.n_views,
             pose_dim=_POSE_DIM,
-            damping=cfg.damping,
+            damping=damping,
             setup_trust_radius=cfg.setup_trust_radius,
             pose_trust_radius=cfg.pose_trust_radius,
         )
@@ -144,8 +160,17 @@ def solve_joint_schur_lm(
         current_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
         accepted = bool(candidate_loss <= current_loss)
         params = candidate if accepted else params
+        next_damping = adapt_joint_schur_damping(damping, accepted=accepted, config=cfg)
         iterations += 1
-        diagnostics = schur.diagnostics
+        diagnostics = replace(
+            schur.diagnostics,
+            damping=damping,
+            next_damping=next_damping,
+            accepted=accepted,
+            current_loss=float(current_loss),
+            candidate_loss=float(candidate_loss),
+        )
+        damping = next_damping
         if float(jnp.linalg.norm(schur.step)) < 1e-5:
             break
 
@@ -163,6 +188,21 @@ def solve_joint_schur_lm(
         frozen_parameters=_frozen_parameters(geometry),
         diagnostics=diagnostics,
     )
+
+
+def adapt_joint_schur_damping(
+    damping: float,
+    *,
+    accepted: bool,
+    config: JointSchurLMConfig,
+) -> float:
+    """Return the next LM damping value after an accepted or rejected step."""
+    current = float(damping)
+    if not config.adapt_damping:
+        return current
+    factor = config.damping_decrease_factor if accepted else config.damping_increase_factor
+    candidate = current * max(float(factor), 0.0)
+    return min(max(candidate, float(config.min_damping)), float(config.max_damping))
 
 
 def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, object]:

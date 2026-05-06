@@ -10,6 +10,7 @@ import numpy as np
 
 from tomojax.align import (
     JointSchurLMConfig,
+    adapt_joint_schur_damping,
     joint_schur_normal_eq_summary,
     schur_step_from_jacobian,
     solve_joint_schur_lm,
@@ -20,6 +21,24 @@ from tomojax.geometry import GeometryState
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_joint_schur_damping_policy_adapts_and_clamps() -> None:
+    config = JointSchurLMConfig(
+        damping_decrease_factor=0.25,
+        damping_increase_factor=4.0,
+        min_damping=0.1,
+        max_damping=10.0,
+    )
+
+    assert adapt_joint_schur_damping(1.0, accepted=True, config=config) == 0.25
+    assert adapt_joint_schur_damping(0.2, accepted=True, config=config) == 0.1
+    assert adapt_joint_schur_damping(2.0, accepted=False, config=config) == 8.0
+    assert adapt_joint_schur_damping(3.0, accepted=False, config=config) == 10.0
+
+    fixed = JointSchurLMConfig(adapt_damping=False)
+    assert adapt_joint_schur_damping(1.0, accepted=True, config=fixed) == 1.0
+    assert adapt_joint_schur_damping(1.0, accepted=False, config=fixed) == 1.0
 
 
 def test_schur_step_matches_dense_normal_solve() -> None:
@@ -135,6 +154,8 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     assert result.active_setup_parameters == ("theta_offset_rad", "det_u_px", "det_v_px")
     assert result.active_pose_dofs == ("phi_residual_rad", "dx_px", "dz_px")
     assert result.diagnostics.dense_step_difference_norm < 2e-4
+    assert result.diagnostics.accepted is True
+    assert result.diagnostics.next_damping <= result.diagnostics.damping
     canonical = result.canonicalized_geometry.state
     np.testing.assert_allclose(
         canonical.setup.theta_offset_rad.value + canonical.pose.phi_residual_rad,
@@ -188,6 +209,11 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert "trust_clipped" in payload["diagnostics"]
     assert "setup_update_by_parameter" in payload["diagnostics"]
     assert "pose_update_max_by_dof" in payload["diagnostics"]
+    assert "damping" in payload["diagnostics"]
+    assert "next_damping" in payload["diagnostics"]
+    assert "accepted" in payload["diagnostics"]
+    assert "current_loss" in payload["diagnostics"]
+    assert "candidate_loss" in payload["diagnostics"]
     assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
     assert len(payload["diagnostics"]["setup_correlation_matrix"]) == 2
 

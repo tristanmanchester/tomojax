@@ -1336,3 +1336,66 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - Trust radii are scalar and non-adaptive; per-DOF metadata radii and
   actual/predicted-decrease radius updates remain future Phase 6 work.
+
+## 2026-05-06 — Add Joint Schur Damping Adaptation
+
+### Summary
+
+- Added configurable joint Schur LM damping adaptation:
+  - `adapt_damping`
+  - `damping_decrease_factor`
+  - `damping_increase_factor`
+  - `min_damping`
+  - `max_damping`
+- Updated `solve_joint_schur_lm` to keep a local damping value and adapt it
+  after each accepted or rejected candidate step.
+- Added `adapt_joint_schur_damping` to the public alignment facade so the
+  accepted/rejected policy is testable without private imports.
+- Extended `JointSchurDiagnostics` and `normal_eq_summary.json` with:
+  - `damping`
+  - `next_damping`
+  - `accepted`
+  - `current_loss`
+  - `candidate_loss`
+- Added deterministic tests for accepted/rejected damping changes, clamp
+  behavior, solver diagnostics, and artifact fields.
+
+### Decisions
+
+- Accepted steps decrease damping and rejected steps increase damping with
+  configurable factors and clamps.
+- Damping adaptation is deliberately separate from trust-radius scaling; this
+  keeps the reference solver simple while preserving diagnostics for the later
+  actual/predicted reduction policy.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 7 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 149 tests.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  `uv run ruff format src tests tools`; first current failures include
+  `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
+  in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
+  findings. Formatter-only churn from this command was reverted outside this
+  damping slice.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The damping policy is accepted/rejected only; actual/predicted reduction and
+  adaptive radius updates remain future Phase 6 work.
+- Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
+  separate milestone instead of mixing repository-wide lint churn into Phase 6
+  numerical solver work.
