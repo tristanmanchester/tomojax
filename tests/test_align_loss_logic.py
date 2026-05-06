@@ -21,6 +21,7 @@ from tomojax.align.objectives.loss_kernels import (
     _loss_tversky,
     _loss_welsch,
 )
+# check-public-imports: allow-private
 from tomojax.align._pose_stage import _should_prefer_gn_candidate
 
 

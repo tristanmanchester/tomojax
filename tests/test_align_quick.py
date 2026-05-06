@@ -3,12 +3,18 @@ import pytest
 import jax.numpy as jnp
 
 import tomojax.align.pipeline as align_pipeline
+# check-public-imports: allow-private
 import tomojax.align._pose_stage as pose_stage
+# check-public-imports: allow-private
 import tomojax.align._stage_loop as stage_loop
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.align.objectives.loss_specs import loss_spec_name, parse_loss_schedule, parse_loss_spec
-from tomojax.align._observer import _normalize_observer_action, adapt_legacy_observer
+# check-public-imports: allow-private
+from tomojax.align._observer import (
+    _normalize_observer_action,
+    adapt_legacy_observer,
+)
 from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
 from tomojax.align.geometry.geometry_blocks import (
     add_geometry_acquisition_diagnostics,

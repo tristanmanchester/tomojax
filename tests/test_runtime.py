@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import sys
 import types
 
+# check-public-imports: allow-private
 from tomojax.cli import _runtime as runtime_helpers
 
 

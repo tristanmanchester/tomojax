@@ -10,10 +10,12 @@ import numpy as np
 import pytest
 import jax.numpy as jnp
 
+# check-public-imports: allow-private
 from tomojax.cli import _runtime as runtime_helpers
 from tomojax.cli import convert as convert_cli
 from tomojax.cli import runtime_checks
 from tomojax.core.geometry.views import stack_view_poses
+# check-public-imports: allow-private
 from tomojax.recon._tv_ops import div3, grad3
 from tomojax.utils import logging as logging_utils
 from tomojax.utils import memory as memory_utils

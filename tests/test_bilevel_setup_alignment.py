@@ -7,7 +7,10 @@ import pytest
 import tomojax.align.geometry.detector_center as detector_center
 import tomojax.align.geometry.geometry_blocks as geometry_blocks
 import tomojax.align.pipeline as pipeline
-from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
+# check-public-imports: allow-private
+from tomojax.align._setup_stage import (
+    _optimize_setup_geometry_bilevel_for_level,
+)
 from tomojax.align.model.diagnostics import GaugeDecision
 from tomojax.align.model.dof_specs import ActiveParameterView
 from tomojax.align.objectives.folds import FoldSpec

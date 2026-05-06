@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+# check-public-imports: allow-private
 import tomojax.align._pose_stage as pose_stage
 import tomojax.cli.align as align_cli
 import tomojax.cli.recon as recon_cli

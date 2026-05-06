@@ -1,0 +1,178 @@
+"""Check that private TomoJAX modules stay behind their public facades."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+
+ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
+
+
+@dataclass(frozen=True)
+class Violation:
+    """A private module import that crosses a top-level TomoJAX boundary."""
+
+    path: Path
+    line: int
+    imported_module: str
+    importing_module: str
+    owner: str
+
+    def format(self, root: Path) -> str:
+        """Format a violation for terminal output."""
+        relative_path = self.path.relative_to(root)
+        return (
+            f"{relative_path}:{self.line}: private import crosses tomojax.{self.owner} "
+            f"boundary: {self.importing_module} imports {self.imported_module}"
+        )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the private-import boundary check."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Reject imports of tomojax.<owner>._private modules from outside tomojax.<owner>. "
+            "Tests may allow a specific white-box import with "
+            f"'# {ALLOW_PRIVATE_MARKER}'."
+        )
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        default=[Path("src/tomojax"), Path("tests")],
+        help="Files or directories to scan.",
+    )
+    args = parser.parse_args(argv)
+
+    root = Path.cwd()
+    paths = [path if path.is_absolute() else root / path for path in args.paths]
+    violations = find_violations(paths, root)
+    if violations:
+        for violation in violations:
+            print(violation.format(root), file=sys.stderr)
+        print(
+            "\nPrivate implementation modules must be imported through their owner's public API. "
+            "For a deliberate white-box test, keep the import local and add "
+            f"'# {ALLOW_PRIVATE_MARKER}' "
+            "on or directly above the import line.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
+    """Find cross-boundary private imports below the given paths."""
+    violations: list[Violation] = []
+    for path in iter_python_files(paths):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        lines = source.splitlines()
+        importing_module = module_name_for_path(path, root)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                imported_modules = imported_modules_from_import_from(node)
+            else:
+                continue
+
+            if line_has_allowed_test_marker(lines, node.lineno, importing_module):
+                continue
+
+            for imported_module in imported_modules:
+                owner = private_owner(imported_module)
+                if owner is None or module_is_inside_owner(importing_module, owner):
+                    continue
+                violations.append(
+                    Violation(
+                        path=path,
+                        line=node.lineno,
+                        imported_module=imported_module,
+                        importing_module=importing_module,
+                        owner=owner,
+                    )
+                )
+    return violations
+
+
+def iter_python_files(paths: Iterable[Path]) -> Iterable[Path]:
+    """Yield Python files from file or directory arguments."""
+    for path in paths:
+        if path.is_file() and path.suffix == ".py":
+            yield path
+        elif path.is_dir():
+            yield from sorted(path.rglob("*.py"))
+
+
+def module_name_for_path(path: Path, root: Path) -> str:
+    """Return a dotted module name for source and test files."""
+    relative_path = path.relative_to(root)
+    if relative_path.parts[:2] == ("src", "tomojax"):
+        module_parts = relative_path.with_suffix("").parts[1:]
+    else:
+        module_parts = relative_path.with_suffix("").parts
+    if module_parts[-1] == "__init__":
+        module_parts = module_parts[:-1]
+    return ".".join(module_parts)
+
+
+def imported_modules_from_import_from(node: ast.ImportFrom) -> list[str]:
+    """Expand an absolute from-import into concrete imported module candidates."""
+    if node.level:
+        return []
+    module = node.module or ""
+    imported_modules = [module] if module else []
+    if is_tomojax_owner_module(module):
+        imported_modules.extend(f"{module}.{alias.name}" for alias in node.names if alias.name)
+    return imported_modules
+
+
+def private_owner(module: str) -> str | None:
+    """Return the top-level TomoJAX owner for a private implementation module."""
+    parts = module.split(".")
+    if len(parts) < 3 or parts[0] != "tomojax":
+        return None
+
+    owner = parts[1]
+    for part in parts[2:]:
+        if part.startswith("_") and part != "__init__":
+            return owner
+    return None
+
+
+def is_tomojax_owner_module(module: str) -> bool:
+    """Return whether a module is exactly tomojax.<owner>."""
+    parts = module.split(".")
+    return len(parts) == 2 and parts[0] == "tomojax"
+
+
+def module_is_inside_owner(module: str, owner: str) -> bool:
+    """Return whether a module belongs to the same top-level TomoJAX owner."""
+    return module == f"tomojax.{owner}" or module.startswith(f"tomojax.{owner}.")
+
+
+def line_has_allowed_test_marker(
+    lines: Sequence[str],
+    line_number: int,
+    importing_module: str,
+) -> bool:
+    """Return whether a test import line has an explicit private-import exception."""
+    if not importing_module.startswith("tests."):
+        return False
+    current_line = lines[line_number - 1]
+    previous_line = lines[line_number - 2] if line_number > 1 else ""
+    return ALLOW_PRIVATE_MARKER in current_line or ALLOW_PRIVATE_MARKER in previous_line
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

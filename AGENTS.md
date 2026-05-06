@@ -7,7 +7,8 @@ Use SIFS from the shell for codebase search before broad file reads when you nee
 - Discover the current CLI contract with `sifs agent-context --json`.
 - Search with `sifs search "<query>" --source <project> --limit 10`.
 - Narrow by path with `--filter-path <repo-relative-path>` and use `--mode bm25` for exact symbols.
-- Inspect results with `sifs get <file_path> <line> --source <project>` and `sifs find-related <file_path> <line> --source
+- Inspect results with `sifs get <file_path> <line> --source <project>` and `sifs find-related <file_path> <line> --source <project>`.
+- Use `--source <project>` when the agent may not be running from the target checkout. If already running in the target checkout, `--source .` is usually appropriate.
 
 ## Project identity
 
@@ -15,15 +16,17 @@ TomoJAX is being reimagined as a fast, differentiable tomography and laminograph
 
 The goal is not to patch the old staged alignment engine. The goal is to implement the architecture described in:
 
-- tomojax_reimagined_docs/01_high_level_architecture.md
-- tomojax_reimagined_docs/02_loss_and_optimiser_spec.md
-- tomojax_reimagined_docs/03_repo_layout.md
-- tomojax_reimagined_docs/04_phased_implementation_plan.md
-- tomojax_reimagined_docs/05_synthetic_128_benchmark_suite.md
-- tomojax_reimagined_docs/06_verification_and_artifact_contract.md
-- tomojax_reimagined_docs/07_synthetic_generator_pseudocode.md
+- docs/tomojax-v2/01_high_level_architecture.md
+- docs/tomojax-v2/02_loss_and_optimiser_spec.md
+- docs/tomojax-v2/03_repo_layout.md
+- docs/tomojax-v2/04_phased_implementation_plan.md
+- docs/tomojax-v2/05_synthetic_128_benchmark_suite.md
+- docs/tomojax-v2/06_verification_and_artifact_contract.md
+- docs/tomojax-v2/07_synthetic_generator_pseudocode.md
 
 If these files are absent, stop and ask for them.
+
+Treat `docs/tomojax-v2/04_phased_implementation_plan.md` as the canonical phased plan. Use `.agent/PLANS.md` only as a living execution log for the active milestone, not as a competing plan.
 
 ## Architectural style
 
@@ -32,17 +35,26 @@ Use deep modules.
 Each top-level package under src/tomojax is a deep module with a small public API and hidden implementation.
 
 Allowed:
+- tomojax.core
 - tomojax.geometry
+- tomojax.motion
+- tomojax.nuisance
 - tomojax.forward
 - tomojax.recon
 - tomojax.align
 - tomojax.verify
+- tomojax.datasets
+- tomojax.backends
+- tomojax.io
+- tomojax.cli
 
 Forbidden across module boundaries:
 - importing tomojax.geometry._anything from outside tomojax.geometry
 - importing tomojax.forward._anything from outside tomojax.forward
 - adding generic utils/helpers/misc modules
 - spreading one feature across many shallow files without a clear module owner
+
+When new top-level modules become importable, update `.importlinter` in the same milestone so dependency direction stays executable.
 
 Each deep module should have:
 - api.py

@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import numpy as np
 
+# check-public-imports: allow-private
 from tomojax.align._pose_stage import (
     _is_expected_align_eval_failure,
     _select_gn_candidate,

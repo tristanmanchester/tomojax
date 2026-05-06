@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import jax.numpy as jnp
 
+# check-public-imports: allow-private
 import tomojax.align._reconstruction_stage as reconstruction_stage
 from tomojax.align.objectives.loss_specs import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig, align

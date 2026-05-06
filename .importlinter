@@ -1,0 +1,12 @@
+[importlinter]
+root_package = tomojax
+
+[importlinter:contract:layers]
+name = Layer direction
+type = layers
+layers =
+    tomojax.bench
+    tomojax.align
+    tomojax.data
+    tomojax.recon
+    tomojax.calibration

@@ -5,6 +5,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
+# check-public-imports: allow-private
 from tomojax.recon._tv_ops import (
     div3,
     grad3,

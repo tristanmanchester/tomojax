@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+# check-public-imports: allow-private
 from tomojax.align._profiles import (
     alignment_profile_policy,
     normalize_alignment_profile,
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
 )
+# check-public-imports: allow-private
 from tomojax.align._quality_policy import (
     normalize_quality_tier,
     reconstruction_quality_policy,
