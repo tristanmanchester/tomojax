@@ -13,7 +13,12 @@ from tomojax.align.api import (
     ContinuationScheduleName,
     reference_continuation_schedule,
 )
-from tomojax.datasets import generate_synthetic_dataset, synthetic128_spec
+from tomojax.datasets import (
+    SyntheticDatasetSidecars,
+    generate_synthetic_dataset,
+    load_synthetic_dataset_sidecars,
+    synthetic128_spec,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -85,6 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     out_dir = Path(args.out_dir)
     dataset_name = None if args.synthetic_dataset is None else str(args.synthetic_dataset)
     dataset_dir: Path | None = None
+    sidecar_readback: dict[str, object] | None = None
     synthetic_nuisance_applied = bool(args.apply_synthetic_nuisance)
     if dataset_name is not None:
         _ = synthetic128_spec(dataset_name)
@@ -97,6 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             views=int(args.views),
         )
         dataset_dir = dataset_paths.dataset_dir
+        sidecar_readback = _sidecar_readback_payload(load_synthetic_dataset_sidecars(dataset_dir))
     solver = AlternatingAlignmentSolver(
         AlternatingSmokeConfig(
             seed=int(args.seed),
@@ -108,6 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             synthetic_dataset_name=dataset_name,
             synthetic_dataset_artifact_dir=dataset_dir,
             synthetic_dataset_nuisance_applied=synthetic_nuisance_applied,
+            synthetic_dataset_sidecar_readback=sidecar_readback,
         )
     )
     result = solver.run_smoke(out_dir)
@@ -117,6 +125,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"geometry: {result.artifacts['geometry_final_json']}")
     print(f"volume: {result.artifacts['final_volume_npy']}")
     return 0
+
+
+def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, object]:
+    """Return a compact verification payload for generated synthetic sidecars."""
+    return {
+        "validated": True,
+        "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
+        "n_views": sidecars.true_geometry.pose.n_views,
+        "true_det_u_px": sidecars.true_geometry.setup.det_u_px.value,
+        "nominal_det_u_px": sidecars.nominal_geometry.setup.det_u_px.value,
+        "corrupted_det_u_px": sidecars.corrupted_geometry.setup.det_u_px.value,
+    }
 
 
 if __name__ == "__main__":  # pragma: no cover

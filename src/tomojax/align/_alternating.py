@@ -75,6 +75,7 @@ class AlternatingSmokeConfig:
     synthetic_dataset_name: str | None = None
     synthetic_dataset_artifact_dir: Path | None = None
     synthetic_dataset_nuisance_applied: bool = False
+    synthetic_dataset_sidecar_readback: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -752,6 +753,8 @@ def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object]
     if cfg.synthetic_dataset_artifact_dir is not None:
         payload["artifact_dir"] = str(cfg.synthetic_dataset_artifact_dir)
     payload["nuisance_applied_to_projections"] = bool(cfg.synthetic_dataset_nuisance_applied)
+    if cfg.synthetic_dataset_sidecar_readback is not None:
+        payload["sidecar_readback"] = dict(cfg.synthetic_dataset_sidecar_readback)
     return payload
 
 
@@ -1526,6 +1529,14 @@ def _write_config_resolved(
             "synthetic_dataset_nuisance_applied = "
             f"{str(bool(dataset_payload.get('nuisance_applied_to_projections'))).lower()}"
         )
+        sidecar_readback = dataset_payload.get("sidecar_readback")
+        if isinstance(sidecar_readback, dict):
+            sidecar_payload = cast("dict[object, object]", sidecar_readback)
+            validated = sidecar_payload.get("validated")
+            n_views = sidecar_payload.get("n_views")
+            lines.append(f"synthetic_dataset_sidecars_validated = {str(bool(validated)).lower()}")
+            if isinstance(n_views, int | float | str):
+                lines.append(f"synthetic_dataset_sidecar_views = {int(n_views)}")
     lines.extend((f"level_factors = {list(schedule.level_factors)!r}", ""))
     _ = path.write_text(
         "\n".join(lines),

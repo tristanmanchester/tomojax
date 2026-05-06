@@ -4316,3 +4316,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The loader intentionally exposes generated sidecars only. Solver ingestion
   still needs a compatibility decision for NumPy-smoke projections versus the
   JAX reference projector.
+
+## 2026-05-06 — Phase 8 Align-Auto Synthetic Sidecar Readback
+
+### Summary
+
+- `align-auto` now validates generated named synthetic benchmark sidecars by
+  calling public `load_synthetic_dataset_sidecars`.
+- The smoke synthetic dataset payload now records a compact
+  `sidecar_readback` summary with validation status, source API, view count,
+  and nominal/corrupted/true detector-u values.
+- The readback summary is propagated through `verification.json`,
+  `run_manifest.json`, and `config_resolved.toml`.
+- Added focused CLI tests for clean and nuisance-applied generated sidecars.
+
+### Decisions
+
+- Keep generated benchmark sidecars as readback-validated metadata only. This
+  slice does not route NumPy-smoke projections into the alternating solver.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 1 file reformatted, 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py tests/test_synthetic_datasets.py -q`
+  passed: 14 tests.
+- `just imports` passed.
+
+### Risks
+
+- Sidecar readback proves artifact consistency, not solver recovery on those
+  generated projections. Solver ingestion remains a later compatibility slice.
