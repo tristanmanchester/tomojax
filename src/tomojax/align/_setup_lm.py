@@ -1,4 +1,4 @@
-"""Pose-only LM/GN solver for the v2 reference path."""
+"""Setup-only LM/GN solver for the v2 reference path."""
 # pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
 # pyright: reportUnknownVariableType=false
 
@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from tomojax.align._lm_numerics import finite_difference_jacobian
 from tomojax.forward import project_parallel_reference_arrays, pseudo_huber_weights, residual_loss
@@ -16,7 +15,7 @@ from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_
 
 
 @dataclass(frozen=True)
-class PoseOnlyLMConfig:
+class SetupOnlyLMConfig:
     max_iterations: int = 6
     damping: float = 1e-2
     sigma: float = 1.0
@@ -25,32 +24,33 @@ class PoseOnlyLMConfig:
 
 
 @dataclass(frozen=True)
-class PoseOnlyLMResult:
+class SetupOnlyLMResult:
     geometry: GeometryState
     canonicalized_geometry: CanonicalizedGeometry
     initial_loss: float
     final_loss: float
     iterations: int
-    active_dofs: tuple[str, ...]
-    frozen_dofs: tuple[str, ...]
+    active_parameters: tuple[str, ...]
+    frozen_parameters: tuple[str, ...]
 
 
-def solve_pose_only_lm(
+def solve_setup_only_lm(
     volume: jax.Array,
     observed: jax.Array,
     geometry: GeometryState,
     *,
     mask: jax.Array | None = None,
-    config: PoseOnlyLMConfig | None = None,
-) -> PoseOnlyLMResult:
-    """Solve per-view detector shifts with damped Gauss-Newton/LM."""
-    cfg = config or PoseOnlyLMConfig()
+    config: SetupOnlyLMConfig | None = None,
+) -> SetupOnlyLMResult:
+    """Solve supported setup detector-shift parameters with damped GN/LM."""
+    cfg = config or SetupOnlyLMConfig()
     vol = jnp.asarray(volume, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
     theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
-    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    setup_shift = jnp.asarray([geometry.setup.det_u_px.value, dz_setup], dtype=jnp.float32)
-    params = _pack_pose(geometry)
+    pose_dx = jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32)
+    pose_dz = jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32)
+    params = _pack_setup(geometry)
+    active = _active_parameters(geometry)
 
     initial_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
     iterations = 0
@@ -59,7 +59,9 @@ def solve_pose_only_lm(
             vol,
             obs,
             theta,
-            setup_shift,
+            pose_dx,
+            pose_dz,
+            geometry,
             params,
             mask=mask,
             sigma=cfg.sigma,
@@ -74,7 +76,9 @@ def solve_pose_only_lm(
                 vol,
                 obs,
                 theta,
-                setup_shift,
+                pose_dx,
+                pose_dz,
+                geometry,
                 candidate,
                 mask=mask,
                 sigma=cfg.sigma,
@@ -104,51 +108,79 @@ def solve_pose_only_lm(
     solved = _geometry_with_params(geometry, params)
     canonicalized = canonicalize_geometry_gauges(solved)
     final_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
-    return PoseOnlyLMResult(
+    return SetupOnlyLMResult(
         geometry=solved,
         canonicalized_geometry=canonicalized,
         initial_loss=float(initial_loss),
         final_loss=float(final_loss),
         iterations=iterations,
-        active_dofs=("dx_px", "dz_px"),
-        frozen_dofs=("alpha_rad", "beta_rad", "phi_residual_rad"),
+        active_parameters=active,
+        frozen_parameters=_frozen_parameters(active),
     )
 
 
-def _pack_pose(geometry: GeometryState) -> jax.Array:
-    dx = jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32)
-    dz = jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32)
-    return jnp.concatenate([dx, dz], axis=0)
+def _active_parameters(geometry: GeometryState) -> tuple[str, ...]:
+    if geometry.setup.det_v_px.active:
+        return ("det_u_px", "det_v_px")
+    return ("det_u_px",)
+
+
+def _frozen_parameters(active: tuple[str, ...]) -> tuple[str, ...]:
+    all_supported = ("det_u_px", "det_v_px")
+    unsupported = (
+        "detector_roll_rad",
+        "axis_rot_x_rad",
+        "axis_rot_y_rad",
+        "theta_offset_rad",
+        "theta_scale",
+    )
+    return tuple(name for name in (*all_supported, *unsupported) if name not in active)
+
+
+def _pack_setup(geometry: GeometryState) -> jax.Array:
+    values = [geometry.setup.det_u_px.value]
+    if geometry.setup.det_v_px.active:
+        values.append(geometry.setup.det_v_px.value)
+    return jnp.asarray(values, dtype=jnp.float32)
 
 
 def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> GeometryState:
-    n_views = geometry.pose.n_views
-    dx = np.asarray(params[:n_views], dtype=np.float64)
-    dz = np.asarray(params[n_views:], dtype=np.float64)
-    return GeometryState(setup=geometry.setup, pose=geometry.pose.with_updates(dx_px=dx, dz_px=dz))
+    setup = geometry.setup.replace_parameter(
+        "det_u_px",
+        geometry.setup.det_u_px.with_value(float(params[0])),
+    )
+    if geometry.setup.det_v_px.active:
+        setup = setup.replace_parameter(
+            "det_v_px",
+            geometry.setup.det_v_px.with_value(float(params[1])),
+        )
+    return GeometryState(setup=setup, pose=geometry.pose)
 
 
-def _split_params(params: jax.Array) -> tuple[jax.Array, jax.Array]:
-    half = params.shape[0] // 2
-    return params[:half], params[half:]
+def _setup_shifts(geometry: GeometryState, params: jax.Array) -> tuple[jax.Array, jax.Array]:
+    det_u = params[0]
+    det_v = params[1] if geometry.setup.det_v_px.active else jnp.asarray(0.0, dtype=jnp.float32)
+    return det_u, det_v
 
 
 def _residual_for_params(
     volume: jax.Array,
     observed: jax.Array,
     theta: jax.Array,
-    setup_shift: jax.Array,
+    pose_dx: jax.Array,
+    pose_dz: jax.Array,
+    geometry: GeometryState,
     params: jax.Array,
     *,
     mask: jax.Array | None,
     sigma: float,
 ) -> jax.Array:
-    dx_pose, dz_pose = _split_params(params)
+    det_u, det_v = _setup_shifts(geometry, params)
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,
-        dx_px=setup_shift[0] + dx_pose,
-        dz_px=setup_shift[1] + dz_pose,
+        dx_px=det_u + pose_dx,
+        dz_px=det_v + pose_dz,
     )
     residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
     if mask is None:
@@ -163,15 +195,14 @@ def _loss_for_params(
     params: jax.Array,
     *,
     mask: jax.Array | None,
-    cfg: PoseOnlyLMConfig,
+    cfg: SetupOnlyLMConfig,
 ) -> jax.Array:
+    det_u, det_v = _setup_shifts(geometry, params)
     theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
-    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dx_pose, dz_pose = _split_params(params)
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,
-        dx_px=geometry.setup.det_u_px.value + dx_pose,
-        dz_px=dz_setup + dz_pose,
+        dx_px=det_u + jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32),
+        dz_px=det_v + jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32),
     )
     return residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss

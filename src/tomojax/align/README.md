@@ -16,10 +16,13 @@ delete or migrate internal owners.
 - `AlignmentSmokeReport`
 - `PoseOnlyLMConfig`
 - `PoseOnlyLMResult`
+- `SetupOnlyLMConfig`
+- `SetupOnlyLMResult`
 - `align`
 - `align_multires`
 - `run_alignment_smoke`
 - `solve_pose_only_lm`
+- `solve_setup_only_lm`
 
 ## Dependencies
 
@@ -49,6 +52,9 @@ Forbidden dependencies:
   optimiser.
 - `solve_pose_only_lm` currently optimises only `dx_px` and `dz_px`; the
   remaining pose DOFs are frozen until the reference projector supports them.
+- `solve_setup_only_lm` currently optimises only `det_u_px` and active
+  `det_v_px`; roll, axis rotation, and theta setup terms remain frozen until
+  the reference projector models them.
 
 ## Tests
 

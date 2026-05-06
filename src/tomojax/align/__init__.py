@@ -20,6 +20,7 @@ from __future__ import annotations
 import sys
 
 from ._pose_lm import PoseOnlyLMConfig, PoseOnlyLMResult, solve_pose_only_lm
+from ._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
 from ._smoke import AlignmentSmokeReport, run_alignment_smoke
 from .io import checkpoint as _checkpoint, params_export as _params_export
 from .model import diagnostics as _diagnostics, motion_models as _motion_models
@@ -42,8 +43,11 @@ __all__ = [
     "AlignmentSmokeReport",
     "PoseOnlyLMConfig",
     "PoseOnlyLMResult",
+    "SetupOnlyLMConfig",
+    "SetupOnlyLMResult",
     "align",
     "align_multires",
     "run_alignment_smoke",
     "solve_pose_only_lm",
+    "solve_setup_only_lm",
 ]
