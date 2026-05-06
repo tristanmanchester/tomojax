@@ -2577,3 +2577,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The early-exit predicate is still the smoke-profile coarse verification
   predicate, not the full production combination of held-out residual,
   parameter-update, and gauge-stability checks.
+
+## 2026-05-06 — Phase 7 Continuation Profile Presets
+
+### Summary
+
+- Added `lightning`, `balanced`, and `reference` continuation schedules while
+  keeping `smoke32` as the deterministic test profile.
+- Exposed `ContinuationScheduleName` through `tomojax.align.api`.
+- Added focused schedule tests for Phase 7 level ordering, conditional level-2
+  behavior, final-level policy, monotonic profile work, and unknown profile
+  rejection.
+
+### Decisions
+
+- Kept profile presets as deterministic schedule data only; CLI/runtime profile
+  plumbing remains out of scope for this slice.
+- Encoded monotonic work increases from `lightning` to `balanced` to
+  `reference`; empirical tuning remains future work.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_continuation.py src/tomojax/align/api.py tests/test_continuation_schedules.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_continuation.py src/tomojax/align/api.py tests/test_continuation_schedules.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_continuation.py tests/test_continuation_schedules.py`
+  passed.
+- `uv run pytest tests/test_continuation_schedules.py tests/test_alternating_solver_smoke.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- The schedule presets are conservative defaults and have not yet been tuned
+  against the full synthetic benchmark suite.

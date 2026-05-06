@@ -11,6 +11,7 @@ from tomojax.align._alternating import (
 from tomojax.align._continuation import (
     ContinuationLevel,
     ContinuationSchedule,
+    ContinuationScheduleName,
     reference_continuation_schedule,
 )
 from tomojax.align._joint_schur_lm import (
@@ -37,6 +38,7 @@ __all__ = [
     "AlternatingSmokeResult",
     "ContinuationLevel",
     "ContinuationSchedule",
+    "ContinuationScheduleName",
     "JointSchurDiagnostics",
     "JointSchurLMConfig",
     "JointSchurLMResult",

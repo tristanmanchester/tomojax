@@ -19,6 +19,7 @@ delete or migrate internal owners.
 - `AlternatingSmokeResult`
 - `ContinuationLevel`
 - `ContinuationSchedule`
+- `ContinuationScheduleName`
 - `JointSchurDiagnostics`
 - `JointSchurLMConfig`
 - `JointSchurLMResult`
