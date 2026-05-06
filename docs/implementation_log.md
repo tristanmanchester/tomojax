@@ -4867,3 +4867,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The report is intentionally not yet the full benchmark comparison report from
   the v2 artifact contract.
+
+## 2026-05-06 — Phase 8 Synthetic Benchmark Timing Metrics
+
+### Summary
+
+- Added measured smoke-run timing to the alternating solver verification
+  payload.
+- `benchmark_result.json` now records `time_to_verified_geometry_seconds` and
+  `total_wall_seconds` from the solver run instead of null placeholders.
+- `benchmark_report.md` renders those measured values in the summary table.
+- Updated deterministic smoke assertions to compare verification payloads
+  excluding the intentionally variable runtime block.
+
+### Decisions
+
+- Timing covers the solver path up to artifact emission. Full end-to-end CLI
+  timing remains a later benchmark harness concern.
+- Tests assert finite positive timing and ordering, not exact values.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py`
+  passed: 5 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py -q`
+  passed: 17 tests.
+- `just imports` passed.
+
+### Risks
+
+- Wall-clock measurements are machine-dependent and should not be used as a
+  deterministic equality signal.

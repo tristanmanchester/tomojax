@@ -369,6 +369,12 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert dataset["artifact_dir"] == str(dataset_paths.dataset_dir)
     assert dataset["volume_shape"] == [32, 32, 32]
     runtime = cast("dict[str, object]", benchmark_result["runtime"])
+    assert isinstance(runtime["time_to_verified_geometry_seconds"], float)
+    assert isinstance(runtime["total_wall_seconds"], float)
+    assert float(cast("float", runtime["time_to_verified_geometry_seconds"])) > 0.0
+    assert float(cast("float", runtime["total_wall_seconds"])) >= float(
+        cast("float", runtime["time_to_verified_geometry_seconds"])
+    )
     assert int(cast("int", runtime["geometry_updates_executed"])) > 0
     reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
     assert isinstance(reconstruction["final_residual"], float)
@@ -381,6 +387,7 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert "reimagined_align_auto_smoke" in benchmark_report
     assert "## Geometry Recovery" in benchmark_report
     assert "## Backend Provenance" in benchmark_report
+    assert "| reimagined_align_auto_smoke | smoke32 |" in benchmark_report
     assert "jax_reference" in benchmark_report
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text

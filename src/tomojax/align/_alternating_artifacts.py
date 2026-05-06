@@ -782,6 +782,7 @@ def _benchmark_result_payload(
     geometry_update_volume_source: GeometryUpdateVolumeSource,
 ) -> dict[str, object]:
     metrics = cast("dict[object, object]", verification.get("metrics", {}))
+    verification_runtime = cast("dict[object, object]", verification.get("runtime", {}))
     geometry_recovery = cast("dict[object, object]", verification.get("geometry_recovery", {}))
     volume_size = verification.get("size")
     failed_gates = _failed_gate_names(failure_report)
@@ -802,8 +803,10 @@ def _benchmark_result_payload(
             "projection_views": verification.get("n_views"),
         },
         "runtime": {
-            "time_to_verified_geometry_seconds": None,
-            "total_wall_seconds": None,
+            "time_to_verified_geometry_seconds": verification_runtime.get(
+                "time_to_verified_geometry_seconds"
+            ),
+            "total_wall_seconds": verification_runtime.get("total_wall_seconds"),
             "reconstruction_calls": sum(1 for summary in summaries if not summary.skipped_level),
             "geometry_updates_requested": sum(summary.geometry_updates for summary in summaries),
             "geometry_updates_executed": sum(

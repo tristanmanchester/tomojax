@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import time
 
 import jax
 
@@ -69,6 +70,7 @@ def _run_alternating_solver_smoke_impl(
     *,
     config: AlternatingSmokeConfig,
 ) -> AlternatingSmokeResult:
+    run_start = time.perf_counter()
     schedule = config.schedule or reference_continuation_schedule()
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +86,7 @@ def _run_alternating_solver_smoke_impl(
     summaries: list[AlternatingLevelSummary] = []
     fista_result: ReferenceFISTAResult | None = None
     coarse_verified = False
+    time_to_verified_geometry_seconds: float | None = None
     last_schur_result: JointSchurLMResult | None = None
 
     initial_loss = _projection_loss(
@@ -188,10 +191,12 @@ def _run_alternating_solver_smoke_impl(
             heldout_residual_passed=heldout_passed,
         )
         previous_loss = loss_after
-        coarse_verified = coarse_verified or (
-            level.role == "preview"
-            and level.skip_finer_if_verified
-            and verification_checks.verified
+        coarse_verified, time_to_verified_geometry_seconds = _coarse_verification_state(
+            level=level,
+            checks_verified=verification_checks.verified,
+            already_verified=coarse_verified,
+            previous_time_to_verified=time_to_verified_geometry_seconds,
+            run_start=run_start,
         )
         summaries.append(
             AlternatingLevelSummary(
@@ -262,6 +267,8 @@ def _run_alternating_solver_smoke_impl(
             geometry_update_volume_source=config.geometry_update_volume_source,
             fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
             fit_background_nuisance=config.fit_background_nuisance,
+            time_to_verified_geometry_seconds=time_to_verified_geometry_seconds,
+            total_wall_seconds=float(time.perf_counter() - run_start),
         ),
     )
     verification = json.loads(artifacts["verification_json"].read_text(encoding="utf-8"))
@@ -273,6 +280,20 @@ def _run_alternating_solver_smoke_impl(
         verification=verification,
         artifacts=artifacts,
     )
+
+
+def _coarse_verification_state(
+    *,
+    level: ContinuationLevel,
+    checks_verified: bool,
+    already_verified: bool,
+    previous_time_to_verified: float | None,
+    run_start: float,
+) -> tuple[bool, float | None]:
+    level_verified = level.role == "preview" and level.skip_finer_if_verified and checks_verified
+    if level_verified and not already_verified:
+        return True, float(time.perf_counter() - run_start)
+    return already_verified or level_verified, previous_time_to_verified
 
 
 def _run_geometry_updates(

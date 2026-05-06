@@ -92,6 +92,8 @@ def _verification_payload(
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
+    time_to_verified_geometry_seconds: float | None,
+    total_wall_seconds: float,
 ) -> dict[str, object]:
     geometry_recovery = _geometry_recovery_payload(true_geometry, initial_geometry, final_geometry)
     volume_recovery = _volume_recovery_payload(truth_volume, final_volume)
@@ -123,6 +125,10 @@ def _verification_payload(
             "relative_improvement": relative_improvement,
             "final_loss": final_loss,
             "volume_nmse": volume_recovery["nmse"],
+        },
+        "runtime": {
+            "time_to_verified_geometry_seconds": time_to_verified_geometry_seconds,
+            "total_wall_seconds": total_wall_seconds,
         },
         "escalation": {
             "level_1_geometry_run": not level1_geometry_skipped,

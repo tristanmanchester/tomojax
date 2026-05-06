@@ -84,6 +84,9 @@ def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
         verification_metrics["residual_after"] <= verification_metrics["residual_before"] + 1.0e-5
     )
     assert verification_metrics["volume_nmse"] >= 0.0
+    runtime = cast("dict[str, float]", result.verification["runtime"])
+    assert runtime["time_to_verified_geometry_seconds"] > 0.0
+    assert runtime["total_wall_seconds"] >= runtime["time_to_verified_geometry_seconds"]
     escalation = cast("dict[str, bool | str]", result.verification["escalation"])
     assert escalation["level_1_geometry_run"] is False
     assert escalation["reason"] == "level_2_verification_passed"
@@ -520,7 +523,11 @@ def test_alternating_solver_smoke_is_deterministic(tmp_path: Path) -> None:
     assert first.final_volume.shape == second.final_volume.shape
     np.testing.assert_allclose(first.final_volume, second.final_volume)
     np.testing.assert_allclose(first.final_geometry.pose.dx_px, second.final_geometry.pose.dx_px)
-    assert first.verification == second.verification
+    first_verification = dict(first.verification)
+    second_verification = dict(second.verification)
+    _ = first_verification.pop("runtime")
+    _ = second_verification.pop("runtime")
+    assert first_verification == second_verification
 
 
 def test_alternating_alignment_solver_runs_smoke_profile(tmp_path: Path) -> None:
