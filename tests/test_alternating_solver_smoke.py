@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from tomojax.align.api import AlternatingAlignmentSolver, run_alternating_solver_smoke
+from tomojax.align.api import (
+    AlternatingAlignmentSolver,
+    AlternatingSmokeConfig,
+    reference_continuation_schedule,
+    run_alternating_solver_smoke,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -177,3 +182,22 @@ def test_alternating_alignment_solver_runs_smoke_profile(tmp_path: Path) -> None
 
     assert result.final_volume.shape == (32, 32, 32)
     assert result.artifacts["verification_json"].exists()
+
+
+def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:
+    result = run_alternating_solver_smoke(
+        tmp_path,
+        config=AlternatingSmokeConfig(schedule=reference_continuation_schedule("lightning")),
+    )
+
+    manifest = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["run_manifest_json"].read_text(encoding="utf-8")),
+    )
+    assert manifest["profile"] == "lightning"
+    assert manifest["run_id"] == "lightning-deterministic"
+    continuation = cast("dict[str, object]", manifest["continuation"])
+    assert continuation["name"] == "lightning"
+    config_text = result.artifacts["config_resolved_toml"].read_text(encoding="utf-8")
+    assert 'profile = "lightning"' in config_text
+    assert "level_factors = [4, 2, 1]" in config_text

@@ -194,6 +194,7 @@ def _run_alternating_solver_smoke_impl(
         final_volume=volume,
         observed=observed,
         mask=mask,
+        schedule=schedule,
         gauge_report=gauge_report,
         fista_result=fista_result,
         summaries=tuple(summaries),
@@ -363,6 +364,7 @@ def _write_artifacts(
     final_volume: jax.Array,
     observed: jax.Array,
     mask: jax.Array,
+    schedule: ContinuationSchedule,
     gauge_report: GaugeReport,
     fista_result: ReferenceFISTAResult,
     summaries: tuple[AlternatingLevelSummary, ...],
@@ -390,8 +392,11 @@ def _write_artifacts(
         "run_manifest_json": output_dir / "run_manifest.json",
         "verification_json": output_dir / "verification.json",
     }
-    _write_config_resolved(artifacts["config_resolved_toml"])
-    _write_json(artifacts["run_manifest_json"], _run_manifest_payload(final_volume, observed))
+    _write_config_resolved(artifacts["config_resolved_toml"], schedule)
+    _write_json(
+        artifacts["run_manifest_json"],
+        _run_manifest_payload(final_volume, observed, schedule),
+    )
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
     _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
     _write_json(artifacts["mask_summary_json"], _mask_summary_payload(mask))
@@ -538,15 +543,16 @@ def _artifact_description(name: str) -> str:
     return descriptions[name]
 
 
-def _write_config_resolved(path: Path) -> None:
+def _write_config_resolved(path: Path, schedule: ContinuationSchedule) -> None:
     _ = path.write_text(
         "\n".join(
             (
-                'profile = "smoke32"',
+                f'profile = "{schedule.name}"',
                 'align_mode = "auto"',
                 'backend_requested = "jax_reference"',
                 'backend_actual = "jax_reference"',
                 'geometry_model = "parallel_tomography_reference"',
+                f"level_factors = {list(schedule.level_factors)!r}",
                 "",
             )
         ),
@@ -559,11 +565,15 @@ def _write_final_volume(path: Path, volume: jax.Array) -> None:
         np.save(handle, np.asarray(jax.device_get(volume), dtype=np.float32), allow_pickle=False)
 
 
-def _run_manifest_payload(volume: jax.Array, projections: jax.Array) -> dict[str, object]:
+def _run_manifest_payload(
+    volume: jax.Array,
+    projections: jax.Array,
+    schedule: ContinuationSchedule,
+) -> dict[str, object]:
     return {
         "schema": "tomojax.run_manifest.v1",
-        "run_id": "smoke32-deterministic",
-        "profile": "smoke32",
+        "run_id": f"{schedule.name}-deterministic",
+        "profile": schedule.name,
         "align_mode": "auto",
         "dataset": {
             "source": "tomojax.datasets.make_benchmark_phantom",
@@ -572,6 +582,10 @@ def _run_manifest_payload(volume: jax.Array, projections: jax.Array) -> dict[str
             "projection_dtype": str(projections.dtype),
         },
         "geometry_model": "parallel_tomography_reference",
+        "continuation": {
+            "name": schedule.name,
+            "level_factors": list(schedule.level_factors),
+        },
         "backend_requested": "jax_reference",
         "backend_actual": "jax_reference",
         "status": "passed",

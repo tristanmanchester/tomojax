@@ -2755,3 +2755,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - FISTA does not yet consume the residual-filter schedule; the continuation
   filters currently affect only geometry loss and verification behavior.
+
+## 2026-05-06 — Phase 7 Profile Provenance Artifacts
+
+### Summary
+
+- Threaded the resolved `ContinuationSchedule` into `run_manifest.json` and
+  `config_resolved.toml`.
+- Fixed hard-coded `smoke32` profile metadata so non-default profiles record the
+  actual schedule name and level factors.
+- Added a focused non-default `lightning` profile smoke test for manifest and
+  resolved-config provenance.
+
+### Decisions
+
+- Kept the config artifact deterministic and minimal: profile, align mode,
+  backend, geometry model, and level factors.
+- Recorded schedule name and level factors now; full schedule serialization is
+  left for a later artifact-schema pass.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- Custom schedule objects are represented by name and level factors only, not a
+  complete per-level serialized schedule.
