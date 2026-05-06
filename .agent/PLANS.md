@@ -12,21 +12,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 6 — Joint setup+pose Schur LM
-- Goal: add the first joint setup+pose Schur LM reference slice for supported
-  setup and pose DOFs.
+- Goal: add first trust-radius mechanics and diagnostics to the joint Schur
+  reference solver.
 
 ### Scope
 
 - In scope:
-  - Pack supported setup DOFs plus per-view pose DOFs into one joint problem.
-  - Build finite-difference residual Jacobians and damped normal equations.
-  - Solve setup step by Schur complement over per-view pose blocks.
-  - Add diagnostics for Schur condition and update norms.
-  - Add deterministic recovery and Schur-vs-dense tests.
+  - Add optional setup and pose update trust radii.
+  - Clip accepted Schur steps by the configured radii.
+  - Record trust scale, clipping status, and per-DOF update diagnostics.
+  - Add deterministic tests and artifact readback coverage.
 - Out of scope:
-  - Alpha/beta pose effects.
-  - Detector roll, axis rotations, theta scale.
-  - Priors, trust radii, and full acceptance policy.
+  - Adaptive trust-region radius update.
+  - Prior terms and bounds.
+  - Unsupported physical DOFs.
 - Deep module owner: `tomojax.align`.
 
 ### Design Sources
@@ -36,53 +35,41 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add joint setup+pose Schur LM reference implementation.
-- [x] Export the public joint solver API.
-- [x] Add deterministic recovery and Schur-vs-dense tests.
+- [x] Add optional trust radii to joint Schur config.
+- [x] Apply trust scaling to Schur and dense-equivalent steps.
+- [x] Add trust and per-DOF update diagnostics to artifact payload.
+- [x] Add deterministic tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [x] Commit the joint Schur LM slice if validations pass.
-
-### Follow-Up Slice
-
-- [x] Add `normal_eq_summary.json` artifact writer for joint Schur diagnostics.
-- [x] Add artifact readback test.
-- [x] Re-run validation commands for the artifact contract.
-- [x] Add global/Schur eigenvalues and pose-block condition diagnostics.
-- [x] Re-run validation commands for enriched diagnostics.
-- [x] Add setup correlation matrix and weak-mode labels.
-- [x] Re-run validation commands for correlation/weak-mode diagnostics.
+- [ ] Commit the trust-radius slice if validations pass.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py`
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py`
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
   passed with 0 errors and 0 warnings.
-- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_joint_schur_lm.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py`
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
   passed.
-- `uv run pytest tests/test_joint_schur_lm.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py -q`
-  passed: 11 tests.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 6 tests.
 - `just imports` passed:
   - `uv run lint-imports --config .importlinter`
   - `uv run python tools/check_public_imports.py`
 - `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
-  passed: 147 tests.
+  passed: 148 tests.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: start with supported differentiable DOFs only:
-  `theta_offset_rad`, `det_u_px`, active `det_v_px`,
-  `phi_residual_rad`, `dx_px`, and `dz_px`.
-- Deviation: this is a reference Schur slice, not the final production
-  trust-region solver.
+- Decision: use scalar setup/pose block radii for the first reference
+  implementation, with per-DOF update diagnostics recorded separately.
+- Deviation: this is not yet an adaptive trust-region policy.
 
 ### Risks
 
-- Risk: setup and pose gauge pairs are non-identifiable without
-  canonicalisation.
-- Mitigation: tests assert realised geometry after canonicalisation, not raw
-  uncanonicalized parameter equality for gauge-coupled values.
+- Risk: overly small trust radii can slow convergence.
+- Mitigation: radii default to `None`, preserving the existing full Schur step
+  unless explicitly configured.

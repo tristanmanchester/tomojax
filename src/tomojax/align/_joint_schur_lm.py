@@ -29,6 +29,8 @@ class JointSchurLMConfig:
     sigma: float = 1.0
     delta: float = 1.0
     finite_difference_step: float = 1e-3
+    setup_trust_radius: float | None = None
+    pose_trust_radius: float | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,10 @@ class JointSchurDiagnostics:
     pose_block_conditions: tuple[float, ...] = ()
     setup_correlation_matrix: tuple[tuple[float, ...], ...] = ()
     weak_mode_labels: tuple[str, ...] = ()
+    trust_scale: float = 1.0
+    trust_clipped: bool = False
+    setup_update_by_parameter: tuple[float, ...] = ()
+    pose_update_max_by_dof: tuple[float, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -54,6 +60,10 @@ class JointSchurDiagnostics:
             "pose_block_conditions": list(self.pose_block_conditions),
             "setup_correlation_matrix": [list(row) for row in self.setup_correlation_matrix],
             "weak_mode_labels": list(self.weak_mode_labels),
+            "trust_scale": self.trust_scale,
+            "trust_clipped": self.trust_clipped,
+            "setup_update_by_parameter": list(self.setup_update_by_parameter),
+            "pose_update_max_by_dof": list(self.pose_update_max_by_dof),
         }
 
 
@@ -95,6 +105,10 @@ def solve_joint_schur_lm(
         pose_block_conditions=(),
         setup_correlation_matrix=(),
         weak_mode_labels=(),
+        trust_scale=1.0,
+        trust_clipped=False,
+        setup_update_by_parameter=(),
+        pose_update_max_by_dof=(),
     )
     iterations = 0
 
@@ -122,6 +136,8 @@ def solve_joint_schur_lm(
             n_views=geometry.pose.n_views,
             pose_dim=_POSE_DIM,
             damping=cfg.damping,
+            setup_trust_radius=cfg.setup_trust_radius,
+            pose_trust_radius=cfg.pose_trust_radius,
         )
         candidate = params + schur.step
         candidate_loss = _loss_for_params(vol, obs, geometry, candidate, mask=mask, cfg=cfg)
@@ -191,6 +207,8 @@ def schur_step_from_jacobian(
     n_views: int,
     pose_dim: int,
     damping: float,
+    setup_trust_radius: float | None = None,
+    pose_trust_radius: float | None = None,
 ) -> SchurStep:
     """Solve a damped joint normal equation by per-view Schur complement."""
     jac = jnp.asarray(jacobian, dtype=jnp.float32)
@@ -201,7 +219,7 @@ def schur_step_from_jacobian(
         dtype=jnp.float32,
     )
     gradient = jac.T @ r
-    dense_step = jnp.linalg.solve(hessian, -gradient)
+    dense_step_unscaled = jnp.linalg.solve(hessian, -gradient)
 
     h_gg = hessian[:n_setup, :n_setup]
     g_g = gradient[:n_setup]
@@ -230,20 +248,54 @@ def schur_step_from_jacobian(
     pose_step = (
         jnp.concatenate(pose_steps, axis=0) if pose_steps else jnp.asarray([], dtype=jnp.float32)
     )
-    step = jnp.concatenate([setup_step, pose_step], axis=0)
+    raw_step = jnp.concatenate([setup_step, pose_step], axis=0)
+    trust_scale = _trust_scale(
+        setup_step,
+        pose_step,
+        setup_trust_radius=setup_trust_radius,
+        pose_trust_radius=pose_trust_radius,
+    )
+    step = raw_step * trust_scale
+    dense_step = dense_step_unscaled * trust_scale
+    pose_step_matrix = (pose_step * trust_scale).reshape((n_views, pose_dim))
     schur_eigenvalues = _eigvalsh_tuple(schur_matrix)
     diagnostics = JointSchurDiagnostics(
         schur_condition=float(jnp.linalg.cond(schur_matrix)),
-        setup_update_norm=float(jnp.linalg.norm(setup_step)),
-        pose_update_norm=float(jnp.linalg.norm(pose_step)),
+        setup_update_norm=float(jnp.linalg.norm(setup_step * trust_scale)),
+        pose_update_norm=float(jnp.linalg.norm(pose_step * trust_scale)),
         dense_step_difference_norm=float(jnp.linalg.norm(step - dense_step)),
         global_eigenvalues=_eigvalsh_tuple(hessian),
         schur_eigenvalues=schur_eigenvalues,
         pose_block_conditions=tuple(pose_block_conditions),
         setup_correlation_matrix=_correlation_matrix_tuple(schur_matrix),
         weak_mode_labels=_weak_mode_labels(schur_eigenvalues),
+        trust_scale=float(trust_scale),
+        trust_clipped=bool(trust_scale < 1.0),
+        setup_update_by_parameter=tuple(float(value) for value in setup_step * trust_scale),
+        pose_update_max_by_dof=tuple(
+            float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
+        ),
     )
     return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
+
+
+def _trust_scale(
+    setup_step: jax.Array,
+    pose_step: jax.Array,
+    *,
+    setup_trust_radius: float | None,
+    pose_trust_radius: float | None,
+) -> jax.Array:
+    scale = jnp.asarray(1.0, dtype=jnp.float32)
+    if setup_trust_radius is not None:
+        setup_norm = jnp.linalg.norm(setup_step)
+        setup_limit = jnp.asarray(max(float(setup_trust_radius), 0.0), dtype=jnp.float32)
+        scale = jnp.minimum(scale, setup_limit / jnp.maximum(setup_norm, 1e-12))
+    if pose_trust_radius is not None:
+        pose_norm = jnp.linalg.norm(pose_step)
+        pose_limit = jnp.asarray(max(float(pose_trust_radius), 0.0), dtype=jnp.float32)
+        scale = jnp.minimum(scale, pose_limit / jnp.maximum(pose_norm, 1e-12))
+    return scale
 
 
 def _eigvalsh_tuple(matrix: jax.Array) -> tuple[float, ...]:

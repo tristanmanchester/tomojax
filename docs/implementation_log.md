@@ -1289,3 +1289,50 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - Weak-mode labels are numerical labels rather than semantic DOF labels until
   eigenvector attribution is added.
+
+## 2026-05-06 — Add Joint Schur Trust Radius Controls
+
+### Summary
+
+- Added optional `setup_trust_radius` and `pose_trust_radius` fields to
+  `JointSchurLMConfig`.
+- Applied trust scaling to the Schur step and the dense-equivalent comparison
+  step.
+- Extended `JointSchurDiagnostics` and `normal_eq_summary.json` with:
+  - `trust_scale`
+  - `trust_clipped`
+  - `setup_update_by_parameter`
+  - `pose_update_max_by_dof`
+- Added deterministic tests covering default unclipped behavior, configured
+  clipping, scaled Schur-vs-dense equivalence, and artifact fields.
+
+### Decisions
+
+- Used scalar setup and pose block radii for the first reference implementation.
+  Per-parameter radii can be layered later using parameter metadata.
+- Trust radii default to `None`, preserving the previous full-step behavior.
+- This is not yet adaptive trust-region control; it only clips an otherwise
+  computed LM step.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 6 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 148 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Trust radii are scalar and non-adaptive; per-DOF metadata radii and
+  actual/predicted-decrease radius updates remain future Phase 6 work.

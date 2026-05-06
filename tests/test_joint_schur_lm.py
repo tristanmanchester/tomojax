@@ -52,9 +52,53 @@ def test_schur_step_matches_dense_normal_solve() -> None:
     assert len(step.diagnostics.schur_eigenvalues) == 2
     assert len(step.diagnostics.pose_block_conditions) == 2
     assert len(step.diagnostics.setup_correlation_matrix) == 2
+    assert step.diagnostics.trust_scale == 1.0
+    assert step.diagnostics.trust_clipped is False
+    assert len(step.diagnostics.setup_update_by_parameter) == 2
+    assert len(step.diagnostics.pose_update_max_by_dof) == 3
     np.testing.assert_allclose(
         np.diag(np.asarray(step.diagnostics.setup_correlation_matrix)),
         np.ones(2),
+        atol=1e-6,
+    )
+
+
+def test_schur_step_applies_setup_trust_radius() -> None:
+    jacobian = jnp.asarray(
+        [
+            [1.0, 0.2, 0.3, 0.0, 0.0],
+            [0.5, 1.0, 0.0, 0.4, 0.1],
+            [0.0, 0.4, 0.2, 0.3, 0.5],
+            [0.3, 0.0, 0.4, 0.1, 0.7],
+        ],
+        dtype=jnp.float32,
+    )
+    residual = jnp.asarray([0.4, -0.2, 0.2, -0.1], dtype=jnp.float32)
+
+    unrestricted = schur_step_from_jacobian(
+        jacobian,
+        residual,
+        n_setup=2,
+        n_views=1,
+        pose_dim=3,
+        damping=1e-2,
+    )
+    clipped = schur_step_from_jacobian(
+        jacobian,
+        residual,
+        n_setup=2,
+        n_views=1,
+        pose_dim=3,
+        damping=1e-2,
+        setup_trust_radius=0.05,
+    )
+
+    assert clipped.diagnostics.trust_clipped is True
+    assert 0.0 < clipped.diagnostics.trust_scale < 1.0
+    assert clipped.diagnostics.setup_update_norm <= 0.050001
+    np.testing.assert_allclose(
+        np.asarray(clipped.step),
+        np.asarray(unrestricted.step) * clipped.diagnostics.trust_scale,
         atol=1e-6,
     )
 
@@ -140,6 +184,10 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert "pose_block_conditions" in payload["diagnostics"]
     assert "setup_correlation_matrix" in payload["diagnostics"]
     assert "weak_mode_labels" in payload["diagnostics"]
+    assert "trust_scale" in payload["diagnostics"]
+    assert "trust_clipped" in payload["diagnostics"]
+    assert "setup_update_by_parameter" in payload["diagnostics"]
+    assert "pose_update_max_by_dof" in payload["diagnostics"]
     assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
     assert len(payload["diagnostics"]["setup_correlation_matrix"]) == 2
 
