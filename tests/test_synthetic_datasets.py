@@ -105,6 +105,69 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     }
 
 
+def test_generate_synthetic_dataset_applies_gain_offset_nuisance(tmp_path: Path) -> None:
+    clean = generate_synthetic_dataset(
+        "synth128_thermal_object_drift",
+        tmp_path / "clean",
+        size=32,
+        clean=True,
+        views=8,
+    )
+    drifted = generate_synthetic_dataset(
+        "synth128_thermal_object_drift",
+        tmp_path / "drifted",
+        size=32,
+        clean=False,
+        views=8,
+    )
+
+    clean_projections = np.load(clean.projections)
+    drifted_projections = np.load(drifted.projections)
+    assert not np.array_equal(clean_projections, drifted_projections)
+    nuisance = cast(
+        "dict[str, Any]",
+        json.loads(drifted.nuisance_truth.read_text(encoding="utf-8")),
+    )
+    assert nuisance["schema"] == "tomojax.synthetic_nuisance_truth.v1"
+    assert nuisance["applied_terms"] == {"gain": True, "offset": True}
+    gain = cast("list[float]", nuisance["gain"])
+    offset = cast("list[float]", nuisance["offset"])
+    assert len(gain) == 8
+    assert len(offset) == 8
+    np.testing.assert_allclose(gain[0], 0.98, atol=1.0e-6)
+    np.testing.assert_allclose(gain[-1], 1.03, atol=1.0e-6)
+    np.testing.assert_allclose(offset[0], -0.015, atol=1.0e-6)
+    np.testing.assert_allclose(offset[-1], 0.015, atol=1.0e-6)
+    expected_first = clean_projections[0] * np.float32(gain[0]) + np.float32(offset[0])
+    np.testing.assert_allclose(drifted_projections[0], expected_first, atol=1.0e-6)
+
+
+def test_generate_clean_synthetic_dataset_records_but_skips_nuisance(tmp_path: Path) -> None:
+    clean = generate_synthetic_dataset(
+        "synth128_lamino_axis_roll_pose",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=8,
+    )
+    dirty = generate_synthetic_dataset(
+        "synth128_lamino_axis_roll_pose",
+        tmp_path / "dirty",
+        size=32,
+        clean=False,
+        views=8,
+    )
+
+    clean_projections = np.load(clean.projections)
+    dirty_projections = np.load(dirty.projections)
+    assert not np.array_equal(clean_projections, dirty_projections)
+    nuisance = cast(
+        "dict[str, Any]",
+        json.loads(clean.nuisance_truth.read_text(encoding="utf-8")),
+    )
+    assert nuisance["applied_terms"] == {"gain": True, "offset": False}
+
+
 def _array_hash(path: Path) -> str:
     data = np.ascontiguousarray(np.load(path))
     return hashlib.sha256(data.tobytes()).hexdigest()

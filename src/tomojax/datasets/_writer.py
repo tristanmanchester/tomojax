@@ -73,6 +73,9 @@ def generate_synthetic_dataset(
         theta_deg=theta,
         pose=true_pose,
     )
+    nuisance = _realize_nuisance(spec, n_views)
+    if not clean:
+        projections = _apply_nuisance(projections, nuisance)
     mask = np.ones(projections.shape, dtype=bool)
 
     paths = _paths(dataset_dir)
@@ -85,7 +88,7 @@ def generate_synthetic_dataset(
     _write_json(paths.true_geometry, _true_geometry(spec, detector_shape, theta))
     _write_pose_csv(paths.true_pose, true_pose)
     _write_motion_csv(paths.true_motion, n_views)
-    _write_json(paths.nuisance_truth, spec.nuisance)
+    _write_json(paths.nuisance_truth, nuisance)
     _write_json(paths.noise_truth, _noise_truth(spec))
     _write_json(paths.manifest, _dataset_manifest(spec, size, detector_shape, n_views))
     return paths
@@ -137,6 +140,70 @@ def _resize_nearest(image: NDArray[np.float32], shape: tuple[int, int]) -> NDArr
     rows = np.linspace(0, image.shape[0] - 1, shape[0]).round().astype(np.intp)
     cols = np.linspace(0, image.shape[1] - 1, shape[1]).round().astype(np.intp)
     return image[np.ix_(rows, cols)].astype(np.float32)
+
+
+def _realize_nuisance(spec: SyntheticDatasetSpec, n_views: int) -> dict[str, object]:
+    gain = _gain_drift(spec.nuisance, n_views)
+    offset = _background_offset(spec.nuisance, n_views)
+    return {
+        "schema": "tomojax.synthetic_nuisance_truth.v1",
+        "source": "benchmark_manifest",
+        "spec": dict(spec.nuisance),
+        "applied_terms": {
+            "gain": gain is not None,
+            "offset": offset is not None,
+        },
+        "gain": None if gain is None else [float(value) for value in gain],
+        "offset": None if offset is None else [float(value) for value in offset],
+    }
+
+
+def _apply_nuisance(
+    projections: NDArray[np.float32],
+    nuisance: dict[str, object],
+) -> NDArray[np.float32]:
+    out = np.asarray(projections, dtype=np.float32).copy()
+    raw_gain = nuisance.get("gain")
+    if isinstance(raw_gain, list):
+        gain = np.asarray(raw_gain, dtype=np.float32)
+        out *= gain[:, None, None]
+    raw_offset = nuisance.get("offset")
+    if isinstance(raw_offset, list):
+        offset = np.asarray(raw_offset, dtype=np.float32)
+        out += offset[:, None, None]
+    return out.astype(np.float32)
+
+
+def _gain_drift(
+    nuisance: dict[str, float | int | str | bool],
+    n_views: int,
+) -> NDArray[np.float32] | None:
+    if "gain_drift" in nuisance:
+        text = str(nuisance["gain_drift"])
+        t = np.linspace(0.0, 1.0, n_views, dtype=np.float32)
+        if text == "linear_0.98_to_1.03":
+            return np.linspace(0.98, 1.03, n_views, dtype=np.float32)
+        if text == "0.97_to_1.04_plus_sinusoid":
+            return (
+                np.linspace(0.97, 1.04, n_views, dtype=np.float32)
+                + np.float32(0.01) * np.sin(np.float32(2.0 * np.pi) * t)
+            ).astype(np.float32)
+    if "gain_drift_fraction" in nuisance:
+        fraction = float(nuisance["gain_drift_fraction"])
+        theta = np.linspace(0.0, 2.0 * np.pi, n_views, endpoint=False, dtype=np.float32)
+        return (1.0 + np.float32(fraction) * np.sin(theta)).astype(np.float32)
+    return None
+
+
+def _background_offset(
+    nuisance: dict[str, float | int | str | bool],
+    n_views: int,
+) -> NDArray[np.float32] | None:
+    if nuisance.get("background_offset") == "small_linear":
+        return np.linspace(-0.015, 0.015, n_views, dtype=np.float32)
+    if nuisance.get("background_drift") == "low_frequency_vertical_gradient":
+        return (np.float32(0.02) * np.sin(np.linspace(0.0, np.pi, n_views))).astype(np.float32)
+    return None
 
 
 def _make_pose_table(

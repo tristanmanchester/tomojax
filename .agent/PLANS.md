@@ -12,46 +12,47 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: expose gain/offset nuisance fitting through the alternating smoke CLI.
+- Goal: apply deterministic nuisance drift in synthetic benchmark artifacts.
 
 ### Scope
 
 - In scope:
-  - Add an alternating smoke config flag for Schur gain/offset fitting.
-  - Pass the flag into Schur geometry updates.
-  - Add an `align-auto` CLI switch for the opt-in nuisance path.
-  - Record the resolved option in config/manifest or diagnostics.
-  - Add focused smoke/CLI tests.
+  - Apply per-view gain drift and simple background offsets in
+    `generate_synthetic_dataset`.
+  - Record realized gain/offset arrays in `nuisance_truth.json`.
+  - Keep `clean=True` behavior nuisance-free.
+  - Add focused synthetic dataset tests for nuisance-bearing specs.
 - Out of scope:
-  - Default-enabling nuisance fitting.
-  - Background fields.
-  - Weak DOF auto-activation rules.
+  - Hot/dead pixels, stripes, bad views, and partial-FOV masks.
+  - Loading generated benchmark projections into the alternating solver.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` and `tomojax.cli`.
+- Deep module owner: `tomojax.datasets`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
+- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
+- `docs/tomojax-v2/07_synthetic_generator_pseudocode.md`
 
 ### Tasks
 
-- [x] Add alternating config plumbing.
-- [x] Add CLI flag and resolved artifact field.
-- [x] Add focused smoke/CLI tests.
+- [x] Add deterministic gain/background realization helpers.
+- [x] Apply nuisance when `clean=False`.
+- [x] Record realized nuisance truth payload.
+- [x] Add focused synthetic dataset tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the CLI nuisance toggle slice.
+- [x] Commit the synthetic nuisance slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+- `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_nuisance_gain_offset.py -q`
   passed: 9 tests.
 - `just imports` passed.
 
@@ -60,10 +61,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep nuisance fitting opt-in at the command/config level until benchmark
-  datasets with nuisance drift are wired into the solver path.
+- Implement only gain and scalar per-view background offsets first, matching the
+  current Phase 8 gain/offset model. More complex nuisance terms remain recorded
+  as spec metadata until they have owned models.
 
 ### Risks
 
-- Risk: the default Phase 7 smoke still runs without nuisance fitting.
-- Mitigation: command-level tests will cover the opt-in path and diagnostics.
+- Risk: this does not yet apply hot/dead pixels, stripes, partial-FOV masks, or
+  bad views from the hardest synthetic specs.
+- Mitigation: record unsupported terms in the nuisance truth payload so later
+  slices can add them explicitly.

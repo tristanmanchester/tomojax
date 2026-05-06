@@ -3832,3 +3832,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The default smoke still has no nuisance drift. This slice exposes and records
   the opt-in path; benchmark ingestion should exercise it with nuisance-bearing
   synthetic data.
+
+## 2026-05-06 — Phase 8 Synthetic Gain/Offset Nuisance Artifacts
+
+### Summary
+
+- Added deterministic gain-drift and per-view scalar background-offset
+  realization to `generate_synthetic_dataset`.
+- `clean=False` synthetic datasets now apply realized gain/offset nuisance to
+  generated projections when the benchmark manifest declares supported terms.
+- `clean=True` still writes clean projections but records the realized nuisance
+  arrays and unsupported original spec fields in `nuisance_truth.json`.
+- Added focused tests for thermal gain/background drift and lamino sinusoidal
+  gain drift artifacts.
+
+### Decisions
+
+- Applied only nuisance terms covered by the current Phase 8 gain/offset model:
+  per-view gain and scalar per-view offsets. Harder terms such as hot/dead
+  pixels, stripes, bad views, and partial-FOV masks remain recorded as spec
+  metadata for later owned slices.
+
+### Validation
+
+- `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed.
+- `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_nuisance_gain_offset.py -q`
+  passed: 9 tests.
+- `just imports` passed.
+
+### Risks
+
+- Nuisance-bearing synthetic artifacts still do not cover the full hard dataset
+  contract. Additional owned nuisance models should add the remaining terms
+  rather than hiding them in the generator.
