@@ -12,22 +12,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Milestone 0 cleanup — legacy Ruff unblock
-- Goal: clear the first geometry deep-module lint blockers after `_stage_loop.py`
-  cleanup.
+- Goal: clear the first alignment I/O lint blockers after geometry cleanup.
 
 ### Scope
 
 - In scope:
-  - Add missing module/class/function docstrings in
-    `src/tomojax/align/geometry`.
-  - Replace parent-relative imports with absolute imports in touched files.
-  - Move annotation-only imports behind `TYPE_CHECKING`.
-  - Fix small local Ruff blockers in parametrization helpers.
-  - Run focused Ruff checks and geometry tests.
+  - Add missing checkpoint and params-export docstrings.
+  - Clean local checkpoint file handling and validation lint.
+  - Reduce `_json_native` return-count lint in params export.
+  - Run focused Ruff checks and checkpoint/export tests.
 - Out of scope:
   - Alignment algorithm changes.
-  - Checkpoint/io/model lint cleanup outside the geometry package.
-  - Repository-wide legacy Ruff cleanup outside this function.
+  - Alignment model lint cleanup.
+  - Repository-wide legacy Ruff cleanup outside alignment I/O.
 - Deep module owner: `tomojax.align`.
 
 ### Design Sources
@@ -36,44 +33,42 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Clean geometry import/type-checking lint.
-- [x] Add missing public docstrings in touched geometry modules.
-- [x] Fix small parametrization Ruff findings.
+- [x] Clean checkpoint doc/file-handling lint.
+- [x] Clean params-export doc/return-count lint.
 - [x] Run focused validation.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit the cleanup slice if validations pass.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/geometry/detector_center.py src/tomojax/align/geometry/geometry_applier.py src/tomojax/align/geometry/geometry_blocks.py src/tomojax/align/geometry/initializers.py src/tomojax/align/geometry/parametrizations.py`
+- `uv run ruff format src/tomojax/align/io/checkpoint.py src/tomojax/align/io/params_export.py`
   passed.
-- `uv run ruff check src/tomojax/align/geometry/detector_center.py src/tomojax/align/geometry/geometry_applier.py src/tomojax/align/geometry/geometry_blocks.py src/tomojax/align/geometry/initializers.py src/tomojax/align/geometry/parametrizations.py`
+- `uv run ruff check src/tomojax/align/io/checkpoint.py src/tomojax/align/io/params_export.py`
   passed.
-- `uv run pytest tests/test_geometry.py tests/test_geometry_applier.py tests/test_geometry_block_taxonomy_generator.py tests/test_detector_center_objective.py tests/test_align_quick.py -q`
-  passed: 54 tests.
+- `uv run pytest tests/test_align_checkpoint.py tests/test_align_quick.py -q`
+  passed: 33 tests.
+- `uv run pytest tests/test_align_params_export.py -q` passed: 8 tests.
 - `just imports` passed.
 - `just check` failed at `uv run ruff check --fix src tests tools` after
-  formatting. The touched geometry files are no longer in the failure list; the
-  first remaining blockers are `align/io/checkpoint.py`,
-  `align/io/params_export.py`, and `align/model/*`, followed by broader
-  repository lint backlog. Formatter churn from `just check` was reverted
-  outside this slice.
+  formatting. The touched alignment I/O files are no longer in the failure
+  list; the first remaining blockers are in `src/tomojax/align/model/*`,
+  followed by broader repository lint backlog. Formatter churn from
+  `just check` was reverted outside this slice.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Kept geometry helper exports unchanged and limited the slice to docstrings,
-  annotation-only import movement, absolute imports, and direct attribute reads.
-- Preserved the existing pose composition order while replacing non-ASCII
-  comment text and the unnecessary transform-return assignment.
+- Preserved checkpoint atomic-write semantics while switching to `Path.replace`
+  and `contextlib.suppress` for temporary-file cleanup.
+- Kept params-export JSON normalization behavior but collapsed scalar/list
+  conversion into a single final return path.
 - Deviation: none from the cleanup scope.
 
 ### Risks
 
-- Risk: moving annotation-only imports can accidentally hide runtime
-  dependencies.
-- Mitigation: only move names used in annotations and run focused geometry tests.
-- Proposed next fix for `just check`: checkpoint/io/model lint cleanup after
-  the geometry package blockers are clear.
+- Risk: checkpoint write-path cleanup could change atomic save behavior.
+- Mitigation: preserve fsync and cleanup semantics and run checkpoint tests.
+- Proposed next fix for `just check`: alignment model lint cleanup after I/O is
+  clear.

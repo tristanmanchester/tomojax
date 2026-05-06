@@ -2277,3 +2277,45 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   explicit in touched files; focused geometry and quick alignment tests passed.
 - Proposed next fix for `just check`: clean checkpoint/io lint, then continue
   through the alignment model package.
+
+## 2026-05-06 — Clean Alignment I/O Lint Blockers
+
+### Summary
+
+- Added checkpoint and params-export module/class docstrings required by the
+  current Ruff configuration.
+- Cleaned checkpoint atomic-write lint by using `Path.replace` and
+  `contextlib.suppress` while preserving fsync and temporary-file cleanup.
+- Simplified schedule metadata validation and params5 shape error formatting.
+- Reduced params-export JSON normalization return-count lint without changing
+  exported payload shape.
+
+### Decisions
+
+- Kept the checkpoint schema and payload fields unchanged.
+- Kept params-export normalization local instead of introducing a shared utility
+  module, consistent with the no-generic-utils policy.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/io/checkpoint.py src/tomojax/align/io/params_export.py`
+  passed.
+- `uv run ruff check src/tomojax/align/io/checkpoint.py src/tomojax/align/io/params_export.py`
+  passed.
+- `uv run pytest tests/test_align_checkpoint.py tests/test_align_quick.py -q`
+  passed: 33 tests.
+- `uv run pytest tests/test_align_params_export.py -q` passed: 8 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. The touched alignment I/O files are no longer in the failure
+  list; the first remaining blockers are in `src/tomojax/align/model/*`,
+  followed by broader repository lint backlog. Formatter churn from
+  `just check` was reverted outside this slice.
+
+### Risks
+
+- Atomic checkpoint save still depends on filesystem support for same-directory
+  replace; this was already required by the previous `os.replace` path.
+- Proposed next fix for `just check`: clean the alignment model package lint
+  blockers beginning with diagnostics, DOF specs, gauge, motion models, and
+  schedules.

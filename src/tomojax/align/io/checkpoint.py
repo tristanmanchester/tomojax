@@ -1,6 +1,9 @@
+"""Alignment checkpoint metadata, persistence, and compatibility validation."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 import json
 import os
@@ -81,6 +84,8 @@ class CheckpointMetadata(TypedDict, total=False):
 
 @dataclass(slots=True)
 class AlignmentCheckpoint:
+    """Loaded alignment checkpoint arrays and metadata."""
+
     x: np.ndarray
     params5: np.ndarray
     motion_coeffs: np.ndarray | None
@@ -91,12 +96,16 @@ class AlignmentCheckpoint:
 
 @dataclass(frozen=True, slots=True)
 class AlignmentProjectionIdentity:
+    """Projection stack identity fields used for resume compatibility."""
+
     shape: tuple[int, ...] | list[int]
     dtype: str
 
 
 @dataclass(frozen=True, slots=True)
 class AlignmentCheckpointGeometrySnapshot:
+    """Geometry and detector metadata captured in a checkpoint."""
+
     geometry_type: str
     geometry_meta: Mapping[str, Any] | None
     reconstruction_grid: Mapping[str, Any]
@@ -108,6 +117,8 @@ class AlignmentCheckpointGeometrySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class AlignmentCheckpointProgress:
+    """Alignment progress counters captured for resume."""
+
     levels: list[int] | None
     level_index: int
     level_factor: int
@@ -124,6 +135,8 @@ class AlignmentCheckpointProgress:
 
 @dataclass(frozen=True, slots=True)
 class AlignmentCheckpointMetadataInput:
+    """Structured input used to build checkpoint metadata."""
+
     projection: AlignmentProjectionIdentity
     geometry: AlignmentCheckpointGeometrySnapshot
     progress: AlignmentCheckpointProgress
@@ -325,13 +338,11 @@ def save_alignment_checkpoint(
             np.savez_compressed(fh, **arrays)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_path, out_path)
+        tmp_path.replace(out_path)
         _fsync_parent(out_path)
     except Exception:
-        try:
+        with suppress(OSError):
             tmp_path.unlink()
-        except OSError:
-            pass
         raise
 
 
@@ -451,11 +462,14 @@ def validate_alignment_checkpoint(
 
     expected_schedule = expected.get("schedule_metadata")
     actual_schedule = metadata.get("schedule_metadata")
-    if actual_schedule is not None and expected_schedule is not None:
-        if normalize_json(actual_schedule) != normalize_json(expected_schedule):
-            raise CheckpointError(
-                "incompatible checkpoint: schedule metadata does not match current request"
-            )
+    if (
+        actual_schedule is not None
+        and expected_schedule is not None
+        and normalize_json(actual_schedule) != normalize_json(expected_schedule)
+    ):
+        raise CheckpointError(
+            "incompatible checkpoint: schedule metadata does not match current request"
+        )
 
     state_grid = metadata.get("state_grid")
     if not isinstance(state_grid, Mapping):
@@ -478,9 +492,11 @@ def validate_alignment_checkpoint(
         )
     expected_params_shape = (int(projection_shape[0]), 5)
     if tuple(checkpoint.params5.shape) != expected_params_shape:
+        actual_shape = list(checkpoint.params5.shape)
+        expected_shape = list(expected_params_shape)
         raise CheckpointError(
             "corrupt checkpoint: params5 shape "
-            f"{list(checkpoint.params5.shape)} does not match expected {list(expected_params_shape)}"
+            f"{actual_shape} does not match expected {expected_shape}"
         )
 
     if checkpoint.motion_coeffs is not None and checkpoint.motion_coeffs.ndim != 2:
