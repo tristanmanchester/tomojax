@@ -19,6 +19,7 @@ from tomojax.align import (
 )
 from tomojax.forward import project_parallel_reference
 from tomojax.geometry import GeometryState
+from tomojax.nuisance import GainOffsetModel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -312,6 +313,40 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     )
 
 
+def test_joint_schur_gain_offset_nuisance_does_not_create_fake_geometry() -> None:
+    volume = _theta_asymmetric_volume()
+    geometry = GeometryState.zeros(2)
+    clean = project_parallel_reference(volume, geometry)
+    observed = GainOffsetModel(
+        gain=jnp.asarray([1.12, 0.91], dtype=jnp.float32),
+        offset=jnp.asarray([0.08, -0.05], dtype=jnp.float32),
+    ).apply(clean)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        geometry,
+        config=JointSchurLMConfig(
+            max_iterations=3,
+            damping=1e-3,
+            delta=1.0,
+            fit_gain_offset=True,
+        ),
+    )
+
+    assert result.initial_loss < 1.0e-10
+    assert result.final_loss < 1.0e-10
+    assert result.diagnostics.gain_offset_fit is True
+    assert result.diagnostics.setup_update_norm < 1.0e-5
+    assert result.diagnostics.pose_update_norm < 1.0e-5
+    np.testing.assert_allclose(result.geometry.pose.dx_px, geometry.pose.dx_px, atol=1.0e-5)
+    np.testing.assert_allclose(
+        result.geometry.pose.phi_residual_rad,
+        geometry.pose.phi_residual_rad,
+        atol=1.0e-5,
+    )
+
+
 def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(1)
@@ -375,9 +410,11 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
         "pose_hessian_diag_by_view",
         "setup_pose_coupling_norm_by_view",
         "parameter_prior_strength",
+        "gain_offset_fit",
     ):
         assert field in payload["diagnostics"]
     assert payload["diagnostics"]["parameter_prior_strength"] == 2.0e-3
+    assert payload["diagnostics"]["gain_offset_fit"] is False
     assert payload["diagnostics"]["next_setup_trust_radius"] is not None
     assert payload["diagnostics"]["next_pose_trust_radius"] is not None
     assert len(payload["diagnostics"]["current_loss_by_view"]) == 1

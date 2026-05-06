@@ -50,6 +50,7 @@ Allowed dependencies:
 - `tomojax.core`
 - `tomojax.geometry`
 - `tomojax.motion`
+- `tomojax.nuisance`
 - `tomojax.forward`
 - `tomojax.recon`
 - `tomojax.verify`
@@ -79,6 +80,8 @@ Forbidden dependencies:
   supported setup and pose DOFs. It has accepted/rejected damping adaptation and
   ratio-based trust-radius adaptation, but is not yet the final trust-region
   engine.
+- `solve_joint_schur_lm` can opt into per-view gain/offset variable projection
+  so affine acquisition drift is modelled as nuisance rather than geometry.
 - `write_joint_schur_normal_eq_summary` writes the current Phase 6
   `normal_eq_summary.json` artifact.
 - `run_alternating_solver_smoke` is the first Phase 7 vertical slice. It runs a

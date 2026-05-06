@@ -3750,3 +3750,48 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The alternating solver does not consume the nuisance model yet, so geometry
   can still absorb intensity drift in the Phase 7 loop. The next Phase 8 slice
   should thread this tested primitive into residual evaluation.
+
+## 2026-05-06 — Phase 8 Schur Gain/Offset Variable Projection
+
+### Summary
+
+- Added opt-in `fit_gain_offset` support to `JointSchurLMConfig`.
+- Schur residual, loss, and per-view loss evaluation can now fit per-view
+  gain/offset through the public `tomojax.nuisance.estimate_gain_offset`
+  primitive before computing projection residuals.
+- Added `gain_offset_fit` to Schur diagnostics and normal-equation summary
+  artifacts.
+- Updated `tomojax.align` README dependencies and invariants to record the
+  public nuisance dependency.
+- Added a focused synthetic Schur test where observed projections contain only
+  per-view affine intensity drift; with nuisance fitting enabled, the solver
+  leaves correct geometry unchanged and reports near-zero residual.
+
+### Decisions
+
+- The hook remains opt-in in this slice. That preserves the existing Phase 7
+  smoke behavior while giving Phase 8 a real path for geometry solvers to stop
+  explaining affine acquisition drift as motion.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_nuisance_gain_offset.py -q`
+  passed: 11 tests.
+- `just imports` passed.
+
+### Notes
+
+- A mistaken `ruff format` invocation including `src/tomojax/align/README.md`
+  failed because Ruff does not parse Markdown; the corrected Python-file format
+  command passed.
+
+### Risks
+
+- Gain/offset fitting is recomputed inside finite-difference residual
+  evaluation, so this is correctness-first rather than performance-first.

@@ -15,6 +15,7 @@ import numpy as np
 from tomojax.align._lm_numerics import finite_difference_jacobian
 from tomojax.forward import project_parallel_reference_arrays, pseudo_huber_weights, residual_loss
 from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_geometry_gauges
+from tomojax.nuisance import estimate_gain_offset
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,6 +45,7 @@ class JointSchurLMConfig:
     setup_trust_radius: float | None = None
     pose_trust_radius: float | None = None
     parameter_prior_strength: float = 0.0
+    fit_gain_offset: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class JointSchurDiagnostics:
     pose_hessian_diag_by_view: tuple[tuple[float, ...], ...] = ()
     setup_pose_coupling_norm_by_view: tuple[float, ...] = ()
     parameter_prior_strength: float = 0.0
+    gain_offset_fit: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -115,6 +118,7 @@ class JointSchurDiagnostics:
             "pose_hessian_diag_by_view": [list(row) for row in self.pose_hessian_diag_by_view],
             "setup_pose_coupling_norm_by_view": list(self.setup_pose_coupling_norm_by_view),
             "parameter_prior_strength": self.parameter_prior_strength,
+            "gain_offset_fit": self.gain_offset_fit,
         }
 
 
@@ -178,14 +182,30 @@ def solve_joint_schur_lm(
     pose_trust_radius = cfg.pose_trust_radius
 
     for _ in range(max(0, int(cfg.max_iterations))):
-        residual = _residual_for_params(vol, obs, geometry, params, mask=mask, sigma=cfg.sigma)
+        residual = _residual_for_params(
+            vol,
+            obs,
+            geometry,
+            params,
+            mask=mask,
+            sigma=cfg.sigma,
+            fit_gain_offset=cfg.fit_gain_offset,
+        )
         weights = jnp.sqrt(pseudo_huber_weights(residual, delta=cfg.delta)).reshape(-1)
 
         def weighted_residual(
             candidate: jax.Array,
             weights_current: jax.Array = weights,
         ) -> jax.Array:
-            raw = _residual_for_params(vol, obs, geometry, candidate, mask=mask, sigma=cfg.sigma)
+            raw = _residual_for_params(
+                vol,
+                obs,
+                geometry,
+                candidate,
+                mask=mask,
+                sigma=cfg.sigma,
+                fit_gain_offset=cfg.fit_gain_offset,
+            )
             data_residual = raw.reshape(-1) * weights_current
             return _with_parameter_prior_residual(
                 data_residual,
@@ -292,6 +312,7 @@ def solve_joint_schur_lm(
             candidate_loss_by_view=candidate_loss_by_view,
             actual_reduction_by_view=actual_reduction_by_view,
             parameter_prior_strength=max(float(cfg.parameter_prior_strength), 0.0),
+            gain_offset_fit=bool(cfg.fit_gain_offset),
         )
         iteration_diagnostics.append(diagnostics)
         damping = next_damping
@@ -690,13 +711,14 @@ def _residual_for_params(
     *,
     mask: jax.Array | None,
     sigma: float,
+    fit_gain_offset: bool,
 ) -> jax.Array:
-    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
-    predicted = project_parallel_reference_arrays(
-        volume,
-        theta_rad=theta_offset + phi_pose,
-        dx_px=det_u + dx_pose,
-        dz_px=det_v + dz_pose,
+    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _with_gain_offset_nuisance(
+        predicted,
+        observed,
+        mask=mask,
+        fit=fit_gain_offset,
     )
     residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
     if mask is None:
@@ -720,6 +742,32 @@ def _with_parameter_prior_residual(
     return jnp.concatenate([data_residual, prior], axis=0)
 
 
+def _predicted_for_params(
+    volume: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+) -> jax.Array:
+    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
+    return project_parallel_reference_arrays(
+        volume,
+        theta_rad=theta_offset + phi_pose,
+        dx_px=det_u + dx_pose,
+        dz_px=det_v + dz_pose,
+    )
+
+
+def _with_gain_offset_nuisance(
+    predicted: jax.Array,
+    observed: jax.Array,
+    *,
+    mask: jax.Array | None,
+    fit: bool,
+) -> jax.Array:
+    if not fit:
+        return predicted
+    return estimate_gain_offset(predicted, observed, mask=mask).apply(predicted)
+
+
 def _loss_for_params(
     volume: jax.Array,
     observed: jax.Array,
@@ -730,12 +778,12 @@ def _loss_for_params(
     cfg: JointSchurLMConfig,
     prior_reference: jax.Array | None = None,
 ) -> jax.Array:
-    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
-    predicted = project_parallel_reference_arrays(
-        volume,
-        theta_rad=theta_offset + phi_pose,
-        dx_px=det_u + dx_pose,
-        dz_px=det_v + dz_pose,
+    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _with_gain_offset_nuisance(
+        predicted,
+        observed,
+        mask=mask,
+        fit=cfg.fit_gain_offset,
     )
     data_loss = residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
     strength = max(float(cfg.parameter_prior_strength), 0.0)
@@ -757,12 +805,12 @@ def _loss_by_view_for_params(
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
 ) -> tuple[float, ...]:
-    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
-    predicted = project_parallel_reference_arrays(
-        volume,
-        theta_rad=theta_offset + phi_pose,
-        dx_px=det_u + dx_pose,
-        dz_px=det_v + dz_pose,
+    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _with_gain_offset_nuisance(
+        predicted,
+        observed,
+        mask=mask,
+        fit=cfg.fit_gain_offset,
     )
     losses: list[float] = []
     mask_array = None if mask is None else jnp.asarray(mask, dtype=jnp.float32)
