@@ -1728,3 +1728,46 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: start a dedicated cleanup slice for
   `src/tomojax/align/_pose_stage.py` import hygiene and local annotation
   findings before tackling larger complexity findings.
+
+## 2026-05-06 — Reduce Pose Stage Ruff Import And Annotation Findings
+
+### Summary
+
+- Converted `_pose_stage.py` parent-relative core imports to absolute imports.
+- Moved `Detector`, `Geometry`, and `Grid` behind `TYPE_CHECKING` because they
+  are only used in postponed annotations in this module.
+- Added broad `jnp.ndarray` annotations to nested JAX objective helpers and
+  scan bodies without changing numerical logic.
+- Replaced a local smoothness-weight append loop with a comprehension and
+  rewrote the GN smooth-candidate lambda as a nested function.
+
+### Decisions
+
+- Kept this as a low-risk cleanup slice and deferred decomposition of the large
+  pose-stage functions to a separate milestone.
+- Treated basedpyright for the whole file as an existing backlog rather than a
+  gate for this slice because it reports broad JAX unknown/private-usage/stat
+  narrowing issues unrelated to the import/annotation cleanup.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_stage.py` now reports only seven
+  local PLR0912/PLR0915 complexity findings.
+- `uv run ruff format --check src/tomojax/align/_pose_stage.py` passed.
+- `uv run pytest tests/test_align_chunking.py -q -k 'not lbfgs'` passed:
+  24 tests, 5 deselected.
+- `uv run pytest tests/test_align_quick.py -q -k 'gn or smooth_pose_model or pose_model'`
+  passed: 23 tests.
+- `just imports` passed.
+
+### Risks
+
+- `just check` remains blocked. The first remaining local failures are
+  `_pose_stage.py` complexity findings in `_build_pose_objective_bundle`,
+  `_align_summary_parts`, `_run_alignment_step`, and `align`, followed by
+  legacy import/type-alias findings in `_profiles.py` and
+  `_reconstruction_stage.py`.
+- The broader basedpyright backlog in `_pose_stage.py` remains unresolved.
+- Proposed next fix for `just check`: split `_align_summary_parts` first,
+  then tackle `_run_alignment_step` and `_build_pose_objective_bundle` as
+  separate behavior-preserving decomposition slices.

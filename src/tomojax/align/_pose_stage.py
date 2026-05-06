@@ -6,25 +6,24 @@ import logging
 import math
 import re
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core import format_duration, progress_iter
-from tomojax.geometry import cylindrical_mask_xy
-
-from ..core.geometry.base import Detector, Geometry, Grid
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import forward_project_view_T, get_detector_grid_device
-from ..core.validation import (
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.core.validation import (
     validate_grid,
     validate_optional_same_shape,
     validate_pose_stack,
     validate_projection_stack,
     validate_volume,
 )
+from tomojax.geometry import cylindrical_mask_xy
+
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
 from ._observer import (
     ObserverAction,
@@ -64,6 +63,9 @@ from .objectives.loss_specs import (
     resolve_loss_for_level,
 )
 from .optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
+
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 
 def _should_prefer_gn_candidate(
@@ -160,15 +162,16 @@ def _select_gn_candidate(
     if smooth_candidate is None:
         return params5_prev, loss_before
 
-    smooth_weights = []
-    for weights in (
-        light_smoothness_weights_sq,
-        medium_smoothness_weights_sq,
-        smoothness_weights_sq,
-        trans_only_smoothness_weights_sq,
-    ):
-        if _has_active_weights(weights):
-            smooth_weights.append(weights)
+    smooth_weights = [
+        weights
+        for weights in (
+            light_smoothness_weights_sq,
+            medium_smoothness_weights_sq,
+            smoothness_weights_sq,
+            trans_only_smoothness_weights_sq,
+        )
+        if _has_active_weights(weights)
+    ]
 
     if not smooth_weights:
         return params5_prev, loss_before
@@ -417,7 +420,7 @@ class PoseMotionContext:
         if not self.use_smooth_pose_model:
             return None
 
-        def motion_align_loss(coeffs, vol):
+        def motion_align_loss(coeffs: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
             return align_loss(self.coeffs_to_constrained_params(coeffs), vol)
 
         return jax.jit(jax.value_and_grad(motion_align_loss))
@@ -457,7 +460,7 @@ class PoseObjectiveBundle:
 
 def _build_pose_objective_bundle(
     *,
-    geometry: Geometry,
+    geometry: Geometry,  # noqa: ARG001
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
@@ -532,7 +535,14 @@ def _build_pose_objective_bundle(
     def _loss_mask_arg(mask_i: jnp.ndarray) -> jnp.ndarray | None:
         return mask_i[None, ...] if has_loss_mask else None
 
-    def _one_view_loss(p5_i, T_nom_i, y_i, masked_vol, mask_i, view_idx):
+    def _one_view_loss(
+        p5_i: jnp.ndarray,
+        T_nom_i: jnp.ndarray,
+        y_i: jnp.ndarray,
+        masked_vol: jnp.ndarray,
+        mask_i: jnp.ndarray,
+        view_idx: jnp.ndarray,
+    ) -> jnp.ndarray:
         T_i = T_nom_i @ se3_from_5d(p5_i)
         pred_i = forward_project_view_T(
             T_i,
@@ -575,10 +585,14 @@ def _build_pose_objective_bundle(
         grad = grad.at[2:].add(1.0 * d2 * ww)
         return total, grad
 
-    def loss_and_grad_manual(params5: jnp.ndarray, vol: jnp.ndarray):
+    def loss_and_grad_manual(
+        params5: jnp.ndarray, vol: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         masked_vol = _apply_vol_mask(vol)
 
-        def body(carry, i):
+        def body(
+            carry: tuple[jnp.ndarray, jnp.ndarray], i: jnp.ndarray
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             total, g = carry
             start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
             params_chunk = jax.lax.dynamic_slice(
@@ -614,7 +628,7 @@ def _build_pose_objective_bundle(
 
     loss_and_grad_manual_jit = jax.jit(loss_and_grad_manual)
 
-    def _pred_flat(T_i, masked_vol):
+    def _pred_flat(T_i: jnp.ndarray, masked_vol: jnp.ndarray) -> jnp.ndarray:
         return forward_project_view_T(
             T_i,
             grid,
@@ -626,8 +640,14 @@ def _build_pose_objective_bundle(
             det_grid=det_grid,
         ).ravel()
 
-    def _gn_update_one(p5_i, T_nom_i, y_i, vol, w_i):
-        def f(p5):
+    def _gn_update_one(
+        p5_i: jnp.ndarray,
+        T_nom_i: jnp.ndarray,
+        y_i: jnp.ndarray,
+        vol: jnp.ndarray,
+        w_i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        def f(p5: jnp.ndarray) -> jnp.ndarray:
             T_i = T_nom_i @ se3_from_5d(p5)
             r = _pred_flat(T_i, vol) - y_i.ravel()
             return w_i.ravel() * r
@@ -638,7 +658,7 @@ def _build_pose_objective_bundle(
         g = vjp(r)[0]
         eye5 = jnp.eye(5, dtype=jnp.float32)
 
-        def jvp_col(v):
+        def jvp_col(v: jnp.ndarray) -> jnp.ndarray:
             return jax.jvp(f, (p5_i,), (v,))[1]
 
         cols = jax.vmap(jvp_col)(eye5)
@@ -657,10 +677,12 @@ def _build_pose_objective_bundle(
     def _ls_weight_chunk(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray) -> jnp.ndarray:
         return loss_adapter.gauss_newton_weights(y_chunk, mask_chunk if has_loss_mask else None)
 
-    def gn_update_all(params5: jnp.ndarray, vol: jnp.ndarray):
+    def gn_update_all(params5: jnp.ndarray, vol: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         masked_vol = _apply_vol_mask(vol)
 
-        def body(carry, i):
+        def body(
+            carry: tuple[jnp.ndarray, jnp.ndarray], i: jnp.ndarray
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             dp_acc, loss_acc = carry
             start_shifted, vmask, view_idx_chunk = _chunk_schedule(i)
             params_chunk = jax.lax.dynamic_slice(
@@ -1093,11 +1115,14 @@ def _run_alignment_step(
         if cfg.gn_accept_only_improving and (loss_before is not None):
             smooth_candidate = None
             if int(params5_in.shape[0]) >= 3:
-                smooth_candidate = lambda candidate, weights: _smooth_gn_candidate(
-                    constrain_candidate(candidate),
-                    ctx.smoothness_gram,
-                    weights,
-                )
+
+                def smooth_candidate(candidate: jnp.ndarray, weights: jnp.ndarray) -> jnp.ndarray:
+                    return _smooth_gn_candidate(
+                        constrain_candidate(candidate),
+                        ctx.smoothness_gram,
+                        weights,
+                    )
+
             params5_out, loss_after = _select_gn_candidate(
                 params5_prev,
                 dp_all,
@@ -1106,7 +1131,9 @@ def _run_alignment_step(
                     _evaluate_align_loss(
                         lambda: ctx.align_loss_jit(candidate, vol),
                         fallback=math.inf,
-                        context="Treating GN candidate as rejected during alignment loss evaluation",
+                        context=(
+                            "Treating GN candidate as rejected during alignment loss evaluation"
+                        ),
                     )
                 ),
                 gn_accept_tol=cfg.gn_accept_tol,
@@ -1648,7 +1675,8 @@ def align(
             if small_impr_streak >= int(cfg.early_stop_patience):
                 if cfg.log_summary:
                     logging.info(
-                        "Early stop after %d outer iters (%s elapsed): rel_impr=%.3e < %.3e for %d consecutive outers",
+                        "Early stop after %d outer iters (%s elapsed): "
+                        "rel_impr=%.3e < %.3e for %d consecutive outers",
                         outer_idx,
                         format_duration(stat.get("cumulative_time")),
                         float(rel_impr),
