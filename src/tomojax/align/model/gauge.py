@@ -1,6 +1,8 @@
+"""Gauge-fixing helpers for alignment pose parameters."""
+
 from __future__ import annotations
 
-from typing import Literal, Mapping, Sequence, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 import jax
 import jax.numpy as jnp
@@ -8,11 +10,16 @@ import numpy as np
 
 from .dofs import DOF_INDEX
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
 
 type GaugeFixMode = Literal["mean_translation", "none"]
 
 
 class GaugeStats(TypedDict, total=False):
+    """JSON-friendly summary of applied gauge-fix statistics."""
+
     mode: str
     dofs: list[str]
     dx_mean_before: float
@@ -33,7 +40,7 @@ def normalize_gauge_fix(raw: object) -> GaugeFixMode:
     if value not in _VALID_GAUGE_FIXES:
         valid = ", ".join(sorted(_VALID_GAUGE_FIXES))
         raise ValueError(f"gauge_fix must be one of {valid}; got {raw!r}")
-    return cast(GaugeFixMode, value)
+    return cast("GaugeFixMode", value)
 
 
 def active_gauge_dofs(*, mode: GaugeFixMode, active_mask: Sequence[bool]) -> tuple[str, ...]:
@@ -57,9 +64,7 @@ def validate_alignment_gauge_feasible(
     lower = np.asarray(bounds_lower, dtype=np.float64)
     upper = np.asarray(bounds_upper, dtype=np.float64)
     if lower.shape != (5,) or upper.shape != (5,):
-        raise ValueError(
-            "alignment gauge bounds must have shape (5,) for [alpha,beta,phi,dx,dz]"
-        )
+        raise ValueError("alignment gauge bounds must have shape (5,) for [alpha,beta,phi,dx,dz]")
     for name in active_gauge_dofs(mode=mode, active_mask=active_mask):
         idx = DOF_INDEX[name]
         lo = float(lower[idx])
@@ -88,7 +93,10 @@ def _project_box_zero_mean(
     lam_lo = jnp.min(values - surrogate_upper) - finite_scale - jnp.float32(1.0)
     lam_hi = jnp.max(values - surrogate_lower) + finite_scale + jnp.float32(1.0)
 
-    def body(_, carry):
+    def body(
+        _: int,
+        carry: tuple[jnp.ndarray, jnp.ndarray],
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         lo, hi = carry
         mid = (lo + hi) * jnp.float32(0.5)
         total = jnp.sum(jnp.clip(values - mid, lower, upper))

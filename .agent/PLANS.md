@@ -12,18 +12,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Milestone 0 cleanup — legacy Ruff unblock
-- Goal: clear alignment active-parameter DOF spec lint blockers.
+- Goal: clear alignment gauge-fix lint blockers.
 
 ### Scope
 
 - In scope:
-  - Add missing `dof_specs.py` module and public API docstrings.
+  - Add missing `gauge.py` module and public typed-dict docstrings.
   - Move annotation-only imports behind `TYPE_CHECKING`.
-  - Remove quoted forward references now covered by postponed annotations.
-  - Run focused Ruff checks and active-parameter tests.
+  - Add missing local loop-body annotations.
+  - Run focused Ruff checks and gauge tests.
 - Out of scope:
   - Alignment algorithm changes.
-  - Remaining model package files outside `dof_specs.py`.
+  - Remaining model package files outside `gauge.py`.
   - Repository-wide legacy Ruff cleanup outside this file.
 - Deep module owner: `tomojax.align`.
 
@@ -33,22 +33,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Clean `dof_specs.py` doc/import lint.
+- [x] Clean `gauge.py` doc/import/annotation lint.
 - [x] Run focused validation.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit the cleanup slice if validations pass.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/model/dof_specs.py` passed.
-- `uv run ruff check src/tomojax/align/model/dof_specs.py` passed.
-- `uv run pytest tests/test_alignment_state.py tests/test_align_optimizers.py tests/test_alignment_objectives.py tests/test_bilevel_setup_alignment.py tests/test_alignment_scenario_catalog.py -q`
-  passed: 46 tests.
+- `uv run ruff format src/tomojax/align/model/gauge.py` passed.
+- `uv run ruff check src/tomojax/align/model/gauge.py` passed.
+- `uv run pytest tests/test_align_gauge.py tests/test_alignment_gauge_registry.py tests/test_align_quick.py -q`
+  passed: 34 tests.
 - `just imports` passed.
 - `just check` failed at `uv run ruff check --fix src tests tools` after
-  formatting. `dof_specs.py` is no longer in the failure list; the first
-  remaining blockers start in `src/tomojax/align/model/gauge.py`, followed by
-  motion model, schedule, state, and broader repository lint backlog. Formatter
+  formatting. `gauge.py` is no longer in the failure list; the first remaining
+  blockers start in `src/tomojax/align/model/motion_models.py`, followed by
+  schedules, state, objectives, and broader repository lint backlog. Formatter
   churn from `just check` was reverted outside this slice.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -56,15 +56,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Kept active parameter packing, whitening, bounds, and native-delta behavior
-  unchanged; changes are limited to public docstrings and annotation-only import
-  movement.
+- Kept gauge-fix behavior unchanged; changes are limited to module/API docs,
+  annotation-only imports, and type annotations for the JAX loop body.
 - Deviation: none from the cleanup scope.
 
 ### Risks
 
 - Risk: annotation-only import movement can hide a runtime dependency.
-- Mitigation: move only names used in annotations and run focused active
-  parameter tests.
-- Proposed next fix for `just check`: continue through `gauge.py`,
-  `motion_models.py`, `schedules.py`, and `state.py`.
+- Mitigation: move only names used in annotations and run focused gauge tests.
+- Proposed next fix for `just check`: continue through `motion_models.py`,
+  `schedules.py`, and `state.py`.

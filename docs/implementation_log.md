@@ -2390,3 +2390,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The import movement is safe only while `AlignmentState`, `Iterable`, and
   `Sequence` remain annotation-only; active parameter tests passed.
 - Proposed next fix for `just check`: clean `gauge.py`.
+
+## 2026-05-06 — Clean Alignment Gauge Lint
+
+### Summary
+
+- Added `gauge.py` module and typed-dict docstrings.
+- Moved annotation-only imports behind `TYPE_CHECKING`.
+- Added explicit argument and return annotations for the JAX zero-mean
+  projection loop body.
+
+### Decisions
+
+- Kept gauge normalization, feasibility checks, projection behavior, and stats
+  payloads unchanged.
+- Left motion model, schedule, and state lint for follow-up focused slices.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/model/gauge.py` passed.
+- `uv run ruff check src/tomojax/align/model/gauge.py` passed.
+- `uv run pytest tests/test_align_gauge.py tests/test_alignment_gauge_registry.py tests/test_align_quick.py -q`
+  passed: 34 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `gauge.py` is no longer in the failure list; the first remaining
+  blockers start in `src/tomojax/align/model/motion_models.py`, followed by
+  schedules, state, objectives, and broader repository lint backlog. Formatter
+  churn from `just check` was reverted outside this slice.
+
+### Risks
+
+- The JAX loop-body annotation is structural only; focused gauge tests passed.
+- Proposed next fix for `just check`: clean `motion_models.py`.
