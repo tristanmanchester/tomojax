@@ -696,6 +696,10 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
         "dict[object, object]",
         benchmark_result.get("benchmark_manifest_criteria", {}),
     )
+    criteria_evaluation = cast(
+        "dict[object, object]",
+        benchmark_result.get("benchmark_manifest_evaluation", {}),
+    )
     reconstruction = cast("dict[object, object]", benchmark_result.get("reconstruction", {}))
     geometry = cast("dict[object, object]", benchmark_result.get("geometry_recovery", {}))
     backend = cast("dict[object, object]", benchmark_result.get("backend", {}))
@@ -747,6 +751,19 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             ],
             "" if manifest_criteria else "none",
             "",
+            "## Benchmark Manifest Evaluation",
+            "",
+            "| Criterion | Status | Value | Threshold | Reason |",
+            "|---|---|---:|---:|---|",
+            *[
+                _criteria_evaluation_row(key, value)
+                for key, value in sorted(
+                    criteria_evaluation.items(),
+                    key=lambda item: str(item[0]),
+                )
+            ],
+            "" if criteria_evaluation else "none",
+            "",
             "## Geometry Recovery",
             "",
             "| Metric | Value |",
@@ -784,6 +801,15 @@ def _markdown_cell(value: object) -> str:
     return str(value)
 
 
+def _criteria_evaluation_row(key: object, value: object) -> str:
+    payload = cast("dict[object, object]", value) if isinstance(value, dict) else {}
+    return (
+        f"| {_markdown_cell(key)} | {_markdown_cell(payload.get('status'))} | "
+        f"{_markdown_cell(payload.get('value'))} | {_markdown_cell(payload.get('threshold'))} | "
+        f"{_markdown_cell(payload.get('reason'))} |"
+    )
+
+
 def _benchmark_result_payload(
     *,
     schedule: ContinuationSchedule,
@@ -802,6 +828,10 @@ def _benchmark_result_payload(
     )
     volume_size = verification.get("size")
     failed_gates = _failed_gate_names(failure_report)
+    manifest_criteria = cast(
+        "dict[object, object]",
+        sidecar_readback.get("recovery_tolerances", {}),
+    )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
         "benchmark": synthetic_dataset.get("name"),
@@ -848,9 +878,66 @@ def _benchmark_result_payload(
             "fallbacks": [],
         },
         "failure_labels": failed_gates,
-        "benchmark_manifest_criteria": sidecar_readback.get("recovery_tolerances", {}),
+        "benchmark_manifest_criteria": manifest_criteria,
+        "benchmark_manifest_evaluation": _benchmark_manifest_evaluation(
+            criteria=manifest_criteria,
+            geometry_recovery=geometry_recovery,
+        ),
         "geometry_update_volume_source": geometry_update_volume_source,
     }
+
+
+def _benchmark_manifest_evaluation(
+    *,
+    criteria: dict[object, object],
+    geometry_recovery: dict[object, object],
+) -> dict[str, object]:
+    return {
+        str(name): _criterion_evaluation(
+            name=str(name),
+            threshold=threshold,
+            geometry_recovery=geometry_recovery,
+        )
+        for name, threshold in criteria.items()
+    }
+
+
+def _criterion_evaluation(
+    *,
+    name: str,
+    threshold: object,
+    geometry_recovery: dict[object, object],
+) -> dict[str, object]:
+    metric_name = _criterion_metric_name(name)
+    if metric_name is None:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "criterion has no smoke-run metric mapping",
+        }
+    value = geometry_recovery.get(metric_name)
+    if not isinstance(value, int | float) or not isinstance(threshold, int | float):
+        return {
+            "status": "not_evaluated",
+            "value": value,
+            "threshold": threshold,
+            "reason": "criterion value or threshold is not numeric",
+        }
+    passed = float(value) < float(threshold)
+    return {
+        "status": "passed" if passed else "failed",
+        "value": float(value),
+        "threshold": float(threshold),
+        "reason": "evaluated against smoke geometry recovery metric",
+    }
+
+
+def _criterion_metric_name(name: str) -> str | None:
+    return {
+        "det_u_error_px_lt": "det_u_realized_rmse_px",
+        "det_v_error_px_lt": "det_v_realized_rmse_px",
+    }.get(name)
 
 
 def _failed_gate_names(failure_report: Mapping[str, object]) -> list[str]:

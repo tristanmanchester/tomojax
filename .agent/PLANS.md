@@ -12,16 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: preserve synthetic benchmark manifest pass criteria in smoke-run
+- Goal: add report-only benchmark manifest criteria evaluation to smoke-run
   benchmark artifacts.
 
 ### Scope
 
 - In scope:
-  - Include sidecar `recovery_tolerances` in synthetic dataset readback.
-  - Thread those manifest criteria into `benchmark_result.json`.
-  - Render them in `benchmark_report.md`.
-  - Add focused CLI assertions for the existing-sidecar path.
+  - Evaluate manifest criteria when the smoke run exposes a matching metric.
+  - Mark unsupported criteria as `not_evaluated`.
+  - Thread evaluation into `benchmark_result.json` and `benchmark_report.md`.
+  - Add focused CLI assertions for evaluated and not-evaluated criteria.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -38,20 +38,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add manifest pass criteria to synthetic sidecar readback.
-- [x] Thread pass criteria into benchmark result/report.
-- [x] Add focused pass-criteria assertions.
+- [x] Add report-only criteria evaluation payload.
+- [x] Render criteria evaluation in markdown report.
+- [x] Add focused criteria-evaluation assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the benchmark pass-criteria slice.
+- [ ] Commit the benchmark criteria-evaluation slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
-  passed: 3 files left unchanged after the final patch.
-- `uv run ruff check src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
   passed.
-- `uv run basedpyright src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
   passed.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
   passed: 7 tests.
@@ -62,10 +62,10 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep benchmark manifest criteria separate from current smoke acceptance
-  tolerances; do not change solver pass/fail behavior in this slice.
+- Criteria evaluation is report-only and must not change solver pass/fail
+  behavior in this slice.
 
 ### Risks
 
-- Risk: manifest pass criteria can be mistaken for active smoke gates.
-- Mitigation: label them as benchmark manifest criteria in result/report.
+- Risk: unsupported benchmark criteria can look silently ignored.
+- Mitigation: emit an explicit `not_evaluated` status with a reason.

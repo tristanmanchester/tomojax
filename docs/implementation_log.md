@@ -4938,3 +4938,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Manifest pass criteria are reported for benchmark context only; they are not
   yet active benchmark gates.
+
+## 2026-05-06 — Phase 8 Benchmark Manifest Criteria Evaluation
+
+### Summary
+
+- Added report-only `benchmark_manifest_evaluation` to synthetic benchmark
+  result artifacts.
+- Criteria with available smoke recovery metrics are marked `passed` or
+  `failed`; unsupported criteria are explicitly marked `not_evaluated` with a
+  reason.
+- `benchmark_report.md` now renders a benchmark manifest evaluation table.
+- Added focused CLI assertions covering an evaluated detector-shift criterion
+  and unsupported object-motion criteria.
+
+### Decisions
+
+- Criteria evaluation is report-only and does not alter solver or smoke
+  verification pass/fail behavior.
+- The initial mapping is intentionally narrow: detector-u and detector-v pixel
+  thresholds can use existing smoke geometry recovery metrics; all other
+  manifest criteria remain not evaluated until their metrics exist.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- Only criteria with explicit smoke metric mappings are evaluated in this slice.

@@ -254,6 +254,17 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     assert "synthetic_dataset_projection_shape = [4, 32, 32]" in config_text
     assert 'synthetic_dataset_projection_dtype = "float32"' in config_text
     assert "synthetic_dataset_sidecar_consistency_passed = true" in config_text
+    benchmark_result = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
+    )
+    evaluation = cast(
+        "dict[str, dict[str, object]]",
+        benchmark_result["benchmark_manifest_evaluation"],
+    )
+    assert evaluation["det_u_error_px_lt"]["status"] == "failed"
+    assert evaluation["det_u_error_px_lt"]["threshold"] == 0.5
+    assert evaluation["axis_error_deg_lt"]["status"] == "not_evaluated"
     nuisance = cast(
         "dict[str, object]",
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
@@ -390,6 +401,7 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert "reimagined_align_auto_smoke" in benchmark_report
     assert "## Geometry Recovery" in benchmark_report
     assert "## Benchmark Manifest Criteria" in benchmark_report
+    assert "## Benchmark Manifest Evaluation" in benchmark_report
     assert "flags_object_motion_suspected" in benchmark_report
     assert "## Backend Provenance" in benchmark_report
     assert "| reimagined_align_auto_smoke | smoke32 |" in benchmark_report
@@ -409,6 +421,12 @@ def _assert_benchmark_criteria_and_runtime(
         benchmark_result["benchmark_manifest_criteria"],
     )
     assert manifest_criteria == readback_tolerances
+    criteria_evaluation = cast(
+        "dict[str, dict[str, object]]",
+        benchmark_result["benchmark_manifest_evaluation"],
+    )
+    assert criteria_evaluation["core_solver"]["status"] == "not_evaluated"
+    assert criteria_evaluation["core_solver"]["threshold"] == "flags_object_motion_suspected"
     runtime = cast("dict[str, object]", benchmark_result["runtime"])
     assert isinstance(runtime["time_to_verified_geometry_seconds"], float)
     assert isinstance(runtime["total_wall_seconds"], float)
