@@ -2647,3 +2647,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - `AlternatingAlignmentSolver` currently exposes only the deterministic
   `run_smoke` method; production data loading and CLI integration are still
   missing.
+
+## 2026-05-06 — Phase 7 Auto Smoke CLI
+
+### Summary
+
+- Added `tomojax.cli.align_auto`, a one-command deterministic Phase 7
+  `align=auto` smoke entrypoint.
+- Added the `tomojax-align-auto-smoke` console script.
+- Added focused CLI tests for help text and writing the core final volume,
+  geometry, and verification artifacts.
+
+### Decisions
+
+- Kept the new command explicitly smoke-profile-only so it does not imply full
+  production dataset alignment.
+- Called `AlternatingAlignmentSolver` from the CLI instead of duplicating solver
+  behavior in `tomojax.cli`.
+- Put the new CLI tests in `tests/test_align_auto_cli.py` to avoid touching the
+  older transitional `tests/test_cli_entrypoints.py` lint backlog.
+
+### Validation
+
+- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run pytest tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py -q`
+  passed: 5 tests.
+- `just imports` passed.
+- `uv run tomojax-align-auto-smoke --help` passed.
+
+### Risks
+
+- The command currently runs only synthetic smoke data; full dataset input and
+  production `align=auto` CLI integration remain future work.
