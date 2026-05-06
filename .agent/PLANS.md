@@ -11,23 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 verification semantics
-- Goal: make supported-DOF improvement tolerate already-good DOFs.
+- Phase: Phase 8 weak DOF handling
+- Goal: add separate setup and pose priors for joint Schur LM diagnostics.
 
 ### Scope
 
 - In scope:
-  - Treat supported DOFs as acceptable when they started within tolerance and
-    remain within tolerance.
-  - Preserve strict improvement for supported DOFs that start outside tolerance.
-  - Cover the geometry recovery payload behavior with focused smoke assertions.
+  - Add optional setup/pose prior strengths to `JointSchurLMConfig`.
+  - Preserve existing `parameter_prior_strength` behavior by default.
+  - Add focused Schur tests showing stronger pose prior reduces pose drift.
 - Out of scope:
   - Adding or changing artifact/report/observability fields.
   - New benchmark ingestion behavior.
   - Changing the default stopped-reconstruction solver path.
   - Solver tuning.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` verification payloads.
+- Deep module owner: `tomojax.align` joint Schur LM solver.
 
 ### Design Sources
 
@@ -38,22 +37,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Update supported-DOF improvement semantics.
-- [x] Add focused geometry recovery assertions.
+- [x] Add optional setup/pose prior strengths.
+- [x] Add focused Schur prior behavior tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the verification semantics slice.
+- [x] Commit the Schur prior slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
-  passed: 2 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed: 2 files reformatted.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 12 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 9 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,11 +60,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- A DOF that starts within tolerance should not force
-  `supported_dofs_improved=false` merely because it cannot strictly improve.
+- Keep `parameter_prior_strength` as the default shared prior; optional
+  per-block priors override it only when explicitly set.
 
 ### Risks
 
-- Risk: this could hide regressions inside tolerance.
-- Mitigation: keep per-DOF `*_improved` and `*_passed` fields unchanged; only
-  the aggregate supported-DOF boolean uses acceptable-or-improved semantics.
+- Risk: stronger pose priors can bias pose-heavy cases.
+- Mitigation: do not change defaults; expose behavior through explicit config
+  and focused tests only.

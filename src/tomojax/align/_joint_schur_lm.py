@@ -45,6 +45,8 @@ class JointSchurLMConfig:
     setup_trust_radius: float | None = None
     pose_trust_radius: float | None = None
     parameter_prior_strength: float = 0.0
+    setup_prior_strength: float | None = None
+    pose_prior_strength: float | None = None
     fit_gain_offset: bool = False
     fit_background_offset: bool = False
 
@@ -221,6 +223,7 @@ def solve_joint_schur_lm(
                 candidate,
                 prior_reference=prior_reference,
                 cfg=cfg,
+                n_setup=n_setup,
             )
 
         r = weighted_residual(params)
@@ -752,14 +755,55 @@ def _with_parameter_prior_residual(
     *,
     prior_reference: jax.Array,
     cfg: JointSchurLMConfig,
+    n_setup: int,
 ) -> jax.Array:
-    strength = max(float(cfg.parameter_prior_strength), 0.0)
-    if strength == 0.0:
+    setup_strength, pose_strength = _prior_strengths(cfg)
+    if setup_strength == 0.0 and pose_strength == 0.0:
         return data_residual
-    prior = jnp.sqrt(jnp.asarray(strength, dtype=jnp.float32)) * (
-        params - jnp.asarray(prior_reference, dtype=jnp.float32)
-    )
-    return jnp.concatenate([data_residual, prior], axis=0)
+    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
+    setup_prior = jnp.sqrt(jnp.asarray(setup_strength, dtype=jnp.float32)) * prior_delta[:n_setup]
+    pose_prior = jnp.sqrt(jnp.asarray(pose_strength, dtype=jnp.float32)) * prior_delta[n_setup:]
+    return jnp.concatenate([data_residual, setup_prior, pose_prior], axis=0)
+
+
+def _prior_strengths(cfg: JointSchurLMConfig) -> tuple[float, float]:
+    base = max(float(cfg.parameter_prior_strength), 0.0)
+    setup = base if cfg.setup_prior_strength is None else max(float(cfg.setup_prior_strength), 0.0)
+    pose = base if cfg.pose_prior_strength is None else max(float(cfg.pose_prior_strength), 0.0)
+    return setup, pose
+
+
+def _parameter_prior_loss(
+    params: jax.Array,
+    *,
+    prior_reference: jax.Array,
+    cfg: JointSchurLMConfig,
+    n_setup: int,
+) -> jax.Array:
+    setup_strength, pose_strength = _prior_strengths(cfg)
+    if setup_strength == pose_strength:
+        prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
+        return (
+            0.5
+            * jnp.asarray(setup_strength, dtype=jnp.float32)
+            * jnp.mean(prior_delta * prior_delta)
+        )
+    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
+    setup_delta = prior_delta[:n_setup]
+    pose_delta = prior_delta[n_setup:]
+    setup_loss = jnp.asarray(0.0, dtype=jnp.float32)
+    if setup_strength > 0.0:
+        setup_loss = (
+            0.5
+            * jnp.asarray(setup_strength, dtype=jnp.float32)
+            * jnp.mean(setup_delta * setup_delta)
+        )
+    pose_loss = jnp.asarray(0.0, dtype=jnp.float32)
+    if pose_strength > 0.0:
+        pose_loss = (
+            0.5 * jnp.asarray(pose_strength, dtype=jnp.float32) * jnp.mean(pose_delta * pose_delta)
+        )
+    return setup_loss + pose_loss
 
 
 def _predicted_for_params(
@@ -837,12 +881,13 @@ def _loss_for_params(
         fit_background_offset=cfg.fit_background_offset,
     )
     data_loss = residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
-    strength = max(float(cfg.parameter_prior_strength), 0.0)
-    if prior_reference is None or strength == 0.0:
+    if prior_reference is None:
         return data_loss
-    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
-    prior_loss = (
-        0.5 * jnp.asarray(strength, dtype=jnp.float32) * jnp.mean(prior_delta * prior_delta)
+    prior_loss = _parameter_prior_loss(
+        params,
+        prior_reference=prior_reference,
+        cfg=cfg,
+        n_setup=_n_setup_params(geometry),
     )
     return data_loss + prior_loss
 

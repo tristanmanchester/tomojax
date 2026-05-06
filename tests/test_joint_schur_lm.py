@@ -313,6 +313,61 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     )
 
 
+def test_joint_schur_pose_prior_strength_damps_pose_drift() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(4)
+    truth_setup = nominal.setup.replace_parameter(
+        "theta_offset_rad",
+        nominal.setup.theta_offset_rad.with_value(0.04),
+    )
+    truth_setup = truth_setup.replace_parameter(
+        "det_u_px",
+        nominal.setup.det_u_px.with_value(0.5),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    shared_prior = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=4,
+            damping=1.0e-3,
+            delta=1.0,
+            parameter_prior_strength=1.0e-3,
+        ),
+    )
+    strong_pose_prior = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=4,
+            damping=1.0e-3,
+            delta=1.0,
+            parameter_prior_strength=1.0e-3,
+            pose_prior_strength=10.0,
+        ),
+    )
+
+    assert strong_pose_prior.final_loss < 1.0e-3
+    assert (
+        strong_pose_prior.diagnostics.pose_update_norm < shared_prior.diagnostics.pose_update_norm
+    )
+    assert strong_pose_prior.diagnostics.setup_update_norm > 0.0
+    shared_pose_max = float(np.max(np.abs(shared_prior.canonicalized_geometry.state.pose.dx_px)))
+    strong_pose_max = float(
+        np.max(np.abs(strong_pose_prior.canonicalized_geometry.state.pose.dx_px))
+    )
+    assert strong_pose_max < shared_pose_max
+    np.testing.assert_allclose(
+        strong_pose_prior.canonicalized_geometry.state.setup.det_u_px.value,
+        truth.setup.det_u_px.value,
+        atol=0.01,
+    )
+
+
 def test_joint_schur_gain_offset_nuisance_does_not_create_fake_geometry() -> None:
     volume = _theta_asymmetric_volume()
     geometry = GeometryState.zeros(2)

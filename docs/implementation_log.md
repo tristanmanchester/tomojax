@@ -5682,3 +5682,39 @@ Recovery details:
 
 - The aggregate `supported_dofs_improved` name is now slightly broader than
   strict improvement; read it with the per-DOF pass/improved fields.
+
+## 2026-05-06 — Phase 8 Joint Schur Block Priors
+
+### Summary
+
+- Added optional `setup_prior_strength` and `pose_prior_strength` fields to
+  `JointSchurLMConfig`.
+- Existing `parameter_prior_strength` remains the default shared prior when the
+  block-specific strengths are unset.
+- Added focused Schur coverage showing a strong pose prior suppresses pose
+  drift in a setup-only truth case while still recovering detector shift.
+
+### Decisions
+
+- Do not change the alternating smoke defaults in this slice.
+- Keep the solver-level knob explicit so benchmark/oracle probes can separate
+  setup recovery from pose-gauge drift without biasing pose-heavy cases by
+  default.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed: 2 files reformatted.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 9 tests.
+- `just imports` passed.
+
+### Risks
+
+- Strong pose priors can hurt pose-dominated benchmarks if applied broadly.
+  They must remain explicit until benchmark evidence justifies schedule-level
+  policy.
