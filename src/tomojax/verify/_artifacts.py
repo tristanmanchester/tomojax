@@ -90,6 +90,7 @@ def inspect_run_artifacts(run_dir: str | Path) -> ArtifactValidationReport:
         issues,
     )
     _validate_benchmark_result(benchmark_payload, issues)
+    _validate_benchmark_report(path / "benchmark_report.md", benchmark_payload, issues)
     return ArtifactValidationReport(run_dir=path, issues=tuple(issues))
 
 
@@ -331,6 +332,33 @@ def _validate_benchmark_result(
             "benchmark_manifest_evaluation_summary",
         ),
     )
+
+
+def _validate_benchmark_report(
+    path: Path,
+    benchmark_payload: dict[str, object] | None,
+    issues: list[ArtifactValidationIssue],
+) -> None:
+    if benchmark_payload is None:
+        return
+    if not path.is_file():
+        issues.append(ArtifactValidationIssue(artifact="benchmark_report.md", reason="missing"))
+        return
+    text = path.read_text(encoding="utf-8")
+    if "# Benchmark:" not in text:
+        issues.append(
+            ArtifactValidationIssue(
+                artifact="benchmark_report.md",
+                reason="missing benchmark title",
+            )
+        )
+    if "## Benchmark Manifest Evaluation" not in text:
+        issues.append(
+            ArtifactValidationIssue(
+                artifact="benchmark_report.md",
+                reason="missing benchmark manifest evaluation section",
+            )
+        )
 
 
 def _append_missing_keys(

@@ -79,3 +79,29 @@ def test_validate_run_artifacts_checks_optional_benchmark_result(tmp_path: Path)
         issue.artifact == "benchmark_result.json" and issue.reason == "missing benchmark"
         for issue in broken_report.issues
     )
+
+
+def test_validate_run_artifacts_requires_report_for_benchmark_result(tmp_path: Path) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path / "datasets",
+        size=32,
+        clean=True,
+        views=4,
+    )
+    solver = AlternatingAlignmentSolver(
+        AlternatingSmokeConfig(
+            synthetic_dataset_name="synth128_setup_global_tomo",
+            synthetic_dataset_artifact_dir=dataset_paths.dataset_dir,
+        )
+    )
+    _ = solver.run_smoke(tmp_path / "run")
+    (tmp_path / "run" / "benchmark_report.md").unlink()
+
+    report = inspect_run_artifacts(tmp_path / "run")
+
+    assert not report.passed
+    assert any(
+        issue.artifact == "benchmark_report.md" and issue.reason == "missing"
+        for issue in report.issues
+    )
