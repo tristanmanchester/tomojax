@@ -1804,3 +1804,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   `_reconstruction_stage.py`.
 - Proposed next fix for `just check`: split `_run_alignment_step` into
   optimizer-kind helpers before tackling `_build_pose_objective_bundle`.
+
+## 2026-05-06 — Split Pose Alignment Step Dispatch
+
+### Summary
+
+- Added a small `_AlignmentStepCoreResult` carrier for alignment step dispatch.
+- Extracted optimizer dispatch, pre-step loss evaluation, GN handling, final
+  gauge application, gauge-stat recording, final-loss bookkeeping, and relative
+  improvement bookkeeping out of `_run_alignment_step`.
+- Preserved the existing `OuterStat` keys and the GN final-loss reuse rule.
+
+### Decisions
+
+- Kept the existing GD and L-BFGS helpers and added matching GN/core helpers
+  instead of changing the optimizer dispatch contract.
+- Left the native JAX/Optax L-BFGS abort as an existing validation risk rather
+  than hiding it or weakening checks.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_stage.py` now reports three local
+  PLR0912/PLR0915 complexity findings.
+- `uv run ruff format --check src/tomojax/align/_pose_stage.py` passed.
+- `uv run pytest tests/test_align_quick.py tests/test_align_chunking.py -q -k '(gn or gd or smooth_pose_model or pose_model) and not lbfgs'`
+  passed: 47 tests, 5 deselected.
+- `uv run pytest tests/test_align_optimizers.py -q` passed: 10 tests.
+- `just imports` passed.
+
+### Risks
+
+- `uv run pytest tests/test_align_quick.py tests/test_align_chunking.py -q -k 'gn or gd or lbfgs or smooth_pose_model or pose_model'`
+  still aborts in the existing JAX/Optax L-BFGS chunking path.
+- `just check` remains blocked by `_pose_stage.py` complexity findings in
+  `_build_pose_objective_bundle` and top-level `align`, followed by legacy
+  import/type-alias findings in `_profiles.py` and `_reconstruction_stage.py`.
+- Proposed next fix for `just check`: decompose `_build_pose_objective_bundle`
+  before the larger top-level `align` split.
