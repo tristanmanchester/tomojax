@@ -11,25 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 synthetic benchmark ingestion
-- Goal: refresh the all-five 32^3 benchmark summary after the verification gate.
+- Phase: Phase 8 verification semantics
+- Goal: gate reported time-to-verified geometry on final synthetic geometry recovery.
 
 ### Scope
 
 - In scope:
-  - Rerun all five planned 32^3 sidecar benchmark cases after the
-    Schur-accepted verification gate.
-  - Render the comparison markdown from the refreshed `benchmark_result.json`
-    files.
-  - Update the tracked benchmark summary and implementation log with current
-    timing/recovery results.
+  - Keep `time_to_verified_geometry_seconds` null unless final geometry
+    recovery passes.
+  - Cover the stopped-reconstruction sidecar recovery-gap case.
+  - Record the changed timing semantics and focused validation.
 - Out of scope:
   - Adding or changing artifact/report/observability fields.
   - New benchmark ingestion behavior.
   - Solver tuning beyond command-line flags already supported.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` run artifacts with public
-  `tomojax.datasets` sidecar generation/loading and `tomojax.bench` comparison.
+- Deep module owner: `tomojax.align` verification payloads.
 
 ### Design Sources
 
@@ -40,38 +37,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Rerun all five 32^3 sidecar benchmark cases.
-- [x] Render refreshed comparison markdown.
-- [x] Update tracked benchmark summary and implementation log.
-- [x] Run `just imports`.
-- [x] Commit refreshed benchmark summary.
+- [x] Gate time-to-verified geometry on final geometry recovery.
+- [x] Add focused stopped-reconstruction sidecar assertion.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [x] Commit the timing semantics slice.
 
 ### Validation
 
-- `JAX_PLATFORM_NAME=cpu uv run python` generated five 32^3 sidecar datasets
-  under `.artifacts/phase8_multi_case_32_after_accept_gate/datasets`.
-- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
-  five existing sidecar directories.
-- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32_after_accept_gate/benchmark_comparison.md`
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
   passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 11 tests.
 - `just imports` passed.
-- `just check` failed at `uv run ruff check --fix src tests tools` on broad
-  pre-existing legacy Ruff debt after formatting 70 unrelated files; formatter
-  churn was reverted. Representative failures start in
-  `src/tomojax/align/model/schedules.py`,
-  `src/tomojax/align/model/state.py`, and legacy tests.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Four rejected-Schur cases now report no verified geometry timing; the thermal
-  drift case still reports a verified geometry time and supported-DOF
-  improvement.
+- A transient accepted level is not enough to publish verified geometry timing
+  when the final synthetic recovery gate fails.
 
 ### Risks
 
-- Risk: generated run artifacts remain ignored under `.artifacts/`.
-- Mitigation: commit the concise markdown summary and implementation-log
-  evidence.
+- Risk: this changes benchmark timing summaries.
+- Mitigation: cover the recovery-gap sidecar and refresh benchmark summaries in
+  a follow-up if needed.

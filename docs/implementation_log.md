@@ -5566,3 +5566,41 @@ Recovery details:
 
 - `just check` remains blocked by legacy/transitional lint debt outside the
   current Phase 8 vertical slice.
+
+## 2026-05-06 — Phase 8 Recovered-Geometry Timing Gate
+
+### Summary
+
+- Tightened `time_to_verified_geometry_seconds` semantics in
+  `verification.json`.
+- A transient accepted level no longer publishes verified-geometry timing when
+  the final synthetic geometry recovery gate fails.
+- Added stopped-reconstruction sidecar coverage for the
+  `synth128_thermal_object_drift` recovery-gap case, where Schur accepts and
+  improves supported DOFs but final recovery remains outside tolerance.
+
+### Decisions
+
+- Treat `time_to_verified_geometry_seconds` as time to recovered geometry in
+  deterministic synthetic smoke runs.
+- Do not add artifact fields; keep the existing runtime key and make failed
+  recovery report `null`.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 11 tests.
+- `just imports` passed.
+
+### Risks
+
+- Benchmark summaries generated before this slice may still contain optimistic
+  verified-geometry timing for accepted-but-unrecovered Schur updates.
+- This changes reporting semantics only; the stopped-volume geometry recovery
+  gap remains.

@@ -99,6 +99,9 @@ def _verification_payload(
     total_wall_seconds: float,
 ) -> dict[str, object]:
     geometry_recovery = _geometry_recovery_payload(true_geometry, initial_geometry, final_geometry)
+    time_to_recovered_geometry_seconds = (
+        time_to_verified_geometry_seconds if geometry_recovery["passed"] else None
+    )
     volume_recovery = _volume_recovery_payload(truth_volume, final_volume)
     level1_geometry_skipped = _level1_geometry_skipped(summaries)
     all_levels_verified = all(summary.verified for summary in summaries)
@@ -130,7 +133,7 @@ def _verification_payload(
             "volume_nmse": volume_recovery["nmse"],
         },
         "runtime": {
-            "time_to_verified_geometry_seconds": time_to_verified_geometry_seconds,
+            "time_to_verified_geometry_seconds": time_to_recovered_geometry_seconds,
             "total_wall_seconds": total_wall_seconds,
         },
         "escalation": {

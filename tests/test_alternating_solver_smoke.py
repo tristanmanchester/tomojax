@@ -689,6 +689,8 @@ def test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap(
     assert result.levels[0].loss_after < result.levels[0].loss_before
     assert result.levels[0].schur_diagnostics is not None
     assert result.levels[0].schur_diagnostics.accepted is True
+    runtime = cast("dict[str, object]", result.verification["runtime"])
+    assert runtime["time_to_verified_geometry_seconds"] is None
     stopped_gauge = cast(
         "dict[str, float | bool | str]", result.verification["stopped_volume_gauge"]
     )
