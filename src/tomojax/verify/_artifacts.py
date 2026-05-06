@@ -251,7 +251,7 @@ def _validate_observability(
         payload,
         issues,
         artifact="observability_report.json",
-        keys=("status", "dofs", "weak_modes"),
+        keys=("status", "dofs", "weak_modes", "handled_frozen_dofs"),
     )
 
 

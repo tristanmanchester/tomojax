@@ -1148,15 +1148,87 @@ def _gauge_report_payload(report: GaugeReport) -> dict[str, object]:
 def _observability_report_payload() -> dict[str, object]:
     return {
         "schema": "tomojax.observability_report.v1",
-        "status": "smoke_placeholder",
+        "status": "smoke_not_evaluated",
         "reason": "Schur curvature observability is not computed in the smoke profile",
         "dofs": {
-            "det_u_px": {"active": True, "status": "not_evaluated"},
-            "theta_offset_rad": {"active": True, "status": "not_evaluated"},
-            "det_v_px": {"active": False, "status": "frozen"},
-            "theta_scale": {"active": False, "status": "frozen"},
+            "setup": {
+                "det_u_px": {
+                    "active": True,
+                    "observable": False,
+                    "status": "weak_not_evaluated",
+                    "gauge_group": "detector_u",
+                },
+                "det_v_px": {
+                    "active": False,
+                    "observable": False,
+                    "status": "frozen",
+                    "gauge_group": "detector_v",
+                },
+                "detector_roll_rad": {
+                    "active": True,
+                    "observable": False,
+                    "status": "weak_not_evaluated",
+                    "gauge_group": "rotation",
+                },
+                "axis_rot_x_rad": {
+                    "active": True,
+                    "observable": False,
+                    "status": "weak_not_evaluated",
+                    "gauge_group": "axis",
+                },
+                "axis_rot_y_rad": {
+                    "active": True,
+                    "observable": False,
+                    "status": "weak_not_evaluated",
+                    "gauge_group": "axis",
+                },
+                "theta_offset_rad": {
+                    "active": True,
+                    "observable": False,
+                    "status": "weak_not_evaluated",
+                    "gauge_group": "rotation",
+                },
+                "theta_scale": {
+                    "active": False,
+                    "observable": False,
+                    "status": "frozen",
+                    "gauge_group": "none",
+                },
+            },
+            "pose": {
+                "alpha_rad": {"active": True, "observable": False, "status": "weak_not_evaluated"},
+                "beta_rad": {"active": True, "observable": False, "status": "weak_not_evaluated"},
+                "phi_residual_rad": {
+                    "active": True,
+                    "observable": False,
+                    "status": "gauge_canonicalised",
+                },
+                "dx_px": {
+                    "active": True,
+                    "observable": False,
+                    "status": "gauge_canonicalised",
+                },
+                "dz_px": {"active": True, "observable": False, "status": "weak_not_evaluated"},
+            },
         },
-        "weak_modes": [],
+        "weak_modes": [
+            {
+                "name": "smoke_curvature_uncomputed",
+                "severity": "info",
+                "affected_dofs": [
+                    "det_u_px",
+                    "detector_roll_rad",
+                    "axis_rot_x_rad",
+                    "axis_rot_y_rad",
+                    "theta_offset_rad",
+                    "alpha_rad",
+                    "beta_rad",
+                    "dz_px",
+                ],
+                "reason": "smoke profile records artifact shape before Schur observability",
+            }
+        ],
+        "handled_frozen_dofs": ["det_v_px", "theta_scale"],
     }
 
 

@@ -255,7 +255,14 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
         "dict[str, object]",
         json.loads(result.artifacts["observability_report_json"].read_text(encoding="utf-8")),
     )
-    assert observability["status"] == "smoke_placeholder"
+    assert observability["status"] == "smoke_not_evaluated"
+    dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
+    assert dofs["setup"]["det_u_px"]["status"] == "weak_not_evaluated"
+    assert dofs["setup"]["det_v_px"]["status"] == "frozen"
+    assert dofs["pose"]["dx_px"]["status"] == "gauge_canonicalised"
+    weak_modes = cast("list[dict[str, object]]", observability["weak_modes"])
+    assert weak_modes[0]["name"] == "smoke_curvature_uncomputed"
+    assert observability["handled_frozen_dofs"] == ["det_v_px", "theta_scale"]
 
     failure_report = cast(
         "dict[str, object]",

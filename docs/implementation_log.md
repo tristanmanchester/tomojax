@@ -3245,3 +3245,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Optimiser-health evidence remains coarse until real accepted/rejected LM/GN
   step diagnostics are part of the alternating solver.
+
+## 2026-05-06 — Phase 7 Observability Report Shape
+
+### Summary
+
+- Expanded the Phase 7 smoke `observability_report.json` beyond the placeholder
+  status.
+- Added structured setup and pose DOF entries with active, observable, status,
+  and gauge-group metadata where applicable.
+- Recorded smoke weak modes and handled frozen DOFs so the report explicitly
+  distinguishes uncomputed observability from frozen parameters.
+
+### Decisions
+
+- Kept the top-level status as `smoke_not_evaluated` because the smoke path
+  still does not compute Schur curvature or condition numbers.
+- Marked gauge-canonicalised pose terms separately from weak/not-evaluated
+  active DOFs.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- This report is still descriptive; numerical observability metrics remain for
+  the real Schur LM/GN implementation.
