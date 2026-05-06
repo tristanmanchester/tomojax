@@ -5414,3 +5414,69 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This clarifies frozen-DOF evidence only; it does not enable `theta_scale`
   recovery.
+
+## 2026-05-06 — Phase 8 Multi-Case 32^3 Benchmark Pass
+
+### Summary
+
+- Generated four deterministic 32^3 sidecar datasets from planned synthetic128
+  scenarios:
+  `synth128_setup_global_tomo`, `synth128_pose_random_extreme`,
+  `synth128_lamino_axis_roll_pose`, and `synth128_thermal_object_drift`.
+- Ran `tomojax-align-auto-smoke` on each existing sidecar directory using
+  `--profile smoke32`, gain/offset nuisance fitting, and background nuisance
+  fitting.
+- Collected the four `benchmark_result.json` files and rendered
+  `.artifacts/phase8_multi_case_32/benchmark_comparison.md` with
+  `tomojax-synthetic-benchmark-compare`.
+- Added a tracked concise run summary at
+  `docs/benchmark_runs/2026-05-06-phase8-multi-case-32.md`.
+
+### Results
+
+| Benchmark | Status | Criteria | Geometry | Volume NMSE | Final residual | Time to verified (s) | Total time (s) |
+|---|---|---|---|---:|---:|---:|---:|
+| `synth128_setup_global_tomo` | failed | failed | failed | 0.693523 | 0 | 9.8828 | 9.9782 |
+| `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 0.662409 | 0.331717 | n/a | 13.6580 |
+| `synth128_lamino_axis_roll_pose` | failed | failed | failed | 0.635030 | 0.00978141 | n/a | 13.3269 |
+| `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 0.608258 | 0.000758991 | 12.4230 | 12.5270 |
+
+Recovery details:
+
+- `synth128_setup_global_tomo`: `det_u_realized_rmse_px=3.625`,
+  `theta_realized_rmse_rad=0.0218166`; supported DOFs did not improve.
+- `synth128_pose_random_extreme`: `det_u_realized_rmse_px=2.7415`,
+  `det_v_realized_rmse_px=2.5782`, `theta_realized_rmse_rad=0.2019`;
+  supported DOFs did not improve.
+- `synth128_lamino_axis_roll_pose`: `det_u_realized_rmse_px=2.2334`,
+  `det_v_realized_rmse_px=0.7336`, `theta_realized_rmse_rad=0.1598`;
+  supported DOFs did not improve.
+- `synth128_thermal_object_drift`: `det_u_realized_rmse_px=1.4893`,
+  `det_v_realized_rmse_px=0.0512`, `theta_realized_rmse_rad=0.0052336`;
+  supported DOFs improved, with failure label `nuisance_residual_structure`.
+
+### Decisions
+
+- Keep the generated sidecar and run artifacts under ignored `.artifacts/`
+  because they include array sidecars and smoke volumes.
+- Commit the concise markdown summary rather than forcing generated `.npy`
+  benchmark artifacts into git.
+- Stop adding artifact/report/observability fields for this pass.
+
+### Validation
+
+- `uv run python` generated the four sidecar datasets through public
+  `tomojax.datasets.generate_synthetic_dataset`.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
+  four existing sidecar directories.
+- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32/benchmark_comparison.md`
+  passed.
+- `just imports` passed after recording the documentation summary.
+
+### Risks
+
+- The first multi-case pass proves sidecar ingestion and comparison reporting,
+  but the current 32^3 smoke solver does not meet the planned synthetic128
+  recovery criteria.
+- JAX emitted CUDA plugin warnings about missing cuSPARSE before falling back to
+  CPU; alignment commands were run with `JAX_PLATFORM_NAME=cpu`.

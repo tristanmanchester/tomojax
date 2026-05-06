@@ -11,23 +11,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 nuisance models and weak DOF handling
-- Goal: make the frozen `theta_scale` weak-DOF report evidence explicit.
+- Phase: Phase 8 synthetic benchmark ingestion
+- Goal: run the first deterministic multi-case 32^3 synthetic benchmark pass.
 
 ### Scope
 
 - In scope:
-  - Add explicit missing-evidence labels for frozen `theta_scale` curvature,
-    correlation, accepted-step, and validation-improvement evidence.
-  - Preserve the report-only weak-DOF policy and public alternating smoke API.
-  - Cover the artifact shape in the deterministic alternating smoke assertions.
+  - Generate 3-5 planned synthetic128 scenario sidecar datasets at 32^3.
+  - Run `align-auto` on each existing generated sidecar directory.
+  - Collect `benchmark_result.json` files and render the compare CLI markdown.
+  - Record pass/fail, timing, and recovery summary in
+    `docs/implementation_log.md`.
 - Out of scope:
-  - New nuisance solver blocks.
-  - Automatic weak-DOF activation changes.
-  - Enabling `theta_scale` optimisation in the projector or solver.
-  - Further report scaffold polishing beyond the missing-evidence payload.
+  - Adding or changing artifact/report/observability fields.
+  - New benchmark ingestion behavior.
+  - Solver tuning beyond command-line flags already supported.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` observability/report payloads.
+- Deep module owner: `tomojax.align` CLI run artifacts with public
+  `tomojax.datasets` sidecar generation/loading and `tomojax.bench` comparison.
 
 ### Design Sources
 
@@ -38,34 +39,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add explicit missing-evidence labels for frozen `theta_scale`.
-- [x] Add focused alternating smoke assertions.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md`.
-- [ ] Commit the theta-scale evidence slice.
+- [x] Generate 3-5 deterministic 32^3 sidecar datasets.
+- [x] Run `tomojax-align-auto-smoke` on each existing sidecar directory.
+- [x] Collect benchmark result artifacts and render the comparison report.
+- [x] Record benchmark pass/fail, timing, and recovery summary.
+- [x] Commit the benchmark summary or intended artifacts.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
-  passed: 2 files left unchanged after the final patch.
-- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+- `uv run python` generated four 32^3 sidecar datasets through public
+  `tomojax.datasets.generate_synthetic_dataset`.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
+  four existing sidecar directories.
+- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32/benchmark_comparison.md`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 10 tests.
-- `just imports` passed.
+- `just imports` passed after recording the documentation summary.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep `theta_scale` frozen in report-only mode until the reference projector
-  supports an identifiable scale parameter.
+- Use generated local artifacts under ignored `.artifacts/`; commit a concise
+  documentation summary unless a small report artifact is suitable.
 
 ### Risks
 
-- Risk: the missing-evidence vocabulary can drift from active DOF evidence.
-- Mitigation: assert frozen `theta_scale` evidence alongside active `det_v_px`
-  evidence in the smoke artifact test.
+- Risk: 32^3 smoke profiles may fail planned synthetic128 pass criteria while
+  still producing useful ingestion evidence.
+- Mitigation: record exact pass/fail labels, timings, and recovery metrics from
+  `benchmark_result.json`.
