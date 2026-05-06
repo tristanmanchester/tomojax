@@ -2962,3 +2962,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The recorded volume metrics are not expected to be strong until longer
   reconstruction schedules and production benchmark profiles are wired in.
+
+## 2026-05-06 — Phase 7 Per-View Residual Metrics
+
+### Summary
+
+- Expanded `residual_metrics.csv` so it records both per-level continuation
+  summaries and final per-view projection residual metrics.
+- Added `row_type=view_residual` rows with RMSE, MAE, robust loss,
+  valid-pixel fraction, outlier fraction, and raw RMSE fields.
+- Extended the deterministic 32^3 smoke test to verify the summary rows and
+  four per-view residual rows are written.
+
+### Decisions
+
+- Added a `row_type` discriminator so existing level summary rows remain in the
+  same artifact without overloading per-view metric columns.
+- Kept this slice to raw final projection residuals; low-pass and band-pass
+  residual views remain a later benchmark-contract expansion.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- Per-view metrics are currently computed from the final raw reference forward
+  projection only, not from the continuation-filtered residual streams.

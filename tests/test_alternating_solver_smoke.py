@@ -222,8 +222,14 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
 def _assert_residual_metrics(result: AlternatingSmokeResult) -> None:
     with result.artifacts["residual_metrics_csv"].open("r", newline="", encoding="utf-8") as fh:
         metric_rows = list(csv.DictReader(fh))
-    assert [row["level_factor"] for row in metric_rows] == ["4", "2", "1"]
-    assert metric_rows[0]["parameter_update_small"] == "True"
+    level_rows = [row for row in metric_rows if row["row_type"] == "level_summary"]
+    view_rows = [row for row in metric_rows if row["row_type"] == "view_residual"]
+    assert [row["level_factor"] for row in level_rows] == ["4", "2", "1"]
+    assert level_rows[0]["parameter_update_small"] == "True"
+    assert [int(row["view_index"]) for row in view_rows] == [0, 1, 2, 3]
+    assert all(float(row["rmse"]) >= 0.0 for row in view_rows)
+    assert all(row["valid_pixel_fraction"] == "1.0" for row in view_rows)
+    assert all(row["raw_rmse"] == row["rmse"] for row in view_rows)
 
 
 def _assert_recovery_tolerances(result: AlternatingSmokeResult) -> None:

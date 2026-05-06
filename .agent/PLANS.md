@@ -12,16 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: record final volume recovery metrics in the Phase 7 deterministic
-  smoke verification report.
+- Goal: add per-view projection residual metrics to the Phase 7 deterministic
+  smoke run.
 
 ### Scope
 
 - In scope:
-  - Compute final-vs-truth volume RMSE, MAE, and NMSE.
-  - Compare volume NMSE against a smoke-specific recovery tolerance.
-  - Record the metrics and pass/fail flags in `verification.json` and
-    `recovery_tolerances.json`.
+  - Expand `residual_metrics.csv` with per-view raw projection residual rows.
+  - Include RMSE, MAE, robust loss, valid-pixel fraction, and raw RMSE fields.
+  - Keep existing per-level summary rows in the same artifact.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -36,12 +35,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add volume recovery tolerances.
-- [x] Compute final volume recovery metrics.
-- [x] Extend focused smoke tests.
+- [x] Add per-view residual metric rows.
+- [x] Extend focused residual metric tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the smoke volume metrics slice.
+- [x] Commit the residual metrics expansion slice.
 
 ### Validation
 
@@ -60,12 +58,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep the tolerance loose enough for the one-iteration smoke FISTA path while
-  still recording the metric needed by the benchmark contract.
+- Add a `row_type` column so per-level summary rows and per-view residual rows
+  can coexist without ambiguity.
 
 ### Risks
 
-- Risk: one-iteration smoke reconstruction is not intended to produce high
-  volume quality.
-- Mitigation: record metrics for audit now and leave stricter benchmark
-  thresholds for larger schedules.
+- Risk: per-view metrics are raw residual only in this slice.
+- Mitigation: use contract field names and leave filtered low-pass/band-pass
+  view metrics for a later pass.

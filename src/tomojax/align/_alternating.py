@@ -575,7 +575,14 @@ def _write_artifacts(
     write_pose_decomposition_csv(artifacts["pose_decomposition_csv"], final_geometry)
     _ = write_fista_trace_csv(fista_result, artifacts["fista_trace_csv"])
     _write_alignment_summary(artifacts["alignment_summary_csv"], summaries)
-    _write_residual_metrics(artifacts["residual_metrics_csv"], summaries)
+    _write_residual_metrics(
+        artifacts["residual_metrics_csv"],
+        summaries,
+        final_volume=final_volume,
+        final_geometry=final_geometry,
+        observed=observed,
+        mask=mask,
+    )
     _write_json(artifacts["verification_json"], verification)
     _write_json(artifacts["artifact_index_json"], _artifact_index_payload(artifacts))
     return artifacts
@@ -616,16 +623,29 @@ def _write_alignment_summary(
 def _write_residual_metrics(
     path: Path,
     summaries: tuple[AlternatingLevelSummary, ...],
+    *,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    observed: jax.Array,
+    mask: jax.Array,
 ) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=[
+                "row_type",
                 "level_factor",
+                "view_index",
                 "role",
                 "loss_before",
                 "loss_after",
                 "absolute_improvement",
+                "rmse",
+                "mae",
+                "robust_loss",
+                "valid_pixel_fraction",
+                "outlier_fraction",
+                "raw_rmse",
                 "residual_filter_kinds",
                 "loss_nonincreasing",
                 "finite_loss",
@@ -640,11 +660,19 @@ def _write_residual_metrics(
         for summary in summaries:
             writer.writerow(
                 {
+                    "row_type": "level_summary",
                     "level_factor": summary.level_factor,
+                    "view_index": "",
                     "role": summary.role,
                     "loss_before": summary.loss_before,
                     "loss_after": summary.loss_after,
                     "absolute_improvement": summary.loss_before - summary.loss_after,
+                    "rmse": "",
+                    "mae": "",
+                    "robust_loss": "",
+                    "valid_pixel_fraction": "",
+                    "outlier_fraction": "",
+                    "raw_rmse": "",
                     "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
                     "loss_nonincreasing": summary.loss_nonincreasing,
                     "finite_loss": summary.finite_loss,
@@ -655,6 +683,57 @@ def _write_residual_metrics(
                     "early_exit_reason": summary.early_exit_reason,
                 }
             )
+        for row in _view_residual_metric_rows(final_volume, final_geometry, observed, mask):
+            writer.writerow(row)
+
+
+def _view_residual_metric_rows(
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    observed: jax.Array,
+    mask: jax.Array,
+) -> tuple[dict[str, object], ...]:
+    predicted = project_parallel_reference(final_volume, final_geometry)
+    residual = jnp.asarray(predicted - observed, dtype=jnp.float32)
+    mask_arr = jnp.asarray(mask, dtype=bool)
+    rows: list[dict[str, object]] = []
+    for view_index in range(int(residual.shape[0])):
+        view_residual = residual[view_index]
+        view_mask = mask_arr[view_index]
+        valid = view_residual[view_mask]
+        rmse = float(jnp.sqrt(jnp.mean(valid * valid)))
+        mae = float(jnp.mean(jnp.abs(valid)))
+        robust = residual_loss(
+            view_residual,
+            jnp.zeros_like(view_residual),
+            mask=view_mask.astype(jnp.float32),
+        ).loss
+        rows.append(
+            {
+                "row_type": "view_residual",
+                "level_factor": "final",
+                "view_index": view_index,
+                "role": "final",
+                "loss_before": "",
+                "loss_after": "",
+                "absolute_improvement": "",
+                "rmse": rmse,
+                "mae": mae,
+                "robust_loss": float(robust),
+                "valid_pixel_fraction": float(jnp.mean(view_mask.astype(jnp.float32))),
+                "outlier_fraction": 0.0,
+                "raw_rmse": rmse,
+                "residual_filter_kinds": "raw",
+                "loss_nonincreasing": "",
+                "finite_loss": "",
+                "gauge_stable": "",
+                "parameter_update_norm": "",
+                "parameter_update_small": "",
+                "skipped_level": "",
+                "early_exit_reason": "",
+            }
+        )
+    return tuple(rows)
 
 
 def _artifact_index_payload(artifacts: Mapping[str, Path]) -> dict[str, object]:
