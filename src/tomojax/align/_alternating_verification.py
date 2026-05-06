@@ -36,6 +36,7 @@ def _level_verification_checks(
     loss_before: float,
     loss_after: float,
     heldout_residual_passed: bool | None,
+    geometry_update_accepted: bool | None,
 ) -> _LevelVerificationChecks:
     loss_nonincreasing = bool(loss_after <= loss_before + cfg.verification_loss_tolerance)
     finite_loss = bool(np.isfinite(loss_before) and np.isfinite(loss_after))
@@ -43,12 +44,14 @@ def _level_verification_checks(
     parameter_update_norm = _parameter_update_norm(update_report)
     parameter_update_small = bool(parameter_update_norm <= cfg.parameter_update_tolerance)
     heldout_ok = heldout_residual_passed is not False
+    geometry_update_ok = geometry_update_accepted is not False
     verified = (
         loss_nonincreasing
         and finite_loss
         and gauge_stable
         and parameter_update_small
         and heldout_ok
+        and geometry_update_ok
     )
     return _LevelVerificationChecks(
         loss_nonincreasing=loss_nonincreasing,

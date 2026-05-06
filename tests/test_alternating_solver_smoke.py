@@ -712,6 +712,48 @@ def test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap(
     assert float(trace_rows[0]["loss_after"]) < float(trace_rows[0]["loss_before"])
 
 
+def test_rejected_schur_update_does_not_verify_sidecar_level(tmp_path: Path) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path / "datasets",
+        size=32,
+        clean=False,
+        views=4,
+    )
+    sidecars = load_synthetic_dataset_sidecars(dataset_paths.dataset_dir)
+    solver = AlternatingAlignmentSolver(
+        AlternatingSmokeConfig(
+            size=32,
+            n_views=4,
+            schedule=reference_continuation_schedule("smoke32"),
+            fit_gain_offset_nuisance=True,
+            fit_background_nuisance=True,
+            synthetic_dataset_name="synth128_setup_global_tomo",
+            synthetic_dataset_artifact_dir=dataset_paths.dataset_dir,
+            synthetic_dataset_nuisance_applied=True,
+            synthetic_dataset_sidecar_readback={
+                "validated": True,
+                "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
+                "n_views": sidecars.true_geometry.pose.n_views,
+                "consistency": sidecars.consistency.to_dict(),
+            },
+        )
+    )
+
+    result = solver.run_smoke(tmp_path / "run")
+
+    assert result.levels[0].schur_diagnostics is not None
+    assert result.levels[0].schur_diagnostics.accepted is False
+    assert result.levels[0].verified is False
+    assert result.verification["coarse_verified"] is False
+    runtime = cast("dict[str, object]", result.verification["runtime"])
+    assert runtime["time_to_verified_geometry_seconds"] is None
+    with result.artifacts["geometry_trace_csv"].open("r", newline="", encoding="utf-8") as fh:
+        trace_rows = list(csv.DictReader(fh))
+    assert trace_rows[0]["schur_accepted"] == "False"
+    assert trace_rows[0]["verified"] == "False"
+
+
 def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:
     result = run_alternating_solver_smoke(
         tmp_path,

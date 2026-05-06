@@ -175,6 +175,9 @@ def _run_alternating_solver_smoke_impl(
             loss_before=loss_before,
             loss_after=loss_after,
             heldout_residual_passed=heldout_passed,
+            geometry_update_accepted=(
+                None if schur_result is None else schur_result.diagnostics.accepted
+            ),
         )
         previous_loss = loss_after
         coarse_verified, time_to_verified_geometry_seconds = _coarse_verification_state(

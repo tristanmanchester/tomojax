@@ -11,24 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 synthetic benchmark ingestion
-- Goal: extend the deterministic 32^3 benchmark pass to all five planned cases.
+- Phase: Phase 8 verification semantics
+- Goal: prevent rejected Schur geometry updates from counting as verified levels.
 
 ### Scope
 
 - In scope:
-  - Generate the remaining planned synthetic128 32^3 sidecar dataset.
-  - Run `align-auto` on the existing generated sidecar directory.
-  - Refresh the collected `benchmark_result.json` comparison markdown.
-  - Record pass/fail, timing, and recovery summary in
-    `docs/implementation_log.md`.
+  - Require accepted Schur diagnostics for level verification when a geometry
+    update is executed.
+  - Cover the stopped-reconstruction setup-global sidecar case where
+    reconstruction absorbs the residual and Schur rejects the update.
+  - Record the changed verification semantics and focused validation.
 - Out of scope:
   - Adding or changing artifact/report/observability fields.
   - New benchmark ingestion behavior.
   - Solver tuning beyond command-line flags already supported.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` CLI run artifacts with public
-  `tomojax.datasets` sidecar generation/loading and `tomojax.bench` comparison.
+- Deep module owner: `tomojax.align` alternating orchestration and verification.
 
 ### Design Sources
 
@@ -39,34 +38,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Generate the remaining deterministic 32^3 sidecar dataset.
-- [x] Run `tomojax-align-auto-smoke` on the existing sidecar directory.
-- [x] Refresh all-five benchmark result comparison.
-- [x] Record all-five pass/fail, timing, and recovery summary.
-- [x] Commit the all-five benchmark summary.
+- [x] Add Schur-accepted requirement to executed geometry-update verification.
+- [x] Add focused stopped-reconstruction sidecar regression.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [x] Commit the verification semantics slice.
 
 ### Validation
 
-- `JAX_PLATFORM_NAME=cpu uv run python` generated
-  `synth128_combined_nuisance_jumps_32` through public
-  `tomojax.datasets.generate_synthetic_dataset`.
-- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for the
-  existing `synth128_combined_nuisance_jumps_32` sidecar directory.
-- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32/benchmark_comparison.md`
-  passed for all five result artifacts.
-- `just imports` passed after recording the all-five documentation summary.
+- `uv run ruff format src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+  passed: 3 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 11 tests.
+- `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use generated local artifacts under ignored `.artifacts/`; commit a concise
-  documentation summary unless a small report artifact is suitable.
+- A level with a rejected Schur update is not verified, even if the stopped
+  reconstruction makes projection loss non-increasing.
 
 ### Risks
 
-- Risk: 32^3 smoke profiles may fail planned synthetic128 pass criteria while
-  still producing useful ingestion evidence.
-- Mitigation: record exact pass/fail labels, timings, and recovery metrics from
-  `benchmark_result.json`.
+- Risk: this may make existing smoke summaries stricter.
+- Mitigation: cover both the rejected sidecar case and existing alternating
+  smoke behavior in focused tests.

@@ -5486,3 +5486,41 @@ Recovery details:
   recovery criteria.
 - JAX emitted CUDA plugin warnings about missing cuSPARSE before falling back to
   CPU; alignment commands were run with `JAX_PLATFORM_NAME=cpu`.
+
+## 2026-05-06 — Phase 8 Schur-Accepted Verification Gate
+
+### Summary
+
+- Tightened alternating level verification so an executed geometry-update level
+  is not verified when the Schur update is rejected.
+- Added a stopped-reconstruction sidecar regression for
+  `synth128_setup_global_tomo`, where the reconstruction absorbs projection
+  residual and the Schur update correctly rejects a zero-loss geometry step.
+- This keeps benchmark timing honest: rejected geometry updates no longer
+  produce a `time_to_verified_geometry_seconds` value.
+
+### Decisions
+
+- Treat Schur acceptance as required evidence for level verification whenever a
+  geometry update is executed.
+- Do not add artifact fields in this slice; the existing `verified`,
+  `schur_accepted`, and runtime fields carry the changed semantics.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+  passed: 3 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 11 tests.
+- `just imports` passed.
+
+### Risks
+
+- Benchmark summaries generated before this change may over-report verified
+  geometry timing for rejected Schur updates.
+- The stopped-reconstruction volume gauge problem remains; this slice only
+  prevents rejected updates from being counted as verified.
