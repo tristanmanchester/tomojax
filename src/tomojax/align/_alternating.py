@@ -134,6 +134,7 @@ def _run_alternating_solver_smoke_impl(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     truth = jnp.asarray(make_benchmark_phantom(cfg.size, seed=cfg.seed), dtype=jnp.float32)
+    true_geometry = GeometryState.zeros(cfg.n_views)
     initial_geometry = _synthetic_initial_geometry(cfg.n_views)
     observed = project_parallel_reference(truth, initial_geometry)
     mask = jnp.ones_like(observed, dtype=jnp.float32)
@@ -221,8 +222,10 @@ def _run_alternating_solver_smoke_impl(
     final_loss = summaries[-1].loss_after
     artifacts = _write_artifacts(
         out_dir,
+        true_geometry=true_geometry,
         initial_geometry=initial_geometry,
         final_geometry=geometry,
+        truth_volume=truth,
         final_volume=volume,
         observed=observed,
         mask=mask,
@@ -444,8 +447,10 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
 def _write_artifacts(
     output_dir: Path,
     *,
+    true_geometry: GeometryState,
     initial_geometry: GeometryState,
     final_geometry: GeometryState,
+    truth_volume: jax.Array,
     final_volume: jax.Array,
     observed: jax.Array,
     mask: jax.Array,
@@ -463,10 +468,13 @@ def _write_artifacts(
         "final_volume_npy": output_dir / "final_volume.npy",
         "failure_report_json": output_dir / "failure_report.json",
         "fista_trace_csv": output_dir / "fista_trace.csv",
+        "geometry_corrupted_json": output_dir / "geometry_corrupted.json",
         "gauge_policy_json": output_dir / "gauge_policy.json",
         "gauge_report_json": output_dir / "gauge_report.json",
         "geometry_final_json": output_dir / "geometry_final.json",
         "geometry_initial_json": output_dir / "geometry_initial.json",
+        "geometry_true_json": output_dir / "geometry_true.json",
+        "ground_truth_volume_npy": output_dir / "ground_truth_volume.npy",
         "input_summary_json": output_dir / "input_summary.json",
         "mask_summary_json": output_dir / "mask_summary.json",
         "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
@@ -491,12 +499,15 @@ def _write_artifacts(
     _write_array(artifacts["observed_projections_npy"], observed)
     _write_mask_array(artifacts["projection_mask_npy"], mask)
     _write_json(artifacts["recovery_tolerances_json"], _recovery_tolerances_payload())
+    _write_array(artifacts["ground_truth_volume_npy"], truth_volume)
     _write_json(artifacts["gauge_policy_json"], _gauge_policy_payload())
     _write_json(artifacts["gauge_report_json"], _gauge_report_payload(gauge_report))
     _write_json(artifacts["observability_report_json"], _observability_report_payload())
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
     _write_json(artifacts["failure_report_json"], _failure_report_payload())
     _write_final_volume(artifacts["final_volume_npy"], final_volume)
+    write_geometry_json(artifacts["geometry_true_json"], true_geometry)
+    write_geometry_json(artifacts["geometry_corrupted_json"], initial_geometry)
     write_geometry_json(artifacts["geometry_initial_json"], initial_geometry)
     write_geometry_json(artifacts["geometry_final_json"], final_geometry)
     write_pose_params_csv(artifacts["pose_params_csv"], final_geometry.pose)
@@ -634,8 +645,11 @@ def _artifact_description(name: str) -> str:
         "fista_trace_csv": "Reference FISTA iteration trace",
         "gauge_policy_json": "Gauge canonicalisation policy",
         "gauge_report_json": "Gauge canonicalisation transfer report",
+        "geometry_corrupted_json": "Corrupted synthetic input geometry state",
         "geometry_final_json": "Final canonical geometry state",
         "geometry_initial_json": "Initial corrupted geometry state",
+        "geometry_true_json": "True uncorrupted synthetic geometry state",
+        "ground_truth_volume_npy": "Ground-truth synthetic smoke volume",
         "input_summary_json": "Synthetic input shape and dtype summary",
         "mask_summary_json": "Projection mask coverage summary",
         "observability_report_json": "Smoke observability placeholder report",

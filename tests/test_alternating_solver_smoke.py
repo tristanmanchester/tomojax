@@ -32,6 +32,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_artifact_index(result, expected)
     _assert_summary_rows(result)
     _assert_saved_volume(result)
+    _assert_truth_artifacts(result)
     _assert_input_arrays(result)
     _assert_manifest(result)
     _assert_gauge_reports(result)
@@ -80,10 +81,13 @@ def _expected_artifacts() -> set[str]:
         "failure_report_json",
         "final_volume_npy",
         "fista_trace_csv",
+        "geometry_corrupted_json",
         "gauge_policy_json",
         "gauge_report_json",
         "geometry_final_json",
         "geometry_initial_json",
+        "geometry_true_json",
+        "ground_truth_volume_npy",
         "input_summary_json",
         "mask_summary_json",
         "observability_report_json",
@@ -125,6 +129,25 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:
     saved_volume = cast("NDArray[np.float32]", np.load(result.artifacts["final_volume_npy"]))
     np.testing.assert_allclose(saved_volume, result.final_volume)
+
+
+def _assert_truth_artifacts(result: AlternatingSmokeResult) -> None:
+    truth = cast("NDArray[np.float32]", np.load(result.artifacts["ground_truth_volume_npy"]))
+    assert truth.shape == (32, 32, 32)
+    assert truth.dtype == np.float32
+
+    true_geometry = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["geometry_true_json"].read_text(encoding="utf-8")),
+    )
+    corrupted_geometry = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["geometry_corrupted_json"].read_text(encoding="utf-8")),
+    )
+    true_setup = cast("dict[str, dict[str, object]]", true_geometry["setup"])
+    corrupted_setup = cast("dict[str, dict[str, object]]", corrupted_geometry["setup"])
+    assert true_setup["det_u_px"]["value"] == 0.0
+    assert corrupted_setup["det_u_px"]["value"] == 0.0
 
 
 def _assert_input_arrays(result: AlternatingSmokeResult) -> None:

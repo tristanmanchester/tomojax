@@ -2861,3 +2861,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The smoke run now persists benchmark-style input arrays, but the full 128^3
   synthetic suite still lives in the dataset generator path and is not yet run
   end-to-end through Phase 7.
+
+## 2026-05-06 — Phase 7 Smoke Truth Provenance
+
+### Summary
+
+- Persisted `ground_truth_volume.npy` from the deterministic Phase 7 smoke run.
+- Added `geometry_true.json` and explicit `geometry_corrupted.json` alongside
+  the existing solver `geometry_initial.json`.
+- Added the new truth/corruption artifacts to `artifact_index.json` and focused
+  smoke tests.
+
+### Decisions
+
+- Kept `geometry_initial.json` as the solver initial state and added
+  `geometry_corrupted.json` to mirror the synthetic benchmark naming contract.
+- Used `GeometryState.zeros(n_views)` as the true uncorrupted smoke geometry.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- `geometry_corrupted.json` currently mirrors `geometry_initial.json`; future
+  production dataset ingestion may need separate supplied-vs-initial records.

@@ -12,15 +12,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: persist smoke input arrays and recovery tolerances with the Phase 7
-  deterministic run.
+- Goal: persist truth and corrupted-input provenance with the Phase 7
+  deterministic smoke run.
 
 ### Scope
 
 - In scope:
-  - Persist observed projections and mask arrays from the deterministic smoke
-    run.
-  - Emit a smoke `recovery_tolerances.json` artifact.
+  - Persist `ground_truth_volume.npy`.
+  - Emit `geometry_true.json` and explicit `geometry_corrupted.json`.
   - Add those artifacts to `artifact_index.json` and focused tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
@@ -36,12 +35,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Write projection and mask input arrays.
-- [x] Emit recovery tolerances.
+- [x] Write truth volume and true/corrupted geometry artifacts.
 - [x] Extend artifact index/test coverage.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the smoke input artifact slice.
+- [x] Commit the smoke truth provenance slice.
 
 ### Validation
 
@@ -60,12 +58,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use `.npy` arrays for smoke input artifacts, matching existing synthetic
-  dataset artifacts.
-- Keep recovery tolerances explicit and smoke-specific.
+- `geometry_initial.json` remains the alignment initial geometry; add
+  `geometry_corrupted.json` as the explicit synthetic corrupted-input name.
+- `geometry_true.json` should be the zero-gauge geometry used before synthetic
+  corruption.
 
 ### Risks
 
-- Risk: the Phase 7 smoke run is not yet a full 128^3 synthetic dataset.
-- Mitigation: persist the same core input artifact classes so the smoke run is
-  benchmark-auditable.
+- Risk: this does not replace the full synthetic dataset generator.
+- Mitigation: mirror the key artifact names from the benchmark contract in the
+  smoke run.
