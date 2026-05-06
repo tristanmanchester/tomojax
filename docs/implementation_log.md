@@ -5010,3 +5010,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This summary is benchmark metadata, not the top-level smoke verification
   result.
+
+## 2026-05-06 — Phase 8 Benchmark Result Artifact Validation
+
+### Summary
+
+- Extended `tomojax.verify.inspect_run_artifacts` to validate optional
+  `benchmark_result.json` when present.
+- The validator now checks the synthetic benchmark result schema and required
+  top-level sections, including criteria/evaluation payloads.
+- Added focused verifier coverage for a synthetic benchmark smoke run and a
+  deliberately malformed benchmark result.
+
+### Decisions
+
+- Benchmark result validation is optional; non-benchmark smoke runs remain valid
+  without `benchmark_result.json`.
+
+### Validation
+
+- `uv run ruff format src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_verify_artifacts.py -q`
+  passed: 3 tests.
+- `just imports` passed.
+
+### Risks
+
+- This validates benchmark result structure, not the semantic correctness of
+  every benchmark metric.

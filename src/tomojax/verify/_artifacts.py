@@ -84,6 +84,12 @@ def inspect_run_artifacts(run_dir: str | Path) -> ArtifactValidationReport:
     _validate_backend_report(payloads.get("backend_report.json"), issues)
     _validate_failure_report(payloads.get("failure_report.json"), issues)
     _validate_observability(payloads.get("observability_report.json"), issues)
+    benchmark_payload = _load_optional_json_object(
+        path / "benchmark_result.json",
+        "benchmark_result.json",
+        issues,
+    )
+    _validate_benchmark_result(benchmark_payload, issues)
     return ArtifactValidationReport(run_dir=path, issues=tuple(issues))
 
 
@@ -109,6 +115,16 @@ def _load_json_object(
         issues.append(ArtifactValidationIssue(artifact=artifact, reason="not a JSON object"))
         return None
     return cast("dict[str, object]", raw_payload)
+
+
+def _load_optional_json_object(
+    path: Path,
+    artifact: str,
+    issues: list[ArtifactValidationIssue],
+) -> dict[str, object] | None:
+    if not path.exists():
+        return None
+    return _load_json_object(path, artifact, issues)
 
 
 def _validate_artifact_index(
@@ -279,6 +295,41 @@ def _validate_failure_report(
         issues,
         artifact="failure_report.json",
         keys=("status", "failure", "failure_classes", "gates", "warnings"),
+    )
+
+
+def _validate_benchmark_result(
+    payload: dict[str, object] | None,
+    issues: list[ArtifactValidationIssue],
+) -> None:
+    if payload is None:
+        return
+    if payload.get("schema") != "tomojax.synthetic_benchmark_result.v1":
+        issues.append(
+            ArtifactValidationIssue(
+                artifact="benchmark_result.json",
+                reason="expected schema 'tomojax.synthetic_benchmark_result.v1'",
+            )
+        )
+    _append_missing_keys(
+        payload,
+        issues,
+        artifact="benchmark_result.json",
+        keys=(
+            "benchmark",
+            "implementation",
+            "profile",
+            "status",
+            "dataset",
+            "runtime",
+            "reconstruction",
+            "geometry_recovery",
+            "backend",
+            "failure_labels",
+            "benchmark_manifest_criteria",
+            "benchmark_manifest_evaluation",
+            "benchmark_manifest_evaluation_summary",
+        ),
     )
 
 

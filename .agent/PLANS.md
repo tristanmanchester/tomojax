@@ -12,16 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: add aggregate benchmark manifest criteria evaluation status to
-  smoke-run benchmark artifacts.
+- Goal: validate optional synthetic benchmark result artifacts in the run
+  artifact verifier.
 
 ### Scope
 
 - In scope:
-  - Summarise criteria evaluation counts by status.
-  - Add an aggregate report-only status.
-  - Render the aggregate status in `benchmark_report.md`.
-  - Add focused CLI assertions for the summary.
+  - Load optional `benchmark_result.json` when present.
+  - Validate its schema and required benchmark result sections.
+  - Add focused verifier coverage for a synthetic benchmark run.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -38,23 +37,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add criteria evaluation summary payload.
-- [x] Render criteria summary in markdown report.
-- [x] Add focused criteria-summary assertions.
+- [x] Add optional benchmark-result validation.
+- [x] Add focused verifier coverage for benchmark artifacts.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the benchmark criteria-summary slice.
+- [ ] Commit the benchmark verifier slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
-  passed: 2 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
-  passed: 7 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_verify_artifacts.py -q`
+  passed: 3 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -62,10 +60,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Criteria summary is report-only and must not change solver pass/fail behavior
-  in this slice.
+- Benchmark result validation is optional and only applies when the artifact is
+  present.
 
 ### Risks
 
-- Risk: aggregate status can be mistaken for the solver verification status.
-- Mitigation: label it as `benchmark_manifest_evaluation_summary`.
+- Risk: making benchmark artifacts mandatory would break non-benchmark smoke
+  runs.
+- Mitigation: load and validate `benchmark_result.json` only when it exists.
