@@ -2499,3 +2499,43 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The alternating solver currently uses gauge canonicalisation rather than the
   full Schur LM/GN geometry update; this is intentionally the smallest Phase 7
   vertical slice and leaves production escalation/continuation for follow-up.
+
+## 2026-05-06 — Phase 7 Smoke Artifact Contract Expansion
+
+### Summary
+
+- Expanded the deterministic 32^3 alternating smoke run to persist
+  `final_volume.npy`.
+- Added the core audit scaffold artifacts for the smoke profile:
+  `run_manifest.json`, `config_resolved.toml`, `input_summary.json`,
+  `projection_stats.json`, `mask_summary.json`, `gauge_report.json`,
+  `backend_report.json`, and `residual_metrics.csv`.
+- Updated `artifact_index.json` entries with artifact type, media type, and
+  descriptions, and extended smoke tests to verify the expanded contract.
+
+### Decisions
+
+- Kept the artifact writer local to `tomojax.align._alternating` for this
+  slice to avoid introducing a generic helper module before a second owner
+  needs it.
+- Used deterministic smoke-profile manifest values rather than wall-clock
+  timestamps so the smoke output remains reproducible.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_vertical_smoke.py -q`
+  passed: 5 tests.
+- `just imports` passed.
+
+### Risks
+
+- The smoke artifact scaffold is not yet the full production run schema from
+  `docs/tomojax-v2/06_verification_and_artifact_contract.md`; missing
+  production artifacts include observability/failure reports, preview slices,
+  residual maps, and CLI-run metadata.

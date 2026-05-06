@@ -21,6 +21,7 @@ from tomojax.align._continuation import (
 from tomojax.datasets import make_benchmark_phantom
 from tomojax.forward import project_parallel_reference, residual_loss
 from tomojax.geometry import (
+    GaugeReport,
     GeometryState,
     canonicalize_geometry_gauges,
     write_geometry_json,
@@ -92,6 +93,7 @@ def run_alternating_solver_smoke(
     mask = jnp.ones_like(observed, dtype=jnp.float32)
 
     geometry = initial_geometry
+    gauge_report = GaugeReport(())
     volume: jax.Array | None = None
     summaries: list[AlternatingLevelSummary] = []
     fista_result: ReferenceFISTAResult | None = None
@@ -116,7 +118,7 @@ def run_alternating_solver_smoke(
         loss_before = _projection_loss(volume, observed, geometry, mask, level)
         skipped_geometry = level.geometry_updates == 0
         if level.geometry_updates > 0:
-            geometry = _run_geometry_updates(geometry, level.geometry_updates)
+            geometry, gauge_report = _run_geometry_updates(geometry, level.geometry_updates)
         loss_after = _projection_loss(volume, observed, geometry, mask, level)
         verified = bool(loss_after <= loss_before + cfg.verification_loss_tolerance)
         coarse_verified = coarse_verified or (
@@ -143,6 +145,10 @@ def run_alternating_solver_smoke(
         out_dir,
         initial_geometry=initial_geometry,
         final_geometry=geometry,
+        final_volume=volume,
+        observed=observed,
+        mask=mask,
+        gauge_report=gauge_report,
         fista_result=fista_result,
         summaries=tuple(summaries),
         verification=_verification_payload(
@@ -178,11 +184,16 @@ def _synthetic_initial_geometry(n_views: int) -> GeometryState:
     )
 
 
-def _run_geometry_updates(geometry: GeometryState, updates: int) -> GeometryState:
+def _run_geometry_updates(
+    geometry: GeometryState, updates: int
+) -> tuple[GeometryState, GaugeReport]:
     updated = geometry
+    gauge_report = GaugeReport(())
     for _ in range(updates):
-        updated = canonicalize_geometry_gauges(updated).state
-    return updated
+        canonicalized = canonicalize_geometry_gauges(updated)
+        updated = canonicalized.state
+        gauge_report = canonicalized.report
+    return updated, gauge_report
 
 
 def _projection_loss(
@@ -245,26 +256,48 @@ def _write_artifacts(
     *,
     initial_geometry: GeometryState,
     final_geometry: GeometryState,
+    final_volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
+    gauge_report: GaugeReport,
     fista_result: ReferenceFISTAResult,
     summaries: tuple[AlternatingLevelSummary, ...],
     verification: Mapping[str, object],
 ) -> dict[str, Path]:
     artifacts = {
-        "geometry_initial_json": output_dir / "geometry_initial.json",
-        "geometry_final_json": output_dir / "geometry_final.json",
-        "pose_params_csv": output_dir / "pose_params.csv",
-        "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
-        "fista_trace_csv": output_dir / "fista_trace.csv",
         "alignment_summary_csv": output_dir / "alignment_summary.csv",
-        "verification_json": output_dir / "verification.json",
         "artifact_index_json": output_dir / "artifact_index.json",
+        "backend_report_json": output_dir / "backend_report.json",
+        "config_resolved_toml": output_dir / "config_resolved.toml",
+        "final_volume_npy": output_dir / "final_volume.npy",
+        "fista_trace_csv": output_dir / "fista_trace.csv",
+        "gauge_report_json": output_dir / "gauge_report.json",
+        "geometry_final_json": output_dir / "geometry_final.json",
+        "geometry_initial_json": output_dir / "geometry_initial.json",
+        "input_summary_json": output_dir / "input_summary.json",
+        "mask_summary_json": output_dir / "mask_summary.json",
+        "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
+        "pose_params_csv": output_dir / "pose_params.csv",
+        "projection_stats_json": output_dir / "projection_stats.json",
+        "residual_metrics_csv": output_dir / "residual_metrics.csv",
+        "run_manifest_json": output_dir / "run_manifest.json",
+        "verification_json": output_dir / "verification.json",
     }
+    _write_config_resolved(artifacts["config_resolved_toml"])
+    _write_json(artifacts["run_manifest_json"], _run_manifest_payload(final_volume, observed))
+    _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
+    _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
+    _write_json(artifacts["mask_summary_json"], _mask_summary_payload(mask))
+    _write_json(artifacts["gauge_report_json"], _gauge_report_payload(gauge_report))
+    _write_json(artifacts["backend_report_json"], _backend_report_payload())
+    _write_final_volume(artifacts["final_volume_npy"], final_volume)
     write_geometry_json(artifacts["geometry_initial_json"], initial_geometry)
     write_geometry_json(artifacts["geometry_final_json"], final_geometry)
     write_pose_params_csv(artifacts["pose_params_csv"], final_geometry.pose)
     write_pose_decomposition_csv(artifacts["pose_decomposition_csv"], final_geometry)
     _ = write_fista_trace_csv(fista_result, artifacts["fista_trace_csv"])
     _write_alignment_summary(artifacts["alignment_summary_csv"], summaries)
+    _write_residual_metrics(artifacts["residual_metrics_csv"], summaries)
     _write_json(artifacts["verification_json"], verification)
     _write_json(artifacts["artifact_index_json"], _artifact_index_payload(artifacts))
     return artifacts
@@ -293,6 +326,34 @@ def _write_alignment_summary(
             writer.writerow(_summary_payload(summary))
 
 
+def _write_residual_metrics(
+    path: Path,
+    summaries: tuple[AlternatingLevelSummary, ...],
+) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "level_factor",
+                "role",
+                "loss_before",
+                "loss_after",
+                "absolute_improvement",
+            ],
+        )
+        writer.writeheader()
+        for summary in summaries:
+            writer.writerow(
+                {
+                    "level_factor": summary.level_factor,
+                    "role": summary.role,
+                    "loss_before": summary.loss_before,
+                    "loss_after": summary.loss_after,
+                    "absolute_improvement": summary.loss_before - summary.loss_after,
+                }
+            )
+
+
 def _artifact_index_payload(artifacts: Mapping[str, Path]) -> dict[str, object]:
     return {
         "schema": "tomojax.artifact_index.v1",
@@ -300,7 +361,9 @@ def _artifact_index_payload(artifacts: Mapping[str, Path]) -> dict[str, object]:
             {
                 "name": name,
                 "path": path.name,
+                "type": _artifact_type(path),
                 "media_type": _media_type(path),
+                "description": _artifact_description(name),
             }
             for name, path in sorted(artifacts.items())
             if name != "artifact_index_json"
@@ -308,12 +371,148 @@ def _artifact_index_payload(artifacts: Mapping[str, Path]) -> dict[str, object]:
     }
 
 
+def _artifact_type(path: Path) -> str:
+    if path.suffix == ".json":
+        return "json"
+    if path.suffix == ".csv":
+        return "csv"
+    if path.suffix == ".toml":
+        return "toml"
+    if path.suffix == ".npy":
+        return "npy"
+    return "binary"
+
+
 def _media_type(path: Path) -> str:
     if path.suffix == ".json":
         return "application/json"
     if path.suffix == ".csv":
         return "text/csv"
+    if path.suffix == ".toml":
+        return "application/toml"
     return "application/octet-stream"
+
+
+def _artifact_description(name: str) -> str:
+    descriptions = {
+        "alignment_summary_csv": "Per-continuation-level alignment summary",
+        "backend_report_json": "Backend provenance for the smoke run",
+        "config_resolved_toml": "Resolved deterministic smoke configuration",
+        "final_volume_npy": "Final reconstructed 32^3 volume",
+        "fista_trace_csv": "Reference FISTA iteration trace",
+        "gauge_report_json": "Gauge canonicalisation transfer report",
+        "geometry_final_json": "Final canonical geometry state",
+        "geometry_initial_json": "Initial corrupted geometry state",
+        "input_summary_json": "Synthetic input shape and dtype summary",
+        "mask_summary_json": "Projection mask coverage summary",
+        "pose_decomposition_csv": "Final realised per-view pose decomposition",
+        "pose_params_csv": "Final per-view pose parameters",
+        "projection_stats_json": "Observed projection summary statistics",
+        "residual_metrics_csv": "Per-level residual metrics",
+        "run_manifest_json": "Resolved smoke run manifest",
+        "verification_json": "Smoke verification report",
+    }
+    return descriptions[name]
+
+
+def _write_config_resolved(path: Path) -> None:
+    _ = path.write_text(
+        "\n".join(
+            (
+                'profile = "smoke32"',
+                'align_mode = "auto"',
+                'backend_requested = "jax_reference"',
+                'backend_actual = "jax_reference"',
+                'geometry_model = "parallel_tomography_reference"',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_final_volume(path: Path, volume: jax.Array) -> None:
+    with path.open("wb") as handle:
+        np.save(handle, np.asarray(jax.device_get(volume), dtype=np.float32), allow_pickle=False)
+
+
+def _run_manifest_payload(volume: jax.Array, projections: jax.Array) -> dict[str, object]:
+    return {
+        "schema": "tomojax.run_manifest.v1",
+        "run_id": "smoke32-deterministic",
+        "profile": "smoke32",
+        "align_mode": "auto",
+        "dataset": {
+            "source": "tomojax.datasets.make_benchmark_phantom",
+            "shape": list(volume.shape),
+            "projection_shape": list(projections.shape),
+            "projection_dtype": str(projections.dtype),
+        },
+        "geometry_model": "parallel_tomography_reference",
+        "backend_requested": "jax_reference",
+        "backend_actual": "jax_reference",
+        "status": "passed",
+    }
+
+
+def _input_summary_payload(volume: jax.Array, projections: jax.Array) -> dict[str, object]:
+    return {
+        "schema": "tomojax.input_summary.v1",
+        "volume_shape": list(volume.shape),
+        "volume_dtype": str(volume.dtype),
+        "projection_shape": list(projections.shape),
+        "projection_dtype": str(projections.dtype),
+    }
+
+
+def _projection_stats_payload(projections: jax.Array) -> dict[str, object]:
+    values = jnp.asarray(projections, dtype=jnp.float32)
+    return {
+        "schema": "tomojax.projection_stats.v1",
+        "min": float(jnp.min(values)),
+        "max": float(jnp.max(values)),
+        "mean": float(jnp.mean(values)),
+        "std": float(jnp.std(values)),
+    }
+
+
+def _mask_summary_payload(mask: jax.Array) -> dict[str, object]:
+    values = jnp.asarray(mask, dtype=jnp.float32)
+    total = int(values.size)
+    valid = int(jnp.sum(values > 0.0))
+    return {
+        "schema": "tomojax.mask_summary.v1",
+        "valid_pixels": valid,
+        "total_pixels": total,
+        "valid_fraction": float(valid / total),
+    }
+
+
+def _gauge_report_payload(report: GaugeReport) -> dict[str, object]:
+    return {
+        "schema": "tomojax.gauge_report.v1",
+        "status": "passed",
+        "operations": [
+            {
+                "source": transfer.source,
+                "target": transfer.target,
+                "value": transfer.value,
+                "unit": transfer.unit,
+                "applied": transfer.applied,
+                "reason": transfer.reason,
+            }
+            for transfer in report.transfers
+        ],
+    }
+
+
+def _backend_report_payload() -> dict[str, object]:
+    return {
+        "schema": "tomojax.backend_report.v1",
+        "requested": "jax_reference",
+        "actual": "jax_reference",
+        "fallback": False,
+    }
 
 
 def _write_json(path: Path, payload: Mapping[str, object]) -> None:
