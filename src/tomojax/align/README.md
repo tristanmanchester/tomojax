@@ -53,8 +53,8 @@ Forbidden dependencies:
 - `solve_pose_only_lm` currently optimises `phi_residual_rad`, `dx_px`, and
   `dz_px`; `alpha_rad` and `beta_rad` are frozen until the reference projector
   supports out-of-plane pose effects.
-- `solve_setup_only_lm` currently optimises only `det_u_px` and active
-  `det_v_px`; roll, axis rotation, and theta setup terms remain frozen until
+- `solve_setup_only_lm` currently optimises `theta_offset_rad`, `det_u_px`, and
+  active `det_v_px`; roll, axis rotation, and theta scale remain frozen until
   the reference projector models them.
 
 ## Tests

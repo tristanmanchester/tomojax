@@ -42,11 +42,11 @@ def solve_setup_only_lm(
     mask: jax.Array | None = None,
     config: SetupOnlyLMConfig | None = None,
 ) -> SetupOnlyLMResult:
-    """Solve supported setup detector-shift parameters with damped GN/LM."""
+    """Solve supported setup parameters with damped GN/LM."""
     cfg = config or SetupOnlyLMConfig()
     vol = jnp.asarray(volume, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
+    phi_pose = jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
     pose_dx = jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32)
     pose_dz = jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32)
     params = _pack_setup(geometry)
@@ -58,7 +58,7 @@ def solve_setup_only_lm(
         residual = _residual_for_params(
             vol,
             obs,
-            theta,
+            phi_pose,
             pose_dx,
             pose_dz,
             geometry,
@@ -75,7 +75,7 @@ def solve_setup_only_lm(
             raw = _residual_for_params(
                 vol,
                 obs,
-                theta,
+                phi_pose,
                 pose_dx,
                 pose_dz,
                 geometry,
@@ -121,24 +121,23 @@ def solve_setup_only_lm(
 
 def _active_parameters(geometry: GeometryState) -> tuple[str, ...]:
     if geometry.setup.det_v_px.active:
-        return ("det_u_px", "det_v_px")
-    return ("det_u_px",)
+        return ("theta_offset_rad", "det_u_px", "det_v_px")
+    return ("theta_offset_rad", "det_u_px")
 
 
 def _frozen_parameters(active: tuple[str, ...]) -> tuple[str, ...]:
-    all_supported = ("det_u_px", "det_v_px")
+    all_supported = ("theta_offset_rad", "det_u_px", "det_v_px")
     unsupported = (
         "detector_roll_rad",
         "axis_rot_x_rad",
         "axis_rot_y_rad",
-        "theta_offset_rad",
         "theta_scale",
     )
     return tuple(name for name in (*all_supported, *unsupported) if name not in active)
 
 
 def _pack_setup(geometry: GeometryState) -> jax.Array:
-    values = [geometry.setup.det_u_px.value]
+    values = [geometry.setup.theta_offset_rad.value, geometry.setup.det_u_px.value]
     if geometry.setup.det_v_px.active:
         values.append(geometry.setup.det_v_px.value)
     return jnp.asarray(values, dtype=jnp.float32)
@@ -146,27 +145,34 @@ def _pack_setup(geometry: GeometryState) -> jax.Array:
 
 def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> GeometryState:
     setup = geometry.setup.replace_parameter(
+        "theta_offset_rad",
+        geometry.setup.theta_offset_rad.with_value(float(params[0])),
+    )
+    setup = setup.replace_parameter(
         "det_u_px",
-        geometry.setup.det_u_px.with_value(float(params[0])),
+        geometry.setup.det_u_px.with_value(float(params[1])),
     )
     if geometry.setup.det_v_px.active:
         setup = setup.replace_parameter(
             "det_v_px",
-            geometry.setup.det_v_px.with_value(float(params[1])),
+            geometry.setup.det_v_px.with_value(float(params[2])),
         )
     return GeometryState(setup=setup, pose=geometry.pose)
 
 
-def _setup_shifts(geometry: GeometryState, params: jax.Array) -> tuple[jax.Array, jax.Array]:
-    det_u = params[0]
-    det_v = params[1] if geometry.setup.det_v_px.active else jnp.asarray(0.0, dtype=jnp.float32)
-    return det_u, det_v
+def _setup_values(
+    geometry: GeometryState, params: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    theta_offset = params[0]
+    det_u = params[1]
+    det_v = params[2] if geometry.setup.det_v_px.active else jnp.asarray(0.0, dtype=jnp.float32)
+    return theta_offset, det_u, det_v
 
 
 def _residual_for_params(
     volume: jax.Array,
     observed: jax.Array,
-    theta: jax.Array,
+    phi_pose: jax.Array,
     pose_dx: jax.Array,
     pose_dz: jax.Array,
     geometry: GeometryState,
@@ -175,10 +181,10 @@ def _residual_for_params(
     mask: jax.Array | None,
     sigma: float,
 ) -> jax.Array:
-    det_u, det_v = _setup_shifts(geometry, params)
+    theta_offset, det_u, det_v = _setup_values(geometry, params)
     predicted = project_parallel_reference_arrays(
         volume,
-        theta_rad=theta,
+        theta_rad=theta_offset + phi_pose,
         dx_px=det_u + pose_dx,
         dz_px=det_v + pose_dz,
     )
@@ -197,8 +203,8 @@ def _loss_for_params(
     mask: jax.Array | None,
     cfg: SetupOnlyLMConfig,
 ) -> jax.Array:
-    det_u, det_v = _setup_shifts(geometry, params)
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
+    theta_offset, det_u, det_v = _setup_values(geometry, params)
+    theta = theta_offset + jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,

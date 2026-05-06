@@ -1061,3 +1061,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - Pose-only LM is still not the full 5-DOF solver until alpha/beta effects and
   trust-region mechanics are implemented.
+
+## 2026-05-06 — Add Theta Offset To Setup-Only LM
+
+### Summary
+
+- Extended `tomojax.align.solve_setup_only_lm` to optimise global
+  `theta_offset_rad` along with `det_u_px` and active `det_v_px`.
+- Kept detector roll, axis rotations, and theta scale frozen because the
+  reference projector does not yet model those setup effects.
+- Added deterministic theta-offset recovery tests on the asymmetric theta
+  fixture.
+- Updated the `tomojax.align` README to reflect the active/frozen setup
+  parameters.
+
+### Decisions
+
+- Reused the existing finite-difference damped LM normal equation for the
+  expanded setup vector.
+- Setup-only LM keeps pose fixed, so `theta_offset_rad` and per-view
+  `phi_residual_rad` remain separable by the existing gauge policy after the
+  solve.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_setup_lm.py tests/test_setup_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_setup_lm.py tests/test_setup_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_setup_lm.py tests/test_setup_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_setup_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py -q`
+  passed: 21 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
+  passed: 144 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Setup-only LM is still incomplete until detector roll, axis rotations,
+  observability diagnostics, and trust-region mechanics are implemented.
