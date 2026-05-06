@@ -340,6 +340,7 @@ def _run_alternating_solver_smoke_impl(
             final_loss=final_loss,
             coarse_verified=coarse_verified,
             true_geometry=true_geometry,
+            initial_geometry=initial_geometry,
             final_geometry=geometry,
             truth_volume=truth,
             final_volume=volume,
@@ -653,6 +654,7 @@ def _verification_payload(
     final_loss: float,
     coarse_verified: bool,
     true_geometry: GeometryState,
+    initial_geometry: GeometryState,
     final_geometry: GeometryState,
     truth_volume: jax.Array,
     final_volume: jax.Array,
@@ -661,7 +663,7 @@ def _verification_payload(
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
 ) -> dict[str, object]:
-    geometry_recovery = _geometry_recovery_payload(true_geometry, final_geometry)
+    geometry_recovery = _geometry_recovery_payload(true_geometry, initial_geometry, final_geometry)
     volume_recovery = _volume_recovery_payload(truth_volume, final_volume)
     level1_geometry_skipped = _level1_geometry_skipped(summaries)
     all_levels_verified = all(summary.verified for summary in summaries)
@@ -753,6 +755,7 @@ def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object]
 
 def _geometry_recovery_payload(
     true_geometry: GeometryState,
+    initial_geometry: GeometryState,
     final_geometry: GeometryState,
 ) -> dict[str, object]:
     raw_tolerances = _recovery_tolerances_payload()["geometry"]
@@ -760,13 +763,21 @@ def _geometry_recovery_payload(
         raise TypeError("geometry recovery tolerances must be a mapping")
     tolerances = cast("dict[str, float]", raw_tolerances)
     final_theta = final_geometry.setup.theta_offset_rad.value + final_geometry.pose.phi_residual_rad
+    initial_theta = (
+        initial_geometry.setup.theta_offset_rad.value + initial_geometry.pose.phi_residual_rad
+    )
     true_theta = true_geometry.setup.theta_offset_rad.value + true_geometry.pose.phi_residual_rad
     final_u = final_geometry.setup.det_u_px.value + final_geometry.pose.dx_px
+    initial_u = initial_geometry.setup.det_u_px.value + initial_geometry.pose.dx_px
     true_u = true_geometry.setup.det_u_px.value + true_geometry.pose.dx_px
     final_v = final_geometry.setup.det_v_px.value + final_geometry.pose.dz_px
+    initial_v = initial_geometry.setup.det_v_px.value + initial_geometry.pose.dz_px
     true_v = true_geometry.setup.det_v_px.value + true_geometry.pose.dz_px
+    initial_theta_rmse = float(np.sqrt(np.mean((initial_theta - true_theta) ** 2)))
     theta_rmse = float(np.sqrt(np.mean((final_theta - true_theta) ** 2)))
+    initial_det_u_rmse = float(np.sqrt(np.mean((initial_u - true_u) ** 2)))
     det_u_rmse = float(np.sqrt(np.mean((final_u - true_u) ** 2)))
+    initial_det_v_rmse = float(np.sqrt(np.mean((initial_v - true_v) ** 2)))
     det_v_rmse = float(np.sqrt(np.mean((final_v - true_v) ** 2)))
     mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px)))
     mean_phi_abs = abs(float(np.mean(final_geometry.pose.phi_residual_rad)))
@@ -783,14 +794,23 @@ def _geometry_recovery_payload(
         and mean_phi_abs <= gauge_limit
         and mean_dz_abs <= gauge_limit
     )
+    theta_improved = bool(theta_rmse < initial_theta_rmse)
+    det_u_improved = bool(det_u_rmse < initial_det_u_rmse)
+    det_v_improved = bool(det_v_rmse < initial_det_v_rmse)
     return {
+        "initial_theta_realized_rmse_rad": initial_theta_rmse,
         "theta_realized_rmse_rad": theta_rmse,
+        "theta_realized_rmse_rad_improved": theta_improved,
         "theta_realized_rmse_rad_passed": theta_rmse <= theta_limit,
         "theta_realized_rmse_rad_limit": theta_limit,
+        "initial_det_u_realized_rmse_px": initial_det_u_rmse,
         "det_u_realized_rmse_px": det_u_rmse,
+        "det_u_realized_rmse_px_improved": det_u_improved,
         "det_u_realized_rmse_px_passed": det_u_rmse <= det_u_limit,
         "det_u_realized_rmse_px_limit": det_u_limit,
+        "initial_det_v_realized_rmse_px": initial_det_v_rmse,
         "det_v_realized_rmse_px": det_v_rmse,
+        "det_v_realized_rmse_px_improved": det_v_improved,
         "det_v_realized_rmse_px_passed": det_v_rmse <= det_v_limit,
         "det_v_realized_rmse_px_limit": det_v_limit,
         "mean_dx_abs_px": mean_dx_abs,
@@ -802,6 +822,7 @@ def _geometry_recovery_payload(
         "mean_dz_abs_px": mean_dz_abs,
         "mean_dz_abs_px_passed": mean_dz_abs <= gauge_limit,
         "mean_dz_abs_px_limit": gauge_limit,
+        "supported_dofs_improved": theta_improved and det_u_improved and det_v_improved,
         "passed": passed,
     }
 

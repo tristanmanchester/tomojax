@@ -4089,3 +4089,43 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The current default smoke has no background drift; opt-in plumbing is covered,
   but benchmark ingestion still needs to exercise the toggle with
   nuisance-bearing data.
+
+## 2026-05-06 — Phase 7 Schur Recovery Evidence In Smoke
+
+### Summary
+
+- Extended the deterministic 32^3 smoke verification payload with
+  corrupted-initial versus final supported DOF recovery metrics.
+- Recorded per-DOF improvement flags for realized theta, detector-u, and
+  detector-v after gauge canonicalisation.
+- Added a focused smoke test that runs the existing joint Schur LM geometry
+  update with the fixed synthetic truth volume source and verifies:
+  projection residual improvement, accepted Schur diagnostics, geometry trace
+  reduction fields, and supported DOF recovery from the corrupted geometry.
+
+### Decisions
+
+- Kept the default smoke geometry-update source as `stopped_reconstruction`.
+  The fixed-truth source is used only as the focused vertical-slice assertion
+  that isolates the Schur update mechanics from the current tiny-volume
+  reconstruction quality.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 10 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 5 tests.
+- `just imports` passed.
+
+### Risks
+
+- The stopped-reconstruction default still limits geometry-recovery tightness.
+  The verification payload now exposes that separately from the fixed-truth
+  Schur recovery assertion.

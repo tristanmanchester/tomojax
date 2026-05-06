@@ -88,6 +88,9 @@ def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
     assert thresholds["parameter_update_tolerance"] == 2.0
     assert thresholds["heldout_residual_tolerance"] == 1.0e-5
     recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
+    assert cast("float", recovery["initial_theta_realized_rmse_rad"]) > 0.0
+    assert cast("float", recovery["initial_det_u_realized_rmse_px"]) > 0.0
+    assert cast("float", recovery["initial_det_v_realized_rmse_px"]) > 0.0
     assert recovery["passed"] is True
     assert cast("float", recovery["theta_realized_rmse_rad"]) <= cast(
         "float", recovery["theta_realized_rmse_rad_limit"]
@@ -572,6 +575,45 @@ def test_alternating_smoke_can_enable_background_nuisance(tmp_path: Path) -> Non
     )
     diagnostics = cast("dict[str, object]", schur["diagnostics"])
     assert diagnostics["background_offset_fit"] is True
+
+
+def test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume(
+    tmp_path: Path,
+) -> None:
+    result = run_alternating_solver_smoke(
+        tmp_path,
+        config=AlternatingSmokeConfig(
+            schedule=reference_continuation_schedule("lightning"),
+            geometry_update_volume_source="fixed_synthetic_truth",
+        ),
+    )
+
+    recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
+    assert recovery["supported_dofs_improved"] is True
+    assert recovery["theta_realized_rmse_rad_improved"] is True
+    assert recovery["det_u_realized_rmse_px_improved"] is True
+    assert recovery["det_v_realized_rmse_px_improved"] is True
+    assert cast("float", recovery["theta_realized_rmse_rad"]) < cast(
+        "float", recovery["initial_theta_realized_rmse_rad"]
+    )
+    assert cast("float", recovery["det_u_realized_rmse_px"]) < cast(
+        "float", recovery["initial_det_u_realized_rmse_px"]
+    )
+    assert cast("float", recovery["det_v_realized_rmse_px"]) < cast(
+        "float", recovery["initial_det_v_realized_rmse_px"]
+    )
+    assert result.levels[0].schur_diagnostics is not None
+    assert result.levels[0].schur_diagnostics.accepted is True
+    assert result.levels[0].schur_diagnostics.actual_reduction > 0.0
+    schur = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["schur_diagnostics_json"].read_text(encoding="utf-8")),
+    )
+    assert schur["status"] == "passed"
+    with result.artifacts["geometry_trace_csv"].open("r", newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows[0]["schur_accepted"] == "True"
+    assert float(rows[0]["schur_actual_reduction"]) > 0.0
 
 
 def test_residual_structure_summary_flags_column_nuisance() -> None:
