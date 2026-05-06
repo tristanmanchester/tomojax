@@ -11,21 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Nuisance models and weak DOF handling
-- Goal: surface synthetic sidecar consistency in the smoke failure report.
+- Phase: Phase 7 alternating solver and continuation vertical slice
+- Goal: split the alternating smoke implementation into cohesive private
+  align-owned modules before adding synthetic benchmark ingestion.
 
 ### Scope
 
 - In scope:
-  - Add a warning-only `synthetic_sidecar_consistency` failure-report gate.
-  - Pass the gate when no synthetic sidecar is present.
-  - Use the loader consistency payload when a synthetic sidecar is present.
-  - Add focused smoke/CLI assertions.
+  - Preserve the public `tomojax.align` API for alternating smoke types and
+    runner entrypoints.
+  - Split `src/tomojax/align/_alternating.py` into private modules for smoke
+    config/result helpers, held-out checks, verification/report payloads,
+    artifact writing, and orchestration.
+  - Keep cross-file imports inside the `tomojax.align` private boundary.
+  - Run focused smoke/CLI tests and `just imports`.
 - Out of scope:
-  - Alternating solver ingestion of generated benchmark projections.
+  - Synthetic benchmark ingestion beyond preserving existing sidecar readback
+    behavior.
   - Stripe/ring bias fields.
-  - Changing align-auto defaults.
-  - Removing existing manifest-spec geometry artifacts.
+  - Changing solver behavior.
   - Further legacy Ruff cleanup.
 - Deep module owner: `tomojax.align`.
 
@@ -33,23 +37,27 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
 - `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
+- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 - `docs/tomojax-v2/07_synthetic_generator_pseudocode.md`
 
 ### Tasks
 
-- [x] Add synthetic sidecar consistency gate.
-- [x] Add focused smoke/CLI assertions.
+- [x] Move smoke config/result dataclasses to a private align module.
+- [x] Move held-out residual checks to a private align module.
+- [x] Move verification/report payload builders to a private align module.
+- [x] Move artifact writing to a private align module.
+- [x] Leave `_alternating.py` as orchestration plus solver loop.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the failure-report sidecar gate slice.
+- [ ] Commit the align-module split slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
-  passed: 3 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
+  passed: 5 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
   passed.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
   passed: 14 tests.
@@ -60,11 +68,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep this warning-only and provenance-oriented; do not fail the smoke run on
-  sidecar metadata in this slice.
+- This is a structural cleanup only. Do not change solver behavior in this
+  slice.
 
 ### Risks
 
-- Risk: the gate can be mistaken for solver validation of generated
-  projections.
-- Mitigation: evidence names the sidecar readback path and remains warning-only.
+- Risk: moving private functions can accidentally widen public API or introduce
+  cross-boundary private imports.
+- Mitigation: only import private modules from inside `tomojax.align`; validate
+  with focused tests and `just imports`.

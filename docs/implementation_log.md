@@ -4527,3 +4527,43 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This validates structural sidecar readback reporting only. Real generated
   projection ingestion and geometry recovery remain separate work.
+
+## 2026-05-06 — Align Alternating Module Split
+
+### Summary
+
+- Split the 32^3 alternating smoke implementation into cohesive private
+  `tomojax.align` modules:
+  - `_alternating_types.py` for smoke config/result dataclasses.
+  - `_alternating_heldout.py` for held-out residual masks and checks.
+  - `_alternating_verification.py` for verification and report payloads.
+  - `_alternating_artifacts.py` for artifact writing.
+- Kept `_alternating.py` focused on orchestration, synthetic geometry setup, and
+  Schur/FISTA loop control.
+- Preserved the public `tomojax.align.api` imports and existing smoke/CLI
+  behavior.
+
+### Decisions
+
+- Kept sibling implementation imports inside the private `tomojax.align`
+  boundary instead of adding a public helper surface.
+- Used scoped Pyright private-implementation suppressions on the split files so
+  private sibling modules can call each other without exporting these helpers as
+  public API.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
+  passed: 5 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 14 tests.
+- `just imports` passed.
+
+### Risks
+
+- This is a structural split only. Synthetic benchmark projection ingestion and
+  stronger real-geometry recovery checks remain next.
