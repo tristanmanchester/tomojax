@@ -577,6 +577,7 @@ def _write_artifacts(
         "mask_summary_json": output_dir / "mask_summary.json",
         "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
         "pose_params_csv": output_dir / "pose_params.csv",
+        "plots_summary_json": output_dir / "plots" / "summary.json",
         "observability_report_json": output_dir / "observability_report.json",
         "observed_projections_npy": output_dir / "observed_projections.npy",
         "preview_error_slice_npy": output_dir / "preview_slices" / "central_z_error.npy",
@@ -636,6 +637,10 @@ def _write_artifacts(
     _ = write_fista_trace_csv(fista_result, artifacts["fista_trace_csv"])
     _write_alignment_summary(artifacts["alignment_summary_csv"], summaries)
     _write_geometry_trace(artifacts["geometry_trace_csv"], summaries)
+    _write_json(
+        artifacts["plots_summary_json"],
+        _plots_summary_payload(fista_result=fista_result, summaries=summaries),
+    )
     _write_residual_map_artifacts(
         artifacts["residual_map_raw_npy"],
         artifacts["residual_map_summary_json"],
@@ -733,6 +738,39 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                     "early_exit_reason": summary.early_exit_reason,
                 }
             )
+
+
+def _plots_summary_payload(
+    *,
+    fista_result: ReferenceFISTAResult,
+    summaries: tuple[AlternatingLevelSummary, ...],
+) -> dict[str, object]:
+    return {
+        "schema": "tomojax.plots_summary.v1",
+        "rendered": False,
+        "reason": "smoke run stores plot-ready numeric traces without rendering dependencies",
+        "fista_loss": [
+            {
+                "iteration": row.iteration,
+                "loss": row.loss,
+                "data_loss": row.data_loss,
+                "regulariser": row.regulariser,
+            }
+            for row in fista_result.trace
+        ],
+        "geometry_loss": [
+            {
+                "level_factor": summary.level_factor,
+                "role": summary.role,
+                "loss_before": summary.loss_before,
+                "loss_after": summary.loss_after,
+                "loss_delta": summary.loss_after - summary.loss_before,
+                "skipped_level": summary.skipped_level,
+                "skipped_geometry": summary.skipped_geometry,
+            }
+            for summary in summaries
+        ],
+    }
 
 
 def _write_residual_metrics(
@@ -972,6 +1010,7 @@ def _artifact_description(name: str) -> str:
         "mask_summary_json": "Projection mask coverage summary",
         "observability_report_json": "Smoke observability placeholder report",
         "observed_projections_npy": "Observed synthetic smoke projections",
+        "plots_summary_json": "Plot-ready convergence summary",
         "pose_decomposition_csv": "Final realised per-view pose decomposition",
         "pose_params_csv": "Final per-view pose parameters",
         "preview_error_slice_npy": "Central final-minus-truth preview slice",

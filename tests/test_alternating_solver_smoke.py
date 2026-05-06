@@ -32,6 +32,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_artifact_index(result, expected)
     _assert_summary_rows(result)
     _assert_geometry_trace(result)
+    _assert_plots_summary(result)
     _assert_saved_volume(result)
     _assert_truth_artifacts(result)
     _assert_input_arrays(result)
@@ -123,6 +124,7 @@ def _expected_artifacts() -> set[str]:
         "mask_summary_json",
         "observability_report_json",
         "observed_projections_npy",
+        "plots_summary_json",
         "pose_decomposition_csv",
         "pose_params_csv",
         "preview_error_slice_npy",
@@ -154,6 +156,7 @@ def _assert_artifact_index(result: AlternatingSmokeResult, expected: set[str]) -
     assert indexed_paths["preview_final_slice_npy"] == "preview_slices/central_z_final.npy"
     assert indexed_paths["preview_summary_json"] == "preview_slices/summary.json"
     assert indexed_paths["preview_truth_slice_npy"] == "preview_slices/central_z_truth.npy"
+    assert indexed_paths["plots_summary_json"] == "plots/summary.json"
     assert indexed_paths["residual_map_raw_npy"] == "residual_maps/final_raw_residual.npy"
     assert indexed_paths["residual_map_summary_json"] == "residual_maps/summary.json"
 
@@ -181,6 +184,19 @@ def _assert_geometry_trace(result: AlternatingSmokeResult) -> None:
     assert rows[1]["skipped_level"] == "True"
     assert rows[2]["skipped_geometry"] == "True"
     assert rows[2]["early_exit_reason"] == "coarse_verification_passed"
+
+
+def _assert_plots_summary(result: AlternatingSmokeResult) -> None:
+    payload = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["plots_summary_json"].read_text(encoding="utf-8")),
+    )
+    assert payload["schema"] == "tomojax.plots_summary.v1"
+    assert payload["rendered"] is False
+    fista_loss = cast("list[dict[str, object]]", payload["fista_loss"])
+    geometry_loss = cast("list[dict[str, object]]", payload["geometry_loss"])
+    assert fista_loss[0]["iteration"] == 0
+    assert [row["level_factor"] for row in geometry_loss] == [4, 2, 1]
 
 
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:

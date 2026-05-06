@@ -3315,3 +3315,37 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Production elapsed-time accounting is still absent from the deterministic
   smoke manifest.
+
+## 2026-05-06 — Phase 7 Plot Summary Artifact
+
+### Summary
+
+- Added `plots/summary.json` to the deterministic Phase 7 smoke artifact
+  bundle.
+- Recorded plot-ready FISTA loss and per-level geometry loss traces without
+  adding rendering dependencies.
+- Indexed the nested plots artifact and extended smoke tests to verify the
+  artifact path and basic trace content.
+
+### Decisions
+
+- Stored numeric plot inputs first rather than rendered PNG/SVG files.
+- Kept rendering out of the smoke path so the focused checks remain fast and
+  deterministic.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- No rendered plot images are emitted yet; this is intentionally paused now in
+  favor of the real Schur-in-the-loop alignment update.

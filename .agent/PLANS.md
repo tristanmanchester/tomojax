@@ -12,15 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: expand the Phase 7 smoke run manifest toward the artifact contract.
+- Goal: add deterministic plot-summary artifacts for the Phase 7 smoke bundle.
 
 ### Scope
 
 - In scope:
-  - Add version, git commit, started/finished timestamps, backend requested,
-    and geometry model details to `run_manifest.json`.
-  - Keep the manifest deterministic where practical for smoke tests.
-  - Extend smoke and artifact-validation tests.
+  - Add a `plots/summary.json` artifact with convergence values suitable for
+    later rendering.
+  - Include FISTA loss trace and per-level geometry loss trace summaries.
+  - Index the nested plots artifact and extend focused smoke tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -35,11 +35,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Expand run manifest payload.
-- [x] Extend smoke and validator tests.
+- [x] Add nested plots summary artifact path.
+- [x] Write deterministic convergence summary payload.
+- [x] Extend smoke artifact/index tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the run manifest contract slice.
+- [x] Commit the plots summary slice.
 
 ### Validation
 
@@ -58,11 +59,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use deterministic timestamp placeholders for the smoke path, while recording
-  the current git commit when available.
+- Store numeric plot-ready data first; leave PNG/SVG rendering for a later
+  reporting/UI pass.
 
 ### Risks
 
-- Risk: runtime timestamps are not measured in this smoke manifest.
-- Mitigation: keep deterministic placeholders and add real timing when the
-  production command owns run orchestration.
+- Risk: no rendered plot images are emitted yet.
+- Mitigation: persist the deterministic data needed to render convergence plots
+  without adding plotting dependencies to the smoke path.
