@@ -29,6 +29,8 @@ def _run_geometry_updates(
     updates: int,
     *,
     sigma: float,
+    setup_prior_strength: float | None,
+    pose_prior_strength: float | None,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
@@ -45,6 +47,8 @@ def _run_geometry_updates(
             setup_trust_radius=level.trust_radius_px,
             pose_trust_radius=level.trust_radius_px,
             parameter_prior_strength=level.prior_strength,
+            setup_prior_strength=setup_prior_strength,
+            pose_prior_strength=pose_prior_strength,
             fit_gain_offset=fit_gain_offset_nuisance,
             fit_background_offset=fit_background_nuisance,
         ),

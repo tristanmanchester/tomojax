@@ -444,6 +444,10 @@ def test_align_auto_accepts_geometry_update_volume_source(
             str(dataset_paths.dataset_dir),
             "--geometry-update-volume-source",
             "fixed_synthetic_truth",
+            "--geometry-update-setup-prior-strength",
+            "0.002",
+            "--geometry-update-pose-prior-strength",
+            "10.0",
         ]
     )
 
@@ -455,6 +459,8 @@ def test_align_auto_accepts_geometry_update_volume_source(
     assert verification["geometry_update_volume_source"] == "fixed_synthetic_truth"
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
+    assert "geometry_update_setup_prior_strength = 0.002" in config_text
+    assert "geometry_update_pose_prior_strength = 10.0" in config_text
 
 
 def _assert_benchmark_criteria_and_runtime(

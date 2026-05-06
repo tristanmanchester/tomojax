@@ -68,6 +68,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
+        "--geometry-update-setup-prior-strength",
+        type=float,
+        help="Optional setup-parameter prior strength for Schur geometry updates.",
+    )
+    _ = parser.add_argument(
+        "--geometry-update-pose-prior-strength",
+        type=float,
+        help="Optional per-view pose prior strength for Schur geometry updates.",
+    )
+    _ = parser.add_argument(
         "--synthetic-dataset",
         help="Optional synthetic128 benchmark spec name to generate and record for this run.",
     )
@@ -148,6 +158,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             n_views=views,
             schedule=reference_continuation_schedule(profile),
             geometry_update_volume_source=geometry_update_volume_source,
+            geometry_update_setup_prior_strength=args.geometry_update_setup_prior_strength,
+            geometry_update_pose_prior_strength=args.geometry_update_pose_prior_strength,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,

@@ -5718,3 +5718,41 @@ Recovery details:
 - Strong pose priors can hurt pose-dominated benchmarks if applied broadly.
   They must remain explicit until benchmark evidence justifies schedule-level
   policy.
+
+## 2026-05-06 — Phase 8 Alternating Schur Block Prior Wiring
+
+### Summary
+
+- Added optional `geometry_update_setup_prior_strength` and
+  `geometry_update_pose_prior_strength` to `AlternatingSmokeConfig`.
+- Passed those optional priors into `JointSchurLMConfig` during alternating
+  Schur geometry updates.
+- Added `--geometry-update-setup-prior-strength` and
+  `--geometry-update-pose-prior-strength` to `tomojax-align-auto-smoke`.
+- Recorded explicitly supplied prior strengths in `config_resolved.toml`.
+
+### Decisions
+
+- Defaults remain unset, so existing continuation schedules still use their
+  shared `prior_strength` values.
+- Keep block priors explicit for synthetic oracle/diagnostic runs until
+  benchmark evidence supports a schedule-level policy.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 1 file reformatted, 5 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- Strong pose priors can bias pose-heavy synthetic cases; this slice only wires
+  explicit knobs and leaves defaults unchanged.

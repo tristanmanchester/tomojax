@@ -68,6 +68,8 @@ def _write_artifacts(
     summaries: tuple[AlternatingLevelSummary, ...],
     schur_result: JointSchurLMResult | None,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
+    geometry_update_setup_prior_strength: float | None,
+    geometry_update_pose_prior_strength: float | None,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     verification: Mapping[str, object],
@@ -119,6 +121,8 @@ def _write_artifacts(
         artifacts["config_resolved_toml"],
         schedule,
         geometry_update_volume_source=geometry_update_volume_source,
+        geometry_update_setup_prior_strength=geometry_update_setup_prior_strength,
+        geometry_update_pose_prior_strength=geometry_update_pose_prior_strength,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
         synthetic_dataset=verification.get("synthetic_dataset"),
@@ -1000,6 +1004,8 @@ def _write_config_resolved(
     schedule: ContinuationSchedule,
     *,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
+    geometry_update_setup_prior_strength: float | None,
+    geometry_update_pose_prior_strength: float | None,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1011,9 +1017,15 @@ def _write_config_resolved(
         'backend_actual = "jax_reference"',
         'geometry_model = "parallel_tomography_reference"',
         f'geometry_update_volume_source = "{geometry_update_volume_source}"',
-        f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}",
-        f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}",
     ]
+    if geometry_update_setup_prior_strength is not None:
+        lines.append(
+            f"geometry_update_setup_prior_strength = {geometry_update_setup_prior_strength}"
+        )
+    if geometry_update_pose_prior_strength is not None:
+        lines.append(f"geometry_update_pose_prior_strength = {geometry_update_pose_prior_strength}")
+    lines.append(f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}")
+    lines.append(f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}")
     if isinstance(synthetic_dataset, dict):
         dataset_payload = cast("dict[object, object]", synthetic_dataset)
         name = dataset_payload.get("name")
