@@ -14,6 +14,9 @@ delete or migrate internal owners.
 
 - `AlignConfig`
 - `AlignmentSmokeReport`
+- `JointSchurDiagnostics`
+- `JointSchurLMConfig`
+- `JointSchurLMResult`
 - `PoseOnlyLMConfig`
 - `PoseOnlyLMResult`
 - `SetupOnlyLMConfig`
@@ -21,6 +24,8 @@ delete or migrate internal owners.
 - `align`
 - `align_multires`
 - `run_alignment_smoke`
+- `schur_step_from_jacobian`
+- `solve_joint_schur_lm`
 - `solve_pose_only_lm`
 - `solve_setup_only_lm`
 
@@ -56,6 +61,8 @@ Forbidden dependencies:
 - `solve_setup_only_lm` currently optimises `theta_offset_rad`, `det_u_px`, and
   active `det_v_px`; roll, axis rotation, and theta scale remain frozen until
   the reference projector models them.
+- `solve_joint_schur_lm` is the first reference Schur setup+pose slice for the
+  supported setup and pose DOFs. It is not yet the final trust-region engine.
 
 ## Tests
 
