@@ -40,6 +40,8 @@ class JointSchurDiagnostics:
     global_eigenvalues: tuple[float, ...] = ()
     schur_eigenvalues: tuple[float, ...] = ()
     pose_block_conditions: tuple[float, ...] = ()
+    setup_correlation_matrix: tuple[tuple[float, ...], ...] = ()
+    weak_mode_labels: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -50,6 +52,8 @@ class JointSchurDiagnostics:
             "global_eigenvalues": list(self.global_eigenvalues),
             "schur_eigenvalues": list(self.schur_eigenvalues),
             "pose_block_conditions": list(self.pose_block_conditions),
+            "setup_correlation_matrix": [list(row) for row in self.setup_correlation_matrix],
+            "weak_mode_labels": list(self.weak_mode_labels),
         }
 
 
@@ -89,6 +93,8 @@ def solve_joint_schur_lm(
         global_eigenvalues=(),
         schur_eigenvalues=(),
         pose_block_conditions=(),
+        setup_correlation_matrix=(),
+        weak_mode_labels=(),
     )
     iterations = 0
 
@@ -225,14 +231,17 @@ def schur_step_from_jacobian(
         jnp.concatenate(pose_steps, axis=0) if pose_steps else jnp.asarray([], dtype=jnp.float32)
     )
     step = jnp.concatenate([setup_step, pose_step], axis=0)
+    schur_eigenvalues = _eigvalsh_tuple(schur_matrix)
     diagnostics = JointSchurDiagnostics(
         schur_condition=float(jnp.linalg.cond(schur_matrix)),
         setup_update_norm=float(jnp.linalg.norm(setup_step)),
         pose_update_norm=float(jnp.linalg.norm(pose_step)),
         dense_step_difference_norm=float(jnp.linalg.norm(step - dense_step)),
         global_eigenvalues=_eigvalsh_tuple(hessian),
-        schur_eigenvalues=_eigvalsh_tuple(schur_matrix),
+        schur_eigenvalues=schur_eigenvalues,
         pose_block_conditions=tuple(pose_block_conditions),
+        setup_correlation_matrix=_correlation_matrix_tuple(schur_matrix),
+        weak_mode_labels=_weak_mode_labels(schur_eigenvalues),
     )
     return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
 
@@ -240,6 +249,23 @@ def schur_step_from_jacobian(
 def _eigvalsh_tuple(matrix: jax.Array) -> tuple[float, ...]:
     values = jnp.linalg.eigvalsh(matrix)
     return tuple(float(value) for value in values)
+
+
+def _correlation_matrix_tuple(matrix: jax.Array) -> tuple[tuple[float, ...], ...]:
+    diagonal = jnp.clip(jnp.diag(matrix), min=1e-12)
+    scale = jnp.sqrt(diagonal[:, None] * diagonal[None, :])
+    correlation = matrix / scale
+    return tuple(tuple(float(value) for value in row) for row in correlation)
+
+
+def _weak_mode_labels(eigenvalues: tuple[float, ...]) -> tuple[str, ...]:
+    if not eigenvalues:
+        return ()
+    max_abs = max(abs(value) for value in eigenvalues)
+    threshold = max(max_abs * 1e-6, 1e-9)
+    return tuple(
+        f"schur_eigen_{index}" for index, value in enumerate(eigenvalues) if abs(value) <= threshold
+    )
 
 
 def _active_setup_parameters(geometry: GeometryState) -> tuple[str, ...]:

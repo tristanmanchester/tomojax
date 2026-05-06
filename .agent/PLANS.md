@@ -50,6 +50,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Re-run validation commands for the artifact contract.
 - [x] Add global/Schur eigenvalues and pose-block condition diagnostics.
 - [x] Re-run validation commands for enriched diagnostics.
+- [x] Add setup correlation matrix and weak-mode labels.
+- [x] Re-run validation commands for correlation/weak-mode diagnostics.
 
 ### Validation
 
