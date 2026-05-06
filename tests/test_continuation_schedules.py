@@ -13,8 +13,14 @@ def test_continuation_profiles_share_phase7_level_order(name: str) -> None:
 
     assert schedule.level_factors == (4, 2, 1)
     assert schedule.levels[0].role == "preview"
+    assert schedule.levels[0].residual_filters[0].kind == "lowpass_gaussian"
     assert schedule.levels[1].run_if_coarse_unverified
+    assert [config.kind for config in schedule.levels[1].residual_filters] == [
+        "lowpass_gaussian",
+        "bandpass_difference_of_gaussians",
+    ]
     assert schedule.levels[2].role == "final"
+    assert schedule.levels[2].residual_filters[0].kind == "raw"
     assert not schedule.levels[2].skip_finer_if_verified
 
 

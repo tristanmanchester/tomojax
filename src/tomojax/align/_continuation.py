@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from tomojax.forward import ResidualFilterConfig
+
 ContinuationScheduleName = Literal["smoke32", "lightning", "balanced", "reference"]
 ContinuationLevelRole = Literal["preview", "final"]
 
@@ -20,6 +22,7 @@ class ContinuationLevel:
     residual_delta: float
     trust_radius_px: float
     prior_strength: float
+    residual_filters: tuple[ResidualFilterConfig, ...]
     role: ContinuationLevelRole = "preview"
     skip_finer_if_verified: bool = True
     run_if_coarse_unverified: bool = False
@@ -96,6 +99,9 @@ def _make_schedule(
                 residual_delta=1.0,
                 trust_radius_px=2.0,
                 prior_strength=1.0e-3,
+                residual_filters=(
+                    ResidualFilterConfig(kind="lowpass_gaussian", weight=1.0, sigma_px=1.0),
+                ),
                 role="preview",
                 skip_finer_if_verified=True,
             ),
@@ -107,6 +113,15 @@ def _make_schedule(
                 residual_delta=0.85,
                 trust_radius_px=1.0,
                 prior_strength=5.0e-4,
+                residual_filters=(
+                    ResidualFilterConfig(kind="lowpass_gaussian", weight=0.7, sigma_px=1.0),
+                    ResidualFilterConfig(
+                        kind="bandpass_difference_of_gaussians",
+                        weight=0.3,
+                        sigma_px=0.8,
+                        outer_sigma_px=1.6,
+                    ),
+                ),
                 role="preview",
                 skip_finer_if_verified=True,
                 run_if_coarse_unverified=True,
@@ -119,6 +134,7 @@ def _make_schedule(
                 residual_delta=0.75,
                 trust_radius_px=0.5,
                 prior_strength=1.0e-4,
+                residual_filters=(ResidualFilterConfig(kind="raw"),),
                 role="final",
                 skip_finer_if_verified=False,
             ),

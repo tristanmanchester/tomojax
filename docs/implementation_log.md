@@ -2718,3 +2718,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Observability remains a placeholder until the alternating solver consumes the
   Schur LM condition and weak-mode diagnostics from the geometry update path.
+
+## 2026-05-06 — Phase 7 Residual Filter Continuation
+
+### Summary
+
+- Added residual-filter configs to the Phase 7 continuation levels:
+  low-pass at level 4, low-pass plus band-pass at conditional level 2, and raw
+  residual at final level 1.
+- Applied the public `tomojax.forward.apply_residual_filter_schedule` path to
+  the projection-domain geometry/verification loss in the alternating smoke
+  runner.
+- Recorded residual-filter kinds in `alignment_summary.csv`,
+  `residual_metrics.csv`, and verification level payloads, with focused tests.
+
+### Decisions
+
+- Kept reconstruction FISTA on the existing reference objective in this slice;
+  only the geometry verification/update loss uses continuation filters.
+- Used the public forward-module filter API rather than adding local filtering
+  under `tomojax.align`.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py -q`
+  passed: 9 tests.
+- `just imports` passed.
+
+### Risks
+
+- FISTA does not yet consume the residual-filter schedule; the continuation
+  filters currently affect only geometry loss and verification behavior.

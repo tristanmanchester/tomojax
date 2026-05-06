@@ -19,7 +19,11 @@ from tomojax.align._continuation import (
     reference_continuation_schedule,
 )
 from tomojax.datasets import make_benchmark_phantom
-from tomojax.forward import project_parallel_reference, residual_loss
+from tomojax.forward import (
+    apply_residual_filter_schedule,
+    project_parallel_reference,
+    residual_loss,
+)
 from tomojax.geometry import (
     GaugeReport,
     GeometryState,
@@ -59,6 +63,7 @@ class AlternatingLevelSummary:
     reconstruction_iterations: int
     geometry_updates: int
     executed_geometry_updates: int
+    residual_filter_kinds: tuple[str, ...]
     loss_before: float
     loss_after: float
     verified: bool
@@ -168,6 +173,7 @@ def _run_alternating_solver_smoke_impl(
                 reconstruction_iterations=level.reconstruction_iterations,
                 geometry_updates=level.geometry_updates,
                 executed_geometry_updates=geometry_updates,
+                residual_filter_kinds=_residual_filter_kinds(level),
                 loss_before=loss_before,
                 loss_after=loss_after,
                 verified=verified,
@@ -257,6 +263,7 @@ def _skipped_level_summary(
         reconstruction_iterations=0,
         geometry_updates=level.geometry_updates,
         executed_geometry_updates=0,
+        residual_filter_kinds=_residual_filter_kinds(level),
         loss_before=loss,
         loss_after=loss,
         verified=True,
@@ -264,6 +271,10 @@ def _skipped_level_summary(
         skipped_level=True,
         early_exit_reason=early_exit_reason,
     )
+
+
+def _residual_filter_kinds(level: ContinuationLevel) -> tuple[str, ...]:
+    return tuple(config.kind for config in level.residual_filters)
 
 
 def _projection_loss(
@@ -274,10 +285,13 @@ def _projection_loss(
     level: ContinuationLevel,
 ) -> float:
     predicted = project_parallel_reference(volume, geometry)
+    filtered = apply_residual_filter_schedule(
+        predicted - observed, level.residual_filters, mask=mask
+    )
     result = residual_loss(
-        predicted,
-        observed,
-        mask=mask,
+        filtered.residual,
+        jnp.zeros_like(filtered.residual),
+        mask=None,
         sigma=level.residual_sigma,
         delta=level.residual_delta,
     )
@@ -331,6 +345,7 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
         "reconstruction_iterations": summary.reconstruction_iterations,
         "geometry_updates": summary.geometry_updates,
         "executed_geometry_updates": summary.executed_geometry_updates,
+        "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
         "loss_before": summary.loss_before,
         "loss_after": summary.loss_after,
         "verified": summary.verified,
@@ -411,6 +426,7 @@ def _write_alignment_summary(
                 "reconstruction_iterations",
                 "geometry_updates",
                 "executed_geometry_updates",
+                "residual_filter_kinds",
                 "loss_before",
                 "loss_after",
                 "verified",
@@ -437,6 +453,7 @@ def _write_residual_metrics(
                 "loss_before",
                 "loss_after",
                 "absolute_improvement",
+                "residual_filter_kinds",
                 "skipped_level",
                 "early_exit_reason",
             ],
@@ -450,6 +467,7 @@ def _write_residual_metrics(
                     "loss_before": summary.loss_before,
                     "loss_after": summary.loss_after,
                     "absolute_improvement": summary.loss_before - summary.loss_after,
+                    "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
                     "skipped_level": summary.skipped_level,
                     "early_exit_reason": summary.early_exit_reason,
                 }

@@ -13,10 +13,29 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from tomojax.align.api import AlternatingSmokeResult
+
 
 def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     result = run_alternating_solver_smoke(tmp_path)
 
+    _assert_smoke_result_shape_and_exit(result)
+    expected = _expected_artifacts()
+    assert set(result.artifacts) == expected
+    for path in result.artifacts.values():
+        assert path.exists()
+    _assert_artifact_index(result, expected)
+    _assert_summary_rows(result)
+    _assert_saved_volume(result)
+    _assert_manifest(result)
+    _assert_gauge_reports(result)
+    _assert_audit_reports(result)
+    _assert_residual_metrics(result)
+    assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
+    assert abs(float(np.mean(result.final_geometry.pose.phi_residual_rad))) < 1.0e-12
+
+
+def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert result.final_volume.shape == (32, 32, 32)
     assert result.verification["size"] == 32
     assert result.verification["seed"] == 17
@@ -25,12 +44,20 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert result.verification["skipped_levels"] == [2]
     assert result.levels[0].geometry_updates == 1
     assert result.levels[0].executed_geometry_updates == 1
+    assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
     assert result.levels[1].skipped_level is True
+    assert result.levels[1].residual_filter_kinds == (
+        "lowpass_gaussian",
+        "bandpass_difference_of_gaussians",
+    )
     assert result.levels[-1].skipped_geometry is True
+    assert result.levels[-1].residual_filter_kinds == ("raw",)
     assert result.levels[-1].geometry_updates == 1
     assert result.levels[-1].executed_geometry_updates == 0
 
-    expected = {
+
+def _expected_artifacts() -> set[str]:
+    return {
         "alignment_summary_csv",
         "artifact_index_json",
         "backend_report_json",
@@ -52,10 +79,9 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
         "run_manifest_json",
         "verification_json",
     }
-    assert set(result.artifacts) == expected
-    for path in result.artifacts.values():
-        assert path.exists()
 
+
+def _assert_artifact_index(result: AlternatingSmokeResult, expected: set[str]) -> None:
     artifact_index = cast(
         "dict[str, object]",
         json.loads(result.artifacts["artifact_index_json"].read_text(encoding="utf-8")),
@@ -65,15 +91,23 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert all(item["type"] for item in indexed_artifacts)
     assert all(item["description"] for item in indexed_artifacts)
 
+
+def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
     with result.artifacts["alignment_summary_csv"].open("r", newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     assert [row["level_factor"] for row in rows] == ["4", "2", "1"]
+    assert rows[0]["residual_filter_kinds"] == "lowpass_gaussian"
+    assert rows[1]["residual_filter_kinds"] == ("lowpass_gaussian|bandpass_difference_of_gaussians")
     assert rows[1]["skipped_level"] == "True"
     assert rows[-1]["executed_geometry_updates"] == "0"
 
+
+def _assert_saved_volume(result: AlternatingSmokeResult) -> None:
     saved_volume = cast("NDArray[np.float32]", np.load(result.artifacts["final_volume_npy"]))
     np.testing.assert_allclose(saved_volume, result.final_volume)
 
+
+def _assert_manifest(result: AlternatingSmokeResult) -> None:
     manifest = cast(
         "dict[str, object]",
         json.loads(result.artifacts["run_manifest_json"].read_text(encoding="utf-8")),
@@ -82,6 +116,8 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert manifest["backend_actual"] == "jax_reference"
     assert manifest["status"] == "passed"
 
+
+def _assert_gauge_reports(result: AlternatingSmokeResult) -> None:
     gauge_report = cast(
         "dict[str, object]",
         json.loads(result.artifacts["gauge_report_json"].read_text(encoding="utf-8")),
@@ -102,6 +138,8 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
         "mean_phi_to_theta_offset",
     }
 
+
+def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     observability = cast(
         "dict[str, object]",
         json.loads(result.artifacts["observability_report_json"].read_text(encoding="utf-8")),
@@ -115,12 +153,11 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert failure_report["status"] == "passed"
     assert failure_report["failure"] is None
 
+
+def _assert_residual_metrics(result: AlternatingSmokeResult) -> None:
     with result.artifacts["residual_metrics_csv"].open("r", newline="", encoding="utf-8") as fh:
         metric_rows = list(csv.DictReader(fh))
     assert [row["level_factor"] for row in metric_rows] == ["4", "2", "1"]
-
-    assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
-    assert abs(float(np.mean(result.final_geometry.pose.phi_residual_rad))) < 1.0e-12
 
 
 def test_alternating_solver_smoke_is_deterministic(tmp_path: Path) -> None:
