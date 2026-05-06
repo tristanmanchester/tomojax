@@ -4793,3 +4793,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This proves real sidecar ingestion through the align-auto smoke path, but not
   full 128^3 benchmark runtime or comparator reporting.
+
+## 2026-05-06 — Phase 8 Synthetic Benchmark Result Artifact
+
+### Summary
+
+- Added a conditional `benchmark_result.json` artifact for deterministic smoke
+  runs that include synthetic benchmark metadata.
+- The artifact records the benchmark name, reimagined align-auto smoke
+  implementation label, profile, status, dataset provenance, core
+  reconstruction metrics, gauge-canonical geometry recovery metrics, backend
+  provenance, failure labels, and deterministic runtime placeholders.
+- Added focused CLI coverage proving ordinary smoke runs do not emit the
+  benchmark result while existing-sidecar synthetic runs do.
+
+### Decisions
+
+- Emit JSON case results first; markdown comparison reports and current-vs-v2
+  comparators remain later benchmark slices.
+- Keep timing fields as explicit `null` placeholders until solver timing is
+  measured and recorded, rather than fabricating deterministic wall-clock data.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- This is a single-case benchmark result, not a full benchmark protocol runner
+  or comparison report.

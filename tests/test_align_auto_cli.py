@@ -44,6 +44,7 @@ def test_align_auto_smoke_command_writes_core_artifacts(
     assert (out_dir / "final_volume.npy").exists()
     assert (out_dir / "geometry_final.json").exists()
     assert (out_dir / "verification.json").exists()
+    assert not (out_dir / "benchmark_result.json").exists()
     verification = cast(
         "dict[str, object]",
         json.loads((out_dir / "verification.json").read_text(encoding="utf-8")),
@@ -355,6 +356,25 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     observed = cast("NDArray[np.float32]", np.load(out_dir / "observed_projections.npy"))
     generated = cast("NDArray[np.float32]", np.load(dataset_paths.projections))
     np.testing.assert_allclose(observed, generated)
+    benchmark_result = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
+    )
+    assert benchmark_result["schema"] == "tomojax.synthetic_benchmark_result.v1"
+    assert benchmark_result["benchmark"] == "synth128_thermal_object_drift"
+    assert benchmark_result["implementation"] == "reimagined_align_auto_smoke"
+    assert benchmark_result["profile"] == "smoke32"
+    dataset = cast("dict[str, object]", benchmark_result["dataset"])
+    assert dataset["artifact_dir"] == str(dataset_paths.dataset_dir)
+    assert dataset["volume_shape"] == [32, 32, 32]
+    runtime = cast("dict[str, object]", benchmark_result["runtime"])
+    assert int(cast("int", runtime["geometry_updates_executed"])) > 0
+    reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
+    assert isinstance(reconstruction["final_residual"], float)
+    geometry_recovery = cast("dict[str, object]", benchmark_result["geometry_recovery"])
+    assert geometry_recovery["supported_dofs_improved"] is True
+    backend = cast("dict[str, object]", benchmark_result["backend"])
+    assert backend["actual"] == "jax_reference"
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text
     captured = capsys.readouterr()

@@ -76,6 +76,7 @@ def _write_artifacts(
         "alignment_summary_csv": output_dir / "alignment_summary.csv",
         "artifact_index_json": output_dir / "artifact_index.json",
         "backend_report_json": output_dir / "backend_report.json",
+        "benchmark_result_json": output_dir / "benchmark_result.json",
         "config_resolved_toml": output_dir / "config_resolved.toml",
         "final_volume_npy": output_dir / "final_volume.npy",
         "failure_report_json": output_dir / "failure_report.json",
@@ -109,6 +110,9 @@ def _write_artifacts(
         "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
         "verification_json": output_dir / "verification.json",
     }
+    synthetic_dataset = verification.get("synthetic_dataset")
+    if not isinstance(synthetic_dataset, dict):
+        _ = artifacts.pop("benchmark_result_json")
     _write_config_resolved(
         artifacts["config_resolved_toml"],
         schedule,
@@ -143,17 +147,31 @@ def _write_artifacts(
         _observability_report_payload(schur_result),
     )
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
+    failure_report = _failure_report_payload(
+        final_volume=final_volume,
+        final_geometry=final_geometry,
+        observed=observed,
+        mask=mask,
+        summaries=summaries,
+        verification=verification,
+    )
     _write_json(
         artifacts["failure_report_json"],
-        _failure_report_payload(
-            final_volume=final_volume,
-            final_geometry=final_geometry,
-            observed=observed,
-            mask=mask,
-            summaries=summaries,
-            verification=verification,
-        ),
+        failure_report,
     )
+    if isinstance(synthetic_dataset, dict):
+        synthetic_dataset_payload = cast("dict[object, object]", synthetic_dataset)
+        _write_json(
+            artifacts["benchmark_result_json"],
+            _benchmark_result_payload(
+                schedule=schedule,
+                verification=verification,
+                synthetic_dataset=synthetic_dataset_payload,
+                summaries=summaries,
+                failure_report=failure_report,
+                geometry_update_volume_source=geometry_update_volume_source,
+            ),
+        )
     _write_final_volume(artifacts["final_volume_npy"], final_volume)
     _write_preview_slice_artifacts(
         truth_path=artifacts["preview_truth_slice_npy"],
@@ -630,6 +648,7 @@ def _artifact_description(name: str) -> str:
     descriptions = {
         "alignment_summary_csv": "Per-continuation-level alignment summary",
         "backend_report_json": "Backend provenance for the smoke run",
+        "benchmark_result_json": "Synthetic benchmark case result",
         "config_resolved_toml": "Resolved deterministic smoke configuration",
         "final_volume_npy": "Final reconstructed 32^3 volume",
         "failure_report_json": "Failure status for the smoke run",
@@ -664,6 +683,83 @@ def _artifact_description(name: str) -> str:
         "verification_json": "Smoke verification report",
     }
     return descriptions[name]
+
+
+def _benchmark_result_payload(
+    *,
+    schedule: ContinuationSchedule,
+    verification: Mapping[str, object],
+    synthetic_dataset: dict[object, object],
+    summaries: tuple[AlternatingLevelSummary, ...],
+    failure_report: Mapping[str, object],
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
+) -> dict[str, object]:
+    metrics = cast("dict[object, object]", verification.get("metrics", {}))
+    geometry_recovery = cast("dict[object, object]", verification.get("geometry_recovery", {}))
+    volume_size = verification.get("size")
+    failed_gates = _failed_gate_names(failure_report)
+    return {
+        "schema": "tomojax.synthetic_benchmark_result.v1",
+        "benchmark": synthetic_dataset.get("name"),
+        "implementation": "reimagined_align_auto_smoke",
+        "profile": schedule.name,
+        "status": verification.get("status"),
+        "dataset": {
+            "name": synthetic_dataset.get("name"),
+            "source": synthetic_dataset.get("source"),
+            "artifact_dir": synthetic_dataset.get("artifact_dir"),
+            "nuisance_applied_to_projections": synthetic_dataset.get(
+                "nuisance_applied_to_projections"
+            ),
+            "volume_shape": [volume_size, volume_size, volume_size],
+            "projection_views": verification.get("n_views"),
+        },
+        "runtime": {
+            "time_to_verified_geometry_seconds": None,
+            "total_wall_seconds": None,
+            "reconstruction_calls": sum(1 for summary in summaries if not summary.skipped_level),
+            "geometry_updates_requested": sum(summary.geometry_updates for summary in summaries),
+            "geometry_updates_executed": sum(
+                summary.executed_geometry_updates for summary in summaries
+            ),
+            "projector_calls": None,
+        },
+        "reconstruction": {
+            "volume_nmse": metrics.get("volume_nmse"),
+            "final_residual": metrics.get("residual_after"),
+            "relative_improvement": metrics.get("relative_improvement"),
+        },
+        "geometry_recovery": {
+            "passed": geometry_recovery.get("passed"),
+            "supported_dofs_improved": geometry_recovery.get("supported_dofs_improved"),
+            "det_u_realized_rmse_px": geometry_recovery.get("det_u_realized_rmse_px"),
+            "det_v_realized_rmse_px": geometry_recovery.get("det_v_realized_rmse_px"),
+            "theta_realized_rmse_rad": geometry_recovery.get("theta_realized_rmse_rad"),
+        },
+        "backend": {
+            "requested": "jax_reference",
+            "actual": "jax_reference",
+            "fallbacks": [],
+        },
+        "failure_labels": failed_gates,
+        "geometry_update_volume_source": geometry_update_volume_source,
+    }
+
+
+def _failed_gate_names(failure_report: Mapping[str, object]) -> list[str]:
+    gates = failure_report.get("gates")
+    if not isinstance(gates, list):
+        return []
+    names: list[str] = []
+    for gate in cast("list[object]", gates):
+        if not isinstance(gate, dict):
+            continue
+        gate_payload = cast("dict[object, object]", gate)
+        if gate_payload.get("passed") is False:
+            name = gate_payload.get("name")
+            if isinstance(name, str):
+                names.append(name)
+    return names
 
 
 def _write_config_resolved(
