@@ -14,9 +14,12 @@ delete or migrate internal owners.
 
 - `AlignConfig`
 - `AlignmentSmokeReport`
+- `PoseOnlyLMConfig`
+- `PoseOnlyLMResult`
 - `align`
 - `align_multires`
 - `run_alignment_smoke`
+- `solve_pose_only_lm`
 
 ## Dependencies
 
@@ -44,6 +47,8 @@ Forbidden dependencies:
 - Public imports should come through this package facade.
 - `run_alignment_smoke` is a tiny v2 wiring check. It is not the final
   optimiser.
+- `solve_pose_only_lm` currently optimises only `dx_px` and `dz_px`; the
+  remaining pose DOFs are frozen until the reference projector supports them.
 
 ## Tests
 

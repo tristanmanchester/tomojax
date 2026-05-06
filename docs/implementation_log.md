@@ -720,3 +720,54 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - The projector is differentiable for detector shifts, but not yet a full
   physical differentiable projector for all 5 pose DOFs.
+
+## 2026-05-06 — Add Pose-Only Detector-Shift LM Solver
+
+### Summary
+
+- Added `tomojax.align.solve_pose_only_lm`, a damped Gauss-Newton/LM solver
+  against a fixed volume for the currently differentiable per-view pose
+  channels:
+  - `dx_px`
+  - `dz_px`
+- Added `PoseOnlyLMConfig` and `PoseOnlyLMResult`.
+- The solver uses masked whitened projection residuals plus pseudo-Huber IRLS
+  weights, solves a damped normal equation, and canonicalises geometry gauges
+  after the solve.
+- Added deterministic tests covering detector-shift recovery, active/frozen DOF
+  reporting, final loss improvement, and gauge canonicalisation preservation.
+
+### Decisions
+
+- This is intentionally not the full 5-DOF pose solver. `alpha_rad`,
+  `beta_rad`, and `phi_residual_rad` are reported as frozen because the current
+  reference projector does not yet provide physical differentiable sensitivity
+  for those DOFs.
+- Used a finite-difference Jacobian for this first LM implementation. The
+  periodic linear detector shift has derivative kinks at integer shifts, and
+  finite differences behaved more robustly from zero initialization while also
+  building toward the required finite-difference validation suite.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_pose_lm.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_pose_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_pose_lm.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_pose_lm.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py -q`
+  passed: 7 tests.
+- `uv run ruff format --check src/tomojax/align/_pose_lm.py src/tomojax/align/api.py src/tomojax/align/__init__.py tests/test_pose_lm.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_pose_lm.py -q`
+  passed: 128 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Full pose-only 5-DOF optimisation remains incomplete until the physical
+  reference projector supports differentiable `alpha`, `beta`, and
+  `phi_residual` effects.
