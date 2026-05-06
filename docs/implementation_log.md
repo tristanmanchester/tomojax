@@ -3711,3 +3711,42 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This is a contract hardening slice, not a new numerical capability. It should
   still catch regressions in the canonical one-command Phase 7 acceptance path.
+
+## 2026-05-06 — Phase 8 Gain/Offset Nuisance Primitive
+
+### Summary
+
+- Added `GainOffsetModel` to `tomojax.nuisance` with identity construction,
+  per-view affine application, and JSON-serializable payload output.
+- Added `estimate_gain_offset`, a closed-form per-view weighted least-squares
+  fit for `observed ~= gain * predicted + offset`.
+- Supported projection-shaped masks and detector-shaped masks, with identity
+  fallback for fully masked views.
+- Updated the nuisance README from skeleton-only status to document the first
+  public Phase 8 primitive.
+- Added focused tests for identity application, synthetic gain/offset recovery,
+  masked fitting, and empty-mask stability.
+
+### Decisions
+
+- Used the variable-projection closed-form update allowed by Phase 8 instead of
+  adding a nuisance LM block. This keeps the first nuisance slice deterministic
+  and independent of the geometry solver.
+
+### Validation
+
+- `uv run ruff format src/tomojax/nuisance/_gain_offset.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_gain_offset.py`
+  passed.
+- `uv run ruff check src/tomojax/nuisance/_gain_offset.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_gain_offset.py`
+  passed.
+- `uv run basedpyright src/tomojax/nuisance/_gain_offset.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_gain_offset.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_nuisance_gain_offset.py tests/test_v2_module_skeleton.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- The alternating solver does not consume the nuisance model yet, so geometry
+  can still absorb intensity drift in the Phase 7 loop. The next Phase 8 slice
+  should thread this tested primitive into residual evaluation.

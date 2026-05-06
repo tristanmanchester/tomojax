@@ -2,4 +2,6 @@
 
 from __future__ import annotations
 
-__all__: tuple[str, ...] = ()
+from tomojax.nuisance.api import GainOffsetModel, estimate_gain_offset
+
+__all__ = ["GainOffsetModel", "estimate_gain_offset"]

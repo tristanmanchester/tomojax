@@ -6,19 +6,22 @@
 projections without being geometry or object motion: gain/offset, backgrounds,
 masks, robust noise scales, stripe bias, bad frames, and related provenance.
 
-This package is currently a v2 skeleton facade. It intentionally exposes no
-public behavior until the nuisance modelling milestone defines typed contracts.
+The first Phase 8 public primitive is per-view gain/offset fitting. It models
+affine intensity drift as acquisition state so geometry does not need to absorb
+flat-field-like projection changes.
 
 ## Public API
 
-No public names are exported yet.
+- `GainOffsetModel`
+- `estimate_gain_offset`
 
 ## Dependencies
 
-Allowed future dependencies:
+Allowed dependencies:
 
 - `tomojax.core`
 - `tomojax.io`
+- JAX arrays
 
 Forbidden dependencies:
 
@@ -36,3 +39,5 @@ Forbidden dependencies:
 
 - `tests/test_v2_module_skeleton.py` verifies this skeleton facade exists and
   imports.
+- `tests/test_nuisance_gain_offset.py` verifies masked per-view fitting,
+  identity application, and residual reduction for synthetic drift.

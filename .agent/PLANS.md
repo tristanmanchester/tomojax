@@ -11,43 +11,50 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Alternating solver and continuation
-- Goal: harden the Phase 7 `align=auto` CLI acceptance contract.
+- Phase: Nuisance models and weak DOF handling
+- Goal: introduce the first typed per-view gain/offset nuisance model.
 
 ### Scope
 
 - In scope:
-  - Assert the CLI command writes a passed verification report.
-  - Assert coarse early exit skips level-1 geometry in command-level tests.
-  - Assert Schur diagnostics and continuation prior trace fields are emitted by
-    the command path.
-  - Add focused CLI validation and `just imports`.
+  - Add a deep-module-owned `GainOffsetModel` public API in `tomojax.nuisance`.
+  - Implement closed-form per-view gain/offset estimation for
+    predicted/observed projection pairs.
+  - Support masks and ridge stabilisation.
+  - Add focused nuisance tests.
 - Out of scope:
+  - Coupling nuisance fitting into the alternating solver.
+  - Low-frequency background fields.
+  - Weak DOF auto-activation rules.
   - Further legacy Ruff cleanup.
-  - GPU/Pallas fast paths.
-  - Loading production datasets through `align-auto`.
-- Deep module owner: `tomojax.cli`.
+- Deep module owner: `tomojax.nuisance`.
 
 ### Design Sources
 
+- `docs/tomojax-v2/01_high_level_architecture.md`
+- `docs/tomojax-v2/03_repo_layout.md`
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 
 ### Tasks
 
-- [x] Expand `align-auto` CLI tests from file existence to acceptance contract.
-- [x] Assert emitted verification, summary, geometry trace, and Schur artifacts.
+- [x] Add private gain/offset implementation.
+- [x] Export typed public nuisance API.
+- [x] Update nuisance README with behavior and tests.
+- [x] Add focused gain/offset tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the CLI contract slice.
+- [x] Commit the gain/offset nuisance slice.
 
 ### Validation
 
-- `uv run ruff format tests/test_align_auto_cli.py` passed.
-- `uv run ruff check tests/test_align_auto_cli.py` passed.
-- `uv run basedpyright tests/test_align_auto_cli.py` passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
-  passed: 3 tests.
+- `uv run ruff format src/tomojax/nuisance/_gain_offset.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_gain_offset.py`
+  passed.
+- `uv run ruff check src/tomojax/nuisance/_gain_offset.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_gain_offset.py`
+  passed.
+- `uv run basedpyright src/tomojax/nuisance/_gain_offset.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_gain_offset.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_nuisance_gain_offset.py tests/test_v2_module_skeleton.py -q`
+  passed: 6 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -55,11 +62,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep this as command-path verification of the existing Phase 7 solver rather
-  than adding new placeholder reports or dataset loading behavior.
+- Start with variable-projection closed-form gain/offset fitting because Phase 8
+  allows that path and it creates a deterministic public nuisance primitive
+  without changing the solver loop yet.
 
 ### Risks
 
-- Risk: this is a test-contract slice, not a new numerical capability.
-- Mitigation: it guards the canonical Phase 7 acceptance criterion that one
-  command produces final volume, geometry, and verification artifacts.
+- Risk: this does not yet prevent geometry from absorbing nuisance drift in the
+  Phase 7 alternating loop.
+- Mitigation: the next Phase 8 slice can thread this tested model into
+  projection residual evaluation.
