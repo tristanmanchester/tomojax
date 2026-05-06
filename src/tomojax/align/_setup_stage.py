@@ -1,31 +1,40 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import Any, Iterable
+import math
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from ..core.geometry.base import Detector, Geometry, Grid
-from ..recon.fista_tv import FistaConfig, fista_tv
-from ._observer import OuterStat
-from .model.diagnostics import validate_active_gauge_policy
-from .model.dof_specs import ActiveParameterView
-from .objectives.fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
-from .objectives.folds import FoldSpec
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
+
 from .geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
 )
-from .objectives.loss_adapters import build_loss_adapter
-from .optimizers import ValidationLmConfig, run_active_validation_lm
-from .model.schedules import ResolvedAlignmentStage
+from .model.diagnostics import validate_active_gauge_policy
+from .model.dof_specs import ActiveParameterView
 from .model.state import AlignmentState, PoseState, SetupGeometryState
+from .objectives.fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
+from .objectives.folds import FoldSpec
+from .objectives.loss_adapters import build_loss_adapter
 from .objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
 )
+from .optimizers import ValidationLmConfig, run_active_validation_lm
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
+
+    from ._observer import OuterStat
+    from .model.schedules import ResolvedAlignmentStage
+    from .objectives.folds import FoldArrays
+    from .objectives.loss_adapters import LossAdapter
+    from .objectives.loss_specs import AlignmentLossSpec
 
 
 FoldEvaluation = tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, dict[str, object]]
@@ -74,8 +83,8 @@ def _run_setup_validation_objective(
     setup_state: AlignmentState,
     active_view: ActiveParameterView,
     base: BaseGeometryArrays,
-    folds,
-    loss_adapter,
+    folds: FoldArrays,
+    loss_adapter: LossAdapter,
     fold_recon_cfg: FoldReconstructionConfig,
     cfg: object,
     init_x: jnp.ndarray | None,
@@ -173,7 +182,7 @@ def _build_geometry_stage_stat(
     active_view: ActiveParameterView,
     cfg: object,
     fold_recon_cfg: FoldReconstructionConfig,
-    folds,
+    folds: FoldArrays,
     loss_name: str,
     schedule_name: str | None,
     stage: ResolvedAlignmentStage | None,
@@ -233,7 +242,7 @@ def _build_geometry_stage_stat(
             "n_folds": int(folds.n_folds),
             "fold_eval_mode": "stopped_train_recon_validation_lm",
             "folds_used": ",".join(str(item[0]) for item in objective_result.fold_cache),
-            "num_train_reconstructions": int(len(objective_result.fold_cache)),
+            "num_train_reconstructions": len(objective_result.fold_cache),
             "validation_residual_count": int(objective_result.residual_count),
             "recon_projection_chunked": True,
             "validation_projection_chunked": True,
@@ -334,7 +343,7 @@ def _optimize_setup_geometry_bilevel_for_level(
     active_geometry_dofs: Iterable[str],
     factor: int,
     cfg: object,
-    loss_spec,
+    loss_spec: AlignmentLossSpec,
     loss_name: str,
     schedule_name: str | None = None,
     stage: ResolvedAlignmentStage | None = None,

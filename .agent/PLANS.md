@@ -12,20 +12,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Milestone 0 cleanup — legacy Ruff unblock
-- Goal: remove `_results.py` type-only import Ruff blockers with
-  behavior-preserving typing cleanup.
+- Goal: remove `_setup_stage.py` import and missing-annotation Ruff blockers
+  with behavior-preserving typing cleanup.
 
 ### Scope
 
 - In scope:
-  - Move annotation-only `jax.numpy`, observer, and schedule imports behind
-    `TYPE_CHECKING`.
-  - Use `collections.abc` for runtime collection protocols.
-  - Preserve result dataclass, callback, and `TypedDict` public APIs.
-  - Run focused Ruff checks and result/alignment tests.
+  - Replace parent-relative imports with absolute imports.
+  - Move annotation-only imports behind `TYPE_CHECKING`.
+  - Add missing annotations for fold arrays, loss adapter, and loss specs.
+  - Preserve setup validation objective behavior.
+  - Run focused Ruff checks and setup/alignment tests.
 - Out of scope:
   - Alignment algorithm changes.
-  - Result schema changes.
+  - Setup optimisation formula changes.
   - Repository-wide legacy Ruff cleanup outside this function.
 - Deep module owner: `tomojax.align`.
 
@@ -35,42 +35,45 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Move `_results.py` annotation-only imports.
+- [x] Clean `_setup_stage.py` imports.
+- [x] Add missing annotations.
 - [x] Run focused validation.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit the cleanup slice if validations pass.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/align/_results.py` passed.
-- `uv run ruff format src/tomojax/align/_results.py` passed.
-- `uv run pytest tests/test_align_checkpoint.py tests/test_align_profiles.py -q`
-  passed: 16 tests.
+- `uv run ruff check src/tomojax/align/_setup_stage.py tests/test_bilevel_setup_alignment.py`
+  passed.
+- `uv run ruff format src/tomojax/align/_setup_stage.py tests/test_bilevel_setup_alignment.py`
+  passed.
+- `uv run pytest tests/test_bilevel_setup_alignment.py tests/test_align_profiles.py -q`
+  passed: 12 tests.
 - `just imports` passed.
 - `just check` failed at `uv run ruff check --fix src tests tools` after
-  `uv run ruff format src tests tools`; `_results.py` is no longer in the
-  failure list. The first remaining failures are import/type annotation
-  findings in `_setup_stage.py`, followed by `_stage_loop.py` and later
-  modules/tests. Formatter churn from this command was reverted outside this
-  slice.
+  `uv run ruff format src tests tools`; `_setup_stage.py` is no longer in the
+  failure list. The first remaining failures are import/type annotation,
+  complexity, loop-binding, and unused-variable findings in `_stage_loop.py`,
+  followed by geometry module doc/import findings and later modules/tests.
+  Formatter churn from this command was reverted outside this slice.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: keep `TypedDict` imported at runtime because the result schemas
-  subclass it.
-- Decision: accept Ruff's local fixes for `__all__` sorting and direct
-  `cfg.spdhg_seed` access while preserving the existing required config
-  contract.
+- Decision: move only annotation-only names to `TYPE_CHECKING`; runtime setup
+  execution imports remain runtime imports.
+- Decision: update the setup-stage test's manual `ResolvedAlignmentStage`
+  construction to the current schedule contract instead of bypassing the test.
+- Decision: clean touched-file test lint exposed by focused Ruff so this slice
+  does not leave known lint in modified files.
 - Deviation: none from the cleanup scope.
 
 ### Risks
 
-- Risk: moving result annotation imports behind `TYPE_CHECKING` could expose a
-  runtime dependency if any code introspects annotations without postponed
-  evaluation.
-- Mitigation: rely on `from __future__ import annotations` and run focused
-  tests that construct resume states and use result helpers.
-- Proposed next fix for `just check`: continue into `_setup_stage.py`.
+- Risk: typing changes could accidentally move runtime dependencies behind
+  `TYPE_CHECKING`.
+- Mitigation: keep construction/execution imports at runtime, move only
+  annotation-only names, and run setup/alignment tests.
+- Proposed next fix for `just check`: continue into `_stage_loop.py`.

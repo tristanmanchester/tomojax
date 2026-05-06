@@ -2071,3 +2071,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   checkpoint/profile tests passed.
 - Proposed next fix for `just check`: clean `_setup_stage.py` imports and
   missing annotations.
+
+## 2026-05-06 — Clean Setup Stage Typing
+
+### Summary
+
+- Replaced `_setup_stage.py` parent-relative imports with absolute imports and
+  moved annotation-only geometry, stat, schedule, fold, adapter, and loss-spec
+  imports behind `TYPE_CHECKING`.
+- Added missing annotations for setup fold arrays, loss adapter, and loss spec
+  inputs.
+- Updated the bilevel setup test's manual `ResolvedAlignmentStage` construction
+  to the current schedule contract and cleaned touched-file lint.
+
+### Decisions
+
+- Kept runtime setup execution dependencies as runtime imports; only
+  annotation-only names moved behind `TYPE_CHECKING`.
+- Treated the stale test constructor as part of this cleanup because it blocked
+  focused setup validation and represented the current stage API inaccurately.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_setup_stage.py tests/test_bilevel_setup_alignment.py`
+  passed.
+- `uv run ruff format src/tomojax/align/_setup_stage.py tests/test_bilevel_setup_alignment.py`
+  passed.
+- `uv run pytest tests/test_bilevel_setup_alignment.py tests/test_align_profiles.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `_setup_stage.py` is no longer in the failure list; the first
+  remaining blockers are in `_stage_loop.py`, followed by geometry module
+  doc/import findings and broader repository lint backlog. Formatter churn
+  from `just check` was reverted outside this slice.
+
+### Risks
+
+- The setup test now carries explicit resolved-stage metadata; if the stage
+  contract changes again, this manual construction will need to change with it.
+- Proposed next fix for `just check`: split `_stage_loop.py` into smaller
+  import/annotation and orchestration cleanup slices.
