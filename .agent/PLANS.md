@@ -12,14 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 nuisance models and weak DOF handling
-- Goal: verify fitted nuisance estimates are recorded in run artifacts.
+- Goal: add setup-correlation evidence to weak-DOF policy reports.
 
 ### Scope
 
 - In scope:
-  - Add alternating smoke artifact coverage for gain/offset diagnostics.
-  - Add alternating smoke artifact coverage for background diagnostics.
-  - Preserve existing artifact schema and solver behavior.
+  - Record det_v setup-correlation evidence from Schur diagnostics.
+  - Gate det_v report-only policy on curvature, accepted step, validation
+    improvement, and correlation evidence.
+  - Preserve theta-scale frozen handling.
 - Out of scope:
   - New nuisance solver blocks.
   - Automatic weak-DOF activation changes.
@@ -36,17 +37,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add artifact-level gain/offset nuisance coverage.
-- [x] Add artifact-level background nuisance coverage.
+- [x] Add det_v correlation evidence payload.
+- [x] Gate det_v report-only decision on correlation evidence.
+- [x] Add focused observability artifact tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the nuisance artifact coverage slice.
+- [x] Commit the weak-DOF correlation slice.
 
 ### Validation
 
-- `uv run ruff format tests/test_alternating_solver_smoke.py` passed.
-- `uv run ruff check tests/test_alternating_solver_smoke.py` passed.
-- `uv run basedpyright tests/test_alternating_solver_smoke.py` passed.
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
   passed: 10 tests.
 - `just imports` passed.
@@ -56,10 +61,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- This slice adds coverage only; the previous solver diagnostics payload is the
-  implementation under test.
+- Correlation evidence is report-only and does not yet change active parameter
+  sets during solve.
 
 ### Risks
 
-- Risk: artifact coverage could add runtime by running more smoke profiles.
-- Mitigation: reuse existing lightning nuisance smoke tests.
+- Risk: setup-correlation evidence can be unavailable if no Schur diagnostics
+  are present.
+- Mitigation: keep missing evidence explicit and conservative.

@@ -367,11 +367,18 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert len(schur_eigenvalues) == 3
     weak_dof_policy = cast("dict[str, object]", observability["weak_dof_policy"])
     assert weak_dof_policy["mode"] == "report_only"
+    thresholds = cast("dict[str, object]", weak_dof_policy["thresholds"])
+    assert thresholds["correlation_abs_max_ceiling"] == 0.98
     decisions = cast("dict[str, dict[str, object]]", weak_dof_policy["decisions"])
     assert decisions["det_v_px"]["decision"] == "keep_active_with_prior"
     assert decisions["theta_scale"]["decision"] == "keep_frozen"
     det_v_evidence = cast("dict[str, object]", decisions["det_v_px"]["evidence"])
     assert det_v_evidence["curvature_passed"] is True
+    assert det_v_evidence["correlation_passed"] is True
+    det_v_correlation = cast("dict[str, object]", det_v_evidence["correlation"])
+    assert det_v_correlation["kind"] == "setup_correlation_matrix"
+    assert det_v_correlation["parameter_index"] == 2
+    assert float(cast("float", det_v_correlation["max_abs_correlation"])) <= 0.98
     assert det_v_evidence["accepted_step_passed"] is True
     assert det_v_evidence["validation_improvement_passed"] is True
     det_v_validation = cast("dict[str, object]", det_v_evidence["validation_improvement"])
@@ -379,8 +386,10 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert float(cast("float", det_v_validation["actual_reduction"])) > 0.0
     assert det_v_validation["accepted"] is True
     det_v_missing = cast("list[str]", det_v_evidence["missing_evidence"])
+    assert "correlation" not in det_v_missing
     assert "validation_improvement_gate_not_available_in_smoke" not in det_v_missing
     theta_scale_evidence = cast("dict[str, object]", decisions["theta_scale"]["evidence"])
+    assert theta_scale_evidence["correlation"] is None
     assert theta_scale_evidence["validation_improvement"] is None
     dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
     assert dofs["setup"]["det_u_px"]["status"] == "evaluated"

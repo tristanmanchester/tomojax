@@ -594,12 +594,18 @@ def _weak_dof_policy_payload(
     accepted_step_required = True
     missing_validation = "validation_improvement_gate_not_available_in_smoke"
     det_v_validation_improvement = _schur_validation_improvement_payload(diagnostics)
+    det_v_correlation = _setup_correlation_payload(
+        diagnostics,
+        parameter_index=2 if det_v_active else None,
+    )
     det_v_decision = _weak_dof_decision(
         name="det_v_px",
         active=det_v_active,
         curvature=det_v_curvature,
+        correlation=det_v_correlation,
         accepted=diagnostics.accepted if diagnostics is not None else False,
         curvature_floor=curvature_floor,
+        correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,
         frozen_reason="det_v_px is frozen in the current geometry",
         validation_improvement=det_v_validation_improvement,
@@ -609,8 +615,10 @@ def _weak_dof_policy_payload(
         name="theta_scale",
         active=False,
         curvature=None,
+        correlation=None,
         accepted=False,
         curvature_floor=curvature_floor,
+        correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,
         frozen_reason="theta_scale is unsupported by the current reference projector",
         validation_improvement=None,
@@ -621,6 +629,7 @@ def _weak_dof_policy_payload(
         "mode": "report_only",
         "thresholds": {
             "curvature_floor": curvature_floor,
+            "correlation_abs_max_ceiling": 0.98,
             "accepted_step_required": accepted_step_required,
         },
         "decisions": {
@@ -635,30 +644,38 @@ def _weak_dof_decision(
     name: str,
     active: bool,
     curvature: float | None,
+    correlation: Mapping[str, object] | None,
     accepted: bool,
     curvature_floor: float,
+    correlation_abs_max_ceiling: float,
     accepted_step_required: bool,
     frozen_reason: str,
     validation_improvement: Mapping[str, object] | None,
     missing_validation: str,
 ) -> dict[str, object]:
     curvature_passed = curvature is not None and curvature >= curvature_floor
+    correlation_passed = bool(correlation["passed"]) if correlation is not None else False
     accepted_passed = bool(accepted) if accepted_step_required else True
     validation_improvement_passed = (
         bool(validation_improvement["passed"]) if validation_improvement is not None else False
     )
-    missing_evidence = ["correlation"]
+    missing_evidence = []
+    if correlation is None:
+        missing_evidence.append("correlation")
     if validation_improvement is None:
         missing_evidence.append(missing_validation)
     if not active:
         decision = "keep_frozen"
         reason = frozen_reason
-    elif curvature_passed and accepted_passed:
+    elif curvature_passed and correlation_passed and accepted_passed:
         decision = "keep_active_with_prior"
-        reason = "curvature and accepted-step evidence are sufficient for report-only smoke policy"
+        reason = (
+            "curvature, correlation, and accepted-step evidence are sufficient "
+            "for report-only smoke policy"
+        )
     else:
         decision = "freeze_or_prior_required"
-        reason = "insufficient curvature or accepted-step evidence"
+        reason = "insufficient curvature, correlation, or accepted-step evidence"
     return {
         "name": name,
         "active": active,
@@ -668,14 +685,44 @@ def _weak_dof_decision(
             "curvature": curvature,
             "curvature_floor": curvature_floor,
             "curvature_passed": curvature_passed,
+            "correlation": correlation,
+            "correlation_abs_max_ceiling": correlation_abs_max_ceiling,
+            "correlation_passed": correlation_passed,
             "accepted_step": accepted,
             "accepted_step_required": accepted_step_required,
             "accepted_step_passed": accepted_passed,
-            "correlation": None,
             "validation_improvement": validation_improvement,
             "validation_improvement_passed": validation_improvement_passed,
             "missing_evidence": missing_evidence,
         },
+    }
+
+
+def _setup_correlation_payload(
+    diagnostics: JointSchurDiagnostics | None,
+    *,
+    parameter_index: int | None,
+) -> dict[str, object] | None:
+    if diagnostics is None or parameter_index is None:
+        return None
+    matrix = diagnostics.setup_correlation_matrix
+    if not matrix or parameter_index >= len(matrix):
+        return None
+    values = [
+        abs(float(value))
+        for index, value in enumerate(matrix[parameter_index])
+        if index != parameter_index
+    ]
+    if not values:
+        return None
+    max_abs = max(values)
+    ceiling = 0.98
+    return {
+        "kind": "setup_correlation_matrix",
+        "parameter_index": parameter_index,
+        "max_abs_correlation": max_abs,
+        "max_abs_correlation_ceiling": ceiling,
+        "passed": bool(max_abs <= ceiling),
     }
 
 

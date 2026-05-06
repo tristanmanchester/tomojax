@@ -193,6 +193,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The smoke artifact coverage uses the lightning profile for runtime. Broader
   Phase 8 nuisance policy still needs benchmark-case validation.
 
+## 2026-05-06 — Add Weak-DOF Correlation Evidence
+
+### Summary
+
+- Added det_v setup-correlation evidence to `observability_report.json`.
+- The report-only det_v weak-DOF decision now requires curvature, correlation,
+  accepted-step, and validation-improvement evidence to pass.
+- Added the correlation threshold to the weak-DOF policy thresholds block.
+- Extended alternating smoke tests to assert the emitted correlation evidence,
+  threshold, and missing-evidence behavior.
+
+### Decisions
+
+- Correlation evidence is computed from the Schur setup correlation matrix for
+  active `det_v_px`. Missing Schur diagnostics keep correlation evidence
+  explicit and conservative.
+- This remains report-only; it does not yet mutate the active setup parameter
+  set during solve.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- The correlation ceiling is conservative and report-only. Automatic weak-DOF
+  activation/freezing still needs a later Phase 8 policy slice.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary
