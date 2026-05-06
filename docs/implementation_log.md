@@ -1841,3 +1841,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   import/type-alias findings in `_profiles.py` and `_reconstruction_stage.py`.
 - Proposed next fix for `just check`: decompose `_build_pose_objective_bundle`
   before the larger top-level `align` split.
+
+## 2026-05-06 — Split Pose Objective Bundle Builders
+
+### Summary
+
+- Added `_PoseObjectiveContext` to carry pose objective arrays, config, chunk
+  sizes, masks, and loss adapter state through private helper builders.
+- Extracted chunk scheduling, mask handling, smoothness loss/gradient handling,
+  align-loss construction, manual loss/gradient construction, and GN update
+  construction out of `_build_pose_objective_bundle`.
+- Preserved the `PoseObjectiveBundle` public surface and the same JAX reference
+  objective paths.
+
+### Decisions
+
+- Used a frozen private context object rather than passing long argument lists
+  through every JAX helper.
+- Shared smoothness handling between align loss, manual gradient, and GN loss
+  paths to keep the existing formulas consistent.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_stage.py` now reports two local
+  PLR0912/PLR0915 complexity findings, both on top-level `align`.
+- `uv run ruff format --check src/tomojax/align/_pose_stage.py` passed.
+- `uv run pytest tests/test_align_quick.py tests/test_align_chunking.py -q -k '(gn or gd or smooth_pose_model or pose_model) and not lbfgs'`
+  passed: 47 tests, 5 deselected.
+- `uv run pytest tests/test_align_optimizers.py -q` passed: 10 tests.
+
+### Risks
+
+- `just check` remains blocked by top-level `align` complexity, followed by
+  legacy import/type-alias findings in `_profiles.py` and
+  `_reconstruction_stage.py`.
+- The existing native JAX/Optax L-BFGS abort remains unresolved.
+- Proposed next fix for `just check`: split top-level `align` orchestration
+  into setup, per-outer, and final-info helpers.
