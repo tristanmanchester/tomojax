@@ -12,14 +12,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: run the first deterministic multi-case 32^3 synthetic benchmark pass.
+- Goal: extend the deterministic 32^3 benchmark pass to all five planned cases.
 
 ### Scope
 
 - In scope:
-  - Generate 3-5 planned synthetic128 scenario sidecar datasets at 32^3.
-  - Run `align-auto` on each existing generated sidecar directory.
-  - Collect `benchmark_result.json` files and render the compare CLI markdown.
+  - Generate the remaining planned synthetic128 32^3 sidecar dataset.
+  - Run `align-auto` on the existing generated sidecar directory.
+  - Refresh the collected `benchmark_result.json` comparison markdown.
   - Record pass/fail, timing, and recovery summary in
     `docs/implementation_log.md`.
 - Out of scope:
@@ -39,21 +39,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Generate 3-5 deterministic 32^3 sidecar datasets.
-- [x] Run `tomojax-align-auto-smoke` on each existing sidecar directory.
-- [x] Collect benchmark result artifacts and render the comparison report.
-- [x] Record benchmark pass/fail, timing, and recovery summary.
-- [x] Commit the benchmark summary or intended artifacts.
+- [x] Generate the remaining deterministic 32^3 sidecar dataset.
+- [x] Run `tomojax-align-auto-smoke` on the existing sidecar directory.
+- [x] Refresh all-five benchmark result comparison.
+- [x] Record all-five pass/fail, timing, and recovery summary.
+- [x] Commit the all-five benchmark summary.
 
 ### Validation
 
-- `uv run python` generated four 32^3 sidecar datasets through public
+- `JAX_PLATFORM_NAME=cpu uv run python` generated
+  `synth128_combined_nuisance_jumps_32` through public
   `tomojax.datasets.generate_synthetic_dataset`.
-- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
-  four existing sidecar directories.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for the
+  existing `synth128_combined_nuisance_jumps_32` sidecar directory.
 - `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32/benchmark_comparison.md`
-  passed.
-- `just imports` passed after recording the documentation summary.
+  passed for all five result artifacts.
+- `just imports` passed after recording the all-five documentation summary.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.

@@ -5419,14 +5419,15 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 ### Summary
 
-- Generated four deterministic 32^3 sidecar datasets from planned synthetic128
+- Generated five deterministic 32^3 sidecar datasets from planned synthetic128
   scenarios:
   `synth128_setup_global_tomo`, `synth128_pose_random_extreme`,
-  `synth128_lamino_axis_roll_pose`, and `synth128_thermal_object_drift`.
+  `synth128_lamino_axis_roll_pose`, `synth128_thermal_object_drift`, and
+  `synth128_combined_nuisance_jumps`.
 - Ran `tomojax-align-auto-smoke` on each existing sidecar directory using
   `--profile smoke32`, gain/offset nuisance fitting, and background nuisance
   fitting.
-- Collected the four `benchmark_result.json` files and rendered
+- Collected the five `benchmark_result.json` files and rendered
   `.artifacts/phase8_multi_case_32/benchmark_comparison.md` with
   `tomojax-synthetic-benchmark-compare`.
 - Added a tracked concise run summary at
@@ -5440,6 +5441,7 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 | `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 0.662409 | 0.331717 | n/a | 13.6580 |
 | `synth128_lamino_axis_roll_pose` | failed | failed | failed | 0.635030 | 0.00978141 | n/a | 13.3269 |
 | `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 0.608258 | 0.000758991 | 12.4230 | 12.5270 |
+| `synth128_combined_nuisance_jumps` | failed | failed | failed | 0.700399 | 0.00452363 | 12.8806 | 12.9807 |
 
 Recovery details:
 
@@ -5454,6 +5456,9 @@ Recovery details:
 - `synth128_thermal_object_drift`: `det_u_realized_rmse_px=1.4893`,
   `det_v_realized_rmse_px=0.0512`, `theta_realized_rmse_rad=0.0052336`;
   supported DOFs improved, with failure label `nuisance_residual_structure`.
+- `synth128_combined_nuisance_jumps`: `det_u_realized_rmse_px=3.8751`,
+  `det_v_realized_rmse_px=0.9955`, `theta_realized_rmse_rad=0.0309604`;
+  supported DOFs did not improve.
 
 ### Decisions
 
@@ -5465,13 +5470,14 @@ Recovery details:
 
 ### Validation
 
-- `uv run python` generated the four sidecar datasets through public
+- `uv run python` generated the five sidecar datasets through public
   `tomojax.datasets.generate_synthetic_dataset`.
 - `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
-  four existing sidecar directories.
+  five existing sidecar directories.
 - `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32/benchmark_comparison.md`
   passed.
 - `just imports` passed after recording the documentation summary.
+- `just imports` passed again after extending the summary to all five cases.
 
 ### Risks
 
