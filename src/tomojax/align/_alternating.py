@@ -71,6 +71,7 @@ class AlternatingSmokeConfig:
     heldout_view_index: int | None = -1
     geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
     fit_gain_offset_nuisance: bool = False
+    fit_background_nuisance: bool = False
     synthetic_dataset_name: str | None = None
     synthetic_dataset_artifact_dir: Path | None = None
 
@@ -240,6 +241,7 @@ def _run_alternating_solver_smoke_impl(
                 geometry_updates,
                 sigma=residual_sigma_effective,
                 fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
+                fit_background_nuisance=config.fit_background_nuisance,
             )
             gauge_report = update_report
             last_schur_result = schur_result
@@ -330,6 +332,7 @@ def _run_alternating_solver_smoke_impl(
         schur_result=last_schur_result,
         geometry_update_volume_source=config.geometry_update_volume_source,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
+        fit_background_nuisance=config.fit_background_nuisance,
         verification=_verification_payload(
             cfg=config,
             schedule=schedule,
@@ -343,6 +346,7 @@ def _run_alternating_solver_smoke_impl(
             summaries=tuple(summaries),
             geometry_update_volume_source=config.geometry_update_volume_source,
             fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
+            fit_background_nuisance=config.fit_background_nuisance,
         ),
     )
     verification = json.loads(artifacts["verification_json"].read_text(encoding="utf-8"))
@@ -419,6 +423,7 @@ def _run_geometry_updates(
     *,
     sigma: float,
     fit_gain_offset_nuisance: bool,
+    fit_background_nuisance: bool,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
     result = solve_joint_schur_lm(
         volume,
@@ -434,6 +439,7 @@ def _run_geometry_updates(
             pose_trust_radius=level.trust_radius_px,
             parameter_prior_strength=level.prior_strength,
             fit_gain_offset=fit_gain_offset_nuisance,
+            fit_background_offset=fit_background_nuisance,
         ),
     )
     return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
@@ -653,6 +659,7 @@ def _verification_payload(
     summaries: tuple[AlternatingLevelSummary, ...],
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
+    fit_background_nuisance: bool,
 ) -> dict[str, object]:
     geometry_recovery = _geometry_recovery_payload(true_geometry, final_geometry)
     volume_recovery = _volume_recovery_payload(truth_volume, final_volume)
@@ -697,6 +704,7 @@ def _verification_payload(
         "schedule": schedule.name,
         "geometry_update_volume_source": geometry_update_volume_source,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
+        "fit_background_nuisance": fit_background_nuisance,
         "synthetic_dataset": _synthetic_dataset_payload(cfg),
         "level_factors": list(schedule.level_factors),
         "initial_loss": initial_loss,
@@ -867,6 +875,7 @@ def _write_artifacts(
     schur_result: JointSchurLMResult | None,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
+    fit_background_nuisance: bool,
     verification: Mapping[str, object],
 ) -> dict[str, Path]:
     artifacts = {
@@ -911,6 +920,7 @@ def _write_artifacts(
         schedule,
         geometry_update_volume_source=geometry_update_volume_source,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
+        fit_background_nuisance=fit_background_nuisance,
         synthetic_dataset=verification.get("synthetic_dataset"),
     )
     _write_json(
@@ -921,6 +931,7 @@ def _write_artifacts(
             schedule,
             geometry_update_volume_source=geometry_update_volume_source,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
+            fit_background_nuisance=fit_background_nuisance,
             synthetic_dataset=verification.get("synthetic_dataset"),
         ),
     )
@@ -1467,6 +1478,7 @@ def _write_config_resolved(
     *,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
+    fit_background_nuisance: bool,
     synthetic_dataset: object,
 ) -> None:
     lines = [
@@ -1477,6 +1489,7 @@ def _write_config_resolved(
         'geometry_model = "parallel_tomography_reference"',
         f'geometry_update_volume_source = "{geometry_update_volume_source}"',
         f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}",
+        f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}",
     ]
     if isinstance(synthetic_dataset, dict):
         dataset_payload = cast("dict[object, object]", synthetic_dataset)
@@ -1516,6 +1529,7 @@ def _run_manifest_payload(
     *,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
+    fit_background_nuisance: bool,
     synthetic_dataset: object,
 ) -> dict[str, object]:
     dataset: dict[str, object] = {
@@ -1539,6 +1553,7 @@ def _run_manifest_payload(
         "geometry_model": "parallel_tomography_reference",
         "geometry_update_volume_source": geometry_update_volume_source,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
+        "fit_background_nuisance": fit_background_nuisance,
         "continuation": {
             "name": schedule.name,
             "level_factors": list(schedule.level_factors),

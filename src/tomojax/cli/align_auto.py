@@ -63,6 +63,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fit per-view gain/offset nuisance during Schur geometry updates.",
     )
+    _ = parser.add_argument(
+        "--fit-background-nuisance",
+        action="store_true",
+        help="Fit low-frequency background nuisance during Schur geometry updates.",
+    )
     return parser
 
 
@@ -93,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             n_views=int(args.views),
             schedule=reference_continuation_schedule(profile),
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
+            fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,
             synthetic_dataset_artifact_dir=dataset_dir,
         )

@@ -4053,3 +4053,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Fitted background rows are recomputed inside finite-difference residual
   evaluation. This is acceptable for the reference correctness path but should
   be revisited before performance work.
+
+## 2026-05-06 — Phase 8 Align-Auto Background Nuisance Toggle
+
+### Summary
+
+- Added `fit_background_nuisance` to `AlternatingSmokeConfig`.
+- Threaded the option into Schur geometry updates through
+  `JointSchurLMConfig.fit_background_offset`.
+- Added `--fit-background-nuisance` to `align-auto`.
+- Recorded the option in `verification.json`, `run_manifest.json`, and
+  `config_resolved.toml`.
+- Added smoke and CLI tests proving the default remains off while opt-in runs
+  emit `background_offset_fit=true` in Schur diagnostics.
+
+### Decisions
+
+- Keep background fitting disabled by default until nuisance-bearing benchmark
+  projections are loaded by the solver path.
+
+### Validation
+
+- `uv run ruff format --check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- The current default smoke has no background drift; opt-in plumbing is covered,
+  but benchmark ingestion still needs to exercise the toggle with
+  nuisance-bearing data.

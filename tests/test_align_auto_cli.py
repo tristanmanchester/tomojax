@@ -23,6 +23,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "smoke32" in captured.out
     assert "--synthetic-dataset" in captured.out
     assert "--fit-gain-offset-nuisance" in captured.out
+    assert "--fit-background-nuisance" in captured.out
 
 
 def test_align_auto_smoke_command_writes_core_artifacts(
@@ -44,6 +45,7 @@ def test_align_auto_smoke_command_writes_core_artifacts(
     assert verification["status"] == "passed"
     assert verification["level1_geometry_skipped"] is True
     assert verification["fit_gain_offset_nuisance"] is False
+    assert verification["fit_background_nuisance"] is False
     summary = cast("dict[str, bool]", verification["summary"])
     assert summary["projection_residual_improved"] is True
     assert summary["gauge_constraints_satisfied"] is True
@@ -77,6 +79,7 @@ def test_align_auto_smoke_command_writes_core_artifacts(
     diagnostics = cast("dict[str, object]", schur["diagnostics"])
     assert diagnostics["parameter_prior_strength"] == 1.0e-3
     assert diagnostics["gain_offset_fit"] is False
+    assert diagnostics["background_offset_fit"] is False
     captured = capsys.readouterr()
     assert "verification:" in captured.out
 
@@ -113,6 +116,40 @@ def test_align_auto_smoke_command_can_enable_gain_offset_nuisance(tmp_path: Path
     )
     diagnostics = cast("dict[str, object]", schur["diagnostics"])
     assert diagnostics["gain_offset_fit"] is True
+
+
+def test_align_auto_smoke_command_can_enable_background_nuisance(tmp_path: Path) -> None:
+    out_dir = tmp_path / "auto-background"
+
+    exit_code = align_auto_cli.main(
+        [
+            "--out-dir",
+            str(out_dir),
+            "--profile",
+            "lightning",
+            "--fit-background-nuisance",
+        ]
+    )
+
+    assert exit_code == 0
+    verification = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "verification.json").read_text(encoding="utf-8")),
+    )
+    assert verification["fit_background_nuisance"] is True
+    manifest = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8")),
+    )
+    assert manifest["fit_background_nuisance"] is True
+    config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
+    assert "fit_background_nuisance = true" in config_text
+    schur = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "schur_diagnostics.json").read_text(encoding="utf-8")),
+    )
+    diagnostics = cast("dict[str, object]", schur["diagnostics"])
+    assert diagnostics["background_offset_fit"] is True
 
 
 def test_align_auto_smoke_command_generates_named_synthetic_dataset(
