@@ -12,17 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: emit a machine-readable benchmark case result for deterministic
+- Goal: emit a minimal human-readable benchmark report for deterministic
   synthetic sidecar smoke runs.
 
 ### Scope
 
 - In scope:
-  - Add a `benchmark_result.json` artifact for runs with synthetic dataset
-    metadata.
-  - Include dataset/profile/status, core reconstruction and geometry metrics,
-    runtime placeholders, backend provenance, and failure labels.
-  - Add focused CLI coverage for an existing-sidecar benchmark result.
+  - Add a conditional `benchmark_report.md` next to `benchmark_result.json`.
+  - Summarise dataset/profile/status, reconstruction residual/NMSE, geometry
+    recovery, backend provenance, and failure labels.
+  - Add focused CLI coverage for the existing-sidecar report.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -39,11 +38,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add synthetic benchmark result artifact.
-- [x] Add focused benchmark-result assertions.
+- [x] Add synthetic benchmark markdown report artifact.
+- [x] Add focused benchmark-report assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the benchmark-result slice.
+- [ ] Commit the benchmark-report slice.
 
 ### Validation
 
@@ -62,14 +61,14 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Emit a JSON result first; markdown comparison reports and current-vs-v2
-  comparators remain later slices.
-- Keep runtime metrics deterministic placeholders until real timing is wired
-  through the solver.
+- Emit a single-case markdown report first; multi-run compare remains a later
+  slice.
+- Keep timing fields explicit as unavailable until real timing is wired through
+  the solver.
 
 ### Risks
 
-- Risk: benchmark result can imply a full protocol run when it is only one
-  focused case.
+- Risk: benchmark report can imply a full protocol comparison when it is only
+  one focused case.
 - Mitigation: label the schema and implementation as
   `reimagined_align_auto_smoke` and include the smoke profile/shape.

@@ -4830,3 +4830,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This is a single-case benchmark result, not a full benchmark protocol runner
   or comparison report.
+
+## 2026-05-06 — Phase 8 Synthetic Benchmark Markdown Report
+
+### Summary
+
+- Added a conditional `benchmark_report.md` artifact for deterministic smoke
+  runs that include synthetic benchmark metadata.
+- The report is generated from `benchmark_result.json` and summarises the
+  single-case implementation/profile/status row, dataset provenance,
+  reconstruction residual/NMSE, gauge-canonical geometry recovery, backend
+  provenance, and failure labels.
+- Added focused CLI coverage proving ordinary smoke runs do not emit the
+  report while existing-sidecar synthetic runs do.
+
+### Decisions
+
+- Keep this as a one-run human-readable report; multi-run compare and
+  current-vs-reimagined tables remain later benchmark slices.
+- Continue to render unavailable timing fields as `n/a` until measured runtime
+  is wired through the solver.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- The report is intentionally not yet the full benchmark comparison report from
+  the v2 artifact contract.

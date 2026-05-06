@@ -44,6 +44,7 @@ def test_align_auto_smoke_command_writes_core_artifacts(
     assert (out_dir / "final_volume.npy").exists()
     assert (out_dir / "geometry_final.json").exists()
     assert (out_dir / "verification.json").exists()
+    assert not (out_dir / "benchmark_report.md").exists()
     assert not (out_dir / "benchmark_result.json").exists()
     verification = cast(
         "dict[str, object]",
@@ -375,6 +376,12 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert geometry_recovery["supported_dofs_improved"] is True
     backend = cast("dict[str, object]", benchmark_result["backend"])
     assert backend["actual"] == "jax_reference"
+    benchmark_report = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "# Benchmark: synth128_thermal_object_drift" in benchmark_report
+    assert "reimagined_align_auto_smoke" in benchmark_report
+    assert "## Geometry Recovery" in benchmark_report
+    assert "## Backend Provenance" in benchmark_report
+    assert "jax_reference" in benchmark_report
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text
     captured = capsys.readouterr()

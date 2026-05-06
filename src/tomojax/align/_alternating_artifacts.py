@@ -75,6 +75,7 @@ def _write_artifacts(
     artifacts = {
         "alignment_summary_csv": output_dir / "alignment_summary.csv",
         "artifact_index_json": output_dir / "artifact_index.json",
+        "benchmark_report_md": output_dir / "benchmark_report.md",
         "backend_report_json": output_dir / "backend_report.json",
         "benchmark_result_json": output_dir / "benchmark_result.json",
         "config_resolved_toml": output_dir / "config_resolved.toml",
@@ -112,6 +113,7 @@ def _write_artifacts(
     }
     synthetic_dataset = verification.get("synthetic_dataset")
     if not isinstance(synthetic_dataset, dict):
+        _ = artifacts.pop("benchmark_report_md")
         _ = artifacts.pop("benchmark_result_json")
     _write_config_resolved(
         artifacts["config_resolved_toml"],
@@ -161,16 +163,18 @@ def _write_artifacts(
     )
     if isinstance(synthetic_dataset, dict):
         synthetic_dataset_payload = cast("dict[object, object]", synthetic_dataset)
-        _write_json(
-            artifacts["benchmark_result_json"],
-            _benchmark_result_payload(
-                schedule=schedule,
-                verification=verification,
-                synthetic_dataset=synthetic_dataset_payload,
-                summaries=summaries,
-                failure_report=failure_report,
-                geometry_update_volume_source=geometry_update_volume_source,
-            ),
+        benchmark_result = _benchmark_result_payload(
+            schedule=schedule,
+            verification=verification,
+            synthetic_dataset=synthetic_dataset_payload,
+            summaries=summaries,
+            failure_report=failure_report,
+            geometry_update_volume_source=geometry_update_volume_source,
+        )
+        _write_json(artifacts["benchmark_result_json"], benchmark_result)
+        _write_text(
+            artifacts["benchmark_report_md"],
+            _benchmark_report_markdown(benchmark_result),
         )
     _write_final_volume(artifacts["final_volume_npy"], final_volume)
     _write_preview_slice_artifacts(
@@ -647,6 +651,7 @@ def _media_type(path: Path) -> str:
 def _artifact_description(name: str) -> str:
     descriptions = {
         "alignment_summary_csv": "Per-continuation-level alignment summary",
+        "benchmark_report_md": "Synthetic benchmark markdown report",
         "backend_report_json": "Backend provenance for the smoke run",
         "benchmark_result_json": "Synthetic benchmark case result",
         "config_resolved_toml": "Resolved deterministic smoke configuration",
@@ -683,6 +688,88 @@ def _artifact_description(name: str) -> str:
         "verification_json": "Smoke verification report",
     }
     return descriptions[name]
+
+
+def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
+    dataset = cast("dict[object, object]", benchmark_result.get("dataset", {}))
+    reconstruction = cast("dict[object, object]", benchmark_result.get("reconstruction", {}))
+    geometry = cast("dict[object, object]", benchmark_result.get("geometry_recovery", {}))
+    backend = cast("dict[object, object]", benchmark_result.get("backend", {}))
+    runtime = cast("dict[object, object]", benchmark_result.get("runtime", {}))
+    failure_labels = benchmark_result.get("failure_labels")
+    labels = (
+        ", ".join(str(label) for label in cast("list[object]", failure_labels))
+        if isinstance(failure_labels, list)
+        else ""
+    )
+    if not labels:
+        labels = "none"
+    benchmark_name = _markdown_cell(benchmark_result.get("benchmark"))
+    return "\n".join(
+        [
+            f"# Benchmark: {benchmark_name}",
+            "",
+            "## Summary",
+            "",
+            "| Impl | Profile | Status | Time to verified | Total time | "
+            "Volume NMSE | Final residual |",
+            "|---|---|---|---:|---:|---:|---:|",
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(benchmark_result.get("implementation")),
+                    _markdown_cell(benchmark_result.get("profile")),
+                    _markdown_cell(benchmark_result.get("status")),
+                    _markdown_cell(runtime.get("time_to_verified_geometry_seconds")),
+                    _markdown_cell(runtime.get("total_wall_seconds")),
+                    _markdown_cell(reconstruction.get("volume_nmse")),
+                    _markdown_cell(reconstruction.get("final_residual")),
+                ]
+            )
+            + " |",
+            "",
+            "## Dataset",
+            "",
+            f"- Name: {_markdown_cell(dataset.get('name'))}",
+            f"- Artifact directory: {_markdown_cell(dataset.get('artifact_dir'))}",
+            f"- Volume shape: {_markdown_cell(dataset.get('volume_shape'))}",
+            f"- Projection views: {_markdown_cell(dataset.get('projection_views'))}",
+            "",
+            "## Geometry Recovery",
+            "",
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| Passed | {_markdown_cell(geometry.get('passed'))} |",
+            "| Supported DOFs improved | "
+            f"{_markdown_cell(geometry.get('supported_dofs_improved'))} |",
+            "| det_u realised RMSE px | "
+            f"{_markdown_cell(geometry.get('det_u_realized_rmse_px'))} |",
+            "| det_v realised RMSE px | "
+            f"{_markdown_cell(geometry.get('det_v_realized_rmse_px'))} |",
+            "| theta realised RMSE rad | "
+            f"{_markdown_cell(geometry.get('theta_realized_rmse_rad'))} |",
+            "",
+            "## Backend Provenance",
+            "",
+            f"- Requested: {_markdown_cell(backend.get('requested'))}",
+            f"- Actual: {_markdown_cell(backend.get('actual'))}",
+            "",
+            "## Failure Labels",
+            "",
+            labels,
+            "",
+        ]
+    )
+
+
+def _markdown_cell(value: object) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, list):
+        return ", ".join(_markdown_cell(item) for item in cast("list[object]", value))
+    return str(value)
 
 
 def _benchmark_result_payload(
@@ -908,3 +995,8 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text(text, encoding="utf-8")
