@@ -73,6 +73,11 @@ class JointSchurDiagnostics:
     current_loss_by_view: tuple[float, ...] = ()
     candidate_loss_by_view: tuple[float, ...] = ()
     actual_reduction_by_view: tuple[float, ...] = ()
+    setup_gradient_by_view: tuple[tuple[float, ...], ...] = ()
+    pose_gradient_by_view: tuple[tuple[float, ...], ...] = ()
+    setup_hessian_diag_by_view: tuple[tuple[float, ...], ...] = ()
+    pose_hessian_diag_by_view: tuple[tuple[float, ...], ...] = ()
+    setup_pose_coupling_norm_by_view: tuple[float, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -102,6 +107,11 @@ class JointSchurDiagnostics:
             "current_loss_by_view": list(self.current_loss_by_view),
             "candidate_loss_by_view": list(self.candidate_loss_by_view),
             "actual_reduction_by_view": list(self.actual_reduction_by_view),
+            "setup_gradient_by_view": [list(row) for row in self.setup_gradient_by_view],
+            "pose_gradient_by_view": [list(row) for row in self.pose_gradient_by_view],
+            "setup_hessian_diag_by_view": [list(row) for row in self.setup_hessian_diag_by_view],
+            "pose_hessian_diag_by_view": [list(row) for row in self.pose_hessian_diag_by_view],
+            "setup_pose_coupling_norm_by_view": list(self.setup_pose_coupling_norm_by_view),
         }
 
 
@@ -347,6 +357,15 @@ class SchurStep:
     diagnostics: JointSchurDiagnostics
 
 
+@dataclass(frozen=True)
+class _PerViewNormalBlockDiagnostics:
+    setup_gradient_by_view: tuple[tuple[float, ...], ...]
+    pose_gradient_by_view: tuple[tuple[float, ...], ...]
+    setup_hessian_diag_by_view: tuple[tuple[float, ...], ...]
+    pose_hessian_diag_by_view: tuple[tuple[float, ...], ...]
+    setup_pose_coupling_norm_by_view: tuple[float, ...]
+
+
 def schur_step_from_jacobian(
     jacobian: jax.Array,
     residual: jax.Array,
@@ -362,6 +381,13 @@ def schur_step_from_jacobian(
     jac = jnp.asarray(jacobian, dtype=jnp.float32)
     r = jnp.asarray(residual, dtype=jnp.float32)
     n_params = n_setup + n_views * pose_dim
+    per_view_blocks = _per_view_normal_block_diagnostics(
+        jac,
+        r,
+        n_setup=n_setup,
+        n_views=n_views,
+        pose_dim=pose_dim,
+    )
     hessian = jac.T @ jac + jnp.eye(n_params, dtype=jnp.float32) * jnp.asarray(
         damping,
         dtype=jnp.float32,
@@ -425,8 +451,55 @@ def schur_step_from_jacobian(
             float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
         ),
         predicted_reduction=predicted_reduction,
+        setup_gradient_by_view=per_view_blocks.setup_gradient_by_view,
+        pose_gradient_by_view=per_view_blocks.pose_gradient_by_view,
+        setup_hessian_diag_by_view=per_view_blocks.setup_hessian_diag_by_view,
+        pose_hessian_diag_by_view=per_view_blocks.pose_hessian_diag_by_view,
+        setup_pose_coupling_norm_by_view=per_view_blocks.setup_pose_coupling_norm_by_view,
     )
     return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
+
+
+def _per_view_normal_block_diagnostics(
+    jacobian: jax.Array,
+    residual: jax.Array,
+    *,
+    n_setup: int,
+    n_views: int,
+    pose_dim: int,
+) -> _PerViewNormalBlockDiagnostics:
+    rows_per_view = int(jacobian.shape[0]) // int(n_views)
+    setup_gradient_by_view: list[tuple[float, ...]] = []
+    pose_gradient_by_view: list[tuple[float, ...]] = []
+    setup_hessian_diag_by_view: list[tuple[float, ...]] = []
+    pose_hessian_diag_by_view: list[tuple[float, ...]] = []
+    setup_pose_coupling_norm_by_view: list[float] = []
+    for view in range(n_views):
+        row_start = view * rows_per_view
+        row_stop = row_start + rows_per_view
+        pose_start = n_setup + view * pose_dim
+        pose_stop = pose_start + pose_dim
+        jac_view = jacobian[row_start:row_stop]
+        residual_view = residual[row_start:row_stop]
+        jac_setup = jac_view[:, :n_setup]
+        jac_pose = jac_view[:, pose_start:pose_stop]
+        setup_gradient = jac_setup.T @ residual_view
+        pose_gradient = jac_pose.T @ residual_view
+        setup_hessian = jac_setup.T @ jac_setup
+        pose_hessian = jac_pose.T @ jac_pose
+        coupling = jac_setup.T @ jac_pose
+        setup_gradient_by_view.append(tuple(float(value) for value in setup_gradient))
+        pose_gradient_by_view.append(tuple(float(value) for value in pose_gradient))
+        setup_hessian_diag_by_view.append(tuple(float(value) for value in jnp.diag(setup_hessian)))
+        pose_hessian_diag_by_view.append(tuple(float(value) for value in jnp.diag(pose_hessian)))
+        setup_pose_coupling_norm_by_view.append(float(jnp.linalg.norm(coupling)))
+    return _PerViewNormalBlockDiagnostics(
+        setup_gradient_by_view=tuple(setup_gradient_by_view),
+        pose_gradient_by_view=tuple(pose_gradient_by_view),
+        setup_hessian_diag_by_view=tuple(setup_hessian_diag_by_view),
+        pose_hessian_diag_by_view=tuple(pose_hessian_diag_by_view),
+        setup_pose_coupling_norm_by_view=tuple(setup_pose_coupling_norm_by_view),
+    )
 
 
 def _trust_scale(

@@ -1505,6 +1505,17 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
   in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
   findings. Formatter-only churn from this command was reverted outside this
+  per-view-normal-block slice.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 150 tests.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  `uv run ruff format src tests tools`; current first failures include
+  `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
+  in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
+  findings. Formatter-only churn from this command was reverted outside this
   per-view-reduction slice.
 - `just imports` passed:
   - `uv run lint-imports --config .importlinter`
@@ -1618,6 +1629,52 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Per-view `Jᵀr`/`JᵀJ` block artifacts are not yet materialized separately from
   the dense finite-difference Jacobian; this slice records per-view loss
   effects only.
+- Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
+  separate milestone instead of mixing repository-wide lint churn into Phase 6
+  numerical solver work.
+
+## 2026-05-06 — Add Joint Schur Per-View Normal-Block Diagnostics
+
+### Summary
+
+- Added compact per-view normal-equation diagnostics to `JointSchurDiagnostics`:
+  - `setup_gradient_by_view`
+  - `pose_gradient_by_view`
+  - `setup_hessian_diag_by_view`
+  - `pose_hessian_diag_by_view`
+  - `setup_pose_coupling_norm_by_view`
+- Computed these summaries from the current finite-difference Jacobian and
+  weighted residual inside `schur_step_from_jacobian`.
+- Extended `normal_eq_summary.json` and iteration trace rows with the new
+  per-view normal-block fields.
+- Added deterministic checks for selected per-view gradient values plus artifact
+  field/readback coverage.
+
+### Decisions
+
+- Recorded compact vectors and norms rather than full per-view matrices to keep
+  the JSON artifact readable.
+- Used a private typed dataclass for the intermediate block diagnostics so the
+  public `JointSchurDiagnostics` construction remains type-safe.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 8 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- These diagnostics are computed from dense finite-difference Jacobians, not a
+  streamed production accumulator. They are reference diagnostics until the
+  fast path exists.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   separate milestone instead of mixing repository-wide lint churn into Phase 6
   numerical solver work.

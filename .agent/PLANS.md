@@ -12,14 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 6 — Joint setup+pose Schur LM
-- Goal: add per-view loss and reduction diagnostics to the joint Schur
+- Goal: add per-view normal-equation block diagnostics to the joint Schur
   reference solver.
 
 ### Scope
 
 - In scope:
-  - Record current and candidate robust loss per view.
-  - Record actual reduction per view for the evaluated candidate step.
+  - Record per-view `Jg^T r` and `Jp^T r` contributions.
+  - Record per-view setup/pose normal-block diagonal summaries.
+  - Record per-view setup-pose coupling norms.
   - Include these fields in iteration diagnostics and `normal_eq_summary.json`.
   - Add deterministic tests and artifact readback coverage.
 - Out of scope:
@@ -34,13 +35,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add per-view loss/reduction fields to diagnostics.
-- [x] Compute current and candidate per-view losses in the solve loop.
-- [x] Include per-view fields in the normal-equation artifact.
+- [x] Add per-view normal-equation fields to diagnostics.
+- [x] Compute per-view block summaries from the finite-difference Jacobian.
+- [x] Include per-view block fields in the normal-equation artifact.
 - [x] Add deterministic tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the per-view-reduction slice if validations pass.
+- [ ] Commit the per-view-normal-block slice if validations pass.
 
 ### Validation
 
@@ -69,17 +70,18 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: record per-view values as actual robust objective losses before and
-  after candidate evaluation, rather than quadratic model reductions.
-- Deviation: per-view `Jᵀr`/`JᵀJ` block artifacts are still not materialized
-  separately from the dense finite-difference Jacobian.
+- Decision: record compact per-view normal-equation summaries instead of full
+  matrices: setup/pose gradients, setup/pose block diagonals, and coupling
+  norms.
+- Deviation: these diagnostics come from the dense finite-difference Jacobian;
+  a streamed per-view accumulator remains future implementation work.
 
 ### Risks
 
-- Risk: per-view losses are robust objective losses, while the Schur model is
-  fit to the current IRLS weighted residual.
-- Mitigation: label them as actual robust losses/reductions rather than model
-  reductions.
+- Risk: these block diagnostics come from dense finite-difference Jacobians,
+  not a streamed per-view accumulator.
+- Mitigation: label them as reference diagnostics and keep the future streamed
+  accumulator as a later implementation detail.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   dedicated milestone rather than mixing repository-wide lint churn into Phase
   6 numerical solver slices.

@@ -151,6 +151,21 @@ def test_schur_step_matches_dense_normal_solve() -> None:
     assert len(step.diagnostics.global_eigenvalues) == 8
     assert len(step.diagnostics.schur_eigenvalues) == 2
     assert len(step.diagnostics.pose_block_conditions) == 2
+    assert len(step.diagnostics.setup_gradient_by_view) == 2
+    assert len(step.diagnostics.pose_gradient_by_view) == 2
+    assert len(step.diagnostics.setup_hessian_diag_by_view) == 2
+    assert len(step.diagnostics.pose_hessian_diag_by_view) == 2
+    assert len(step.diagnostics.setup_pose_coupling_norm_by_view) == 2
+    np.testing.assert_allclose(
+        np.asarray(step.diagnostics.setup_gradient_by_view[0]),
+        np.asarray(jacobian[:3, :2].T @ residual[:3]),
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(step.diagnostics.pose_gradient_by_view[1]),
+        np.asarray(jacobian[3:, 5:8].T @ residual[3:]),
+        atol=1e-6,
+    )
     assert len(step.diagnostics.setup_correlation_matrix) == 2
     assert step.diagnostics.trust_scale == 1.0
     assert step.diagnostics.trust_clipped is False
@@ -300,34 +315,45 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert payload["iteration_diagnostics"][-1] == payload["diagnostics"]
     assert payload["active_setup_parameters"] == ["theta_offset_rad", "det_u_px"]
     assert payload["active_pose_dofs"] == ["phi_residual_rad", "dx_px", "dz_px"]
-    assert "schur_condition" in payload["diagnostics"]
-    assert "global_eigenvalues" in payload["diagnostics"]
-    assert "schur_eigenvalues" in payload["diagnostics"]
-    assert "pose_block_conditions" in payload["diagnostics"]
-    assert "setup_correlation_matrix" in payload["diagnostics"]
-    assert "weak_mode_labels" in payload["diagnostics"]
-    assert "trust_scale" in payload["diagnostics"]
-    assert "trust_clipped" in payload["diagnostics"]
-    assert "setup_update_by_parameter" in payload["diagnostics"]
-    assert "pose_update_max_by_dof" in payload["diagnostics"]
-    assert "damping" in payload["diagnostics"]
-    assert "next_damping" in payload["diagnostics"]
-    assert "accepted" in payload["diagnostics"]
-    assert "current_loss" in payload["diagnostics"]
-    assert "candidate_loss" in payload["diagnostics"]
-    assert "predicted_reduction" in payload["diagnostics"]
-    assert "actual_reduction" in payload["diagnostics"]
-    assert "reduction_ratio" in payload["diagnostics"]
-    assert "next_setup_trust_radius" in payload["diagnostics"]
-    assert "next_pose_trust_radius" in payload["diagnostics"]
-    assert "current_loss_by_view" in payload["diagnostics"]
-    assert "candidate_loss_by_view" in payload["diagnostics"]
-    assert "actual_reduction_by_view" in payload["diagnostics"]
+    for field in (
+        "schur_condition",
+        "global_eigenvalues",
+        "schur_eigenvalues",
+        "pose_block_conditions",
+        "setup_correlation_matrix",
+        "weak_mode_labels",
+        "trust_scale",
+        "trust_clipped",
+        "setup_update_by_parameter",
+        "pose_update_max_by_dof",
+        "damping",
+        "next_damping",
+        "accepted",
+        "current_loss",
+        "candidate_loss",
+        "predicted_reduction",
+        "actual_reduction",
+        "reduction_ratio",
+        "next_setup_trust_radius",
+        "next_pose_trust_radius",
+        "current_loss_by_view",
+        "candidate_loss_by_view",
+        "actual_reduction_by_view",
+        "setup_gradient_by_view",
+        "pose_gradient_by_view",
+        "setup_hessian_diag_by_view",
+        "pose_hessian_diag_by_view",
+        "setup_pose_coupling_norm_by_view",
+    ):
+        assert field in payload["diagnostics"]
     assert payload["diagnostics"]["next_setup_trust_radius"] is not None
     assert payload["diagnostics"]["next_pose_trust_radius"] is not None
     assert len(payload["diagnostics"]["current_loss_by_view"]) == 1
     assert len(payload["diagnostics"]["candidate_loss_by_view"]) == 1
     assert len(payload["diagnostics"]["actual_reduction_by_view"]) == 1
+    assert len(payload["diagnostics"]["setup_gradient_by_view"]) == 1
+    assert len(payload["diagnostics"]["pose_gradient_by_view"]) == 1
+    assert len(payload["diagnostics"]["setup_pose_coupling_norm_by_view"]) == 1
     assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
     assert len(payload["diagnostics"]["setup_correlation_matrix"]) == 2
 
