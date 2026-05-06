@@ -3510,3 +3510,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This is still a 32^3 deterministic smoke profile with a minimal projector.
   The next step is to keep increasing realism without letting reconstruction
   absorb the geometry signal.
+
+## 2026-05-06 — Phase 7 Benchmark-Facing Auto Path
+
+### Summary
+
+- Added optional synthetic128 benchmark metadata to the Phase 7 smoke config.
+- Extended `align-auto` with `--synthetic-dataset` and `--dataset-out-dir`.
+- The command now generates deterministic synthetic dataset artifacts for a
+  named benchmark spec before running the Phase 7 auto smoke path.
+- Recorded the synthetic benchmark identity and generated artifact directory in
+  `verification.json`, `run_manifest.json`, and `config_resolved.toml`.
+- Added focused CLI and smoke tests for the benchmark-facing path.
+
+### Decisions
+
+- This slice deliberately keeps the solver input as the current deterministic
+  Phase 7 smoke fixture. The named synthetic dataset artifacts are generated
+  and recorded as benchmark context only; full external dataset ingestion is a
+  separate numerical/data-loading slice.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_verify_artifacts.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- The command now ties auto runs to named synthetic benchmark artifact
+  generation, but it does not yet consume those generated projections, masks,
+  or geometry files as solver inputs.

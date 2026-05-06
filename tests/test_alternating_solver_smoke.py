@@ -62,6 +62,7 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
 
 def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
     assert result.verification["geometry_update_volume_source"] == "stopped_reconstruction"
+    assert result.verification["synthetic_dataset"] is None
     verification_summary = cast("dict[str, bool]", result.verification["summary"])
     assert verification_summary["final_reconstruction_valid"] is True
     assert verification_summary["gauge_constraints_satisfied"] is True
@@ -296,6 +297,7 @@ def _assert_manifest(result: AlternatingSmokeResult) -> None:
     assert manifest["finished_at"] == "deterministic-smoke"
     assert manifest["geometry_model"] == "parallel_tomography_reference"
     assert manifest["geometry_update_volume_source"] == "stopped_reconstruction"
+    assert "synthetic128_benchmark" not in cast("dict[str, object]", manifest["dataset"])
     assert manifest["backend_requested"] == "jax_reference"
     assert manifest["backend_actual"] == "jax_reference"
     assert manifest["status"] == "passed"

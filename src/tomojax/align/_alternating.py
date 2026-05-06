@@ -67,6 +67,8 @@ class AlternatingSmokeConfig:
     gauge_stability_tolerance: float = 1.0e-10
     parameter_update_tolerance: float = 2.0
     geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
+    synthetic_dataset_name: str | None = None
+    synthetic_dataset_artifact_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -528,6 +530,7 @@ def _verification_payload(
         "n_views": cfg.n_views,
         "schedule": schedule.name,
         "geometry_update_volume_source": geometry_update_volume_source,
+        "synthetic_dataset": _synthetic_dataset_payload(cfg),
         "level_factors": list(schedule.level_factors),
         "initial_loss": initial_loss,
         "final_loss": final_loss,
@@ -558,6 +561,18 @@ def _level1_geometry_skipped(summaries: tuple[AlternatingLevelSummary, ...]) -> 
         and summary.skipped_geometry
         for summary in summaries
     )
+
+
+def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object] | None:
+    if cfg.synthetic_dataset_name is None:
+        return None
+    payload: dict[str, object] = {
+        "name": cfg.synthetic_dataset_name,
+        "source": "synthetic128_spec",
+    }
+    if cfg.synthetic_dataset_artifact_dir is not None:
+        payload["artifact_dir"] = str(cfg.synthetic_dataset_artifact_dir)
+    return payload
 
 
 def _geometry_recovery_payload(
@@ -720,6 +735,7 @@ def _write_artifacts(
         artifacts["config_resolved_toml"],
         schedule,
         geometry_update_volume_source=geometry_update_volume_source,
+        synthetic_dataset=verification.get("synthetic_dataset"),
     )
     _write_json(
         artifacts["run_manifest_json"],
@@ -728,6 +744,7 @@ def _write_artifacts(
             observed,
             schedule,
             geometry_update_volume_source=geometry_update_volume_source,
+            synthetic_dataset=verification.get("synthetic_dataset"),
         ),
     )
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
@@ -1232,20 +1249,27 @@ def _write_config_resolved(
     schedule: ContinuationSchedule,
     *,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
+    synthetic_dataset: object,
 ) -> None:
+    lines = [
+        f'profile = "{schedule.name}"',
+        'align_mode = "auto"',
+        'backend_requested = "jax_reference"',
+        'backend_actual = "jax_reference"',
+        'geometry_model = "parallel_tomography_reference"',
+        f'geometry_update_volume_source = "{geometry_update_volume_source}"',
+    ]
+    if isinstance(synthetic_dataset, dict):
+        dataset_payload = cast("dict[object, object]", synthetic_dataset)
+        name = dataset_payload.get("name")
+        artifact_dir = dataset_payload.get("artifact_dir")
+        if isinstance(name, str):
+            lines.append(f'synthetic_dataset_name = "{name}"')
+        if isinstance(artifact_dir, str):
+            lines.append(f'synthetic_dataset_artifact_dir = "{artifact_dir}"')
+    lines.extend((f"level_factors = {list(schedule.level_factors)!r}", ""))
     _ = path.write_text(
-        "\n".join(
-            (
-                f'profile = "{schedule.name}"',
-                'align_mode = "auto"',
-                'backend_requested = "jax_reference"',
-                'backend_actual = "jax_reference"',
-                'geometry_model = "parallel_tomography_reference"',
-                f'geometry_update_volume_source = "{geometry_update_volume_source}"',
-                f"level_factors = {list(schedule.level_factors)!r}",
-                "",
-            )
-        ),
+        "\n".join(lines),
         encoding="utf-8",
     )
 
@@ -1272,7 +1296,16 @@ def _run_manifest_payload(
     schedule: ContinuationSchedule,
     *,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
+    synthetic_dataset: object,
 ) -> dict[str, object]:
+    dataset: dict[str, object] = {
+        "source": "tomojax.datasets.make_benchmark_phantom",
+        "shape": list(volume.shape),
+        "projection_shape": list(projections.shape),
+        "projection_dtype": str(projections.dtype),
+    }
+    if isinstance(synthetic_dataset, dict):
+        dataset["synthetic128_benchmark"] = synthetic_dataset
     return {
         "schema": "tomojax.run_manifest.v1",
         "tomojax_version": _tomojax_version(),
@@ -1282,12 +1315,7 @@ def _run_manifest_payload(
         "finished_at": "deterministic-smoke",
         "profile": schedule.name,
         "align_mode": "auto",
-        "dataset": {
-            "source": "tomojax.datasets.make_benchmark_phantom",
-            "shape": list(volume.shape),
-            "projection_shape": list(projections.shape),
-            "projection_dtype": str(projections.dtype),
-        },
+        "dataset": dataset,
         "geometry_model": "parallel_tomography_reference",
         "geometry_update_volume_source": geometry_update_volume_source,
         "continuation": {
