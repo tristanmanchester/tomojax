@@ -922,3 +922,54 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This is not yet production reconstruction quality: the reference projector is
   still minimal, and multiresolution schedules plus stronger step-size control
   remain future Phase 3 work.
+
+## 2026-05-06 — Add Reference FISTA Reconstruction Schedules
+
+### Summary
+
+- Added `tomojax.recon.reference_fista_schedule`, a typed v2 schedule resolver
+  for reference FISTA preview and final reconstruction runs.
+- Added schedule dataclasses:
+  - `ReferenceFISTASchedule`
+  - `ReferenceFISTAScheduleEntry`
+  - `ReferenceReconstructionScheduleName`
+- Defined the Phase 3 schedule contract:
+  - preview schedule: levels 4 and 2
+  - final schedule: level 1
+- Included the Phase 2 residual filter policies in schedule entries:
+  - level 4 uses low-pass
+  - level 2 uses low-pass plus band-pass
+  - level 1 uses raw residuals
+- Added deterministic tests for schedule resolution, level factors, filter
+  weights, and unknown-name rejection.
+
+### Decisions
+
+- The schedule API resolves typed configuration only. It does not execute a
+  multiresolution pyramid yet; that orchestration belongs in a later Phase 3 or
+  Phase 7 slice.
+- Kept this separate from the old-core `recon.multires` path so v2 reference
+  reconstruction can evolve behind the deep-module API without importing old
+  geometry internals.
+
+### Validation
+
+- `uv run ruff check src/tomojax/recon/_schedule_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py tests/test_reference_fista_schedule.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/recon/_schedule_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py tests/test_reference_fista_schedule.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/recon/_schedule_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py tests/test_reference_fista_schedule.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_reference_fista_schedule.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py -q`
+  passed: 7 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
+  passed: 139 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Full schedule execution over a multiresolution pyramid is still incomplete.

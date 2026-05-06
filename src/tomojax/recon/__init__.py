@@ -15,6 +15,12 @@ from ._fista_reference import (
     write_fista_trace_csv,
 )
 from ._reference import reconstruct_average_reference
+from ._schedule_reference import (
+    ReferenceFISTASchedule,
+    ReferenceFISTAScheduleEntry,
+    ReferenceReconstructionScheduleName,
+    reference_fista_schedule,
+)
 from .types import Regulariser
 
 
@@ -42,13 +48,17 @@ __all__ = [
     "FistaConfig",
     "ReferenceFISTAConfig",
     "ReferenceFISTAResult",
+    "ReferenceFISTASchedule",
+    "ReferenceFISTAScheduleEntry",
     "ReferenceFISTATraceRow",
+    "ReferenceReconstructionScheduleName",
     "Regulariser",
     "SPDHGConfig",
     "fbp",
     "fista_reconstruct_reference",
     "fista_tv",
     "reconstruct_average_reference",
+    "reference_fista_schedule",
     "spdhg_tv",
     "write_fista_trace_csv",
 ]

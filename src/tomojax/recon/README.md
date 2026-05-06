@@ -16,12 +16,16 @@ forward model.
 - `FistaConfig`
 - `ReferenceFISTAConfig`
 - `ReferenceFISTAResult`
+- `ReferenceFISTASchedule`
+- `ReferenceFISTAScheduleEntry`
 - `ReferenceFISTATraceRow`
+- `ReferenceReconstructionScheduleName`
 - `Regulariser`
 - `SPDHGConfig`
 - `fbp`
 - `fista_reconstruct_reference`
 - `fista_tv`
+- `reference_fista_schedule`
 - `reconstruct_average_reference`
 - `spdhg_tv`
 - `write_fista_trace_csv`
@@ -48,6 +52,8 @@ Forbidden dependencies:
 - Reconstruction traces must be suitable for artifact reports.
 - `fista_reconstruct_reference` is the first v2 JAX reference FISTA preview
   contract. It uses the current minimal reference projector.
+- `reference_fista_schedule` resolves the v2 preview/final schedule contract;
+  full pyramid execution belongs to a later orchestration milestone.
 - `reconstruct_average_reference` is a tiny smoke helper, not the final default
   reconstruction algorithm.
 
