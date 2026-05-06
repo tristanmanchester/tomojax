@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Mapping, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
-import jax.numpy as jnp
+if TYPE_CHECKING:
+    import jax.numpy as jnp
 
-from ._observer import ObserverAction, OuterStat
-from .model.schedules import ResolvedAlignmentStage
+    from ._observer import ObserverAction, OuterStat
+    from .model.schedules import ResolvedAlignmentStage
 
 
 type GaugeFixSummary = dict[str, float | str | list[str]]
@@ -194,7 +196,7 @@ def record_reconstruction_info(
                     if dst in {"spdhg_views_per_batch", "spdhg_num_blocks"}
                     else float(value)
                 )
-        stat["spdhg_seed"] = int(getattr(cfg, "spdhg_seed")) + int(outer_idx) - 1
+        stat["spdhg_seed"] = int(cfg.spdhg_seed) + int(outer_idx) - 1
     return L_prev
 
 
@@ -245,10 +247,10 @@ def enrich_multires_stage_stat(
 
 
 __all__ = [
-    "AlignInfo",
     "AlignCheckpointCallback",
-    "AlignMultiresInfo",
+    "AlignInfo",
     "AlignMultiresCheckpointCallback",
+    "AlignMultiresInfo",
     "AlignMultiresResumeState",
     "AlignResumeState",
     "enrich_multires_stage_stat",

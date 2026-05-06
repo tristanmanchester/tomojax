@@ -2034,3 +2034,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   coverage passed, but a dedicated stat-schema test was not added in this
   slice.
 - Proposed next fix for `just check`: clean `_results.py` type-only imports.
+
+## 2026-05-06 — Clean Alignment Result Type Imports
+
+### Summary
+
+- Moved `_results.py` annotation-only `jax.numpy`, observer, and schedule
+  imports behind `TYPE_CHECKING`.
+- Switched runtime collection protocol imports to `collections.abc`.
+- Let Ruff apply file-local fixes for `__all__` ordering and direct
+  `cfg.spdhg_seed` access.
+
+### Decisions
+
+- Kept `TypedDict` as a runtime import because the result schema classes
+  subclass it.
+- Kept result payload shapes unchanged; this slice only changes import/runtime
+  typing hygiene.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_results.py` passed.
+- `uv run ruff format src/tomojax/align/_results.py` passed.
+- `uv run pytest tests/test_align_checkpoint.py tests/test_align_profiles.py -q`
+  passed: 16 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `_results.py` is no longer in the failure list; the first
+  remaining blockers are in `_setup_stage.py`, followed by `_stage_loop.py`
+  and broader repository lint backlog. Formatter churn from `just check` was
+  reverted outside this slice.
+
+### Risks
+
+- Runtime annotation introspection remains dependent on postponed annotations;
+  checkpoint/profile tests passed.
+- Proposed next fix for `just check`: clean `_setup_stage.py` imports and
+  missing annotations.
