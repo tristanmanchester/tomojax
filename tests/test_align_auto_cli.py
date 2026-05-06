@@ -265,6 +265,17 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     assert evaluation["det_u_error_px_lt"]["status"] == "failed"
     assert evaluation["det_u_error_px_lt"]["threshold"] == 0.5
     assert evaluation["axis_error_deg_lt"]["status"] == "not_evaluated"
+    evaluation_summary = cast(
+        "dict[str, object]",
+        benchmark_result["benchmark_manifest_evaluation_summary"],
+    )
+    assert evaluation_summary == {
+        "failed": 1,
+        "not_evaluated": 3,
+        "passed": 0,
+        "status": "failed",
+        "total": 4,
+    }
     nuisance = cast(
         "dict[str, object]",
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
@@ -427,6 +438,17 @@ def _assert_benchmark_criteria_and_runtime(
     )
     assert criteria_evaluation["core_solver"]["status"] == "not_evaluated"
     assert criteria_evaluation["core_solver"]["threshold"] == "flags_object_motion_suspected"
+    criteria_summary = cast(
+        "dict[str, object]",
+        benchmark_result["benchmark_manifest_evaluation_summary"],
+    )
+    assert criteria_summary == {
+        "failed": 0,
+        "not_evaluated": 2,
+        "passed": 0,
+        "status": "partially_evaluated",
+        "total": 2,
+    }
     runtime = cast("dict[str, object]", benchmark_result["runtime"])
     assert isinstance(runtime["time_to_verified_geometry_seconds"], float)
     assert isinstance(runtime["total_wall_seconds"], float)

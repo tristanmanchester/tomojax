@@ -700,6 +700,10 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
         "dict[object, object]",
         benchmark_result.get("benchmark_manifest_evaluation", {}),
     )
+    criteria_summary = cast(
+        "dict[object, object]",
+        benchmark_result.get("benchmark_manifest_evaluation_summary", {}),
+    )
     reconstruction = cast("dict[object, object]", benchmark_result.get("reconstruction", {}))
     geometry = cast("dict[object, object]", benchmark_result.get("geometry_recovery", {}))
     backend = cast("dict[object, object]", benchmark_result.get("backend", {}))
@@ -752,6 +756,11 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             "" if manifest_criteria else "none",
             "",
             "## Benchmark Manifest Evaluation",
+            "",
+            f"- Status: {_markdown_cell(criteria_summary.get('status'))}",
+            f"- Passed: {_markdown_cell(criteria_summary.get('passed'))}",
+            f"- Failed: {_markdown_cell(criteria_summary.get('failed'))}",
+            f"- Not evaluated: {_markdown_cell(criteria_summary.get('not_evaluated'))}",
             "",
             "| Criterion | Status | Value | Threshold | Reason |",
             "|---|---|---:|---:|---|",
@@ -832,6 +841,10 @@ def _benchmark_result_payload(
         "dict[object, object]",
         sidecar_readback.get("recovery_tolerances", {}),
     )
+    manifest_evaluation = _benchmark_manifest_evaluation(
+        criteria=manifest_criteria,
+        geometry_recovery=geometry_recovery,
+    )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
         "benchmark": synthetic_dataset.get("name"),
@@ -879,9 +892,9 @@ def _benchmark_result_payload(
         },
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
-        "benchmark_manifest_evaluation": _benchmark_manifest_evaluation(
-            criteria=manifest_criteria,
-            geometry_recovery=geometry_recovery,
+        "benchmark_manifest_evaluation": manifest_evaluation,
+        "benchmark_manifest_evaluation_summary": _benchmark_manifest_evaluation_summary(
+            manifest_evaluation
         ),
         "geometry_update_volume_source": geometry_update_volume_source,
     }
@@ -930,6 +943,32 @@ def _criterion_evaluation(
         "value": float(value),
         "threshold": float(threshold),
         "reason": "evaluated against smoke geometry recovery metric",
+    }
+
+
+def _benchmark_manifest_evaluation_summary(
+    evaluation: Mapping[str, object],
+) -> dict[str, object]:
+    counts = {"passed": 0, "failed": 0, "not_evaluated": 0}
+    for payload in evaluation.values():
+        if not isinstance(payload, dict):
+            continue
+        status = cast("dict[object, object]", payload).get("status")
+        if status in counts:
+            counts[cast("str", status)] += 1
+    total = sum(counts.values())
+    if counts["failed"] > 0:
+        status = "failed"
+    elif counts["not_evaluated"] > 0:
+        status = "partially_evaluated"
+    elif counts["passed"] > 0:
+        status = "passed"
+    else:
+        status = "not_evaluated"
+    return {
+        "status": status,
+        "total": total,
+        **counts,
     }
 
 

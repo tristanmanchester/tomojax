@@ -12,16 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: add report-only benchmark manifest criteria evaluation to smoke-run
-  benchmark artifacts.
+- Goal: add aggregate benchmark manifest criteria evaluation status to
+  smoke-run benchmark artifacts.
 
 ### Scope
 
 - In scope:
-  - Evaluate manifest criteria when the smoke run exposes a matching metric.
-  - Mark unsupported criteria as `not_evaluated`.
-  - Thread evaluation into `benchmark_result.json` and `benchmark_report.md`.
-  - Add focused CLI assertions for evaluated and not-evaluated criteria.
+  - Summarise criteria evaluation counts by status.
+  - Add an aggregate report-only status.
+  - Render the aggregate status in `benchmark_report.md`.
+  - Add focused CLI assertions for the summary.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -38,12 +38,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add report-only criteria evaluation payload.
-- [x] Render criteria evaluation in markdown report.
-- [x] Add focused criteria-evaluation assertions.
+- [x] Add criteria evaluation summary payload.
+- [x] Render criteria summary in markdown report.
+- [x] Add focused criteria-summary assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the benchmark criteria-evaluation slice.
+- [ ] Commit the benchmark criteria-summary slice.
 
 ### Validation
 
@@ -62,10 +62,10 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Criteria evaluation is report-only and must not change solver pass/fail
-  behavior in this slice.
+- Criteria summary is report-only and must not change solver pass/fail behavior
+  in this slice.
 
 ### Risks
 
-- Risk: unsupported benchmark criteria can look silently ignored.
-- Mitigation: emit an explicit `not_evaluated` status with a reason.
+- Risk: aggregate status can be mistaken for the solver verification status.
+- Mitigation: label it as `benchmark_manifest_evaluation_summary`.

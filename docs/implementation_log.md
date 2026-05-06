@@ -4975,3 +4975,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 ### Risks
 
 - Only criteria with explicit smoke metric mappings are evaluated in this slice.
+
+## 2026-05-06 — Phase 8 Benchmark Criteria Evaluation Summary
+
+### Summary
+
+- Added `benchmark_manifest_evaluation_summary` to synthetic benchmark results.
+- The summary reports aggregate status plus passed, failed, not-evaluated, and
+  total criterion counts.
+- `benchmark_report.md` now renders the aggregate status and counts before the
+  per-criterion table.
+- Added focused CLI assertions for failed and partially evaluated summaries.
+
+### Decisions
+
+- The aggregate status is report-only and does not change the solver
+  verification status.
+- `failed` takes precedence over `partially_evaluated`; unsupported-only
+  criteria are reported as `partially_evaluated`.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- This summary is benchmark metadata, not the top-level smoke verification
+  result.
