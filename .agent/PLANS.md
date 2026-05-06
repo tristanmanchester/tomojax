@@ -12,46 +12,46 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: add a residual-structure gate for `nuisance_unmodelled` failure reporting.
+- Goal: add the first typed low-frequency background nuisance model.
 
 ### Scope
 
 - In scope:
-  - Add a residual-structure gate to `failure_report.json`.
-  - Report `nuisance_unmodelled` warnings when detector-column or per-view
-    residual structure is strong.
-  - Keep default smoke passing.
-  - Add focused tests for passing and warning cases.
+  - Add a public `BackgroundOffsetModel` to `tomojax.nuisance`.
+  - Implement per-view constant plus vertical-gradient background application.
+  - Implement masked closed-form fitting against residual backgrounds.
+  - Add focused nuisance tests and README/API updates.
 - Out of scope:
-  - Full stripe/background model fitting.
-  - Making nuisance warnings fail the run.
+  - Coupling background fitting into Schur or alternating solver.
+  - Stripe/ring bias fields.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: `tomojax.nuisance`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
+- `docs/tomojax-v2/07_synthetic_generator_pseudocode.md`
 
 ### Tasks
 
-- [x] Add residual structure summary helper.
-- [x] Add nuisance gate and warning mapping.
-- [x] Add focused smoke and unit-style tests.
+- [x] Add private background model implementation.
+- [x] Export typed public nuisance API.
+- [x] Update nuisance README.
+- [x] Add focused background tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the nuisance failure gate slice.
+- [x] Commit the background nuisance slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_residual_structure.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
   passed.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_residual_structure.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff check src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_residual_structure.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
-  passed: 8 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_nuisance_background.py tests/test_nuisance_gain_offset.py tests/test_v2_module_skeleton.py -q`
+  passed: 10 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -59,10 +59,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- The gate is warning-only because Phase 8 nuisance models are still incomplete.
+- Start with a low-frequency vertical-gradient basis because the hardest
+  synthetic nuisance spec names a low-frequency vertical background drift.
 
 ### Risks
 
-- Risk: the structure heuristic is simple and may not catch all nuisance modes.
-- Mitigation: expose the metrics in failure evidence and evolve the gate with
-  background/stripe models.
+- Risk: this background model is not yet wired into solver residual evaluation.
+- Mitigation: keep the model tested and public so the next slice can integrate
+  it behind an opt-in solver/config flag.

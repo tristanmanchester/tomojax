@@ -6,13 +6,15 @@
 projections without being geometry or object motion: gain/offset, backgrounds,
 masks, robust noise scales, stripe bias, bad frames, and related provenance.
 
-The first Phase 8 public primitive is per-view gain/offset fitting. It models
-affine intensity drift as acquisition state so geometry does not need to absorb
-flat-field-like projection changes.
+The first Phase 8 public primitives are per-view gain/offset fitting and a
+low-frequency background offset model. They model acquisition drift so geometry
+does not need to absorb flat-field-like projection changes.
 
 ## Public API
 
+- `BackgroundOffsetModel`
 - `GainOffsetModel`
+- `estimate_background_offset`
 - `estimate_gain_offset`
 
 ## Dependencies
@@ -41,3 +43,5 @@ Forbidden dependencies:
   imports.
 - `tests/test_nuisance_gain_offset.py` verifies masked per-view fitting,
   identity application, and residual reduction for synthetic drift.
+- `tests/test_nuisance_background.py` verifies masked constant plus
+  vertical-gradient background fitting.

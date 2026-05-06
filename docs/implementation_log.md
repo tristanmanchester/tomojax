@@ -3979,3 +3979,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The heuristic is intentionally simple and may miss structured nuisance modes
   until stripe/background models are added.
+
+## 2026-05-06 — Phase 8 Background Offset Nuisance Primitive
+
+### Summary
+
+- Added public `BackgroundOffsetModel` to `tomojax.nuisance`.
+- Implemented per-view constant plus vertical-gradient additive background
+  application.
+- Added masked closed-form `estimate_background_offset` fitting against
+  `observed - predicted`.
+- Exported the background API through the nuisance facade and updated the
+  nuisance README.
+- Added focused tests for neutral application, constant/gradient recovery,
+  detector masking, and empty-mask stability.
+
+### Decisions
+
+- Started with a constant plus vertical-gradient basis because the synthetic
+  benchmark nuisance spec explicitly calls out low-frequency vertical
+  background drift.
+
+### Validation
+
+- `uv run ruff format src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
+  passed.
+- `uv run ruff check src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
+  passed.
+- `uv run basedpyright src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_nuisance_background.py tests/test_nuisance_gain_offset.py tests/test_v2_module_skeleton.py -q`
+  passed: 10 tests.
+- `just imports` passed.
+
+### Risks
+
+- The model is not yet integrated into Schur or alternating residual
+  evaluation. The next slice should add an opt-in solver hook, following the
+  gain/offset path.
