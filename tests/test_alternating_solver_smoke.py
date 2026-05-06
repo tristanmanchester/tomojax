@@ -224,6 +224,12 @@ def _assert_manifest(result: AlternatingSmokeResult) -> None:
         json.loads(result.artifacts["run_manifest_json"].read_text(encoding="utf-8")),
     )
     assert manifest["align_mode"] == "auto"
+    assert isinstance(manifest["tomojax_version"], str)
+    assert isinstance(manifest["git_commit"], str)
+    assert manifest["started_at"] == "deterministic-smoke"
+    assert manifest["finished_at"] == "deterministic-smoke"
+    assert manifest["geometry_model"] == "parallel_tomography_reference"
+    assert manifest["backend_requested"] == "jax_reference"
     assert manifest["backend_actual"] == "jax_reference"
     assert manifest["status"] == "passed"
 

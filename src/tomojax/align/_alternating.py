@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
+import subprocess
 from typing import TYPE_CHECKING, cast
 
 import jax
@@ -1028,7 +1030,11 @@ def _run_manifest_payload(
 ) -> dict[str, object]:
     return {
         "schema": "tomojax.run_manifest.v1",
+        "tomojax_version": _tomojax_version(),
+        "git_commit": _git_commit(),
         "run_id": f"{schedule.name}-deterministic",
+        "started_at": "deterministic-smoke",
+        "finished_at": "deterministic-smoke",
         "profile": schedule.name,
         "align_mode": "auto",
         "dataset": {
@@ -1046,6 +1052,26 @@ def _run_manifest_payload(
         "backend_actual": "jax_reference",
         "status": "passed",
     }
+
+
+def _tomojax_version() -> str:
+    try:
+        return version("tomojax")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+def _git_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
 
 
 def _input_summary_payload(volume: jax.Array, projections: jax.Array) -> dict[str, object]:

@@ -12,14 +12,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: expand Phase 7 smoke observability reporting beyond the placeholder.
+- Goal: expand the Phase 7 smoke run manifest toward the artifact contract.
 
 ### Scope
 
 - In scope:
-  - Add structured setup DOF and pose DOF observability entries.
-  - Label smoke-uncomputed active DOFs as weak/not-evaluated and frozen DOFs as
-    handled.
+  - Add version, git commit, started/finished timestamps, backend requested,
+    and geometry model details to `run_manifest.json`.
+  - Keep the manifest deterministic where practical for smoke tests.
   - Extend smoke and artifact-validation tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
@@ -35,11 +35,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Expand observability report payload.
+- [x] Expand run manifest payload.
 - [x] Extend smoke and validator tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the observability report slice.
+- [x] Commit the run manifest contract slice.
 
 ### Validation
 
@@ -58,11 +58,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep observability status explicit as `smoke_not_evaluated` until Schur
-  curvature diagnostics exist.
+- Use deterministic timestamp placeholders for the smoke path, while recording
+  the current git commit when available.
 
 ### Risks
 
-- Risk: this still does not compute curvature or condition numbers.
-- Mitigation: label active DOFs as weak/not-evaluated rather than pretending
-  they are observable.
+- Risk: runtime timestamps are not measured in this smoke manifest.
+- Mitigation: keep deterministic placeholders and add real timing when the
+  production command owns run orchestration.

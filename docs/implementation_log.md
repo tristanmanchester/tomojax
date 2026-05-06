@@ -3280,3 +3280,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This report is still descriptive; numerical observability metrics remain for
   the real Schur LM/GN implementation.
+
+## 2026-05-06 — Phase 7 Run Manifest Contract Fields
+
+### Summary
+
+- Expanded the Phase 7 smoke `run_manifest.json` with contract-required
+  `tomojax_version`, `git_commit`, `started_at`, `finished_at`,
+  `backend_requested`, and geometry model fields.
+- Updated artifact validation so missing manifest contract keys fail loudly.
+- Extended smoke tests to verify the deterministic timestamp placeholders and
+  backend/geometry manifest fields.
+
+### Decisions
+
+- Kept smoke timestamps deterministic as `deterministic-smoke` so repeated smoke
+  runs remain reproducible.
+- Recorded the current git commit when available, with an `unknown` fallback for
+  non-git environments.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- Production elapsed-time accounting is still absent from the deterministic
+  smoke manifest.

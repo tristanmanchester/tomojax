@@ -168,7 +168,20 @@ def _validate_manifest(
         payload,
         issues,
         artifact="run_manifest.json",
-        keys=("run_id", "profile", "align_mode", "dataset", "status"),
+        keys=(
+            "tomojax_version",
+            "git_commit",
+            "run_id",
+            "started_at",
+            "finished_at",
+            "profile",
+            "align_mode",
+            "dataset",
+            "geometry_model",
+            "backend_requested",
+            "backend_actual",
+            "status",
+        ),
     )
 
 
