@@ -2319,3 +2319,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: clean the alignment model package lint
   blockers beginning with diagnostics, DOF specs, gauge, motion models, and
   schedules.
+
+## 2026-05-06 — Clean Alignment Diagnostics And DOF Lint
+
+### Summary
+
+- Added public docstrings for gauge diagnostics and scoped DOF helpers.
+- Moved annotation-only diagnostics imports behind `TYPE_CHECKING`.
+- Simplified the conditioning threshold branch without changing singular-value
+  diagnostics.
+
+### Decisions
+
+- Kept this as a narrow model-package slice so the larger `dof_specs.py` and
+  schedule cleanup can be reviewed separately.
+- Left all gauge policy rules and DOF normalization behavior unchanged.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/model/diagnostics.py src/tomojax/align/model/dofs.py`
+  passed.
+- `uv run ruff check src/tomojax/align/model/diagnostics.py src/tomojax/align/model/dofs.py`
+  passed.
+- `uv run pytest tests/test_alignment_gauge_registry.py tests/test_align_quick.py tests/test_align_profiles.py -q`
+  passed: 34 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `diagnostics.py` and `dofs.py` are no longer in the failure list;
+  the first remaining blockers start in `src/tomojax/align/model/dof_specs.py`,
+  followed by gauge, motion model, schedule, state, and broader repository lint
+  backlog. Formatter churn from `just check` was reverted outside this slice.
+
+### Risks
+
+- The diagnostics import movement is safe only while those names remain
+  annotation-only; focused gauge/profile tests passed.
+- Proposed next fix for `just check`: clean `dof_specs.py`.

@@ -1,10 +1,15 @@
+"""Gauge-policy and conditioning diagnostics for alignment DOFs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Literal
 
 import jax.numpy as jnp
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 
 GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"]
@@ -12,6 +17,8 @@ GaugePolicy = Literal["reject", "anchor_mean", "prior_required", "diagnose_only"
 
 @dataclass(frozen=True, slots=True)
 class GaugeDecision:
+    """Resolved decision for active gauge-coupled alignment DOFs."""
+
     policy: GaugePolicy
     active_dofs: tuple[str, ...]
     conflicts: tuple[str, ...]
@@ -19,6 +26,7 @@ class GaugeDecision:
 
     @property
     def status(self) -> str:
+        """Return a compact status label for the gauge decision."""
         if self.conflicts and self.policy == "reject":
             return "rejected"
         if self.conflicts:
@@ -26,6 +34,7 @@ class GaugeDecision:
         return "ok"
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-native decision summary."""
         return {
             "policy": self.policy,
             "active_dofs": list(self.active_dofs),
@@ -36,7 +45,7 @@ class GaugeDecision:
 
 
 class GaugePolicyError(ValueError):
-    pass
+    """Raised when requested DOFs violate the selected gauge policy."""
 
 
 _COUPLED_RULES: tuple[tuple[str, frozenset[str], str], ...] = (
@@ -84,6 +93,7 @@ def validate_active_gauge_policy(
     policy: GaugePolicy = "reject",
     priors: Mapping[str, object] | None = None,
 ) -> GaugeDecision:
+    """Validate active DOFs against known gauge-coupling rules."""
     active = tuple(str(name) for name in active_dofs)
     active_set = set(active)
     conflicts = tuple(code for code, names, _msg in _COUPLED_RULES if names <= active_set)
@@ -110,15 +120,13 @@ def conditioning_diagnostics(
     dof_names: Sequence[str],
     rtol: float = 1e-4,
 ) -> dict[str, object]:
+    """Return singular-value diagnostics for an alignment sensitivity matrix."""
     mat = jnp.asarray(sensitivity, dtype=jnp.float32)
     if mat.ndim != 2:
         raise ValueError("conditioning sensitivity must be a 2-D matrix")
     _u, s, vh = jnp.linalg.svd(mat, full_matrices=False)
     s_np = np.asarray(s)
-    if s_np.size == 0:
-        threshold = 0.0
-    else:
-        threshold = float(np.max(s_np)) * float(rtol)
+    threshold = 0.0 if s_np.size == 0 else float(np.max(s_np)) * float(rtol)
     weak = np.where(s_np <= threshold)[0]
     near_null: list[dict[str, object]] = []
     names = tuple(str(name) for name in dof_names)

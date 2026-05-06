@@ -1,3 +1,5 @@
+"""Normalize and resolve public alignment degree-of-freedom selections."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -5,7 +7,6 @@ from dataclasses import dataclass
 import math
 
 import jax.numpy as jnp
-
 
 DOF_NAMES = ("alpha", "beta", "phi", "dx", "dz")
 DOF_INDEX = {name: idx for idx, name in enumerate(DOF_NAMES)}
@@ -41,11 +42,13 @@ class ScopedAlignmentDofs:
 
     @property
     def pose_mask(self) -> tuple[bool, bool, bool, bool, bool]:
+        """Return a 5-column mask for active pose DOFs."""
         active = set(self.active_pose_dofs)
         return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
 
     @property
     def active_dofs(self) -> tuple[str, ...]:
+        """Return active pose and geometry DOFs in canonical order."""
         return self.active_pose_dofs + self.active_geometry_dofs
 
 
@@ -192,13 +195,11 @@ def _parse_bound_float(raw: object, *, option_name: str, dof_name: str) -> float
         value = float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"Invalid alignment bound for {option_name} {dof_name!r}: "
-            f"{raw!r} is not numeric"
+            f"Invalid alignment bound for {option_name} {dof_name!r}: {raw!r} is not numeric"
         ) from exc
     if not math.isfinite(value):
         raise ValueError(
-            f"Invalid alignment bound for {option_name} {dof_name!r}: "
-            f"{raw!r} must be finite"
+            f"Invalid alignment bound for {option_name} {dof_name!r}: {raw!r} must be finite"
         )
     return value
 
@@ -216,9 +217,7 @@ def _validate_bound_name(
     if name == "tilt_deg" and geometry is not None:
         name = _tilt_alias_for_geometry(geometry)
     if name not in ALL_ALIGNMENT_DOF_INDEX:
-        raise ValueError(
-            f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}"
-        )
+        raise ValueError(f"Unknown alignment DOF for {option_name}: {name!r}; valid DOFs: {valid}")
     return name
 
 
@@ -244,8 +243,7 @@ def _parse_bound_pair(raw_pair: object, *, option_name: str, dof_name: str) -> t
     if isinstance(raw_pair, str):
         if ":" not in raw_pair:
             raise ValueError(
-                f"Invalid alignment bounds for {option_name} {dof_name!r}: "
-                "expected lower:upper"
+                f"Invalid alignment bounds for {option_name} {dof_name!r}: expected lower:upper"
             )
         lower_raw, upper_raw = raw_pair.split(":", 1)
         pair: Sequence[object] = (lower_raw.strip(), upper_raw.strip())
@@ -268,7 +266,7 @@ def _parse_bound_pair(raw_pair: object, *, option_name: str, dof_name: str) -> t
         raise ValueError(
             f"Invalid alignment bounds for {option_name} {dof_name!r}: "
             f"lower bound {lower:g} must be less than upper bound {upper:g} "
-            f"({ _bound_unit_label(dof_name) })"
+            f"({_bound_unit_label(dof_name)})"
         )
     return _public_bound_to_internal(dof_name, lower), _public_bound_to_internal(
         dof_name,
@@ -306,8 +304,7 @@ def _iter_bound_items(value: object, *, option_name: str) -> Iterable[tuple[obje
             items.append((item[0], (item[1], item[2])))
         return items
     raise ValueError(
-        f"Invalid alignment bounds for {option_name}: "
-        "expected a string, mapping, sequence, or None"
+        f"Invalid alignment bounds for {option_name}: expected a string, mapping, sequence, or None"
     )
 
 
