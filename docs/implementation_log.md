@@ -3558,3 +3558,42 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   unrelated legacy files; that formatter churn was reverted immediately because
   it was outside the Phase 7 slice.
 - No Phase 7 benchmark-facing files were left dirty after the revert.
+
+## 2026-05-06 — Phase 7 Robust Residual Scale Hook
+
+### Summary
+
+- Added public `robust_residual_scale` to `tomojax.forward`.
+- Threaded per-level estimated residual scale into the Phase 7 alternating
+  smoke path.
+- Used the continuation schedule sigma as a stability floor for the effective
+  sigma passed to Schur loss evaluation.
+- Recorded estimated and effective residual sigma in level summaries and CSV
+  artifacts.
+- Added focused forward and smoke tests for the MAD estimator and artifact
+  contract.
+
+### Decisions
+
+- The deterministic 32^3 smoke residual is sparse enough that its MAD estimate
+  is below the stable solver scale. The effective sigma therefore uses
+  `max(schedule_sigma, robust_estimate)` so noisier benchmark ingestion can
+  raise the scale later without destabilising the current smoke run.
+
+### Validation
+
+- `uv run ruff format src/tomojax/forward/_residuals.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py src/tomojax/align/_alternating.py tests/test_forward_reference.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/forward/_residuals.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py src/tomojax/align/_alternating.py tests/test_forward_reference.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/forward/_residuals.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py src/tomojax/align/_alternating.py tests/test_forward_reference.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 16 tests.
+- `just imports` passed.
+
+### Risks
+
+- This hook mostly records scale on the current sparse smoke fixture. It should
+  become more behaviorally important when the solver consumes noisier generated
+  benchmark projections.

@@ -32,6 +32,7 @@ from tomojax.forward import (
     apply_residual_filter_schedule,
     project_parallel_reference,
     residual_loss,
+    robust_residual_scale,
 )
 from tomojax.geometry import (
     GaugeReport,
@@ -85,6 +86,8 @@ class AlternatingLevelSummary:
     loss_after: float
     loss_nonincreasing: bool
     finite_loss: bool
+    residual_sigma_estimated: float
+    residual_sigma_effective: float
     gauge_stable: bool
     parameter_update_norm: float
     parameter_update_small: bool
@@ -163,7 +166,14 @@ def _run_alternating_solver_smoke_impl(
     coarse_verified = False
     last_schur_result: JointSchurLMResult | None = None
 
-    initial_loss = _projection_loss(truth, observed, geometry, mask, schedule.levels[0])
+    initial_loss = _projection_loss(
+        truth,
+        observed,
+        geometry,
+        mask,
+        schedule.levels[0],
+        sigma=schedule.levels[0].residual_sigma,
+    )
     previous_loss = initial_loss
     for level in schedule.levels:
         if level.run_if_coarse_unverified and coarse_verified:
@@ -194,7 +204,16 @@ def _run_alternating_solver_smoke_impl(
             ),
         )
         volume = jax.lax.stop_gradient(fista_result.volume)
-        loss_before = _projection_loss(volume, observed, geometry, mask, level)
+        residual_sigma_estimated = _level_residual_sigma(volume, observed, geometry, mask, level)
+        residual_sigma_effective = max(level.residual_sigma, residual_sigma_estimated)
+        loss_before = _projection_loss(
+            volume,
+            observed,
+            geometry,
+            mask,
+            level,
+            sigma=residual_sigma_effective,
+        )
         geometry_updates, early_exit_reason = _geometry_updates_for_level(level, coarse_verified)
         skipped_geometry = geometry_updates == 0
         update_report = GaugeReport(())
@@ -211,6 +230,7 @@ def _run_alternating_solver_smoke_impl(
                 mask,
                 level,
                 geometry_updates,
+                sigma=residual_sigma_effective,
             )
             gauge_report = update_report
             last_schur_result = schur_result
@@ -218,7 +238,14 @@ def _run_alternating_solver_smoke_impl(
             loss_after = schur_result.final_loss
         else:
             schur_result = None
-            loss_after = _projection_loss(volume, observed, geometry, mask, level)
+            loss_after = _projection_loss(
+                volume,
+                observed,
+                geometry,
+                mask,
+                level,
+                sigma=residual_sigma_effective,
+            )
         verification_checks = _level_verification_checks(
             cfg=cfg,
             geometry=geometry,
@@ -244,6 +271,8 @@ def _run_alternating_solver_smoke_impl(
                 loss_after=loss_after,
                 loss_nonincreasing=verification_checks.loss_nonincreasing,
                 finite_loss=verification_checks.finite_loss,
+                residual_sigma_estimated=residual_sigma_estimated,
+                residual_sigma_effective=residual_sigma_effective,
                 gauge_stable=verification_checks.gauge_stable,
                 parameter_update_norm=verification_checks.parameter_update_norm,
                 parameter_update_small=verification_checks.parameter_update_small,
@@ -344,6 +373,8 @@ def _run_geometry_updates(
     mask: jax.Array,
     level: ContinuationLevel,
     updates: int,
+    *,
+    sigma: float,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
     result = solve_joint_schur_lm(
         volume,
@@ -354,7 +385,7 @@ def _run_geometry_updates(
             max_iterations=max(1, int(updates)),
             damping=1.0e-3,
             delta=level.residual_delta,
-            sigma=level.residual_sigma,
+            sigma=sigma,
             setup_trust_radius=level.trust_radius_px,
             pose_trust_radius=level.trust_radius_px,
         ),
@@ -401,6 +432,8 @@ def _skipped_level_summary(
         loss_after=loss,
         loss_nonincreasing=True,
         finite_loss=True,
+        residual_sigma_estimated=level.residual_sigma,
+        residual_sigma_effective=level.residual_sigma,
         gauge_stable=True,
         parameter_update_norm=0.0,
         parameter_update_small=True,
@@ -459,6 +492,8 @@ def _projection_loss(
     geometry: GeometryState,
     mask: jax.Array,
     level: ContinuationLevel,
+    *,
+    sigma: float,
 ) -> float:
     predicted = project_parallel_reference(volume, geometry)
     filtered = apply_residual_filter_schedule(
@@ -468,10 +503,26 @@ def _projection_loss(
         filtered.residual,
         jnp.zeros_like(filtered.residual),
         mask=None,
-        sigma=level.residual_sigma,
+        sigma=sigma,
         delta=level.residual_delta,
     )
     return float(result.loss)
+
+
+def _level_residual_sigma(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    mask: jax.Array,
+    level: ContinuationLevel,
+) -> float:
+    predicted = project_parallel_reference(volume, geometry)
+    filtered = apply_residual_filter_schedule(
+        predicted - observed,
+        level.residual_filters,
+        mask=mask,
+    )
+    return float(robust_residual_scale(filtered.residual))
 
 
 def _verification_payload(
@@ -666,6 +717,8 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
         "loss_after": summary.loss_after,
         "loss_nonincreasing": summary.loss_nonincreasing,
         "finite_loss": summary.finite_loss,
+        "residual_sigma_estimated": summary.residual_sigma_estimated,
+        "residual_sigma_effective": summary.residual_sigma_effective,
         "gauge_stable": summary.gauge_stable,
         "parameter_update_norm": summary.parameter_update_norm,
         "parameter_update_small": summary.parameter_update_small,
@@ -837,6 +890,8 @@ def _write_alignment_summary(
                 "loss_after",
                 "loss_nonincreasing",
                 "finite_loss",
+                "residual_sigma_estimated",
+                "residual_sigma_effective",
                 "gauge_stable",
                 "parameter_update_norm",
                 "parameter_update_small",
@@ -870,6 +925,8 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                 "loss_after",
                 "loss_delta",
                 "loss_nonincreasing",
+                "residual_sigma_estimated",
+                "residual_sigma_effective",
                 "gauge_stable",
                 "parameter_update_norm",
                 "parameter_update_small",
@@ -1016,6 +1073,8 @@ def _write_residual_metrics(
                 "residual_filter_kinds",
                 "loss_nonincreasing",
                 "finite_loss",
+                "residual_sigma_estimated",
+                "residual_sigma_effective",
                 "gauge_stable",
                 "parameter_update_norm",
                 "parameter_update_small",
@@ -1043,6 +1102,8 @@ def _write_residual_metrics(
                     "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
                     "loss_nonincreasing": summary.loss_nonincreasing,
                     "finite_loss": summary.finite_loss,
+                    "residual_sigma_estimated": summary.residual_sigma_estimated,
+                    "residual_sigma_effective": summary.residual_sigma_effective,
                     "gauge_stable": summary.gauge_stable,
                     "parameter_update_norm": summary.parameter_update_norm,
                     "parameter_update_small": summary.parameter_update_small,
@@ -1093,6 +1154,8 @@ def _view_residual_metric_rows(
                 "residual_filter_kinds": "raw",
                 "loss_nonincreasing": "",
                 "finite_loss": "",
+                "residual_sigma_estimated": "",
+                "residual_sigma_effective": "",
                 "gauge_stable": "",
                 "parameter_update_norm": "",
                 "parameter_update_small": "",

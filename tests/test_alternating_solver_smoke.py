@@ -111,6 +111,8 @@ def _assert_level_exit_contract(result: AlternatingSmokeResult) -> None:
     assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
     assert result.levels[0].loss_nonincreasing
     assert result.levels[0].finite_loss
+    assert result.levels[0].residual_sigma_estimated > 0.0
+    assert result.levels[0].residual_sigma_effective == 1.0
     assert result.levels[0].gauge_stable
     assert result.levels[0].parameter_update_small
     assert result.levels[0].parameter_update_norm > 0.0
@@ -196,6 +198,8 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
     assert rows[1]["skipped_level"] == "True"
     assert rows[-1]["executed_geometry_updates"] == "0"
     assert rows[0]["loss_nonincreasing"] == "True"
+    assert float(rows[0]["residual_sigma_estimated"]) > 0.0
+    assert rows[0]["residual_sigma_effective"] == "1.0"
     assert rows[0]["gauge_stable"] == "True"
 
 

@@ -49,6 +49,24 @@ def pseudo_huber_weights(residual: jax.Array, *, delta: float = 1.0) -> jax.Arra
     return 1.0 / jnp.sqrt(1.0 + (r / d) ** 2)
 
 
+def robust_residual_scale(residual: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
+    """Estimate residual noise scale with the normal-consistent MAD."""
+    values = jnp.asarray(residual, dtype=jnp.float32)
+    if mask is not None:
+        mask_arr = jnp.asarray(mask, dtype=bool)
+        if mask_arr.shape != values.shape:
+            raise ValueError("mask must match residual shape")
+        values = values[mask_arr]
+    if values.size == 0:
+        return jnp.asarray(1.0, dtype=jnp.float32)
+    median = jnp.median(values)
+    mad = jnp.median(jnp.abs(values - median))
+    scale = jnp.asarray(1.4826, dtype=jnp.float32) * mad
+    return jnp.where(
+        jnp.isfinite(scale) & (scale > 0.0), scale, jnp.asarray(1.0, dtype=jnp.float32)
+    )
+
+
 def residual_loss(
     predicted: jax.Array,
     observed: jax.Array,

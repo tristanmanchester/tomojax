@@ -14,6 +14,7 @@ from tomojax.forward import (
     pseudo_huber_loss,
     pseudo_huber_weights,
     residual_loss,
+    robust_residual_scale,
 )
 from tomojax.geometry import GeometryState
 
@@ -144,3 +145,12 @@ def test_residual_loss_reports_valid_count_and_downweights_outliers() -> None:
     assert float(result.loss) > 0.0
     assert float(result.weights[1]) < float(result.weights[0])
     assert float(pseudo_huber_weights(jnp.asarray([0.0]), delta=1.0)[0]) == 1.0
+
+
+def test_robust_residual_scale_uses_masked_mad() -> None:
+    residual = jnp.array([0.0, 1.0, 2.0, 100.0], dtype=jnp.float32)
+    mask = jnp.array([1.0, 1.0, 1.0, 0.0], dtype=jnp.float32)
+
+    scale = robust_residual_scale(residual, mask=mask)
+
+    np.testing.assert_allclose(float(scale), 1.4826, rtol=1e-6)

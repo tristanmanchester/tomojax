@@ -16,6 +16,7 @@ from tomojax.forward._residuals import (
     pseudo_huber_loss,
     pseudo_huber_weights,
     residual_loss,
+    robust_residual_scale,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "pseudo_huber_loss",
     "pseudo_huber_weights",
     "residual_loss",
+    "robust_residual_scale",
 ]
