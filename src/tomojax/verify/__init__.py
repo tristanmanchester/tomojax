@@ -7,6 +7,7 @@ from tomojax.verify.api import (
     ArtifactValidationIssue,
     ArtifactValidationReport,
     inspect_run_artifacts,
+    residual_structure_summary,
     validate_run_artifacts,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "ArtifactValidationIssue",
     "ArtifactValidationReport",
     "inspect_run_artifacts",
+    "residual_structure_summary",
     "validate_run_artifacts",
 ]

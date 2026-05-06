@@ -9,11 +9,13 @@ from tomojax.verify._artifacts import (
     inspect_run_artifacts,
     validate_run_artifacts,
 )
+from tomojax.verify._residual_structure import residual_structure_summary
 
 __all__ = [
     "ArtifactValidationError",
     "ArtifactValidationIssue",
     "ArtifactValidationReport",
     "inspect_run_artifacts",
+    "residual_structure_summary",
     "validate_run_artifacts",
 ]

@@ -11,6 +11,7 @@ gauge reports, backend provenance reports, and failure classification.
 - `ArtifactValidationReport`
 - `ArtifactValidationError`
 - `inspect_run_artifacts(run_dir)`
+- `residual_structure_summary(residual, mask)`
 - `validate_run_artifacts(run_dir)`
 
 ## Dependencies
@@ -33,9 +34,13 @@ Forbidden dependencies:
 - Synthetic recovery checks must be deterministic from a seed.
 - Reports must distinguish failures, warnings, and unverified conditions.
 - Required run artifacts must fail loudly when missing or malformed.
+- Residual-structure checks are warning-oriented classifiers, not solver state
+  mutations.
 
 ## Tests
 
 - `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
 - `tests/test_verify_artifacts.py` validates positive and negative artifact
   bundle checks.
+- `tests/test_alternating_solver_smoke.py` covers the residual-structure summary
+  used by failure reports.

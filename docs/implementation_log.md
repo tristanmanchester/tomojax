@@ -3941,3 +3941,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The smoke report lacks correlation and validation-improvement evidence, so
   those fields are intentionally marked missing rather than inferred.
+
+## 2026-05-06 — Phase 8 Nuisance Residual Failure Gate
+
+### Summary
+
+- Added public `tomojax.verify.residual_structure_summary` for warning-oriented
+  residual structure classification.
+- Added a `nuisance_residual_structure` warning gate to `failure_report.json`.
+- The gate reports per-view mean residual structure and detector-column mean
+  residual structure against explicit thresholds.
+- `failure_report.json` now maps failed nuisance-structure gates to
+  `nuisance_unmodelled` warnings with a recommended action.
+- Added focused smoke assertions for the passing default case and a structured
+  column-residual test for the warning heuristic.
+
+### Decisions
+
+- The gate is warning-only. Phase 8 nuisance models are not complete enough to
+  fail an otherwise valid smoke run on this heuristic alone.
+- The residual-structure helper lives in `tomojax.verify` so align and tests use
+  a public verification primitive instead of reaching into private align code.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_residual_structure.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_residual_structure.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_residual_structure.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- The heuristic is intentionally simple and may miss structured nuisance modes
+  until stripe/background models are added.

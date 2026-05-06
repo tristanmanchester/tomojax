@@ -48,7 +48,7 @@ from tomojax.recon import (
     reconstruct_backprojection_reference,
     write_fista_trace_csv,
 )
-from tomojax.verify import validate_run_artifacts
+from tomojax.verify import residual_structure_summary, validate_run_artifacts
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -943,6 +943,7 @@ def _write_artifacts(
         _failure_report_payload(
             final_volume=final_volume,
             final_geometry=final_geometry,
+            observed=observed,
             mask=mask,
             summaries=summaries,
             verification=verification,
@@ -1896,6 +1897,7 @@ def _failure_report_payload(
     *,
     final_volume: jax.Array,
     final_geometry: GeometryState,
+    observed: jax.Array,
     mask: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
     verification: Mapping[str, object],
@@ -1903,6 +1905,7 @@ def _failure_report_payload(
     gates = _failure_gate_rows(
         final_volume=final_volume,
         final_geometry=final_geometry,
+        observed=observed,
         mask=mask,
         summaries=summaries,
         verification=verification,
@@ -1936,6 +1939,18 @@ def _failure_report_payload(
             }
             for gate in warning_gates
             if gate["name"] == "projection_residual_improvement"
+        ]
+        + [
+            {
+                "class": "nuisance_unmodelled",
+                "severity": "warning",
+                "evidence": [str(gate["evidence"])],
+                "recommended_action": (
+                    "enable gain/offset nuisance fitting or inspect flat-field correction"
+                ),
+            }
+            for gate in warning_gates
+            if gate["name"] == "nuisance_residual_structure"
         ],
     }
 
@@ -1944,12 +1959,15 @@ def _failure_gate_rows(
     *,
     final_volume: jax.Array,
     final_geometry: GeometryState,
+    observed: jax.Array,
     mask: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
     verification: Mapping[str, object],
 ) -> list[dict[str, object]]:
     summary = cast("Mapping[str, object]", verification["summary"])
     valid_fraction = float(jnp.mean(jnp.asarray(mask, dtype=jnp.float32)))
+    predicted = project_parallel_reference(final_volume, final_geometry)
+    residual_structure = residual_structure_summary(predicted - observed, mask)
     return [
         {
             "name": "finite_outputs",
@@ -1980,6 +1998,12 @@ def _failure_gate_rows(
             "passed": bool(summary["backend_provenance_complete"]),
             "severity": "error",
             "evidence": "backend_report.json records requested and actual reference components",
+        },
+        {
+            "name": "nuisance_residual_structure",
+            "passed": bool(residual_structure["passed"]),
+            "severity": "warning",
+            "evidence": residual_structure,
         },
     ]
 

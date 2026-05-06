@@ -12,6 +12,7 @@ from tomojax.align.api import (
     reference_continuation_schedule,
     run_alternating_solver_smoke,
 )
+from tomojax.verify import residual_structure_summary
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -375,6 +376,11 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert weak_modes[0]["name"] == "schur_weak_modes"
     assert observability["handled_frozen_dofs"] == ["theta_scale"]
 
+    _assert_failure_report(result)
+    _assert_backend_report(result)
+
+
+def _assert_failure_report(result: AlternatingSmokeResult) -> None:
     failure_report = cast(
         "dict[str, object]",
         json.loads(result.artifacts["failure_report_json"].read_text(encoding="utf-8")),
@@ -389,10 +395,14 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert gates_by_name["optimiser_health"]["passed"] is True
     assert gates_by_name["backend_provenance"]["passed"] is True
     assert gates_by_name["projection_residual_improvement"]["severity"] == "warning"
+    assert gates_by_name["nuisance_residual_structure"]["severity"] == "warning"
+    assert gates_by_name["nuisance_residual_structure"]["passed"] is True
     warnings = cast("list[dict[str, object]]", failure_report["warnings"])
     assert gates_by_name["projection_residual_improvement"]["passed"] is True
     assert warnings == []
 
+
+def _assert_backend_report(result: AlternatingSmokeResult) -> None:
     backend_report = cast(
         "dict[str, object]",
         json.loads(result.artifacts["backend_report_json"].read_text(encoding="utf-8")),
@@ -539,3 +549,17 @@ def test_alternating_smoke_can_enable_gain_offset_nuisance(tmp_path: Path) -> No
     )
     diagnostics = cast("dict[str, object]", schur["diagnostics"])
     assert diagnostics["gain_offset_fit"] is True
+
+
+def test_residual_structure_summary_flags_column_nuisance() -> None:
+    residual = np.zeros((4, 8, 8), dtype=np.float32)
+    residual[:, :, 3] = 1.0
+    residual[:, :, 4] = -1.0
+    mask = np.ones_like(residual, dtype=bool)
+
+    summary = residual_structure_summary(residual, mask)
+
+    assert summary["passed"] is False
+    assert float(cast("float", summary["column_mean_rms_ratio"])) > float(
+        cast("float", summary["column_mean_rms_ratio_threshold"])
+    )
