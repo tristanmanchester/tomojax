@@ -2,10 +2,9 @@
 
 ## Purpose
 
-`tomojax.geometry` owns public geometry metadata helpers that are shared by
-datasets, CLI entrypoints, reconstruction, and alignment. The current Milestone
-0 surface is limited to axis-order normalization and detector field-of-view
-helpers migrated out of the forbidden `tomojax.utils` namespace.
+`tomojax.geometry` owns public geometry metadata, v2 setup/pose state, gauge
+canonicalisation, and detector field-of-view helpers that are shared by
+datasets, CLI entrypoints, reconstruction, and alignment.
 
 ## Public API
 
@@ -16,6 +15,10 @@ helpers migrated out of the forbidden `tomojax.utils` namespace.
 - FOV helpers: `RoiInfo`, `compute_roi`, `grid_from_detector_fov`,
   `grid_from_detector_fov_cube`, `grid_from_detector_fov_slices`,
   `cylindrical_mask_xy`
+- State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
+  `GeometryState`
+- Gauge helpers: `canonicalize_geometry_gauges`, `CanonicalizedGeometry`,
+  `GaugeReport`, `GaugeTransfer`
 
 ## Dependencies
 
@@ -30,8 +33,11 @@ datasets, or CLI modules.
 - Axis helpers preserve NumPy/JAX array type where practical.
 - FOV helpers keep the centered-origin grid convention used by existing
   reconstruction tests.
+- Gauge canonicalisation transfers mean residual pose components into setup
+  parameters while preserving realised setup-plus-pose channels.
 
 ## Tests
 
 Covered by `tests/test_axes_io.py`, `tests/test_regression_geometry_io.py`,
-`tests/test_issue_fix_pr.py`, and CLI geometry-build tests.
+`tests/test_issue_fix_pr.py`, `tests/test_geometry_gauges.py`, and CLI
+geometry-build tests.

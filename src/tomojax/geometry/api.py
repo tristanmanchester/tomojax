@@ -18,13 +18,28 @@ from tomojax.geometry._fov import (
     grid_from_detector_fov_cube,
     grid_from_detector_fov_slices,
 )
+from tomojax.geometry._gauges import (
+    CanonicalizedGeometry,
+    GaugeReport,
+    GaugeTransfer,
+    canonicalize_geometry_gauges,
+)
+from tomojax.geometry._state import GeometryState, PoseParameters, ScalarParameter, SetupParameters
 
 __all__ = [
     "DISK_VOLUME_AXES",
     "INTERNAL_VOLUME_AXES",
     "VOLUME_AXES_ATTR",
+    "CanonicalizedGeometry",
+    "GaugeReport",
+    "GaugeTransfer",
+    "GeometryState",
+    "PoseParameters",
     "RoiInfo",
+    "ScalarParameter",
+    "SetupParameters",
     "axes_to_perm",
+    "canonicalize_geometry_gauges",
     "compute_roi",
     "cylindrical_mask_xy",
     "grid_from_detector_fov",

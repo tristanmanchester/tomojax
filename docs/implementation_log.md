@@ -475,3 +475,53 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The smoke projector is intentionally simple. It should be replaced as the
   benchmark truth generator once the `tomojax.forward` JAX reference projector
   is implemented and validated.
+
+## 2026-05-06 — Add Geometry State And Gauge Canonicalisation
+
+### Summary
+
+- Added typed v2 geometry state containers in `tomojax.geometry`:
+  - `ScalarParameter`
+  - `SetupParameters`
+  - `PoseParameters`
+  - `GeometryState`
+- Added gauge canonicalisation:
+  - `mean(dx_px) -> det_u_px`
+  - `mean(phi_residual_rad) -> theta_offset_rad`
+  - `mean(dz_px) -> det_v_px` only when `det_v_px` is active
+- Added structured gauge reports with `GaugeTransfer`, `GaugeReport`, and
+  `CanonicalizedGeometry`.
+- Added `tests/test_geometry_gauges.py` covering zero-centering, inactive
+  `det_v`, active `det_v`, shape validation, and realised setup-plus-pose gauge
+  preservation.
+
+### Decisions
+
+- Kept these v2 state types in top-level `tomojax.geometry` without replacing
+  old `tomojax.core.geometry` primitives in this slice.
+- Implemented only state and gauge data structures. Geometry artifact
+  serialisation, optimiser integration, Jacobians, and Schur solves remain
+  separate milestones.
+
+### Validation
+
+- `uv run ruff check src/tomojax/geometry tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/geometry tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py -q`
+  passed: 5 tests.
+- `uv run ruff format --check src/tomojax/geometry tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py -q`
+  passed: 113 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Geometry state JSON/CSV artifact writing is still missing and should be added
+  before optimizer milestones rely on geometry provenance.
