@@ -2,16 +2,22 @@
 
 ## Purpose
 
-`tomojax.datasets` will own deterministic synthetic benchmark specifications,
+`tomojax.datasets` owns deterministic synthetic benchmark specifications,
 phantom generation, dataset manifests, masks, and recovery tolerances.
 
-This package is currently a v2 skeleton facade. It intentionally exposes no
-public behavior until the synthetic benchmark foundation milestone defines
-typed contracts.
+The current implementation is a foundation writer: it emits deterministic
+32^3 smoke artifacts and can configure 128^3 benchmark artifacts from the v2
+manifest. Its projection writer is a CPU smoke projector, not the final
+differentiable `tomojax.forward` reference path.
 
 ## Public API
 
-No public names are exported yet.
+- `SyntheticArtifactPaths`
+- `SyntheticDatasetSpec`
+- `generate_synthetic_dataset`
+- `load_synthetic128_specs`
+- `make_benchmark_phantom`
+- `synthetic128_spec`
 
 ## Dependencies
 
@@ -39,5 +45,6 @@ Forbidden dependencies:
 
 ## Tests
 
-- `tests/test_v2_module_skeleton.py` verifies this skeleton facade exists and
-  imports.
+- `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
+- `tests/test_synthetic_datasets.py` verifies manifest loading, deterministic
+  phantom generation, and smoke artifact emission.

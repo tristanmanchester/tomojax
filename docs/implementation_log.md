@@ -418,3 +418,60 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - `tomojax.datasets` and old `tomojax.data` temporarily coexist. The synthetic
   benchmark foundation should make `datasets` the owner for deterministic v2
   generators and then delete or migrate old data code deliberately.
+
+## 2026-05-06 — Add Synthetic Dataset Foundation
+
+### Summary
+
+- Added typed synthetic benchmark spec loading in `tomojax.datasets` from
+  `docs/tomojax-v2/benchmark_manifest.yaml`.
+- Added a deterministic procedural phantom generator for smoke and benchmark
+  artifact generation.
+- Added `generate_synthetic_dataset(...)`, which writes:
+  - `dataset_manifest.json`
+  - `ground_truth_volume.npy`
+  - `projections.npy`
+  - `mask.npy`
+  - `nominal_geometry.json`
+  - `corrupted_geometry.json`
+  - `true_geometry.json`
+  - `true_pose.csv`
+  - `true_motion.csv`
+  - `nuisance_truth.json`
+  - `noise_truth.json`
+- Added `tests/test_synthetic_datasets.py` for manifest loading, deterministic
+  phantom generation, and repeatable 32^3 smoke artifact emission.
+
+### Decisions
+
+- `tomojax.datasets` owns the v2 synthetic benchmark foundation. Old
+  `tomojax.data` remains transitional and was not extended for this slice.
+- The first projection writer is a deterministic CPU smoke projector used to
+  produce artifact contracts. It is not the final differentiable JAX reference
+  projector, which remains owned by the `tomojax.forward` milestone.
+- 128^3 mode is supported by configuration, but tests exercise 32^3 smoke mode
+  to keep validation fast.
+
+### Validation
+
+- `uv run ruff check src/tomojax/datasets tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
+  passed: 5 tests.
+- `uv run ruff format --check src/tomojax/datasets tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py -q`
+  passed: 110 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The smoke projector is intentionally simple. It should be replaced as the
+  benchmark truth generator once the `tomojax.forward` JAX reference projector
+  is implemented and validated.

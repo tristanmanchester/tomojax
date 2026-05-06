@@ -2,4 +2,20 @@
 
 from __future__ import annotations
 
-__all__: tuple[str, ...] = ()
+from tomojax.datasets.api import (
+    SyntheticArtifactPaths,
+    SyntheticDatasetSpec,
+    generate_synthetic_dataset,
+    load_synthetic128_specs,
+    make_benchmark_phantom,
+    synthetic128_spec,
+)
+
+__all__ = [
+    "SyntheticArtifactPaths",
+    "SyntheticDatasetSpec",
+    "generate_synthetic_dataset",
+    "load_synthetic128_specs",
+    "make_benchmark_phantom",
+    "synthetic128_spec",
+]
