@@ -402,6 +402,11 @@ def _assert_failure_report(result: AlternatingSmokeResult) -> None:
     assert gates_by_name["projection_residual_improvement"]["severity"] == "warning"
     assert gates_by_name["nuisance_residual_structure"]["severity"] == "warning"
     assert gates_by_name["nuisance_residual_structure"]["passed"] is True
+    assert gates_by_name["synthetic_sidecar_consistency"]["severity"] == "warning"
+    assert gates_by_name["synthetic_sidecar_consistency"]["passed"] is True
+    assert gates_by_name["synthetic_sidecar_consistency"]["evidence"] == (
+        "no synthetic sidecar dataset requested"
+    )
     warnings = cast("list[dict[str, object]]", failure_report["warnings"])
     assert gates_by_name["projection_residual_improvement"]["passed"] is True
     assert warnings == []

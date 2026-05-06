@@ -4494,3 +4494,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Structural consistency still does not prove that generated NumPy-smoke
   projections are compatible with the JAX reference projector.
+
+## 2026-05-06 — Phase 8 Synthetic Sidecar Failure Gate
+
+### Summary
+
+- Added warning-only `synthetic_sidecar_consistency` to the smoke
+  `failure_report.json` gate table.
+- Default smoke runs pass the gate with explicit no-sidecar evidence.
+- Named synthetic sidecar runs report the loader consistency payload through the
+  gate evidence.
+- Added focused smoke and CLI assertions.
+
+### Decisions
+
+- Keep the gate warning-only and provenance-scoped. It does not imply generated
+  projections are used by the solver.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed: 3 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 14 tests.
+- `just imports` passed.
+
+### Risks
+
+- This validates structural sidecar readback reporting only. Real generated
+  projection ingestion and geometry recovery remain separate work.

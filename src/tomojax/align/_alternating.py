@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import csv
 from dataclasses import dataclass, field, replace
 from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -49,9 +50,6 @@ from tomojax.recon import (
     write_fista_trace_csv,
 )
 from tomojax.verify import residual_structure_summary, validate_run_artifacts
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 GeometryUpdateVolumeSource = Literal["fixed_synthetic_truth", "stopped_reconstruction"]
 
@@ -2020,6 +2018,18 @@ def _failure_report_payload(
             }
             for gate in warning_gates
             if gate["name"] == "nuisance_residual_structure"
+        ]
+        + [
+            {
+                "class": "bad_input_metadata",
+                "severity": "warning",
+                "evidence": [str(gate["evidence"])],
+                "recommended_action": (
+                    "inspect generated synthetic sidecar manifest and artifact paths"
+                ),
+            }
+            for gate in warning_gates
+            if gate["name"] == "synthetic_sidecar_consistency"
         ],
     }
 
@@ -2074,7 +2084,44 @@ def _failure_gate_rows(
             "severity": "warning",
             "evidence": residual_structure,
         },
+        _synthetic_sidecar_consistency_gate(verification),
     ]
+
+
+def _synthetic_sidecar_consistency_gate(verification: Mapping[str, object]) -> dict[str, object]:
+    synthetic_dataset = verification.get("synthetic_dataset")
+    if not isinstance(synthetic_dataset, Mapping):
+        return {
+            "name": "synthetic_sidecar_consistency",
+            "passed": True,
+            "severity": "warning",
+            "evidence": "no synthetic sidecar dataset requested",
+        }
+    synthetic_payload = cast("Mapping[object, object]", synthetic_dataset)
+    raw_sidecar_readback = synthetic_payload.get("sidecar_readback")
+    if not isinstance(raw_sidecar_readback, Mapping):
+        return {
+            "name": "synthetic_sidecar_consistency",
+            "passed": False,
+            "severity": "warning",
+            "evidence": "synthetic sidecar dataset lacks sidecar_readback payload",
+        }
+    sidecar_readback = cast("Mapping[object, object]", raw_sidecar_readback)
+    raw_consistency = sidecar_readback.get("consistency")
+    if not isinstance(raw_consistency, Mapping):
+        return {
+            "name": "synthetic_sidecar_consistency",
+            "passed": False,
+            "severity": "warning",
+            "evidence": "synthetic sidecar readback lacks consistency payload",
+        }
+    consistency = cast("Mapping[object, object]", raw_consistency)
+    return {
+        "name": "synthetic_sidecar_consistency",
+        "passed": bool(consistency.get("passed")),
+        "severity": "warning",
+        "evidence": {str(key): value for key, value in consistency.items()},
+    }
 
 
 def _finite_outputs(volume: jax.Array, geometry: GeometryState) -> bool:

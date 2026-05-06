@@ -246,6 +246,20 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
     )
     assert nuisance["applied_to_projections"] is False
+    failure_report = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "failure_report.json").read_text(encoding="utf-8")),
+    )
+    gates = cast("list[dict[str, object]]", failure_report["gates"])
+    gates_by_name = {str(gate["name"]): gate for gate in gates}
+    assert gates_by_name["synthetic_sidecar_consistency"]["passed"] is True
+    assert (
+        cast(
+            "dict[str, object]",
+            gates_by_name["synthetic_sidecar_consistency"]["evidence"],
+        )["passed"]
+        is True
+    )
     captured = capsys.readouterr()
     assert "synthetic_dataset:" in captured.out
 
