@@ -38,6 +38,7 @@ from tomojax.recon import (
     fista_reconstruct_reference,
     write_fista_trace_csv,
 )
+from tomojax.verify import validate_run_artifacts
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -585,6 +586,7 @@ def _write_artifacts(
     )
     _write_json(artifacts["verification_json"], verification)
     _write_json(artifacts["artifact_index_json"], _artifact_index_payload(artifacts))
+    _ = validate_run_artifacts(output_dir)
     return artifacts
 
 

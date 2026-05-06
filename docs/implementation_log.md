@@ -2997,3 +2997,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Per-view metrics are currently computed from the final raw reference forward
   projection only, not from the continuation-filtered residual streams.
+
+## 2026-05-06 — Phase 7 Artifact Validation
+
+### Summary
+
+- Added a typed `tomojax.verify` artifact validation API with inspect and
+  fail-loud entrypoints.
+- Validated required smoke JSON artifacts, core schema identifiers, geometry
+  schema version, and indexed artifact file existence.
+- Wired the Phase 7 smoke artifact writer through validation before returning
+  and added positive/negative tests against real smoke bundles.
+
+### Decisions
+
+- Used a lightweight stdlib validator instead of adding a schema dependency for
+  the smoke contract.
+- Kept this slice focused on JSON/index validation; CSV and array semantic
+  validation remain future extensions of the same API.
+
+### Validation
+
+- `uv run ruff format src/tomojax/verify src/tomojax/align/_alternating.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/verify src/tomojax/align/_alternating.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/verify src/tomojax/align/_alternating.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- The validator does not yet check CSV column semantics, array shapes, or
+  preview/residual-map directory contents.
