@@ -12,48 +12,45 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: apply deterministic nuisance drift in synthetic benchmark artifacts.
+- Goal: replace the smoke observability placeholder with Schur-backed weak DOF evidence.
 
 ### Scope
 
 - In scope:
-  - Apply per-view gain drift and simple background offsets in
-    `generate_synthetic_dataset`.
-  - Record realized gain/offset arrays in `nuisance_truth.json`.
-  - Keep `clean=True` behavior nuisance-free.
-  - Add focused synthetic dataset tests for nuisance-bearing specs.
+  - Feed the last Schur result into `observability_report.json`.
+  - Record Schur condition/eigenvalue evidence in the report.
+  - Emit explicit `det_v_px` and `theta_scale` weak/frozen statuses.
+  - Update focused artifact tests.
 - Out of scope:
-  - Hot/dead pixels, stripes, bad views, and partial-FOV masks.
-  - Loading generated benchmark projections into the alternating solver.
+  - Auto-activating `det_v_px` or `theta_scale`.
+  - Full correlation-based weak DOF policy.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.datasets`.
+- Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
-- `docs/tomojax-v2/07_synthetic_generator_pseudocode.md`
+- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 
 ### Tasks
 
-- [x] Add deterministic gain/background realization helpers.
-- [x] Apply nuisance when `clean=False`.
-- [x] Record realized nuisance truth payload.
-- [x] Add focused synthetic dataset tests.
+- [x] Thread Schur result into observability report writer.
+- [x] Replace placeholder weak-mode payload with Schur-backed evidence.
+- [x] Add focused smoke artifact assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the synthetic nuisance slice.
+- [x] Commit the observability slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_nuisance_gain_offset.py -q`
-  passed: 9 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 7 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,13 +58,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Implement only gain and scalar per-view background offsets first, matching the
-  current Phase 8 gain/offset model. More complex nuisance terms remain recorded
-  as spec metadata until they have owned models.
+- Treat this as evidence reporting only. Activation/deactivation decisions for
+  weak DOFs remain a later Phase 8 slice.
 
 ### Risks
 
-- Risk: this does not yet apply hot/dead pixels, stripes, partial-FOV masks, or
-  bad views from the hardest synthetic specs.
-- Mitigation: record unsupported terms in the nuisance truth payload so later
-  slices can add them explicitly.
+- Risk: curvature evidence is coarse because supported Schur setup parameters
+  are only theta offset, det_u, and active det_v.
+- Mitigation: report status and reasons explicitly rather than pretending full
+  weak-DOF policy is complete.

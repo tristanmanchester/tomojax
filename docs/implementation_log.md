@@ -3870,3 +3870,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Nuisance-bearing synthetic artifacts still do not cover the full hard dataset
   contract. Additional owned nuisance models should add the remaining terms
   rather than hiding them in the generator.
+
+## 2026-05-06 — Phase 8 Schur-Backed Observability Report
+
+### Summary
+
+- Replaced the Phase 7 smoke observability placeholder with a report built from
+  the last Schur geometry update.
+- `observability_report.json` now records Schur condition number, Schur
+  eigenvalues, minimum Schur eigenvalue, and weak-mode labels.
+- The report now explicitly marks supported setup DOFs as evaluated, active
+  `det_v_px` as evaluated in the smoke Schur setup block, and `theta_scale` as
+  frozen with a reason.
+- Updated focused smoke artifact assertions for the new evidence-backed report.
+
+### Decisions
+
+- This slice reports evidence only. It does not auto-activate or freeze weak
+  DOFs beyond the current geometry state.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- The evidence is limited to supported Schur setup DOFs in the current smoke
+  geometry. Full weak-DOF policy still needs correlation and validation
+  improvement rules.

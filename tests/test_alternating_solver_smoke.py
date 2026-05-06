@@ -347,14 +347,24 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
         "dict[str, object]",
         json.loads(result.artifacts["observability_report_json"].read_text(encoding="utf-8")),
     )
-    assert observability["status"] == "smoke_not_evaluated"
+    assert observability["status"] == "evaluated"
+    assert isinstance(observability["schur_condition_number"], float)
+    assert isinstance(observability["schur_min_eigenvalue"], float)
+    schur_eigenvalues = cast("list[float]", observability["schur_eigenvalues"])
+    assert len(schur_eigenvalues) == 3
     dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
-    assert dofs["setup"]["det_u_px"]["status"] == "weak_not_evaluated"
-    assert dofs["setup"]["det_v_px"]["status"] == "frozen"
+    assert dofs["setup"]["det_u_px"]["status"] == "evaluated"
+    assert dofs["setup"]["det_u_px"]["observable"] is True
+    assert dofs["setup"]["det_v_px"]["status"] == "evaluated"
+    assert dofs["setup"]["det_v_px"]["observable"] is True
+    assert dofs["setup"]["det_v_px"]["reason"] == "active_in_schur_setup_block"
+    assert dofs["setup"]["theta_scale"]["reason"] == (
+        "theta_scale is frozen until identifiable scale policy exists"
+    )
     assert dofs["pose"]["dx_px"]["status"] == "gauge_canonicalised"
     weak_modes = cast("list[dict[str, object]]", observability["weak_modes"])
-    assert weak_modes[0]["name"] == "smoke_curvature_uncomputed"
-    assert observability["handled_frozen_dofs"] == ["det_v_px", "theta_scale"]
+    assert weak_modes[0]["name"] == "schur_weak_modes"
+    assert observability["handled_frozen_dofs"] == ["theta_scale"]
 
     failure_report = cast(
         "dict[str, object]",

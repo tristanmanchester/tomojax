@@ -933,7 +933,10 @@ def _write_artifacts(
     _write_array(artifacts["ground_truth_volume_npy"], truth_volume)
     _write_json(artifacts["gauge_policy_json"], _gauge_policy_payload())
     _write_json(artifacts["gauge_report_json"], _gauge_report_payload(gauge_report))
-    _write_json(artifacts["observability_report_json"], _observability_report_payload())
+    _write_json(
+        artifacts["observability_report_json"],
+        _observability_report_payload(schur_result),
+    )
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
     _write_json(
         artifacts["failure_report_json"],
@@ -1664,24 +1667,62 @@ def _gauge_report_payload(report: GaugeReport) -> dict[str, object]:
     }
 
 
-def _observability_report_payload() -> dict[str, object]:
+def _observability_report_payload(schur_result: JointSchurLMResult | None) -> dict[str, object]:
+    diagnostics = None if schur_result is None else schur_result.diagnostics
+    schur_condition = None if diagnostics is None else diagnostics.schur_condition
+    schur_eigenvalues = () if diagnostics is None else diagnostics.schur_eigenvalues
+    min_schur_eigenvalue = (
+        None if not schur_eigenvalues else min(float(v) for v in schur_eigenvalues)
+    )
+    weak_mode_labels = () if diagnostics is None else diagnostics.weak_mode_labels
+    status = "evaluated" if diagnostics is not None else "not_run"
+    det_v_active = (
+        False if schur_result is None else "det_v_px" in schur_result.active_setup_parameters
+    )
+    det_v_status = "evaluated" if det_v_active else "frozen"
+    det_v_reason = (
+        "active_in_schur_setup_block"
+        if det_v_active
+        else "det_v_px is frozen in the current smoke geometry"
+    )
+    weak_modes = [
+        {
+            "name": "schur_weak_modes",
+            "severity": "info",
+            "affected_dofs": list(weak_mode_labels),
+            "reason": "Schur eigenvalue threshold flagged weak setup modes"
+            if weak_mode_labels
+            else "no Schur eigenvalue fell below the weak-mode threshold",
+        }
+    ]
     return {
         "schema": "tomojax.observability_report.v1",
-        "status": "smoke_not_evaluated",
-        "reason": "Schur curvature observability is not computed in the smoke profile",
+        "status": status,
+        "reason": "Schur curvature diagnostics from the last geometry update"
+        if diagnostics is not None
+        else "No Schur geometry update was run",
+        "schur_condition_number": schur_condition,
+        "schur_min_eigenvalue": min_schur_eigenvalue,
+        "schur_eigenvalues": [float(value) for value in schur_eigenvalues],
         "dofs": {
             "setup": {
                 "det_u_px": {
                     "active": True,
-                    "observable": False,
-                    "status": "weak_not_evaluated",
+                    "observable": diagnostics is not None,
+                    "status": "evaluated" if diagnostics is not None else "not_run",
                     "gauge_group": "detector_u",
+                    "curvature": None
+                    if not diagnostics or not diagnostics.schur_eigenvalues
+                    else float(max(diagnostics.schur_eigenvalues)),
+                    "reason": "included in supported Schur setup block",
                 },
                 "det_v_px": {
-                    "active": False,
-                    "observable": False,
-                    "status": "frozen",
+                    "active": det_v_active,
+                    "observable": det_v_active and diagnostics is not None,
+                    "status": det_v_status,
                     "gauge_group": "detector_v",
+                    "curvature": min_schur_eigenvalue if det_v_active else None,
+                    "reason": det_v_reason,
                 },
                 "detector_roll_rad": {
                     "active": True,
@@ -1712,6 +1753,8 @@ def _observability_report_payload() -> dict[str, object]:
                     "observable": False,
                     "status": "frozen",
                     "gauge_group": "none",
+                    "curvature": None,
+                    "reason": "theta_scale is frozen until identifiable scale policy exists",
                 },
             },
             "pose": {
@@ -1730,24 +1773,8 @@ def _observability_report_payload() -> dict[str, object]:
                 "dz_px": {"active": True, "observable": False, "status": "weak_not_evaluated"},
             },
         },
-        "weak_modes": [
-            {
-                "name": "smoke_curvature_uncomputed",
-                "severity": "info",
-                "affected_dofs": [
-                    "det_u_px",
-                    "detector_roll_rad",
-                    "axis_rot_x_rad",
-                    "axis_rot_y_rad",
-                    "theta_offset_rad",
-                    "alpha_rad",
-                    "beta_rad",
-                    "dz_px",
-                ],
-                "reason": "smoke profile records artifact shape before Schur observability",
-            }
-        ],
-        "handled_frozen_dofs": ["det_v_px", "theta_scale"],
+        "weak_modes": weak_modes,
+        "handled_frozen_dofs": ["theta_scale"] if det_v_active else ["det_v_px", "theta_scale"],
     }
 
 
