@@ -2355,3 +2355,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The diagnostics import movement is safe only while those names remain
   annotation-only; focused gauge/profile tests passed.
 - Proposed next fix for `just check`: clean `dof_specs.py`.
+
+## 2026-05-06 — Clean Active Parameter DOF Spec Lint
+
+### Summary
+
+- Added `dof_specs.py` module and public API docstrings for active parameter
+  packing, whitening, bounds, and diagnostics helpers.
+- Moved annotation-only imports behind `TYPE_CHECKING`.
+- Removed quoted forward references now covered by postponed annotations.
+
+### Decisions
+
+- Kept active-parameter behavior unchanged; this slice only documents the API
+  and cleans annotation imports.
+- Left gauge, motion model, schedule, and state lint for separate focused
+  slices.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/model/dof_specs.py` passed.
+- `uv run ruff check src/tomojax/align/model/dof_specs.py` passed.
+- `uv run pytest tests/test_alignment_state.py tests/test_align_optimizers.py tests/test_alignment_objectives.py tests/test_bilevel_setup_alignment.py tests/test_alignment_scenario_catalog.py -q`
+  passed: 46 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `dof_specs.py` is no longer in the failure list; the first
+  remaining blockers start in `src/tomojax/align/model/gauge.py`, followed by
+  motion model, schedule, state, and broader repository lint backlog. Formatter
+  churn from `just check` was reverted outside this slice.
+
+### Risks
+
+- The import movement is safe only while `AlignmentState`, `Iterable`, and
+  `Sequence` remain annotation-only; active parameter tests passed.
+- Proposed next fix for `just check`: clean `gauge.py`.

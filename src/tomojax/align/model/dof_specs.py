@@ -1,8 +1,10 @@
+"""Registry and vector views for typed alignment degrees of freedom."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Iterable, Literal, Sequence
+from typing import TYPE_CHECKING, Literal
 
 import jax.numpy as jnp
 
@@ -12,7 +14,11 @@ from .dofs import (
     DofBounds,
     normalize_alignment_dofs,
 )
-from .state import AlignmentState
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+    from .state import AlignmentState
 
 
 DofScope = Literal["setup", "pose"]
@@ -30,11 +36,13 @@ class ParameterScale:
             raise ValueError("ParameterScale.scale must be finite and positive")
 
     def to_whitened(self, value: jnp.ndarray) -> jnp.ndarray:
+        """Map native physical values into whitened optimiser coordinates."""
         return (jnp.asarray(value, dtype=jnp.float32) - jnp.float32(self.reference)) / jnp.float32(
             self.scale
         )
 
     def from_whitened(self, value: jnp.ndarray) -> jnp.ndarray:
+        """Map whitened optimiser coordinates back to native physical values."""
         return jnp.float32(self.reference) + jnp.asarray(value, dtype=jnp.float32) * jnp.float32(
             self.scale
         )
@@ -58,10 +66,12 @@ class DofSpec:
 
     @property
     def is_pose(self) -> bool:
+        """Return whether this DOF belongs to per-view pose state."""
         return self.scope == "pose"
 
     @property
     def is_setup(self) -> bool:
+        """Return whether this DOF belongs to setup geometry state."""
         return self.scope == "setup"
 
 
@@ -185,14 +195,13 @@ def _bounds_overrides_for_active_dofs(
         target = concrete_targets[0]
 
     if target in overrides:
-        raise ValueError(
-            f"Duplicate alignment bounds after resolving tilt_deg alias: {target!r}"
-        )
+        raise ValueError(f"Duplicate alignment bounds after resolving tilt_deg alias: {target!r}")
     overrides[target] = tilt_bound
     return overrides
 
 
 def dof_spec(name: str) -> DofSpec:
+    """Return the registry entry for a public alignment DOF name."""
     try:
         return DOF_SPECS[str(name)]
     except KeyError as exc:
@@ -201,6 +210,7 @@ def dof_spec(name: str) -> DofSpec:
 
 
 def ordered_dofs(names: Iterable[str]) -> tuple[str, ...]:
+    """Return requested DOFs in canonical registry order."""
     requested = tuple(names)
     requested_set = set(requested)
     return tuple(name for name in ALL_ALIGNMENT_DOF_NAMES if name in requested_set)
@@ -218,14 +228,13 @@ class ActiveParameterView:
         values: str | Iterable[str] | None,
         *,
         geometry: object | None = None,
-    ) -> "ActiveParameterView":
+    ) -> ActiveParameterView:
+        """Build an active parameter view from public DOF selections."""
         names = normalize_alignment_dofs(values, option_name="active_dofs", geometry=geometry)
         return cls(ordered_dofs(names))
 
     def __post_init__(self) -> None:
-        normalized = ordered_dofs(
-            normalize_alignment_dofs(self.dofs, option_name="active_dofs")
-        )
+        normalized = ordered_dofs(normalize_alignment_dofs(self.dofs, option_name="active_dofs"))
         if len(normalized) != len(tuple(self.dofs)):
             raise ValueError("Duplicate active DOFs are not allowed")
         object.__setattr__(self, "dofs", normalized)
@@ -236,17 +245,21 @@ class ActiveParameterView:
 
     @property
     def specs(self) -> tuple[DofSpec, ...]:
+        """Return registry specs for active DOFs."""
         return tuple(dof_spec(name) for name in self.dofs)
 
     @property
     def active_pose_dofs(self) -> tuple[str, ...]:
+        """Return active pose DOFs in canonical order."""
         return tuple(spec.name for spec in self.specs if spec.is_pose)
 
     @property
     def active_setup_dofs(self) -> tuple[str, ...]:
+        """Return active setup geometry DOFs in canonical order."""
         return tuple(spec.name for spec in self.specs if spec.is_setup)
 
     def pack(self, state: AlignmentState) -> jnp.ndarray:
+        """Pack active state values into a whitened vector."""
         parts: list[jnp.ndarray] = []
         for spec in self.specs:
             values = _values_for_spec(state, spec)
@@ -254,6 +267,7 @@ class ActiveParameterView:
         return jnp.concatenate(parts, axis=0) if parts else jnp.zeros((0,), dtype=jnp.float32)
 
     def unpack(self, state: AlignmentState, whitened: jnp.ndarray) -> AlignmentState:
+        """Return state with active values replaced from a whitened vector."""
         values = jnp.asarray(whitened, dtype=jnp.float32).reshape(-1)
         cursor = 0
         setup_updates: dict[str, jnp.ndarray] = {}
@@ -286,6 +300,7 @@ class ActiveParameterView:
         state: AlignmentState,
         bounds: DofBounds | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return lower and upper bounds in whitened active-vector coordinates."""
         overrides = (
             {}
             if bounds is None
@@ -307,6 +322,7 @@ class ActiveParameterView:
         before: AlignmentState,
         after: AlignmentState,
     ) -> dict[str, list[float] | float]:
+        """Return native-unit per-DOF deltas between two alignment states."""
         deltas: dict[str, list[float] | float] = {}
         for spec in self.specs:
             delta = _values_for_spec(after, spec) - _values_for_spec(before, spec)
@@ -361,4 +377,5 @@ def active_view_from_scopes(
     pose_dofs: Sequence[str] = (),
     setup_dofs: Sequence[str] = (),
 ) -> ActiveParameterView:
+    """Build an active parameter view from separate pose and setup scopes."""
     return ActiveParameterView(ordered_dofs(tuple(pose_dofs) + tuple(setup_dofs)))
