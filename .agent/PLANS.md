@@ -12,20 +12,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: add the first typed low-frequency background nuisance model.
+- Goal: add opt-in background nuisance fitting to Schur residuals.
 
 ### Scope
 
 - In scope:
-  - Add a public `BackgroundOffsetModel` to `tomojax.nuisance`.
-  - Implement per-view constant plus vertical-gradient background application.
-  - Implement masked closed-form fitting against residual backgrounds.
-  - Add focused nuisance tests and README/API updates.
+  - Add an opt-in Schur config flag for background offset fitting.
+  - Apply the fitted background model when evaluating Schur residuals and losses.
+  - Record background fitting in Schur diagnostics/artifacts.
+  - Add a focused synthetic Schur test for background drift without fake geometry.
 - Out of scope:
-  - Coupling background fitting into Schur or alternating solver.
+  - Default-enabling background fitting in Phase 7 smoke.
+  - CLI/alternating plumbing for the background flag.
   - Stripe/ring bias fields.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.nuisance`.
+- Deep module owner: `tomojax.align`, consuming public `tomojax.nuisance`.
 
 ### Design Sources
 
@@ -34,24 +35,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add private background model implementation.
-- [x] Export typed public nuisance API.
-- [x] Update nuisance README.
-- [x] Add focused background tests.
+- [x] Add Schur background nuisance config and diagnostics.
+- [x] Apply fitted background in Schur residual/loss evaluation.
+- [x] Add focused Schur+background test.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the background nuisance slice.
+- [x] Commit the Schur background nuisance slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `uv run ruff check src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `uv run basedpyright src/tomojax/nuisance/_background.py src/tomojax/nuisance/api.py src/tomojax/nuisance/__init__.py tests/test_nuisance_background.py`
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_nuisance_background.py tests/test_nuisance_gain_offset.py tests/test_v2_module_skeleton.py -q`
-  passed: 10 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_nuisance_background.py -q`
+  passed: 12 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -59,11 +59,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Start with a low-frequency vertical-gradient basis because the hardest
-  synthetic nuisance spec names a low-frequency vertical background drift.
+- Keep background fitting opt-in and solver-local for this slice, mirroring the
+  earlier gain/offset integration.
 
 ### Risks
 
-- Risk: this background model is not yet wired into solver residual evaluation.
-- Mitigation: keep the model tested and public so the next slice can integrate
-  it behind an opt-in solver/config flag.
+- Risk: background fitting is recomputed in finite-difference residuals and is
+  not performance-optimized.
+- Mitigation: this remains the correctness-first JAX reference path.

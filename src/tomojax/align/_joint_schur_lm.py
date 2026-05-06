@@ -15,7 +15,7 @@ import numpy as np
 from tomojax.align._lm_numerics import finite_difference_jacobian
 from tomojax.forward import project_parallel_reference_arrays, pseudo_huber_weights, residual_loss
 from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_geometry_gauges
-from tomojax.nuisance import estimate_gain_offset
+from tomojax.nuisance import estimate_background_offset, estimate_gain_offset
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,6 +46,7 @@ class JointSchurLMConfig:
     pose_trust_radius: float | None = None
     parameter_prior_strength: float = 0.0
     fit_gain_offset: bool = False
+    fit_background_offset: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ class JointSchurDiagnostics:
     setup_pose_coupling_norm_by_view: tuple[float, ...] = ()
     parameter_prior_strength: float = 0.0
     gain_offset_fit: bool = False
+    background_offset_fit: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -119,6 +121,7 @@ class JointSchurDiagnostics:
             "setup_pose_coupling_norm_by_view": list(self.setup_pose_coupling_norm_by_view),
             "parameter_prior_strength": self.parameter_prior_strength,
             "gain_offset_fit": self.gain_offset_fit,
+            "background_offset_fit": self.background_offset_fit,
         }
 
 
@@ -190,6 +193,7 @@ def solve_joint_schur_lm(
             mask=mask,
             sigma=cfg.sigma,
             fit_gain_offset=cfg.fit_gain_offset,
+            fit_background_offset=cfg.fit_background_offset,
         )
         weights = jnp.sqrt(pseudo_huber_weights(residual, delta=cfg.delta)).reshape(-1)
 
@@ -205,6 +209,7 @@ def solve_joint_schur_lm(
                 mask=mask,
                 sigma=cfg.sigma,
                 fit_gain_offset=cfg.fit_gain_offset,
+                fit_background_offset=cfg.fit_background_offset,
             )
             data_residual = raw.reshape(-1) * weights_current
             return _with_parameter_prior_residual(
@@ -313,6 +318,7 @@ def solve_joint_schur_lm(
             actual_reduction_by_view=actual_reduction_by_view,
             parameter_prior_strength=max(float(cfg.parameter_prior_strength), 0.0),
             gain_offset_fit=bool(cfg.fit_gain_offset),
+            background_offset_fit=bool(cfg.fit_background_offset),
         )
         iteration_diagnostics.append(diagnostics)
         damping = next_damping
@@ -712,13 +718,15 @@ def _residual_for_params(
     mask: jax.Array | None,
     sigma: float,
     fit_gain_offset: bool,
+    fit_background_offset: bool,
 ) -> jax.Array:
     predicted = _predicted_for_params(volume, geometry, params)
-    predicted = _with_gain_offset_nuisance(
+    predicted = _with_fitted_nuisance(
         predicted,
         observed,
         mask=mask,
-        fit=fit_gain_offset,
+        fit_gain_offset=fit_gain_offset,
+        fit_background_offset=fit_background_offset,
     )
     residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
     if mask is None:
@@ -756,16 +764,20 @@ def _predicted_for_params(
     )
 
 
-def _with_gain_offset_nuisance(
+def _with_fitted_nuisance(
     predicted: jax.Array,
     observed: jax.Array,
     *,
     mask: jax.Array | None,
-    fit: bool,
+    fit_gain_offset: bool,
+    fit_background_offset: bool,
 ) -> jax.Array:
-    if not fit:
-        return predicted
-    return estimate_gain_offset(predicted, observed, mask=mask).apply(predicted)
+    corrected = predicted
+    if fit_gain_offset:
+        corrected = estimate_gain_offset(corrected, observed, mask=mask).apply(corrected)
+    if fit_background_offset:
+        corrected = estimate_background_offset(corrected, observed, mask=mask).apply(corrected)
+    return corrected
 
 
 def _loss_for_params(
@@ -779,11 +791,12 @@ def _loss_for_params(
     prior_reference: jax.Array | None = None,
 ) -> jax.Array:
     predicted = _predicted_for_params(volume, geometry, params)
-    predicted = _with_gain_offset_nuisance(
+    predicted = _with_fitted_nuisance(
         predicted,
         observed,
         mask=mask,
-        fit=cfg.fit_gain_offset,
+        fit_gain_offset=cfg.fit_gain_offset,
+        fit_background_offset=cfg.fit_background_offset,
     )
     data_loss = residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
     strength = max(float(cfg.parameter_prior_strength), 0.0)
@@ -806,11 +819,12 @@ def _loss_by_view_for_params(
     cfg: JointSchurLMConfig,
 ) -> tuple[float, ...]:
     predicted = _predicted_for_params(volume, geometry, params)
-    predicted = _with_gain_offset_nuisance(
+    predicted = _with_fitted_nuisance(
         predicted,
         observed,
         mask=mask,
-        fit=cfg.fit_gain_offset,
+        fit_gain_offset=cfg.fit_gain_offset,
+        fit_background_offset=cfg.fit_background_offset,
     )
     losses: list[float] = []
     mask_array = None if mask is None else jnp.asarray(mask, dtype=jnp.float32)

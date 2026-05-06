@@ -4017,3 +4017,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The model is not yet integrated into Schur or alternating residual
   evaluation. The next slice should add an opt-in solver hook, following the
   gain/offset path.
+
+## 2026-05-06 — Phase 8 Schur Background Offset Fitting
+
+### Summary
+
+- Added opt-in `fit_background_offset` support to `JointSchurLMConfig`.
+- Schur residual, loss, and per-view loss evaluation can now fit the public
+  `BackgroundOffsetModel` through `estimate_background_offset`.
+- Added `background_offset_fit` to Schur diagnostics and normal-equation
+  summaries.
+- Added a focused synthetic Schur test where observed projections contain only
+  low-frequency background drift; with background fitting enabled, the solver
+  leaves correct geometry unchanged and reports near-zero residual.
+
+### Decisions
+
+- Background fitting remains opt-in and solver-local in this slice. The default
+  Phase 7/8 smoke path is unchanged until an alternating/CLI toggle is added.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_nuisance_background.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- Fitted background rows are recomputed inside finite-difference residual
+  evaluation. This is acceptable for the reference correctness path but should
+  be revisited before performance work.
