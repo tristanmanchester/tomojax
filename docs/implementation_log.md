@@ -2194,3 +2194,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   should keep new per-stage state explicit on that carrier.
 - Proposed next fix for `just check`: split `align_multires` orchestration
   complexity.
+
+## 2026-05-06 — Split Multires Public Orchestration
+
+### Summary
+
+- Added private multires context and run-state carriers for setup, resume, and
+  finalization bookkeeping.
+- Extracted multires input setup/validation, level selection, initial volume
+  selection, translation seeding, per-level execution, and run finalization from
+  the public `align_multires` function.
+- Removed all remaining `_stage_loop.py` Ruff findings without changing the
+  public alignment API.
+
+### Decisions
+
+- Kept the split inside `tomojax.align._stage_loop` so the existing
+  `tomojax.align.pipeline` facade and import-linter contract remain unchanged.
+- Preserved the coarsest-level phase-correlation seeding path as private helper
+  logic rather than changing the alignment schedule model.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_stage_loop.py` passed.
+- `uv run ruff check src/tomojax/align/_stage_loop.py` passed.
+- `uv run pytest tests/test_multires.py tests/test_bilevel_setup_alignment.py tests/test_align_checkpoint.py tests/test_align_quick.py -q`
+  passed: 66 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `_stage_loop.py` is no longer in the failure list; the first
+  remaining blockers are geometry module doc/import lint findings, followed by
+  checkpoint/io/model lint and broader repository backlog. Formatter churn from
+  `just check` was reverted outside this slice.
+
+### Risks
+
+- The run-state carrier now owns checkpoint/resume bookkeeping across helper
+  calls; focused multires/checkpoint tests passed, but future per-level state
+  additions should be explicit fields.
+- Proposed next fix for `just check`: clean the geometry deep-module lint
+  backlog beginning with `detector_center.py`, `geometry_applier.py`,
+  `geometry_blocks.py`, `initializers.py`, and `parametrizations.py`.

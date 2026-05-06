@@ -12,20 +12,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Milestone 0 cleanup — legacy Ruff unblock
-- Goal: remove `_run_multires_level_stages` complexity with
-  behavior-preserving stage-handler extraction.
+- Goal: remove `align_multires` orchestration complexity with private
+  setup/loop/finalization extraction.
 
 ### Scope
 
 - In scope:
-  - Extract proposal-stage execution.
-  - Extract setup-geometry stage execution.
-  - Extract pose-alignment stage execution.
-  - Preserve level stats/loss/checkpoint/observer behavior.
-  - Run focused Ruff checks and multires/setup tests.
+  - Extract multires input setup and validation.
+  - Extract resume/progress initialization.
+  - Extract per-level orchestration from the public function.
+  - Preserve checkpoint/resume/observer behavior.
+  - Run focused Ruff checks and multires/checkpoint tests.
 - Out of scope:
   - Alignment algorithm changes.
-  - Large `align_multires` decomposition.
+  - Geometry module lint cleanup.
   - Repository-wide legacy Ruff cleanup outside this function.
 - Deep module owner: `tomojax.align`.
 
@@ -35,9 +35,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Extract proposal stage handler.
-- [x] Extract setup stage handler.
-- [x] Extract pose stage handler.
+- [x] Extract multires input setup.
+- [x] Extract resume/progress initialization.
+- [x] Extract level orchestration helper.
 - [x] Run focused validation.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit the cleanup slice if validations pass.
@@ -45,33 +45,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Validation
 
 - `uv run ruff format src/tomojax/align/_stage_loop.py` passed.
-- `uv run ruff check src/tomojax/align/_stage_loop.py` now reports only
-  `align_multires` PLR0912/PLR0915.
-- `uv run pytest tests/test_multires.py tests/test_bilevel_setup_alignment.py tests/test_align_checkpoint.py -q`
-  passed: 43 tests.
+- `uv run ruff check src/tomojax/align/_stage_loop.py` passed.
+- `uv run pytest tests/test_multires.py tests/test_bilevel_setup_alignment.py tests/test_align_checkpoint.py tests/test_align_quick.py -q`
+  passed: 66 tests.
 - `just imports` passed.
 - `just check` failed at `uv run ruff check --fix src tests tools` after
-  formatting. The first remaining blockers are `align_multires`
-  PLR0912/PLR0915, followed by geometry module doc/import findings and the
-  broader repository lint backlog. Formatter churn from `just check` was
-  reverted outside this slice.
+  formatting. `_stage_loop.py` is no longer in the failure list; the first
+  remaining blockers are geometry module doc/import lint findings, followed by
+  checkpoint/io/model lint and broader repository backlog. Formatter churn from
+  `just check` was reverted outside this slice.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Added a private `StageLoopState` carrier so proposal, setup-geometry, and
-  pose-alignment handlers can return the same level state without widening the
-  public API.
-- Kept stage dispatch behavior local to `_stage_loop.py`; no alignment
-  algorithm changes were made.
+- Added private multires context and run-state carriers for setup, resume, and
+  finalization state.
+- Moved translation seeding into a private helper while preserving the existing
+  coarsest-level phase-correlation behavior.
+- Moved per-level execution and completion checkpoint emission behind a private
+  level runner.
 - Deviation: none from the cleanup scope.
 
 ### Risks
 
-- Risk: stage handler extraction could change level stats/loss accumulation.
-- Mitigation: keep helpers private, return the same mutated state values, and
-  run focused multires/setup/checkpoint tests.
-- Proposed next fix for `just check`: split `align_multires` orchestration
-  complexity.
+- Risk: moving the per-level loop could alter checkpoint/resume state
+  bookkeeping.
+- Mitigation: keep carriers private, copy the same mutable state transitions,
+  and run focused multires/checkpoint tests.
+- Proposed next fix for `just check`: geometry module doc/import cleanup after
+  `_stage_loop.py` complexity is gone.

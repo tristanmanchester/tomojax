@@ -75,7 +75,7 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
     from ._observer import ObserverAction, ObserverCallback, OuterStat
-    from .model.schedules import ResolvedAlignmentStage
+    from .model.schedules import ResolvedAlignmentSchedule, ResolvedAlignmentStage
 
 _SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
 
@@ -252,6 +252,41 @@ class StageLoopState:
     final_gauge_fix_dofs: list[str]
     final_gauge_fix_stats: dict[str, object]
     stage_resume_consumed: bool = False
+
+
+@dataclass(frozen=True)
+class MultiresContext:
+    cfg: AlignConfig
+    observer_fn: ObserverCallback | None
+    resolved_schedule: ResolvedAlignmentSchedule
+    active_mask_tuple: tuple[bool, ...]
+    setup_alignment_state: object
+    active_geometry_dofs: tuple[str, ...]
+    factors_list: list[int]
+    levels: list[MultiresLevel]
+
+
+@dataclass(frozen=True)
+class MultiresRunState:
+    x_init: jnp.ndarray | None
+    params5: jnp.ndarray | None
+    prev_factor: int | None
+    loss_hist: list[float]
+    global_outer_stats: list[OuterStat]
+    stopped_by_observer: bool
+    final_observer_action: ObserverAction
+    global_outer_idx: int
+    global_elapsed_offset: float
+    executed_outer_iters: int
+    final_pose_model_variables: int | None
+    final_per_view_variables: int | None
+    final_pose_model_basis_shape: list[int] | None
+    final_loss_kind: str | None
+    final_gauge_fix: str
+    final_gauge_fix_dofs: list[str]
+    final_gauge_fix_stats: dict[str, object] | None
+    last_level_index_processed: int | None
+    setup_alignment_state: object
 
 
 def _stage_index_or_none(stat: Mapping[str, object]) -> int | None:
@@ -1212,6 +1247,470 @@ def _final_align_multires_info(
     }
 
 
+def _build_multires_context(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    cfg: AlignConfig | None,
+    observer: ObserverCallback | None,
+    resume_state: AlignMultiresResumeState | None,
+    factors: Iterable[int],
+) -> MultiresContext:
+    cfg = cfg if cfg is not None else AlignConfig()
+    observer_fn = adapt_legacy_observer(observer) if observer is not None else None
+    resolved_schedule = _resolved_schedule_for_cfg(cfg, geometry=geometry)
+    setup_base = BaseGeometryArrays.from_geometry(geometry, detector)
+    setup_alignment_state = alignment_state_from_checkpoint(
+        resume_state.geometry_calibration_state if resume_state is not None else None,
+        n_views=int(projections.shape[0]),
+        volume=resume_state.x if resume_state is not None else None,
+    )
+    setup_alignment_state = setup_alignment_state.replace(
+        setup=setup_alignment_state.setup.replace(
+            nominal_axis_unit=setup_base.nominal_axis_unit,
+        )
+    )
+    validate_grid(grid, "align_multires grid")
+    validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="align_multires projections",
+    )
+    factors_list = [validate_scale_factor(f) for f in factors]
+    validate_loss_schedule_levels(cfg.loss, factors_list)
+    return MultiresContext(
+        cfg=cfg,
+        observer_fn=observer_fn,
+        resolved_schedule=resolved_schedule,
+        active_mask_tuple=resolved_schedule.pose_mask,
+        setup_alignment_state=setup_alignment_state,
+        active_geometry_dofs=resolved_schedule.active_geometry_dofs,
+        factors_list=factors_list,
+        levels=_build_multires_levels(geometry, grid, detector, projections, factors_list),
+    )
+
+
+def _build_multires_levels(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    factors_list: list[int],
+) -> list[MultiresLevel]:
+    levels: list[MultiresLevel] = []
+    for factor in factors_list:
+        level_grid = scale_grid(grid, factor)
+        level_detector = scale_detector(detector, factor)
+        level_projections = bin_projections(projections, factor)
+        validate_projection_stack(
+            level_projections,
+            level_detector,
+            geometry=geometry,
+            context=f"align_multires level factor {factor} projections",
+        )
+        levels.append(
+            {
+                "factor": factor,
+                "grid": level_grid,
+                "detector": level_detector,
+                "projections": level_projections,
+            }
+        )
+    return levels
+
+
+def _initial_multires_run_state(
+    *,
+    context: MultiresContext,
+    resume_state: AlignMultiresResumeState | None,
+) -> MultiresRunState:
+    level_complete = resume_state is not None and resume_state.level_complete
+    x_init = resume_state.x if level_complete else None
+    params5 = resume_state.params5 if level_complete else None
+    prev_factor = int(resume_state.level_factor) if level_complete else None
+    final_gauge_fix = normalize_gauge_fix(context.cfg.gauge_fix)
+    return MultiresRunState(
+        x_init=x_init,
+        params5=params5,
+        prev_factor=prev_factor,
+        loss_hist=list(resume_state.loss) if resume_state is not None else [],
+        global_outer_stats=(
+            [dict(stat) for stat in resume_state.outer_stats] if resume_state is not None else []
+        ),
+        stopped_by_observer=False,
+        final_observer_action="continue",
+        global_outer_idx=(
+            int(resume_state.global_outer_iters_completed) if resume_state is not None else 0
+        ),
+        global_elapsed_offset=(
+            float(resume_state.elapsed_offset) if resume_state is not None else 0.0
+        ),
+        executed_outer_iters=(
+            int(resume_state.global_outer_iters_completed) if resume_state is not None else 0
+        ),
+        final_pose_model_variables=None,
+        final_per_view_variables=None,
+        final_pose_model_basis_shape=None,
+        final_loss_kind=None,
+        final_gauge_fix=final_gauge_fix,
+        final_gauge_fix_dofs=list(
+            active_gauge_dofs(
+                mode=final_gauge_fix,
+                active_mask=context.active_mask_tuple,
+            )
+        ),
+        final_gauge_fix_stats=None,
+        last_level_index_processed=None,
+        setup_alignment_state=context.setup_alignment_state,
+    )
+
+
+def _levels_to_run(
+    levels: list[MultiresLevel],
+    resume_state: AlignMultiresResumeState | None,
+) -> list[tuple[int, MultiresLevel]]:
+    if resume_state is not None and resume_state.run_complete:
+        return []
+    start_level = 0
+    if resume_state is not None:
+        start_level = int(resume_state.level_index) + (1 if resume_state.level_complete else 0)
+    return list(enumerate(levels))[start_level:]
+
+
+def _level_initial_volume(
+    *,
+    level: MultiresLevel,
+    x_init: jnp.ndarray | None,
+    prev_factor: int | None,
+    resume_state: AlignMultiresResumeState | None,
+    resuming_this_level: bool,
+) -> jnp.ndarray | None:
+    if resuming_this_level and resume_state is not None:
+        return resume_state.x
+    if x_init is None or prev_factor is None:
+        return None
+    level_grid = level["grid"]
+    return upsample_volume(
+        x_init,
+        prev_factor // level["factor"],
+        (level_grid.nx, level_grid.ny, level_grid.nz),
+    )
+
+
+def _seed_translation_params(
+    *,
+    geometry: Geometry,
+    cfg: AlignConfig,
+    active_mask_tuple: tuple[bool, ...],
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    x0: jnp.ndarray | None,
+    params0: jnp.ndarray | None,
+) -> jnp.ndarray | None:
+    seed_cfg = FistaConfig(
+        iters=max(3, cfg.recon_iters // 2),
+        lambda_tv=cfg.lambda_tv,
+        regulariser=cfg.regulariser,
+        huber_delta=cfg.huber_delta,
+        projector_unroll=int(cfg.projector_unroll),
+        checkpoint_projector=cfg.checkpoint_projector,
+        gather_dtype=cfg.gather_dtype,
+        recon_rel_tol=cfg.recon_rel_tol,
+        recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
+    )
+    x_seed, _ = fista_tv(geometry, grid, detector, projections, init_x=x0, config=seed_cfg)
+    transforms = stack_view_poses(geometry, projections.shape[0])
+
+    def project_seed_view(transform: jnp.ndarray) -> jnp.ndarray:
+        return forward_project_view_T(
+            transform,
+            grid,
+            detector,
+            x_seed,
+            use_checkpoint=cfg.checkpoint_projector,
+            gather_dtype=cfg.gather_dtype,
+        )
+
+    preds = jax.vmap(project_seed_view, in_axes=0)(transforms)
+    shift_uv = jax.vmap(phase_corr_shift)(preds, projections)
+    shifts = jnp.stack(shift_uv, axis=1).astype(jnp.float32)
+    seed_params = (
+        jnp.zeros((projections.shape[0], 5), dtype=jnp.float32)
+        if params0 is None
+        else jnp.asarray(params0, dtype=jnp.float32)
+    )
+    if active_mask_tuple[3]:
+        seed_params = seed_params.at[:, 3].set(shifts[:, 0] * jnp.float32(detector.du))
+    if active_mask_tuple[4]:
+        seed_params = seed_params.at[:, 4].set(shifts[:, 1] * jnp.float32(detector.dv))
+    return seed_params
+
+
+def _params_for_multires_level(
+    *,
+    level_index: int,
+    geometry: Geometry,
+    context: MultiresContext,
+    level: MultiresLevel,
+    x0: jnp.ndarray | None,
+    params0: jnp.ndarray | None,
+) -> jnp.ndarray | None:
+    if level_index != 0 or not context.cfg.seed_translations:
+        return params0
+    return _seed_translation_params(
+        geometry=geometry,
+        cfg=context.cfg,
+        active_mask_tuple=context.active_mask_tuple,
+        grid=level["grid"],
+        detector=level["detector"],
+        projections=level["projections"],
+        x0=x0,
+        params0=params0,
+    )
+
+
+def _build_stage_runtime(
+    *,
+    context: MultiresContext,
+    level_index: int,
+    level_factor: int,
+    level_run: LevelResumePlan,
+    state: MultiresRunState,
+    level_stats: list[OuterStat],
+    level_losses: list[float],
+    active_loss_name: str,
+    checkpoint_callback: AlignMultiresCheckpointCallback | None,
+) -> StageRuntime:
+    return StageRuntime(
+        level_index=level_index,
+        level_factor=level_factor,
+        global_before_level=level_run.global_before_level,
+        global_elapsed_offset=state.global_elapsed_offset,
+        active_loss_name=active_loss_name,
+        schedule_name=context.resolved_schedule.name,
+        stats_before_level=level_run.stats_before_level,
+        loss_before_level=level_run.loss_before_level,
+        level_stats=level_stats,
+        level_losses=level_losses,
+        prev_factor=state.prev_factor,
+        observer_fn=context.observer_fn,
+        checkpoint_callback=checkpoint_callback,
+    )
+
+
+def _state_after_multires_level(
+    *,
+    state: MultiresRunState,
+    level: MultiresLevel,
+    level_index: int,
+    level_run: LevelResumePlan,
+    stage_result: StageRunResult,
+) -> tuple[MultiresRunState, dict[str, object]]:
+    info = stage_result.info
+    info["loss"] = stage_result.level_losses
+    info["outer_stats"] = [
+        dict(stat)
+        for stat in stage_result.level_stats
+        if not str(stat.get("geometry_block") or "").startswith("setup_")
+    ]
+    info["completed_outer_iters"] = len(stage_result.level_stats)
+    info["wall_time_total"] = float(stage_result.level_wall_time)
+    info["observer_action"] = stage_result.level_action
+    level_completed_after = len(stage_result.level_stats)
+    return (
+        replace(
+            state,
+            x_init=stage_result.x_lvl,
+            params5=stage_result.params5,
+            prev_factor=level["factor"],
+            loss_hist=level_run.loss_before_level + stage_result.level_losses,
+            global_outer_stats=level_run.stats_before_level + stage_result.level_stats,
+            stopped_by_observer=stage_result.level_action == "stop_run",
+            final_observer_action=stage_result.level_action,
+            global_outer_idx=level_run.global_before_level + level_completed_after,
+            executed_outer_iters=level_run.global_before_level + level_completed_after,
+            global_elapsed_offset=state.global_elapsed_offset + float(stage_result.level_wall_time),
+            final_pose_model_variables=int(info.get("pose_model_variables") or 0),
+            final_per_view_variables=int(info.get("per_view_variables") or 0),
+            final_pose_model_basis_shape=list(info.get("pose_model_basis_shape") or []),
+            final_loss_kind=str(info.get("loss_kind", state.final_loss_kind or "")) or None,
+            final_gauge_fix=str(info.get("gauge_fix", stage_result.final_gauge_fix)),
+            final_gauge_fix_dofs=list(
+                info.get("gauge_fix_dofs", stage_result.final_gauge_fix_dofs)
+            ),
+            final_gauge_fix_stats=dict(info.get("gauge_fix_final", {}) or {}),
+            last_level_index_processed=level_index,
+            setup_alignment_state=stage_result.setup_alignment_state,
+        ),
+        info,
+    )
+
+
+def _run_one_multires_level(
+    *,
+    geometry: Geometry,
+    context: MultiresContext,
+    resume_state: AlignMultiresResumeState | None,
+    checkpoint_callback: AlignMultiresCheckpointCallback | None,
+    level_index: int,
+    level: MultiresLevel,
+    state: MultiresRunState,
+) -> MultiresRunState:
+    level_factor = int(level["factor"])
+    grid = level["grid"]
+    detector = level["detector"]
+    projections = level["projections"]
+    active_loss_spec = resolve_loss_for_level(context.cfg.loss, level_factor)
+    active_loss_name = loss_spec_name(active_loss_spec)
+    logging.info(
+        "Alignment level %d/%d factor=%d using loss=%s",
+        level_index + 1,
+        len(context.levels),
+        level_factor,
+        active_loss_name,
+    )
+    resuming_this_level = (
+        resume_state is not None
+        and not resume_state.level_complete
+        and int(resume_state.level_index) == level_index
+    )
+    x0 = _level_initial_volume(
+        level=level,
+        x_init=state.x_init,
+        prev_factor=state.prev_factor,
+        resume_state=resume_state,
+        resuming_this_level=resuming_this_level,
+    )
+    params0 = (
+        resume_state.params5 if resuming_this_level and resume_state is not None else state.params5
+    )
+    params0 = _params_for_multires_level(
+        level_index=level_index,
+        geometry=geometry,
+        context=context,
+        level=level,
+        x0=x0,
+        params0=params0,
+    )
+    level_run = _prepare_multires_level_state(
+        resume_state=resume_state,
+        level_index=level_index,
+        loss_hist=state.loss_hist,
+        global_outer_stats=state.global_outer_stats,
+        executed_outer_iters=state.executed_outer_iters,
+    )
+    level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
+    level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
+    stage_result = _run_multires_level_stages(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        cfg=context.cfg,
+        resolved_schedule=context.resolved_schedule,
+        active_loss_spec=active_loss_spec,
+        active_loss_name=active_loss_name,
+        setup_alignment_state=state.setup_alignment_state,
+        active_geometry_dofs=context.active_geometry_dofs,
+        level_factor=level_factor,
+        stage_runtime=_build_stage_runtime(
+            context=context,
+            level_index=level_index,
+            level_factor=level_factor,
+            level_run=level_run,
+            state=state,
+            level_stats=level_stats,
+            level_losses=level_losses,
+            active_loss_name=active_loss_name,
+            checkpoint_callback=checkpoint_callback,
+        ),
+        resume_state=resume_state,
+        resuming_this_level=resuming_this_level,
+        level_resume=level_run,
+        global_elapsed_offset=state.global_elapsed_offset,
+        x_lvl=x0 if x0 is not None else jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32),
+        params5=params0
+        if params0 is not None
+        else jnp.zeros((projections.shape[0], 5), dtype=jnp.float32),
+        level_stats=level_stats,
+        level_losses=level_losses,
+        final_gauge_fix=state.final_gauge_fix,
+        final_gauge_fix_dofs=state.final_gauge_fix_dofs,
+        final_gauge_fix_stats=state.final_gauge_fix_stats or {},
+    )
+    next_state, info = _state_after_multires_level(
+        state=state,
+        level=level,
+        level_index=level_index,
+        level_run=level_run,
+        stage_result=stage_result,
+    )
+    _emit_level_completion_checkpoint(
+        checkpoint_callback=checkpoint_callback,
+        x_lvl=stage_result.x_lvl,
+        params5=stage_result.params5,
+        info=info,
+        level_index=level_index,
+        level_factor=level_factor,
+        level_completed_after=len(stage_result.level_stats),
+        global_outer_idx=int(next_state.global_outer_idx),
+        prev_factor=level["factor"],
+        loss_hist=next_state.loss_hist,
+        global_outer_stats=next_state.global_outer_stats,
+        global_elapsed_offset=next_state.global_elapsed_offset,
+        level_complete=_level_is_complete(
+            context, len(stage_result.level_stats), info, stage_result.level_action
+        ),
+        setup_alignment_state=stage_result.setup_alignment_state,
+        active_geometry_dofs=context.active_geometry_dofs,
+        resolved_schedule=context.resolved_schedule,
+        level_stats=stage_result.level_stats,
+    )
+    return next_state
+
+
+def _level_is_complete(
+    context: MultiresContext,
+    level_completed_after: int,
+    info: Mapping[str, object],
+    level_action: ObserverAction,
+) -> bool:
+    return (
+        level_completed_after
+        >= sum(int(stage.maxiter) for stage in context.resolved_schedule.stages)
+        or level_action == "advance_level"
+        or not bool(info.get("stopped_by_observer", False))
+    )
+
+
+def _run_multires_levels(
+    *,
+    geometry: Geometry,
+    context: MultiresContext,
+    resume_state: AlignMultiresResumeState | None,
+    checkpoint_callback: AlignMultiresCheckpointCallback | None,
+) -> MultiresRunState:
+    state = _initial_multires_run_state(context=context, resume_state=resume_state)
+    if resume_state is not None and resume_state.run_complete:
+        return replace(state, x_init=resume_state.x, params5=resume_state.params5, prev_factor=1)
+    for level_index, level in _levels_to_run(context.levels, resume_state):
+        state = _run_one_multires_level(
+            geometry=geometry,
+            context=context,
+            resume_state=resume_state,
+            checkpoint_callback=checkpoint_callback,
+            level_index=int(level_index),
+            level=level,
+            state=state,
+        )
+        if state.final_observer_action == "stop_run":
+            break
+    return state
+
+
 def align_multires(
     geometry: Geometry,
     grid: Grid,
@@ -1228,353 +1727,73 @@ def align_multires(
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
-    if cfg is None:
-        cfg = AlignConfig()
-    observer_fn = adapt_legacy_observer(observer) if observer is not None else None
-    resolved_schedule = _resolved_schedule_for_cfg(cfg, geometry=geometry)
-    active_mask_tuple = resolved_schedule.pose_mask
-    setup_base = BaseGeometryArrays.from_geometry(geometry, detector)
-    setup_alignment_state = alignment_state_from_checkpoint(
-        resume_state.geometry_calibration_state if resume_state is not None else None,
-        n_views=int(projections.shape[0]),
-        volume=resume_state.x if resume_state is not None else None,
-    )
-    setup_alignment_state = setup_alignment_state.replace(
-        setup=setup_alignment_state.setup.replace(
-            nominal_axis_unit=setup_base.nominal_axis_unit,
-        )
-    )
-    active_geometry_dofs = resolved_schedule.active_geometry_dofs
-
-    validate_grid(grid, "align_multires grid")
-    validate_projection_stack(
-        projections,
+    context = _build_multires_context(
+        geometry,
+        grid,
         detector,
+        projections,
+        cfg,
+        observer,
+        resume_state,
+        factors,
+    )
+    state = _run_multires_levels(
         geometry=geometry,
-        context="align_multires projections",
-    )
-
-    factors_list = [validate_scale_factor(f) for f in factors]
-    validate_loss_schedule_levels(cfg.loss, factors_list)
-    levels: list[MultiresLevel] = []
-    for f in factors_list:
-        g = scale_grid(grid, f)
-        d = scale_detector(detector, f)
-        y = bin_projections(projections, f)
-        validate_projection_stack(
-            y,
-            d,
-            geometry=geometry,
-            context=f"align_multires level factor {f} projections",
-        )
-        levels.append(
-            {
-                "factor": f,
-                "grid": g,
-                "detector": d,
-                "projections": y,
-            }
-        )
-
-    x_init = resume_state.x if resume_state is not None and resume_state.level_complete else None
-    params5 = (
-        resume_state.params5 if resume_state is not None and resume_state.level_complete else None
-    )
-    prev_factor: int | None = (
-        int(resume_state.level_factor)
-        if resume_state is not None and resume_state.level_complete
-        else None
-    )
-    loss_hist: list[float] = list(resume_state.loss) if resume_state is not None else []
-    global_outer_stats: list[OuterStat] = (
-        [dict(stat) for stat in resume_state.outer_stats] if resume_state is not None else []
-    )
-    stopped_by_observer = False
-    final_observer_action: ObserverAction = "continue"
-    global_outer_idx = (
-        int(resume_state.global_outer_iters_completed) if resume_state is not None else 0
-    )
-    global_elapsed_offset = float(resume_state.elapsed_offset) if resume_state is not None else 0.0
-    executed_outer_iters = int(global_outer_idx)
-    final_pose_model_variables: int | None = None
-    final_per_view_variables: int | None = None
-    final_pose_model_basis_shape: list[int] | None = None
-    final_loss_kind: str | None = None
-    final_gauge_fix = normalize_gauge_fix(cfg.gauge_fix)
-    final_gauge_fix_dofs = list(
-        active_gauge_dofs(mode=final_gauge_fix, active_mask=active_mask_tuple)
-    )
-    final_gauge_fix_stats: dict[str, float | str | list[str]] | None = None
-    last_level_index_processed: int | None = None
-
-    if resume_state is not None and resume_state.run_complete:
-        levels_to_run: list[tuple[int, MultiresLevel]] = []
-        x_init = resume_state.x
-        params5 = resume_state.params5
-        prev_factor = 1
-    else:
-        start_level = 0
-        if resume_state is not None:
-            start_level = int(resume_state.level_index) + (1 if resume_state.level_complete else 0)
-        levels_to_run = list(enumerate(levels))[start_level:]
-
-    for li, lvl in levels_to_run:
-        g = lvl["grid"]
-        d = lvl["detector"]
-        y = lvl["projections"]
-        active_loss_spec = resolve_loss_for_level(cfg.loss, int(lvl["factor"]))
-        active_loss_name = loss_spec_name(active_loss_spec)
-        final_loss_kind = active_loss_name
-        logging.info(
-            "Alignment level %d/%d factor=%d using loss=%s",
-            int(li) + 1,
-            len(levels),
-            int(lvl["factor"]),
-            active_loss_name,
-        )
-        resuming_this_level = (
-            resume_state is not None
-            and not resume_state.level_complete
-            and int(resume_state.level_index) == int(li)
-        )
-        if resuming_this_level:
-            x0 = resume_state.x
-        elif x_init is not None and prev_factor is not None:
-            # Upsample previous x to current level as init
-            f_up = prev_factor // lvl["factor"]
-            x0 = upsample_volume(x_init, f_up, (g.nx, g.ny, g.nz))
-        else:
-            x0 = None
-
-        # Optional translation seeding at the coarsest level via phase correlation
-        params0 = resume_state.params5 if resuming_this_level else params5
-        if li == 0 and cfg.seed_translations:
-            # quick seed recon to project nominal poses
-            seed_cfg = FistaConfig(
-                iters=max(3, cfg.recon_iters // 2),
-                lambda_tv=cfg.lambda_tv,
-                regulariser=cfg.regulariser,
-                huber_delta=cfg.huber_delta,
-                projector_unroll=int(cfg.projector_unroll),
-                checkpoint_projector=cfg.checkpoint_projector,
-                gather_dtype=cfg.gather_dtype,
-                recon_rel_tol=cfg.recon_rel_tol,
-                recon_patience=(int(cfg.recon_patience) if cfg.recon_patience is not None else 0),
-            )
-            x_seed, _ = fista_tv(
-                geometry,
-                g,
-                d,
-                y,
-                init_x=x0,
-                config=seed_cfg,
-            )
-            T_nom = stack_view_poses(geometry, y.shape[0])
-
-            def project_seed_view(
-                transform: jnp.ndarray,
-                *,
-                seed_grid: Grid = g,
-                seed_detector: Detector = d,
-                seed_volume: jnp.ndarray = x_seed,
-            ) -> jnp.ndarray:
-                return forward_project_view_T(
-                    transform,
-                    seed_grid,
-                    seed_detector,
-                    seed_volume,
-                    use_checkpoint=cfg.checkpoint_projector,
-                    gather_dtype=cfg.gather_dtype,
-                )
-
-            vm_pred = jax.vmap(
-                project_seed_view,
-                in_axes=0,
-            )
-            preds = vm_pred(T_nom)
-            shift_uv = jax.vmap(phase_corr_shift)(preds, y)  # returns (du, dv)
-            shifts = jnp.stack(shift_uv, axis=1).astype(jnp.float32)  # (n, 2)
-            # Convert pixel shifts to world units using detector spacing
-            dx = shifts[:, 0] * jnp.float32(d.du)
-            dz = shifts[:, 1] * jnp.float32(d.dv)
-            seed_params = (
-                jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
-                if params0 is None
-                else jnp.asarray(params0, dtype=jnp.float32)
-            )
-            if active_mask_tuple[3]:
-                seed_params = seed_params.at[:, 3].set(dx)
-            if active_mask_tuple[4]:
-                seed_params = seed_params.at[:, 4].set(dz)
-            params0 = seed_params
-
-        level_run = _prepare_multires_level_state(
-            resume_state=resume_state,
-            level_index=int(li),
-            loss_hist=loss_hist,
-            global_outer_stats=global_outer_stats,
-            executed_outer_iters=executed_outer_iters,
-        )
-        stats_before_level = level_run.stats_before_level
-        loss_before_level = level_run.loss_before_level
-        global_before_level = level_run.global_before_level
-        level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
-        level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
-        x_lvl = x0 if x0 is not None else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
-        params5 = params0 if params0 is not None else jnp.zeros((y.shape[0], 5), dtype=jnp.float32)
-        stage_runtime = StageRuntime(
-            level_index=int(li),
-            level_factor=int(lvl["factor"]),
-            global_before_level=global_before_level,
-            global_elapsed_offset=global_elapsed_offset,
-            active_loss_name=active_loss_name,
-            schedule_name=resolved_schedule.name,
-            stats_before_level=stats_before_level,
-            loss_before_level=loss_before_level,
-            level_stats=level_stats,
-            level_losses=level_losses,
-            prev_factor=prev_factor,
-            observer_fn=observer_fn,
-            checkpoint_callback=checkpoint_callback,
-        )
-
-        stage_result = _run_multires_level_stages(
-            geometry=geometry,
-            grid=g,
-            detector=d,
-            projections=y,
-            cfg=cfg,
-            resolved_schedule=resolved_schedule,
-            active_loss_spec=active_loss_spec,
-            active_loss_name=active_loss_name,
-            setup_alignment_state=setup_alignment_state,
-            active_geometry_dofs=active_geometry_dofs,
-            level_factor=int(lvl["factor"]),
-            stage_runtime=stage_runtime,
-            resume_state=resume_state,
-            resuming_this_level=resuming_this_level,
-            level_resume=level_run,
-            global_elapsed_offset=global_elapsed_offset,
-            x_lvl=x_lvl,
-            params5=params5,
-            level_stats=level_stats,
-            level_losses=level_losses,
-            final_gauge_fix=final_gauge_fix,
-            final_gauge_fix_dofs=final_gauge_fix_dofs,
-            final_gauge_fix_stats=final_gauge_fix_stats or {},
-        )
-        x_lvl = stage_result.x_lvl
-        params5 = stage_result.params5
-        info = stage_result.info
-        setup_alignment_state = stage_result.setup_alignment_state
-        level_stats = stage_result.level_stats
-        level_losses = stage_result.level_losses
-        level_wall_time = stage_result.level_wall_time
-        level_action = stage_result.level_action
-        final_gauge_fix = stage_result.final_gauge_fix
-        final_gauge_fix_dofs = stage_result.final_gauge_fix_dofs
-        final_gauge_fix_stats = stage_result.final_gauge_fix_stats
-
-        info["loss"] = level_losses
-        info["outer_stats"] = [
-            dict(stat)
-            for stat in level_stats
-            if not str(stat.get("geometry_block") or "").startswith("setup_")
-        ]
-        info["completed_outer_iters"] = len(level_stats)
-        info["wall_time_total"] = float(level_wall_time)
-        info["observer_action"] = level_action
-        level_completed_after = len(level_stats)
-        level_complete = (
-            level_completed_after >= sum(int(stage.maxiter) for stage in resolved_schedule.stages)
-            or level_action == "advance_level"
-            or not bool(info.get("stopped_by_observer", False))
-        )
-        loss_hist = loss_before_level + level_losses
-        global_outer_stats = stats_before_level + level_stats
-        global_outer_idx = global_before_level + level_completed_after
-        executed_outer_iters = int(global_outer_idx)
-        final_pose_model_variables = int(info.get("pose_model_variables") or 0)
-        final_per_view_variables = int(info.get("per_view_variables") or 0)
-        final_pose_model_basis_shape = list(info.get("pose_model_basis_shape") or [])
-        final_gauge_fix = str(info.get("gauge_fix", final_gauge_fix))
-        final_gauge_fix_dofs = list(info.get("gauge_fix_dofs", final_gauge_fix_dofs))
-        final_gauge_fix_stats = dict(info.get("gauge_fix_final", {}) or {})
-        x_init = x_lvl
-        prev_factor = lvl["factor"]
-        last_level_index_processed = int(li)
-        global_elapsed_offset += float(level_wall_time)
-        _emit_level_completion_checkpoint(
-            checkpoint_callback=checkpoint_callback,
-            x_lvl=x_lvl,
-            params5=params5,
-            info=info,
-            level_index=int(li),
-            level_factor=int(lvl["factor"]),
-            level_completed_after=level_completed_after,
-            global_outer_idx=int(global_outer_idx),
-            prev_factor=prev_factor,
-            loss_hist=loss_hist,
-            global_outer_stats=global_outer_stats,
-            global_elapsed_offset=global_elapsed_offset,
-            level_complete=level_complete,
-            setup_alignment_state=setup_alignment_state,
-            active_geometry_dofs=active_geometry_dofs,
-            resolved_schedule=resolved_schedule,
-            level_stats=level_stats,
-        )
-        final_observer_action = level_action
-        if level_action == "stop_run":
-            stopped_by_observer = True
-            break
-        if level_action == "advance_level":
-            continue
-
-    x_final = _final_multires_volume(x_init=x_init, prev_factor=prev_factor, grid=grid)
-    run_complete = _multires_run_is_complete(
-        params5=params5,
-        stopped_by_observer=stopped_by_observer,
+        context=context,
         resume_state=resume_state,
-        last_level_index_processed=last_level_index_processed,
-        level_count=len(levels),
+        checkpoint_callback=checkpoint_callback,
+    )
+    x_final = _final_multires_volume(
+        x_init=state.x_init,
+        prev_factor=state.prev_factor,
+        grid=grid,
+    )
+    run_complete = _multires_run_is_complete(
+        params5=state.params5,
+        stopped_by_observer=state.stopped_by_observer,
+        resume_state=resume_state,
+        last_level_index_processed=state.last_level_index_processed,
+        level_count=len(context.levels),
     )
     _emit_run_completion_checkpoint(
         checkpoint_callback=checkpoint_callback,
-        params5=params5,
+        params5=state.params5,
         run_complete=run_complete,
         x_final=x_final,
-        level_count=len(levels),
-        executed_outer_iters=executed_outer_iters,
-        loss_hist=loss_hist,
-        global_outer_stats=global_outer_stats,
-        global_elapsed_offset=global_elapsed_offset,
-        setup_alignment_state=setup_alignment_state,
-        active_geometry_dofs=active_geometry_dofs,
-        resolved_schedule=resolved_schedule,
+        level_count=len(context.levels),
+        executed_outer_iters=state.executed_outer_iters,
+        loss_hist=state.loss_hist,
+        global_outer_stats=state.global_outer_stats,
+        global_elapsed_offset=state.global_elapsed_offset,
+        setup_alignment_state=state.setup_alignment_state,
+        active_geometry_dofs=context.active_geometry_dofs,
+        resolved_schedule=context.resolved_schedule,
     )
 
     return (
         x_final,
-        params5 if params5 is not None else jnp.zeros((projections.shape[0], 5), jnp.float32),
+        state.params5
+        if state.params5 is not None
+        else jnp.zeros((projections.shape[0], 5), jnp.float32),
         _final_align_multires_info(
-            loss_hist=loss_hist,
-            factors_list=factors_list,
-            final_loss_kind=final_loss_kind,
-            cfg=cfg,
-            stopped_by_observer=stopped_by_observer,
-            final_observer_action=final_observer_action,
-            executed_outer_iters=executed_outer_iters,
-            global_elapsed_offset=global_elapsed_offset,
-            global_outer_stats=global_outer_stats,
-            resolved_schedule=resolved_schedule,
+            loss_hist=state.loss_hist,
+            factors_list=context.factors_list,
+            final_loss_kind=state.final_loss_kind,
+            cfg=context.cfg,
+            stopped_by_observer=state.stopped_by_observer,
+            final_observer_action=state.final_observer_action,
+            executed_outer_iters=state.executed_outer_iters,
+            global_elapsed_offset=state.global_elapsed_offset,
+            global_outer_stats=state.global_outer_stats,
+            resolved_schedule=context.resolved_schedule,
             geometry=geometry,
-            final_pose_model_variables=final_pose_model_variables,
-            final_per_view_variables=final_per_view_variables,
-            final_pose_model_basis_shape=final_pose_model_basis_shape,
-            active_geometry_dofs=active_geometry_dofs,
-            final_gauge_fix=final_gauge_fix,
-            final_gauge_fix_dofs=final_gauge_fix_dofs,
-            final_gauge_fix_stats=final_gauge_fix_stats,
-            setup_alignment_state=setup_alignment_state,
+            final_pose_model_variables=state.final_pose_model_variables,
+            final_per_view_variables=state.final_per_view_variables,
+            final_pose_model_basis_shape=state.final_pose_model_basis_shape,
+            active_geometry_dofs=context.active_geometry_dofs,
+            final_gauge_fix=state.final_gauge_fix,
+            final_gauge_fix_dofs=state.final_gauge_fix_dofs,
+            final_gauge_fix_stats=state.final_gauge_fix_stats,
+            setup_alignment_state=state.setup_alignment_state,
         ),
     )
