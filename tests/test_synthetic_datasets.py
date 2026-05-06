@@ -81,6 +81,9 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     assert manifest["detector_shape"] == [40, 40]
     assert manifest["views"] == 16
     assert "det_u_error_px_lt" in manifest["recovery_tolerances"]
+    artifacts = cast("dict[str, str]", manifest["artifacts"])
+    assert artifacts["v2_true_geometry_json"] == "v2_true_geometry.json"
+    assert artifacts["v2_true_pose_params_csv"] == "v2_true_pose_params.csv"
 
     projections = np.load(first.projections)
     mask = np.load(first.mask)
@@ -111,15 +114,25 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
         "dz_px",
     }
 
-    true_pose_params = read_pose_params_csv(first.v2_true_pose)
-    true_state = read_geometry_json(first.v2_true_geometry, true_pose_params)
+    true_pose_params = read_pose_params_csv(
+        first.dataset_dir / artifacts["v2_true_pose_params_csv"]
+    )
+    true_state = read_geometry_json(
+        first.dataset_dir / artifacts["v2_true_geometry_json"],
+        true_pose_params,
+    )
     assert true_state.pose.n_views == 16
     assert true_state.setup.det_u_px.value == 14.5
     np.testing.assert_allclose(true_state.setup.theta_offset_rad.value, np.deg2rad(1.25))
     np.testing.assert_allclose(true_state.pose.phi_residual_rad, np.zeros(16))
 
-    nominal_pose_params = read_pose_params_csv(first.v2_nominal_pose)
-    nominal_state = read_geometry_json(first.v2_nominal_geometry, nominal_pose_params)
+    nominal_pose_params = read_pose_params_csv(
+        first.dataset_dir / artifacts["v2_nominal_pose_params_csv"]
+    )
+    nominal_state = read_geometry_json(
+        first.dataset_dir / artifacts["v2_nominal_geometry_json"],
+        nominal_pose_params,
+    )
     assert nominal_state.setup.det_u_px.value == 0.0
     assert nominal_state.pose.n_views == 16
 

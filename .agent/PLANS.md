@@ -12,17 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: emit `GeometryState`-compatible synthetic benchmark geometry sidecars.
+- Goal: advertise v2 synthetic benchmark geometry sidecars in the dataset
+  manifest.
 
 ### Scope
 
 - In scope:
-  - Add v2 `GeometryState` JSON sidecars for nominal, corrupted, and true
-    synthetic benchmark geometry.
-  - Add radian `pose_params.csv` sidecars matching the public geometry reader.
-  - Keep the existing manifest-spec geometry JSON and degree pose CSV files for
-    benchmark contract continuity.
-  - Add focused dataset tests proving the new geometry sidecars can be read
+  - Add a stable artifact map to `dataset_manifest.json`.
+  - Include v2 geometry and pose sidecars in that map.
+  - Keep existing artifact filenames unchanged.
+  - Add focused tests that resolve sidecar paths from the manifest and read them
     through public `tomojax.geometry` APIs.
 - Out of scope:
   - Alternating solver ingestion of generated benchmark projections.
@@ -40,23 +39,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add v2 geometry state paths and writes.
-- [x] Add pose params CSV sidecars in radians.
-- [x] Add focused public geometry readback tests.
+- [x] Add manifest artifact map.
+- [x] Include v2 sidecar path entries.
+- [x] Add focused manifest-discovery readback tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the v2 geometry sidecar slice.
+- [x] Commit the manifest sidecar index slice.
 
 ### Validation
 
 - `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
-  passed: 2 files left unchanged.
+  passed: 1 file reformatted, 1 file left unchanged.
 - `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
 - `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
-  passed: 8 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py -q`
+  passed: 6 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -64,12 +63,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep existing synthetic benchmark artifacts stable; add v2 sidecars rather
-  than changing the manifest-defined JSON schema in place.
+- Add manifest discovery metadata without renaming or removing existing
+  synthetic benchmark artifacts.
 
 ### Risks
 
-- Risk: generated benchmark projections still use the NumPy smoke projector
-  rather than the JAX reference forward model.
-- Mitigation: this slice only creates a public geometry-format bridge for a
-  later ingestion step.
+- Risk: manifest sidecar discovery still does not imply solver ingestion.
+- Mitigation: tests only assert path discoverability and public geometry
+  readback.

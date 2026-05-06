@@ -110,7 +110,7 @@ def generate_synthetic_dataset(
     write_pose_params_csv(paths.v2_true_pose, true_state.pose)
     _write_json(paths.nuisance_truth, nuisance)
     _write_json(paths.noise_truth, _noise_truth(spec))
-    _write_json(paths.manifest, _dataset_manifest(spec, size, detector_shape, n_views))
+    _write_json(paths.manifest, _dataset_manifest(spec, size, detector_shape, n_views, paths))
     return paths
 
 
@@ -413,7 +413,11 @@ def _true_geometry(
 
 
 def _dataset_manifest(
-    spec: SyntheticDatasetSpec, size: int, detector_shape: tuple[int, int], views: int
+    spec: SyntheticDatasetSpec,
+    size: int,
+    detector_shape: tuple[int, int],
+    views: int,
+    paths: SyntheticArtifactPaths,
 ) -> dict[str, object]:
     return {
         "name": spec.name,
@@ -425,7 +429,29 @@ def _dataset_manifest(
         "phantom_seed": spec.phantom_seed,
         "pose_seed": spec.pose_seed,
         "artifact_contract": "tomojax-v2.synthetic-dataset.v1",
+        "artifacts": _manifest_artifact_map(paths),
         "recovery_tolerances": spec.pass_criteria,
+    }
+
+
+def _manifest_artifact_map(paths: SyntheticArtifactPaths) -> dict[str, str]:
+    return {
+        "ground_truth_volume_npy": paths.volume.name,
+        "projections_npy": paths.projections.name,
+        "mask_npy": paths.mask.name,
+        "nominal_geometry_json": paths.nominal_geometry.name,
+        "corrupted_geometry_json": paths.corrupted_geometry.name,
+        "true_geometry_json": paths.true_geometry.name,
+        "true_pose_csv": paths.true_pose.name,
+        "true_motion_csv": paths.true_motion.name,
+        "v2_nominal_geometry_json": paths.v2_nominal_geometry.name,
+        "v2_corrupted_geometry_json": paths.v2_corrupted_geometry.name,
+        "v2_true_geometry_json": paths.v2_true_geometry.name,
+        "v2_nominal_pose_params_csv": paths.v2_nominal_pose.name,
+        "v2_corrupted_pose_params_csv": paths.v2_corrupted_pose.name,
+        "v2_true_pose_params_csv": paths.v2_true_pose.name,
+        "nuisance_truth_json": paths.nuisance_truth.name,
+        "noise_truth_json": paths.noise_truth.name,
     }
 
 
