@@ -3597,3 +3597,42 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This hook mostly records scale on the current sparse smoke fixture. It should
   become more behaviorally important when the solver consumes noisier generated
   benchmark projections.
+
+## 2026-05-06 — Phase 7 Held-Out Residual Gate
+
+### Summary
+
+- Added deterministic held-out view masking to the Phase 7 smoke config.
+- Schur geometry updates now train on the non-held-out views when the held-out
+  check is enabled.
+- Added held-out residual before/after/pass fields to level summaries,
+  `alignment_summary.csv`, `geometry_trace.csv`, `residual_metrics.csv`, and
+  `verification.json`.
+- Coarse early exit now requires the held-out residual check to pass in addition
+  to residual nonincrease, finite losses, stable gauges, and small parameter
+  updates.
+- Added focused smoke tests for the held-out threshold and emitted metrics.
+
+### Decisions
+
+- The 4-view smoke profile holds out the last view. The held-out residual is
+  allowed the same `1.0e-5` tolerance as the projection residual gate because
+  this small smoke fixture can improve training residual while the held-out
+  view remains nearly flat.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- The held-out gate is deterministic and real, but with only four smoke views it
+  proves tolerance stability more than broad generalisation.

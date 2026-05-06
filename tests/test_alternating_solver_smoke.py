@@ -83,6 +83,7 @@ def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
     thresholds = cast("dict[str, float]", result.verification["thresholds"])
     assert thresholds["gauge_stability_tolerance"] == 1.0e-10
     assert thresholds["parameter_update_tolerance"] == 2.0
+    assert thresholds["heldout_residual_tolerance"] == 1.0e-5
     recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
     assert recovery["passed"] is True
     assert cast("float", recovery["theta_realized_rmse_rad"]) <= cast(
@@ -113,6 +114,9 @@ def _assert_level_exit_contract(result: AlternatingSmokeResult) -> None:
     assert result.levels[0].finite_loss
     assert result.levels[0].residual_sigma_estimated > 0.0
     assert result.levels[0].residual_sigma_effective == 1.0
+    assert result.levels[0].heldout_residual_before is not None
+    assert result.levels[0].heldout_residual_after is not None
+    assert result.levels[0].heldout_residual_passed is True
     assert result.levels[0].gauge_stable
     assert result.levels[0].parameter_update_small
     assert result.levels[0].parameter_update_norm > 0.0
@@ -200,6 +204,8 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
     assert rows[0]["loss_nonincreasing"] == "True"
     assert float(rows[0]["residual_sigma_estimated"]) > 0.0
     assert rows[0]["residual_sigma_effective"] == "1.0"
+    assert float(rows[0]["heldout_residual_before"]) > 0.0
+    assert rows[0]["heldout_residual_passed"] == "True"
     assert rows[0]["gauge_stable"] == "True"
 
 
@@ -211,6 +217,7 @@ def _assert_geometry_trace(result: AlternatingSmokeResult) -> None:
     assert rows[0]["geometry_updates_executed"] == "8"
     assert float(rows[0]["parameter_update_norm"]) > 0.0
     assert rows[0]["verified"] == "True"
+    assert rows[0]["heldout_residual_passed"] == "True"
     assert rows[0]["schur_accepted"] == "True"
     assert float(rows[0]["schur_actual_reduction"]) > 0.0
     assert float(rows[0]["schur_dense_step_difference_norm"]) < 5.0e-3

@@ -67,6 +67,8 @@ class AlternatingSmokeConfig:
     verification_loss_tolerance: float = 1.0e-5
     gauge_stability_tolerance: float = 1.0e-10
     parameter_update_tolerance: float = 2.0
+    heldout_residual_tolerance: float = 1.0e-5
+    heldout_view_index: int | None = -1
     geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
     synthetic_dataset_name: str | None = None
     synthetic_dataset_artifact_dir: Path | None = None
@@ -88,6 +90,9 @@ class AlternatingLevelSummary:
     finite_loss: bool
     residual_sigma_estimated: float
     residual_sigma_effective: float
+    heldout_residual_before: float | None
+    heldout_residual_after: float | None
+    heldout_residual_passed: bool | None
     gauge_stable: bool
     parameter_update_norm: float
     parameter_update_small: bool
@@ -147,16 +152,16 @@ def _run_alternating_solver_smoke_impl(
     *,
     config: AlternatingSmokeConfig,
 ) -> AlternatingSmokeResult:
-    cfg = config
-    schedule = cfg.schedule or reference_continuation_schedule()
+    schedule = config.schedule or reference_continuation_schedule()
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    truth = jnp.asarray(make_benchmark_phantom(cfg.size, seed=cfg.seed), dtype=jnp.float32)
-    true_geometry = _synthetic_true_geometry(cfg.n_views)
-    initial_geometry = _synthetic_initial_geometry(cfg.n_views)
+    truth = jnp.asarray(make_benchmark_phantom(config.size, seed=config.seed), dtype=jnp.float32)
+    true_geometry = _synthetic_true_geometry(config.n_views)
+    initial_geometry = _synthetic_initial_geometry(config.n_views)
     observed = project_parallel_reference(truth, true_geometry)
     mask = jnp.ones_like(observed, dtype=jnp.float32)
+    train_mask, heldout_mask = _heldout_masks(mask, config.heldout_view_index)
 
     geometry = initial_geometry
     gauge_report = GaugeReport(())
@@ -192,7 +197,7 @@ def _run_alternating_solver_smoke_impl(
             initial_volume=(
                 volume
                 if volume is not None
-                else reconstruct_backprojection_reference(observed, geometry, depth=cfg.size)
+                else reconstruct_backprojection_reference(observed, geometry, depth=config.size)
             ),
             mask=mask,
             config=ReferenceFISTAConfig(
@@ -217,17 +222,18 @@ def _run_alternating_solver_smoke_impl(
         geometry_updates, early_exit_reason = _geometry_updates_for_level(level, coarse_verified)
         skipped_geometry = geometry_updates == 0
         update_report = GaugeReport(())
+        geometry_before_update = geometry
         if geometry_updates > 0:
             geometry_update_volume = _geometry_update_volume(
                 truth_volume=truth,
                 stopped_volume=volume,
-                source=cfg.geometry_update_volume_source,
+                source=config.geometry_update_volume_source,
             )
             geometry, update_report, schur_result = _run_geometry_updates(
                 geometry_update_volume,
                 observed,
                 geometry,
-                mask,
+                train_mask,
                 level,
                 geometry_updates,
                 sigma=residual_sigma_effective,
@@ -246,12 +252,23 @@ def _run_alternating_solver_smoke_impl(
                 level,
                 sigma=residual_sigma_effective,
             )
+        heldout_before, heldout_after, heldout_passed = _heldout_residual_check(
+            volume,
+            observed,
+            before_geometry=geometry_before_update,
+            after_geometry=geometry,
+            heldout_mask=heldout_mask,
+            level=level,
+            sigma=residual_sigma_effective,
+            tolerance=config.heldout_residual_tolerance,
+        )
         verification_checks = _level_verification_checks(
-            cfg=cfg,
+            cfg=config,
             geometry=geometry,
             update_report=update_report,
             loss_before=loss_before,
             loss_after=loss_after,
+            heldout_residual_passed=heldout_passed,
         )
         previous_loss = loss_after
         coarse_verified = coarse_verified or (
@@ -273,6 +290,9 @@ def _run_alternating_solver_smoke_impl(
                 finite_loss=verification_checks.finite_loss,
                 residual_sigma_estimated=residual_sigma_estimated,
                 residual_sigma_effective=residual_sigma_effective,
+                heldout_residual_before=heldout_before,
+                heldout_residual_after=heldout_after,
+                heldout_residual_passed=heldout_passed,
                 gauge_stable=verification_checks.gauge_stable,
                 parameter_update_norm=verification_checks.parameter_update_norm,
                 parameter_update_small=verification_checks.parameter_update_small,
@@ -304,9 +324,9 @@ def _run_alternating_solver_smoke_impl(
         fista_result=fista_result,
         summaries=tuple(summaries),
         schur_result=last_schur_result,
-        geometry_update_volume_source=cfg.geometry_update_volume_source,
+        geometry_update_volume_source=config.geometry_update_volume_source,
         verification=_verification_payload(
-            cfg=cfg,
+            cfg=config,
             schedule=schedule,
             initial_loss=initial_loss,
             final_loss=final_loss,
@@ -316,7 +336,7 @@ def _run_alternating_solver_smoke_impl(
             truth_volume=truth,
             final_volume=volume,
             summaries=tuple(summaries),
-            geometry_update_volume_source=cfg.geometry_update_volume_source,
+            geometry_update_volume_source=config.geometry_update_volume_source,
         ),
     )
     verification = json.loads(artifacts["verification_json"].read_text(encoding="utf-8"))
@@ -364,6 +384,23 @@ def _geometry_with_active_det_v(n_views: int) -> GeometryState:
         replace(base.setup.det_v_px, value=0.0, active=True),
     )
     return GeometryState(setup=setup, pose=base.pose)
+
+
+def _heldout_masks(
+    mask: jax.Array,
+    heldout_view_index: int | None,
+) -> tuple[jax.Array, jax.Array | None]:
+    if heldout_view_index is None:
+        return mask, None
+    n_views = int(mask.shape[0])
+    view_index = int(heldout_view_index)
+    if view_index < 0:
+        view_index += n_views
+    if view_index < 0 or view_index >= n_views:
+        raise ValueError("heldout_view_index must select an existing view")
+    heldout = jnp.zeros_like(mask, dtype=jnp.float32).at[view_index, :, :].set(mask[view_index])
+    train = jnp.asarray(mask, dtype=jnp.float32).at[view_index, :, :].set(0.0)
+    return train, heldout
 
 
 def _run_geometry_updates(
@@ -434,6 +471,9 @@ def _skipped_level_summary(
         finite_loss=True,
         residual_sigma_estimated=level.residual_sigma,
         residual_sigma_effective=level.residual_sigma,
+        heldout_residual_before=None,
+        heldout_residual_after=None,
+        heldout_residual_passed=None,
         gauge_stable=True,
         parameter_update_norm=0.0,
         parameter_update_small=True,
@@ -455,13 +495,21 @@ def _level_verification_checks(
     update_report: GaugeReport,
     loss_before: float,
     loss_after: float,
+    heldout_residual_passed: bool | None,
 ) -> _LevelVerificationChecks:
     loss_nonincreasing = bool(loss_after <= loss_before + cfg.verification_loss_tolerance)
     finite_loss = bool(np.isfinite(loss_before) and np.isfinite(loss_after))
     gauge_stable = _gauge_stable(geometry, tolerance=cfg.gauge_stability_tolerance)
     parameter_update_norm = _parameter_update_norm(update_report)
     parameter_update_small = bool(parameter_update_norm <= cfg.parameter_update_tolerance)
-    verified = loss_nonincreasing and finite_loss and gauge_stable and parameter_update_small
+    heldout_ok = heldout_residual_passed is not False
+    verified = (
+        loss_nonincreasing
+        and finite_loss
+        and gauge_stable
+        and parameter_update_small
+        and heldout_ok
+    )
     return _LevelVerificationChecks(
         loss_nonincreasing=loss_nonincreasing,
         finite_loss=finite_loss,
@@ -523,6 +571,62 @@ def _level_residual_sigma(
         mask=mask,
     )
     return float(robust_residual_scale(filtered.residual))
+
+
+def _heldout_projection_loss(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    heldout_mask: jax.Array | None,
+    level: ContinuationLevel,
+    *,
+    sigma: float,
+) -> float | None:
+    if heldout_mask is None:
+        return None
+    return _projection_loss(volume, observed, geometry, heldout_mask, level, sigma=sigma)
+
+
+def _heldout_residual_check(
+    volume: jax.Array,
+    observed: jax.Array,
+    *,
+    before_geometry: GeometryState,
+    after_geometry: GeometryState,
+    heldout_mask: jax.Array | None,
+    level: ContinuationLevel,
+    sigma: float,
+    tolerance: float,
+) -> tuple[float | None, float | None, bool | None]:
+    before = _heldout_projection_loss(
+        volume,
+        observed,
+        before_geometry,
+        heldout_mask,
+        level,
+        sigma=sigma,
+    )
+    after = _heldout_projection_loss(
+        volume,
+        observed,
+        after_geometry,
+        heldout_mask,
+        level,
+        sigma=sigma,
+    )
+    passed = _heldout_residual_passed(before=before, after=after, tolerance=tolerance)
+    return before, after, passed
+
+
+def _heldout_residual_passed(
+    *,
+    before: float | None,
+    after: float | None,
+    tolerance: float,
+) -> bool | None:
+    if before is None or after is None:
+        return None
+    return bool(after <= before + tolerance)
 
 
 def _verification_payload(
@@ -597,6 +701,7 @@ def _verification_payload(
             "loss_tolerance": cfg.verification_loss_tolerance,
             "gauge_stability_tolerance": cfg.gauge_stability_tolerance,
             "parameter_update_tolerance": cfg.parameter_update_tolerance,
+            "heldout_residual_tolerance": cfg.heldout_residual_tolerance,
         },
         "geometry_recovery": geometry_recovery,
         "volume_recovery": volume_recovery,
@@ -719,6 +824,9 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
         "finite_loss": summary.finite_loss,
         "residual_sigma_estimated": summary.residual_sigma_estimated,
         "residual_sigma_effective": summary.residual_sigma_effective,
+        "heldout_residual_before": summary.heldout_residual_before,
+        "heldout_residual_after": summary.heldout_residual_after,
+        "heldout_residual_passed": summary.heldout_residual_passed,
         "gauge_stable": summary.gauge_stable,
         "parameter_update_norm": summary.parameter_update_norm,
         "parameter_update_small": summary.parameter_update_small,
@@ -892,6 +1000,9 @@ def _write_alignment_summary(
                 "finite_loss",
                 "residual_sigma_estimated",
                 "residual_sigma_effective",
+                "heldout_residual_before",
+                "heldout_residual_after",
+                "heldout_residual_passed",
                 "gauge_stable",
                 "parameter_update_norm",
                 "parameter_update_small",
@@ -927,6 +1038,9 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                 "loss_nonincreasing",
                 "residual_sigma_estimated",
                 "residual_sigma_effective",
+                "heldout_residual_before",
+                "heldout_residual_after",
+                "heldout_residual_passed",
                 "gauge_stable",
                 "parameter_update_norm",
                 "parameter_update_small",
@@ -954,6 +1068,11 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                     "loss_after": summary.loss_after,
                     "loss_delta": summary.loss_after - summary.loss_before,
                     "loss_nonincreasing": summary.loss_nonincreasing,
+                    "residual_sigma_estimated": summary.residual_sigma_estimated,
+                    "residual_sigma_effective": summary.residual_sigma_effective,
+                    "heldout_residual_before": summary.heldout_residual_before,
+                    "heldout_residual_after": summary.heldout_residual_after,
+                    "heldout_residual_passed": summary.heldout_residual_passed,
                     "gauge_stable": summary.gauge_stable,
                     "parameter_update_norm": summary.parameter_update_norm,
                     "parameter_update_small": summary.parameter_update_small,
@@ -1075,6 +1194,9 @@ def _write_residual_metrics(
                 "finite_loss",
                 "residual_sigma_estimated",
                 "residual_sigma_effective",
+                "heldout_residual_before",
+                "heldout_residual_after",
+                "heldout_residual_passed",
                 "gauge_stable",
                 "parameter_update_norm",
                 "parameter_update_small",
@@ -1104,6 +1226,9 @@ def _write_residual_metrics(
                     "finite_loss": summary.finite_loss,
                     "residual_sigma_estimated": summary.residual_sigma_estimated,
                     "residual_sigma_effective": summary.residual_sigma_effective,
+                    "heldout_residual_before": summary.heldout_residual_before,
+                    "heldout_residual_after": summary.heldout_residual_after,
+                    "heldout_residual_passed": summary.heldout_residual_passed,
                     "gauge_stable": summary.gauge_stable,
                     "parameter_update_norm": summary.parameter_update_norm,
                     "parameter_update_small": summary.parameter_update_small,
@@ -1156,6 +1281,9 @@ def _view_residual_metric_rows(
                 "finite_loss": "",
                 "residual_sigma_estimated": "",
                 "residual_sigma_effective": "",
+                "heldout_residual_before": "",
+                "heldout_residual_after": "",
+                "heldout_residual_passed": "",
                 "gauge_stable": "",
                 "parameter_update_norm": "",
                 "parameter_update_small": "",

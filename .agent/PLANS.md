@@ -12,16 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Alternating solver and continuation
-- Goal: add robust residual-scale estimation to Phase 7 continuation.
+- Goal: add held-out residual verification to Phase 7 early exit.
 
 ### Scope
 
 - In scope:
-  - Add a typed robust residual-scale estimator in `tomojax.forward`.
-  - Use per-level robust residual scale in the Phase 7 smoke path with the
-    schedule sigma as a stability floor.
-  - Record estimated/effective residual sigma in level summaries and artifacts.
-  - Add focused forward and smoke tests.
+  - Add a small deterministic held-out view mask for geometry updates.
+  - Use training-view masks for Schur geometry updates when enabled.
+  - Require held-out residual to pass before coarse early exit.
+  - Record held-out residual metrics in level summaries and artifacts.
+  - Add focused smoke tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -36,24 +36,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add public robust residual-scale estimator.
-- [x] Thread estimated/effective sigma through Phase 7 level execution.
-- [x] Record sigma in summaries/artifacts.
-- [x] Add focused forward and smoke tests.
+- [x] Add held-out view mask plumbing.
+- [x] Use training mask for Schur updates.
+- [x] Add held-out residual pass/fail to early-exit verification.
+- [x] Record held-out metrics in summaries/artifacts.
+- [x] Add focused smoke tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the robust-scale continuation slice.
+- [x] Commit the held-out residual slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/forward/_residuals.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py src/tomojax/align/_alternating.py tests/test_forward_reference.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run ruff check src/tomojax/forward/_residuals.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py src/tomojax/align/_alternating.py tests/test_forward_reference.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/forward/_residuals.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py src/tomojax/align/_alternating.py tests/test_forward_reference.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
-  passed: 16 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 6 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,12 +62,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use the schedule residual sigma as a lower bound because the sparse 32^3
-  smoke residual has a very small MAD scale.
+- Hold out the last view in the 4-view smoke profile so Schur trains on three
+  views and coarse early exit depends on an unoptimised-view residual check.
 
 ### Risks
 
-- Risk: the current smoke fixture is sparse enough that robust scale estimation
-  mostly records rather than changes behavior.
-- Mitigation: use it as a floor-aware hook now and let noisier benchmark
-  ingestion exercise scale increases later.
+- Risk: the 32^3 held-out residual is very small and may only prove tolerance
+  stability, not broad generalisation.
+- Mitigation: record the exact held-out residual before/after values and keep
+  this as a deterministic early-exit gate until larger benchmark ingestion is
+  available.
