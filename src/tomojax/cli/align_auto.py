@@ -12,6 +12,7 @@ from tomojax.align.api import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
     ContinuationScheduleName,
+    GeometryUpdateVolumeSource,
     reference_continuation_schedule,
 )
 from tomojax.datasets import (
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 _PROFILE_CHOICES = ("smoke32", "lightning", "balanced", "reference")
 _SYNTHETIC_SIZE_CHOICES = (32, 128)
+_GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synthetic_truth")
 SyntheticSize = Literal[32, 128]
 
 
@@ -56,6 +58,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Synthetic cubic volume size.",
     )
     _ = parser.add_argument("--views", type=int, default=4, help="Number of synthetic views.")
+    _ = parser.add_argument(
+        "--geometry-update-volume-source",
+        choices=_GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES,
+        default="stopped_reconstruction",
+        help=(
+            "Volume source for Schur geometry updates. "
+            "Use fixed_synthetic_truth only for synthetic oracle diagnostics."
+        ),
+    )
     _ = parser.add_argument(
         "--synthetic-dataset",
         help="Optional synthetic128 benchmark spec name to generate and record for this run.",
@@ -94,6 +105,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     profile = cast("ContinuationScheduleName", args.profile)
+    geometry_update_volume_source = cast(
+        "GeometryUpdateVolumeSource",
+        args.geometry_update_volume_source,
+    )
     size = cast("SyntheticSize", int(args.size))
     views = int(args.views)
     out_dir = Path(args.out_dir)
@@ -132,6 +147,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             size=size,
             n_views=views,
             schedule=reference_continuation_schedule(profile),
+            geometry_update_volume_source=geometry_update_volume_source,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,

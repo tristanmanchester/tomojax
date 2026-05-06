@@ -419,8 +419,42 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert "jax_reference" in benchmark_report
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text
+    assert 'geometry_update_volume_source = "stopped_reconstruction"' in config_text
     captured = capsys.readouterr()
     assert f"synthetic_dataset: {dataset_paths.dataset_dir}" in captured.out
+
+
+def test_align_auto_accepts_geometry_update_volume_source(
+    tmp_path: Path,
+) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "synth128_thermal_object_drift",
+        tmp_path / "datasets",
+        size=32,
+        clean=True,
+        views=4,
+    )
+    out_dir = tmp_path / "auto-truth-source"
+
+    exit_code = align_auto_cli.main(
+        [
+            "--out-dir",
+            str(out_dir),
+            "--synthetic-dataset-dir",
+            str(dataset_paths.dataset_dir),
+            "--geometry-update-volume-source",
+            "fixed_synthetic_truth",
+        ]
+    )
+
+    assert exit_code == 0
+    verification = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "verification.json").read_text(encoding="utf-8")),
+    )
+    assert verification["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
+    assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
 
 
 def _assert_benchmark_criteria_and_runtime(
@@ -450,10 +484,14 @@ def _assert_benchmark_criteria_and_runtime(
         "total": 2,
     }
     runtime = cast("dict[str, object]", benchmark_result["runtime"])
-    assert isinstance(runtime["time_to_verified_geometry_seconds"], float)
-    assert isinstance(runtime["total_wall_seconds"], float)
-    assert float(cast("float", runtime["time_to_verified_geometry_seconds"])) > 0.0
-    assert float(cast("float", runtime["total_wall_seconds"])) >= float(
-        cast("float", runtime["time_to_verified_geometry_seconds"])
+    assert runtime["time_to_verified_geometry_seconds"] is None or isinstance(
+        runtime["time_to_verified_geometry_seconds"],
+        float,
     )
+    assert isinstance(runtime["total_wall_seconds"], float)
+    if runtime["time_to_verified_geometry_seconds"] is not None:
+        assert float(cast("float", runtime["time_to_verified_geometry_seconds"])) > 0.0
+        assert float(cast("float", runtime["total_wall_seconds"])) >= float(
+            cast("float", runtime["time_to_verified_geometry_seconds"])
+        )
     assert int(cast("int", runtime["geometry_updates_executed"])) > 0

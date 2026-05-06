@@ -5604,3 +5604,40 @@ Recovery details:
   verified-geometry timing for accepted-but-unrecovered Schur updates.
 - This changes reporting semantics only; the stopped-volume geometry recovery
   gap remains.
+
+## 2026-05-06 — Phase 8 Align-Auto Geometry Source Option
+
+### Summary
+
+- Added `--geometry-update-volume-source` to `tomojax-align-auto-smoke`.
+- The option exposes the existing
+  `AlternatingSmokeConfig.geometry_update_volume_source` setting with choices
+  `stopped_reconstruction` and `fixed_synthetic_truth`.
+- Added CLI coverage showing `fixed_synthetic_truth` propagates into
+  `verification.json` and `config_resolved.toml`.
+- Updated align-auto benchmark runtime assertions for the stricter
+  recovered-geometry timing semantics.
+
+### Decisions
+
+- Keep `stopped_reconstruction` as the default production-like path.
+- Treat `fixed_synthetic_truth` as an explicit synthetic oracle/diagnostic mode,
+  useful for separating Schur solver capability from stopped-volume gauge
+  failures.
+
+### Validation
+
+- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- `fixed_synthetic_truth` is not a production reconstruction/alignment path; it
+  exists only for deterministic synthetic diagnosis.

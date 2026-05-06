@@ -11,22 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 verification semantics
-- Goal: gate reported time-to-verified geometry on final synthetic geometry recovery.
+- Phase: Phase 8 synthetic benchmark ingestion
+- Goal: expose the existing geometry-update volume source through `align-auto`.
 
 ### Scope
 
 - In scope:
-  - Keep `time_to_verified_geometry_seconds` null unless final geometry
-    recovery passes.
-  - Cover the stopped-reconstruction sidecar recovery-gap case.
-  - Record the changed timing semantics and focused validation.
+  - Add an `align-auto` CLI option for the existing
+    `AlternatingSmokeConfig.geometry_update_volume_source` setting.
+  - Cover CLI propagation into run artifacts.
+  - Record focused validation.
 - Out of scope:
   - Adding or changing artifact/report/observability fields.
   - New benchmark ingestion behavior.
-  - Solver tuning beyond command-line flags already supported.
+  - Changing the default stopped-reconstruction solver path.
+  - Solver tuning beyond exposing the existing config.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` verification payloads.
+- Deep module owner: `tomojax.cli` entrypoint over public `tomojax.align.api`.
 
 ### Design Sources
 
@@ -37,22 +38,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Gate time-to-verified geometry on final geometry recovery.
-- [x] Add focused stopped-reconstruction sidecar assertion.
+- [x] Add CLI option for geometry-update volume source.
+- [x] Add focused CLI propagation coverage.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the timing semantics slice.
+- [x] Commit the CLI source option slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
   passed: 2 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 11 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -60,11 +61,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- A transient accepted level is not enough to publish verified geometry timing
-  when the final synthetic recovery gate fails.
+- Keep default `stopped_reconstruction`; use the new flag only for explicit
+  oracle/diagnostic benchmark runs.
 
 ### Risks
 
-- Risk: this changes benchmark timing summaries.
-- Mitigation: cover the recovery-gap sidecar and refresh benchmark summaries in
-  a follow-up if needed.
+- Risk: users may misuse `fixed_synthetic_truth` as a production mode.
+- Mitigation: CLI help labels it as an explicit geometry-update volume source;
+  default remains `stopped_reconstruction`.
