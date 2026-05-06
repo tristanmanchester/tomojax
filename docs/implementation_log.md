@@ -5636,6 +5636,12 @@ Recovery details:
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
   passed: 8 tests.
 - `just imports` passed.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke --geometry-update-volume-source fixed_synthetic_truth ...`
+  completed on `synth128_setup_global_tomo_32`.
+  The oracle run improved `det_u_realized_rmse_px` from 3.625 to 0.368451 and
+  passed the manifest `det_u_error_px_lt` criterion, but final geometry still
+  failed because `theta_realized_rmse_rad` worsened to 0.0606714 and overall
+  synthetic recovery did not pass.
 
 ### Risks
 
