@@ -11,23 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 synthetic benchmark ingestion
-- Goal: expose the existing geometry-update volume source through `align-auto`.
+- Phase: Phase 8 verification semantics
+- Goal: make supported-DOF improvement tolerate already-good DOFs.
 
 ### Scope
 
 - In scope:
-  - Add an `align-auto` CLI option for the existing
-    `AlternatingSmokeConfig.geometry_update_volume_source` setting.
-  - Cover CLI propagation into run artifacts.
-  - Record focused validation.
+  - Treat supported DOFs as acceptable when they started within tolerance and
+    remain within tolerance.
+  - Preserve strict improvement for supported DOFs that start outside tolerance.
+  - Cover the geometry recovery payload behavior with focused smoke assertions.
 - Out of scope:
   - Adding or changing artifact/report/observability fields.
   - New benchmark ingestion behavior.
   - Changing the default stopped-reconstruction solver path.
-  - Solver tuning beyond exposing the existing config.
+  - Solver tuning.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.cli` entrypoint over public `tomojax.align.api`.
+- Deep module owner: `tomojax.align` verification payloads.
 
 ### Design Sources
 
@@ -38,22 +38,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add CLI option for geometry-update volume source.
-- [x] Add focused CLI propagation coverage.
+- [x] Update supported-DOF improvement semantics.
+- [x] Add focused geometry recovery assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the CLI source option slice.
+- [x] Commit the verification semantics slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
   passed: 2 files left unchanged.
-- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
-  passed: 8 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 12 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,11 +61,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep default `stopped_reconstruction`; use the new flag only for explicit
-  oracle/diagnostic benchmark runs.
+- A DOF that starts within tolerance should not force
+  `supported_dofs_improved=false` merely because it cannot strictly improve.
 
 ### Risks
 
-- Risk: users may misuse `fixed_synthetic_truth` as a production mode.
-- Mitigation: CLI help labels it as an explicit geometry-update volume source;
-  default remains `stopped_reconstruction`.
+- Risk: this could hide regressions inside tolerance.
+- Mitigation: keep per-DOF `*_improved` and `*_passed` fields unchanged; only
+  the aggregate supported-DOF boolean uses acceptable-or-improved semantics.

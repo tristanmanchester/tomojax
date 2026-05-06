@@ -756,6 +756,48 @@ def test_rejected_schur_update_does_not_verify_sidecar_level(tmp_path: Path) -> 
     assert trace_rows[0]["verified"] == "False"
 
 
+def test_supported_dof_summary_allows_already_good_dofs(
+    tmp_path: Path,
+) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path / "datasets",
+        size=32,
+        clean=False,
+        views=4,
+    )
+    sidecars = load_synthetic_dataset_sidecars(dataset_paths.dataset_dir)
+    solver = AlternatingAlignmentSolver(
+        AlternatingSmokeConfig(
+            size=32,
+            n_views=4,
+            schedule=reference_continuation_schedule("smoke32"),
+            geometry_update_volume_source="fixed_synthetic_truth",
+            fit_gain_offset_nuisance=True,
+            fit_background_nuisance=True,
+            synthetic_dataset_name="synth128_setup_global_tomo",
+            synthetic_dataset_artifact_dir=dataset_paths.dataset_dir,
+            synthetic_dataset_nuisance_applied=True,
+            synthetic_dataset_sidecar_readback={
+                "validated": True,
+                "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
+                "n_views": sidecars.true_geometry.pose.n_views,
+                "consistency": sidecars.consistency.to_dict(),
+            },
+        )
+    )
+
+    result = solver.run_smoke(tmp_path / "run")
+
+    recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
+    assert recovery["supported_dofs_improved"] is True
+    assert recovery["det_u_realized_rmse_px_improved"] is True
+    assert recovery["theta_realized_rmse_rad_improved"] is False
+    assert recovery["theta_realized_rmse_rad_passed"] is True
+    assert recovery["det_v_realized_rmse_px_improved"] is False
+    assert recovery["det_v_realized_rmse_px_passed"] is True
+
+
 def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:
     result = run_alternating_solver_smoke(
         tmp_path,

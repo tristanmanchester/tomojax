@@ -5647,3 +5647,38 @@ Recovery details:
 
 - `fixed_synthetic_truth` is not a production reconstruction/alignment path; it
   exists only for deterministic synthetic diagnosis.
+
+## 2026-05-06 — Phase 8 Supported DOF Recovery Semantics
+
+### Summary
+
+- Updated the aggregate `supported_dofs_improved` geometry recovery boolean.
+- A supported DOF that starts within tolerance now satisfies the aggregate when
+  it remains within tolerance, even if it cannot strictly improve.
+- Supported DOFs that start outside tolerance still need strict error reduction.
+- Added fixed-truth setup-global smoke coverage where `det_u_px` improves while
+  theta and det-v remain within tolerance without strict improvement.
+
+### Decisions
+
+- Preserve the existing per-DOF `*_improved` and `*_passed` fields so the
+  aggregate cannot hide individual regressions or tolerance failures.
+- Keep final `geometry_recovery.passed` unchanged; this slice only makes the
+  aggregate improvement summary reflect already-good DOFs.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed: 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- The aggregate `supported_dofs_improved` name is now slightly broader than
+  strict improvement; read it with the per-DOF pass/improved fields.

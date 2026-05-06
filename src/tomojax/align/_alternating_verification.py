@@ -251,6 +251,21 @@ def _geometry_recovery_payload(
     theta_improved = bool(theta_rmse < initial_theta_rmse)
     det_u_improved = bool(det_u_rmse < initial_det_u_rmse)
     det_v_improved = bool(det_v_rmse < initial_det_v_rmse)
+    theta_supported = _supported_dof_acceptable_or_improved(
+        initial_error=initial_theta_rmse,
+        final_error=theta_rmse,
+        limit=theta_limit,
+    )
+    det_u_supported = _supported_dof_acceptable_or_improved(
+        initial_error=initial_det_u_rmse,
+        final_error=det_u_rmse,
+        limit=det_u_limit,
+    )
+    det_v_supported = _supported_dof_acceptable_or_improved(
+        initial_error=initial_det_v_rmse,
+        final_error=det_v_rmse,
+        limit=det_v_limit,
+    )
     return {
         "initial_theta_realized_rmse_rad": initial_theta_rmse,
         "theta_realized_rmse_rad": theta_rmse,
@@ -276,9 +291,20 @@ def _geometry_recovery_payload(
         "mean_dz_abs_px": mean_dz_abs,
         "mean_dz_abs_px_passed": (not det_v_gauge_active or mean_dz_abs <= gauge_limit),
         "mean_dz_abs_px_limit": gauge_limit,
-        "supported_dofs_improved": theta_improved and det_u_improved and det_v_improved,
+        "supported_dofs_improved": theta_supported and det_u_supported and det_v_supported,
         "passed": passed,
     }
+
+
+def _supported_dof_acceptable_or_improved(
+    *,
+    initial_error: float,
+    final_error: float,
+    limit: float,
+) -> bool:
+    if initial_error <= limit:
+        return bool(final_error <= limit)
+    return bool(final_error < initial_error)
 
 
 def _volume_recovery_payload(truth_volume: jax.Array, final_volume: jax.Array) -> dict[str, object]:
