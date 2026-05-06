@@ -43,6 +43,46 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This was a structural cleanup, so behavior coverage relies on the existing
   deterministic alternating smoke tests.
 
+## 2026-05-06 — Ingest Synthetic Benchmark Result Artifacts
+
+### Summary
+
+- Added `tomojax.bench.synthetic_results` for loading schema-validated
+  `benchmark_result.json` artifacts.
+- Added deterministic markdown comparison rendering over actual benchmark result
+  fields: benchmark, implementation, profile, status, criteria status, geometry
+  status, volume NMSE, final residual, runtime, and source path.
+- Re-exported the narrow helper API from `tomojax.bench`.
+- Added focused tests for loading, rendering, writing, and schema rejection.
+
+### Decisions
+
+- Kept this as artifact ingestion over existing `benchmark_result.json` files
+  rather than starting the full current-vs-reimagined protocol runner.
+- The comparison report uses only fields already required by the synthetic
+  benchmark result schema.
+
+### Validation
+
+- `uv run ruff format src/tomojax/bench/synthetic_results.py src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py`
+  passed.
+- `uv run ruff check src/tomojax/bench/synthetic_results.py src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py`
+  passed.
+- `uv run basedpyright src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_bench_synthetic_results.py -q` passed: 4 tests.
+- `uv run pytest tests/test_bench_fitness_imports.py tests/test_bench_synthetic_results.py -q`
+  passed: 5 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- `tomojax.bench` is still transitional and not yet one of the finalized v2
+  deep modules, so this keeps a narrow API and avoids broader benchmark package
+  restructuring.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary

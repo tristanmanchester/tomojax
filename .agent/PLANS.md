@@ -12,23 +12,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: split the alternating solver private implementation before adding more
-  benchmark-ingestion behavior.
+- Goal: ingest synthetic benchmark result artifacts into a deterministic
+  comparison report.
 
 ### Scope
 
 - In scope:
-  - Keep `tomojax.align._alternating` as the public-compatible facade.
-  - Move the alternating loop into a private orchestration implementation.
-  - Move geometry-update and per-level smoke helpers into cohesive private files.
-  - Preserve existing artifact, verification/report payload, held-out check, and
-    config/result helper boundaries.
+  - Load one or more `benchmark_result.json` artifacts.
+  - Validate the synthetic benchmark result schema before comparison.
+  - Emit a deterministic markdown comparison table over actual benchmark result
+    fields.
 - Out of scope:
-  - New benchmark ingestion behavior.
-  - Artifact-shape polishing.
-  - Public API changes.
+  - Full current-vs-reimagined protocol runner.
+  - New synthetic dataset generation behavior.
+  - Larger 128^3 benchmark runtime.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: transitional `tomojax.bench`.
 
 ### Design Sources
 
@@ -39,23 +38,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Split alternating orchestration from the public facade.
-- [x] Move geometry-update helpers out of the facade.
-- [x] Move level-summary/time-state helpers out of the facade.
+- [x] Add benchmark-result artifact loading.
+- [x] Add deterministic markdown comparison rendering.
+- [x] Add focused tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the align-module cleanup slice.
+- [x] Commit the benchmark-ingestion slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
-  passed: 4 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
+- `uv run ruff format src/tomojax/bench/synthetic_results.py src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
+- `uv run ruff check src/tomojax/bench/synthetic_results.py src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 10 tests.
+- `uv run basedpyright src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py`
+  passed.
+- `uv run pytest tests/test_bench_synthetic_results.py -q` passed: 4 tests.
+- `uv run pytest tests/test_bench_fitness_imports.py tests/test_bench_synthetic_results.py -q`
+  passed: 5 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -63,11 +63,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- `_alternating.py` remains importable so the existing public facade in
-  `tomojax.align.api` does not change.
+- The comparison helper operates on committed artifact schema fields only and
+  does not infer unsupported benchmark criteria.
 
 ### Risks
 
-- Risk: moving private helpers could accidentally change smoke-run behavior.
-- Mitigation: preserve existing tests and add focused import/API coverage if
-  needed before running the 32^3 smoke tests.
+- Risk: transitional `tomojax.bench` is not yet a v2 deep module.
+- Mitigation: keep the ingestion helper private-owned within `tomojax.bench`
+  and expose only a narrow typed API.
