@@ -4607,3 +4607,46 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The sidecar recovery gate is still a 32^3 smoke-sized vertical slice. The
   128^3 benchmark path will need detector-grid support beyond the current JAX
   reference projector before it can use non-square manifest detector shapes.
+
+## 2026-05-06 — Phase 7 Stopped-Reconstruction Sidecar Contract
+
+### Summary
+
+- Added a focused default-source sidecar smoke contract for
+  `geometry_update_volume_source="stopped_reconstruction"`.
+- The test verifies the real Schur update runs on generated 32^3 sidecars,
+  accepts a step, improves projection residual, and improves supported DOFs.
+- The test also preserves the current absolute recovery gap: detector-shift
+  recovery remains outside the smoke tolerance when the stopped volume is
+  reconstructed from corrupted geometry.
+
+### Decisions
+
+- Do not weaken the fixed-truth Schur recovery test or the geometry recovery
+  tolerances.
+- Keep the stopped-reconstruction limitation executable so the next slice can
+  address reconstruction/volume gauge handling with a clear before/after signal.
+
+### Validation
+
+- `uv run ruff format tests/test_alternating_solver_smoke.py`
+  passed: 1 file left unchanged.
+- `uv run ruff check tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed.
+- `just check` currently fails in legacy Ruff cleanup before typecheck/tests:
+  - `uv run ruff format src tests tools` reformatted 70 legacy files.
+  - `uv run ruff check --fix src tests tools` fixed 320 issues and left 1364
+    Ruff issues, starting in transitional `src/tomojax/align/model/schedules.py`
+    and `src/tomojax/align/model/state.py`.
+  - The unrelated formatter churn from the broad command was reverted.
+
+### Risks
+
+- The default stopped-reconstruction path improves but does not yet recover
+  detector shift to tolerance because the current geometry-aware backprojection
+  can bake detector shift into the latent volume.

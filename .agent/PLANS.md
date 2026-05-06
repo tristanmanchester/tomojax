@@ -12,19 +12,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 alternating solver and continuation vertical slice
-- Goal: ingest generated 32^3 synthetic benchmark sidecars into the alternating
-  smoke runner and validate real Schur geometry recovery.
+- Goal: add an executable stopped-reconstruction sidecar contract and record
+  the remaining reconstruction-gauge recovery gap.
 
 ### Scope
 
 - In scope:
-  - Load generated synthetic sidecar volume/projections/mask/geometry for the
-    deterministic 32^3 smoke run when requested.
-  - Use the supported joint Schur LM solver as the geometry update.
-  - Start from corrupted geometry that differs from true geometry.
-  - Verify projection residual improvement and supported DOF recovery after
-    gauge canonicalisation.
-  - Record Schur diagnostics and geometry trace artifacts from the real update.
+  - Quantify the current sidecar-backed 32^3 smoke run with the default
+    `stopped_reconstruction` update volume source.
+  - Preserve the fixed-truth sidecar Schur test as an isolating solver check.
+  - Add focused assertions that the stopped-reconstruction sidecar path uses the
+    real Schur update and improves projection residual/supported DOFs.
+  - Record that absolute detector-shift recovery still needs reconstruction
+    gauge handling.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -41,38 +41,44 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add sidecar-backed smoke inputs without changing default public API.
-- [x] Use corrupted sidecar geometry as initial geometry and true sidecar
-  geometry for recovery checks.
-- [x] Add focused assertions for residual improvement, supported DOF recovery,
-  Schur diagnostics, and geometry trace artifacts.
+- [x] Identify why sidecar stopped-reconstruction recovery fails today.
+- [x] Add focused stopped-reconstruction sidecar assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the synthetic ingestion vertical slice.
+- [ ] Commit the stopped-reconstruction sidecar slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py`
-  passed during implementation.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+- `uv run ruff format tests/test_alternating_solver_smoke.py`
+  passed: 1 file left unchanged.
+- `uv run ruff check tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+- `uv run basedpyright tests/test_alternating_solver_smoke.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py -q`
-  passed: 25 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
 - `just imports` passed.
+- `just check` failed in legacy Ruff cleanup before typecheck/tests:
+  - `uv run ruff format src tests tools` reformatted 70 legacy files.
+  - `uv run ruff check --fix src tests tools` fixed 320 issues and left 1364
+    Ruff issues, starting in transitional `src/tomojax/align/model/schedules.py`
+    and `src/tomojax/align/model/state.py`.
+  - The unrelated formatter churn from this broad command was reverted.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep ingestion scoped to generated 32^3 sidecars and the existing reference
-  Schur solver. Do not add another placeholder report layer.
+- Do not relax the fixed-truth recovery gate. The stopped-reconstruction test
+  records the current real-loop behavior separately until reconstruction gauge
+  handling is implemented.
 
 ### Risks
 
-- Risk: generated NumPy smoke projections may not match the JAX reference
-  projector exactly enough for strict recovery gates.
-- Mitigation: use the sidecar consistency payload and deterministic focused
-  tests to quantify residual and supported DOF improvement before broadening.
+- Finding: the current geometry-aware backprojection bakes detector shift into
+  the stopped volume. Schur improves residual, but absolute det_u recovery
+  remains outside the smoke tolerance.
+- Mitigation: keep the limitation executable and explicit; next slice should
+  address reconstruction/volume gauge handling rather than weakening recovery
+  checks.
