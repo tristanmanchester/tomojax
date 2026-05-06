@@ -676,3 +676,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The smoke path does not perform optimisation. Pose-only LM/GN remains the next
   major geometry milestone after the reference projector grows enough physical
   fidelity for meaningful derivatives.
+
+## 2026-05-06 — Make Detector Shifts Differentiable
+
+### Summary
+
+- Replaced rounded detector shifts in the minimal forward projector with
+  differentiable periodic linear interpolation.
+- Added `project_parallel_reference_arrays`, which accepts JAX arrays for
+  `theta_rad`, `dx_px`, and `dz_px`. This gives future pose optimizers a path
+  that can differentiate through detector shifts.
+- Added tests for fractional detector shifts and `jax.grad` through `dx_px`.
+
+### Decisions
+
+- Kept the current coarse theta quadrant handling. This slice only removes the
+  non-differentiable rounded detector-shift path.
+- Periodic interpolation is a smoke/reference simplification. Full detector
+  boundary policy belongs with the physical projector milestone.
+
+### Validation
+
+- `uv run ruff check src/tomojax/forward tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/forward tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py -q`
+  passed: 12 tests.
+- `uv run ruff format --check src/tomojax/forward tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_vertical_smoke.py -q`
+  passed: 126 tests.
+
+### Risks
+
+- `uv run python` without forcing CPU emits a JAX CUDA plugin warning about
+  missing cuSPARSE, then falls back to CPU. The current validation still passes
+  on CPU.
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The projector is differentiable for detector shifts, but not yet a full
+  physical differentiable projector for all 5 pose DOFs.

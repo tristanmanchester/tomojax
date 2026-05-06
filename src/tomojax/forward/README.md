@@ -13,6 +13,7 @@ rotations, and Jacobian checks remain future Phase 2 work.
 ## Public API
 
 - `project_parallel_reference`
+- `project_parallel_reference_arrays`
 - `masked_whitened_residual`
 - `pseudo_huber_loss`
 - `pseudo_huber_weights`
@@ -41,6 +42,8 @@ Forbidden dependencies:
 - Projection residuals must support masks and robust whitening.
 - Backend fast paths must report provenance and compare against the reference
   path.
+- Detector shifts in the minimal reference projector use differentiable periodic
+  linear interpolation.
 
 ## Tests
 

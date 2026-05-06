@@ -11,27 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Minimal vertical-slice bridge across Phase 2 and Phase 3
-- Goal: add a tiny reconstruction/alignment smoke path using the new v2
-  geometry, forward, robust residual, and gauge APIs.
+- Phase: Phase 2 differentiability bridge before pose optimisation
+- Goal: make detector-shift projection differentiable for future pose solvers.
 
 ### Scope
 
 - In scope:
-  - Make the minimal forward projector respect setup `det_u_px` and active
-    `det_v_px` so gauge canonicalisation preserves projections.
-  - Add a simple reference backprojection/preview reconstruction helper in
-    `tomojax.recon`.
-  - Add an alignment smoke report in `tomojax.align` that reconstructs a preview
-    volume, computes masked robust projection loss, canonicalises gauges, and
-    verifies the canonical projection loss is preserved.
-  - Add tests for gauge-equivalent projection preservation and the smoke report.
+  - Replace rounded detector shifts in the minimal forward projector with
+    periodic linear interpolation.
+  - Add an array-based projection helper that accepts JAX pose/setup shift arrays.
+  - Add tests for fractional detector shifts and differentiability with respect
+    to `dx_px`.
 - Out of scope:
-  - FISTA/Huber-TV implementation.
-  - LM/GN geometry optimisation.
-  - Full physical projector support for detector roll, axis rotations, or
-    laminography.
-- Deep module owners: `tomojax.forward`, `tomojax.recon`, and `tomojax.align`.
+  - Pose-only LM/GN optimisation.
+  - Detector roll, axis rotations, theta scale, and laminography ray geometry.
+  - Reconstruction or alignment API changes.
+- Deep module owner: `tomojax.forward`.
 
 ### Design Sources
 
@@ -41,35 +36,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Inspect current `recon` and `align` public facades.
-- [x] Update minimal forward projector for setup detector shifts.
-- [x] Add reference reconstruction smoke helper.
-- [x] Add alignment smoke report.
-- [x] Add tests.
+- [x] Inspect current minimal forward projector.
+- [x] Add differentiable periodic detector shift helper.
+- [x] Add JAX array-based projection helper.
+- [x] Add differentiability tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the smoke vertical slice if validations pass.
+- [ ] Commit the differentiable-shift slice if validations pass.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/forward src/tomojax/recon/_reference.py
-  src/tomojax/recon/api.py src/tomojax/recon/__init__.py
-  src/tomojax/align/_smoke.py src/tomojax/align/api.py
-  src/tomojax/align/__init__.py tests/test_vertical_smoke.py
-  tests/test_forward_reference.py tests/test_v2_module_skeleton.py` passes.
-- `uv run basedpyright src/tomojax/forward src/tomojax/recon/_reference.py
-  src/tomojax/recon/api.py src/tomojax/recon/__init__.py
-  src/tomojax/align/_smoke.py src/tomojax/align/api.py
-  src/tomojax/align/__init__.py tests/test_vertical_smoke.py
-  tests/test_forward_reference.py tests/test_v2_module_skeleton.py` passes with
+- `uv run ruff check src/tomojax/forward tests/test_forward_reference.py
+  tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py` passes.
+- `uv run basedpyright src/tomojax/forward tests/test_forward_reference.py
+  tests/test_vertical_smoke.py tests/test_v2_module_skeleton.py` passes with
   0 errors and 0 warnings.
-- `uv run pytest tests/test_vertical_smoke.py tests/test_forward_reference.py
-  tests/test_v2_module_skeleton.py -q` passes with 10 tests.
+- `uv run pytest tests/test_forward_reference.py tests/test_vertical_smoke.py
+  tests/test_v2_module_skeleton.py -q` passes with 12 tests.
 - `uv run ruff format --check src/tomojax/forward
-  src/tomojax/recon/_reference.py src/tomojax/recon/api.py
-  src/tomojax/recon/__init__.py src/tomojax/align/_smoke.py
-  src/tomojax/align/api.py src/tomojax/align/__init__.py
-  tests/test_vertical_smoke.py tests/test_forward_reference.py
+  tests/test_forward_reference.py tests/test_vertical_smoke.py
   tests/test_v2_module_skeleton.py` passes.
 - `just imports` passes.
 - `uv run pytest tests/test_json_utils.py tests/test_manifest.py
@@ -80,11 +65,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py
   tests/test_geometry_gauges.py tests/test_geometry_serialization.py
   tests/test_forward_reference.py tests/test_vertical_smoke.py -q` passes with
-  124 tests.
-- A broad `uv run ruff format --check src/tomojax/forward src/tomojax/recon
-  src/tomojax/align ...` still reports 20 untouched transitional align/recon
-  files that would be reformatted. This is outside this slice and remains part
-  of the broader legacy cleanup.
+  126 tests.
+- `uv run python` without `JAX_PLATFORM_NAME=cpu` reports a CUDA plugin warning
+  about missing cuSPARSE, then falls back to CPU. Tests still run successfully
+  under `uv run`.
 - `just check` remains blocked by broad transitional legacy Ruff failures
   recorded in the Milestone 0 cleanup log.
 
@@ -93,13 +77,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: this smoke path is deliberately small and deterministic. It proves
-  module wiring and artifact-style reporting, not final numerical performance.
-- Deviation: reconstruction preview is average backprojection, not FISTA/TV.
-  The full reconstruction milestone remains open.
+- Decision: keep the current coarse theta handling, but remove non-differentiable
+  rounded detector shifts.
+- Deviation: this still is not full physical ray geometry.
 
 ### Risks
 
-- Risk: smoke helpers can become accidental product APIs.
-- Mitigation: README/log must label them as reference smoke helpers and future
-  milestones should replace them with FISTA/LM defaults.
+- Risk: periodic boundary interpolation is a smoke-model simplification.
+- Mitigation: document this as reference scaffolding and keep physical projector
+  expansion as future Phase 2 work.

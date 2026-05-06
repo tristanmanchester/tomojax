@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-# pyright: reportAny=false, reportUnknownMemberType=false
+import jax
+
+# pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
+# pyright: reportUnknownVariableType=false
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.forward import (
     masked_whitened_residual,
     project_parallel_reference,
+    project_parallel_reference_arrays,
     pseudo_huber_loss,
     pseudo_huber_weights,
     residual_loss,
@@ -35,6 +39,39 @@ def test_project_parallel_reference_applies_detector_shift() -> None:
     shifted = project_parallel_reference(volume, shifted_geometry)
 
     np.testing.assert_allclose(np.asarray(shifted[0]), np.roll(np.asarray(base[0]), 1, axis=1))
+
+
+def test_project_parallel_reference_applies_fractional_detector_shift() -> None:
+    volume = jnp.zeros((4, 4, 4), dtype=jnp.float32)
+    volume = volume.at[0, :, 1].set(1.0)
+
+    shifted = project_parallel_reference_arrays(
+        volume,
+        theta_rad=jnp.asarray([0.0], dtype=jnp.float32),
+        dx_px=jnp.asarray([0.5], dtype=jnp.float32),
+        dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+    )
+
+    row = np.asarray(shifted[0, 0])
+    np.testing.assert_allclose(row, [0.0, 2.0, 2.0, 0.0], atol=1e-6)
+
+
+def test_project_parallel_reference_arrays_is_differentiable_for_dx() -> None:
+    volume = jnp.zeros((4, 4, 4), dtype=jnp.float32)
+    volume = volume.at[0, :, 1].set(1.0)
+
+    def pixel_value(dx_px: jax.Array) -> jax.Array:
+        projected = project_parallel_reference_arrays(
+            volume,
+            theta_rad=jnp.asarray([0.0], dtype=jnp.float32),
+            dx_px=jnp.asarray([dx_px], dtype=jnp.float32),
+            dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+        )
+        return projected[0, 0, 1]
+
+    gradient = jax.grad(pixel_value)(jnp.asarray(0.25, dtype=jnp.float32))
+
+    assert float(gradient) < 0.0
 
 
 def test_masked_whitened_residual_zeros_invalid_pixels() -> None:
