@@ -213,6 +213,7 @@ def _geometry_recovery_payload(
     mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px)))
     mean_phi_abs = abs(float(np.mean(final_geometry.pose.phi_residual_rad)))
     mean_dz_abs = abs(float(np.mean(final_geometry.pose.dz_px)))
+    det_v_gauge_active = final_geometry.setup.det_v_px.active
     theta_limit = float(tolerances["theta_realized_rmse_rad_lt"])
     det_u_limit = float(tolerances["det_u_realized_rmse_px_lt"])
     det_v_limit = float(tolerances["det_v_realized_rmse_px_lt"])
@@ -223,7 +224,7 @@ def _geometry_recovery_payload(
         and det_v_rmse <= det_v_limit
         and mean_dx_abs <= gauge_limit
         and mean_phi_abs <= gauge_limit
-        and mean_dz_abs <= gauge_limit
+        and (not det_v_gauge_active or mean_dz_abs <= gauge_limit)
     )
     theta_improved = bool(theta_rmse < initial_theta_rmse)
     det_u_improved = bool(det_u_rmse < initial_det_u_rmse)
@@ -251,7 +252,7 @@ def _geometry_recovery_payload(
         "mean_phi_abs_rad_passed": mean_phi_abs <= gauge_limit,
         "mean_phi_abs_rad_limit": gauge_limit,
         "mean_dz_abs_px": mean_dz_abs,
-        "mean_dz_abs_px_passed": mean_dz_abs <= gauge_limit,
+        "mean_dz_abs_px_passed": (not det_v_gauge_active or mean_dz_abs <= gauge_limit),
         "mean_dz_abs_px_limit": gauge_limit,
         "supported_dofs_improved": theta_improved and det_u_improved and det_v_improved,
         "passed": passed,

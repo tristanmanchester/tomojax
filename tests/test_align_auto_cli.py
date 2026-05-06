@@ -198,15 +198,15 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
             "mask": {
                 "dtype": "bool",
                 "path": str(dataset_dir / "mask.npy"),
-                "shape": [4, 40, 40],
+                "shape": [4, 32, 32],
             },
             "projections": {
                 "dtype": "float32",
                 "path": str(dataset_dir / "projections.npy"),
-                "shape": [4, 40, 40],
+                "shape": [4, 32, 32],
             },
             "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
-            "true_det_u_px": 14.5,
+            "true_det_u_px": 3.625,
             "validated": True,
             "volume": {
                 "dtype": "float32",
@@ -227,9 +227,9 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     sidecar_readback = cast("dict[str, object]", synthetic_benchmark["sidecar_readback"])
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
-    assert sidecar_readback["true_det_u_px"] == 14.5
+    assert sidecar_readback["true_det_u_px"] == 3.625
     projections = cast("dict[str, object]", sidecar_readback["projections"])
-    assert projections["shape"] == [4, 40, 40]
+    assert projections["shape"] == [4, 32, 32]
     assert projections["dtype"] == "float32"
     consistency = cast("dict[str, object]", sidecar_readback["consistency"])
     assert consistency["passed"] is True
@@ -238,7 +238,7 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     assert "synthetic_dataset_nuisance_applied = false" in config_text
     assert "synthetic_dataset_sidecars_validated = true" in config_text
     assert "synthetic_dataset_sidecar_views = 4" in config_text
-    assert "synthetic_dataset_projection_shape = [4, 40, 40]" in config_text
+    assert "synthetic_dataset_projection_shape = [4, 32, 32]" in config_text
     assert 'synthetic_dataset_projection_dtype = "float32"' in config_text
     assert "synthetic_dataset_sidecar_consistency_passed = true" in config_text
     nuisance = cast(
@@ -293,7 +293,7 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
     projections = cast("dict[str, object]", sidecar_readback["projections"])
-    assert projections["shape"] == [4, 48, 48]
+    assert projections["shape"] == [4, 32, 32]
     consistency = cast("dict[str, object]", sidecar_readback["consistency"])
     assert consistency["passed"] is True
     manifest = cast(

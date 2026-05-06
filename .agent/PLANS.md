@@ -12,24 +12,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 alternating solver and continuation vertical slice
-- Goal: split the alternating smoke implementation into cohesive private
-  align-owned modules before adding synthetic benchmark ingestion.
+- Goal: ingest generated 32^3 synthetic benchmark sidecars into the alternating
+  smoke runner and validate real Schur geometry recovery.
 
 ### Scope
 
 - In scope:
-  - Preserve the public `tomojax.align` API for alternating smoke types and
-    runner entrypoints.
-  - Split `src/tomojax/align/_alternating.py` into private modules for smoke
-    config/result helpers, held-out checks, verification/report payloads,
-    artifact writing, and orchestration.
-  - Keep cross-file imports inside the `tomojax.align` private boundary.
-  - Run focused smoke/CLI tests and `just imports`.
+  - Load generated synthetic sidecar volume/projections/mask/geometry for the
+    deterministic 32^3 smoke run when requested.
+  - Use the supported joint Schur LM solver as the geometry update.
+  - Start from corrupted geometry that differs from true geometry.
+  - Verify projection residual improvement and supported DOF recovery after
+    gauge canonicalisation.
+  - Record Schur diagnostics and geometry trace artifacts from the real update.
 - Out of scope:
-  - Synthetic benchmark ingestion beyond preserving existing sidecar readback
-    behavior.
   - Stripe/ring bias fields.
-  - Changing solver behavior.
+  - Larger 128^3 benchmark runtime.
+  - New placeholder artifact/report polish.
   - Further legacy Ruff cleanup.
 - Deep module owner: `tomojax.align`.
 
@@ -42,25 +41,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Move smoke config/result dataclasses to a private align module.
-- [x] Move held-out residual checks to a private align module.
-- [x] Move verification/report payload builders to a private align module.
-- [x] Move artifact writing to a private align module.
-- [x] Leave `_alternating.py` as orchestration plus solver loop.
+- [x] Add sidecar-backed smoke inputs without changing default public API.
+- [x] Use corrupted sidecar geometry as initial geometry and true sidecar
+  geometry for recovery checks.
+- [x] Add focused assertions for residual improvement, supported DOF recovery,
+  Schur diagnostics, and geometry trace artifacts.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the align-module split slice.
+- [ ] Commit the synthetic ingestion vertical slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
-  passed: 5 files left unchanged after the final patch.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py`
+  passed during implementation.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_types.py src/tomojax/align/_alternating_heldout.py src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
-  passed: 14 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py -q`
+  passed: 25 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -68,12 +67,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- This is a structural cleanup only. Do not change solver behavior in this
-  slice.
+- Keep ingestion scoped to generated 32^3 sidecars and the existing reference
+  Schur solver. Do not add another placeholder report layer.
 
 ### Risks
 
-- Risk: moving private functions can accidentally widen public API or introduce
-  cross-boundary private imports.
-- Mitigation: only import private modules from inside `tomojax.align`; validate
-  with focused tests and `just imports`.
+- Risk: generated NumPy smoke projections may not match the JAX reference
+  projector exactly enough for strict recovery gates.
+- Mitigation: use the sidecar consistency payload and deterministic focused
+  tests to quantify residual and supported DOF improvement before broadening.

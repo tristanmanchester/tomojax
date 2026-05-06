@@ -10,10 +10,12 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import jax.numpy as jnp
 import numpy as np
 
 from tomojax.datasets._phantoms import make_benchmark_phantom
 from tomojax.datasets._specs import SyntheticDatasetSpec, synthetic128_spec
+from tomojax.forward import project_parallel_reference
 from tomojax.geometry import (
     GeometryState,
     PoseParameters,
@@ -65,10 +67,7 @@ def generate_synthetic_dataset(
         _remove_known_artifacts(dataset_dir)
 
     n_views = int(views or (16 if size == 32 else spec.views))
-    detector_shape = (
-        max(16, spec.detector_shape[0] * size // 128),
-        max(16, spec.detector_shape[1] * size // 128),
-    )
+    detector_shape = _detector_shape_for_size(spec, size)
     theta = np.linspace(
         spec.theta_range_deg[0],
         spec.theta_range_deg[1],
@@ -78,13 +77,21 @@ def generate_synthetic_dataset(
     )
 
     volume = make_benchmark_phantom(size, spec.phantom_seed)
-    true_pose = _make_pose_table(spec, theta)
-    projections = _project_smoke(
-        volume,
-        detector_shape=detector_shape,
-        theta_deg=theta,
-        pose=true_pose,
+    pixel_scale = float(size) / 128.0
+    true_pose = _make_pose_table(spec, theta, pixel_scale=pixel_scale)
+    nominal_state = _geometry_state_from_spec(
+        spec,
+        n_views=n_views,
+        pose=None,
+        pixel_scale=pixel_scale,
     )
+    true_state = _geometry_state_from_spec(
+        spec,
+        n_views=n_views,
+        pose=true_pose,
+        pixel_scale=pixel_scale,
+    )
+    projections = _project_v2_smoke(volume, true_state)
     nuisance = _realize_nuisance(spec, n_views, applied_to_projections=not clean)
     if not clean:
         projections = _apply_nuisance(projections, nuisance)
@@ -100,8 +107,6 @@ def generate_synthetic_dataset(
     _write_json(paths.true_geometry, _true_geometry(spec, detector_shape, theta))
     _write_pose_csv(paths.true_pose, true_pose)
     _write_motion_csv(paths.true_motion, n_views)
-    nominal_state = _geometry_state_from_spec(spec, n_views=n_views, pose=None)
-    true_state = _geometry_state_from_spec(spec, n_views=n_views, pose=true_pose)
     write_geometry_json(paths.v2_nominal_geometry, nominal_state)
     write_geometry_json(paths.v2_corrupted_geometry, nominal_state)
     write_geometry_json(paths.v2_true_geometry, true_state)
@@ -112,6 +117,22 @@ def generate_synthetic_dataset(
     _write_json(paths.noise_truth, _noise_truth(spec))
     _write_json(paths.manifest, _dataset_manifest(spec, size, detector_shape, n_views, paths))
     return paths
+
+
+def _detector_shape_for_size(spec: SyntheticDatasetSpec, size: int) -> tuple[int, int]:
+    if size == 32:
+        return (32, 32)
+    return (
+        max(16, spec.detector_shape[0] * size // 128),
+        max(16, spec.detector_shape[1] * size // 128),
+    )
+
+
+def _project_v2_smoke(
+    volume: NDArray[np.float32],
+    geometry: GeometryState,
+) -> NDArray[np.float32]:
+    return np.asarray(project_parallel_reference(jnp.asarray(volume), geometry), dtype=np.float32)
 
 
 def _paths(dataset_dir: Path) -> SyntheticArtifactPaths:
@@ -141,31 +162,6 @@ def _remove_known_artifacts(dataset_dir: Path) -> None:
     for path in _paths(dataset_dir).__dict__.values():
         if isinstance(path, Path) and path.is_file():
             path.unlink()
-
-
-def _project_smoke(
-    volume: NDArray[np.float32],
-    *,
-    detector_shape: tuple[int, int],
-    theta_deg: NDArray[np.float32],
-    pose: dict[str, NDArray[np.float32]],
-) -> NDArray[np.float32]:
-    base_views: list[NDArray[np.float32]] = []
-    for idx, theta in enumerate(theta_deg):
-        quadrant = int(np.floor((float(theta) % 180.0) / 45.0)) % 4
-        rotated = np.rot90(volume, k=quadrant, axes=(0, 1))
-        projection = rotated.sum(axis=1, dtype=np.float32)
-        projection = _resize_nearest(projection, detector_shape)
-        projection = np.roll(projection, round(float(pose["dx_px"][idx])), axis=1)
-        projection = np.roll(projection, round(float(pose["dz_px"][idx])), axis=0)
-        base_views.append(projection.astype(np.float32))
-    return np.stack(base_views, axis=0).astype(np.float32)
-
-
-def _resize_nearest(image: NDArray[np.float32], shape: tuple[int, int]) -> NDArray[np.float32]:
-    rows = np.linspace(0, image.shape[0] - 1, shape[0]).round().astype(np.intp)
-    cols = np.linspace(0, image.shape[1] - 1, shape[1]).round().astype(np.intp)
-    return image[np.ix_(rows, cols)].astype(np.float32)
 
 
 def _realize_nuisance(
@@ -258,6 +254,8 @@ def _background_vertical_gradient(
 def _make_pose_table(
     spec: SyntheticDatasetSpec,
     theta_deg: NDArray[np.float32],
+    *,
+    pixel_scale: float,
 ) -> dict[str, NDArray[np.float32]]:
     rng = np.random.default_rng(spec.pose_seed or spec.phantom_seed)
     n_views = theta_deg.shape[0]
@@ -274,12 +272,10 @@ def _make_pose_table(
         "phi_residual_deg": _pose_component(
             spec.true_pose.get("phi_residual_deg", "zero"), rng, theta_rad, n_views, scale=10.0
         ),
-        "dx_px": _pose_component(
-            spec.true_pose.get("dx_px", "zero"), rng, theta_rad, n_views, scale=20.0
-        ),
-        "dz_px": _pose_component(
-            spec.true_pose.get("dz_px", "zero"), rng, theta_rad, n_views, scale=20.0
-        ),
+        "dx_px": pixel_scale
+        * _pose_component(spec.true_pose.get("dx_px", "zero"), rng, theta_rad, n_views, scale=20.0),
+        "dz_px": pixel_scale
+        * _pose_component(spec.true_pose.get("dz_px", "zero"), rng, theta_rad, n_views, scale=20.0),
     }
 
 
@@ -314,6 +310,7 @@ def _geometry_state_from_spec(
     *,
     n_views: int,
     pose: dict[str, NDArray[np.float32]] | None,
+    pixel_scale: float,
 ) -> GeometryState:
     state = GeometryState.zeros(n_views)
     setup_values = spec.true_setup if pose is not None else {}
@@ -322,13 +319,13 @@ def _geometry_state_from_spec(
     setup = setup.replace_parameter(
         "det_v_px",
         replace(
-            setup.det_v_px.with_value(_setup_value(setup_values, "det_v_px")),
+            setup.det_v_px.with_value(pixel_scale * _setup_value(setup_values, "det_v_px")),
             active=det_v_active,
         ),
     )
     setup = setup.replace_parameter(
         "det_u_px",
-        setup.det_u_px.with_value(_setup_value(setup_values, "det_u_px")),
+        setup.det_u_px.with_value(pixel_scale * _setup_value(setup_values, "det_u_px")),
     )
     setup = setup.replace_parameter(
         "detector_roll_rad",

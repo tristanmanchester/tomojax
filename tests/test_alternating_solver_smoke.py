@@ -12,6 +12,10 @@ from tomojax.align.api import (
     reference_continuation_schedule,
     run_alternating_solver_smoke,
 )
+from tomojax.datasets import (
+    generate_synthetic_dataset,
+    load_synthetic_dataset_sidecars,
+)
 from tomojax.verify import residual_structure_summary
 
 if TYPE_CHECKING:
@@ -518,6 +522,88 @@ def test_alternating_alignment_solver_runs_smoke_profile(tmp_path: Path) -> None
 
     assert result.final_volume.shape == (32, 32, 32)
     assert result.artifacts["verification_json"].exists()
+
+
+def test_alternating_solver_ingests_generated_synthetic_sidecars(tmp_path: Path) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "synth128_thermal_object_drift",
+        tmp_path / "datasets",
+        size=32,
+        clean=True,
+        views=4,
+    )
+    sidecars = load_synthetic_dataset_sidecars(dataset_paths.dataset_dir)
+    solver = AlternatingAlignmentSolver(
+        AlternatingSmokeConfig(
+            size=32,
+            n_views=4,
+            schedule=reference_continuation_schedule("smoke32"),
+            geometry_update_volume_source="fixed_synthetic_truth",
+            synthetic_dataset_name="synth128_thermal_object_drift",
+            synthetic_dataset_artifact_dir=dataset_paths.dataset_dir,
+            synthetic_dataset_sidecar_readback={
+                "validated": True,
+                "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
+                "n_views": sidecars.true_geometry.pose.n_views,
+                "volume": sidecars.volume.to_dict(),
+                "projections": sidecars.projections.to_dict(),
+                "mask": sidecars.mask.to_dict(),
+                "consistency": sidecars.consistency.to_dict(),
+            },
+        )
+    )
+
+    result = solver.run_smoke(tmp_path / "run")
+
+    assert result.verification["status"] == "passed"
+    observed = cast("NDArray[np.float32]", np.load(result.artifacts["observed_projections_npy"]))
+    generated = cast("NDArray[np.float32]", np.load(dataset_paths.projections))
+    np.testing.assert_allclose(observed, generated)
+    assert (
+        result.initial_geometry.setup.det_u_px.value != result.final_geometry.setup.det_u_px.value
+    )
+    assert (
+        sidecars.corrupted_geometry.setup.det_u_px.value
+        != sidecars.true_geometry.setup.det_u_px.value
+    )
+    recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
+    assert recovery["supported_dofs_improved"] is True
+    assert recovery["passed"] is True
+    assert cast("float", recovery["det_u_realized_rmse_px"]) < cast(
+        "float", recovery["initial_det_u_realized_rmse_px"]
+    )
+    assert cast("float", recovery["theta_realized_rmse_rad"]) < cast(
+        "float", recovery["initial_theta_realized_rmse_rad"]
+    )
+    assert result.levels[0].loss_after < result.levels[0].loss_before
+    assert result.levels[0].schur_diagnostics is not None
+    assert result.levels[0].schur_diagnostics.accepted is True
+
+    schur_payload = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["schur_diagnostics_json"].read_text(encoding="utf-8")),
+    )
+    assert schur_payload["status"] == "passed"
+    assert schur_payload["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    with result.artifacts["geometry_trace_csv"].open("r", newline="", encoding="utf-8") as fh:
+        trace_rows = list(csv.DictReader(fh))
+    assert trace_rows[0]["schur_accepted"] == "True"
+    assert float(trace_rows[0]["loss_after"]) < float(trace_rows[0]["loss_before"])
+
+    failure_report = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["failure_report_json"].read_text(encoding="utf-8")),
+    )
+    gates = cast("list[dict[str, object]]", failure_report["gates"])
+    gates_by_name = {str(gate["name"]): gate for gate in gates}
+    assert gates_by_name["synthetic_sidecar_consistency"]["passed"] is True
+    assert (
+        cast(
+            "dict[str, object]",
+            gates_by_name["synthetic_sidecar_consistency"]["evidence"],
+        )["passed"]
+        is True
+    )
 
 
 def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:

@@ -80,7 +80,7 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     manifest = cast("dict[str, Any]", json.loads(first.manifest.read_text(encoding="utf-8")))
     assert manifest["name"] == "synth128_setup_global_tomo"
     assert manifest["volume_shape"] == [32, 32, 32]
-    assert manifest["detector_shape"] == [40, 40]
+    assert manifest["detector_shape"] == [32, 32]
     assert manifest["views"] == 16
     assert "det_u_error_px_lt" in manifest["recovery_tolerances"]
     artifacts = cast("dict[str, str]", manifest["artifacts"])
@@ -89,7 +89,7 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
 
     projections = np.load(first.projections)
     mask = np.load(first.mask)
-    assert projections.shape == (16, 40, 40)
+    assert projections.shape == (16, 32, 32)
     assert projections.dtype == np.float32
     assert mask.shape == projections.shape
     assert mask.dtype == np.bool_
@@ -124,7 +124,7 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
         true_pose_params,
     )
     assert true_state.pose.n_views == 16
-    assert true_state.setup.det_u_px.value == 14.5
+    assert true_state.setup.det_u_px.value == 3.625
     np.testing.assert_allclose(true_state.setup.theta_offset_rad.value, np.deg2rad(1.25))
     np.testing.assert_allclose(true_state.pose.phi_residual_rad, np.zeros(16))
 
@@ -155,21 +155,21 @@ def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) ->
     assert sidecars.artifacts["v2_true_geometry_json"] == paths.v2_true_geometry
     assert sidecars.true_geometry.pose.n_views == 8
     assert sidecars.true_geometry.setup.det_v_px.active is True
-    assert sidecars.true_geometry.setup.det_u_px.value == -8.0
+    assert sidecars.true_geometry.setup.det_u_px.value == -2.0
     assert sidecars.nominal_geometry.setup.det_u_px.value == 0.0
     assert sidecars.corrupted_geometry.setup.det_u_px.value == 0.0
     assert sidecars.volume.path == paths.volume
     assert sidecars.volume.shape == (32, 32, 32)
     assert sidecars.volume.dtype == "float32"
     assert sidecars.projections.path == paths.projections
-    assert sidecars.projections.shape == (8, 48, 48)
+    assert sidecars.projections.shape == (8, 32, 32)
     assert sidecars.projections.dtype == "float32"
     assert sidecars.mask.path == paths.mask
     assert sidecars.mask.shape == sidecars.projections.shape
     assert sidecars.mask.dtype == "bool"
     assert sidecars.projections.to_dict() == {
         "path": str(paths.projections),
-        "shape": [8, 48, 48],
+        "shape": [8, 32, 32],
         "dtype": "float32",
     }
     assert sidecars.consistency.passed is True

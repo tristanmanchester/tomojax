@@ -3,13 +3,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
-import numpy as np
 
 from tomojax.align._alternating_artifacts import _write_artifacts
 from tomojax.align._alternating_heldout import (
@@ -18,6 +16,7 @@ from tomojax.align._alternating_heldout import (
     _level_residual_sigma,
     _projection_loss,
 )
+from tomojax.align._alternating_inputs import build_smoke_inputs
 from tomojax.align._alternating_types import (
     AlternatingLevelSummary,
     AlternatingSmokeConfig,
@@ -34,8 +33,6 @@ from tomojax.align._joint_schur_lm import (
     JointSchurLMResult,
     solve_joint_schur_lm,
 )
-from tomojax.datasets import make_benchmark_phantom
-from tomojax.forward import project_parallel_reference
 from tomojax.geometry import GaugeReport, GeometryState
 from tomojax.recon import (
     ReferenceFISTAConfig,
@@ -76,11 +73,9 @@ def _run_alternating_solver_smoke_impl(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    truth = jnp.asarray(make_benchmark_phantom(config.size, seed=config.seed), dtype=jnp.float32)
-    true_geometry = _synthetic_true_geometry(config.n_views)
-    initial_geometry = _synthetic_initial_geometry(config.n_views)
-    observed = project_parallel_reference(truth, true_geometry)
-    mask = jnp.ones_like(observed, dtype=jnp.float32)
+    inputs = build_smoke_inputs(config)
+    truth, observed, mask = inputs.truth_volume, inputs.observed_projections, inputs.mask
+    true_geometry, initial_geometry = inputs.true_geometry, inputs.initial_geometry
     train_mask, heldout_mask = _heldout_masks(mask, config.heldout_view_index)
 
     geometry = initial_geometry
@@ -276,42 +271,6 @@ def _run_alternating_solver_smoke_impl(
         verification=verification,
         artifacts=artifacts,
     )
-
-
-def _synthetic_initial_geometry(n_views: int) -> GeometryState:
-    base = _geometry_with_active_det_v(n_views)
-    return GeometryState(
-        setup=base.setup,
-        pose=base.pose,
-    )
-
-
-def _synthetic_true_geometry(n_views: int) -> GeometryState:
-    base = _geometry_with_active_det_v(n_views)
-    span = np.linspace(-1.0, 1.0, num=n_views, dtype=np.float64)
-    setup = base.setup.replace_parameter(
-        "theta_offset_rad",
-        base.setup.theta_offset_rad.with_value(0.035),
-    )
-    setup = setup.replace_parameter("det_u_px", setup.det_u_px.with_value(0.045))
-    setup = setup.replace_parameter("det_v_px", setup.det_v_px.with_value(-0.03))
-    return GeometryState(
-        setup=setup,
-        pose=base.pose.with_updates(
-            phi_residual_rad=0.1 * span,
-            dx_px=0.02 + 0.01 * span,
-            dz_px=-0.0125 + 0.0075 * span,
-        ),
-    )
-
-
-def _geometry_with_active_det_v(n_views: int) -> GeometryState:
-    base = GeometryState.zeros(n_views)
-    setup = base.setup.replace_parameter(
-        "det_v_px",
-        replace(base.setup.det_v_px, value=0.0, active=True),
-    )
-    return GeometryState(setup=setup, pose=base.pose)
 
 
 def _run_geometry_updates(

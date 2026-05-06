@@ -4567,3 +4567,43 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - This is a structural split only. Synthetic benchmark projection ingestion and
   stronger real-geometry recovery checks remain next.
+
+## 2026-05-06 — Phase 7 Synthetic Sidecar Ingestion
+
+### Summary
+
+- Added sidecar-backed input assembly for the alternating smoke runner.
+- When `synthetic_dataset_artifact_dir` is set, the smoke run now loads the
+  generated volume, projections, mask, corrupted geometry, and true geometry
+  from the manifest-indexed sidecars.
+- Updated the 32^3 synthetic generator to use a JAX-reference detector grid and
+  v2 true geometry for generated projections, with pixel-valued setup and pose
+  terms scaled to the smoke grid.
+- Added a deterministic 32^3 sidecar smoke test that verifies Schur loss
+  improvement, supported DOF recovery after gauge canonicalisation, Schur
+  diagnostics, geometry trace evidence, and sidecar consistency reporting.
+
+### Decisions
+
+- Kept the default in-memory smoke path unchanged.
+- Used the existing `fixed_synthetic_truth` geometry-update volume source for
+  the focused sidecar recovery test so this slice validates the real Schur
+  geometry update independently of reconstruction quality.
+- Treated mean `dz` gauge enforcement as required only when `det_v_px` is active,
+  matching the supported/frozen DOF policy.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_inputs.py src/tomojax/align/_alternating_verification.py src/tomojax/datasets/_writer.py tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_synthetic_datasets.py tests/test_align_auto_cli.py -q`
+  passed: 25 tests.
+- `just imports` passed.
+
+### Risks
+
+- The sidecar recovery gate is still a 32^3 smoke-sized vertical slice. The
+  128^3 benchmark path will need detector-grid support beyond the current JAX
+  reference projector before it can use non-square manifest detector shapes.
