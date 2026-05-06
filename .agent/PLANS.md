@@ -11,23 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 2 — JAX reference forward model and residual loss
-- Goal: add the level-aware projection-domain residual filters required by the
-  canonical forward/residual spec.
+- Phase: Phase 3 — Reconstruction step: Huber-TV/FISTA preview
+- Goal: add the first v2 JAX reference FISTA reconstruction preview against the
+  current reference projector.
 
 ### Scope
 
 - In scope:
-  - Add typed residual filter configuration/result values.
-  - Implement raw, low-pass, and band-pass residual filtering for projection
-    stacks.
-  - Keep filtering in `tomojax.forward`.
-  - Add deterministic filter tests and public facade exports.
+  - Add typed reference FISTA config/result/trace rows.
+  - Use the JAX reference projector and masked robust residual loss.
+  - Add smoothed TV regularisation, warm start, and non-negativity projection.
+  - Add CSV trace artifact export.
+  - Add deterministic tiny reconstruction tests.
 - Out of scope:
-  - Full physical projector geometry.
-  - Laminography parameterisations.
-  - Geometry Jacobian checks for unsupported DOFs.
-- Deep module owner: `tomojax.forward`.
+  - Physical projector/backprojector completeness.
+  - Multiresolution reconstruction schedules.
+  - Production step-size estimation or line search.
+- Deep module owner: `tomojax.recon`.
 
 ### Design Sources
 
@@ -36,42 +36,42 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add residual filter implementation.
-- [x] Export the public filter API.
-- [x] Add deterministic raw/low-pass/band-pass tests.
+- [x] Add reference FISTA implementation.
+- [x] Export the public FISTA preview API.
+- [x] Add deterministic reconstruction and trace tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the residual-filter slice if validations pass.
+- [x] Commit the FISTA preview slice if validations pass.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/forward/_filters.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+- `uv run ruff check src/tomojax/recon/_fista_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
   passed.
-- `uv run basedpyright src/tomojax/forward/_filters.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+- `uv run basedpyright src/tomojax/recon/_fista_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
   passed with 0 errors and 0 warnings.
-- `uv run ruff format --check src/tomojax/forward/_filters.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+- `uv run ruff format --check src/tomojax/recon/_fista_reference.py src/tomojax/recon/api.py src/tomojax/recon/__init__.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
   passed.
-- `uv run pytest tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py -q`
-  passed: 13 tests.
+- `uv run pytest tests/test_reference_fista.py tests/test_v2_module_skeleton.py -q`
+  passed: 4 tests.
 - `just imports` passed:
   - `uv run lint-imports --config .importlinter`
   - `uv run python tools/check_public_imports.py`
-- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
-  passed: 134 tests.
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
+  passed: 136 tests.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: use a small separable smoothing kernel as the JAX reference
-  low-pass filter and define band-pass as `raw - low_pass(raw)`.
-- Deviation: this is not a full multiresolution frequency-domain filter bank;
-  it is the first deterministic reference contract for residual filtering.
+- Decision: use a fixed configured step size for this first reference FISTA
+  slice.
+- Deviation: the current projector is still the minimal differentiable
+  reference projector, so this is a preview FISTA contract rather than final
+  reconstruction quality.
 
 ### Risks
 
-- Risk: tests could over-constrain numerical constants for a future physical
-  filter bank.
-- Mitigation: test shape, energy-routing, identity behavior, and mask-safe
-  contracts instead of exact spectral design details.
+- Risk: fixed step size can be problem-dependent.
+- Mitigation: expose it in the config and test only tiny deterministic
+  reference cases.

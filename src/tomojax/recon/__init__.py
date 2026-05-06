@@ -7,6 +7,13 @@ from types import ModuleType
 from typing import Any
 
 from . import fbp as _fbp_module, fista_tv as _fista_tv_module, spdhg_tv as _spdhg_tv_module
+from ._fista_reference import (
+    ReferenceFISTAConfig,
+    ReferenceFISTAResult,
+    ReferenceFISTATraceRow,
+    fista_reconstruct_reference,
+    write_fista_trace_csv,
+)
 from ._reference import reconstruct_average_reference
 from .types import Regulariser
 
@@ -33,10 +40,15 @@ SPDHGConfig = _spdhg_tv_module.SPDHGConfig
 __all__ = [
     "FBPConfig",
     "FistaConfig",
+    "ReferenceFISTAConfig",
+    "ReferenceFISTAResult",
+    "ReferenceFISTATraceRow",
     "Regulariser",
     "SPDHGConfig",
     "fbp",
+    "fista_reconstruct_reference",
     "fista_tv",
     "reconstruct_average_reference",
     "spdhg_tv",
+    "write_fista_trace_csv",
 ]
