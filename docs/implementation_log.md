@@ -2423,3 +2423,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The JAX loop-body annotation is structural only; focused gauge tests passed.
 - Proposed next fix for `just check`: clean `motion_models.py`.
+
+## 2026-05-06 — Clean Alignment Motion Model Lint
+
+### Summary
+
+- Added `motion_models.py` module and property docstrings.
+- Moved annotation-only `Sequence` import behind `TYPE_CHECKING`.
+- Cleaned local type-checking lint for `cast` and sorted `__all__`.
+
+### Decisions
+
+- Kept pose model basis construction, coefficient fitting, and expansion
+  behavior unchanged.
+- Stopped the legacy Ruff cleanup path after this slice per user direction and
+  will move the active plan directly to the smallest Phase 7 alternating-solver
+  smoke/artifact vertical slice.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/model/motion_models.py` passed.
+- `uv run ruff check src/tomojax/align/model/motion_models.py` passed.
+- `uv run pytest tests/test_align_motion_models.py -q` passed: 6 tests.
+- `just imports` passed.
+- `uv run pytest tests/test_align_motion_models.py tests/test_align_chunking.py tests/test_align_optimizers.py -q`
+  aborted with a JAX/Optax L-BFGS segmentation fault in
+  `tests/test_align_chunking.py::test_align_smooth_pose_model_clips_active_bounds_only`;
+  this is the known native L-BFGS path and is not caused by this docs/import
+  cleanup. No unrelated formatter churn was present from this validation.
+
+### Risks
+
+- The import movement is safe only while `Sequence` remains annotation-only;
+  focused motion-model tests passed.
+- Proposed next fix: switch from legacy Ruff cleanup to Phase 7 alternating
+  solver continuation smoke.

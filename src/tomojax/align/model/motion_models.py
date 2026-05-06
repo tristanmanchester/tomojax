@@ -1,12 +1,17 @@
+"""Low-dimensional pose trajectory models for alignment."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Sequence, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 
 from .dofs import DOF_INDEX
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 type PoseModelName = Literal["per_view", "polynomial", "spline"]
@@ -25,22 +30,27 @@ class PoseMotionModel:
 
     @property
     def n_views(self) -> int:
+        """Return the number of modeled views."""
         return int(self.basis.shape[0])
 
     @property
     def n_basis(self) -> int:
+        """Return the number of basis coefficients per active DOF."""
         return int(self.basis.shape[1])
 
     @property
     def n_active(self) -> int:
+        """Return the number of active pose DOFs."""
         return len(self.active_indices)
 
     @property
     def variable_count(self) -> int:
+        """Return the number of optimized model coefficients."""
         return self.n_basis * self.n_active
 
     @property
     def per_view_variable_count(self) -> int:
+        """Return equivalent unconstrained per-view variable count."""
         return self.n_views * self.n_active
 
 
@@ -88,9 +98,7 @@ def build_pose_motion_model(
         else _normalize_coordinate(np.asarray(scan_coordinate, dtype=np.float64))
     )
     if coord.shape != (int(n_views),):
-        raise ValueError(
-            f"scan_coordinate must have shape ({int(n_views)},), got {coord.shape}"
-        )
+        raise ValueError(f"scan_coordinate must have shape ({int(n_views)},), got {coord.shape}")
 
     basis_np = build_pose_basis(
         name,
@@ -160,10 +168,8 @@ def _normalize_pose_model(raw: str) -> PoseModelName:
     if value in {"per-view", "perview"}:
         value = "per_view"
     if value not in {"per_view", "polynomial", "spline"}:
-        raise ValueError(
-            "pose_model must be one of 'per_view', 'polynomial', or 'spline'"
-        )
-    return cast(PoseModelName, value)
+        raise ValueError("pose_model must be one of 'per_view', 'polynomial', or 'spline'")
+    return cast("PoseModelName", value)
 
 
 def _normalize_coordinate(coord: np.ndarray) -> np.ndarray:
@@ -237,8 +243,8 @@ def _linear_interpolation_basis(scan_coordinate: np.ndarray, knot_x: np.ndarray)
 
 
 __all__ = [
-    "PoseMotionModel",
     "PoseModelName",
+    "PoseMotionModel",
     "build_pose_basis",
     "build_pose_motion_model",
     "expand_motion_coefficients",
