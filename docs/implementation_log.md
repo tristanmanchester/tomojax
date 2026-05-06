@@ -5880,3 +5880,129 @@ Mode: `balanced`, existing sidecar ingestion path, no nuisance fitting.
   should be replaced by chunked or analytic reductions when optimizing speed.
 - 128^3/128-view was not attempted after fixed-truth failed at 64^3/64 views;
   the next correctness step is geometry convention/coupling diagnosis.
+
+## 2026-05-06 — Phase 8 Diagnostic Pause Summary
+
+### Summary
+
+- Pausing after the GPU memory-regression diagnostic reached a clean commit
+  (`dc2aa74`).
+- No new feature, report-field, or refactor slice is started in this entry.
+- The current evidence says the 32^3/4-view benchmark should remain CI/wiring
+  coverage only. It is not realistic alignment-quality evidence.
+
+### Five-Case 32^3 Benchmark Failures
+
+The five-case 32^3 pass generated planned sidecars and exercised existing
+sidecar ingestion, `benchmark_result.json`, `benchmark_report.md`, and compare
+artifacts. All five stopped-reconstruction runs completed but failed recovery:
+
+| Benchmark | Status | Criteria | Geometry | Total Time s | Notes |
+|---|---|---|---|---:|---|
+| `synth128_setup_global_tomo` | failed | failed | failed | 11.5794 | `det_u=3.625`, `theta=0.0218166`, `det_v=0` |
+| `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 13.3407 | `det_u=2.7415`, `det_v=2.5782`, `theta=0.2019` |
+| `synth128_lamino_axis_roll_pose` | failed | failed | failed | 13.3946 | `det_u=2.2334`, `det_v=0.7336`, `theta=0.1598` |
+| `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 13.5649 | `det_u=1.4893`, `det_v=0.0512`, `theta=0.0052336`; label `nuisance_residual_structure` |
+| `synth128_combined_nuisance_jumps` | failed | failed | failed | 13.4880 | `det_u=3.8751`, `det_v=0.9955`, `theta=0.0309604` |
+
+Best diagnosis: this pass validated benchmark plumbing and failure reporting,
+not solver quality. It should not be used to tune or judge alignment recovery.
+
+### Fixed-Truth Versus Stopped-Reconstruction Evidence
+
+The realistic setup-global ladder used a nuisance-free 64^3 volume and 64 views
+on `cuda:0` with the `balanced` profile:
+
+| Mode | Status | Geometry | det_u RMSE px | det_v RMSE px | theta RMSE rad | Final Residual | Volume NMSE | Schur Accepted | Total Time s |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth` | failed | failed | 6.9338 | 0.00666 | 0.02211 | 0.856277 | 0.686109 | true | 37.5096 |
+| `stopped_reconstruction` | failed | failed | 7.25 | 0 | 0.02182 | 0 | 0.686110 | true | 24.8489 |
+
+Interpretation:
+
+- `fixed_synthetic_truth` also fails, so the next blocker is not only
+  reconstruction/volume gauge handling.
+- The likely next diagnosis target is setup/pose/theta coupling or geometry
+  convention mapping.
+- A quick true-volume loss check found that the sidecar/projector convention is
+  internally consistent for setup-global: true geometry gives zero projection
+  loss, corrupted geometry is high loss, and true `det_u` alone nearly explains
+  the data. The Schur step, however, moves `det_u` only from 0 to about 0.316 px
+  versus the true 7.25 px after the `balanced` fixed-truth run.
+- The fixed-truth Schur trace shows accepted but trust-clipped pose-dominated
+  steps. First two setup updates were approximately
+  `[theta=8.35e-05, det_u=-0.0414]` then
+  `[theta=1.46e-05, det_u=-0.0142]` before gauge canonicalisation moved the
+  realised final `det_u` to about 0.316 px. This suggests setup update is being
+  weakly expressed or absorbed through pose/gauge coupling.
+
+### GPU Memory Finding
+
+Initial 64^3/64-view fixed-truth failed in Schur finite differences with a
+12.14 GiB GPU allocation for an HLO shaped like
+`f32[194,64,64,64,64]`. The allocation source was the shared
+finite-difference Jacobian evaluating all parameter perturbations with one
+`jax.vmap`, materializing parameter x view x volume work arrays.
+
+Implemented fix in `dc2aa74`:
+
+- `finite_difference_jacobian` now accumulates finite-difference columns
+  sequentially.
+- The 64^3 sidecar path is accepted and records the current projected detector
+  shape correctly.
+- `benchmark_result.json` records `jax_default_backend` and
+  `selected_jax_device`.
+
+After the fix, GPU component probes passed for 1/4/16/64 views:
+
+| Views | Projector | Backprojector | FISTA 1 Iter | Schur Fixed Truth | Schur Stopped Volume | Schur Fixed Truth + Nuisance |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.974s | 1.022s | 4.069s | 5.362s | 4.074s | 4.716s |
+| 4 | 1.016s | 1.199s | 4.337s | 6.484s | 4.890s | 5.488s |
+| 16 | 1.042s | 1.422s | 4.542s | 8.640s | 6.983s | 7.850s |
+| 64 | 1.066s | 2.130s | 5.287s | 18.062s | 15.870s | 17.672s |
+
+### Commands And Artifacts
+
+Key commands already run:
+
+- GPU probe:
+  `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda uv run python -c 'import jax; ...'`
+- 64^3 sidecar generation:
+  `generate_synthetic_dataset("synth128_setup_global_tomo", ..., size=64, clean=True, views=64)`
+- Component probes:
+  `.artifacts/phase8_setup_global_gpu_ladder/probes/probe_components.py --views 1|4|16|64`
+- Fixed-truth benchmark:
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir ... --geometry-update-volume-source fixed_synthetic_truth`
+- Stopped-reconstruction benchmark:
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir ... --geometry-update-volume-source stopped_reconstruction`
+- Compare:
+  `tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_setup_global_gpu_ladder/benchmark_comparison_64.md`
+
+Important artifacts:
+
+- `docs/benchmark_runs/2026-05-06-phase8-multi-case-32.md`
+- `docs/benchmark_runs/2026-05-06-phase8-setup-global-gpu-ladder.md`
+- `.artifacts/phase8_multi_case_32_benchmark_pass/`
+- `.artifacts/phase8_setup_global_gpu_ladder/datasets/synth128_setup_global_tomo_64/`
+- `.artifacts/phase8_setup_global_gpu_ladder/probes/components_1.json`
+- `.artifacts/phase8_setup_global_gpu_ladder/probes/components_4.json`
+- `.artifacts/phase8_setup_global_gpu_ladder/probes/components_16.json`
+- `.artifacts/phase8_setup_global_gpu_ladder/probes/components_64.json`
+- `.artifacts/phase8_setup_global_gpu_ladder/runs/64_fixed_truth_balanced/benchmark_result.json`
+- `.artifacts/phase8_setup_global_gpu_ladder/runs/64_stopped_reconstruction_balanced/benchmark_result.json`
+- `.artifacts/phase8_setup_global_gpu_ladder/benchmark_comparison_64.md`
+
+### Open Questions
+
+- Why does fixed-truth Schur make only a small realised `det_u` correction when
+  true `det_u` alone nearly explains the setup-global data?
+- Is setup motion being absorbed into per-view `dx_px` and then only partially
+  recovered by gauge canonicalisation?
+- Should setup-global oracle diagnosis temporarily use a setup-only solver or
+  stronger pose prior to separate setup recovery from pose gauge?
+- Are the Schur trust radius, robust weighting, or reduction-ratio adaptation
+  too conservative for large setup shifts at realistic view count?
+- Does the unsupported axis/roll metadata in the synthetic128 manifest need
+  clearer handling now that the v2 smoke projector only models theta and
+  detector shifts?
