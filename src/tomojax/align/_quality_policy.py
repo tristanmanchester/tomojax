@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Literal, TypeAlias, cast
+from typing import Literal, cast
 
-
-AlignmentQualityTier: TypeAlias = Literal[
+type AlignmentQualityTier = Literal[
     "proposal",
     "fast",
     "refine",
@@ -43,7 +42,7 @@ _POLICIES: dict[AlignmentQualityTier, ReconstructionQualityPolicy] = {
 def normalize_quality_tier(value: str) -> AlignmentQualityTier:
     tier = str(value).strip().lower().replace("-", "_")
     if tier in _POLICIES:
-        return cast(AlignmentQualityTier, tier)
+        return cast("AlignmentQualityTier", tier)
     if tier == "tortoise":
         return "reference"
     if tier == "lightning":

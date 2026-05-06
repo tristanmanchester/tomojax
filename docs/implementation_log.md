@@ -1961,3 +1961,35 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   slice.
 - Proposed next fix for `just check`: convert `_quality_policy.py` to a PEP
   695 alias, then continue into `_reconstruction_stage.py`.
+
+## 2026-05-06 — Clean Alignment Quality Policy Alias
+
+### Summary
+
+- Converted `_quality_policy.py` `AlignmentQualityTier` from `TypeAlias` to a
+  PEP 695 `type` alias.
+- Let Ruff apply the file-local cast quoting and import ordering changes.
+- Kept the public alias name and quality policy behavior unchanged.
+
+### Decisions
+
+- Kept this as a separate small cleanup slice because it fully removes the
+  `_quality_policy.py` blocker before the larger reconstruction-stage work.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_quality_policy.py` passed.
+- `uv run ruff format src/tomojax/align/_quality_policy.py` passed.
+- `uv run pytest tests/test_align_profiles.py -q` passed: 6 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `_quality_policy.py` is no longer in the failure list; the first
+  remaining blockers are in `_reconstruction_stage.py`, followed by
+  `_results.py`, `_setup_stage.py`, and broader repository lint backlog.
+  Formatter churn from `just check` was reverted outside this slice.
+
+### Risks
+
+- Minimal behavioral risk; focused profile tests passed.
+- Proposed next fix for `just check`: clean `_reconstruction_stage.py`
+  imports, local helper annotations, and statement count.
