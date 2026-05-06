@@ -546,6 +546,8 @@ def _write_artifacts(
         "projection_mask_npy": output_dir / "projection_mask.npy",
         "projection_stats_json": output_dir / "projection_stats.json",
         "recovery_tolerances_json": output_dir / "recovery_tolerances.json",
+        "residual_map_raw_npy": output_dir / "residual_maps" / "final_raw_residual.npy",
+        "residual_map_summary_json": output_dir / "residual_maps" / "summary.json",
         "residual_metrics_csv": output_dir / "residual_metrics.csv",
         "run_manifest_json": output_dir / "run_manifest.json",
         "verification_json": output_dir / "verification.json",
@@ -576,6 +578,14 @@ def _write_artifacts(
     write_pose_decomposition_csv(artifacts["pose_decomposition_csv"], final_geometry)
     _ = write_fista_trace_csv(fista_result, artifacts["fista_trace_csv"])
     _write_alignment_summary(artifacts["alignment_summary_csv"], summaries)
+    _write_residual_map_artifacts(
+        artifacts["residual_map_raw_npy"],
+        artifacts["residual_map_summary_json"],
+        final_volume=final_volume,
+        final_geometry=final_geometry,
+        observed=observed,
+        mask=mask,
+    )
     _write_residual_metrics(
         artifacts["residual_metrics_csv"],
         summaries,
@@ -585,7 +595,7 @@ def _write_artifacts(
         mask=mask,
     )
     _write_json(artifacts["verification_json"], verification)
-    _write_json(artifacts["artifact_index_json"], _artifact_index_payload(artifacts))
+    _write_json(artifacts["artifact_index_json"], _artifact_index_payload(output_dir, artifacts))
     _ = validate_run_artifacts(output_dir)
     return artifacts
 
@@ -738,13 +748,42 @@ def _view_residual_metric_rows(
     return tuple(rows)
 
 
-def _artifact_index_payload(artifacts: Mapping[str, Path]) -> dict[str, object]:
+def _write_residual_map_artifacts(
+    residual_path: Path,
+    summary_path: Path,
+    *,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    observed: jax.Array,
+    mask: jax.Array,
+) -> None:
+    predicted = project_parallel_reference(final_volume, final_geometry)
+    residual = jnp.asarray(predicted - observed, dtype=jnp.float32)
+    mask_arr = jnp.asarray(mask, dtype=bool)
+    _write_array(residual_path, residual)
+    _write_json(
+        summary_path,
+        {
+            "schema": "tomojax.residual_map_summary.v1",
+            "residual_map": residual_path.name,
+            "shape": list(residual.shape),
+            "dtype": str(residual.dtype),
+            "valid_pixel_fraction": float(jnp.mean(mask_arr.astype(jnp.float32))),
+            "rmse": float(jnp.sqrt(jnp.mean(residual[mask_arr] * residual[mask_arr]))),
+            "mae": float(jnp.mean(jnp.abs(residual[mask_arr]))),
+            "min": float(jnp.min(residual)),
+            "max": float(jnp.max(residual)),
+        },
+    )
+
+
+def _artifact_index_payload(output_dir: Path, artifacts: Mapping[str, Path]) -> dict[str, object]:
     return {
         "schema": "tomojax.artifact_index.v1",
         "artifacts": [
             {
                 "name": name,
-                "path": path.name,
+                "path": path.relative_to(output_dir).as_posix(),
                 "type": _artifact_type(path),
                 "media_type": _media_type(path),
                 "description": _artifact_description(name),
@@ -801,6 +840,8 @@ def _artifact_description(name: str) -> str:
         "projection_mask_npy": "Valid projection mask",
         "projection_stats_json": "Observed projection summary statistics",
         "recovery_tolerances_json": "Smoke recovery tolerance contract",
+        "residual_map_raw_npy": "Final raw projection residual map",
+        "residual_map_summary_json": "Final raw residual-map summary",
         "residual_metrics_csv": "Per-level residual metrics",
         "run_manifest_json": "Resolved smoke run manifest",
         "verification_json": "Smoke verification report",
@@ -830,11 +871,13 @@ def _write_final_volume(path: Path, volume: jax.Array) -> None:
 
 
 def _write_array(path: Path, array: jax.Array) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
         np.save(handle, np.asarray(jax.device_get(array), dtype=np.float32), allow_pickle=False)
 
 
 def _write_mask_array(path: Path, mask: jax.Array) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
         np.save(handle, np.asarray(jax.device_get(mask), dtype=bool), allow_pickle=False)
 
@@ -996,6 +1039,7 @@ def _failure_report_payload() -> dict[str, object]:
 
 
 def _write_json(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text(
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",

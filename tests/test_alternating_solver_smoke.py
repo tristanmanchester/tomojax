@@ -37,6 +37,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_manifest(result)
     _assert_gauge_reports(result)
     _assert_audit_reports(result)
+    _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
     _assert_recovery_tolerances(result)
     assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
@@ -108,6 +109,8 @@ def _expected_artifacts() -> set[str]:
         "projection_mask_npy",
         "projection_stats_json",
         "recovery_tolerances_json",
+        "residual_map_raw_npy",
+        "residual_map_summary_json",
         "residual_metrics_csv",
         "run_manifest_json",
         "verification_json",
@@ -123,6 +126,9 @@ def _assert_artifact_index(result: AlternatingSmokeResult, expected: set[str]) -
     assert {item["name"] for item in indexed_artifacts} == expected - {"artifact_index_json"}
     assert all(item["type"] for item in indexed_artifacts)
     assert all(item["description"] for item in indexed_artifacts)
+    indexed_paths = {item["name"]: item["path"] for item in indexed_artifacts}
+    assert indexed_paths["residual_map_raw_npy"] == "residual_maps/final_raw_residual.npy"
+    assert indexed_paths["residual_map_summary_json"] == "residual_maps/summary.json"
 
 
 def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
@@ -217,6 +223,22 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     )
     assert failure_report["status"] == "passed"
     assert failure_report["failure"] is None
+
+
+def _assert_residual_map_artifacts(result: AlternatingSmokeResult) -> None:
+    residual_map = cast("NDArray[np.float32]", np.load(result.artifacts["residual_map_raw_npy"]))
+    summary = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["residual_map_summary_json"].read_text(encoding="utf-8")),
+    )
+
+    assert residual_map.shape == (4, 32, 32)
+    assert residual_map.dtype == np.float32
+    assert summary["schema"] == "tomojax.residual_map_summary.v1"
+    assert summary["shape"] == [4, 32, 32]
+    assert summary["dtype"] == "float32"
+    assert summary["valid_pixel_fraction"] == 1.0
+    assert float(cast("float", summary["rmse"])) >= 0.0
 
 
 def _assert_residual_metrics(result: AlternatingSmokeResult) -> None:

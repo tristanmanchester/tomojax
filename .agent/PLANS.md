@@ -12,21 +12,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: add schema validation for the deterministic Phase 7 smoke artifact
+- Goal: persist deterministic residual-map artifacts for the Phase 7 smoke
   bundle.
 
 ### Scope
 
 - In scope:
-  - Give `tomojax.verify` a typed public artifact validation API.
-  - Validate required smoke JSON artifacts and indexed artifact existence.
-  - Make the smoke run fail loudly before returning if required artifacts are
-    missing or malformed.
+  - Write final raw projection residual maps under `residual_maps/`.
+  - Record a residual-map summary JSON with shape, dtype, and aggregate stats.
+  - Index nested residual-map artifacts and keep validation passing.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
   - Full production dataset loading through the new command.
-- Deep module owner: `tomojax.verify`, integrated by `tomojax.align`.
+- Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
@@ -36,22 +35,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add a typed `tomojax.verify` artifact validation API.
-- [x] Wire Phase 7 smoke artifact validation into the run.
-- [x] Add focused positive and negative validation tests.
+- [x] Add nested residual-map artifact paths.
+- [x] Write final raw residual map and summary.
+- [x] Extend smoke artifact/index tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the artifact validation slice.
+- [x] Commit the residual-map artifact slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/verify src/tomojax/align/_alternating.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run ruff check src/tomojax/verify src/tomojax/align/_alternating.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/verify src/tomojax/align/_alternating.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run pytest tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
   passed: 8 tests.
 - `just imports` passed.
 
@@ -60,13 +59,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use a lightweight stdlib validator rather than adding a runtime dependency
-  for the smoke contract.
-- Validate only the core JSON artifact schemas and artifact-index existence in
-  this slice.
+- Keep residual maps as `.npy` arrays for the smoke path so tests can validate
+  exact deterministic numeric content without image rendering dependencies.
+- Store nested artifact paths relative to the run directory in
+  `artifact_index.json`.
 
 ### Risks
 
-- Risk: CSV and array semantic validation is still shallow.
-- Mitigation: keep this API extensible and cover required JSON/index failures
-  first.
+- Risk: preview image and plot artifacts are still absent.
+- Mitigation: this slice closes the residual-map artifact gap first and leaves
+  human-facing previews for a separate UI/reporting pass.

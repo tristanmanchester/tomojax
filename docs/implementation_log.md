@@ -3032,3 +3032,37 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The validator does not yet check CSV column semantics, array shapes, or
   preview/residual-map directory contents.
+
+## 2026-05-06 — Phase 7 Residual Map Artifacts
+
+### Summary
+
+- Added `residual_maps/final_raw_residual.npy` for the deterministic Phase 7
+  smoke bundle.
+- Added `residual_maps/summary.json` with residual-map schema, shape, dtype,
+  valid-pixel fraction, and aggregate residual statistics.
+- Updated `artifact_index.json` to record run-directory-relative nested paths
+  and extended smoke tests to verify the indexed residual-map artifacts.
+
+### Decisions
+
+- Persisted residual maps as `.npy` arrays for the smoke path so deterministic
+  numeric content can be validated without image-rendering dependencies.
+- Kept human-facing preview images and plots out of this slice.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- The smoke run still does not emit preview slices or plots from the artifact
+  contract.
