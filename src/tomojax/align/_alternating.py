@@ -7,7 +7,7 @@ import csv
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -239,6 +239,8 @@ def _run_alternating_solver_smoke_impl(
             initial_loss=initial_loss,
             final_loss=final_loss,
             coarse_verified=coarse_verified,
+            true_geometry=true_geometry,
+            final_geometry=geometry,
             summaries=tuple(summaries),
         ),
     )
@@ -384,8 +386,11 @@ def _verification_payload(
     initial_loss: float,
     final_loss: float,
     coarse_verified: bool,
+    true_geometry: GeometryState,
+    final_geometry: GeometryState,
     summaries: tuple[AlternatingLevelSummary, ...],
 ) -> dict[str, object]:
+    recovery = _geometry_recovery_payload(true_geometry, final_geometry)
     return {
         "schema": "tomojax.alternating_smoke.verification.v1",
         "seed": cfg.seed,
@@ -408,6 +413,7 @@ def _verification_payload(
             "gauge_stability_tolerance": cfg.gauge_stability_tolerance,
             "parameter_update_tolerance": cfg.parameter_update_tolerance,
         },
+        "geometry_recovery": recovery,
         "levels": [_summary_payload(summary) for summary in summaries],
     }
 
@@ -420,6 +426,31 @@ def _level1_geometry_skipped(summaries: tuple[AlternatingLevelSummary, ...]) -> 
         and summary.skipped_geometry
         for summary in summaries
     )
+
+
+def _geometry_recovery_payload(
+    true_geometry: GeometryState,
+    final_geometry: GeometryState,
+) -> dict[str, object]:
+    raw_tolerances = _recovery_tolerances_payload()["geometry"]
+    if not isinstance(raw_tolerances, dict):
+        raise TypeError("geometry recovery tolerances must be a mapping")
+    tolerances = cast("dict[str, float]", raw_tolerances)
+    mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px - true_geometry.pose.dx_px)))
+    mean_phi_abs = abs(
+        float(np.mean(final_geometry.pose.phi_residual_rad - true_geometry.pose.phi_residual_rad))
+    )
+    mean_dx_limit = float(tolerances["mean_dx_abs_px_lt"])
+    mean_phi_limit = float(tolerances["mean_phi_abs_rad_lt"])
+    return {
+        "mean_dx_abs_px": mean_dx_abs,
+        "mean_dx_abs_px_passed": mean_dx_abs <= mean_dx_limit,
+        "mean_dx_abs_px_limit": mean_dx_limit,
+        "mean_phi_abs_rad": mean_phi_abs,
+        "mean_phi_abs_rad_passed": mean_phi_abs <= mean_phi_limit,
+        "mean_phi_abs_rad_limit": mean_phi_limit,
+        "passed": mean_dx_abs <= mean_dx_limit and mean_phi_abs <= mean_phi_limit,
+    }
 
 
 def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:

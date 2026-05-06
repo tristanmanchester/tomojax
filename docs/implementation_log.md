@@ -2894,3 +2894,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - `geometry_corrupted.json` currently mirrors `geometry_initial.json`; future
   production dataset ingestion may need separate supplied-vs-initial records.
+
+## 2026-05-06 — Phase 7 Smoke Recovery Metrics
+
+### Summary
+
+- Added final-vs-true smoke geometry recovery metrics to `verification.json`.
+- Compared mean residual `dx` and `phi_residual` errors against the
+  smoke-specific `recovery_tolerances.json` thresholds.
+- Added focused tests for recovery pass/fail, measured values, and limits.
+
+### Decisions
+
+- Kept recovery metrics limited to the gauge-canonicalised mean pose quantities
+  represented by the current reference smoke path.
+- Reused the same smoke tolerance payload written to `recovery_tolerances.json`
+  so the verification report and tolerance artifact stay aligned.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- Recovery coverage is still limited to smoke-scale gauge recovery, not the
+  full 5-DOF synthetic recovery suite.

@@ -12,15 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: persist truth and corrupted-input provenance with the Phase 7
-  deterministic smoke run.
+- Goal: record geometry recovery metrics in the Phase 7 deterministic smoke
+  verification report.
 
 ### Scope
 
 - In scope:
-  - Persist `ground_truth_volume.npy`.
-  - Emit `geometry_true.json` and explicit `geometry_corrupted.json`.
-  - Add those artifacts to `artifact_index.json` and focused tests.
+  - Compute final-vs-true smoke geometry recovery metrics after
+    canonicalisation.
+  - Compare those metrics against `recovery_tolerances.json` thresholds.
+  - Record the metrics and pass/fail flags in `verification.json`.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -35,11 +36,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Write truth volume and true/corrupted geometry artifacts.
-- [x] Extend artifact index/test coverage.
+- [x] Add geometry recovery metric computation.
+- [x] Record recovery pass/fail in verification artifacts.
+- [x] Extend focused smoke tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the smoke truth provenance slice.
+- [x] Commit the smoke recovery metrics slice.
 
 ### Validation
 
@@ -58,13 +60,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- `geometry_initial.json` remains the alignment initial geometry; add
-  `geometry_corrupted.json` as the explicit synthetic corrupted-input name.
-- `geometry_true.json` should be the zero-gauge geometry used before synthetic
-  corruption.
+- Use the same smoke-specific recovery tolerances written to
+  `recovery_tolerances.json`.
+- Keep metrics deterministic and limited to the DOFs represented in the current
+  reference projector.
 
 ### Risks
 
-- Risk: this does not replace the full synthetic dataset generator.
-- Mitigation: mirror the key artifact names from the benchmark contract in the
-  smoke run.
+- Risk: smoke recovery metrics cover only gauge-canonicalized mean pose
+  recovery, not full 5-DOF pose recovery.
+- Mitigation: record the limited metric names explicitly.

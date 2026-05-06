@@ -53,6 +53,13 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     thresholds = cast("dict[str, float]", result.verification["thresholds"])
     assert thresholds["gauge_stability_tolerance"] == 1.0e-10
     assert thresholds["parameter_update_tolerance"] == 2.0
+    recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
+    assert recovery["passed"] is True
+    mean_dx_abs = cast("float", recovery["mean_dx_abs_px"])
+    mean_phi_abs = cast("float", recovery["mean_phi_abs_rad"])
+    assert mean_dx_abs <= 1.0e-10
+    assert mean_phi_abs <= 1.0e-10
+    assert recovery["mean_dx_abs_px_limit"] == 1.0e-10
     assert result.levels[0].geometry_updates == 1
     assert result.levels[0].executed_geometry_updates == 1
     assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
