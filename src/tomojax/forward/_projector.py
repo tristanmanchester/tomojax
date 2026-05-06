@@ -49,20 +49,60 @@ def _project_one_view(
     dx_px: jax.Array,
     dz_px: jax.Array,
 ) -> jax.Array:
-    quadrant = jnp.asarray(jnp.floor((theta_rad % jnp.pi) / (jnp.pi / 4.0)), dtype=jnp.int32) % 4
-    rotated = jax.lax.switch(
-        quadrant,
-        (
-            lambda x: x,
-            lambda x: jnp.rot90(x, k=1, axes=(0, 1)),
-            lambda x: jnp.rot90(x, k=2, axes=(0, 1)),
-            lambda x: jnp.rot90(x, k=3, axes=(0, 1)),
-        ),
-        volume,
-    )
+    rotated = _rotate_xy_linear(volume, theta_rad)
     projection = jnp.sum(rotated, axis=1)
     projection = _shift_periodic_linear(projection, dx_px=dx_px, dz_px=dz_px)
     return projection.astype(jnp.float32)
+
+
+def _rotate_xy_linear(volume: jax.Array, theta_rad: jax.Array) -> jax.Array:
+    x_coords = jnp.arange(volume.shape[0], dtype=jnp.float32)
+    y_coords = jnp.arange(volume.shape[1], dtype=jnp.float32)
+    x_grid, y_grid = jnp.meshgrid(x_coords, y_coords, indexing="ij")
+    x_center = (jnp.asarray(volume.shape[0], dtype=jnp.float32) - 1.0) / 2.0
+    y_center = (jnp.asarray(volume.shape[1], dtype=jnp.float32) - 1.0) / 2.0
+    x_rel = x_grid - x_center
+    y_rel = y_grid - y_center
+    cos_t = jnp.cos(theta_rad)
+    sin_t = jnp.sin(theta_rad)
+    source_x = cos_t * x_rel + sin_t * y_rel + x_center
+    source_y = -sin_t * x_rel + cos_t * y_rel + y_center
+
+    def sample_slice(slice_xy: jax.Array) -> jax.Array:
+        return _sample_image_linear_zero(slice_xy, source_x=source_x, source_y=source_y)
+
+    return jax.vmap(sample_slice, in_axes=2, out_axes=2)(volume)
+
+
+def _sample_image_linear_zero(
+    image: jax.Array,
+    *,
+    source_x: jax.Array,
+    source_y: jax.Array,
+) -> jax.Array:
+    x0 = jnp.floor(source_x).astype(jnp.int32)
+    y0 = jnp.floor(source_y).astype(jnp.int32)
+    x1 = x0 + 1
+    y1 = y0 + 1
+    x_frac = source_x - jnp.floor(source_x)
+    y_frac = source_y - jnp.floor(source_y)
+    top = (1.0 - y_frac) * _take2d_zero(image, x0, y0) + y_frac * _take2d_zero(image, x0, y1)
+    bottom = (1.0 - y_frac) * _take2d_zero(image, x1, y0) + y_frac * _take2d_zero(
+        image,
+        x1,
+        y1,
+    )
+    return (1.0 - x_frac) * top + x_frac * bottom
+
+
+def _take2d_zero(image: jax.Array, x_index: jax.Array, y_index: jax.Array) -> jax.Array:
+    valid = (
+        (x_index >= 0) & (x_index < image.shape[0]) & (y_index >= 0) & (y_index < image.shape[1])
+    )
+    clipped_x = jnp.clip(x_index, 0, image.shape[0] - 1)
+    clipped_y = jnp.clip(y_index, 0, image.shape[1] - 1)
+    values = image[clipped_x, clipped_y]
+    return jnp.where(valid, values, 0.0)
 
 
 def _shift_periodic_linear(image: jax.Array, *, dx_px: jax.Array, dz_px: jax.Array) -> jax.Array:

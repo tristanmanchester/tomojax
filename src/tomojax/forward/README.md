@@ -7,8 +7,9 @@ and geometry-parameter reductions for the v2 JAX reference path.
 
 The current implementation is a minimal reference slice for tiny smoke tests:
 it supports a simple parallel-beam projection of cubic volumes plus per-view
-detector shifts. Full physical ray geometry, laminography, detector roll, axis
-rotations, and Jacobian checks remain future Phase 2 work.
+detector shifts and differentiable in-plane view-angle rotation. Full physical
+ray geometry, laminography, detector roll, axis rotations, and Jacobian checks
+remain future Phase 2 work.
 
 ## Public API
 
@@ -49,6 +50,8 @@ Forbidden dependencies:
   path.
 - Detector shifts in the minimal reference projector use differentiable periodic
   linear interpolation.
+- View-angle rotation in the minimal reference projector uses bilinear sampling
+  in the x-y plane and zero outside-volume boundaries.
 - Residual filters are projection-domain JAX reference policies. The current
   public policies are `raw`, `lowpass_gaussian`, and
   `bandpass_difference_of_gaussians`.

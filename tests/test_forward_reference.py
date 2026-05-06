@@ -74,6 +74,47 @@ def test_project_parallel_reference_arrays_is_differentiable_for_dx() -> None:
     assert float(gradient) < 0.0
 
 
+def test_project_parallel_reference_changes_smoothly_with_theta() -> None:
+    volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
+    volume = volume.at[1, 2, 1].set(1.0)
+    volume = volume.at[3, 1, 3].set(0.5)
+
+    base = project_parallel_reference_arrays(
+        volume,
+        theta_rad=jnp.asarray([0.0], dtype=jnp.float32),
+        dx_px=jnp.asarray([0.0], dtype=jnp.float32),
+        dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+    )
+    tilted = project_parallel_reference_arrays(
+        volume,
+        theta_rad=jnp.asarray([0.2], dtype=jnp.float32),
+        dx_px=jnp.asarray([0.0], dtype=jnp.float32),
+        dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+    )
+
+    assert float(jnp.linalg.norm(tilted - base)) > 0.0
+
+
+def test_project_parallel_reference_arrays_is_differentiable_for_theta() -> None:
+    volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
+    volume = volume.at[1, 2, 1].set(1.0)
+    volume = volume.at[3, 1, 3].set(0.5)
+
+    def pixel_value(theta_rad: jax.Array) -> jax.Array:
+        projected = project_parallel_reference_arrays(
+            volume,
+            theta_rad=jnp.asarray([theta_rad], dtype=jnp.float32),
+            dx_px=jnp.asarray([0.0], dtype=jnp.float32),
+            dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+        )
+        return projected[0, 1, 1]
+
+    gradient = jax.grad(pixel_value)(jnp.asarray(0.2, dtype=jnp.float32))
+
+    assert jnp.isfinite(gradient)
+    assert abs(float(gradient)) > 1e-6
+
+
 def test_masked_whitened_residual_zeros_invalid_pixels() -> None:
     predicted = jnp.array([[2.0, 4.0], [6.0, 8.0]], dtype=jnp.float32)
     observed = jnp.ones((2, 2), dtype=jnp.float32)

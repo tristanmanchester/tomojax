@@ -973,3 +973,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - `just check` remains blocked by broad transitional legacy Ruff failures
   recorded in the Milestone 0 cleanup entry.
 - Full schedule execution over a multiresolution pyramid is still incomplete.
+
+## 2026-05-06 — Make Reference Projector Differentiable In Theta
+
+### Summary
+
+- Replaced the minimal reference projector's quadrant `rot90` angle handling
+  with bilinear x-y plane rotation.
+- Preserved the existing differentiable periodic detector-shift path after
+  projection.
+- Added tests showing projection output changes with small theta updates and
+  autodiff returns a finite nonzero theta gradient.
+- Updated `tomojax.forward` documentation to describe the new angle sampling
+  boundary policy.
+
+### Decisions
+
+- The reference angle rotation now samples outside-volume coordinates as zero.
+  Detector shifts remain periodic because that behavior was already covered by
+  the current smoke/reference contracts.
+- This is still the minimal parallel projector. It does not yet implement
+  laminography, detector roll, axis rotations, or full physical ray geometry.
+
+### Validation
+
+- `uv run ruff check src/tomojax/forward/_projector.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/forward/_projector.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/forward/_projector.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_reference_fista.py tests/test_v2_module_skeleton.py -q`
+  passed: 20 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
+  passed: 141 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Full physical angle/pose sensitivity remains incomplete until the projector
+  models axis rotations, detector roll, and laminography geometry.
