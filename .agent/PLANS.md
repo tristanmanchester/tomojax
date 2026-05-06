@@ -11,22 +11,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Milestone 0 bridge before Phase 1
-- Goal: finish the guardrail/architecture-smell audit and define the smallest
-  deletion/migration path into the v2 deep-module skeleton.
+- Phase: Skeleton bridge before canonical Phase 0/Phase 1 implementation
+- Goal: make the canonical v2 top-level deep-module skeleton importable and
+  enforceable without migrating numerical behavior yet.
 
 ### Scope
 
 - In scope:
-  - Record current guardrail status against the live tree.
-  - Identify pre-v2 architecture smells that block Phase 1.
-  - Pick the first deep-module migration target and keep checks strict.
+  - Add missing top-level v2 package facades: `nuisance`, `forward`, `verify`,
+    and `datasets`.
+  - Add missing `api.py`/`README.md` public-boundary files for existing
+    top-level owners where practical.
+  - Update import-linter to include the newly importable top-level modules.
+  - Add a small contract test that every canonical v2 top-level module has the
+    required facade files and imports cleanly.
 - Out of scope:
-  - Implementing benchmark datasets, projectors, reconstruction, or optimisers.
-  - Preserving old CLI/API compatibility surfaces unless explicitly needed for a
-    benchmark/reference primitive.
-- Deep module owner: repository-level architecture guardrails; first migration
-  candidate is `tomojax.core`/`tomojax.io` ownership of former `tomojax.utils`.
+  - Implementing synthetic datasets, projectors, residuals, reconstruction, or
+    optimisers.
+  - Deleting old `data`, `calibration`, `bench`, or nested `align/*`
+    transitional owners.
+  - Changing old CLI behavior or public command compatibility.
+- Deep module owner: repository-level v2 skeleton and import-boundary
+  guardrails.
 
 ### Design Sources
 
@@ -40,109 +46,64 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Read `AGENTS.md` and the canonical phased plan.
-- [x] Verify the v2 design docs and guardrail files exist.
-- [x] Run current import-boundary guardrails.
-- [x] Run current typecheck to capture the transitional failure shape.
-- [x] Identify public API/private implementation gaps.
-- [x] Migrate or delete the first shallow utility surface without weakening
-  checks.
+- [x] Finish and commit the Milestone 0 utility cleanup.
+- [x] Read the repo-layout deep-module skeleton requirements.
+- [x] Add missing top-level skeleton packages and facade files.
 - [x] Add or update tests where practical before implementation.
-- [x] Delete superseded code introduced or made obsolete by this milestone.
 - [x] Update import-linter and public-import checks if module boundaries changed.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
+- [ ] Commit the skeleton bridge slice if validations pass.
 
 ### Validation
 
+- `uv run ruff check src/tomojax/nuisance src/tomojax/forward
+  src/tomojax/verify src/tomojax/datasets src/tomojax/cli/__init__.py
+  src/tomojax/cli/api.py src/tomojax/align/api.py src/tomojax/recon/api.py
+  tests/test_v2_module_skeleton.py` passes.
+- `uv run basedpyright src/tomojax/nuisance src/tomojax/forward
+  src/tomojax/verify src/tomojax/datasets src/tomojax/cli/__init__.py
+  src/tomojax/cli/api.py src/tomojax/align/api.py src/tomojax/recon/api.py
+  tests/test_v2_module_skeleton.py` passes with 0 errors and 0 warnings.
+- `uv run pytest tests/test_v2_module_skeleton.py -q` passes with 2 tests.
 - `just imports` passes.
-- `uv run ruff check src/tomojax/io src/tomojax/calibration/_json.py
-  tests/test_json_utils.py` passes.
-- `uv run basedpyright src/tomojax/io` passes with 0 errors and 0 warnings.
-- `uv run pytest tests/test_json_utils.py tests/test_manifest.py
-  tests/test_align_checkpoint.py -q` passes with 18 tests.
-- `uv run ruff check src/tomojax/geometry tests/test_regression_geometry_io.py
-  tests/test_axes_io.py tests/test_issue_fix_pr.py` passes.
-- `uv run basedpyright src/tomojax/geometry` passes with 0 errors and 0
-  warnings.
-- `uv run pytest tests/test_axes_io.py tests/test_regression_geometry_io.py
-  tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py
-  tests/test_align_roi.py -q` passes with 66 tests.
-- `uv run ruff check src/tomojax/motion tests/test_phasecorr.py` passes.
-- `uv run basedpyright src/tomojax/motion` passes with 0 errors and 0
-  warnings.
-- `uv run pytest tests/test_phasecorr.py -q` passes with 5 tests.
-- `uv run ruff check src/tomojax/backends tests/test_memory.py` passes.
-- `uv run pytest tests/test_memory.py tests/test_cli_geometry_build.py
-  tests/test_small_module_coverage.py -q` passes with 40 tests.
-- `uv run ruff check src/tomojax/core/_logging.py src/tomojax/core/api.py
-  src/tomojax/core/__init__.py tests/test_logging.py
-  tests/test_small_module_coverage.py` passes.
-- `uv run basedpyright src/tomojax/core/_logging.py src/tomojax/core/api.py
-  src/tomojax/core/__init__.py` passes with 0 errors and 0 warnings.
-- `uv run pytest tests/test_logging.py tests/test_small_module_coverage.py -q`
-  passes with 9 tests.
+- `uv run ruff format --check src/tomojax/nuisance src/tomojax/forward
+  src/tomojax/verify src/tomojax/datasets src/tomojax/cli/__init__.py
+  src/tomojax/cli/api.py src/tomojax/align/api.py src/tomojax/recon/api.py
+  tests/test_v2_module_skeleton.py` passes.
 - `uv run pytest tests/test_json_utils.py tests/test_manifest.py
   tests/test_align_checkpoint.py tests/test_axes_io.py
   tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py
   tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py
-  tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py -q`
-  passes with 105 tests.
-- `uv run basedpyright` currently fails on the transitional tree with 4456
-  errors and 9341 warnings. First reported failures are in `align/_config.py`,
-  `align/_observer.py`, `align/_pose_stage.py`, and `tests/test_views.py`.
-- `just check` currently fails during `uv run ruff check --fix src tests tools`
-  after formatting. The first current failures are broad pre-existing
-  transitional lint debt in old modules such as `src/tomojax/__init__.py`,
-  `src/tomojax/align/_config.py`, and `src/tomojax/align/_pose_stage.py`;
-  the command reported 2065 errors total, 448 fixed, and 1617 remaining.
-  Proposed next fix: continue deleting or migrating old transitional owners
-  into v2 deep modules rather than weakening Ruff or bulk-fixing legacy code
-  outside the active milestone.
+  tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py
+  tests/test_v2_module_skeleton.py -q` passes with 107 tests.
+- `just check` is not rerun for this skeleton-only slice because the immediately
+  preceding Milestone 0 run already stopped in broad transitional legacy Ruff
+  debt before reaching this new code. Next fix remains owner-by-owner migration
+  or deletion of old transitional modules.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: keep the existing strict gates and treat failures as migration work,
-  not as reasons to loosen configuration.
-- Decision: make `tomojax.utils` the first cleanup target because production
-  imports remain in `align/io/checkpoint.py`, `calibration/_json.py`, and
-  `cli/manifest.py`, while `utils` is explicitly forbidden by the v2
-  architecture.
-- Decision: move the shared JSON normalization contract into `tomojax.io`
-  because manifests, checkpoint metadata, and calibration JSON all serialize
-  artifacts rather than perform numerical core work.
-- Decision: move axis-order and detector-FOV helpers into `tomojax.geometry`
-  because they describe geometry metadata and reconstruction domains, not
-  generic utilities.
-- Decision: move phase-correlation translation estimation into
-  `tomojax.motion` because it estimates per-view motion used by alignment
-  initialization.
-- Decision: move backend memory and gather-dtype probes into
-  `tomojax.backends` because they are runtime backend policy, not generic
-  utilities.
-- Decision: move logging/progress formatting into `tomojax.core` as shared
-  runtime instrumentation so the forbidden `tomojax.utils` package can be
-  deleted.
-- Deviation from canonical docs: this is a Milestone 0 bridge before canonical
-  Phase 1, because the tree still has old module owners and no top-level
-  `api.py`/`README.md` deep-module skeletons.
-- Rationale: migrating the shallow utility surface first removes a forbidden
-  abstraction layer without committing to the full Phase 1 public API shape.
+- Decision: keep this as a skeleton-only bridge so the repo shape converges on
+  `docs/tomojax-v2/03_repo_layout.md` before Phase 0 benchmark and Phase 1
+  geometry implementations add behavior.
+- Decision: empty new facades should expose `__all__: tuple[str, ...] = ()`
+  until the owning milestone introduces a typed public API. This avoids
+  placeholder classes that would become compatibility debt.
+- Deviation from canonical docs: old transitional owners remain importable for
+  now. They will be deleted or migrated owner-by-owner in later milestones.
+- Rationale: executable package boundaries help future migrations land in the
+  correct owner without pretending the numerical implementation already exists.
 
 ### Risks
 
-- Risk: old tests are white-box coupled to private implementation and
-  transitional module names.
-- Mitigation: update tests only as the corresponding public/deep-module owner is
-  introduced, keeping explicit `check-public-imports: allow-private` exceptions
-  temporary and visible.
-- Risk: large typecheck failure volume can hide new regressions.
-- Mitigation: record current failure shape and run narrower validation after
-  each scoped migration.
-- Risk: `tomojax.backends._memory` still contains dynamic JAX/device probes that
-  do not pass narrow basedpyright yet.
-- Mitigation: keep its public facade typed and cover behavior with focused
-  memory tests until backend policy is redesigned in a later milestone.
+- Risk: adding empty modules can look like completed implementation.
+- Mitigation: READMEs and the implementation log must mark these as skeleton
+  facades only.
+- Risk: old `tomojax.data` and future `tomojax.datasets` may temporarily
+  coexist.
+- Mitigation: keep `datasets` empty until the synthetic benchmark foundation
+  owns deterministic generators and manifests.

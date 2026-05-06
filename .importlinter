@@ -7,9 +7,13 @@ type = layers
 layers =
     tomojax.bench
     tomojax.align
+    tomojax.verify
+    tomojax.datasets
     tomojax.data
     tomojax.recon
+    tomojax.forward
     tomojax.backends
+    tomojax.nuisance
     tomojax.calibration
     tomojax.motion
     tomojax.geometry

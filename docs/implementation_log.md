@@ -361,3 +361,60 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - `just check` remains the milestone target, but passing it requires continuing
   the planned migration/deletion of old transitional modules rather than
   weakening or mass-suppressing checks.
+
+## 2026-05-06 — Add The v2 Deep-Module Skeleton
+
+### Summary
+
+- Added missing canonical top-level v2 skeleton packages:
+  - `tomojax.nuisance`
+  - `tomojax.forward`
+  - `tomojax.verify`
+  - `tomojax.datasets`
+- Added `api.py`, `__init__.py`, and `README.md` facade files for the new
+  skeleton packages.
+- Added missing v2 facade files for existing top-level owners:
+  - `tomojax.cli`
+  - `tomojax.align`
+  - `tomojax.recon`
+- Added `tests/test_v2_module_skeleton.py` to enforce the top-level
+  `README.md`/`__init__.py`/`api.py` contract and import every canonical facade.
+- Added the newly importable v2 modules to `.importlinter`.
+
+### Decisions
+
+- Empty new facades export no public names until the owning implementation
+  milestone introduces typed contracts. This avoids placeholder APIs that would
+  become compatibility debt.
+- Kept old transitional owners (`tomojax.data`, `tomojax.calibration`,
+  `tomojax.bench`, and nested alignment packages) importable for now. They will
+  be deleted or migrated owner-by-owner instead of hidden behind new
+  compatibility layers.
+- Kept the skeleton bridge behavior-free. The next implementation milestone
+  should add actual benchmark/dataset or geometry behavior against these
+  boundaries.
+
+### Validation
+
+- `uv run ruff check src/tomojax/nuisance src/tomojax/forward src/tomojax/verify src/tomojax/datasets src/tomojax/cli/__init__.py src/tomojax/cli/api.py src/tomojax/align/api.py src/tomojax/recon/api.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/nuisance src/tomojax/forward src/tomojax/verify src/tomojax/datasets src/tomojax/cli/__init__.py src/tomojax/cli/api.py src/tomojax/align/api.py src/tomojax/recon/api.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_v2_module_skeleton.py -q` passed: 2 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run ruff format --check src/tomojax/nuisance src/tomojax/forward src/tomojax/verify src/tomojax/datasets src/tomojax/cli/__init__.py src/tomojax/cli/api.py src/tomojax/align/api.py src/tomojax/recon/api.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py -q`
+  passed: 107 tests.
+
+### Risks
+
+- `just check` was not rerun for this skeleton-only slice because the immediately
+  preceding run already stopped in broad legacy Ruff failures before reaching
+  the new code. Passing `just check` still requires migrating or deleting old
+  transitional modules rather than weakening checks.
+- `tomojax.datasets` and old `tomojax.data` temporarily coexist. The synthetic
+  benchmark foundation should make `datasets` the owner for deterministic v2
+  generators and then delete or migrate old data code deliberately.
