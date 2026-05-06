@@ -33,6 +33,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_summary_rows(result)
     _assert_geometry_trace(result)
     _assert_plots_summary(result)
+    _assert_schur_diagnostics(result)
     _assert_saved_volume(result)
     _assert_truth_artifacts(result)
     _assert_input_arrays(result)
@@ -55,6 +56,11 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert result.verification["level1_geometry_skipped"] is True
     assert result.verification["skipped_levels"] == [2]
     assert result.verification["status"] == "passed"
+    _assert_verification_contract(result)
+    _assert_level_exit_contract(result)
+
+
+def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
     verification_summary = cast("dict[str, bool]", result.verification["summary"])
     assert verification_summary["final_reconstruction_valid"] is True
     assert verification_summary["gauge_constraints_satisfied"] is True
@@ -63,6 +69,8 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     verification_metrics = cast("dict[str, float]", result.verification["metrics"])
     assert verification_metrics["residual_before"] == result.levels[0].loss_before
     assert verification_metrics["residual_after"] == result.verification["final_loss"]
+    assert verification_summary["projection_residual_improved"] is True
+    assert verification_metrics["residual_after"] < verification_metrics["residual_before"]
     assert verification_summary["projection_residual_improved"] == (
         verification_metrics["residual_after"] <= verification_metrics["residual_before"] + 1.0e-5
     )
@@ -75,6 +83,15 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert thresholds["parameter_update_tolerance"] == 2.0
     recovery = cast("dict[str, float | bool]", result.verification["geometry_recovery"])
     assert recovery["passed"] is True
+    assert cast("float", recovery["theta_realized_rmse_rad"]) <= cast(
+        "float", recovery["theta_realized_rmse_rad_limit"]
+    )
+    assert cast("float", recovery["det_u_realized_rmse_px"]) <= cast(
+        "float", recovery["det_u_realized_rmse_px_limit"]
+    )
+    assert cast("float", recovery["det_v_realized_rmse_px"]) <= cast(
+        "float", recovery["det_v_realized_rmse_px_limit"]
+    )
     mean_dx_abs = cast("float", recovery["mean_dx_abs_px"])
     mean_phi_abs = cast("float", recovery["mean_phi_abs_rad"])
     assert mean_dx_abs <= 1.0e-10
@@ -84,6 +101,9 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert volume_recovery["passed"] is True
     assert cast("float", volume_recovery["nmse"]) <= cast("float", volume_recovery["nmse_limit"])
     assert cast("float", volume_recovery["rmse"]) >= 0.0
+
+
+def _assert_level_exit_contract(result: AlternatingSmokeResult) -> None:
     assert result.levels[0].geometry_updates == 1
     assert result.levels[0].executed_geometry_updates == 1
     assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
@@ -91,7 +111,10 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert result.levels[0].finite_loss
     assert result.levels[0].gauge_stable
     assert result.levels[0].parameter_update_small
-    assert result.levels[0].parameter_update_norm == 1.25
+    assert result.levels[0].parameter_update_norm > 0.0
+    assert result.levels[0].schur_diagnostics is not None
+    assert result.levels[0].schur_diagnostics.accepted is True
+    assert result.levels[0].schur_diagnostics.actual_reduction > 0.0
     assert result.levels[1].skipped_level is True
     assert result.levels[1].residual_filter_kinds == (
         "lowpass_gaussian",
@@ -138,6 +161,7 @@ def _expected_artifacts() -> set[str]:
         "residual_map_summary_json",
         "residual_metrics_csv",
         "run_manifest_json",
+        "schur_diagnostics_json",
         "verification_json",
     }
 
@@ -179,8 +203,11 @@ def _assert_geometry_trace(result: AlternatingSmokeResult) -> None:
     assert [row["level_factor"] for row in rows] == ["4", "2", "1"]
     assert rows[0]["geometry_updates_requested"] == "1"
     assert rows[0]["geometry_updates_executed"] == "1"
-    assert rows[0]["parameter_update_norm"] == "1.25"
+    assert float(rows[0]["parameter_update_norm"]) > 0.0
     assert rows[0]["verified"] == "True"
+    assert rows[0]["schur_accepted"] == "True"
+    assert float(rows[0]["schur_actual_reduction"]) > 0.0
+    assert float(rows[0]["schur_dense_step_difference_norm"]) < 5.0e-3
     assert rows[1]["skipped_level"] == "True"
     assert rows[2]["skipped_geometry"] == "True"
     assert rows[2]["early_exit_reason"] == "coarse_verification_passed"
@@ -197,6 +224,25 @@ def _assert_plots_summary(result: AlternatingSmokeResult) -> None:
     geometry_loss = cast("list[dict[str, object]]", payload["geometry_loss"])
     assert fista_loss[0]["iteration"] == 0
     assert [row["level_factor"] for row in geometry_loss] == [4, 2, 1]
+
+
+def _assert_schur_diagnostics(result: AlternatingSmokeResult) -> None:
+    payload = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["schur_diagnostics_json"].read_text(encoding="utf-8")),
+    )
+    assert payload["schema"] == "tomojax.schur_diagnostics.v1"
+    assert payload["status"] == "passed"
+    assert payload["solver"] == "joint_schur_lm_reference"
+    assert payload["active_setup_parameters"] == [
+        "theta_offset_rad",
+        "det_u_px",
+        "det_v_px",
+    ]
+    diagnostics = cast("dict[str, object]", payload["diagnostics"])
+    assert diagnostics["accepted"] is True
+    assert float(cast("float", diagnostics["actual_reduction"])) > 0.0
+    assert len(cast("list[float]", diagnostics["current_loss_by_view"])) == 4
 
 
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:
@@ -219,8 +265,9 @@ def _assert_truth_artifacts(result: AlternatingSmokeResult) -> None:
     )
     true_setup = cast("dict[str, dict[str, object]]", true_geometry["setup"])
     corrupted_setup = cast("dict[str, dict[str, object]]", corrupted_geometry["setup"])
-    assert true_setup["det_u_px"]["value"] == 0.0
-    assert corrupted_setup["det_u_px"]["value"] == 0.0
+    assert true_setup["det_u_px"]["value"] == 0.18
+    assert true_setup["det_u_px"]["value"] != corrupted_setup["det_u_px"]["value"]
+    assert true_setup["theta_offset_rad"]["value"] != corrupted_setup["theta_offset_rad"]["value"]
 
 
 def _assert_input_arrays(result: AlternatingSmokeResult) -> None:
@@ -301,8 +348,8 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert gates_by_name["backend_provenance"]["passed"] is True
     assert gates_by_name["projection_residual_improvement"]["severity"] == "warning"
     warnings = cast("list[dict[str, object]]", failure_report["warnings"])
-    if gates_by_name["projection_residual_improvement"]["passed"] is False:
-        assert warnings[0]["class"] == "no_improvement"
+    assert gates_by_name["projection_residual_improvement"]["passed"] is True
+    assert warnings == []
 
     backend_report = cast(
         "dict[str, object]",
@@ -385,7 +432,8 @@ def _assert_recovery_tolerances(result: AlternatingSmokeResult) -> None:
     geometry = cast("dict[str, float]", payload["geometry"])
     volume = cast("dict[str, float]", payload["volume"])
     verification = cast("dict[str, bool]", payload["verification"])
-    assert geometry["mean_dx_abs_px_lt"] == 1.0e-10
+    assert geometry["theta_realized_rmse_rad_lt"] == 8.0e-2
+    assert geometry["mean_gauge_abs_lt"] == 1.0e-10
     assert volume["nmse_lt"] == 10.0
     assert verification["gauge_stable"] is True
 

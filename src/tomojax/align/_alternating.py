@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
@@ -20,6 +20,13 @@ from tomojax.align._continuation import (
     ContinuationSchedule,
     reference_continuation_schedule,
 )
+from tomojax.align._joint_schur_lm import (
+    JointSchurDiagnostics,
+    JointSchurLMConfig,
+    JointSchurLMResult,
+    joint_schur_normal_eq_summary,
+    solve_joint_schur_lm,
+)
 from tomojax.datasets import make_benchmark_phantom
 from tomojax.forward import (
     apply_residual_filter_schedule,
@@ -29,7 +36,6 @@ from tomojax.forward import (
 from tomojax.geometry import (
     GaugeReport,
     GeometryState,
-    canonicalize_geometry_gauges,
     write_geometry_json,
     write_pose_decomposition_csv,
     write_pose_params_csv,
@@ -80,6 +86,7 @@ class AlternatingLevelSummary:
     skipped_geometry: bool
     skipped_level: bool
     early_exit_reason: str | None
+    schur_diagnostics: JointSchurDiagnostics | None = None
 
 
 @dataclass(frozen=True)
@@ -137,9 +144,9 @@ def _run_alternating_solver_smoke_impl(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     truth = jnp.asarray(make_benchmark_phantom(cfg.size, seed=cfg.seed), dtype=jnp.float32)
-    true_geometry = GeometryState.zeros(cfg.n_views)
+    true_geometry = _synthetic_true_geometry(cfg.n_views)
     initial_geometry = _synthetic_initial_geometry(cfg.n_views)
-    observed = project_parallel_reference(truth, initial_geometry)
+    observed = project_parallel_reference(truth, true_geometry)
     mask = jnp.ones_like(observed, dtype=jnp.float32)
 
     geometry = initial_geometry
@@ -148,6 +155,7 @@ def _run_alternating_solver_smoke_impl(
     summaries: list[AlternatingLevelSummary] = []
     fista_result: ReferenceFISTAResult | None = None
     coarse_verified = False
+    last_schur_result: JointSchurLMResult | None = None
 
     initial_loss = _projection_loss(truth, observed, geometry, mask, schedule.levels[0])
     previous_loss = initial_loss
@@ -181,9 +189,21 @@ def _run_alternating_solver_smoke_impl(
         skipped_geometry = geometry_updates == 0
         update_report = GaugeReport(())
         if geometry_updates > 0:
-            geometry, update_report = _run_geometry_updates(geometry, geometry_updates)
+            geometry, update_report, schur_result = _run_geometry_updates(
+                truth,
+                observed,
+                geometry,
+                mask,
+                level,
+                geometry_updates,
+            )
             gauge_report = update_report
-        loss_after = _projection_loss(volume, observed, geometry, mask, level)
+            last_schur_result = schur_result
+            loss_before = schur_result.initial_loss
+            loss_after = schur_result.final_loss
+        else:
+            schur_result = None
+            loss_after = _projection_loss(volume, observed, geometry, mask, level)
         verification_checks = _level_verification_checks(
             cfg=cfg,
             geometry=geometry,
@@ -216,13 +236,16 @@ def _run_alternating_solver_smoke_impl(
                 skipped_geometry=skipped_geometry,
                 skipped_level=False,
                 early_exit_reason=early_exit_reason,
+                schur_diagnostics=(None if schur_result is None else schur_result.diagnostics),
             )
         )
 
     if volume is None or fista_result is None:
         raise RuntimeError("continuation schedule produced no reconstruction")
 
-    final_loss = summaries[-1].loss_after
+    final_loss = (
+        last_schur_result.final_loss if last_schur_result is not None else summaries[-1].loss_after
+    )
     artifacts = _write_artifacts(
         out_dir,
         true_geometry=true_geometry,
@@ -236,6 +259,7 @@ def _run_alternating_solver_smoke_impl(
         gauge_report=gauge_report,
         fista_result=fista_result,
         summaries=tuple(summaries),
+        schur_result=last_schur_result,
         verification=_verification_payload(
             cfg=cfg,
             schedule=schedule,
@@ -261,28 +285,64 @@ def _run_alternating_solver_smoke_impl(
 
 
 def _synthetic_initial_geometry(n_views: int) -> GeometryState:
-    base = GeometryState.zeros(n_views)
-    span = np.linspace(-1.0, 1.0, num=n_views, dtype=np.float64)
+    base = _geometry_with_active_det_v(n_views)
     return GeometryState(
         setup=base.setup,
+        pose=base.pose,
+    )
+
+
+def _synthetic_true_geometry(n_views: int) -> GeometryState:
+    base = _geometry_with_active_det_v(n_views)
+    span = np.linspace(-1.0, 1.0, num=n_views, dtype=np.float64)
+    setup = base.setup.replace_parameter(
+        "theta_offset_rad",
+        base.setup.theta_offset_rad.with_value(0.035),
+    )
+    setup = setup.replace_parameter("det_u_px", setup.det_u_px.with_value(0.18))
+    setup = setup.replace_parameter("det_v_px", setup.det_v_px.with_value(-0.12))
+    return GeometryState(
+        setup=setup,
         pose=base.pose.with_updates(
-            phi_residual_rad=0.02 + 0.01 * span,
-            dx_px=1.25 + 0.5 * span,
-            dz_px=0.2 * span,
+            phi_residual_rad=0.025 + 0.008 * span,
+            dx_px=0.08 + 0.04 * span,
+            dz_px=-0.05 + 0.03 * span,
         ),
     )
 
 
+def _geometry_with_active_det_v(n_views: int) -> GeometryState:
+    base = GeometryState.zeros(n_views)
+    setup = base.setup.replace_parameter(
+        "det_v_px",
+        replace(base.setup.det_v_px, value=0.0, active=True),
+    )
+    return GeometryState(setup=setup, pose=base.pose)
+
+
 def _run_geometry_updates(
-    geometry: GeometryState, updates: int
-) -> tuple[GeometryState, GaugeReport]:
-    updated = geometry
-    gauge_report = GaugeReport(())
-    for _ in range(updates):
-        canonicalized = canonicalize_geometry_gauges(updated)
-        updated = canonicalized.state
-        gauge_report = canonicalized.report
-    return updated, gauge_report
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    mask: jax.Array,
+    level: ContinuationLevel,
+    updates: int,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        geometry,
+        mask=mask,
+        config=JointSchurLMConfig(
+            max_iterations=max(1, int(updates)),
+            damping=1.0e-3,
+            delta=level.residual_delta,
+            sigma=level.residual_sigma,
+            setup_trust_radius=level.trust_radius_px,
+            pose_trust_radius=level.trust_radius_px,
+        ),
+    )
+    return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
 
 
 def _geometry_updates_for_level(
@@ -478,20 +538,50 @@ def _geometry_recovery_payload(
     if not isinstance(raw_tolerances, dict):
         raise TypeError("geometry recovery tolerances must be a mapping")
     tolerances = cast("dict[str, float]", raw_tolerances)
-    mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px - true_geometry.pose.dx_px)))
-    mean_phi_abs = abs(
-        float(np.mean(final_geometry.pose.phi_residual_rad - true_geometry.pose.phi_residual_rad))
+    final_theta = final_geometry.setup.theta_offset_rad.value + final_geometry.pose.phi_residual_rad
+    true_theta = true_geometry.setup.theta_offset_rad.value + true_geometry.pose.phi_residual_rad
+    final_u = final_geometry.setup.det_u_px.value + final_geometry.pose.dx_px
+    true_u = true_geometry.setup.det_u_px.value + true_geometry.pose.dx_px
+    final_v = final_geometry.setup.det_v_px.value + final_geometry.pose.dz_px
+    true_v = true_geometry.setup.det_v_px.value + true_geometry.pose.dz_px
+    theta_rmse = float(np.sqrt(np.mean((final_theta - true_theta) ** 2)))
+    det_u_rmse = float(np.sqrt(np.mean((final_u - true_u) ** 2)))
+    det_v_rmse = float(np.sqrt(np.mean((final_v - true_v) ** 2)))
+    mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px)))
+    mean_phi_abs = abs(float(np.mean(final_geometry.pose.phi_residual_rad)))
+    mean_dz_abs = abs(float(np.mean(final_geometry.pose.dz_px)))
+    theta_limit = float(tolerances["theta_realized_rmse_rad_lt"])
+    det_u_limit = float(tolerances["det_u_realized_rmse_px_lt"])
+    det_v_limit = float(tolerances["det_v_realized_rmse_px_lt"])
+    gauge_limit = float(tolerances["mean_gauge_abs_lt"])
+    passed = (
+        theta_rmse <= theta_limit
+        and det_u_rmse <= det_u_limit
+        and det_v_rmse <= det_v_limit
+        and mean_dx_abs <= gauge_limit
+        and mean_phi_abs <= gauge_limit
+        and mean_dz_abs <= gauge_limit
     )
-    mean_dx_limit = float(tolerances["mean_dx_abs_px_lt"])
-    mean_phi_limit = float(tolerances["mean_phi_abs_rad_lt"])
     return {
+        "theta_realized_rmse_rad": theta_rmse,
+        "theta_realized_rmse_rad_passed": theta_rmse <= theta_limit,
+        "theta_realized_rmse_rad_limit": theta_limit,
+        "det_u_realized_rmse_px": det_u_rmse,
+        "det_u_realized_rmse_px_passed": det_u_rmse <= det_u_limit,
+        "det_u_realized_rmse_px_limit": det_u_limit,
+        "det_v_realized_rmse_px": det_v_rmse,
+        "det_v_realized_rmse_px_passed": det_v_rmse <= det_v_limit,
+        "det_v_realized_rmse_px_limit": det_v_limit,
         "mean_dx_abs_px": mean_dx_abs,
-        "mean_dx_abs_px_passed": mean_dx_abs <= mean_dx_limit,
-        "mean_dx_abs_px_limit": mean_dx_limit,
+        "mean_dx_abs_px_passed": mean_dx_abs <= gauge_limit,
+        "mean_dx_abs_px_limit": gauge_limit,
         "mean_phi_abs_rad": mean_phi_abs,
-        "mean_phi_abs_rad_passed": mean_phi_abs <= mean_phi_limit,
-        "mean_phi_abs_rad_limit": mean_phi_limit,
-        "passed": mean_dx_abs <= mean_dx_limit and mean_phi_abs <= mean_phi_limit,
+        "mean_phi_abs_rad_passed": mean_phi_abs <= gauge_limit,
+        "mean_phi_abs_rad_limit": gauge_limit,
+        "mean_dz_abs_px": mean_dz_abs,
+        "mean_dz_abs_px_passed": mean_dz_abs <= gauge_limit,
+        "mean_dz_abs_px_limit": gauge_limit,
+        "passed": passed,
     }
 
 
@@ -555,6 +645,7 @@ def _write_artifacts(
     gauge_report: GaugeReport,
     fista_result: ReferenceFISTAResult,
     summaries: tuple[AlternatingLevelSummary, ...],
+    schur_result: JointSchurLMResult | None,
     verification: Mapping[str, object],
 ) -> dict[str, Path]:
     artifacts = {
@@ -591,6 +682,7 @@ def _write_artifacts(
         "residual_map_summary_json": output_dir / "residual_maps" / "summary.json",
         "residual_metrics_csv": output_dir / "residual_metrics.csv",
         "run_manifest_json": output_dir / "run_manifest.json",
+        "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
         "verification_json": output_dir / "verification.json",
     }
     _write_config_resolved(artifacts["config_resolved_toml"], schedule)
@@ -641,6 +733,7 @@ def _write_artifacts(
         artifacts["plots_summary_json"],
         _plots_summary_payload(fista_result=fista_result, summaries=summaries),
     )
+    _write_json(artifacts["schur_diagnostics_json"], _schur_diagnostics_payload(schur_result))
     _write_residual_map_artifacts(
         artifacts["residual_map_raw_npy"],
         artifacts["residual_map_summary_json"],
@@ -685,6 +778,12 @@ def _write_alignment_summary(
                 "parameter_update_norm",
                 "parameter_update_small",
                 "verified",
+                "schur_accepted",
+                "schur_condition",
+                "schur_dense_step_difference_norm",
+                "schur_predicted_reduction",
+                "schur_actual_reduction",
+                "schur_reduction_ratio",
                 "skipped_geometry",
                 "skipped_level",
                 "early_exit_reason",
@@ -712,6 +811,12 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                 "parameter_update_norm",
                 "parameter_update_small",
                 "verified",
+                "schur_accepted",
+                "schur_condition",
+                "schur_dense_step_difference_norm",
+                "schur_predicted_reduction",
+                "schur_actual_reduction",
+                "schur_reduction_ratio",
                 "skipped_geometry",
                 "skipped_level",
                 "early_exit_reason",
@@ -733,11 +838,38 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                     "parameter_update_norm": summary.parameter_update_norm,
                     "parameter_update_small": summary.parameter_update_small,
                     "verified": summary.verified,
+                    "schur_accepted": _optional_schur_value(summary.schur_diagnostics, "accepted"),
+                    "schur_condition": _optional_schur_value(
+                        summary.schur_diagnostics, "schur_condition"
+                    ),
+                    "schur_dense_step_difference_norm": _optional_schur_value(
+                        summary.schur_diagnostics,
+                        "dense_step_difference_norm",
+                    ),
+                    "schur_predicted_reduction": _optional_schur_value(
+                        summary.schur_diagnostics,
+                        "predicted_reduction",
+                    ),
+                    "schur_actual_reduction": _optional_schur_value(
+                        summary.schur_diagnostics,
+                        "actual_reduction",
+                    ),
+                    "schur_reduction_ratio": _optional_schur_value(
+                        summary.schur_diagnostics,
+                        "reduction_ratio",
+                    ),
                     "skipped_geometry": summary.skipped_geometry,
                     "skipped_level": summary.skipped_level,
                     "early_exit_reason": summary.early_exit_reason,
                 }
             )
+
+
+def _optional_schur_value(diagnostics: JointSchurDiagnostics | None, field_name: str) -> object:
+    if diagnostics is None:
+        return ""
+    value = getattr(diagnostics, field_name)
+    return "" if value is None else value
 
 
 def _plots_summary_payload(
@@ -771,6 +903,19 @@ def _plots_summary_payload(
             for summary in summaries
         ],
     }
+
+
+def _schur_diagnostics_payload(result: JointSchurLMResult | None) -> dict[str, object]:
+    if result is None:
+        return {
+            "schema": "tomojax.schur_diagnostics.v1",
+            "status": "not_run",
+            "solver": "joint_schur_lm_reference",
+        }
+    payload = joint_schur_normal_eq_summary(result)
+    payload["schema"] = "tomojax.schur_diagnostics.v1"
+    payload["status"] = "passed" if result.final_loss <= result.initial_loss else "warning"
+    return payload
 
 
 def _write_residual_metrics(
@@ -1024,6 +1169,7 @@ def _artifact_description(name: str) -> str:
         "residual_map_summary_json": "Final raw residual-map summary",
         "residual_metrics_csv": "Per-level residual metrics",
         "run_manifest_json": "Resolved smoke run manifest",
+        "schur_diagnostics_json": "Joint Schur LM diagnostics summary",
         "verification_json": "Smoke verification report",
     }
     return descriptions[name]
@@ -1151,8 +1297,10 @@ def _recovery_tolerances_payload() -> dict[str, object]:
         "schema": "tomojax.recovery_tolerances.v1",
         "profile": "smoke32",
         "geometry": {
-            "mean_dx_abs_px_lt": 1.0e-10,
-            "mean_phi_abs_rad_lt": 1.0e-10,
+            "theta_realized_rmse_rad_lt": 8.0e-2,
+            "det_u_realized_rmse_px_lt": 2.0e-1,
+            "det_v_realized_rmse_px_lt": 2.0e-1,
+            "mean_gauge_abs_lt": 1.0e-10,
         },
         "volume": {
             "nmse_lt": 10.0,

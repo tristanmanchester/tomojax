@@ -3349,3 +3349,45 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - No rendered plot images are emitted yet; this is intentionally paused now in
   favor of the real Schur-in-the-loop alignment update.
+
+## 2026-05-06 — Phase 7 Schur Geometry Update In The Loop
+
+### Summary
+
+- Switched the deterministic 32^3 smoke fixture so observed projections are
+  generated from true geometry while the solver starts from a corrupted initial
+  geometry.
+- Replaced the placeholder geometry canonicalisation update in the Phase 7 loop
+  with the supported `solve_joint_schur_lm` reference solver.
+- Recorded Schur diagnostics in `schur_diagnostics.json` and added accepted
+  step, condition, dense-vs-Schur, and reduction fields to `geometry_trace.csv`.
+- Extended smoke tests to verify projection residual improvement, accepted Schur
+  diagnostics, gauge-canonical supported DOF recovery, and true-vs-corrupted
+  geometry separation.
+
+### Decisions
+
+- Used the synthetic ground-truth volume as the fixed volume for this first
+  Schur-in-the-loop smoke slice so geometry recovery is isolated from the tiny
+  one-iteration FISTA reconstruction.
+- Kept the alternating reconstruction artifact path intact; replacing the fixed
+  synthetic volume with the stopped reconstructed latent is the next numerical
+  integration step.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_joint_schur_lm.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 14 tests.
+- `just imports` passed.
+
+### Risks
+
+- This is a real Schur geometry update, but it is still an alignment-isolated
+  smoke slice using the synthetic fixed volume rather than the stopped FISTA
+  latent volume.
