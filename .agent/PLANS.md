@@ -12,25 +12,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: record synthetic array metadata in `align-auto` sidecar readback
-  artifacts.
+- Goal: add loader-level synthetic array/geometry consistency checks.
 
 ### Scope
 
 - In scope:
-  - Include volume, projection, and mask array metadata in the
-    `sidecar_readback` payload.
-  - Record projection shape/dtype in `verification.json` and
-    `run_manifest.json`.
-  - Add compact projection metadata fields to `config_resolved.toml`.
-  - Add focused CLI tests.
+  - Compare loaded array metadata against `dataset_manifest.json`.
+  - Check projection/mask shapes match and view counts match loaded geometry.
+  - Expose a compact consistency payload on `SyntheticDatasetSidecars`.
+  - Add focused loader tests for passing and failing consistency.
 - Out of scope:
   - Alternating solver ingestion of generated benchmark projections.
   - Stripe/ring bias fields.
   - Changing align-auto defaults.
   - Removing existing manifest-spec geometry artifacts.
   - Further legacy Ruff cleanup.
-- Deep module owners: `tomojax.cli` and `tomojax.align` artifact plumbing.
+- Deep module owner: `tomojax.datasets`.
 
 ### Design Sources
 
@@ -40,23 +37,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add array metadata to `align-auto` sidecar readback.
-- [x] Record compact projection metadata in resolved config.
-- [x] Add focused CLI tests.
+- [x] Add loader consistency payload.
+- [x] Check manifest shape/view metadata against arrays and geometry.
+- [x] Add focused loader tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the align-auto array metadata slice.
+- [x] Commit the synthetic consistency loader slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
-  passed: 3 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed: 4 files left unchanged.
+- `uv run ruff check src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py tests/test_synthetic_datasets.py -q`
-  passed: 15 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
+  passed: 12 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -64,11 +61,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep generated arrays as sidecar metadata only. Do not route them into the
-  smoke solver in this slice.
+- Keep consistency checks structural only. Do not compare generated projections
+  numerically against the JAX reference projector in this slice.
 
 ### Risks
 
-- Risk: metadata can look like ingestion evidence if not labelled clearly.
-- Mitigation: keep the payload under `sidecar_readback` and do not change solver
-  inputs.
+- Risk: structural consistency still does not prove physical projector
+  compatibility.
+- Mitigation: payload should report shape/view consistency only; reference
+  projector compatibility remains later work.

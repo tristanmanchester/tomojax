@@ -172,6 +172,17 @@ def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) ->
         "shape": [8, 48, 48],
         "dtype": "float32",
     }
+    assert sidecars.consistency.passed is True
+    assert sidecars.consistency.to_dict() == {
+        "passed": True,
+        "checks": {
+            "geometry_views_match_manifest": True,
+            "mask_shape_matches_projections": True,
+            "projection_detector_shape_matches_manifest": True,
+            "projection_views_match_manifest": True,
+            "volume_shape_matches_manifest": True,
+        },
+    }
 
 
 def test_load_synthetic_dataset_sidecars_rejects_missing_artifact_map(tmp_path: Path) -> None:
@@ -207,6 +218,27 @@ def test_load_synthetic_dataset_sidecars_rejects_missing_array_artifact(
 
     with pytest.raises(ValueError, match="projections_npy"):
         _ = load_synthetic_dataset_sidecars(paths.dataset_dir)
+
+
+def test_load_synthetic_dataset_sidecars_reports_manifest_shape_mismatch(
+    tmp_path: Path,
+) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=4,
+    )
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+    manifest["detector_shape"] = [99, 99]
+    _ = paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    sidecars = load_synthetic_dataset_sidecars(paths.dataset_dir)
+
+    assert sidecars.consistency.passed is False
+    assert sidecars.consistency.checks["projection_detector_shape_matches_manifest"] is False
+    assert sidecars.consistency.checks["projection_views_match_manifest"] is True
 
 
 def test_generate_synthetic_dataset_applies_gain_offset_nuisance(tmp_path: Path) -> None:

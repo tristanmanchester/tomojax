@@ -4424,3 +4424,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This improves provenance/readback only. Solver ingestion still needs a
   deliberate compatibility step because generated projections come from the
   NumPy smoke projector.
+
+## 2026-05-06 — Phase 8 Synthetic Loader Consistency Summary
+
+### Summary
+
+- Added `SyntheticDatasetConsistency` to the synthetic sidecar loader.
+- The loader now compares manifest-declared volume shape, detector shape, and
+  view count against memory-mapped volume/projection/mask metadata and loaded
+  true geometry view count.
+- `SyntheticDatasetSidecars.consistency` reports per-check booleans plus an
+  aggregate `passed` flag.
+- Added focused tests for all-pass consistency and a manifest detector-shape
+  mismatch.
+
+### Decisions
+
+- Keep consistency structural only. This does not compare generated projections
+  against the JAX reference projector or route sidecar arrays into alignment.
+
+### Validation
+
+- `uv run ruff format src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed: 4 files left unchanged.
+- `uv run ruff check src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- Structural consistency is necessary but not sufficient for solver ingestion;
+  physical projector compatibility remains unverified.
