@@ -41,6 +41,7 @@ class ArtifactValidationError(RuntimeError):
 _REQUIRED_JSON_SCHEMAS = {
     "artifact_index.json": "tomojax.artifact_index.v1",
     "backend_report.json": "tomojax.backend_report.v1",
+    "failure_report.json": "tomojax.failure_report.v1",
     "observability_report.json": "tomojax.observability_report.v1",
     "run_manifest.json": "tomojax.run_manifest.v1",
     "verification.json": "tomojax.alternating_smoke.verification.v1",
@@ -81,6 +82,7 @@ def inspect_run_artifacts(run_dir: str | Path) -> ArtifactValidationReport:
     _validate_manifest(payloads.get("run_manifest.json"), issues)
     _validate_verification(payloads.get("verification.json"), issues)
     _validate_backend_report(payloads.get("backend_report.json"), issues)
+    _validate_failure_report(payloads.get("failure_report.json"), issues)
     _validate_observability(payloads.get("observability_report.json"), issues)
     return ArtifactValidationReport(run_dir=path, issues=tuple(issues))
 
@@ -250,6 +252,20 @@ def _validate_observability(
         issues,
         artifact="observability_report.json",
         keys=("status", "dofs", "weak_modes"),
+    )
+
+
+def _validate_failure_report(
+    payload: dict[str, object] | None,
+    issues: list[ArtifactValidationIssue],
+) -> None:
+    if payload is None:
+        return
+    _append_missing_keys(
+        payload,
+        issues,
+        artifact="failure_report.json",
+        keys=("status", "failure", "failure_classes", "gates", "warnings"),
     )
 
 

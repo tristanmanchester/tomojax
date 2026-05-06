@@ -12,14 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: expand Phase 7 smoke backend provenance toward the artifact contract.
+- Goal: expand Phase 7 smoke failure reporting with verification gate outcomes.
 
 ### Scope
 
 - In scope:
-  - Add projector, backprojector, geometry-reduction, detector-grid, fallback,
-    and agreement-test fields to `backend_report.json`.
-  - Keep the existing `requested`, `actual`, and `fallback` fields.
+  - Add structured finite-output, projection-improvement, gauge-stability,
+    optimiser-health, and backend-provenance gate rows to `failure_report.json`.
+  - Keep the smoke run status passing while recording warning-level failed
+    gates when the tiny smoke path does not improve residuals.
   - Extend smoke and artifact-validation tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
@@ -35,11 +36,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Expand backend provenance payload.
+- [x] Expand failure report payload.
 - [x] Extend smoke and validator tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the backend provenance slice.
+- [x] Commit the failure report gate slice.
 
 ### Validation
 
@@ -58,11 +59,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Report JAX reference components explicitly and include an agreement-test row
-  marking the reference path as the baseline.
+- Treat failed smoke-only quality gates as warnings while preserving the
+  deterministic smoke pass/fail status used for wiring checks.
 
 ### Risks
 
-- Risk: no alternate backend comparison exists yet.
-- Mitigation: mark the agreement row as reference-baseline provenance and add
-  true max/mean error checks when fast paths land.
+- Risk: gate evidence is still coarse because real LM/GN optimiser diagnostics
+  are not wired into the alternating solver.
+- Mitigation: keep gate names and severities explicit so later optimiser traces
+  can replace smoke approximations.

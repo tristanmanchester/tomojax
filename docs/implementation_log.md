@@ -3209,3 +3209,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Agreement testing currently records reference-baseline provenance only; real
   max/mean error comparisons remain blocked on alternate backend paths.
+
+## 2026-05-06 — Phase 7 Failure Report Gates
+
+### Summary
+
+- Expanded the Phase 7 smoke `failure_report.json` with verification gate rows.
+- Added finite-output, projection-residual-improvement, gauge-stability,
+  optimiser-health, and backend-provenance gates.
+- Added structured warning entries for smoke-level `no_improvement` cases while
+  preserving the smoke run's pass status.
+- Updated artifact validation to require the expanded failure-report shape.
+
+### Decisions
+
+- Treated projection residual non-improvement as a warning in the tiny smoke
+  profile because this path is still a wiring check with placeholder geometry
+  updates.
+- Kept the failure classes from the artifact contract visible in the report so
+  later verifier work can promote warnings/errors without changing shape.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- Optimiser-health evidence remains coarse until real accepted/rejected LM/GN
+  step diagnostics are part of the alternating solver.

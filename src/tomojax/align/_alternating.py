@@ -606,7 +606,16 @@ def _write_artifacts(
     _write_json(artifacts["gauge_report_json"], _gauge_report_payload(gauge_report))
     _write_json(artifacts["observability_report_json"], _observability_report_payload())
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
-    _write_json(artifacts["failure_report_json"], _failure_report_payload())
+    _write_json(
+        artifacts["failure_report_json"],
+        _failure_report_payload(
+            final_volume=final_volume,
+            final_geometry=final_geometry,
+            mask=mask,
+            summaries=summaries,
+            verification=verification,
+        ),
+    )
     _write_final_volume(artifacts["final_volume_npy"], final_volume)
     _write_preview_slice_artifacts(
         truth_path=artifacts["preview_truth_slice_npy"],
@@ -1175,12 +1184,120 @@ def _backend_report_payload() -> dict[str, object]:
     }
 
 
-def _failure_report_payload() -> dict[str, object]:
+def _failure_report_payload(
+    *,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    mask: jax.Array,
+    summaries: tuple[AlternatingLevelSummary, ...],
+    verification: Mapping[str, object],
+) -> dict[str, object]:
+    gates = _failure_gate_rows(
+        final_volume=final_volume,
+        final_geometry=final_geometry,
+        mask=mask,
+        summaries=summaries,
+        verification=verification,
+    )
+    warning_gates = [gate for gate in gates if not gate["passed"]]
     return {
         "schema": "tomojax.failure_report.v1",
         "status": "passed",
         "failure": None,
+        "failure_classes": [
+            "geometry_not_observable",
+            "pose_overfit",
+            "nuisance_unmodelled",
+            "backend_fallback_unexpected",
+            "reconstruction_underconverged",
+            "motion_model_insufficient",
+            "deformation_suspected",
+            "bad_input_metadata",
+            "nan_or_inf",
+            "no_improvement",
+        ],
+        "gates": gates,
+        "warnings": [
+            {
+                "class": "no_improvement",
+                "severity": "warning",
+                "evidence": [str(gate["evidence"])],
+                "recommended_action": (
+                    "run a longer continuation profile or enable real geometry LM/GN updates"
+                ),
+            }
+            for gate in warning_gates
+            if gate["name"] == "projection_residual_improvement"
+        ],
     }
+
+
+def _failure_gate_rows(
+    *,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    mask: jax.Array,
+    summaries: tuple[AlternatingLevelSummary, ...],
+    verification: Mapping[str, object],
+) -> list[dict[str, object]]:
+    summary = cast("Mapping[str, object]", verification["summary"])
+    valid_fraction = float(jnp.mean(jnp.asarray(mask, dtype=jnp.float32)))
+    return [
+        {
+            "name": "finite_outputs",
+            "passed": _finite_outputs(final_volume, final_geometry) and valid_fraction > 0.0,
+            "severity": "error",
+            "evidence": f"valid_pixel_fraction={valid_fraction}",
+        },
+        {
+            "name": "projection_residual_improvement",
+            "passed": bool(summary["projection_residual_improved"]),
+            "severity": "warning",
+            "evidence": "final residual is compared against first level loss_before",
+        },
+        {
+            "name": "gauge_stability",
+            "passed": bool(summary["gauge_constraints_satisfied"]),
+            "severity": "error",
+            "evidence": "mean dx and mean phi residual are gauge canonicalised",
+        },
+        {
+            "name": "optimiser_health",
+            "passed": any(level.executed_geometry_updates > 0 for level in summaries),
+            "severity": "warning",
+            "evidence": "smoke geometry update uses gauge canonicalisation placeholder",
+        },
+        {
+            "name": "backend_provenance",
+            "passed": bool(summary["backend_provenance_complete"]),
+            "severity": "error",
+            "evidence": "backend_report.json records requested and actual reference components",
+        },
+    ]
+
+
+def _finite_outputs(volume: jax.Array, geometry: GeometryState) -> bool:
+    setup_values = (
+        geometry.setup.det_u_px.value,
+        geometry.setup.det_v_px.value,
+        geometry.setup.detector_roll_rad.value,
+        geometry.setup.axis_rot_x_rad.value,
+        geometry.setup.axis_rot_y_rad.value,
+        geometry.setup.theta_offset_rad.value,
+        geometry.setup.theta_scale.value,
+    )
+    pose_values = (
+        geometry.pose.alpha_rad,
+        geometry.pose.beta_rad,
+        geometry.pose.phi_residual_rad,
+        geometry.pose.dx_px,
+        geometry.pose.dz_px,
+    )
+    return bool(
+        jnp.all(jnp.isfinite(volume))
+        and all(np.isfinite(value) for value in setup_values)
+        and all(np.isfinite(values).all() for values in pose_values)
+    )
 
 
 def _write_json(path: Path, payload: Mapping[str, object]) -> None:

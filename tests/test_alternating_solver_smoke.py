@@ -263,6 +263,17 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     )
     assert failure_report["status"] == "passed"
     assert failure_report["failure"] is None
+    assert "nan_or_inf" in cast("list[str]", failure_report["failure_classes"])
+    gates = cast("list[dict[str, object]]", failure_report["gates"])
+    gates_by_name = {str(gate["name"]): gate for gate in gates}
+    assert gates_by_name["finite_outputs"]["passed"] is True
+    assert gates_by_name["gauge_stability"]["passed"] is True
+    assert gates_by_name["optimiser_health"]["passed"] is True
+    assert gates_by_name["backend_provenance"]["passed"] is True
+    assert gates_by_name["projection_residual_improvement"]["severity"] == "warning"
+    warnings = cast("list[dict[str, object]]", failure_report["warnings"])
+    if gates_by_name["projection_residual_improvement"]["passed"] is False:
+        assert warnings[0]["class"] == "no_improvement"
 
     backend_report = cast(
         "dict[str, object]",
