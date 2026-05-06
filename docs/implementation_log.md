@@ -3547,3 +3547,14 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The command now ties auto runs to named synthetic benchmark artifact
   generation, but it does not yet consume those generated projections, masks,
   or geometry files as solver inputs.
+
+### Full Check Baseline
+
+- `just check` was run after this slice and failed during `uv run ruff check
+  --fix src tests tools` on broad pre-existing transitional lint/docstring
+  debt, starting with `src/tomojax/align/model/schedules.py` and
+  `src/tomojax/align/model/state.py`.
+- The preceding `uv run ruff format src tests tools` step reformatted many
+  unrelated legacy files; that formatter churn was reverted immediately because
+  it was outside the Phase 7 slice.
+- No Phase 7 benchmark-facing files were left dirty after the revert.
