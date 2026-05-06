@@ -3678,3 +3678,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This is not the full prior family from the design docs; it is the smallest
   continuation-driven Schur prior needed to make the Phase 7 loop use a real
   regularised geometry update.
+
+## 2026-05-06 — Phase 7 Align-Auto CLI Acceptance Contract
+
+### Summary
+
+- Expanded the `tomojax-align-auto-smoke` command test from artifact existence
+  checks to the Phase 7 acceptance contract.
+- The CLI test now asserts that `verification.json` reports `status="passed"`,
+  residual improvement, stable gauges, all verified levels, and default level-1
+  geometry skipping.
+- The command path now has focused test coverage for emitted
+  `alignment_summary.csv`, `geometry_trace.csv`, and `schur_diagnostics.json`
+  fields, including held-out pass state and continuation prior strength.
+
+### Decisions
+
+- Kept this slice as command-path verification only. The solver and artifact
+  writer already produce the reports; this test ensures the user-facing command
+  exercises and preserves that behavior.
+
+### Validation
+
+- `uv run ruff format tests/test_align_auto_cli.py` passed.
+- `uv run ruff check tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright tests/test_align_auto_cli.py` passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 3 tests.
+- `just imports` passed.
+
+### Risks
+
+- This is a contract hardening slice, not a new numerical capability. It should
+  still catch regressions in the canonical one-command Phase 7 acceptance path.

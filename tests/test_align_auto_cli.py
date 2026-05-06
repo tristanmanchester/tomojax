@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from typing import TYPE_CHECKING, cast
 
@@ -35,6 +36,44 @@ def test_align_auto_smoke_command_writes_core_artifacts(
     assert (out_dir / "final_volume.npy").exists()
     assert (out_dir / "geometry_final.json").exists()
     assert (out_dir / "verification.json").exists()
+    verification = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "verification.json").read_text(encoding="utf-8")),
+    )
+    assert verification["status"] == "passed"
+    assert verification["level1_geometry_skipped"] is True
+    summary = cast("dict[str, bool]", verification["summary"])
+    assert summary["projection_residual_improved"] is True
+    assert summary["gauge_constraints_satisfied"] is True
+    assert summary["all_levels_verified"] is True
+    metrics = cast("dict[str, float]", verification["metrics"])
+    assert metrics["residual_after"] < metrics["residual_before"]
+    recovery = cast("dict[str, bool | float]", verification["geometry_recovery"])
+    assert recovery["passed"] is True
+    levels = cast("list[dict[str, object]]", verification["levels"])
+    assert levels[0]["prior_strength"] == 1.0e-3
+
+    with (out_dir / "alignment_summary.csv").open("r", newline="", encoding="utf-8") as fh:
+        summary_rows = list(csv.DictReader(fh))
+    assert [row["level_factor"] for row in summary_rows] == ["4", "2", "1"]
+    assert summary_rows[0]["verified"] == "True"
+    assert summary_rows[0]["prior_strength"] == "0.001"
+    assert summary_rows[-1]["executed_geometry_updates"] == "0"
+
+    with (out_dir / "geometry_trace.csv").open("r", newline="", encoding="utf-8") as fh:
+        trace_rows = list(csv.DictReader(fh))
+    assert trace_rows[0]["schur_accepted"] == "True"
+    assert trace_rows[0]["heldout_residual_passed"] == "True"
+    assert trace_rows[-1]["early_exit_reason"] == "coarse_verification_passed"
+
+    schur = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "schur_diagnostics.json").read_text(encoding="utf-8")),
+    )
+    assert schur["status"] == "passed"
+    assert schur["geometry_update_volume_source"] == "stopped_reconstruction"
+    diagnostics = cast("dict[str, object]", schur["diagnostics"])
+    assert diagnostics["parameter_prior_strength"] == 1.0e-3
     captured = capsys.readouterr()
     assert "verification:" in captured.out
 

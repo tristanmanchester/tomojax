@@ -12,48 +12,42 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Alternating solver and continuation
-- Goal: use Phase 7 continuation prior strength in Schur geometry updates.
+- Goal: harden the Phase 7 `align=auto` CLI acceptance contract.
 
 ### Scope
 
 - In scope:
-  - Add a weak quadratic parameter prior to the joint Schur LM solver.
-  - Drive that prior from `ContinuationLevel.prior_strength`.
-  - Record prior strength in Schur diagnostics and Phase 7 artifacts.
-  - Add focused Schur and smoke tests.
+  - Assert the CLI command writes a passed verification report.
+  - Assert coarse early exit skips level-1 geometry in command-level tests.
+  - Assert Schur diagnostics and continuation prior trace fields are emitted by
+    the command path.
+  - Add focused CLI validation and `just imports`.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
-  - Full production dataset loading through the new command.
-- Deep module owner: `tomojax.align`.
+  - Loading production datasets through `align-auto`.
+- Deep module owner: `tomojax.cli`.
 
 ### Design Sources
 
-- `docs/tomojax-v2/01_high_level_architecture.md`
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
 - `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 
 ### Tasks
 
-- [x] Add Schur parameter prior config.
-- [x] Include the prior in Schur residuals and losses.
-- [x] Thread continuation prior strength into Phase 7 Schur updates.
-- [x] Record prior strength in diagnostics/artifacts.
-- [x] Add focused Schur and smoke tests.
+- [x] Expand `align-auto` CLI tests from file existence to acceptance contract.
+- [x] Assert emitted verification, summary, geometry trace, and Schur artifacts.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the prior-strength slice.
+- [x] Commit the CLI contract slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_alternating.py tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_alternating.py tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_alternating.py tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
-  passed: 12 tests.
+- `uv run ruff format tests/test_align_auto_cli.py` passed.
+- `uv run ruff check tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright tests/test_align_auto_cli.py` passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 3 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,13 +55,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use a zero-centered prior around the current Schur solve's initial parameter
-  vector. This makes the continuation prior a weak step regulariser without
-  adding metadata priors yet.
+- Keep this as command-path verification of the existing Phase 7 solver rather
+  than adding new placeholder reports or dataset loading behavior.
 
 ### Risks
 
-- Risk: this is a simple local parameter prior, not the full metadata/smoothness
-  prior family from the design docs.
-- Mitigation: keep it explicit in diagnostics and evolve it once nuisance and
-  metadata priors exist.
+- Risk: this is a test-contract slice, not a new numerical capability.
+- Mitigation: it guards the canonical Phase 7 acceptance criterion that one
+  command produces final volume, geometry, and verification artifacts.
