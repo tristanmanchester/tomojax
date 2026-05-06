@@ -12,15 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 — alternating solver and continuation
-- Goal: add a one-command Phase 7 auto-alignment smoke entrypoint.
+- Goal: add remaining core audit reports to the Phase 7 smoke run directory.
 
 ### Scope
 
 - In scope:
-  - Add a CLI module for the deterministic `align=auto` smoke pipeline.
-  - Add a console script that writes final volume, geometry, and verification
-    artifacts into a run directory.
-  - Test the command help and a full smoke invocation.
+  - Emit `gauge_policy.json`, `observability_report.json`, and
+    `failure_report.json` from the deterministic alternating smoke run.
+  - Add those reports to `artifact_index.json`.
+  - Extend focused smoke tests for report presence and key fields.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -35,37 +35,35 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add CLI command module.
-- [x] Add console script entrypoint.
-- [x] Add focused CLI tests.
+- [x] Add gauge policy, observability, and failure report artifacts.
+- [x] Extend artifact index/test coverage.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the Phase 7 CLI smoke slice.
+- [x] Commit the Phase 7 audit report slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run pytest tests/test_align_auto_cli.py tests/test_alternating_solver_smoke.py -q`
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
   passed: 5 tests.
 - `just imports` passed.
-- `uv run tomojax-align-auto-smoke --help` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- The command is smoke-profile-only for now and should clearly say so.
-- The command must call `AlternatingAlignmentSolver`, not duplicate solver
-  logic in `tomojax.cli`.
+- Keep these reports smoke-profile minimal and deterministic.
+- `failure_report.json` should explicitly record no failure for passed runs
+  instead of being omitted.
 
 ### Risks
 
-- Risk: users may mistake the smoke command for full dataset alignment.
-- Mitigation: name and help text identify it as the deterministic Phase 7
-  smoke entrypoint.
+- Risk: observability values are not yet computed from Schur curvature.
+- Mitigation: mark smoke DOFs as diagnostic placeholders and record full
+  curvature-backed observability as follow-up.

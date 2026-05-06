@@ -35,13 +35,16 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
         "artifact_index_json",
         "backend_report_json",
         "config_resolved_toml",
+        "failure_report_json",
         "final_volume_npy",
         "fista_trace_csv",
+        "gauge_policy_json",
         "gauge_report_json",
         "geometry_final_json",
         "geometry_initial_json",
         "input_summary_json",
         "mask_summary_json",
+        "observability_report_json",
         "pose_decomposition_csv",
         "pose_params_csv",
         "projection_stats_json",
@@ -88,6 +91,29 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
         "setup.det_u_px",
         "setup.theta_offset_rad",
     }
+
+    gauge_policy = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["gauge_policy_json"].read_text(encoding="utf-8")),
+    )
+    policy_operations = cast("list[dict[str, object]]", gauge_policy["operations"])
+    assert {operation["name"] for operation in policy_operations} >= {
+        "mean_dx_to_det_u",
+        "mean_phi_to_theta_offset",
+    }
+
+    observability = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["observability_report_json"].read_text(encoding="utf-8")),
+    )
+    assert observability["status"] == "smoke_placeholder"
+
+    failure_report = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["failure_report_json"].read_text(encoding="utf-8")),
+    )
+    assert failure_report["status"] == "passed"
+    assert failure_report["failure"] is None
 
     with result.artifacts["residual_metrics_csv"].open("r", newline="", encoding="utf-8") as fh:
         metric_rows = list(csv.DictReader(fh))

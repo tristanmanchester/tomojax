@@ -359,7 +359,9 @@ def _write_artifacts(
         "backend_report_json": output_dir / "backend_report.json",
         "config_resolved_toml": output_dir / "config_resolved.toml",
         "final_volume_npy": output_dir / "final_volume.npy",
+        "failure_report_json": output_dir / "failure_report.json",
         "fista_trace_csv": output_dir / "fista_trace.csv",
+        "gauge_policy_json": output_dir / "gauge_policy.json",
         "gauge_report_json": output_dir / "gauge_report.json",
         "geometry_final_json": output_dir / "geometry_final.json",
         "geometry_initial_json": output_dir / "geometry_initial.json",
@@ -367,6 +369,7 @@ def _write_artifacts(
         "mask_summary_json": output_dir / "mask_summary.json",
         "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
         "pose_params_csv": output_dir / "pose_params.csv",
+        "observability_report_json": output_dir / "observability_report.json",
         "projection_stats_json": output_dir / "projection_stats.json",
         "residual_metrics_csv": output_dir / "residual_metrics.csv",
         "run_manifest_json": output_dir / "run_manifest.json",
@@ -377,8 +380,11 @@ def _write_artifacts(
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
     _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
     _write_json(artifacts["mask_summary_json"], _mask_summary_payload(mask))
+    _write_json(artifacts["gauge_policy_json"], _gauge_policy_payload())
     _write_json(artifacts["gauge_report_json"], _gauge_report_payload(gauge_report))
+    _write_json(artifacts["observability_report_json"], _observability_report_payload())
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
+    _write_json(artifacts["failure_report_json"], _failure_report_payload())
     _write_final_volume(artifacts["final_volume_npy"], final_volume)
     write_geometry_json(artifacts["geometry_initial_json"], initial_geometry)
     write_geometry_json(artifacts["geometry_final_json"], final_geometry)
@@ -495,12 +501,15 @@ def _artifact_description(name: str) -> str:
         "backend_report_json": "Backend provenance for the smoke run",
         "config_resolved_toml": "Resolved deterministic smoke configuration",
         "final_volume_npy": "Final reconstructed 32^3 volume",
+        "failure_report_json": "Failure status for the smoke run",
         "fista_trace_csv": "Reference FISTA iteration trace",
+        "gauge_policy_json": "Gauge canonicalisation policy",
         "gauge_report_json": "Gauge canonicalisation transfer report",
         "geometry_final_json": "Final canonical geometry state",
         "geometry_initial_json": "Initial corrupted geometry state",
         "input_summary_json": "Synthetic input shape and dtype summary",
         "mask_summary_json": "Projection mask coverage summary",
+        "observability_report_json": "Smoke observability placeholder report",
         "pose_decomposition_csv": "Final realised per-view pose decomposition",
         "pose_params_csv": "Final per-view pose parameters",
         "projection_stats_json": "Observed projection summary statistics",
@@ -584,6 +593,32 @@ def _mask_summary_payload(mask: jax.Array) -> dict[str, object]:
     }
 
 
+def _gauge_policy_payload() -> dict[str, object]:
+    return {
+        "schema": "tomojax.gauge_policy.v1",
+        "operations": [
+            {
+                "name": "mean_dx_to_det_u",
+                "source": "pose.dx_px.mean",
+                "target": "setup.det_u_px",
+                "enabled": True,
+            },
+            {
+                "name": "mean_phi_to_theta_offset",
+                "source": "pose.phi_residual_rad.mean",
+                "target": "setup.theta_offset_rad",
+                "enabled": True,
+            },
+            {
+                "name": "mean_dz_to_det_v_if_active",
+                "source": "pose.dz_px.mean",
+                "target": "setup.det_v_px",
+                "enabled": True,
+            },
+        ],
+    }
+
+
 def _gauge_report_payload(report: GaugeReport) -> dict[str, object]:
     return {
         "schema": "tomojax.gauge_report.v1",
@@ -602,12 +637,35 @@ def _gauge_report_payload(report: GaugeReport) -> dict[str, object]:
     }
 
 
+def _observability_report_payload() -> dict[str, object]:
+    return {
+        "schema": "tomojax.observability_report.v1",
+        "status": "smoke_placeholder",
+        "reason": "Schur curvature observability is not computed in the smoke profile",
+        "dofs": {
+            "det_u_px": {"active": True, "status": "not_evaluated"},
+            "theta_offset_rad": {"active": True, "status": "not_evaluated"},
+            "det_v_px": {"active": False, "status": "frozen"},
+            "theta_scale": {"active": False, "status": "frozen"},
+        },
+        "weak_modes": [],
+    }
+
+
 def _backend_report_payload() -> dict[str, object]:
     return {
         "schema": "tomojax.backend_report.v1",
         "requested": "jax_reference",
         "actual": "jax_reference",
         "fallback": False,
+    }
+
+
+def _failure_report_payload() -> dict[str, object]:
+    return {
+        "schema": "tomojax.failure_report.v1",
+        "status": "passed",
+        "failure": None,
     }
 
 

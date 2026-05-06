@@ -2684,3 +2684,37 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The command currently runs only synthetic smoke data; full dataset input and
   production `align=auto` CLI integration remain future work.
+
+## 2026-05-06 — Phase 7 Smoke Audit Reports
+
+### Summary
+
+- Added `gauge_policy.json`, `observability_report.json`, and
+  `failure_report.json` to the deterministic Phase 7 smoke run.
+- Included those reports in `artifact_index.json`.
+- Extended the smoke tests to verify report presence and key fields.
+
+### Decisions
+
+- Kept `observability_report.json` explicitly marked as
+  `smoke_placeholder`; Schur-curvature-backed observability is not computed in
+  this smoke profile yet.
+- Wrote `failure_report.json` for passed runs with `status="passed"` and
+  `failure=null` so the artifact is always present.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 5 tests.
+- `just imports` passed.
+
+### Risks
+
+- Observability remains a placeholder until the alternating solver consumes the
+  Schur LM condition and weak-mode diagnostics from the geometry update path.
