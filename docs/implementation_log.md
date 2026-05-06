@@ -2154,3 +2154,43 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   seed-translation regression in this slice.
 - Proposed next fix for `just check`: decompose `_run_multires_level_stages`
   before the larger `align_multires` split.
+
+## 2026-05-06 — Split Multires Level Stage Dispatch
+
+### Summary
+
+- Added a private `StageLoopState` carrier for `_stage_loop.py` level-local
+  state.
+- Extracted proposal, setup-geometry, and pose-alignment stage handlers from
+  `_run_multires_level_stages`.
+- Preserved level stats, loss accumulation, checkpoint writes, resume handling,
+  observer actions, and final gauge-fix propagation.
+
+### Decisions
+
+- Kept the split private to `tomojax.align`; no public API or algorithm
+  behavior changed.
+- Left the larger `align_multires` orchestration split for the next cleanup
+  slice because it is the remaining function-level Ruff complexity blocker.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_stage_loop.py` passed.
+- `uv run ruff check src/tomojax/align/_stage_loop.py` now reports only
+  `align_multires` PLR0912/PLR0915.
+- `uv run pytest tests/test_multires.py tests/test_bilevel_setup_alignment.py tests/test_align_checkpoint.py -q`
+  passed: 43 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. The first remaining blockers are `align_multires`
+  PLR0912/PLR0915, followed by geometry module doc/import findings and the
+  broader repository lint backlog. Formatter churn from `just check` was
+  reverted outside this slice.
+
+### Risks
+
+- The handler split depends on `StageLoopState` carrying every mutated level
+  value; focused multires/setup/checkpoint tests passed, but future changes
+  should keep new per-stage state explicit on that carrier.
+- Proposed next fix for `just check`: split `align_multires` orchestration
+  complexity.
