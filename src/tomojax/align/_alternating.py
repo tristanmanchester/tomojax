@@ -543,6 +543,10 @@ def _write_artifacts(
         "pose_params_csv": output_dir / "pose_params.csv",
         "observability_report_json": output_dir / "observability_report.json",
         "observed_projections_npy": output_dir / "observed_projections.npy",
+        "preview_error_slice_npy": output_dir / "preview_slices" / "central_z_error.npy",
+        "preview_final_slice_npy": output_dir / "preview_slices" / "central_z_final.npy",
+        "preview_summary_json": output_dir / "preview_slices" / "summary.json",
+        "preview_truth_slice_npy": output_dir / "preview_slices" / "central_z_truth.npy",
         "projection_mask_npy": output_dir / "projection_mask.npy",
         "projection_stats_json": output_dir / "projection_stats.json",
         "recovery_tolerances_json": output_dir / "recovery_tolerances.json",
@@ -570,6 +574,14 @@ def _write_artifacts(
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
     _write_json(artifacts["failure_report_json"], _failure_report_payload())
     _write_final_volume(artifacts["final_volume_npy"], final_volume)
+    _write_preview_slice_artifacts(
+        truth_path=artifacts["preview_truth_slice_npy"],
+        final_path=artifacts["preview_final_slice_npy"],
+        error_path=artifacts["preview_error_slice_npy"],
+        summary_path=artifacts["preview_summary_json"],
+        truth_volume=truth_volume,
+        final_volume=final_volume,
+    )
     write_geometry_json(artifacts["geometry_true_json"], true_geometry)
     write_geometry_json(artifacts["geometry_corrupted_json"], initial_geometry)
     write_geometry_json(artifacts["geometry_initial_json"], initial_geometry)
@@ -777,6 +789,39 @@ def _write_residual_map_artifacts(
     )
 
 
+def _write_preview_slice_artifacts(
+    *,
+    truth_path: Path,
+    final_path: Path,
+    error_path: Path,
+    summary_path: Path,
+    truth_volume: jax.Array,
+    final_volume: jax.Array,
+) -> None:
+    center_index = int(truth_volume.shape[0] // 2)
+    truth_slice = jnp.asarray(truth_volume[center_index, :, :], dtype=jnp.float32)
+    final_slice = jnp.asarray(final_volume[center_index, :, :], dtype=jnp.float32)
+    error_slice = jnp.asarray(final_slice - truth_slice, dtype=jnp.float32)
+    _write_array(truth_path, truth_slice)
+    _write_array(final_path, final_slice)
+    _write_array(error_path, error_slice)
+    _write_json(
+        summary_path,
+        {
+            "schema": "tomojax.preview_slices.v1",
+            "axis": "z",
+            "index": center_index,
+            "shape": list(truth_slice.shape),
+            "dtype": str(truth_slice.dtype),
+            "truth_slice": truth_path.name,
+            "final_slice": final_path.name,
+            "error_slice": error_path.name,
+            "error_rmse": float(jnp.sqrt(jnp.mean(error_slice * error_slice))),
+            "error_mae": float(jnp.mean(jnp.abs(error_slice))),
+        },
+    )
+
+
 def _artifact_index_payload(output_dir: Path, artifacts: Mapping[str, Path]) -> dict[str, object]:
     return {
         "schema": "tomojax.artifact_index.v1",
@@ -837,6 +882,10 @@ def _artifact_description(name: str) -> str:
         "observed_projections_npy": "Observed synthetic smoke projections",
         "pose_decomposition_csv": "Final realised per-view pose decomposition",
         "pose_params_csv": "Final per-view pose parameters",
+        "preview_error_slice_npy": "Central final-minus-truth preview slice",
+        "preview_final_slice_npy": "Central final-volume preview slice",
+        "preview_summary_json": "Preview-slice summary",
+        "preview_truth_slice_npy": "Central truth-volume preview slice",
         "projection_mask_npy": "Valid projection mask",
         "projection_stats_json": "Observed projection summary statistics",
         "recovery_tolerances_json": "Smoke recovery tolerance contract",

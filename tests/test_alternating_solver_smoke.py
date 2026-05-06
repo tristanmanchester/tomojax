@@ -37,6 +37,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_manifest(result)
     _assert_gauge_reports(result)
     _assert_audit_reports(result)
+    _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
     _assert_recovery_tolerances(result)
@@ -106,6 +107,10 @@ def _expected_artifacts() -> set[str]:
         "observed_projections_npy",
         "pose_decomposition_csv",
         "pose_params_csv",
+        "preview_error_slice_npy",
+        "preview_final_slice_npy",
+        "preview_summary_json",
+        "preview_truth_slice_npy",
         "projection_mask_npy",
         "projection_stats_json",
         "recovery_tolerances_json",
@@ -127,6 +132,10 @@ def _assert_artifact_index(result: AlternatingSmokeResult, expected: set[str]) -
     assert all(item["type"] for item in indexed_artifacts)
     assert all(item["description"] for item in indexed_artifacts)
     indexed_paths = {item["name"]: item["path"] for item in indexed_artifacts}
+    assert indexed_paths["preview_error_slice_npy"] == "preview_slices/central_z_error.npy"
+    assert indexed_paths["preview_final_slice_npy"] == "preview_slices/central_z_final.npy"
+    assert indexed_paths["preview_summary_json"] == "preview_slices/summary.json"
+    assert indexed_paths["preview_truth_slice_npy"] == "preview_slices/central_z_truth.npy"
     assert indexed_paths["residual_map_raw_npy"] == "residual_maps/final_raw_residual.npy"
     assert indexed_paths["residual_map_summary_json"] == "residual_maps/summary.json"
 
@@ -223,6 +232,28 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     )
     assert failure_report["status"] == "passed"
     assert failure_report["failure"] is None
+
+
+def _assert_preview_slice_artifacts(result: AlternatingSmokeResult) -> None:
+    truth = cast("NDArray[np.float32]", np.load(result.artifacts["preview_truth_slice_npy"]))
+    final = cast("NDArray[np.float32]", np.load(result.artifacts["preview_final_slice_npy"]))
+    error = cast("NDArray[np.float32]", np.load(result.artifacts["preview_error_slice_npy"]))
+    summary = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["preview_summary_json"].read_text(encoding="utf-8")),
+    )
+
+    assert truth.shape == (32, 32)
+    assert final.shape == truth.shape
+    assert error.shape == truth.shape
+    assert truth.dtype == np.float32
+    np.testing.assert_allclose(error, final - truth, atol=1.0e-37)
+    assert summary["schema"] == "tomojax.preview_slices.v1"
+    assert summary["axis"] == "z"
+    assert summary["index"] == 16
+    assert summary["shape"] == [32, 32]
+    assert summary["dtype"] == "float32"
+    assert float(cast("float", summary["error_rmse"])) >= 0.0
 
 
 def _assert_residual_map_artifacts(result: AlternatingSmokeResult) -> None:

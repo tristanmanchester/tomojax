@@ -12,15 +12,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: persist deterministic residual-map artifacts for the Phase 7 smoke
+- Goal: persist deterministic preview-slice artifacts for the Phase 7 smoke
   bundle.
 
 ### Scope
 
 - In scope:
-  - Write final raw projection residual maps under `residual_maps/`.
-  - Record a residual-map summary JSON with shape, dtype, and aggregate stats.
-  - Index nested residual-map artifacts and keep validation passing.
+  - Write central truth, final, and error preview slices under
+    `preview_slices/`.
+  - Record a preview-slice summary JSON with shape, axis, index, and aggregate
+    stats.
+  - Index nested preview-slice artifacts and keep focused validation passing.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -35,12 +37,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add nested residual-map artifact paths.
-- [x] Write final raw residual map and summary.
+- [x] Add nested preview-slice artifact paths.
+- [x] Write central truth/final/error preview slices and summary.
 - [x] Extend smoke artifact/index tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the residual-map artifact slice.
+- [x] Commit the preview-slice artifact slice.
 
 ### Validation
 
@@ -59,13 +61,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep residual maps as `.npy` arrays for the smoke path so tests can validate
-  exact deterministic numeric content without image rendering dependencies.
+- Keep preview slices as `.npy` arrays for the smoke path so tests can validate
+  deterministic numeric content without image rendering dependencies.
 - Store nested artifact paths relative to the run directory in
   `artifact_index.json`.
 
 ### Risks
 
 - Risk: preview image and plot artifacts are still absent.
-- Mitigation: this slice closes the residual-map artifact gap first and leaves
-  human-facing previews for a separate UI/reporting pass.
+- Mitigation: this slice records deterministic preview data first and leaves
+  human-facing rendering for a separate UI/reporting pass.

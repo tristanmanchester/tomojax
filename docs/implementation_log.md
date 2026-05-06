@@ -3066,3 +3066,37 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The smoke run still does not emit preview slices or plots from the artifact
   contract.
+
+## 2026-05-06 — Phase 7 Preview Slice Artifacts
+
+### Summary
+
+- Added deterministic preview-slice artifacts under `preview_slices/` for the
+  Phase 7 smoke bundle.
+- Persisted central z-slices for truth, final reconstruction, and final-minus-
+  truth error as `.npy` arrays.
+- Added `preview_slices/summary.json` with schema, axis, index, shape, dtype,
+  and error aggregate metrics, and indexed all nested preview artifacts.
+
+### Decisions
+
+- Stored numeric preview arrays instead of rendered images so the smoke tests
+  can validate deterministic data without adding rendering dependencies.
+- Used a tiny absolute tolerance in the preview error assertion to allow
+  float32 subnormal roundoff after save/load.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- Human-facing PNG previews and plots are still not emitted by the smoke run.
