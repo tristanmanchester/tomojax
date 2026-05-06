@@ -2112,3 +2112,45 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   contract changes again, this manual construction will need to change with it.
 - Proposed next fix for `just check`: split `_stage_loop.py` into smaller
   import/annotation and orchestration cleanup slices.
+
+## 2026-05-06 — Clean Multires Stage Loop Imports
+
+### Summary
+
+- Replaced `_stage_loop.py` parent-relative imports with absolute imports and
+  moved annotation-only geometry, observer, and schedule imports behind
+  `TYPE_CHECKING`.
+- Added annotations to the stage observer and checkpoint callback factory.
+- Moved multires scale/bin helpers and phase-correlation import to module scope,
+  fixed the optional translation-seeding `vmap` lambda by binding per-level
+  values through a local function, and removed unused resume-stage locals.
+
+### Decisions
+
+- Kept this as a pre-split cleanup slice so the next `_stage_loop.py` work can
+  focus on actual orchestration complexity.
+- Left `_run_multires_level_stages` and `align_multires` decomposition for the
+  next slice because their complexity changes need focused review.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_stage_loop.py` now reports only the
+  remaining planned complexity blockers in `_run_multires_level_stages` and
+  `align_multires`.
+- `uv run ruff format src/tomojax/align/_stage_loop.py` passed.
+- `uv run pytest tests/test_multires.py tests/test_bilevel_setup_alignment.py tests/test_align_checkpoint.py -q`
+  passed: 43 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. The first remaining blockers are `_stage_loop.py`
+  PLR0915/PLR0912 complexity findings, followed by geometry module doc/import
+  findings and broader repository lint backlog. Formatter churn from
+  `just check` was reverted outside this slice.
+
+### Risks
+
+- The optional translation-seeding path changed from an inline lambda to a
+  local function; focused multires tests passed, but there is no dedicated
+  seed-translation regression in this slice.
+- Proposed next fix for `just check`: decompose `_run_multires_level_stages`
+  before the larger `align_multires` split.

@@ -4,28 +4,32 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 import logging
 import time
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry.base import Detector, Geometry, Grid
-from ..core.geometry.views import stack_view_poses
-from ..core.multires import upsample_volume
-from ..core.projector import forward_project_view_T
-from ..core.validation import (
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.multires import (
+    bin_projections,
+    scale_detector,
+    scale_grid,
+    upsample_volume,
+    validate_scale_factor,
+)
+from tomojax.core.projector import forward_project_view_T
+from tomojax.core.validation import (
     validate_grid,
     validate_projection_stack,
 )
-from ..recon.fista_tv import FistaConfig, fista_tv
+from tomojax.motion import phase_corr_shift
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
+
 from ._config import (
     AlignConfig,
     _resolved_schedule_for_cfg,
 )
 from ._observer import (
-    ObserverAction,
-    ObserverCallback,
-    OuterStat,
     _normalize_observer_action,
     adapt_legacy_observer,
 )
@@ -58,9 +62,6 @@ from .model.gauge import (
     active_gauge_dofs,
     normalize_gauge_fix,
 )
-from .model.schedules import (
-    ResolvedAlignmentStage,
-)
 from .model.state import PoseState, alignment_state_from_checkpoint
 from .objectives.loss_adapters import build_loss_adapter
 from .objectives.loss_specs import (
@@ -69,6 +70,12 @@ from .objectives.loss_specs import (
     validate_loss_schedule_levels,
 )
 from .proposals import ProposalCandidate, score_pose_stack_candidates
+
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
+
+    from ._observer import ObserverAction, ObserverCallback, OuterStat
+    from .model.schedules import ResolvedAlignmentStage
 
 _SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
 
@@ -152,7 +159,11 @@ class StageRuntime:
         if self.observer_fn is None:
             return None
 
-        def stage_observer(x_obs, params_obs, stat_obs):
+        def stage_observer(
+            x_obs: jnp.ndarray,
+            params_obs: jnp.ndarray,
+            stat_obs: OuterStat,
+        ) -> ObserverAction | None:
             enriched = _enrich_multires_stage_stat(
                 stat_obs,
                 level_factor=self.level_factor,
@@ -174,7 +185,7 @@ class StageRuntime:
         global_start: int,
         setup_alignment_state: object,
         active_geometry_dofs: tuple[str, ...],
-    ):
+    ) -> AlignMultiresCheckpointCallback | None:
         if self.checkpoint_callback is None:
             return None
 
@@ -1016,13 +1027,6 @@ def align_multires(
 
     Carries alignment parameters across levels and downsamples/upsamples volume.
     """
-    from ..core.multires import (
-        bin_projections,
-        scale_detector,
-        scale_grid,
-        validate_scale_factor,
-    )
-
     if cfg is None:
         cfg = AlignConfig()
     observer_fn = adapt_legacy_observer(observer) if observer is not None else None
@@ -1165,17 +1169,25 @@ def align_multires(
                 config=seed_cfg,
             )
             T_nom = stack_view_poses(geometry, y.shape[0])
-            from tomojax.motion import phase_corr_shift
 
-            vm_pred = jax.vmap(
-                lambda T: forward_project_view_T(
-                    T,
-                    g,
-                    d,
-                    x_seed,
+            def project_seed_view(
+                transform: jnp.ndarray,
+                *,
+                seed_grid: Grid = g,
+                seed_detector: Detector = d,
+                seed_volume: jnp.ndarray = x_seed,
+            ) -> jnp.ndarray:
+                return forward_project_view_T(
+                    transform,
+                    seed_grid,
+                    seed_detector,
+                    seed_volume,
                     use_checkpoint=cfg.checkpoint_projector,
                     gather_dtype=cfg.gather_dtype,
-                ),
+                )
+
+            vm_pred = jax.vmap(
+                project_seed_view,
                 in_axes=0,
             )
             preds = vm_pred(T_nom)
@@ -1205,9 +1217,6 @@ def align_multires(
         stats_before_level = level_run.stats_before_level
         loss_before_level = level_run.loss_before_level
         global_before_level = level_run.global_before_level
-        resume_stage_index = level_run.resume_stage_index
-        resume_stage_completed = level_run.resume_stage_completed
-        resume_stage_iters = level_run.resume_stage_iters
         level_stats: list[OuterStat] = [dict(stat) for stat in level_run.preserved_level_stats]
         level_losses: list[float] = [float(value) for value in level_run.preserved_level_losses]
         x_lvl = x0 if x0 is not None else jnp.zeros((g.nx, g.ny, g.nz), dtype=jnp.float32)
