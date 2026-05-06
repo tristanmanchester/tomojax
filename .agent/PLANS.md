@@ -12,21 +12,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 — alternating solver and continuation
-- Goal: expand the deterministic 32^3 alternating smoke run to emit the
-  core verification/artifact contract scaffold.
+- Goal: add explicit early-exit continuation behavior to the deterministic
+  32^3 alternating smoke run.
 
 ### Scope
 
 - In scope:
-  - Persist `final_volume.npy` from the 32^3 alternating smoke result.
-  - Emit run-level contract scaffolding: `run_manifest.json`,
-    `config_resolved.toml`, `input_summary.json`, `projection_stats.json`,
-    `mask_summary.json`, `gauge_report.json`, `backend_report.json`, and
-    `residual_metrics.csv`.
-  - Update artifact index and focused tests to cover the expanded contract.
+  - Add a conditional level-2 continuation entry to the `smoke32` schedule.
+  - Skip level 2 when coarse verification passes.
+  - Model level-1 geometry as verification-triggered and skipped by default
+    when coarse verification passes.
+  - Record skipped levels/geometry in summaries and verification artifacts.
 - Out of scope:
   - Further legacy Ruff cleanup.
-  - Full Phase 7 production schedule profiles and adaptive escalation.
+  - Full Phase 7 production profile presets.
   - CLI integration.
   - GPU/Pallas fast paths.
 - Deep module owner: `tomojax.align`.
@@ -39,20 +38,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add expanded artifact payloads to the alternating smoke runner.
-- [x] Persist the final 32^3 volume artifact.
-- [x] Extend tests for artifact index and contract files.
+- [x] Extend the continuation schedule with conditional level 2 and level-1
+      geometry metadata.
+- [x] Implement skipped-level and skipped-geometry summaries.
+- [x] Record early-exit decisions in verification artifacts.
+- [x] Extend focused tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the Phase 7 artifact contract slice.
+- [x] Commit the Phase 7 early-exit slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff check src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
   passed.
 - `uv run pytest tests/test_alternating_solver_smoke.py tests/test_vertical_smoke.py -q`
   passed: 5 tests.
@@ -63,14 +64,14 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep this slice inside `tomojax.align._alternating`; do not introduce a
-  generic artifact helper module.
-- Artifact fields can be smoke-profile minimal, but every emitted file must be
-  listed in `artifact_index.json`.
+- Continue to use gauge canonicalisation as the only geometry update in this
+  smoke profile; this slice only changes continuation control flow.
+- A skipped level should still appear in `alignment_summary.csv`,
+  `residual_metrics.csv`, and `verification.json` so early-exit behavior is
+  auditable.
 
 ### Risks
 
-- Risk: the smoke artifact scaffold may not yet satisfy the full production
-  schema.
-- Mitigation: make the files explicit, deterministic, and covered by focused
-  tests while recording remaining production-schema gaps in the log.
+- Risk: skipped-level rows can be mistaken for executed reconstructions.
+- Mitigation: add an explicit `skipped_level` field to level summaries and
+  artifacts.

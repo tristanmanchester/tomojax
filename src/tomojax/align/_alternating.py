@@ -58,10 +58,13 @@ class AlternatingLevelSummary:
     role: str
     reconstruction_iterations: int
     geometry_updates: int
+    executed_geometry_updates: int
     loss_before: float
     loss_after: float
     verified: bool
     skipped_geometry: bool
+    skipped_level: bool
+    early_exit_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -100,7 +103,18 @@ def run_alternating_solver_smoke(
     coarse_verified = False
 
     initial_loss = _projection_loss(truth, observed, geometry, mask, schedule.levels[0])
+    previous_loss = initial_loss
     for level in schedule.levels:
+        if level.run_if_coarse_unverified and coarse_verified:
+            summaries.append(
+                _skipped_level_summary(
+                    level,
+                    previous_loss,
+                    early_exit_reason="coarse_verification_passed",
+                )
+            )
+            continue
+
         fista_result = fista_reconstruct_reference(
             observed,
             geometry,
@@ -116,11 +130,13 @@ def run_alternating_solver_smoke(
         )
         volume = jax.lax.stop_gradient(fista_result.volume)
         loss_before = _projection_loss(volume, observed, geometry, mask, level)
-        skipped_geometry = level.geometry_updates == 0
-        if level.geometry_updates > 0:
-            geometry, gauge_report = _run_geometry_updates(geometry, level.geometry_updates)
+        geometry_updates, early_exit_reason = _geometry_updates_for_level(level, coarse_verified)
+        skipped_geometry = geometry_updates == 0
+        if geometry_updates > 0:
+            geometry, gauge_report = _run_geometry_updates(geometry, geometry_updates)
         loss_after = _projection_loss(volume, observed, geometry, mask, level)
         verified = bool(loss_after <= loss_before + cfg.verification_loss_tolerance)
+        previous_loss = loss_after
         coarse_verified = coarse_verified or (
             level.role == "preview" and level.skip_finer_if_verified and verified
         )
@@ -130,10 +146,13 @@ def run_alternating_solver_smoke(
                 role=level.role,
                 reconstruction_iterations=level.reconstruction_iterations,
                 geometry_updates=level.geometry_updates,
+                executed_geometry_updates=geometry_updates,
                 loss_before=loss_before,
                 loss_after=loss_after,
                 verified=verified,
                 skipped_geometry=skipped_geometry,
+                skipped_level=False,
+                early_exit_reason=early_exit_reason,
             )
         )
 
@@ -196,6 +215,36 @@ def _run_geometry_updates(
     return updated, gauge_report
 
 
+def _geometry_updates_for_level(
+    level: ContinuationLevel,
+    coarse_verified: bool,
+) -> tuple[int, str | None]:
+    if level.role == "final" and coarse_verified:
+        return 0, "coarse_verification_passed"
+    return level.geometry_updates, None
+
+
+def _skipped_level_summary(
+    level: ContinuationLevel,
+    loss: float,
+    *,
+    early_exit_reason: str,
+) -> AlternatingLevelSummary:
+    return AlternatingLevelSummary(
+        level_factor=level.level_factor,
+        role=level.role,
+        reconstruction_iterations=0,
+        geometry_updates=level.geometry_updates,
+        executed_geometry_updates=0,
+        loss_before=loss,
+        loss_after=loss,
+        verified=True,
+        skipped_geometry=True,
+        skipped_level=True,
+        early_exit_reason=early_exit_reason,
+    )
+
+
 def _projection_loss(
     volume: jax.Array,
     observed: jax.Array,
@@ -233,9 +282,25 @@ def _verification_payload(
         "initial_loss": initial_loss,
         "final_loss": final_loss,
         "coarse_verified": coarse_verified,
-        "level1_geometry_skipped": coarse_verified,
+        "level1_geometry_skipped": _level1_geometry_skipped(summaries),
+        "skipped_levels": [summary.level_factor for summary in summaries if summary.skipped_level],
+        "early_exit_reasons": [
+            summary.early_exit_reason
+            for summary in summaries
+            if summary.early_exit_reason is not None
+        ],
         "levels": [_summary_payload(summary) for summary in summaries],
     }
+
+
+def _level1_geometry_skipped(summaries: tuple[AlternatingLevelSummary, ...]) -> bool:
+    return any(
+        summary.level_factor == 1
+        and summary.geometry_updates > 0
+        and summary.executed_geometry_updates == 0
+        and summary.skipped_geometry
+        for summary in summaries
+    )
 
 
 def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
@@ -244,10 +309,13 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
         "role": summary.role,
         "reconstruction_iterations": summary.reconstruction_iterations,
         "geometry_updates": summary.geometry_updates,
+        "executed_geometry_updates": summary.executed_geometry_updates,
         "loss_before": summary.loss_before,
         "loss_after": summary.loss_after,
         "verified": summary.verified,
         "skipped_geometry": summary.skipped_geometry,
+        "skipped_level": summary.skipped_level,
+        "early_exit_reason": summary.early_exit_reason,
     }
 
 
@@ -315,10 +383,13 @@ def _write_alignment_summary(
                 "role",
                 "reconstruction_iterations",
                 "geometry_updates",
+                "executed_geometry_updates",
                 "loss_before",
                 "loss_after",
                 "verified",
                 "skipped_geometry",
+                "skipped_level",
+                "early_exit_reason",
             ],
         )
         writer.writeheader()
@@ -339,6 +410,8 @@ def _write_residual_metrics(
                 "loss_before",
                 "loss_after",
                 "absolute_improvement",
+                "skipped_level",
+                "early_exit_reason",
             ],
         )
         writer.writeheader()
@@ -350,6 +423,8 @@ def _write_residual_metrics(
                     "loss_before": summary.loss_before,
                     "loss_after": summary.loss_after,
                     "absolute_improvement": summary.loss_before - summary.loss_after,
+                    "skipped_level": summary.skipped_level,
+                    "early_exit_reason": summary.early_exit_reason,
                 }
             )
 

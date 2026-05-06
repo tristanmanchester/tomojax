@@ -2539,3 +2539,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   `docs/tomojax-v2/06_verification_and_artifact_contract.md`; missing
   production artifacts include observability/failure reports, preview slices,
   residual maps, and CLI-run metadata.
+
+## 2026-05-06 — Phase 7 Early Exit Continuation Smoke
+
+### Summary
+
+- Extended the `smoke32` continuation schedule from level 4/final to
+  level 4, conditional level 2, and final level 1.
+- Added explicit skipped-level and skipped-geometry summary fields so early
+  exit decisions are visible in `alignment_summary.csv`,
+  `residual_metrics.csv`, and `verification.json`.
+- Made level-1 geometry a planned verification-triggered polish step that is
+  skipped when coarse verification passes, while still running the final
+  reconstruction.
+
+### Decisions
+
+- Kept gauge canonicalisation as the smoke geometry update; this slice only
+  changes continuation control flow and artifact reporting.
+- Recorded skipped level 2 as an artifact row instead of silently omitting it so
+  early-exit behavior remains auditable.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_vertical_smoke.py -q`
+  passed: 5 tests.
+- `just imports` passed.
+
+### Risks
+
+- The early-exit predicate is still the smoke-profile coarse verification
+  predicate, not the full production combination of held-out residual,
+  parameter-update, and gauge-stability checks.

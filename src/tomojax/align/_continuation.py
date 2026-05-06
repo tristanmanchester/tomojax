@@ -22,6 +22,7 @@ class ContinuationLevel:
     prior_strength: float
     role: ContinuationLevelRole = "preview"
     skip_finer_if_verified: bool = True
+    run_if_coarse_unverified: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,9 +59,21 @@ def reference_continuation_schedule(
                 skip_finer_if_verified=True,
             ),
             ContinuationLevel(
+                level_factor=2,
+                reconstruction_iterations=1,
+                geometry_updates=1,
+                residual_sigma=0.85,
+                residual_delta=0.85,
+                trust_radius_px=1.0,
+                prior_strength=5.0e-4,
+                role="preview",
+                skip_finer_if_verified=True,
+                run_if_coarse_unverified=True,
+            ),
+            ContinuationLevel(
                 level_factor=1,
                 reconstruction_iterations=1,
-                geometry_updates=0,
+                geometry_updates=1,
                 residual_sigma=0.75,
                 residual_delta=0.75,
                 trust_radius_px=0.5,

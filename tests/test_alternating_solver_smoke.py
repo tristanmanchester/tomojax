@@ -22,8 +22,13 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     assert result.verification["seed"] == 17
     assert result.verification["coarse_verified"] is True
     assert result.verification["level1_geometry_skipped"] is True
+    assert result.verification["skipped_levels"] == [2]
     assert result.levels[0].geometry_updates == 1
+    assert result.levels[0].executed_geometry_updates == 1
+    assert result.levels[1].skipped_level is True
     assert result.levels[-1].skipped_geometry is True
+    assert result.levels[-1].geometry_updates == 1
+    assert result.levels[-1].executed_geometry_updates == 0
 
     expected = {
         "alignment_summary_csv",
@@ -59,7 +64,9 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
 
     with result.artifacts["alignment_summary_csv"].open("r", newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
-    assert [row["level_factor"] for row in rows] == ["4", "1"]
+    assert [row["level_factor"] for row in rows] == ["4", "2", "1"]
+    assert rows[1]["skipped_level"] == "True"
+    assert rows[-1]["executed_geometry_updates"] == "0"
 
     saved_volume = cast("NDArray[np.float32]", np.load(result.artifacts["final_volume_npy"]))
     np.testing.assert_allclose(saved_volume, result.final_volume)
@@ -84,7 +91,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
 
     with result.artifacts["residual_metrics_csv"].open("r", newline="", encoding="utf-8") as fh:
         metric_rows = list(csv.DictReader(fh))
-    assert [row["level_factor"] for row in metric_rows] == ["4", "1"]
+    assert [row["level_factor"] for row in metric_rows] == ["4", "2", "1"]
 
     assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
     assert abs(float(np.mean(result.final_geometry.pose.phi_residual_rad))) < 1.0e-12
