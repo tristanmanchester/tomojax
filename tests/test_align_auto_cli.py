@@ -212,6 +212,12 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
                 "path": str(dataset_dir / "projections.npy"),
                 "shape": [4, 32, 32],
             },
+            "recovery_tolerances": {
+                "axis_error_deg_lt": 0.1,
+                "det_u_error_px_lt": 0.5,
+                "roll_error_deg_lt": 0.05,
+                "theta_offset_error_deg_lt": 0.1,
+            },
             "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
             "true_det_u_px": 3.625,
             "validated": True,
@@ -299,6 +305,8 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     sidecar_readback = cast("dict[str, object]", synthetic_dataset["sidecar_readback"])
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
+    readback_tolerances = cast("dict[str, object]", sidecar_readback["recovery_tolerances"])
+    assert "det_u_error_px_lt" in readback_tolerances
     projections = cast("dict[str, object]", sidecar_readback["projections"])
     assert projections["shape"] == [4, 32, 32]
     consistency = cast("dict[str, object]", sidecar_readback["consistency"])
@@ -354,6 +362,8 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     sidecar_readback = cast("dict[str, object]", synthetic_dataset["sidecar_readback"])
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
+    readback_tolerances = cast("dict[str, object]", sidecar_readback["recovery_tolerances"])
+    assert readback_tolerances["core_solver"] == "flags_object_motion_suspected"
     observed = cast("NDArray[np.float32]", np.load(out_dir / "observed_projections.npy"))
     generated = cast("NDArray[np.float32]", np.load(dataset_paths.projections))
     np.testing.assert_allclose(observed, generated)
@@ -365,17 +375,10 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert benchmark_result["benchmark"] == "synth128_thermal_object_drift"
     assert benchmark_result["implementation"] == "reimagined_align_auto_smoke"
     assert benchmark_result["profile"] == "smoke32"
+    _assert_benchmark_criteria_and_runtime(benchmark_result, readback_tolerances)
     dataset = cast("dict[str, object]", benchmark_result["dataset"])
     assert dataset["artifact_dir"] == str(dataset_paths.dataset_dir)
     assert dataset["volume_shape"] == [32, 32, 32]
-    runtime = cast("dict[str, object]", benchmark_result["runtime"])
-    assert isinstance(runtime["time_to_verified_geometry_seconds"], float)
-    assert isinstance(runtime["total_wall_seconds"], float)
-    assert float(cast("float", runtime["time_to_verified_geometry_seconds"])) > 0.0
-    assert float(cast("float", runtime["total_wall_seconds"])) >= float(
-        cast("float", runtime["time_to_verified_geometry_seconds"])
-    )
-    assert int(cast("int", runtime["geometry_updates_executed"])) > 0
     reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
     assert isinstance(reconstruction["final_residual"], float)
     geometry_recovery = cast("dict[str, object]", benchmark_result["geometry_recovery"])
@@ -386,6 +389,8 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert "# Benchmark: synth128_thermal_object_drift" in benchmark_report
     assert "reimagined_align_auto_smoke" in benchmark_report
     assert "## Geometry Recovery" in benchmark_report
+    assert "## Benchmark Manifest Criteria" in benchmark_report
+    assert "flags_object_motion_suspected" in benchmark_report
     assert "## Backend Provenance" in benchmark_report
     assert "| reimagined_align_auto_smoke | smoke32 |" in benchmark_report
     assert "jax_reference" in benchmark_report
@@ -393,3 +398,22 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text
     captured = capsys.readouterr()
     assert f"synthetic_dataset: {dataset_paths.dataset_dir}" in captured.out
+
+
+def _assert_benchmark_criteria_and_runtime(
+    benchmark_result: dict[str, object],
+    readback_tolerances: dict[str, object],
+) -> None:
+    manifest_criteria = cast(
+        "dict[str, object]",
+        benchmark_result["benchmark_manifest_criteria"],
+    )
+    assert manifest_criteria == readback_tolerances
+    runtime = cast("dict[str, object]", benchmark_result["runtime"])
+    assert isinstance(runtime["time_to_verified_geometry_seconds"], float)
+    assert isinstance(runtime["total_wall_seconds"], float)
+    assert float(cast("float", runtime["time_to_verified_geometry_seconds"])) > 0.0
+    assert float(cast("float", runtime["total_wall_seconds"])) >= float(
+        cast("float", runtime["time_to_verified_geometry_seconds"])
+    )
+    assert int(cast("int", runtime["geometry_updates_executed"])) > 0

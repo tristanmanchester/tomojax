@@ -162,6 +162,7 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "projections": sidecars.projections.to_dict(),
         "mask": sidecars.mask.to_dict(),
         "consistency": sidecars.consistency.to_dict(),
+        "recovery_tolerances": _sidecar_recovery_tolerances(sidecars),
     }
 
 
@@ -201,6 +202,14 @@ def _sidecar_nuisance_applied(sidecars: SyntheticDatasetSidecars) -> bool:
         return False
     payload = cast("dict[str, object]", json.loads(path.read_text(encoding="utf-8")))
     return bool(payload.get("applied_to_projections"))
+
+
+def _sidecar_recovery_tolerances(sidecars: SyntheticDatasetSidecars) -> dict[str, object]:
+    tolerances = sidecars.manifest.get("recovery_tolerances")
+    if isinstance(tolerances, dict):
+        tolerance_items = cast("dict[object, object]", tolerances)
+        return {str(key): value for key, value in tolerance_items.items()}
+    return {}
 
 
 if __name__ == "__main__":  # pragma: no cover

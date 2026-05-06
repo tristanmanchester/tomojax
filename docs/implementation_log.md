@@ -4902,3 +4902,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Wall-clock measurements are machine-dependent and should not be used as a
   deterministic equality signal.
+
+## 2026-05-06 — Phase 8 Benchmark Manifest Criteria Readback
+
+### Summary
+
+- Added synthetic sidecar manifest `recovery_tolerances` to the align-auto
+  readback payload.
+- `benchmark_result.json` now records those values under
+  `benchmark_manifest_criteria`.
+- `benchmark_report.md` renders the criteria in a dedicated benchmark manifest
+  section.
+- Added focused CLI assertions for generated and existing-sidecar benchmark
+  runs.
+
+### Decisions
+
+- Keep benchmark manifest criteria separate from the current smoke acceptance
+  tolerances; this slice records benchmark expectations without changing solver
+  pass/fail behavior.
+
+### Validation
+
+- `uv run ruff format src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed: 3 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- Manifest pass criteria are reported for benchmark context only; they are not
+  yet active benchmark gates.

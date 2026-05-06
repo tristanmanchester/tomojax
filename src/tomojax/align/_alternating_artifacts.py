@@ -692,6 +692,10 @@ def _artifact_description(name: str) -> str:
 
 def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
     dataset = cast("dict[object, object]", benchmark_result.get("dataset", {}))
+    manifest_criteria = cast(
+        "dict[object, object]",
+        benchmark_result.get("benchmark_manifest_criteria", {}),
+    )
     reconstruction = cast("dict[object, object]", benchmark_result.get("reconstruction", {}))
     geometry = cast("dict[object, object]", benchmark_result.get("geometry_recovery", {}))
     backend = cast("dict[object, object]", benchmark_result.get("backend", {}))
@@ -734,6 +738,14 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             f"- Artifact directory: {_markdown_cell(dataset.get('artifact_dir'))}",
             f"- Volume shape: {_markdown_cell(dataset.get('volume_shape'))}",
             f"- Projection views: {_markdown_cell(dataset.get('projection_views'))}",
+            "",
+            "## Benchmark Manifest Criteria",
+            "",
+            *[
+                f"- {_markdown_cell(key)}: {_markdown_cell(value)}"
+                for key, value in sorted(manifest_criteria.items(), key=lambda item: str(item[0]))
+            ],
+            "" if manifest_criteria else "none",
             "",
             "## Geometry Recovery",
             "",
@@ -784,6 +796,10 @@ def _benchmark_result_payload(
     metrics = cast("dict[object, object]", verification.get("metrics", {}))
     verification_runtime = cast("dict[object, object]", verification.get("runtime", {}))
     geometry_recovery = cast("dict[object, object]", verification.get("geometry_recovery", {}))
+    sidecar_readback = cast(
+        "dict[object, object]",
+        synthetic_dataset.get("sidecar_readback", {}),
+    )
     volume_size = verification.get("size")
     failed_gates = _failed_gate_names(failure_report)
     return {
@@ -832,6 +848,7 @@ def _benchmark_result_payload(
             "fallbacks": [],
         },
         "failure_labels": failed_gates,
+        "benchmark_manifest_criteria": sidecar_readback.get("recovery_tolerances", {}),
         "geometry_update_volume_source": geometry_update_volume_source,
     }
 
