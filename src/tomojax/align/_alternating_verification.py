@@ -784,9 +784,10 @@ def _failure_report_payload(
         verification=verification,
     )
     warning_gates = [gate for gate in gates if not gate["passed"]]
+    warnings = _failure_warning_payloads(warning_gates)
     return {
         "schema": "tomojax.failure_report.v1",
-        "status": "passed",
+        "status": "warning" if warnings else "passed",
         "failure": None,
         "failure_classes": [
             "geometry_not_observable",
@@ -801,7 +802,14 @@ def _failure_report_payload(
             "no_improvement",
         ],
         "gates": gates,
-        "warnings": [
+        "warnings": warnings,
+    }
+
+
+def _failure_warning_payloads(warning_gates: list[dict[str, object]]) -> list[dict[str, object]]:
+    return cast(
+        "list[dict[str, object]]",
+        [
             {
                 "class": "no_improvement",
                 "severity": "warning",
@@ -837,7 +845,7 @@ def _failure_report_payload(
             for gate in warning_gates
             if gate["name"] == "synthetic_sidecar_consistency"
         ],
-    }
+    )
 
 
 def _failure_gate_rows(

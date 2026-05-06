@@ -231,6 +231,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The correlation ceiling is conservative and report-only. Automatic weak-DOF
   activation/freezing still needs a later Phase 8 policy slice.
 
+## 2026-05-06 — Surface Failure-Report Warning Status
+
+### Summary
+
+- Updated `failure_report.json` payloads to use `status: "warning"` when a
+  warning-class gate fails.
+- Clean smoke runs still assert `status: "passed"` and an empty warnings list.
+- Added focused structured-residual coverage showing that a column-pattern
+  residual produces a `nuisance_unmodelled` warning.
+
+### Decisions
+
+- This remains a warning classification, not a hard failure policy. The
+  `failure` field stays `None` for warning-only reports.
+- The focused test uses a deliberate white-box import of the align-owned
+  failure report builder because the current public verification facade does
+  not yet expose full failure-report construction.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py -q`
+  passed: 11 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- Failure-report construction still lives under `tomojax.align`; a later verify
+  module slice should move the report builder behind the public `tomojax.verify`
+  facade.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary
