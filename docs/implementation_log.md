@@ -1878,3 +1878,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The existing native JAX/Optax L-BFGS abort remains unresolved.
 - Proposed next fix for `just check`: split top-level `align` orchestration
   into setup, per-outer, and final-info helpers.
+
+## 2026-05-06 — Split Pose Align Orchestration
+
+### Summary
+
+- Added `_AlignLoopState` to carry mutable alignment loop, resume, checkpoint,
+  loss, observer, and gauge state through private helpers.
+- Extracted step-context construction, per-outer reconstruction/alignment
+  execution, observer handling, early-stop handling, completion logging, and
+  final `AlignInfo` assembly out of top-level `align`.
+- Preserved the public `align` API, checkpoint payload, and fixed-volume
+  objective provenance fields while clearing the last local `_pose_stage.py`
+  Ruff complexity blocker.
+
+### Decisions
+
+- Kept mutable loop state explicit instead of hiding it behind callbacks so the
+  resume/checkpoint contract remains visible and testable.
+- Left runtime/objective setup in `align` for now; the cleanup goal was the
+  orchestration loop, not a broader pipeline rewrite.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_stage.py` passed.
+- `uv run ruff format src/tomojax/align/_pose_stage.py` passed.
+- `uv run pytest tests/test_align_quick.py tests/test_align_chunking.py -q -k '(gn or gd or smooth_pose_model or pose_model) and not lbfgs'`
+  passed: 47 tests, 5 deselected.
+- `uv run pytest tests/test_align_optimizers.py -q` passed: 10 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. The first remaining blockers are legacy import/type-alias issues
+  in `_profiles.py`, `_quality_policy.py`, `_reconstruction_stage.py`,
+  `_results.py`, and `_setup_stage.py`, followed by broader repository lint
+  backlog. Formatter churn from `just check` was reverted outside this slice.
+
+### Risks
+
+- Stateful extraction could regress resume/checkpoint or early-stop behavior;
+  targeted GN/GD alignment coverage passed, but dedicated checkpoint tests were
+  not run in this slice.
+- The existing native JAX/Optax L-BFGS abort remains unresolved.
+- Proposed next fix for `just check`: clean `_profiles.py` import/type-alias
+  findings, then proceed through `_quality_policy.py` and
+  `_reconstruction_stage.py`.
