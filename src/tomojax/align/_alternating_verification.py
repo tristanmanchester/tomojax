@@ -15,7 +15,7 @@ from tomojax.align._alternating_types import (
     _LevelVerificationChecks,
 )
 from tomojax.forward import project_parallel_reference, residual_loss
-from tomojax.verify import residual_structure_summary
+from tomojax.verify import failure_report_from_gates, residual_structure_summary
 
 if TYPE_CHECKING:
     from tomojax.align._alternating_types import (
@@ -783,69 +783,7 @@ def _failure_report_payload(
         summaries=summaries,
         verification=verification,
     )
-    warning_gates = [gate for gate in gates if not gate["passed"]]
-    warnings = _failure_warning_payloads(warning_gates)
-    return {
-        "schema": "tomojax.failure_report.v1",
-        "status": "warning" if warnings else "passed",
-        "failure": None,
-        "failure_classes": [
-            "geometry_not_observable",
-            "pose_overfit",
-            "nuisance_unmodelled",
-            "backend_fallback_unexpected",
-            "reconstruction_underconverged",
-            "motion_model_insufficient",
-            "deformation_suspected",
-            "bad_input_metadata",
-            "nan_or_inf",
-            "no_improvement",
-        ],
-        "gates": gates,
-        "warnings": warnings,
-    }
-
-
-def _failure_warning_payloads(warning_gates: list[dict[str, object]]) -> list[dict[str, object]]:
-    return cast(
-        "list[dict[str, object]]",
-        [
-            {
-                "class": "no_improvement",
-                "severity": "warning",
-                "evidence": [str(gate["evidence"])],
-                "recommended_action": (
-                    "run a longer continuation profile or enable real geometry LM/GN updates"
-                ),
-            }
-            for gate in warning_gates
-            if gate["name"] == "projection_residual_improvement"
-        ]
-        + [
-            {
-                "class": "nuisance_unmodelled",
-                "severity": "warning",
-                "evidence": [str(gate["evidence"])],
-                "recommended_action": (
-                    "enable gain/offset nuisance fitting or inspect flat-field correction"
-                ),
-            }
-            for gate in warning_gates
-            if gate["name"] == "nuisance_residual_structure"
-        ]
-        + [
-            {
-                "class": "bad_input_metadata",
-                "severity": "warning",
-                "evidence": [str(gate["evidence"])],
-                "recommended_action": (
-                    "inspect generated synthetic sidecar manifest and artifact paths"
-                ),
-            }
-            for gate in warning_gates
-            if gate["name"] == "synthetic_sidecar_consistency"
-        ],
-    )
+    return failure_report_from_gates(gates)
 
 
 def _failure_gate_rows(

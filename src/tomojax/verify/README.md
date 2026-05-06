@@ -10,6 +10,9 @@ gauge reports, backend provenance reports, and failure classification.
 - `ArtifactValidationIssue`
 - `ArtifactValidationReport`
 - `ArtifactValidationError`
+- `FAILURE_CLASSES`
+- `failure_report_from_gates(gates)`
+- `failure_warnings_from_gates(gates)`
 - `inspect_run_artifacts(run_dir)`
 - `residual_structure_summary(residual, mask)`
 - `validate_run_artifacts(run_dir)`

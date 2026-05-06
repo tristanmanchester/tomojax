@@ -269,6 +269,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   module slice should move the report builder behind the public `tomojax.verify`
   facade.
 
+## 2026-05-06 — Move Failure-Report Assembly To Verify
+
+### Summary
+
+- Added `tomojax.verify.failure_report_from_gates` and
+  `tomojax.verify.failure_warnings_from_gates`.
+- Moved the common failure-report envelope, failure-class list, warning status,
+  and warning payload construction into `tomojax.verify`.
+- Routed alternating smoke failure reports through the verify-owned helper while
+  keeping align responsible for producing run-specific gate evidence.
+- Replaced the private white-box failure-report test with public verify facade
+  coverage.
+
+### Decisions
+
+- `tomojax.verify` now owns the generic failure-report shape; `tomojax.align`
+  still owns solver-specific gate evidence until a later artifact ownership
+  cleanup moves more report construction out of align.
+
+### Validation
+
+- `uv run ruff format src/tomojax/verify src/tomojax/align/_alternating_verification.py tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/verify src/tomojax/align/_alternating_verification.py tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/verify src/tomojax/align/_alternating_verification.py tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_failure_report_classification.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 16 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- The gate evidence is still produced in `tomojax.align`; verify-owned complete
+  report construction remains a future cleanup.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary
