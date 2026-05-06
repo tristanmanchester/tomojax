@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+from tomojax.align._alternating import (
+    AlternatingLevelSummary,
+    AlternatingSmokeConfig,
+    AlternatingSmokeResult,
+    run_alternating_solver_smoke,
+)
+from tomojax.align._continuation import (
+    ContinuationLevel,
+    ContinuationSchedule,
+    reference_continuation_schedule,
+)
 from tomojax.align._joint_schur_lm import (
     JointSchurDiagnostics,
     JointSchurLMConfig,
@@ -21,6 +32,11 @@ from tomojax.align.pipeline import AlignConfig, align, align_multires
 __all__ = [
     "AlignConfig",
     "AlignmentSmokeReport",
+    "AlternatingLevelSummary",
+    "AlternatingSmokeConfig",
+    "AlternatingSmokeResult",
+    "ContinuationLevel",
+    "ContinuationSchedule",
     "JointSchurDiagnostics",
     "JointSchurLMConfig",
     "JointSchurLMResult",
@@ -33,7 +49,9 @@ __all__ = [
     "align",
     "align_multires",
     "joint_schur_normal_eq_summary",
+    "reference_continuation_schedule",
     "run_alignment_smoke",
+    "run_alternating_solver_smoke",
     "schur_step_from_jacobian",
     "solve_joint_schur_lm",
     "solve_pose_only_lm",

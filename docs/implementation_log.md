@@ -2458,3 +2458,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   focused motion-model tests passed.
 - Proposed next fix: switch from legacy Ruff cleanup to Phase 7 alternating
   solver continuation smoke.
+
+## 2026-05-06 — Phase 7 Alternating Solver Smoke Slice
+
+### Summary
+
+- Added an align-owned `smoke32` continuation schedule with preview and final
+  levels.
+- Added a deterministic 32^3 stopped-volume alternating smoke runner that
+  reconstructs with the JAX reference FISTA path, applies gauge
+  canonicalisation as the first geometry update, and writes Phase 7 smoke
+  artifacts.
+- Added smoke tests that verify deterministic volume output, coarse
+  verification, level-1 geometry skip recording, pose gauge canonicalisation,
+  and artifact presence.
+
+### Decisions
+
+- Kept the legacy `tomojax.align` package facade unchanged; Phase 7 names are
+  exposed through `tomojax.align.api`.
+- Used gauge canonicalisation as the smallest geometry-update vertical slice so
+  the run emits real geometry/provenance artifacts before the full production
+  Schur LM loop is wired into the alternating solver.
+- Stopped legacy Ruff cleanup after the motion-model slice per user direction.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_continuation.py src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_vertical_smoke.py -q`
+  passed: 5 tests.
+- `just imports` passed.
+
+### Risks
+
+- The alternating solver currently uses gauge canonicalisation rather than the
+  full Schur LM/GN geometry update; this is intentionally the smallest Phase 7
+  vertical slice and leaves production escalation/continuation for follow-up.

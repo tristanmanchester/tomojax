@@ -14,6 +14,11 @@ delete or migrate internal owners.
 
 - `AlignConfig`
 - `AlignmentSmokeReport`
+- `AlternatingLevelSummary`
+- `AlternatingSmokeConfig`
+- `AlternatingSmokeResult`
+- `ContinuationLevel`
+- `ContinuationSchedule`
 - `JointSchurDiagnostics`
 - `JointSchurLMConfig`
 - `JointSchurLMResult`
@@ -26,6 +31,8 @@ delete or migrate internal owners.
 - `align`
 - `align_multires`
 - `joint_schur_normal_eq_summary`
+- `reference_continuation_schedule`
+- `run_alternating_solver_smoke`
 - `run_alignment_smoke`
 - `schur_step_from_jacobian`
 - `solve_joint_schur_lm`
@@ -71,8 +78,14 @@ Forbidden dependencies:
   engine.
 - `write_joint_schur_normal_eq_summary` writes the current Phase 6
   `normal_eq_summary.json` artifact.
+- `run_alternating_solver_smoke` is the first Phase 7 vertical slice. It runs a
+  deterministic 32^3 stopped-volume alternating smoke path and writes the
+  initial/final geometry, pose CSVs, FISTA trace, alignment summary,
+  verification report, and artifact index.
 
 ## Tests
 
 - Existing alignment tests cover transitional behavior.
+- `tests/test_alternating_solver_smoke.py` covers the Phase 7 deterministic
+  artifact smoke run.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.
