@@ -3428,3 +3428,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The geometry-aware backprojection is still a simple reference initializer,
   not a full reconstruction-quality solution.
+
+## 2026-05-06 — Phase 7 Schur Volume Source Contract
+
+### Summary
+
+- Added a typed `GeometryUpdateVolumeSource` contract for the Phase 7 smoke
+  Schur geometry update.
+- Kept the default source as the fixed synthetic truth volume and made that
+  explicit in the alternating smoke config.
+- Recorded the selected source in `config_resolved.toml`, `run_manifest.json`,
+  `verification.json`, and `schur_diagnostics.json`.
+- Exposed the source type through the `tomojax.align` public API and README.
+- Extended smoke tests to verify the explicit source contract across the
+  emitted artifacts.
+
+### Decisions
+
+- This slice does not switch the Schur update to the stopped FISTA latent. The
+  synthetic fixed volume remains the deterministic smoke source until stopped
+  latent recovery can pass the supported DOF checks.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/api.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- The source contract is explicit, but the default is still a smoke-only
+  numerical bridge. The next numerical slice should make stopped-latent Schur
+  recovery pass before changing the default.

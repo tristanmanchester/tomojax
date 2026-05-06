@@ -7,6 +7,7 @@ from tomojax.align._alternating import (
     AlternatingLevelSummary,
     AlternatingSmokeConfig,
     AlternatingSmokeResult,
+    GeometryUpdateVolumeSource,
     run_alternating_solver_smoke,
 )
 from tomojax.align._continuation import (
@@ -41,6 +42,7 @@ __all__ = [
     "ContinuationLevel",
     "ContinuationSchedule",
     "ContinuationScheduleName",
+    "GeometryUpdateVolumeSource",
     "JointSchurDiagnostics",
     "JointSchurLMConfig",
     "JointSchurLMResult",

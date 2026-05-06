@@ -21,6 +21,7 @@ delete or migrate internal owners.
 - `ContinuationLevel`
 - `ContinuationSchedule`
 - `ContinuationScheduleName`
+- `GeometryUpdateVolumeSource`
 - `JointSchurDiagnostics`
 - `JointSchurLMConfig`
 - `JointSchurLMResult`

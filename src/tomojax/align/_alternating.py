@@ -9,7 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -52,6 +52,8 @@ from tomojax.verify import validate_run_artifacts
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+GeometryUpdateVolumeSource = Literal["fixed_synthetic_truth", "stopped_reconstruction"]
+
 
 @dataclass(frozen=True)
 class AlternatingSmokeConfig:
@@ -64,6 +66,7 @@ class AlternatingSmokeConfig:
     verification_loss_tolerance: float = 1.0e-5
     gauge_stability_tolerance: float = 1.0e-10
     parameter_update_tolerance: float = 2.0
+    geometry_update_volume_source: GeometryUpdateVolumeSource = "fixed_synthetic_truth"
 
 
 @dataclass(frozen=True)
@@ -194,8 +197,13 @@ def _run_alternating_solver_smoke_impl(
         skipped_geometry = geometry_updates == 0
         update_report = GaugeReport(())
         if geometry_updates > 0:
+            geometry_update_volume = _geometry_update_volume(
+                truth_volume=truth,
+                stopped_volume=volume,
+                source=cfg.geometry_update_volume_source,
+            )
             geometry, update_report, schur_result = _run_geometry_updates(
-                truth,
+                geometry_update_volume,
                 observed,
                 geometry,
                 mask,
@@ -265,6 +273,7 @@ def _run_alternating_solver_smoke_impl(
         fista_result=fista_result,
         summaries=tuple(summaries),
         schur_result=last_schur_result,
+        geometry_update_volume_source=cfg.geometry_update_volume_source,
         verification=_verification_payload(
             cfg=cfg,
             schedule=schedule,
@@ -276,6 +285,7 @@ def _run_alternating_solver_smoke_impl(
             truth_volume=truth,
             final_volume=volume,
             summaries=tuple(summaries),
+            geometry_update_volume_source=cfg.geometry_update_volume_source,
         ),
     )
     verification = json.loads(artifacts["verification_json"].read_text(encoding="utf-8"))
@@ -348,6 +358,19 @@ def _run_geometry_updates(
         ),
     )
     return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
+
+
+def _geometry_update_volume(
+    *,
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    source: GeometryUpdateVolumeSource,
+) -> jax.Array:
+    if source == "fixed_synthetic_truth":
+        return jax.lax.stop_gradient(truth_volume)
+    if source == "stopped_reconstruction":
+        return jax.lax.stop_gradient(stopped_volume)
+    raise ValueError(f"unknown geometry update volume source {source!r}")
 
 
 def _geometry_updates_for_level(
@@ -461,6 +484,7 @@ def _verification_payload(
     truth_volume: jax.Array,
     final_volume: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
 ) -> dict[str, object]:
     geometry_recovery = _geometry_recovery_payload(true_geometry, final_geometry)
     volume_recovery = _volume_recovery_payload(truth_volume, final_volume)
@@ -503,6 +527,7 @@ def _verification_payload(
         "size": cfg.size,
         "n_views": cfg.n_views,
         "schedule": schedule.name,
+        "geometry_update_volume_source": geometry_update_volume_source,
         "level_factors": list(schedule.level_factors),
         "initial_loss": initial_loss,
         "final_loss": final_loss,
@@ -651,6 +676,7 @@ def _write_artifacts(
     fista_result: ReferenceFISTAResult,
     summaries: tuple[AlternatingLevelSummary, ...],
     schur_result: JointSchurLMResult | None,
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
     verification: Mapping[str, object],
 ) -> dict[str, Path]:
     artifacts = {
@@ -690,10 +716,19 @@ def _write_artifacts(
         "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
         "verification_json": output_dir / "verification.json",
     }
-    _write_config_resolved(artifacts["config_resolved_toml"], schedule)
+    _write_config_resolved(
+        artifacts["config_resolved_toml"],
+        schedule,
+        geometry_update_volume_source=geometry_update_volume_source,
+    )
     _write_json(
         artifacts["run_manifest_json"],
-        _run_manifest_payload(final_volume, observed, schedule),
+        _run_manifest_payload(
+            final_volume,
+            observed,
+            schedule,
+            geometry_update_volume_source=geometry_update_volume_source,
+        ),
     )
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
     _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
@@ -738,7 +773,13 @@ def _write_artifacts(
         artifacts["plots_summary_json"],
         _plots_summary_payload(fista_result=fista_result, summaries=summaries),
     )
-    _write_json(artifacts["schur_diagnostics_json"], _schur_diagnostics_payload(schur_result))
+    _write_json(
+        artifacts["schur_diagnostics_json"],
+        _schur_diagnostics_payload(
+            schur_result,
+            geometry_update_volume_source=geometry_update_volume_source,
+        ),
+    )
     _write_residual_map_artifacts(
         artifacts["residual_map_raw_npy"],
         artifacts["residual_map_summary_json"],
@@ -910,16 +951,22 @@ def _plots_summary_payload(
     }
 
 
-def _schur_diagnostics_payload(result: JointSchurLMResult | None) -> dict[str, object]:
+def _schur_diagnostics_payload(
+    result: JointSchurLMResult | None,
+    *,
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
+) -> dict[str, object]:
     if result is None:
         return {
             "schema": "tomojax.schur_diagnostics.v1",
             "status": "not_run",
             "solver": "joint_schur_lm_reference",
+            "geometry_update_volume_source": geometry_update_volume_source,
         }
     payload = joint_schur_normal_eq_summary(result)
     payload["schema"] = "tomojax.schur_diagnostics.v1"
     payload["status"] = "passed" if result.final_loss <= result.initial_loss else "warning"
+    payload["geometry_update_volume_source"] = geometry_update_volume_source
     return payload
 
 
@@ -1180,7 +1227,12 @@ def _artifact_description(name: str) -> str:
     return descriptions[name]
 
 
-def _write_config_resolved(path: Path, schedule: ContinuationSchedule) -> None:
+def _write_config_resolved(
+    path: Path,
+    schedule: ContinuationSchedule,
+    *,
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
+) -> None:
     _ = path.write_text(
         "\n".join(
             (
@@ -1189,6 +1241,7 @@ def _write_config_resolved(path: Path, schedule: ContinuationSchedule) -> None:
                 'backend_requested = "jax_reference"',
                 'backend_actual = "jax_reference"',
                 'geometry_model = "parallel_tomography_reference"',
+                f'geometry_update_volume_source = "{geometry_update_volume_source}"',
                 f"level_factors = {list(schedule.level_factors)!r}",
                 "",
             )
@@ -1217,6 +1270,8 @@ def _run_manifest_payload(
     volume: jax.Array,
     projections: jax.Array,
     schedule: ContinuationSchedule,
+    *,
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
 ) -> dict[str, object]:
     return {
         "schema": "tomojax.run_manifest.v1",
@@ -1234,6 +1289,7 @@ def _run_manifest_payload(
             "projection_dtype": str(projections.dtype),
         },
         "geometry_model": "parallel_tomography_reference",
+        "geometry_update_volume_source": geometry_update_volume_source,
         "continuation": {
             "name": schedule.name,
             "level_factors": list(schedule.level_factors),
@@ -1603,5 +1659,6 @@ __all__ = [
     "AlternatingLevelSummary",
     "AlternatingSmokeConfig",
     "AlternatingSmokeResult",
+    "GeometryUpdateVolumeSource",
     "run_alternating_solver_smoke",
 ]

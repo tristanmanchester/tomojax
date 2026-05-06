@@ -61,6 +61,7 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
 
 
 def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
+    assert result.verification["geometry_update_volume_source"] == "fixed_synthetic_truth"
     verification_summary = cast("dict[str, bool]", result.verification["summary"])
     assert verification_summary["final_reconstruction_valid"] is True
     assert verification_summary["gauge_constraints_satisfied"] is True
@@ -234,6 +235,7 @@ def _assert_schur_diagnostics(result: AlternatingSmokeResult) -> None:
     assert payload["schema"] == "tomojax.schur_diagnostics.v1"
     assert payload["status"] == "passed"
     assert payload["solver"] == "joint_schur_lm_reference"
+    assert payload["geometry_update_volume_source"] == "fixed_synthetic_truth"
     assert payload["active_setup_parameters"] == [
         "theta_offset_rad",
         "det_u_px",
@@ -293,6 +295,7 @@ def _assert_manifest(result: AlternatingSmokeResult) -> None:
     assert manifest["started_at"] == "deterministic-smoke"
     assert manifest["finished_at"] == "deterministic-smoke"
     assert manifest["geometry_model"] == "parallel_tomography_reference"
+    assert manifest["geometry_update_volume_source"] == "fixed_synthetic_truth"
     assert manifest["backend_requested"] == "jax_reference"
     assert manifest["backend_actual"] == "jax_reference"
     assert manifest["status"] == "passed"
@@ -474,4 +477,5 @@ def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:
     assert continuation["name"] == "lightning"
     config_text = result.artifacts["config_resolved_toml"].read_text(encoding="utf-8")
     assert 'profile = "lightning"' in config_text
+    assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
     assert "level_factors = [4, 2, 1]" in config_text
