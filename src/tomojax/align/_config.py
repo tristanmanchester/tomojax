@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Mapping, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from ..core.geometry.base import Geometry
-from ..core.backend_policy import ProjectorBackendInput, normalize_projector_backend
-from ..recon.types import Regulariser
+from tomojax.core.backend_policy import normalize_projector_backend
+
 from ._profiles import (
     AlignmentProfileInput,
     FallbackPolicy,
@@ -13,21 +12,34 @@ from ._profiles import (
     alignment_profile_policy,
     normalize_alignment_profile,
 )
-from .objectives.loss_specs import AlignmentLossConfig, L2OtsuLossSpec
+from .geometry.geometry_blocks import normalize_geometry_dofs
 from .model.diagnostics import GaugePolicy
 from .model.dofs import (
-    DofBounds,
     ScopedAlignmentDofs,
     bounds_vectors,
     normalize_alignment_dofs,
     normalize_bounds,
 )
 from .model.gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
-from .geometry.geometry_blocks import normalize_geometry_dofs
-from .model.schedules import AlignmentSchedule, ResolvedAlignmentSchedule, resolve_alignment_schedule
+from .model.schedules import (
+    AlignmentSchedule,
+    ResolvedAlignmentSchedule,
+    resolve_alignment_schedule,
+)
+from .objectives.loss_specs import L2OtsuLossSpec
 
-ReconAlgo: TypeAlias = Literal["fista", "spdhg"]
-ReconAlgoInput: TypeAlias = Literal[
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from tomojax.core.backend_policy import ProjectorBackendInput
+    from tomojax.core.geometry.base import Geometry
+    from tomojax.recon.types import Regulariser
+
+    from .model.dofs import DofBounds
+    from .objectives.loss_specs import AlignmentLossConfig
+
+type ReconAlgo = Literal["fista", "spdhg"]
+type ReconAlgoInput = Literal[
     "fista",
     "spdhg",
     "fista_tv",
@@ -35,12 +47,15 @@ ReconAlgoInput: TypeAlias = Literal[
     "fista-tv",
     "spdhg-tv",
 ]
-GaugePolicyInput: TypeAlias = GaugePolicy | Literal[
-    "anchor-mean",
-    "prior-required",
-    "diagnose-only",
-]
-PoseModelInput: TypeAlias = Literal[
+type GaugePolicyInput = (
+    GaugePolicy
+    | Literal[
+        "anchor-mean",
+        "prior-required",
+        "diagnose-only",
+    ]
+)
+type PoseModelInput = Literal[
     "per_view",
     "per-view",
     "polynomial",
@@ -48,23 +63,23 @@ PoseModelInput: TypeAlias = Literal[
 ]
 
 
-def _active_dof_mask_for_cfg(cfg: "AlignConfig") -> tuple[bool, bool, bool, bool, bool]:
+def _active_dof_mask_for_cfg(cfg: AlignConfig) -> tuple[bool, bool, bool, bool, bool]:
     return _scoped_dofs_for_cfg(cfg).pose_mask
 
 
-def _active_dofs_for_cfg(cfg: "AlignConfig") -> tuple[str, ...]:
+def _active_dofs_for_cfg(cfg: AlignConfig) -> tuple[str, ...]:
     return _scoped_dofs_for_cfg(cfg).active_pose_dofs
 
 
 def _active_geometry_dofs_for_cfg(
-    cfg: "AlignConfig",
+    cfg: AlignConfig,
     geometry: Geometry | None = None,
 ) -> tuple[str, ...]:
     return _scoped_dofs_for_cfg(cfg, geometry=geometry).active_geometry_dofs
 
 
 def _scoped_dofs_for_cfg(
-    cfg: "AlignConfig",
+    cfg: AlignConfig,
     *,
     geometry: Geometry | None = None,
 ) -> ScopedAlignmentDofs:
@@ -72,7 +87,9 @@ def _scoped_dofs_for_cfg(
     return ScopedAlignmentDofs(
         active_pose_dofs=resolved.active_pose_dofs,
         active_geometry_dofs=resolved.active_geometry_dofs,
-        frozen_pose_dofs=tuple(name for name in cfg.freeze_dofs if name in {"alpha", "beta", "phi", "dx", "dz"}),
+        frozen_pose_dofs=tuple(
+            name for name in cfg.freeze_dofs if name in {"alpha", "beta", "phi", "dx", "dz"}
+        ),
         frozen_geometry_dofs=tuple(
             name
             for name in cfg.freeze_dofs
@@ -90,7 +107,7 @@ def _scoped_dofs_for_cfg(
 
 
 def _resolved_schedule_for_cfg(
-    cfg: "AlignConfig",
+    cfg: AlignConfig,
     *,
     geometry: Geometry | None = None,
 ) -> ResolvedAlignmentSchedule:
@@ -100,7 +117,7 @@ def _resolved_schedule_for_cfg(
         freeze_dofs=cfg.freeze_dofs,
         geometry_dofs=cfg.geometry_dofs,
         geometry=geometry,
-        gauge_policy=cfg.gauge_policy,
+        gauge_policy=cast("GaugePolicy", cfg.gauge_policy),
         gauge_priors=cfg.gauge_priors,
         opt_method=cfg.opt_method,
         outer_iters=int(cfg.outer_iters),
@@ -157,7 +174,7 @@ class AlignConfig:
     gauge_fix: GaugeFixMode = "mean_translation"
     seed_translations: bool = False
     # Volume masking before forward projection (modeling for ROI/truncation)
-    # Options: "off" (default), "cyl" (cylindrical mask in x–y broadcast along z)
+    # Options: "off" (default), "cyl" (cylindrical mask in x-y broadcast along z)
     mask_vol: str = "off"
     # Logging
     log_summary: bool = False
@@ -175,6 +192,17 @@ class AlignConfig:
     loss: AlignmentLossConfig = field(default_factory=L2OtsuLossSpec)
 
     def __post_init__(self) -> None:
+        self._apply_profile_policy()
+        self._normalize_reconstruction_options()
+        self._normalize_backend_options()
+        self._normalize_optimizer_options()
+        self._normalize_schedule_options()
+        self._normalize_dof_options()
+        self._normalize_gauge_options()
+        self._normalize_pose_model_options()
+        self._normalize_gauge_fix_options()
+
+    def _apply_profile_policy(self) -> None:
         self.align_profile = normalize_alignment_profile(self.align_profile)
         profile_policy = alignment_profile_policy(self.align_profile)
         if self.align_profile == "tortoise":
@@ -190,22 +218,28 @@ class AlignConfig:
         else:
             self.quality_tier = profile_policy.quality_tier
             self.fallback_policy = profile_policy.fallback_policy
+
+    def _normalize_reconstruction_options(self) -> None:
         recon_algo = str(self.recon_algo).strip().lower().replace("-", "_")
         if recon_algo in {"fista_tv"}:
             recon_algo = "fista"
         elif recon_algo in {"spdhg_tv"}:
             recon_algo = "spdhg"
-        self.recon_algo = cast(ReconAlgoInput, recon_algo)
+        self.recon_algo = cast("ReconAlgoInput", recon_algo)
         if self.recon_algo not in {"fista", "spdhg"}:
             raise ValueError("recon_algo must be one of 'fista' or 'spdhg'")
+
+    def _normalize_backend_options(self) -> None:
         self.projector_backend = normalize_projector_backend(self.projector_backend)
         self.gather_dtype = str(self.gather_dtype).strip().lower()
-        self.quality_tier = cast(QualityTier, str(self.quality_tier).strip().lower())
+        self.quality_tier = cast("QualityTier", str(self.quality_tier).strip().lower())
         if self.quality_tier not in {"fast", "reference"}:
             raise ValueError("quality_tier must be one of 'fast' or 'reference'")
-        self.fallback_policy = cast(FallbackPolicy, str(self.fallback_policy).strip().lower())
+        self.fallback_policy = cast("FallbackPolicy", str(self.fallback_policy).strip().lower())
         if self.fallback_policy not in {"fallback", "strict"}:
             raise ValueError("fallback_policy must be one of 'fallback' or 'strict'")
+
+    def _normalize_optimizer_options(self) -> None:
         opt_method = str(self.opt_method).strip().lower().replace("-", "_")
         if opt_method in {"lbfgsb", "l_bfgs", "l_bfgs_b"}:
             opt_method = "lbfgs"
@@ -222,6 +256,8 @@ class AlignConfig:
             raise ValueError("lbfgs_ftol must be >= 0")
         if float(self.lbfgs_gtol) < 0.0:
             raise ValueError("lbfgs_gtol must be >= 0")
+
+    def _normalize_schedule_options(self) -> None:
         if self.schedule is not None and self.optimise_dofs is not None:
             raise ValueError("schedule and optimise_dofs are mutually exclusive")
         if isinstance(self.schedule, str):
@@ -233,13 +269,17 @@ class AlignConfig:
                 self.optimise_dofs,
                 option_name="optimise_dofs",
             )
+
+    def _normalize_dof_options(self) -> None:
         self.freeze_dofs = normalize_alignment_dofs(self.freeze_dofs, option_name="freeze_dofs")
         self.geometry_dofs = normalize_geometry_dofs(
             self.geometry_dofs,
             geometry=None,
         )
+
+    def _normalize_gauge_options(self) -> None:
         self.gauge_policy = cast(
-            GaugePolicyInput,
+            "GaugePolicyInput",
             str(self.gauge_policy).strip().lower().replace("-", "_"),
         )
         if self.gauge_policy not in {"reject", "anchor_mean", "prior_required", "diagnose_only"}:
@@ -247,10 +287,12 @@ class AlignConfig:
                 "gauge_policy must be one of 'reject', 'anchor_mean', "
                 "'prior_required', or 'diagnose_only'"
             )
-        _active_dof_mask_for_cfg(self)
+        _ = _active_dof_mask_for_cfg(self)
         self.bounds = normalize_bounds(self.bounds, option_name="bounds")
+
+    def _normalize_pose_model_options(self) -> None:
         pose_model = str(self.pose_model).strip().lower().replace("-", "_")
-        self.pose_model = cast(PoseModelInput, pose_model)
+        self.pose_model = cast("PoseModelInput", pose_model)
         if self.pose_model not in {"per_view", "polynomial", "spline"}:
             raise ValueError("pose_model must be one of 'per_view', 'polynomial', or 'spline'")
         if self.pose_model == "polynomial" and int(self.degree) < 0:
@@ -260,9 +302,12 @@ class AlignConfig:
                 raise ValueError("knot_spacing must be >= 1 for spline pose_model")
             if int(self.degree) not in (1, 2, 3):
                 raise ValueError("degree must be one of 1, 2, or 3 for spline pose_model")
+
+    def _normalize_gauge_fix_options(self) -> None:
         self.gauge_fix = normalize_gauge_fix(self.gauge_fix)
         if self.gauge_fix == "mean_translation":
-            bounds_lower, bounds_upper = bounds_vectors(self.bounds)
+            bounds = cast("DofBounds", self.bounds)
+            bounds_lower, bounds_upper = bounds_vectors(bounds)
             active_mask_for_gauge = _active_dof_mask_for_cfg(self)
             validate_alignment_gauge_feasible(
                 mode=self.gauge_fix,
@@ -270,8 +315,6 @@ class AlignConfig:
                 bounds_lower=bounds_lower,
                 bounds_upper=bounds_upper,
             )
-
-
 
 
 __all__ = [

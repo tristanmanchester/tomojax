@@ -1678,3 +1678,53 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   separate milestone instead of mixing repository-wide lint churn into Phase 6
   numerical solver work.
+
+## 2026-05-06 — Unblock First Milestone 0 Ruff Cleanup Cluster
+
+### Summary
+
+- Replaced ambiguous Unicode punctuation in the package docstring with ASCII
+  equivalents.
+- Updated `tomojax.align._config` imports, type-only imports, and Python 3.12
+  type aliases to satisfy the first `just check` Ruff cluster.
+- Split `AlignConfig.__post_init__` into focused normalization helpers while
+  preserving the previous normalization order.
+- Added casts where normalized config fields narrow from public input types to
+  internal enum-like literals.
+
+### Decisions
+
+- Kept the helper call order identical to the old in-method validation order to
+  avoid behavior changes.
+- Left the existing public-facade contract mismatch and LBFGS native crash out
+  of scope for this narrow cleanup slice.
+
+### Validation
+
+- `uv run ruff check src/tomojax/__init__.py src/tomojax/align/_config.py`
+  passed.
+- `uv run basedpyright src/tomojax/__init__.py src/tomojax/align/_config.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/__init__.py src/tomojax/align/_config.py`
+  passed.
+- `uv run pytest tests/test_align_profiles.py tests/test_align_motion_models.py tests/test_align_gauge.py tests/test_align_optimizers.py tests/test_v2_module_skeleton.py -q`
+  passed: 30 tests.
+- `uv run pytest tests/test_align_chunking.py -q -k 'not lbfgs'` passed:
+  24 tests, 5 deselected.
+- `just imports` passed.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures. The
+  first remaining cluster now starts in `src/tomojax/align/_pose_stage.py`
+  with parent-relative imports, type-only imports, missing annotations, and
+  complexity findings.
+- `uv run pytest tests/test_cli_config.py tests/test_align_contracts.py tests/test_alignment_schedules.py -q`
+  still fails on `test_alignment_public_facade_stays_narrow`, which expects the
+  old three-symbol `tomojax.align.__all__` while the current committed facade
+  exposes LM symbols.
+- A broader config-adjacent pytest run encountered a native JAX/Optax
+  segmentation fault inside an existing LBFGS chunking path.
+- Proposed next fix for `just check`: start a dedicated cleanup slice for
+  `src/tomojax/align/_pose_stage.py` import hygiene and local annotation
+  findings before tackling larger complexity findings.
