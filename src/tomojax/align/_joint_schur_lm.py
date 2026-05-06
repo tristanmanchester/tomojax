@@ -70,6 +70,9 @@ class JointSchurDiagnostics:
     reduction_ratio: float | None = None
     next_setup_trust_radius: float | None = None
     next_pose_trust_radius: float | None = None
+    current_loss_by_view: tuple[float, ...] = ()
+    candidate_loss_by_view: tuple[float, ...] = ()
+    actual_reduction_by_view: tuple[float, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -96,6 +99,9 @@ class JointSchurDiagnostics:
             "reduction_ratio": self.reduction_ratio,
             "next_setup_trust_radius": self.next_setup_trust_radius,
             "next_pose_trust_radius": self.next_pose_trust_radius,
+            "current_loss_by_view": list(self.current_loss_by_view),
+            "candidate_loss_by_view": list(self.candidate_loss_by_view),
+            "actual_reduction_by_view": list(self.actual_reduction_by_view),
         }
 
 
@@ -179,8 +185,32 @@ def solve_joint_schur_lm(
         candidate = params + schur.step
         candidate_loss = _loss_for_params(vol, obs, geometry, candidate, mask=mask, cfg=cfg)
         current_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
+        current_loss_by_view = _loss_by_view_for_params(
+            vol,
+            obs,
+            geometry,
+            params,
+            mask=mask,
+            cfg=cfg,
+        )
+        candidate_loss_by_view = _loss_by_view_for_params(
+            vol,
+            obs,
+            geometry,
+            candidate,
+            mask=mask,
+            cfg=cfg,
+        )
         accepted = bool(candidate_loss <= current_loss)
         actual_reduction = float(current_loss - candidate_loss)
+        actual_reduction_by_view = tuple(
+            current - candidate
+            for current, candidate in zip(
+                current_loss_by_view,
+                candidate_loss_by_view,
+                strict=True,
+            )
+        )
         predicted_reduction = schur.diagnostics.predicted_reduction
         reduction_ratio = _reduction_ratio(actual_reduction, predicted_reduction)
         params = candidate if accepted else params
@@ -212,6 +242,9 @@ def solve_joint_schur_lm(
             reduction_ratio=reduction_ratio,
             next_setup_trust_radius=next_setup_trust_radius,
             next_pose_trust_radius=next_pose_trust_radius,
+            current_loss_by_view=current_loss_by_view,
+            candidate_loss_by_view=candidate_loss_by_view,
+            actual_reduction_by_view=actual_reduction_by_view,
         )
         iteration_diagnostics.append(diagnostics)
         damping = next_damping
@@ -567,3 +600,40 @@ def _loss_for_params(
         dz_px=det_v + dz_pose,
     )
     return residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
+
+
+def _loss_by_view_for_params(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+) -> tuple[float, ...]:
+    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
+    predicted = project_parallel_reference_arrays(
+        volume,
+        theta_rad=theta_offset + phi_pose,
+        dx_px=det_u + dx_pose,
+        dz_px=det_v + dz_pose,
+    )
+    losses: list[float] = []
+    mask_array = None if mask is None else jnp.asarray(mask, dtype=jnp.float32)
+    for view in range(geometry.pose.n_views):
+        mask_view = (
+            None
+            if mask_array is None
+            else mask_array[view]
+            if mask_array.ndim == observed.ndim
+            else mask_array
+        )
+        loss = residual_loss(
+            predicted[view],
+            observed[view],
+            mask=mask_view,
+            sigma=cfg.sigma,
+            delta=cfg.delta,
+        ).loss
+        losses.append(float(loss))
+    return tuple(losses)

@@ -247,6 +247,9 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
         assert result.diagnostics.reduction_ratio >= 0.0
     assert result.diagnostics.next_setup_trust_radius is None
     assert result.diagnostics.next_pose_trust_radius is None
+    assert len(result.diagnostics.current_loss_by_view) == 2
+    assert len(result.diagnostics.candidate_loss_by_view) == 2
+    assert len(result.diagnostics.actual_reduction_by_view) == 2
     canonical = result.canonicalized_geometry.state
     np.testing.assert_allclose(
         canonical.setup.theta_offset_rad.value + canonical.pose.phi_residual_rad,
@@ -317,8 +320,14 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert "reduction_ratio" in payload["diagnostics"]
     assert "next_setup_trust_radius" in payload["diagnostics"]
     assert "next_pose_trust_radius" in payload["diagnostics"]
+    assert "current_loss_by_view" in payload["diagnostics"]
+    assert "candidate_loss_by_view" in payload["diagnostics"]
+    assert "actual_reduction_by_view" in payload["diagnostics"]
     assert payload["diagnostics"]["next_setup_trust_radius"] is not None
     assert payload["diagnostics"]["next_pose_trust_radius"] is not None
+    assert len(payload["diagnostics"]["current_loss_by_view"]) == 1
+    assert len(payload["diagnostics"]["candidate_loss_by_view"]) == 1
+    assert len(payload["diagnostics"]["actual_reduction_by_view"]) == 1
     assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
     assert len(payload["diagnostics"]["setup_correlation_matrix"]) == 2
 

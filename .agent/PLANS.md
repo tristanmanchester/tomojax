@@ -12,17 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 6 — Joint setup+pose Schur LM
-- Goal: add per-iteration diagnostics trace artifacts to the joint Schur
+- Goal: add per-view loss and reduction diagnostics to the joint Schur
   reference solver.
 
 ### Scope
 
 - In scope:
-  - Preserve diagnostics for every joint Schur iteration, not only the final
-    iteration.
-  - Include the iteration trace in `normal_eq_summary.json`.
-  - Add deterministic tests for trace length, final-diagnostic consistency,
-    and artifact readback coverage.
+  - Record current and candidate robust loss per view.
+  - Record actual reduction per view for the evaluated candidate step.
+  - Include these fields in iteration diagnostics and `normal_eq_summary.json`.
+  - Add deterministic tests and artifact readback coverage.
 - Out of scope:
   - Prior terms and bounds.
   - Unsupported physical DOFs.
@@ -35,13 +34,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add iteration diagnostics to `JointSchurLMResult`.
-- [x] Collect diagnostics for each accepted/rejected solve iteration.
-- [x] Include the iteration trace in the normal-equation artifact.
+- [x] Add per-view loss/reduction fields to diagnostics.
+- [x] Compute current and candidate per-view losses in the solve loop.
+- [x] Include per-view fields in the normal-equation artifact.
 - [x] Add deterministic tests.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run validation commands.
-- [ ] Commit the iteration-trace slice if validations pass.
+- [ ] Commit the per-view-reduction slice if validations pass.
 
 ### Validation
 
@@ -70,16 +69,17 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Decision: reuse `JointSchurDiagnostics` for each trace row so the final row
-  has the same schema as `diagnostics`.
-- Deviation: the trace is JSON artifact data only; no CSV writer exists yet for
-  the Phase 6 reference solver.
+- Decision: record per-view values as actual robust objective losses before and
+  after candidate evaluation, rather than quadratic model reductions.
+- Deviation: per-view `Jᵀr`/`JᵀJ` block artifacts are still not materialized
+  separately from the dense finite-difference Jacobian.
 
 ### Risks
 
-- Risk: artifact size grows with iteration count.
-- Mitigation: this reference solver has a small default iteration count and
-  stores compact scalar/list diagnostics only.
+- Risk: per-view losses are robust objective losses, while the Schur model is
+  fit to the current IRLS weighted residual.
+- Mitigation: label them as actual robust losses/reductions rather than model
+  reductions.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   dedicated milestone rather than mixing repository-wide lint churn into Phase
   6 numerical solver slices.
