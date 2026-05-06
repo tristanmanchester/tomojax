@@ -90,6 +90,7 @@ class AlternatingLevelSummary:
     finite_loss: bool
     residual_sigma_estimated: float
     residual_sigma_effective: float
+    prior_strength: float
     heldout_residual_before: float | None
     heldout_residual_after: float | None
     heldout_residual_passed: bool | None
@@ -290,6 +291,7 @@ def _run_alternating_solver_smoke_impl(
                 finite_loss=verification_checks.finite_loss,
                 residual_sigma_estimated=residual_sigma_estimated,
                 residual_sigma_effective=residual_sigma_effective,
+                prior_strength=level.prior_strength,
                 heldout_residual_before=heldout_before,
                 heldout_residual_after=heldout_after,
                 heldout_residual_passed=heldout_passed,
@@ -425,6 +427,7 @@ def _run_geometry_updates(
             sigma=sigma,
             setup_trust_radius=level.trust_radius_px,
             pose_trust_radius=level.trust_radius_px,
+            parameter_prior_strength=level.prior_strength,
         ),
     )
     return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
@@ -471,6 +474,7 @@ def _skipped_level_summary(
         finite_loss=True,
         residual_sigma_estimated=level.residual_sigma,
         residual_sigma_effective=level.residual_sigma,
+        prior_strength=level.prior_strength,
         heldout_residual_before=None,
         heldout_residual_after=None,
         heldout_residual_passed=None,
@@ -824,6 +828,7 @@ def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:
         "finite_loss": summary.finite_loss,
         "residual_sigma_estimated": summary.residual_sigma_estimated,
         "residual_sigma_effective": summary.residual_sigma_effective,
+        "prior_strength": summary.prior_strength,
         "heldout_residual_before": summary.heldout_residual_before,
         "heldout_residual_after": summary.heldout_residual_after,
         "heldout_residual_passed": summary.heldout_residual_passed,
@@ -1000,6 +1005,7 @@ def _write_alignment_summary(
                 "finite_loss",
                 "residual_sigma_estimated",
                 "residual_sigma_effective",
+                "prior_strength",
                 "heldout_residual_before",
                 "heldout_residual_after",
                 "heldout_residual_passed",
@@ -1038,6 +1044,7 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                 "loss_nonincreasing",
                 "residual_sigma_estimated",
                 "residual_sigma_effective",
+                "prior_strength",
                 "heldout_residual_before",
                 "heldout_residual_after",
                 "heldout_residual_passed",
@@ -1070,6 +1077,7 @@ def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, 
                     "loss_nonincreasing": summary.loss_nonincreasing,
                     "residual_sigma_estimated": summary.residual_sigma_estimated,
                     "residual_sigma_effective": summary.residual_sigma_effective,
+                    "prior_strength": summary.prior_strength,
                     "heldout_residual_before": summary.heldout_residual_before,
                     "heldout_residual_after": summary.heldout_residual_after,
                     "heldout_residual_passed": summary.heldout_residual_passed,
@@ -1194,6 +1202,7 @@ def _write_residual_metrics(
                 "finite_loss",
                 "residual_sigma_estimated",
                 "residual_sigma_effective",
+                "prior_strength",
                 "heldout_residual_before",
                 "heldout_residual_after",
                 "heldout_residual_passed",
@@ -1226,6 +1235,7 @@ def _write_residual_metrics(
                     "finite_loss": summary.finite_loss,
                     "residual_sigma_estimated": summary.residual_sigma_estimated,
                     "residual_sigma_effective": summary.residual_sigma_effective,
+                    "prior_strength": summary.prior_strength,
                     "heldout_residual_before": summary.heldout_residual_before,
                     "heldout_residual_after": summary.heldout_residual_after,
                     "heldout_residual_passed": summary.heldout_residual_passed,
@@ -1281,6 +1291,7 @@ def _view_residual_metric_rows(
                 "finite_loss": "",
                 "residual_sigma_estimated": "",
                 "residual_sigma_effective": "",
+                "prior_strength": "",
                 "heldout_residual_before": "",
                 "heldout_residual_after": "",
                 "heldout_residual_passed": "",

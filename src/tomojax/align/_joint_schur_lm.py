@@ -43,6 +43,7 @@ class JointSchurLMConfig:
     finite_difference_step: float = 1e-3
     setup_trust_radius: float | None = None
     pose_trust_radius: float | None = None
+    parameter_prior_strength: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class JointSchurDiagnostics:
     setup_hessian_diag_by_view: tuple[tuple[float, ...], ...] = ()
     pose_hessian_diag_by_view: tuple[tuple[float, ...], ...] = ()
     setup_pose_coupling_norm_by_view: tuple[float, ...] = ()
+    parameter_prior_strength: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -112,6 +114,7 @@ class JointSchurDiagnostics:
             "setup_hessian_diag_by_view": [list(row) for row in self.setup_hessian_diag_by_view],
             "pose_hessian_diag_by_view": [list(row) for row in self.pose_hessian_diag_by_view],
             "setup_pose_coupling_norm_by_view": list(self.setup_pose_coupling_norm_by_view),
+            "parameter_prior_strength": self.parameter_prior_strength,
         }
 
 
@@ -142,8 +145,17 @@ def solve_joint_schur_lm(
     vol = jnp.asarray(volume, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
     params = _pack_joint(geometry)
+    prior_reference = params
     n_setup = _n_setup_params(geometry)
-    initial_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
+    initial_loss = _loss_for_params(
+        vol,
+        obs,
+        geometry,
+        params,
+        mask=mask,
+        cfg=cfg,
+        prior_reference=prior_reference,
+    )
     diagnostics = JointSchurDiagnostics(
         schur_condition=float("nan"),
         setup_update_norm=0.0,
@@ -174,9 +186,16 @@ def solve_joint_schur_lm(
             weights_current: jax.Array = weights,
         ) -> jax.Array:
             raw = _residual_for_params(vol, obs, geometry, candidate, mask=mask, sigma=cfg.sigma)
-            return raw.reshape(-1) * weights_current
+            data_residual = raw.reshape(-1) * weights_current
+            return _with_parameter_prior_residual(
+                data_residual,
+                candidate,
+                prior_reference=prior_reference,
+                cfg=cfg,
+            )
 
         r = weighted_residual(params)
+        data_rows = int(obs.size)
         jacobian = finite_difference_jacobian(
             weighted_residual,
             params,
@@ -191,10 +210,27 @@ def solve_joint_schur_lm(
             damping=damping,
             setup_trust_radius=setup_trust_radius,
             pose_trust_radius=pose_trust_radius,
+            data_rows=data_rows,
         )
         candidate = params + schur.step
-        candidate_loss = _loss_for_params(vol, obs, geometry, candidate, mask=mask, cfg=cfg)
-        current_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
+        candidate_loss = _loss_for_params(
+            vol,
+            obs,
+            geometry,
+            candidate,
+            mask=mask,
+            cfg=cfg,
+            prior_reference=prior_reference,
+        )
+        current_loss = _loss_for_params(
+            vol,
+            obs,
+            geometry,
+            params,
+            mask=mask,
+            cfg=cfg,
+            prior_reference=prior_reference,
+        )
         current_loss_by_view = _loss_by_view_for_params(
             vol,
             obs,
@@ -255,6 +291,7 @@ def solve_joint_schur_lm(
             current_loss_by_view=current_loss_by_view,
             candidate_loss_by_view=candidate_loss_by_view,
             actual_reduction_by_view=actual_reduction_by_view,
+            parameter_prior_strength=max(float(cfg.parameter_prior_strength), 0.0),
         )
         iteration_diagnostics.append(diagnostics)
         damping = next_damping
@@ -265,7 +302,15 @@ def solve_joint_schur_lm(
 
     solved = _geometry_with_params(geometry, params)
     canonicalized = canonicalize_geometry_gauges(solved)
-    final_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
+    final_loss = _loss_for_params(
+        vol,
+        obs,
+        geometry,
+        params,
+        mask=mask,
+        cfg=cfg,
+        prior_reference=prior_reference,
+    )
     return JointSchurLMResult(
         geometry=solved,
         canonicalized_geometry=canonicalized,
@@ -376,14 +421,17 @@ def schur_step_from_jacobian(
     damping: float,
     setup_trust_radius: float | None = None,
     pose_trust_radius: float | None = None,
+    data_rows: int | None = None,
 ) -> SchurStep:
     """Solve a damped joint normal equation by per-view Schur complement."""
     jac = jnp.asarray(jacobian, dtype=jnp.float32)
     r = jnp.asarray(residual, dtype=jnp.float32)
     n_params = n_setup + n_views * pose_dim
+    diagnostic_jacobian = jac if data_rows is None else jac[: int(data_rows)]
+    diagnostic_residual = r if data_rows is None else r[: int(data_rows)]
     per_view_blocks = _per_view_normal_block_diagnostics(
-        jac,
-        r,
+        diagnostic_jacobian,
+        diagnostic_residual,
         n_setup=n_setup,
         n_views=n_views,
         pose_dim=pose_dim,
@@ -656,6 +704,22 @@ def _residual_for_params(
     return residual * jnp.asarray(mask, dtype=jnp.float32)
 
 
+def _with_parameter_prior_residual(
+    data_residual: jax.Array,
+    params: jax.Array,
+    *,
+    prior_reference: jax.Array,
+    cfg: JointSchurLMConfig,
+) -> jax.Array:
+    strength = max(float(cfg.parameter_prior_strength), 0.0)
+    if strength == 0.0:
+        return data_residual
+    prior = jnp.sqrt(jnp.asarray(strength, dtype=jnp.float32)) * (
+        params - jnp.asarray(prior_reference, dtype=jnp.float32)
+    )
+    return jnp.concatenate([data_residual, prior], axis=0)
+
+
 def _loss_for_params(
     volume: jax.Array,
     observed: jax.Array,
@@ -664,6 +728,7 @@ def _loss_for_params(
     *,
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
+    prior_reference: jax.Array | None = None,
 ) -> jax.Array:
     theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
     predicted = project_parallel_reference_arrays(
@@ -672,7 +737,15 @@ def _loss_for_params(
         dx_px=det_u + dx_pose,
         dz_px=det_v + dz_pose,
     )
-    return residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
+    data_loss = residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
+    strength = max(float(cfg.parameter_prior_strength), 0.0)
+    if prior_reference is None or strength == 0.0:
+        return data_loss
+    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
+    prior_loss = (
+        0.5 * jnp.asarray(strength, dtype=jnp.float32) * jnp.mean(prior_delta * prior_delta)
+    )
+    return data_loss + prior_loss
 
 
 def _loss_by_view_for_params(

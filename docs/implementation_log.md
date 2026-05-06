@@ -3636,3 +3636,45 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The held-out gate is deterministic and real, but with only four smoke views it
   proves tolerance stability more than broad generalisation.
+
+## 2026-05-06 — Phase 7 Continuation Prior In Schur Loop
+
+### Summary
+
+- Added `parameter_prior_strength` to the joint Schur LM config and diagnostics.
+- Added a weak quadratic parameter prior around the current Schur solve's
+  initial parameter vector, included in both finite-difference residual rows
+  and accepted/rejected candidate loss evaluation.
+- Kept per-view Schur normal-equation diagnostics data-only by separating data
+  residual rows from appended prior rows.
+- Threaded `ContinuationLevel.prior_strength` into Phase 7 geometry updates.
+- Recorded prior strength in level summaries, `alignment_summary.csv`,
+  `geometry_trace.csv`, `residual_metrics.csv`, and Schur diagnostics.
+- Extended focused Schur and deterministic 32^3 smoke tests to verify the real
+  Schur update improves projection residual, recovers supported realised DOFs
+  after gauge canonicalisation, and emits the prior diagnostics.
+
+### Decisions
+
+- The continuation prior is currently a local step regulariser around the
+  current solve's initial packed parameter vector. This keeps the vertical
+  slice small and explicit until metadata, nuisance, and smoothness priors are
+  implemented.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_alternating.py tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_alternating.py tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_alternating.py tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 12 tests.
+- `just imports` passed.
+
+### Risks
+
+- This is not the full prior family from the design docs; it is the smallest
+  continuation-driven Schur prior needed to make the Phase 7 loop use a real
+  regularised geometry update.

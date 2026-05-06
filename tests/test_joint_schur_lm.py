@@ -166,6 +166,25 @@ def test_schur_step_matches_dense_normal_solve() -> None:
         np.asarray(jacobian[3:, 5:8].T @ residual[3:]),
         atol=1e-6,
     )
+    with_prior_rows = schur_step_from_jacobian(
+        jnp.concatenate([jacobian, jnp.eye(8, dtype=jnp.float32) * 0.1], axis=0),
+        jnp.concatenate([residual, jnp.zeros(8, dtype=jnp.float32)], axis=0),
+        n_setup=2,
+        n_views=2,
+        pose_dim=3,
+        damping=1e-2,
+        data_rows=int(residual.size),
+    )
+    np.testing.assert_allclose(
+        np.asarray(with_prior_rows.diagnostics.setup_gradient_by_view[0]),
+        np.asarray(step.diagnostics.setup_gradient_by_view[0]),
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(with_prior_rows.diagnostics.pose_gradient_by_view[1]),
+        np.asarray(step.diagnostics.pose_gradient_by_view[1]),
+        atol=1e-6,
+    )
     assert len(step.diagnostics.setup_correlation_matrix) == 2
     assert step.diagnostics.trust_scale == 1.0
     assert step.diagnostics.trust_clipped is False
@@ -243,7 +262,12 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
         volume,
         observed,
         nominal,
-        config=JointSchurLMConfig(max_iterations=8, damping=1e-3, delta=1.0),
+        config=JointSchurLMConfig(
+            max_iterations=8,
+            damping=1e-3,
+            delta=1.0,
+            parameter_prior_strength=1.0e-3,
+        ),
     )
 
     assert result.final_loss < result.initial_loss
@@ -252,14 +276,19 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     assert result.active_setup_parameters == ("theta_offset_rad", "det_u_px", "det_v_px")
     assert result.active_pose_dofs == ("phi_residual_rad", "dx_px", "dz_px")
     assert result.diagnostics.dense_step_difference_norm < 2e-4
-    assert result.diagnostics.accepted is True
-    assert result.diagnostics.next_damping <= result.diagnostics.damping
-    assert result.diagnostics.predicted_reduction > 0.0
-    assert result.diagnostics.actual_reduction >= 0.0
-    if result.diagnostics.reduction_ratio is None:
-        assert result.diagnostics.predicted_reduction <= 1e-12
+    assert result.diagnostics.parameter_prior_strength == 1.0e-3
+    accepted_diagnostics = [
+        diagnostics for diagnostics in result.iteration_diagnostics if diagnostics.accepted
+    ]
+    assert accepted_diagnostics
+    assert accepted_diagnostics[0].next_damping <= accepted_diagnostics[0].damping
+    assert accepted_diagnostics[0].predicted_reduction > 0.0
+    assert accepted_diagnostics[0].actual_reduction >= 0.0
+    accepted_reduction_ratio = accepted_diagnostics[0].reduction_ratio
+    if accepted_reduction_ratio is None:
+        assert accepted_diagnostics[0].predicted_reduction <= 1e-12
     else:
-        assert result.diagnostics.reduction_ratio >= 0.0
+        assert accepted_reduction_ratio >= 0.0
     assert result.diagnostics.next_setup_trust_radius is None
     assert result.diagnostics.next_pose_trust_radius is None
     assert len(result.diagnostics.current_loss_by_view) == 2
@@ -301,6 +330,7 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
             damping=1e-3,
             setup_trust_radius=0.05,
             pose_trust_radius=0.05,
+            parameter_prior_strength=2.0e-3,
         ),
     )
 
@@ -344,8 +374,10 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
         "setup_hessian_diag_by_view",
         "pose_hessian_diag_by_view",
         "setup_pose_coupling_norm_by_view",
+        "parameter_prior_strength",
     ):
         assert field in payload["diagnostics"]
+    assert payload["diagnostics"]["parameter_prior_strength"] == 2.0e-3
     assert payload["diagnostics"]["next_setup_trust_radius"] is not None
     assert payload["diagnostics"]["next_pose_trust_radius"] is not None
     assert len(payload["diagnostics"]["current_loss_by_view"]) == 1

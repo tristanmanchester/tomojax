@@ -114,6 +114,7 @@ def _assert_level_exit_contract(result: AlternatingSmokeResult) -> None:
     assert result.levels[0].finite_loss
     assert result.levels[0].residual_sigma_estimated > 0.0
     assert result.levels[0].residual_sigma_effective == 1.0
+    assert result.levels[0].prior_strength == 1.0e-3
     assert result.levels[0].heldout_residual_before is not None
     assert result.levels[0].heldout_residual_after is not None
     assert result.levels[0].heldout_residual_passed is True
@@ -204,6 +205,7 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
     assert rows[0]["loss_nonincreasing"] == "True"
     assert float(rows[0]["residual_sigma_estimated"]) > 0.0
     assert rows[0]["residual_sigma_effective"] == "1.0"
+    assert rows[0]["prior_strength"] == "0.001"
     assert float(rows[0]["heldout_residual_before"]) > 0.0
     assert rows[0]["heldout_residual_passed"] == "True"
     assert rows[0]["gauge_stable"] == "True"
@@ -216,6 +218,7 @@ def _assert_geometry_trace(result: AlternatingSmokeResult) -> None:
     assert rows[0]["geometry_updates_requested"] == "8"
     assert rows[0]["geometry_updates_executed"] == "8"
     assert float(rows[0]["parameter_update_norm"]) > 0.0
+    assert rows[0]["prior_strength"] == "0.001"
     assert rows[0]["verified"] == "True"
     assert rows[0]["heldout_residual_passed"] == "True"
     assert rows[0]["schur_accepted"] == "True"
@@ -255,6 +258,7 @@ def _assert_schur_diagnostics(result: AlternatingSmokeResult) -> None:
     ]
     diagnostics = cast("dict[str, object]", payload["diagnostics"])
     assert diagnostics["accepted"] is True
+    assert diagnostics["parameter_prior_strength"] == 1.0e-3
     assert float(cast("float", diagnostics["actual_reduction"])) > 0.0
     assert len(cast("list[float]", diagnostics["current_loss_by_view"])) == 4
 
@@ -435,6 +439,7 @@ def _assert_residual_metrics(result: AlternatingSmokeResult) -> None:
     view_rows = [row for row in metric_rows if row["row_type"] == "view_residual"]
     assert [row["level_factor"] for row in level_rows] == ["4", "2", "1"]
     assert level_rows[0]["parameter_update_small"] == "True"
+    assert level_rows[0]["prior_strength"] == "0.001"
     assert [int(row["view_index"]) for row in view_rows] == [0, 1, 2, 3]
     assert all(float(row["rmse"]) >= 0.0 for row in view_rows)
     assert all(row["valid_pixel_fraction"] == "1.0" for row in view_rows)
