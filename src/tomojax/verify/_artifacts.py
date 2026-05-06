@@ -224,7 +224,18 @@ def _validate_backend_report(
         payload,
         issues,
         artifact="backend_report.json",
-        keys=("requested", "actual"),
+        keys=(
+            "requested",
+            "actual",
+            "actual_projector",
+            "actual_backprojector",
+            "actual_geometry_reductions",
+            "canonical_detector_grid",
+            "calibrated_detector_grid",
+            "pallas_eligible",
+            "fallbacks",
+            "agreement_tests",
+        ),
     )
 
 

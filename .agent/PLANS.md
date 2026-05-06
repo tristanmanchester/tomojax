@@ -12,16 +12,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: align the Phase 7 smoke verification report with the artifact
-  contract's top-level shape.
+- Goal: expand Phase 7 smoke backend provenance toward the artifact contract.
 
 ### Scope
 
 - In scope:
-  - Add `status`, `summary`, `metrics`, and `escalation` sections to
-    `verification.json`.
-  - Keep existing smoke-specific fields for deterministic tests and audit.
-  - Extend focused smoke and artifact-validation tests.
+  - Add projector, backprojector, geometry-reduction, detector-grid, fallback,
+    and agreement-test fields to `backend_report.json`.
+  - Keep the existing `requested`, `actual`, and `fallback` fields.
+  - Extend smoke and artifact-validation tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -36,11 +35,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add contract-shaped verification sections.
+- [x] Expand backend provenance payload.
 - [x] Extend smoke and validator tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the verification report contract slice.
+- [x] Commit the backend provenance slice.
 
 ### Validation
 
@@ -59,11 +58,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Preserve existing smoke-specific keys while adding the contract-shaped
-  sections so downstream tests and scripts do not lose detailed diagnostics.
+- Report JAX reference components explicitly and include an agreement-test row
+  marking the reference path as the baseline.
 
 ### Risks
 
-- Risk: some summary predicates are smoke-level approximations.
-- Mitigation: expose them under explicit names and refine them as the
-  optimiser gains real held-out residual checks and weak-DOF handling.
+- Risk: no alternate backend comparison exists yet.
+- Mitigation: mark the agreement row as reference-baseline provenance and add
+  true max/mean error checks when fast paths land.

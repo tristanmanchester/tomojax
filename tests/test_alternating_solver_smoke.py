@@ -264,6 +264,27 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert failure_report["status"] == "passed"
     assert failure_report["failure"] is None
 
+    backend_report = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["backend_report_json"].read_text(encoding="utf-8")),
+    )
+    assert backend_report["actual_projector"] == "jax_reference"
+    assert backend_report["actual_backprojector"] == "jax_reference"
+    assert backend_report["actual_geometry_reductions"] == "jax_reference"
+    assert backend_report["canonical_detector_grid"] is True
+    assert backend_report["calibrated_detector_grid"] is False
+    assert backend_report["pallas_eligible"] is False
+    assert backend_report["fallbacks"] == []
+    agreement_tests = cast("list[dict[str, object]]", backend_report["agreement_tests"])
+    assert agreement_tests == [
+        {
+            "component": "residual",
+            "max_abs_error": 0.0,
+            "mean_abs_error": 0.0,
+            "status": "reference_baseline",
+        }
+    ]
+
 
 def _assert_preview_slice_artifacts(result: AlternatingSmokeResult) -> None:
     truth = cast("NDArray[np.float32]", np.load(result.artifacts["preview_truth_slice_npy"]))

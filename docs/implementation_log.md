@@ -3175,3 +3175,37 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The smoke run still uses placeholder geometry updates, so the new verification
   summary is a report-shape contract rather than proof of full optimiser
   convergence.
+
+## 2026-05-06 — Phase 7 Backend Provenance Report
+
+### Summary
+
+- Expanded the Phase 7 smoke `backend_report.json` beyond the placeholder
+  requested/actual fields.
+- Added explicit projector, backprojector, geometry-reduction, detector-grid,
+  Pallas eligibility, fallback, and agreement-test provenance fields.
+- Updated artifact validation to require the expanded backend provenance keys.
+
+### Decisions
+
+- Reported all active components as `jax_reference` because this smoke path is
+  intentionally CPU/JAX reference first.
+- Added a `reference_baseline` agreement-test row with zero errors so the
+  contract shape is present before fast-path comparison tests exist.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- Agreement testing currently records reference-baseline provenance only; real
+  max/mean error comparisons remain blocked on alternate backend paths.

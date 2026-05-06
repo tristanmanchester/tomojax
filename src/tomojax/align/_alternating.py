@@ -1156,7 +1156,22 @@ def _backend_report_payload() -> dict[str, object]:
         "schema": "tomojax.backend_report.v1",
         "requested": "jax_reference",
         "actual": "jax_reference",
+        "actual_projector": "jax_reference",
+        "actual_backprojector": "jax_reference",
+        "actual_geometry_reductions": "jax_reference",
+        "canonical_detector_grid": True,
+        "calibrated_detector_grid": False,
+        "pallas_eligible": False,
         "fallback": False,
+        "fallbacks": [],
+        "agreement_tests": [
+            {
+                "component": "residual",
+                "max_abs_error": 0.0,
+                "mean_abs_error": 0.0,
+                "status": "reference_baseline",
+            }
+        ],
     }
 
 
