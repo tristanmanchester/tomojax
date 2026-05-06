@@ -11,6 +11,7 @@ from tomojax.bench import (
     synthetic_benchmark_comparison_markdown,
     write_synthetic_benchmark_comparison_markdown,
 )
+from tomojax.bench.synthetic_results import main as synthetic_results_main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,6 +82,40 @@ def test_writes_synthetic_benchmark_comparison(tmp_path: Path) -> None:
 
     assert out_path == tmp_path / "comparison.md"
     assert "synth128_setup_global_tomo" in out_path.read_text(encoding="utf-8")
+
+
+def test_synthetic_benchmark_compare_cli_writes_report(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result_path = _write_result(
+        tmp_path / "run" / "benchmark_result.json",
+        benchmark="synth128_setup_global_tomo",
+    )
+    out_path = tmp_path / "comparison.md"
+
+    exit_code = synthetic_results_main([str(result_path), "--out", str(out_path)])
+
+    assert exit_code == 0
+    assert "synth128_setup_global_tomo" in out_path.read_text(encoding="utf-8")
+    assert f"benchmark_comparison: {out_path}" in capsys.readouterr().out
+
+
+def test_synthetic_benchmark_compare_cli_prints_report(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result_path = _write_result(
+        tmp_path / "run" / "benchmark_result.json",
+        benchmark="synth128_setup_global_tomo",
+    )
+
+    exit_code = synthetic_results_main([str(result_path)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith("# Synthetic Benchmark Comparison\n")
+    assert "synth128_setup_global_tomo" in captured.out
 
 
 def test_rejects_non_benchmark_result_artifact(tmp_path: Path) -> None:

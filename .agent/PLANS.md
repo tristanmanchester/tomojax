@@ -12,16 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: ingest synthetic benchmark result artifacts into a deterministic
-  comparison report.
+- Goal: expose synthetic benchmark result comparison as a real CLI command.
 
 ### Scope
 
 - In scope:
-  - Load one or more `benchmark_result.json` artifacts.
-  - Validate the synthetic benchmark result schema before comparison.
-  - Emit a deterministic markdown comparison table over actual benchmark result
-    fields.
+  - Add a command-line entrypoint over the existing benchmark-result ingestion
+    helper.
+  - Support writing a deterministic markdown comparison report to a requested
+    output path.
+  - Support stdout preview when no output path is supplied.
 - Out of scope:
   - Full current-vs-reimagined protocol runner.
   - New synthetic dataset generation behavior.
@@ -38,36 +38,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add benchmark-result artifact loading.
-- [x] Add deterministic markdown comparison rendering.
-- [x] Add focused tests.
+- [x] Add benchmark comparison CLI entrypoint.
+- [x] Add focused CLI tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the benchmark-ingestion slice.
+- [x] Commit the benchmark comparison CLI slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/bench/synthetic_results.py src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py`
+- `uv run ruff format src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py pyproject.toml`
   passed.
-- `uv run ruff check src/tomojax/bench/synthetic_results.py src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py`
+- `uv run ruff check src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py pyproject.toml`
   passed.
 - `uv run basedpyright src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py`
   passed.
-- `uv run pytest tests/test_bench_synthetic_results.py -q` passed: 4 tests.
-- `uv run pytest tests/test_bench_fitness_imports.py tests/test_bench_synthetic_results.py -q`
-  passed: 5 tests.
+- `uv run pytest tests/test_bench_synthetic_results.py -q` passed: 6 tests.
 - `just imports` passed.
+- `uv run tomojax-synthetic-benchmark-compare --help` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- The comparison helper operates on committed artifact schema fields only and
-  does not infer unsupported benchmark criteria.
+- The CLI stays on the existing `tomojax.bench.synthetic_results` helper rather
+  than creating a new benchmark runner.
 
 ### Risks
 
 - Risk: transitional `tomojax.bench` is not yet a v2 deep module.
-- Mitigation: keep the ingestion helper private-owned within `tomojax.bench`
-  and expose only a narrow typed API.
+- Mitigation: keep the command narrow and limited to result-artifact ingestion.

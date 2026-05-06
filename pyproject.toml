@@ -53,6 +53,7 @@ tomojax-astra-parallel-bench = "tomojax.bench.astra_parallel:main"
 tomojax-benchmark-suite = "tomojax.bench.benchmark_suite:main"
 tomojax-alignment-smoke-bench = "tomojax.bench.alignment_smoke:main"
 tomojax-pallas-sanity = "tomojax.bench.pallas_sanity:main"
+tomojax-synthetic-benchmark-compare = "tomojax.bench.synthetic_results:main"
 
 [dependency-groups]
 dev = [

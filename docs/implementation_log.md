@@ -83,6 +83,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   deep modules, so this keeps a narrow API and avoids broader benchmark package
   restructuring.
 
+## 2026-05-06 — Add Synthetic Benchmark Comparison CLI
+
+### Summary
+
+- Added the `tomojax-synthetic-benchmark-compare` console script.
+- The command reads one or more synthetic `benchmark_result.json` artifacts
+  using the existing schema-validated ingestion helper.
+- It writes a deterministic markdown report with `--out` or prints the same
+  report to stdout when `--out` is omitted.
+- Added focused CLI coverage for report writing and stdout rendering.
+
+### Decisions
+
+- Kept the command as a thin wrapper around `tomojax.bench.synthetic_results`
+  instead of introducing a separate runner or report format.
+
+### Validation
+
+- `uv run ruff format src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py pyproject.toml`
+  passed.
+- `uv run ruff check src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py pyproject.toml`
+  passed.
+- `uv run basedpyright src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_bench_synthetic_results.py -q` passed: 6 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run tomojax-synthetic-benchmark-compare --help` passed.
+
+### Risks
+
+- The command compares existing result artifacts only; it does not yet schedule
+  benchmark cases or compare current TomoJAX against the reimagined path.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary

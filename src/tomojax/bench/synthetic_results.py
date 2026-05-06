@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,38 @@ def write_synthetic_benchmark_comparison_markdown(
     out_path = Path(path)
     _ = out_path.write_text(synthetic_benchmark_comparison_markdown(results), encoding="utf-8")
     return out_path
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Compare synthetic benchmark result artifacts from the command line."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    result_paths = cast("list[str]", args.benchmark_result)
+    results = load_synthetic_benchmark_results(tuple(result_paths))
+    markdown = synthetic_benchmark_comparison_markdown(results)
+    if args.out is None:
+        print(markdown, end="")
+    else:
+        out_path = Path(cast("str", args.out))
+        _ = out_path.write_text(markdown, encoding="utf-8")
+        print(f"benchmark_comparison: {out_path}")
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compare one or more synthetic benchmark_result.json artifacts."
+    )
+    _ = parser.add_argument(
+        "benchmark_result",
+        nargs="+",
+        help="Path to a synthetic benchmark_result.json artifact.",
+    )
+    _ = parser.add_argument(
+        "--out",
+        help="Optional markdown output path. If omitted, the report is printed to stdout.",
+    )
+    return parser
 
 
 def _validate_synthetic_benchmark_result(payload: dict[str, object], path: Path) -> None:
@@ -129,3 +165,7 @@ def _markdown_cell(value: object) -> str:
         return f"{value:.6g}"
     text = str(value)
     return text.replace("|", "\\|").replace("\n", " ")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
