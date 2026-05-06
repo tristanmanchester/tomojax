@@ -1,46 +1,107 @@
-# Repository Guidelines (TomoJAX v2)
+# AGENTS.md
 
-## Project Structure & Module Organization
-- Core projector and operators live under `src/tomojax/core/`.
-  - Pose‑aware forward projector: `src/tomojax/core/projector.py`
-  - Geometry types: `src/tomojax/core/geometry/`
-- Reconstruction lives under `src/tomojax/recon/` (FBP, FISTA‑TV, multires helpers).
-- Alignment workflows live under `src/tomojax/align/` (see `pipeline.py`).
-- Reusable benchmark datasets and scoring helpers live under `src/tomojax/bench/`.
-- CLI entry points live under `src/tomojax/cli/`:
-  - `simulate`, `misalign`, `preprocess`, `recon`, `align`, `inspect`, `validate`, `convert`, `loss_bench`.
-- Tests live in `tests/` (CPU‑friendly sizes).
-- Documented solutions live in `docs/solutions/`, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`); relevant when implementing or debugging in documented areas.
-- Input data and generated artifacts belong in `data/` or `runs/`; these are git‑ignored.
-- Figures for docs live in `images/`.
+## SIFS Code Search
 
-## Build, Test, and Development Commands
-- Sync the managed environment with `uv sync --extra cuda12 --group dev` (or `uv sync --extra cpu --group dev` for CPU-only).
-- Benchmark-harness runs under `bench/` need `uv sync --extra bench --group dev` in addition to the normal CPU/GPU extra.
-- Verify JAX/accelerator: `uv run tomojax-test-gpu` (prints backend and devices). For CPU: `JAX_PLATFORM_NAME=cpu uv run tomojax-test-cpu`.
-- Run tests: `uv run pytest -q tests` or target a file, e.g., `uv run pytest -q tests/test_projector.py`.
-- CLI workflows (examples; see `README.md` for more):
-  - Simulate: `uv run tomojax-simulate --help`
-  - Recon: `uv run tomojax-recon --data data/sim.nxs --algo fbp --out runs/fbp.nxs`
-  - Align: `uv run tomojax-align --data data/sim_misaligned.nxs --levels 2 1 --outer-iters 4 --out runs/align.nxs`
+Use SIFS from the shell for codebase search before broad file reads when you need to find behavior, symbols, related implementations, or relevant files.
 
-## Coding Style & Naming Conventions
-- Python 3.12, 4‑space indents, aim for ≤100 characters per line, prefer `jnp.float32` arrays.
-- Provide type hints and concise docstrings on public helpers; keep JAX code functional and side‑effect free.
-- Follow snake_case for functions/variables, UPPER_SNAKE_CASE for constants; extend APIs with kwargs instead of breaking signatures (e.g., projector functions).
+- Discover the current CLI contract with `sifs agent-context --json`.
+- Search with `sifs search "<query>" --source <project> --limit 10`.
+- Narrow by path with `--filter-path <repo-relative-path>` and use `--mode bm25` for exact symbols.
+- Inspect results with `sifs get <file_path> <line> --source <project>` and `sifs find-related <file_path> <line> --source
 
-## Testing Guidelines
-- Test surface ownership and placement rules live in `tests/README.md`; use that guide when deciding whether a change needs a unit, workflow, CLI, or benchmark-harness regression.
-- Mirror existing patterns in `tests/test_*.py`; keep problem sizes CPU‑friendly.
-- Name tests `test_*` and guard expensive cases behind flags or explicit CLI switches.
-- Record CLI commands and seeds when running experiments; capture them in PR descriptions or notes.
+## Project identity
 
-## Commit & Pull Request Guidelines
-- Use Conventional Commits (`feat:`, `fix:`, `chore:`, etc.) with imperative subjects ≤72 characters.
-- PRs should state the problem, link issues, list reproduction commands, detail expected vs. actual results, and include performance notes (device, shapes, runtime).
-- Attach before/after visuals from `images/` or run outputs when changes affect reconstructions or docs.
+TomoJAX is being reimagined as a fast, differentiable tomography and laminography alignment/reconstruction toolbox.
 
-## Security & Configuration Tips
-- CUDA 12 on Linux is required for GPU runs; install the `cuda12` extra when syncing with uv.
-- Never commit large datasets or generated artifacts; verify `.gitignore` coverage before pushing.
-- JAX persistent compilation cache: the `align` CLI enables it if available; override location via `TOMOJAX_JAX_CACHE_DIR` (defaults to `~/.cache/tomojax/jax_cache`).
+The goal is not to patch the old staged alignment engine. The goal is to implement the architecture described in:
+
+- tomojax_reimagined_docs/01_high_level_architecture.md
+- tomojax_reimagined_docs/02_loss_and_optimiser_spec.md
+- tomojax_reimagined_docs/03_repo_layout.md
+- tomojax_reimagined_docs/04_phased_implementation_plan.md
+- tomojax_reimagined_docs/05_synthetic_128_benchmark_suite.md
+- tomojax_reimagined_docs/06_verification_and_artifact_contract.md
+- tomojax_reimagined_docs/07_synthetic_generator_pseudocode.md
+
+If these files are absent, stop and ask for them.
+
+## Architectural style
+
+Use deep modules.
+
+Each top-level package under src/tomojax is a deep module with a small public API and hidden implementation.
+
+Allowed:
+- tomojax.geometry
+- tomojax.forward
+- tomojax.recon
+- tomojax.align
+- tomojax.verify
+
+Forbidden across module boundaries:
+- importing tomojax.geometry._anything from outside tomojax.geometry
+- importing tomojax.forward._anything from outside tomojax.forward
+- adding generic utils/helpers/misc modules
+- spreading one feature across many shallow files without a clear module owner
+
+Each deep module should have:
+- api.py
+- __init__.py that re-exports the public API
+- private _*.py implementation files
+- README.md describing purpose, public API, dependencies, invariants, and tests
+
+## Rewrite policy
+
+This is a reimagining, not a compatibility refactor.
+
+Prefer deleting obsolete code to adapting it.
+
+Do not preserve old CLI paths, old staged aligners, old experimental branches, or duplicated kernels unless they are required for benchmark comparison and have tests.
+
+Do not create legacy/, old/, compat/, scratch/, helpers.py, utils.py, or misc.py.
+
+Git history is the archive.
+
+## Numerical policy
+
+The default geometry solver is robust Schur LM/GN over setup plus per-view 5-DOF pose.
+
+The default geometry loss is masked, whitened pseudo-Huber projection-domain reprojection loss with weak priors and gauge canonicalisation.
+
+The default reconstruction step is FISTA / Huber-TV FISTA with stopped-gradient latent volumes during alignment.
+
+Do not introduce grid-search alignment methods as default behaviour.
+
+Non-gradient methods are allowed only as benchmarked optional accelerators or diagnostics.
+
+## Development policy
+
+Before making large changes:
+1. Read the relevant design docs.
+2. Create or update an execution plan.
+3. Identify the deep module owner.
+4. Add or update tests first where practical.
+5. Keep diffs scoped to the current milestone.
+
+After each milestone:
+1. Run `just check`.
+2. Fix failures immediately.
+3. Update docs/implementation_log.md.
+4. Record decisions and deviations from the design docs.
+
+## Quality gates
+
+Every public API must be typed.
+Every deep module must have tests.
+Every geometry update must emit artifact/provenance data.
+Every backend fast path must have a JAX reference comparison.
+Every synthetic recovery path must be deterministic from a seed.
+
+## Done means
+
+A milestone is done only when:
+- implementation exists,
+- tests exist,
+- `just check` passes,
+- docs/implementation_log.md is updated,
+- dead code introduced by the change has been deleted.

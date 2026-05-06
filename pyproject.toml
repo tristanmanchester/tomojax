@@ -62,27 +62,121 @@ dev = [
 ]
 
 [tool.ruff]
-line-length = 100
 target-version = "py312"
+line-length = 100
 src = ["src", "tests"]
-exclude = [
-    ".git",
-    ".pixi",
-    ".venv",
-    "__pycache__",
-    "bench/data",
-    "bench/out",
-    "build",
-    "dist",
-    "scripts",
-]
-
-[tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # import sorting
+    "UP",     # pyupgrade
+    "B",      # bugbear
+    "SIM",    # simplification
+    "C4",     # comprehensions
+    "PIE",    # misc cleanup
+    "RET",    # return statements
+    "ARG",    # unused arguments
+    "PTH",    # pathlib
+    "PL",     # pylint subset
+    "RUF",    # ruff-specific
+    "NPY",    # numpy
+    "PERF",   # performance
+    "PT",     # pytest style
+    "TID",    # tidy imports
+    "TC",     # type-checking imports
+    "ANN",    # annotations
+    "D",      # docstrings
+    "ERA",    # commented-out code
+]
+
+ignore = [
+    "ANN401",   # allow Any at explicit backend/plugin boundaries only
+    "D105",     # magic method docstrings are noise
+    "D107",     # __init__ docstrings are noise
+    "PLR0913",  # numerical kernels sometimes need many parameters
+    "PLR2004",  # numerical thresholds are often clearer inline
+    "TRY003",   # scientific error messages benefit from explicit text
+    "EM101",
+    "EM102",
+]
+
+fixable = ["ALL"]
+unfixable = [
+    "ERA001",   # do not auto-delete commented code; force agent to decide
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tomojax"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D",
+    "ANN",
+    "PLR2004",
+]
+"benchmarks/**" = [
+    "D",
+    "ANN",
+]
+"src/tomojax/backends/pallas/**" = [
+    "PLR0913",
+]
+"src/tomojax/**/_*.py" = [
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+]
+
+[tool.basedpyright]
+include = ["src/tomojax", "tests"]
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    "build",
+    "dist",
+]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+reportMissingTypeStubs = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownArgumentType = "warning"
+reportUnknownVariableType = "warning"
+reportAny = "warning"
+reportPrivateUsage = "error"
+reportUnusedCallResult = "warning"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "unit: fast CPU-only tests",
+    "integration: multi-module tests",
+    "gpu: requires GPU",
+    "pallas: requires Pallas-capable backend",
+    "slow: slow tests",
+    "benchmark: benchmark/regression tests",
+]
