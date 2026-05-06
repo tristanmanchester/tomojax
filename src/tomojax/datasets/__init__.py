@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tomojax.datasets.api import (
+    SyntheticArrayMetadata,
     SyntheticArtifactPaths,
     SyntheticDatasetSidecars,
     SyntheticDatasetSpec,
@@ -14,6 +15,7 @@ from tomojax.datasets.api import (
 )
 
 __all__ = [
+    "SyntheticArrayMetadata",
     "SyntheticArtifactPaths",
     "SyntheticDatasetSidecars",
     "SyntheticDatasetSpec",

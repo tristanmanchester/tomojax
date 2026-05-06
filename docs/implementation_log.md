@@ -4351,3 +4351,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Sidecar readback proves artifact consistency, not solver recovery on those
   generated projections. Solver ingestion remains a later compatibility slice.
+
+## 2026-05-06 — Phase 8 Synthetic Array Metadata Loader
+
+### Summary
+
+- Added public `SyntheticArrayMetadata` to `tomojax.datasets`.
+- `load_synthetic_dataset_sidecars` now validates manifest-indexed
+  `ground_truth_volume_npy`, `projections_npy`, and `mask_npy` artifacts using
+  memory-mapped NumPy loads.
+- The loader exposes array paths, shapes, and dtypes without eagerly loading
+  full 128^3 data.
+- Added focused tests for volume/projection/mask metadata and missing
+  projection artifact entries.
+
+### Decisions
+
+- Keep array readback metadata-only. This prepares a public ingestion surface
+  while avoiding accidental coupling between the NumPy smoke projector and the
+  JAX reference solver.
+
+### Validation
+
+- `uv run ruff format src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed: 4 files left unchanged after import-order fixes.
+- `uv run ruff check src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
+  passed: 11 tests.
+- `just imports` passed.
+
+### Risks
+
+- Shape/dtype validation does not verify physical consistency between generated
+  projections and v2 geometry sidecars. That remains a later solver-ingestion
+  or reference-projector compatibility task.

@@ -8,7 +8,26 @@ import json
 from pathlib import Path
 from typing import cast
 
+import numpy as np
+
 from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
+
+
+@dataclass(frozen=True)
+class SyntheticArrayMetadata:
+    """Shape and dtype metadata for a generated NumPy artifact."""
+
+    path: Path
+    shape: tuple[int, ...]
+    dtype: str
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable metadata payload."""
+        return {
+            "path": str(self.path),
+            "shape": list(self.shape),
+            "dtype": self.dtype,
+        }
 
 
 @dataclass(frozen=True)
@@ -21,6 +40,9 @@ class SyntheticDatasetSidecars:
     nominal_geometry: GeometryState
     corrupted_geometry: GeometryState
     true_geometry: GeometryState
+    volume: SyntheticArrayMetadata
+    projections: SyntheticArrayMetadata
+    mask: SyntheticArrayMetadata
 
 
 def load_synthetic_dataset_sidecars(dataset_dir: Path) -> SyntheticDatasetSidecars:
@@ -44,6 +66,9 @@ def load_synthetic_dataset_sidecars(dataset_dir: Path) -> SyntheticDatasetSideca
         geometry_key="v2_true_geometry_json",
         pose_key="v2_true_pose_params_csv",
     )
+    volume = _read_array_metadata(artifacts, "ground_truth_volume_npy")
+    projections = _read_array_metadata(artifacts, "projections_npy")
+    mask = _read_array_metadata(artifacts, "mask_npy")
     return SyntheticDatasetSidecars(
         dataset_dir=root,
         manifest=manifest,
@@ -51,6 +76,9 @@ def load_synthetic_dataset_sidecars(dataset_dir: Path) -> SyntheticDatasetSideca
         nominal_geometry=nominal_geometry,
         corrupted_geometry=corrupted_geometry,
         true_geometry=true_geometry,
+        volume=volume,
+        projections=projections,
+        mask=mask,
     )
 
 
@@ -82,3 +110,19 @@ def _read_indexed_geometry(
         ) from exc
     pose = read_pose_params_csv(pose_path)
     return read_geometry_json(geometry_path, pose)
+
+
+def _read_array_metadata(
+    artifacts: dict[str, Path],
+    key: str,
+) -> SyntheticArrayMetadata:
+    try:
+        path = artifacts[key]
+    except KeyError as exc:
+        raise ValueError(f"dataset_manifest.json missing required artifact {key!r}") from exc
+    array = np.load(path, mmap_mode="r")
+    return SyntheticArrayMetadata(
+        path=path,
+        shape=tuple(int(dim) for dim in array.shape),
+        dtype=str(array.dtype),
+    )

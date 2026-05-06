@@ -158,6 +158,20 @@ def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) ->
     assert sidecars.true_geometry.setup.det_u_px.value == -8.0
     assert sidecars.nominal_geometry.setup.det_u_px.value == 0.0
     assert sidecars.corrupted_geometry.setup.det_u_px.value == 0.0
+    assert sidecars.volume.path == paths.volume
+    assert sidecars.volume.shape == (32, 32, 32)
+    assert sidecars.volume.dtype == "float32"
+    assert sidecars.projections.path == paths.projections
+    assert sidecars.projections.shape == (8, 48, 48)
+    assert sidecars.projections.dtype == "float32"
+    assert sidecars.mask.path == paths.mask
+    assert sidecars.mask.shape == sidecars.projections.shape
+    assert sidecars.mask.dtype == "bool"
+    assert sidecars.projections.to_dict() == {
+        "path": str(paths.projections),
+        "shape": [8, 48, 48],
+        "dtype": "float32",
+    }
 
 
 def test_load_synthetic_dataset_sidecars_rejects_missing_artifact_map(tmp_path: Path) -> None:
@@ -173,6 +187,25 @@ def test_load_synthetic_dataset_sidecars_rejects_missing_artifact_map(tmp_path: 
     _ = paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="artifacts mapping"):
+        _ = load_synthetic_dataset_sidecars(paths.dataset_dir)
+
+
+def test_load_synthetic_dataset_sidecars_rejects_missing_array_artifact(
+    tmp_path: Path,
+) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=4,
+    )
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+    artifacts = cast("dict[str, str]", manifest["artifacts"])
+    del artifacts["projections_npy"]
+    _ = paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="projections_npy"):
         _ = load_synthetic_dataset_sidecars(paths.dataset_dir)
 
 
