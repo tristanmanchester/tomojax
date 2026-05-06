@@ -1,13 +1,17 @@
+"""Initializers and deterministic view splits for setup geometry alignment."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry import Geometry
+if TYPE_CHECKING:
+    import jax.numpy as jnp
 
-from ..objectives.loss_adapters import LossAdapter
+    from tomojax.align.objectives.loss_adapters import LossAdapter
+    from tomojax.core.geometry import Geometry
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +24,7 @@ class DetectorCenterSeed:
     status: str
 
     def to_dict(self) -> dict[str, float | str]:
+        """Return a JSON-native seed summary."""
         return {
             "det_u_px": float(self.det_u_px),
             "intercept_px": float(self.intercept_px),
@@ -81,7 +86,7 @@ def projection_com_det_u_seed(
         )
     com = np.zeros((n_views,), dtype=np.float32)
     com[valid] = numerator[valid] / denom[valid]
-    theta = np.deg2rad(np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32))
+    theta = np.deg2rad(np.asarray(geometry.thetas_deg, dtype=np.float32))
     design = np.stack(
         [
             np.ones_like(theta[valid]),

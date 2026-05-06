@@ -1,7 +1,9 @@
+"""Apply setup and pose calibration state to geometry arrays."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -9,14 +11,18 @@ import numpy as np
 
 from tomojax.calibration.axis_geometry import axis_pose_stack, axis_unit_from_rotations
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
-from tomojax.core.geometry import Detector, Geometry, Grid
 from tomojax.core.geometry.axis import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 
 from .parametrizations import se3_from_5d
-from ..model.state import AlignmentState, SetupGeometryState
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from tomojax.align.model.state import AlignmentState, SetupGeometryState
+    from tomojax.core.geometry import Detector, Geometry, Grid
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +44,9 @@ class BaseGeometryArrays:
         detector: Detector,
         *,
         level_factor: int = 1,
-    ) -> "BaseGeometryArrays":
-        thetas = jnp.asarray(getattr(geometry, "thetas_deg"), dtype=jnp.float32)
+    ) -> BaseGeometryArrays:
+        """Build base arrays from a concrete geometry and detector."""
+        thetas = jnp.asarray(geometry.thetas_deg, dtype=jnp.float32)
         n_views = int(thetas.shape[0])
         is_lamino = isinstance(geometry, LaminographyGeometry)
         return cls(
@@ -55,6 +62,8 @@ class BaseGeometryArrays:
 
 @dataclass(frozen=True, slots=True)
 class EffectiveGeometryArrays:
+    """Pose, detector-grid, and axis arrays after applying alignment state."""
+
     pose_stack: jnp.ndarray
     det_grid: tuple[jnp.ndarray, jnp.ndarray]
     axis_unit_lab: jnp.ndarray
@@ -123,8 +132,7 @@ def _setup_axis_unit_for_base(
         )
     else:
         nominal = _laminography_axis_unit_jax(
-            jnp.asarray(base.nominal_tilt_deg, dtype=jnp.float32)
-            + jnp.rad2deg(setup.tilt_rad),
+            jnp.asarray(base.nominal_tilt_deg, dtype=jnp.float32) + jnp.rad2deg(setup.tilt_rad),
             str(base.tilt_about),
         )
     return axis_unit_from_rotations(
@@ -165,7 +173,7 @@ def materialize_setup_geometry(
     indices: Sequence[int] | None = None,
 ) -> Geometry:
     """Build a Python geometry object for setup-state projection/reconstruction calls."""
-    thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)
+    thetas = np.asarray(geometry.thetas_deg, dtype=np.float32)
     if indices is not None:
         thetas = thetas[np.asarray(indices, dtype=np.int32)]
     axis = tuple(
@@ -175,10 +183,7 @@ def materialize_setup_geometry(
     setup_rotated_axis = (
         abs(float(setup.axis_rot_x_rad)) > 1e-7
         or abs(float(setup.axis_rot_y_rad)) > 1e-7
-        or (
-            not isinstance(geometry, LaminographyGeometry)
-            and abs(float(setup.tilt_rad)) > 1e-7
-        )
+        or (not isinstance(geometry, LaminographyGeometry) and abs(float(setup.tilt_rad)) > 1e-7)
     )
     if isinstance(geometry, RotationAxisGeometry) or setup_rotated_axis:
         return RotationAxisGeometry(
@@ -220,6 +225,7 @@ def pose_stack_for_setup(
     base: BaseGeometryArrays,
     setup: SetupGeometryState,
 ) -> jnp.ndarray:
+    """Return the setup-adjusted view pose stack for a base geometry bundle."""
     axis = _setup_axis_unit_for_base(base, setup)
     return axis_pose_stack(base.thetas_deg, axis)
 
@@ -241,6 +247,7 @@ def subset_base_geometry(
     base: BaseGeometryArrays,
     indices: Sequence[int],
 ) -> BaseGeometryArrays:
+    """Return a view-subsetted copy of a base geometry array bundle."""
     idx = jnp.asarray(indices, dtype=jnp.int32)
     return BaseGeometryArrays(
         thetas_deg=base.thetas_deg[idx],

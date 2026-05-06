@@ -2235,3 +2235,45 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: clean the geometry deep-module lint
   backlog beginning with `detector_center.py`, `geometry_applier.py`,
   `geometry_blocks.py`, `initializers.py`, and `parametrizations.py`.
+
+## 2026-05-06 — Clean Alignment Geometry Lint Blockers
+
+### Summary
+
+- Added module and public API docstrings for the first geometry lint blockers:
+  detector-center exports, geometry application, calibration blocks,
+  initializers, and pose parametrizations.
+- Replaced parent-relative imports with absolute imports where needed and moved
+  annotation-only geometry/state imports behind `TYPE_CHECKING`.
+- Cleaned small parametrization findings by removing non-ASCII comment text and
+  returning the final transform update directly.
+
+### Decisions
+
+- Kept the geometry package API unchanged; this slice only addressed docs,
+  imports, and local lint findings.
+- Replaced constant `getattr` calls in touched geometry files with direct
+  attribute access as part of the focused Ruff cleanup.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/geometry/detector_center.py src/tomojax/align/geometry/geometry_applier.py src/tomojax/align/geometry/geometry_blocks.py src/tomojax/align/geometry/initializers.py src/tomojax/align/geometry/parametrizations.py`
+  passed.
+- `uv run ruff check src/tomojax/align/geometry/detector_center.py src/tomojax/align/geometry/geometry_applier.py src/tomojax/align/geometry/geometry_blocks.py src/tomojax/align/geometry/initializers.py src/tomojax/align/geometry/parametrizations.py`
+  passed.
+- `uv run pytest tests/test_geometry.py tests/test_geometry_applier.py tests/test_geometry_block_taxonomy_generator.py tests/test_detector_center_objective.py tests/test_align_quick.py -q`
+  passed: 54 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. The touched geometry files are no longer in the failure list; the
+  first remaining blockers are `align/io/checkpoint.py`,
+  `align/io/params_export.py`, and `align/model/*`, followed by broader
+  repository lint backlog. Formatter churn from `just check` was reverted
+  outside this slice.
+
+### Risks
+
+- Direct attribute access now makes the expected geometry protocol more
+  explicit in touched files; focused geometry and quick alignment tests passed.
+- Proposed next fix for `just check`: clean checkpoint/io lint, then continue
+  through the alignment model package.

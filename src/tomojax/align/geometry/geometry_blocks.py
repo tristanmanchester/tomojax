@@ -1,12 +1,16 @@
+"""Geometry calibration state and materialization helpers for alignment."""
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import math
-from typing import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.align.model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
 from tomojax.calibration.axis_geometry import (
     axis_unit_from_rotations,
     nominal_axis_unit_from_inputs,
@@ -14,10 +18,14 @@ from tomojax.calibration.axis_geometry import (
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.calibration.gauge import validate_calibration_gauges
 from tomojax.calibration.state import CalibrationState, CalibrationVariable
-from tomojax.core.geometry import Detector, Geometry, Grid, RotationAxisGeometry
+from tomojax.core.geometry import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
-from tomojax.align.model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+    from tomojax.core.geometry import Detector, Geometry, Grid
 
 
 GEOMETRY_DOFS: tuple[str, ...] = GEOMETRY_DOF_NAMES
@@ -72,7 +80,8 @@ class GeometryCalibrationState:
         geometry: Geometry,
         *,
         active_geometry_dofs: Iterable[str] | None = None,
-    ) -> "GeometryCalibrationState":
+    ) -> GeometryCalibrationState:
+        """Create native-resolution calibration state from a geometry."""
         geometry_inputs = geometry_inputs_from_geometry(geometry)
         active = normalize_geometry_dofs(active_geometry_dofs, geometry=geometry)
         nominal = tuple(float(v) for v in nominal_axis_unit_from_inputs(geometry_inputs))
@@ -92,7 +101,8 @@ class GeometryCalibrationState:
         geometry: Geometry,
         *,
         active_geometry_dofs: Iterable[str] | None = None,
-    ) -> "GeometryCalibrationState":
+    ) -> GeometryCalibrationState:
+        """Restore calibration state values from a checkpoint payload."""
         state = cls.from_geometry(geometry, active_geometry_dofs=active_geometry_dofs)
         if not isinstance(payload, Mapping):
             return state
@@ -118,7 +128,8 @@ class GeometryCalibrationState:
                         values[str(name)] = float(raw_value)
         return replace(state, **values)
 
-    def replace_values(self, names: Sequence[str], values: jnp.ndarray) -> "GeometryCalibrationState":
+    def replace_values(self, names: Sequence[str], values: jnp.ndarray) -> GeometryCalibrationState:
+        """Return a copy with named calibration values replaced."""
         updates: dict[str, float] = {}
         arr = np.asarray(values, dtype=np.float32).reshape(-1)
         for idx, name in enumerate(names):
@@ -126,9 +137,11 @@ class GeometryCalibrationState:
         return replace(self, **updates)
 
     def values_for(self, names: Sequence[str]) -> jnp.ndarray:
+        """Return calibration values for named geometry DOFs."""
         return jnp.asarray([float(getattr(self, name)) for name in names], dtype=jnp.float32)
 
     def to_calibration_state(self) -> CalibrationState:
+        """Convert alignment geometry state to the public calibration schema."""
         active = set(self.active_geometry_dofs)
         axis_unit = [float(v) for v in self.axis_unit_lab()]
         return CalibrationState(
@@ -187,6 +200,7 @@ class GeometryCalibrationState:
         )
 
     def axis_unit_lab(self) -> tuple[float, float, float]:
+        """Return the effective lab-frame rotation-axis unit vector."""
         axis = axis_unit_from_rotations(
             self.nominal_axis_unit,
             axis_rot_x_deg=float(self.axis_rot_x_deg),
@@ -196,12 +210,13 @@ class GeometryCalibrationState:
 
 
 def geometry_inputs_from_geometry(geometry: Geometry) -> dict[str, object]:
-    detector = getattr(geometry, "detector")
-    grid = getattr(geometry, "grid")
+    """Extract calibration input fields from a concrete geometry object."""
+    detector = geometry.detector
+    grid = geometry.grid
     payload: dict[str, object] = {
         "grid": grid.to_dict(),
         "detector": detector.to_dict(),
-        "thetas_deg": np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32),
+        "thetas_deg": np.asarray(geometry.thetas_deg, dtype=np.float32),
         "geometry_type": "parallel",
     }
     if isinstance(geometry, LaminographyGeometry):
@@ -209,9 +224,9 @@ def geometry_inputs_from_geometry(geometry: Geometry) -> dict[str, object]:
         payload["tilt_deg"] = float(geometry.tilt_deg)
         payload["tilt_about"] = str(geometry.tilt_about)
     elif isinstance(geometry, RotationAxisGeometry):
-        payload["axis_unit_lab"] = list(getattr(geometry, "axis_unit_lab"))
+        payload["axis_unit_lab"] = list(geometry.axis_unit_lab)
     if getattr(geometry, "detector_roll_deg", None) is not None:
-        payload["detector_roll_deg"] = float(getattr(geometry, "detector_roll_deg"))
+        payload["detector_roll_deg"] = float(geometry.detector_roll_deg)
     return payload
 
 
@@ -221,7 +236,8 @@ def geometry_with_axis_state(
     detector: Detector,
     state: GeometryCalibrationState,
 ) -> Geometry:
-    thetas = np.asarray(getattr(geometry, "thetas_deg"), dtype=np.float32)
+    """Build a geometry object with the axis direction from calibration state."""
+    thetas = np.asarray(geometry.thetas_deg, dtype=np.float32)
     axis_active = (
         abs(float(state.axis_rot_x_deg)) > 1e-7
         or abs(float(state.axis_rot_y_deg)) > 1e-7
@@ -251,6 +267,7 @@ def level_detector_grid(
     state: GeometryCalibrationState,
     factor: int,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Return detector grid arrays with level-scaled calibration offsets."""
     factor_f = float(max(1, int(factor)))
     return detector_grid_from_calibration(
         detector,
@@ -346,17 +363,9 @@ def add_geometry_acquisition_diagnostics(
 ) -> dict[str, object]:
     """Annotate geometry diagnostics with acquisition-conditioning context."""
     output = dict(diagnostics)
-    blocks = [
-        dict(block)
-        for block in output.get("blocks", [])
-        if isinstance(block, Mapping)
-    ]
+    blocks = [dict(block) for block in output.get("blocks", []) if isinstance(block, Mapping)]
     theta_span = _theta_span_from_geometry(geometry)
-    warnings = [
-        str(warning)
-        for warning in output.get("warnings", [])
-        if isinstance(warning, str)
-    ]
+    warnings = [str(warning) for warning in output.get("warnings", []) if isinstance(warning, str)]
     axis_active = bool({"axis_rot_x_deg", "axis_rot_y_deg"} & set(active_geometry_dofs))
     if axis_active and theta_span is not None and theta_span < 270.0:
         warning = "axis_direction_sub_full_rotation_acquisition"
