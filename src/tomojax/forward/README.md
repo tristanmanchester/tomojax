@@ -14,6 +14,11 @@ rotations, and Jacobian checks remain future Phase 2 work.
 
 - `project_parallel_reference`
 - `project_parallel_reference_arrays`
+- `apply_residual_filter`
+- `apply_residual_filter_schedule`
+- `ResidualFilterConfig`
+- `ResidualFilterKind`
+- `ResidualFilterResult`
 - `masked_whitened_residual`
 - `pseudo_huber_loss`
 - `pseudo_huber_weights`
@@ -44,6 +49,9 @@ Forbidden dependencies:
   path.
 - Detector shifts in the minimal reference projector use differentiable periodic
   linear interpolation.
+- Residual filters are projection-domain JAX reference policies. The current
+  public policies are `raw`, `lowpass_gaussian`, and
+  `bandpass_difference_of_gaussians`.
 
 ## Tests
 

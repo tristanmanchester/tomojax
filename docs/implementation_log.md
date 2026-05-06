@@ -821,3 +821,54 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - Full setup-only optimisation remains incomplete until the physical reference
   projector supports detector roll, axis rotation, and theta setup effects.
+
+## 2026-05-06 — Add Projection Residual Filters
+
+### Summary
+
+- Added `tomojax.forward.apply_residual_filter` and
+  `tomojax.forward.apply_residual_filter_schedule`.
+- Added typed residual filter config/result values:
+  - `ResidualFilterConfig`
+  - `ResidualFilterKind`
+  - `ResidualFilterResult`
+- Implemented the first deterministic JAX reference residual filter policies:
+  - `raw`
+  - `lowpass_gaussian`
+  - `bandpass_difference_of_gaussians`
+- Added deterministic tests for raw identity with mask reapplication,
+  low-pass impulse spreading and sum preservation, band-pass zero-mean
+  behavior, and weighted schedule summation.
+
+### Decisions
+
+- The current low-pass policy uses a separable Gaussian kernel over the final
+  two detector axes and periodic boundary handling via `jnp.roll`.
+- The current band-pass policy is a difference between inner and outer Gaussian
+  low-pass results. This matches the named Phase 2 reference policy without
+  committing the public API to a future multiresolution filter bank design.
+- Masks are reapplied after filtering so invalid pixels remain suppressed in
+  filtered residuals.
+
+### Validation
+
+- `uv run ruff check src/tomojax/forward/_filters.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/forward/_filters.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/forward/_filters.py src/tomojax/forward/api.py src/tomojax/forward/__init__.py tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_residual_filters.py tests/test_forward_reference.py tests/test_v2_module_skeleton.py -q`
+  passed: 13 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
+  passed: 134 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The residual filters are deterministic reference policies, not yet a complete
+  level-aware continuation schedule integrated into the alternating solver.
