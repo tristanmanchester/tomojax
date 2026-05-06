@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -64,6 +65,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory for generated synthetic benchmark artifacts. Defaults under --out-dir.",
     )
     _ = parser.add_argument(
+        "--synthetic-dataset-dir",
+        help=(
+            "Existing generated synthetic benchmark artifact directory to ingest. "
+            "When supplied, --synthetic-dataset is optional metadata and no dataset is generated."
+        ),
+    )
+    _ = parser.add_argument(
         "--apply-synthetic-nuisance",
         action="store_true",
         help="Apply nuisance terms from the named synthetic benchmark to generated projections.",
@@ -87,12 +95,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     profile = cast("ContinuationScheduleName", args.profile)
     size = cast("SyntheticSize", int(args.size))
+    views = int(args.views)
     out_dir = Path(args.out_dir)
     dataset_name = None if args.synthetic_dataset is None else str(args.synthetic_dataset)
     dataset_dir: Path | None = None
     sidecar_readback: dict[str, object] | None = None
     synthetic_nuisance_applied = bool(args.apply_synthetic_nuisance)
-    if dataset_name is not None:
+    if args.synthetic_dataset_dir is not None:
+        dataset_dir = Path(args.synthetic_dataset_dir)
+        sidecars = load_synthetic_dataset_sidecars(dataset_dir)
+        manifest_name = _sidecar_manifest_name(sidecars)
+        if dataset_name is not None and dataset_name != manifest_name:
+            parser.error(
+                "--synthetic-dataset must match the existing sidecar manifest name "
+                f"{manifest_name!r}"
+            )
+        dataset_name = manifest_name
+        size, views = _sidecar_size_and_views(sidecars)
+        synthetic_nuisance_applied = _sidecar_nuisance_applied(sidecars)
+        sidecar_readback = _sidecar_readback_payload(sidecars)
+    elif dataset_name is not None:
         _ = synthetic128_spec(dataset_name)
         dataset_root = Path(args.dataset_out_dir) if args.dataset_out_dir else out_dir / "datasets"
         dataset_paths = generate_synthetic_dataset(
@@ -100,7 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset_root,
             size=size,
             clean=not synthetic_nuisance_applied,
-            views=int(args.views),
+            views=views,
         )
         dataset_dir = dataset_paths.dataset_dir
         sidecar_readback = _sidecar_readback_payload(load_synthetic_dataset_sidecars(dataset_dir))
@@ -108,7 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         AlternatingSmokeConfig(
             seed=int(args.seed),
             size=size,
-            n_views=int(args.views),
+            n_views=views,
             schedule=reference_continuation_schedule(profile),
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
@@ -141,6 +163,44 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "mask": sidecars.mask.to_dict(),
         "consistency": sidecars.consistency.to_dict(),
     }
+
+
+def _sidecar_manifest_name(sidecars: SyntheticDatasetSidecars) -> str:
+    name = sidecars.manifest.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("synthetic dataset sidecar manifest must contain a string name")
+    return name
+
+
+def _sidecar_size_and_views(sidecars: SyntheticDatasetSidecars) -> tuple[SyntheticSize, int]:
+    raw_volume_shape = cast("object", sidecars.manifest.get("volume_shape"))
+    if not isinstance(raw_volume_shape, list):
+        raise ValueError("synthetic dataset sidecar manifest must contain volume_shape")
+    volume_shape = cast("list[object]", raw_volume_shape)
+    if len(volume_shape) != 3:
+        raise ValueError("synthetic dataset sidecar manifest must contain volume_shape")
+    if not all(isinstance(dim, int) for dim in volume_shape):
+        raise ValueError("synthetic dataset sidecar volume_shape must contain integers")
+    dims = [dim for dim in volume_shape if isinstance(dim, int)]
+    size = dims[0]
+    if dims != [size, size, size]:
+        raise ValueError("synthetic dataset sidecar volume_shape must be cubic")
+    views = sidecars.manifest.get("views")
+    if not isinstance(views, int):
+        raise ValueError("synthetic dataset sidecar manifest must contain integer views")
+    if size == 32:
+        return 32, views
+    if size == 128:
+        return 128, views
+    raise ValueError("synthetic dataset sidecar size must be 32 or 128")
+
+
+def _sidecar_nuisance_applied(sidecars: SyntheticDatasetSidecars) -> bool:
+    path = sidecars.artifacts.get("nuisance_truth_json")
+    if path is None:
+        return False
+    payload = cast("dict[str, object]", json.loads(path.read_text(encoding="utf-8")))
+    return bool(payload.get("applied_to_projections"))
 
 
 if __name__ == "__main__":  # pragma: no cover

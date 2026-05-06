@@ -4,12 +4,16 @@ import csv
 import json
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import pytest
 
 import tomojax.cli.align_auto as align_auto_cli
+from tomojax.datasets import generate_synthetic_dataset
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from numpy.typing import NDArray
 
 
 def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[str]) -> None:
@@ -22,6 +26,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "verification artifacts" in captured.out
     assert "smoke32" in captured.out
     assert "--synthetic-dataset" in captured.out
+    assert "--synthetic-dataset-dir" in captured.out
     assert "--apply-synthetic-nuisance" in captured.out
     assert "--fit-gain-offset-nuisance" in captured.out
     assert "--fit-background-nuisance" in captured.out
@@ -310,3 +315,47 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
     )
     assert nuisance["applied_to_projections"] is True
+
+
+def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "synth128_thermal_object_drift",
+        tmp_path / "prepared-datasets",
+        size=32,
+        clean=True,
+        views=4,
+    )
+    out_dir = tmp_path / "auto-existing-benchmark"
+
+    exit_code = align_auto_cli.main(
+        [
+            "--out-dir",
+            str(out_dir),
+            "--synthetic-dataset-dir",
+            str(dataset_paths.dataset_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert not (out_dir / "datasets").exists()
+    verification = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "verification.json").read_text(encoding="utf-8")),
+    )
+    synthetic_dataset = cast("dict[str, object]", verification["synthetic_dataset"])
+    assert synthetic_dataset["name"] == "synth128_thermal_object_drift"
+    assert synthetic_dataset["artifact_dir"] == str(dataset_paths.dataset_dir)
+    assert synthetic_dataset["nuisance_applied_to_projections"] is False
+    sidecar_readback = cast("dict[str, object]", synthetic_dataset["sidecar_readback"])
+    assert sidecar_readback["validated"] is True
+    assert sidecar_readback["n_views"] == 4
+    observed = cast("NDArray[np.float32]", np.load(out_dir / "observed_projections.npy"))
+    generated = cast("NDArray[np.float32]", np.load(dataset_paths.projections))
+    np.testing.assert_allclose(observed, generated)
+    config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
+    assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text
+    captured = capsys.readouterr()
+    assert f"synthetic_dataset: {dataset_paths.dataset_dir}" in captured.out

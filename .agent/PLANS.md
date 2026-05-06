@@ -11,17 +11,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 nuisance models and weak DOF handling
-- Goal: replace weak-DOF validation-improvement placeholder evidence with real
-  Schur improvement evidence in the smoke observability policy.
+- Phase: Phase 8 synthetic benchmark ingestion
+- Goal: allow the deterministic align-auto smoke command to ingest an existing
+  generated synthetic benchmark sidecar directory.
 
 ### Scope
 
 - In scope:
-  - Populate weak-DOF policy evidence from Schur actual reduction when
-    diagnostics exist.
-  - Keep inactive/frozen DOFs explicit.
-  - Update focused observability assertions.
+  - Add an explicit existing-sidecar input option to `tomojax.cli.align_auto`.
+  - Validate and record sidecar readback before running the solver.
+  - Add focused CLI coverage proving projections are loaded from the existing
+    benchmark directory.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -38,22 +38,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add Schur validation-improvement evidence to weak DOF decisions.
-- [x] Update focused observability assertions.
+- [x] Add existing-sidecar input option to `align_auto`.
+- [x] Add focused CLI ingestion assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the weak-DOF evidence slice.
+- [ ] Commit the benchmark-ingestion slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
-  passed: 3 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 10 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,11 +61,13 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Do not change weak-DOF decisions in this slice; add evidence only.
+- Existing sidecar ingestion should not regenerate or overwrite benchmark
+  artifacts.
+- Keep the command scoped to 32^3 focused validation unless explicitly running
+  a larger benchmark.
 
 ### Risks
 
-- Risk: Schur actual reduction is optimisation evidence, not a held-out
-  validation metric.
-- Mitigation: label it as `schur_actual_reduction` and keep held-out validation
-  for a later policy slice.
+- Risk: CLI size/views can drift from the supplied sidecars.
+- Mitigation: pass configured size/views through the existing sidecar shape
+  checks and fail before writing misleading run artifacts.

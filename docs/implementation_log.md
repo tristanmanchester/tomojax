@@ -4753,3 +4753,43 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The evidence is still smoke-level Schur reduction, not a held-out weak-DOF
   acceptance gate.
+
+## 2026-05-06 — Phase 8 Existing Synthetic Sidecar Ingestion
+
+### Summary
+
+- Added `--synthetic-dataset-dir` to `tomojax.cli.align_auto` for ingesting an
+  existing generated synthetic benchmark sidecar directory without regenerating
+  artifacts.
+- The command now loads sidecars, infers dataset name, size, view count, and
+  nuisance-applied status from the manifest/readback, then passes the real
+  sidecar volume, projections, mask, and corrupted geometry into the smoke
+  solver.
+- Added focused CLI coverage that prepares a benchmark dataset outside the run
+  directory, ingests it, and verifies the run's observed projections match the
+  prepared sidecars.
+
+### Decisions
+
+- Existing-sidecar ingestion does not create or overwrite `out_dir/datasets`.
+- If both `--synthetic-dataset` and `--synthetic-dataset-dir` are supplied, the
+  explicit name must match the sidecar manifest name.
+- This remains a deterministic 32^3 focused path; larger 128^3 runtime remains
+  out of scope for this slice.
+
+### Validation
+
+- `uv run ruff format src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- This proves real sidecar ingestion through the align-auto smoke path, but not
+  full 128^3 benchmark runtime or comparator reporting.
