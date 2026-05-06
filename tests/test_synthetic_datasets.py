@@ -7,10 +7,12 @@ import json
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import pytest
 
 from tomojax.datasets import (
     generate_synthetic_dataset,
     load_synthetic128_specs,
+    load_synthetic_dataset_sidecars,
     make_benchmark_phantom,
 )
 from tomojax.geometry import read_geometry_json, read_pose_params_csv
@@ -135,6 +137,43 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     )
     assert nominal_state.setup.det_u_px.value == 0.0
     assert nominal_state.pose.n_views == 16
+
+
+def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_lamino_axis_roll_pose",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=8,
+    )
+
+    sidecars = load_synthetic_dataset_sidecars(paths.dataset_dir)
+
+    assert sidecars.dataset_dir == paths.dataset_dir
+    assert sidecars.manifest["name"] == "synth128_lamino_axis_roll_pose"
+    assert sidecars.artifacts["v2_true_geometry_json"] == paths.v2_true_geometry
+    assert sidecars.true_geometry.pose.n_views == 8
+    assert sidecars.true_geometry.setup.det_v_px.active is True
+    assert sidecars.true_geometry.setup.det_u_px.value == -8.0
+    assert sidecars.nominal_geometry.setup.det_u_px.value == 0.0
+    assert sidecars.corrupted_geometry.setup.det_u_px.value == 0.0
+
+
+def test_load_synthetic_dataset_sidecars_rejects_missing_artifact_map(tmp_path: Path) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=4,
+    )
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+    del manifest["artifacts"]
+    _ = paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="artifacts mapping"):
+        _ = load_synthetic_dataset_sidecars(paths.dataset_dir)
 
 
 def test_generate_synthetic_dataset_applies_gain_offset_nuisance(tmp_path: Path) -> None:

@@ -4278,3 +4278,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Manifest discovery makes sidecars easy to consume, but the alternating solver
   still needs a deliberate ingestion step before using generated benchmark
   projections.
+
+## 2026-05-06 — Phase 8 Synthetic Sidecar Loader API
+
+### Summary
+
+- Added public `SyntheticDatasetSidecars` and
+  `load_synthetic_dataset_sidecars` to `tomojax.datasets`.
+- The loader reads `dataset_manifest.json`, resolves its relative artifact map,
+  and loads nominal, corrupted, and true v2 geometry states through public
+  `tomojax.geometry` readers.
+- Exported the loader through `tomojax.datasets.api`, the package facade, and
+  the datasets README.
+- Added focused tests for successful manifest-indexed readback and malformed
+  manifests missing the artifact map.
+
+### Decisions
+
+- Keep the loader data-only. It does not validate projection compatibility or
+  run alignment; it exists as the public bridge that later `align-auto`
+  ingestion can call.
+
+### Validation
+
+- `uv run ruff format src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed: 4 files left unchanged after focused fixes.
+- `uv run ruff check src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets/_loader.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py tests/test_synthetic_datasets.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_v2_module_skeleton.py -q`
+  passed: 10 tests.
+- `just imports` passed.
+
+### Risks
+
+- The loader intentionally exposes generated sidecars only. Solver ingestion
+  still needs a compatibility decision for NumPy-smoke projections versus the
+  JAX reference projector.

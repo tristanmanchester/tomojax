@@ -13,8 +13,10 @@ differentiable `tomojax.forward` reference path.
 ## Public API
 
 - `SyntheticArtifactPaths`
+- `SyntheticDatasetSidecars`
 - `SyntheticDatasetSpec`
 - `generate_synthetic_dataset`
+- `load_synthetic_dataset_sidecars`
 - `load_synthetic128_specs`
 - `make_benchmark_phantom`
 - `synthetic128_spec`
