@@ -1993,3 +1993,44 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Minimal behavioral risk; focused profile tests passed.
 - Proposed next fix for `just check`: clean `_reconstruction_stage.py`
   imports, local helper annotations, and statement count.
+
+## 2026-05-06 — Clean Reconstruction Stage Ruff Blockers
+
+### Summary
+
+- Replaced `_reconstruction_stage.py` parent-relative imports with absolute
+  imports and moved annotation-only geometry/stat imports behind
+  `TYPE_CHECKING`.
+- Added return annotations to the local FISTA, SPDHG, and Huber-FISTA-core
+  reconstruction runner helpers.
+- Extracted OOM message detection and final reconstruction `OuterStat`
+  assembly into private helpers, clearing the local statement-count blocker
+  without changing reconstruction math.
+
+### Decisions
+
+- Kept `Mapping` as a runtime `collections.abc` import because the final info
+  path still uses `isinstance(info_rec, Mapping)`.
+- Moved the existing stat payload verbatim into `_reconstruction_step_stat`
+  rather than changing the provenance/stat contract.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_reconstruction_stage.py` passed.
+- `uv run ruff format src/tomojax/align/_reconstruction_stage.py` passed.
+- `uv run pytest tests/test_align_quick.py tests/test_align_chunking.py -q -k '(gn or gd or smooth_pose_model or pose_model) and not lbfgs'`
+  passed: 47 tests, 5 deselected.
+- `uv run pytest tests/test_align_profiles.py -q` passed: 6 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `_reconstruction_stage.py` is no longer in the failure list; the
+  first remaining blockers are `_results.py`, `_setup_stage.py`,
+  `_stage_loop.py`, and broader repository lint backlog. Formatter churn from
+  `just check` was reverted outside this slice.
+
+### Risks
+
+- Final-stat assembly now lives in a helper; focused alignment/reconstruction
+  coverage passed, but a dedicated stat-schema test was not added in this
+  slice.
+- Proposed next fix for `just check`: clean `_results.py` type-only imports.

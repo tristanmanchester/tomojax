@@ -1,24 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import functools
 import logging
 import time
-from typing import Mapping
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
-from ..core.backend_policy import normalize_projector_backend
-from ..core.geometry.base import Detector, Geometry, Grid
-from ..core.geometry.views import stack_view_poses
-from ..recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
-from ..recon.fista_tv import FistaConfig, fista_tv
-from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
-from .geometry.parametrizations import se3_from_5d
-from ._observer import OuterStat
-from ._results import record_reconstruction_info as _record_reconstruction_info
+from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
+
 from ._quality_policy import reconstruction_quality_policy
+from ._results import record_reconstruction_info as _record_reconstruction_info
+from .geometry.parametrizations import se3_from_5d
 from .objectives.recon_layer import PoseAdjustedGeometry
+
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
+
+    from ._observer import OuterStat
 
 
 def _heuristic_projection_lipschitz(
@@ -63,7 +68,9 @@ def _resolve_reconstruction_projector_backend(
             raise RuntimeError(reason)
         return "jax", reason
     try:
-        from ..core.pallas_projector import pallas_projector_sinogram_unsupported_reason
+        from tomojax.core.pallas_projector import (
+            pallas_projector_sinogram_unsupported_reason,
+        )
 
         reason = pallas_projector_sinogram_unsupported_reason(
             T_all,
@@ -81,6 +88,52 @@ def _resolve_reconstruction_projector_backend(
             raise RuntimeError(reason)
         return "jax", reason
     return "pallas", None
+
+
+def _is_oom_error_message(message: str) -> bool:
+    return (
+        ("RESOURCE_EXHAUSTED" in message)
+        or ("Out of memory" in message)
+        or ("Allocator" in message)
+    )
+
+
+def _reconstruction_step_stat(
+    *,
+    recon_start: float,
+    recon_retry: bool,
+    info_rec: object,
+    recon_algo: str,
+    cfg: object,
+    outer_idx: int,
+    L_prev: float | None,
+) -> tuple[OuterStat, float | None]:
+    info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
+    requested_backend = str(getattr(cfg, "projector_backend", "jax"))
+    actual_recon_backend = str(info_mapping.get("actual_backend") or "jax")
+    fallback_reason = info_mapping.get("fallback_reason")
+    stat: OuterStat = {
+        "recon_time": time.perf_counter() - recon_start,
+        "recon_retry": recon_retry,
+        "recon_requested_backend": requested_backend,
+        "recon_actual_backend": actual_recon_backend,
+        "recon_fallback_reason": str(fallback_reason) if fallback_reason else None,
+        "align_profile": str(getattr(cfg, "align_profile", "lightning")),
+        "quality_tier": str(getattr(cfg, "quality_tier", "")),
+        "fallback_policy": str(getattr(cfg, "fallback_policy", "")),
+        "regulariser": str(info_mapping.get("regulariser") or getattr(cfg, "regulariser", "")),
+        "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
+        "regulariser_value_computed": bool(info_mapping.get("regulariser_value_computed", False)),
+    }
+    L_next = _record_reconstruction_info(
+        stat,
+        info_rec=info_mapping,
+        recon_algo=recon_algo,
+        cfg=cfg,
+        outer_idx=outer_idx,
+        L_prev=L_prev,
+    )
+    return stat, L_next
 
 
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
@@ -132,7 +185,12 @@ def _run_reconstruction_step(
 ) -> tuple[jnp.ndarray, float | None, OuterStat]:
     recon_geometry = PoseAdjustedGeometry(geometry=geometry, params5=params5)
 
-    def _run_fista(vpb: int | None, unroll: int, gather: str, gm: str):
+    def _run_fista(
+        vpb: int | None,
+        unroll: int,
+        gather: str,
+        gm: str,
+    ) -> tuple[jnp.ndarray, Mapping[str, object]]:
         fista_cfg = FistaConfig(
             iters=cfg.recon_iters,
             lambda_tv=cfg.lambda_tv,
@@ -158,7 +216,7 @@ def _run_reconstruction_step(
             det_grid=det_grid,
         )
 
-    def _run_spdhg():
+    def _run_spdhg() -> tuple[jnp.ndarray, Mapping[str, object]]:
         spdhg_cfg = SPDHGConfig(
             iters=int(cfg.recon_iters),
             lambda_tv=float(cfg.lambda_tv),
@@ -182,7 +240,7 @@ def _run_reconstruction_step(
             det_grid=det_grid,
         )
 
-    def _run_huber_fista_core():
+    def _run_huber_fista_core() -> tuple[jnp.ndarray, Mapping[str, object]]:
         n_views = int(projections.shape[0])
         L_core = (
             float(L_prev)
@@ -273,11 +331,7 @@ def _run_reconstruction_step(
                 )
             except Exception as e:
                 msg = str(e)
-                is_oom = (
-                    ("RESOURCE_EXHAUSTED" in msg)
-                    or ("Out of memory" in msg)
-                    or ("Allocator" in msg)
-                )
+                is_oom = _is_oom_error_message(msg)
                 if not is_oom:
                     raise
                 logging.warning(
@@ -288,11 +342,7 @@ def _run_reconstruction_step(
                     x_out, info_rec = _run_fista(1, 1, cfg.gather_dtype, "stream")
                 except Exception as e2:
                     msg2 = str(e2)
-                    if (
-                        ("RESOURCE_EXHAUSTED" in msg2)
-                        or ("Out of memory" in msg2)
-                        or ("Allocator" in msg2)
-                    ):
+                    if _is_oom_error_message(msg2):
                         logging.error(
                             "FISTA still OOM at finest level. Reduce memory pressure "
                             "(smaller problem size or lower internal batching), or "
@@ -303,28 +353,10 @@ def _run_reconstruction_step(
         x_out, info_rec = _run_spdhg()
 
     jax.block_until_ready(x_out)
-    info_mapping = info_rec if isinstance(info_rec, Mapping) else {}
-    requested_backend = str(getattr(cfg, "projector_backend", "jax"))
-    actual_recon_backend = str(info_mapping.get("actual_backend") or "jax")
-    fallback_reason = info_mapping.get("fallback_reason")
-    stat: OuterStat = {
-        "recon_time": time.perf_counter() - recon_start,
-        "recon_retry": recon_retry,
-        "recon_requested_backend": requested_backend,
-        "recon_actual_backend": actual_recon_backend,
-        "recon_fallback_reason": str(fallback_reason) if fallback_reason else None,
-        "align_profile": str(getattr(cfg, "align_profile", "lightning")),
-        "quality_tier": str(getattr(cfg, "quality_tier", "")),
-        "fallback_policy": str(getattr(cfg, "fallback_policy", "")),
-        "regulariser": str(info_mapping.get("regulariser") or getattr(cfg, "regulariser", "")),
-        "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
-        "regulariser_value_computed": bool(
-            info_mapping.get("regulariser_value_computed", False)
-        ),
-    }
-    L_next = _record_reconstruction_info(
-        stat,
-        info_rec=info_mapping,
+    stat, L_next = _reconstruction_step_stat(
+        recon_start=recon_start,
+        recon_retry=recon_retry,
+        info_rec=info_rec,
         recon_algo=recon_algo,
         cfg=cfg,
         outer_idx=outer_idx,
