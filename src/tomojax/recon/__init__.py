@@ -14,7 +14,7 @@ from ._fista_reference import (
     fista_reconstruct_reference,
     write_fista_trace_csv,
 )
-from ._reference import reconstruct_average_reference
+from ._reference import reconstruct_average_reference, reconstruct_backprojection_reference
 from ._schedule_reference import (
     ReferenceFISTASchedule,
     ReferenceFISTAScheduleEntry,
@@ -58,6 +58,7 @@ __all__ = [
     "fista_reconstruct_reference",
     "fista_tv",
     "reconstruct_average_reference",
+    "reconstruct_backprojection_reference",
     "reference_fista_schedule",
     "spdhg_tv",
     "write_fista_trace_csv",

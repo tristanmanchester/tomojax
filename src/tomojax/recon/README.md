@@ -27,6 +27,7 @@ forward model.
 - `fista_tv`
 - `reference_fista_schedule`
 - `reconstruct_average_reference`
+- `reconstruct_backprojection_reference`
 - `spdhg_tv`
 - `write_fista_trace_csv`
 
@@ -56,6 +57,8 @@ Forbidden dependencies:
   full pyramid execution belongs to a later orchestration milestone.
 - `reconstruct_average_reference` is a tiny smoke helper, not the final default
   reconstruction algorithm.
+- `reconstruct_backprojection_reference` is a deterministic geometry-aware
+  reference initializer for smoke and FISTA warm starts.
 
 ## Tests
 

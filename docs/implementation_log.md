@@ -3391,3 +3391,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - This is a real Schur geometry update, but it is still an alignment-isolated
   smoke slice using the synthetic fixed volume rather than the stopped FISTA
   latent volume.
+
+## 2026-05-06 — Phase 7 Geometry-Aware Backprojection Initializer
+
+### Summary
+
+- Added public `reconstruct_backprojection_reference` to `tomojax.recon`.
+- Implemented a deterministic geometry-aware reference backprojection for smoke
+  and FISTA warm starts.
+- Used the backprojection volume as the initial volume for the Phase 7 smoke
+  FISTA path when no previous stopped latent exists.
+- Extended reconstruction and smoke tests to cover shape, nonzero output, and
+  the stronger saved smoke volume.
+
+### Decisions
+
+- Kept the Schur update source as the fixed synthetic smoke volume for this
+  slice because the stopped FISTA latent is not yet strong enough to recover all
+  supported DOFs.
+- Kept the backprojection helper in `tomojax.recon` as a reference
+  reconstruction primitive rather than adding more artifact-shape scaffolding.
+
+### Validation
+
+- `uv run ruff format src/tomojax/recon/_reference.py src/tomojax/recon/__init__.py src/tomojax/recon/api.py src/tomojax/align/_alternating.py tests/test_reference_fista.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/recon/_reference.py src/tomojax/recon/__init__.py src/tomojax/recon/api.py src/tomojax/align/_alternating.py tests/test_reference_fista.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/recon/_reference.py src/tomojax/recon/__init__.py src/tomojax/recon/api.py src/tomojax/align/_alternating.py tests/test_reference_fista.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_reference_fista.py tests/test_alternating_solver_smoke.py tests/test_joint_schur_lm.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 17 tests.
+- `just imports` passed.
+
+### Risks
+
+- The geometry-aware backprojection is still a simple reference initializer,
+  not a full reconstruction-quality solution.

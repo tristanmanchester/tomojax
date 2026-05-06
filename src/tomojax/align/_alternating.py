@@ -44,6 +44,7 @@ from tomojax.recon import (
     ReferenceFISTAConfig,
     ReferenceFISTAResult,
     fista_reconstruct_reference,
+    reconstruct_backprojection_reference,
     write_fista_trace_csv,
 )
 from tomojax.verify import validate_run_artifacts
@@ -173,7 +174,11 @@ def _run_alternating_solver_smoke_impl(
         fista_result = fista_reconstruct_reference(
             observed,
             geometry,
-            initial_volume=volume,
+            initial_volume=(
+                volume
+                if volume is not None
+                else reconstruct_backprojection_reference(observed, geometry, depth=cfg.size)
+            ),
             mask=mask,
             config=ReferenceFISTAConfig(
                 iterations=level.reconstruction_iterations,

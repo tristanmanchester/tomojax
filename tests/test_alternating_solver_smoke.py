@@ -248,6 +248,7 @@ def _assert_schur_diagnostics(result: AlternatingSmokeResult) -> None:
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:
     saved_volume = cast("NDArray[np.float32]", np.load(result.artifacts["final_volume_npy"]))
     np.testing.assert_allclose(saved_volume, result.final_volume)
+    assert float(np.max(saved_volume)) > 0.01
 
 
 def _assert_truth_artifacts(result: AlternatingSmokeResult) -> None:

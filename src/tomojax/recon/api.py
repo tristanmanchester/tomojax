@@ -20,7 +20,10 @@ from tomojax.recon import (
     spdhg_tv,
     write_fista_trace_csv,
 )
-from tomojax.recon._reference import reconstruct_average_reference
+from tomojax.recon._reference import (
+    reconstruct_average_reference,
+    reconstruct_backprojection_reference,
+)
 
 __all__ = [
     "FBPConfig",
@@ -37,6 +40,7 @@ __all__ = [
     "fista_reconstruct_reference",
     "fista_tv",
     "reconstruct_average_reference",
+    "reconstruct_backprojection_reference",
     "reference_fista_schedule",
     "spdhg_tv",
     "write_fista_trace_csv",

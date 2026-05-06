@@ -12,6 +12,7 @@ from tomojax.geometry import GeometryState
 from tomojax.recon import (
     ReferenceFISTAConfig,
     fista_reconstruct_reference,
+    reconstruct_backprojection_reference,
     write_fista_trace_csv,
 )
 
@@ -60,6 +61,20 @@ def test_reference_fista_warm_start_and_trace_csv(tmp_path: Path) -> None:
         rows = list(csv.DictReader(handle))
     assert [row["iteration"] for row in rows] == ["0", "1"]
     assert rows[0]["backend"] == "jax_reference"
+
+
+def test_reference_backprojection_uses_geometry_and_preserves_shape() -> None:
+    truth = _tiny_volume()
+    geometry = GeometryState.zeros(2)
+    projections = project_parallel_reference(truth, geometry)
+
+    volume = reconstruct_backprojection_reference(projections, geometry, depth=truth.shape[1])
+
+    assert volume.shape == truth.shape
+    assert volume.dtype == jnp.float32
+    assert float(jnp.max(volume)) > 0.0
+    reprojection = project_parallel_reference(volume, geometry)
+    assert reprojection.shape == projections.shape
 
 
 def _tiny_volume() -> jnp.ndarray:
