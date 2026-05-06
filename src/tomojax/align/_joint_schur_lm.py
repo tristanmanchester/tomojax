@@ -85,6 +85,8 @@ class JointSchurDiagnostics:
     parameter_prior_strength: float = 0.0
     gain_offset_fit: bool = False
     background_offset_fit: bool = False
+    gain_offset_model: dict[str, object] | None = None
+    background_offset_model: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -122,6 +124,8 @@ class JointSchurDiagnostics:
             "parameter_prior_strength": self.parameter_prior_strength,
             "gain_offset_fit": self.gain_offset_fit,
             "background_offset_fit": self.background_offset_fit,
+            "gain_offset_model": self.gain_offset_model,
+            "background_offset_model": self.background_offset_model,
         }
 
 
@@ -319,6 +323,14 @@ def solve_joint_schur_lm(
             parameter_prior_strength=max(float(cfg.parameter_prior_strength), 0.0),
             gain_offset_fit=bool(cfg.fit_gain_offset),
             background_offset_fit=bool(cfg.fit_background_offset),
+            **_nuisance_diagnostics_for_params(
+                vol,
+                obs,
+                geometry,
+                params,
+                mask=mask,
+                cfg=cfg,
+            ),
         )
         iteration_diagnostics.append(diagnostics)
         damping = next_damping
@@ -778,6 +790,32 @@ def _with_fitted_nuisance(
     if fit_background_offset:
         corrected = estimate_background_offset(corrected, observed, mask=mask).apply(corrected)
     return corrected
+
+
+def _nuisance_diagnostics_for_params(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+) -> dict[str, dict[str, object] | None]:
+    predicted = _predicted_for_params(volume, geometry, params)
+    gain_offset_model = None
+    background_offset_model = None
+    corrected = predicted
+    if cfg.fit_gain_offset:
+        gain_offset = estimate_gain_offset(corrected, observed, mask=mask)
+        gain_offset_model = gain_offset.to_dict()
+        corrected = gain_offset.apply(corrected)
+    if cfg.fit_background_offset:
+        background_offset = estimate_background_offset(corrected, observed, mask=mask)
+        background_offset_model = background_offset.to_dict()
+    return {
+        "gain_offset_model": gain_offset_model,
+        "background_offset_model": background_offset_model,
+    }
 
 
 def _loss_for_params(

@@ -11,23 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 synthetic benchmark ingestion
-- Goal: expose synthetic benchmark result comparison as a real CLI command.
+- Phase: Phase 8 nuisance models and weak DOF handling
+- Goal: record fitted nuisance estimates in Schur diagnostics.
 
 ### Scope
 
 - In scope:
-  - Add a command-line entrypoint over the existing benchmark-result ingestion
-    helper.
-  - Support writing a deterministic markdown comparison report to a requested
-    output path.
-  - Support stdout preview when no output path is supplied.
+  - Include fitted gain/offset estimates in joint Schur diagnostics when
+    enabled.
+  - Include fitted background estimates in joint Schur diagnostics when enabled.
+  - Preserve existing geometry-update behavior and artifact schemas.
 - Out of scope:
-  - Full current-vs-reimagined protocol runner.
-  - New synthetic dataset generation behavior.
-  - Larger 128^3 benchmark runtime.
+  - New nuisance solver blocks.
+  - Automatic weak-DOF activation changes.
+  - Broader failure-classifier policy changes.
   - Further legacy Ruff cleanup.
-- Deep module owner: transitional `tomojax.bench`.
+- Deep module owner: `tomojax.align` with public `tomojax.nuisance` payloads.
 
 ### Design Sources
 
@@ -38,33 +37,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add benchmark comparison CLI entrypoint.
-- [x] Add focused CLI tests.
+- [x] Add nuisance estimate payloads to Schur diagnostics.
+- [x] Add focused diagnostics tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the benchmark comparison CLI slice.
+- [x] Commit the nuisance diagnostics slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py pyproject.toml`
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `uv run ruff check src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py pyproject.toml`
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `uv run basedpyright src/tomojax/bench/synthetic_results.py tests/test_bench_synthetic_results.py`
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
   passed.
-- `uv run pytest tests/test_bench_synthetic_results.py -q` passed: 6 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 8 tests.
 - `just imports` passed.
-- `uv run tomojax-synthetic-benchmark-compare --help` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- The CLI stays on the existing `tomojax.bench.synthetic_results` helper rather
-  than creating a new benchmark runner.
+- Diagnostics record the nuisance estimate for the current accepted parameter
+  state rather than each rejected candidate.
 
 ### Risks
 
-- Risk: transitional `tomojax.bench` is not yet a v2 deep module.
-- Mitigation: keep the command narrow and limited to result-artifact ingestion.
+- Risk: diagnostics could imply nuisance fitting ran when it was disabled.
+- Mitigation: keep payloads `None` unless the matching fit flag is enabled.

@@ -3,7 +3,7 @@ from __future__ import annotations
 # pyright: reportAny=false, reportUnknownMemberType=false
 from dataclasses import replace
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -337,6 +337,20 @@ def test_joint_schur_gain_offset_nuisance_does_not_create_fake_geometry() -> Non
     assert result.initial_loss < 1.0e-10
     assert result.final_loss < 1.0e-10
     assert result.diagnostics.gain_offset_fit is True
+    assert result.diagnostics.gain_offset_model is not None
+    gain_offset_model = result.diagnostics.gain_offset_model
+    assert gain_offset_model["schema"] == "tomojax.gain_offset_model.v1"
+    np.testing.assert_allclose(
+        cast("list[float]", gain_offset_model["gain"]),
+        [1.12, 0.91],
+        atol=5.0e-4,
+    )
+    np.testing.assert_allclose(
+        cast("list[float]", gain_offset_model["offset"]),
+        [0.08, -0.05],
+        atol=5.0e-4,
+    )
+    assert result.diagnostics.background_offset_model is None
     assert result.diagnostics.setup_update_norm < 1.0e-5
     assert result.diagnostics.pose_update_norm < 1.0e-5
     np.testing.assert_allclose(result.geometry.pose.dx_px, geometry.pose.dx_px, atol=1.0e-5)
@@ -371,6 +385,20 @@ def test_joint_schur_background_nuisance_does_not_create_fake_geometry() -> None
     assert result.initial_loss < 1.0e-10
     assert result.final_loss < 1.0e-10
     assert result.diagnostics.background_offset_fit is True
+    assert result.diagnostics.gain_offset_model is None
+    assert result.diagnostics.background_offset_model is not None
+    background_offset_model = result.diagnostics.background_offset_model
+    assert background_offset_model["schema"] == "tomojax.background_offset_model.v1"
+    np.testing.assert_allclose(
+        cast("list[float]", background_offset_model["constant"]),
+        [0.06, -0.04],
+        atol=5.0e-4,
+    )
+    np.testing.assert_allclose(
+        cast("list[float]", background_offset_model["vertical_gradient"]),
+        [0.03, -0.02],
+        atol=5.0e-4,
+    )
     assert result.diagnostics.setup_update_norm < 1.0e-5
     assert result.diagnostics.pose_update_norm < 1.0e-5
     np.testing.assert_allclose(result.geometry.pose.dx_px, geometry.pose.dx_px, atol=1.0e-5)
@@ -446,11 +474,15 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
         "parameter_prior_strength",
         "gain_offset_fit",
         "background_offset_fit",
+        "gain_offset_model",
+        "background_offset_model",
     ):
         assert field in payload["diagnostics"]
     assert payload["diagnostics"]["parameter_prior_strength"] == 2.0e-3
     assert payload["diagnostics"]["gain_offset_fit"] is False
     assert payload["diagnostics"]["background_offset_fit"] is False
+    assert payload["diagnostics"]["gain_offset_model"] is None
+    assert payload["diagnostics"]["background_offset_model"] is None
     assert payload["diagnostics"]["next_setup_trust_radius"] is not None
     assert payload["diagnostics"]["next_pose_trust_radius"] is not None
     assert len(payload["diagnostics"]["current_loss_by_view"]) == 1

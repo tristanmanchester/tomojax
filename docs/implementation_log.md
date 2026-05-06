@@ -118,6 +118,46 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The command compares existing result artifacts only; it does not yet schedule
   benchmark cases or compare current TomoJAX against the reimagined path.
 
+## 2026-05-06 — Record Schur Nuisance Estimates
+
+### Summary
+
+- Extended `JointSchurDiagnostics` with optional `gain_offset_model` and
+  `background_offset_model` payloads.
+- When gain/offset fitting is enabled, diagnostics now record the fitted
+  per-view gain and offset model for the accepted parameter state.
+- When background fitting is enabled, diagnostics now record the fitted
+  constant plus vertical-gradient background model for the accepted parameter
+  state.
+- Focused Schur tests now verify that fitted nuisance estimates are recovered
+  and that disabled nuisance payloads remain `None`.
+
+### Decisions
+
+- Diagnostics reuse public `tomojax.nuisance` model `to_dict()` payloads rather
+  than defining a parallel artifact schema.
+- This slice records provenance for fitted nuisance correction without changing
+  the geometry update rule or weak-DOF policy.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 8 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- The recorded nuisance estimates are diagnostic payloads. Automatic escalation
+  and weak-DOF decisions still need additional Phase 8 policy work.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary
