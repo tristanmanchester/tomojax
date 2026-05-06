@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _normalize_command(cmd: Sequence[str]) -> list[str]:
@@ -12,7 +14,7 @@ def _normalize_command(cmd: Sequence[str]) -> list[str]:
     if not args or not args[0]:
         raise ValueError("command must include an executable")
     executable = args[0]
-    if not os.path.isabs(executable):
+    if not Path(executable).is_absolute():
         resolved = shutil.which(executable)
         if resolved is None:
             raise FileNotFoundError(f"Unable to resolve executable {executable!r}")
@@ -22,10 +24,22 @@ def _normalize_command(cmd: Sequence[str]) -> list[str]:
 
 
 def run_command(cmd: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+    """Run a resolved command with shell disabled."""
     normalized = _normalize_command(cmd)
-    return subprocess.run(normalized, shell=False, **kwargs)  # nosec B603
+    kwargs.setdefault("check", False)
+    return subprocess.run(normalized, shell=False, **kwargs)  # noqa: PLW1510  # nosec B603
 
 
-def check_output_command(cmd: Sequence[str], **kwargs: Any) -> bytes | str:
+def check_output_command(
+    cmd: Sequence[str],
+    *,
+    stderr: int | None = None,
+    text: bool = False,
+) -> bytes | str:
     normalized = _normalize_command(cmd)
-    return subprocess.check_output(normalized, shell=False, **kwargs)  # nosec B603
+    return subprocess.check_output(  # nosec B603
+        normalized,
+        shell=False,
+        stderr=stderr,
+        text=text,
+    )

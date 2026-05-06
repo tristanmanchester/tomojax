@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+import os
 from typing import Literal, TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from tomojax.backends import default_gather_dtype
+from tomojax.core import progress_iter
 
 from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from ..core.geometry.base import DetectorDict, GridDict
@@ -16,7 +19,13 @@ from ..core.projector import (
     forward_project_view_T,
     get_detector_grid_device,
 )
-from ..utils.memory import default_gather_dtype
+from .artefacts import (
+    ArtefactMetadata,
+    SimulationArtefacts,
+    apply_simulation_artefacts,
+    normalise_simulation_artefacts,
+)
+from .io_hdf5 import NXTomoMetadata, save_nxtomo
 from .phantoms import (
     blobs,
     cube,
@@ -26,14 +35,6 @@ from .phantoms import (
     shepp_logan_3d,
     sphere,
 )
-from .artefacts import (
-    ArtefactMetadata,
-    SimulationArtefacts,
-    apply_simulation_artefacts,
-    normalise_simulation_artefacts,
-)
-from .io_hdf5 import NXTomoMetadata, save_nxtomo
-from ..utils.logging import progress_iter
 
 
 class LaminoGeometryMeta(TypedDict):
@@ -79,9 +80,7 @@ class SimConfig:
     tilt_about: str = "x"
     phantom: str = "shepp"
     # single-object phantom parameters (for cube/sphere)
-    single_size: float = (
-        0.5  # relative size (cube side or sphere diameter as fraction of min dim)
-    )
+    single_size: float = 0.5  # relative size (cube side or sphere diameter as fraction of min dim)
     single_value: float = 1.0
     single_rotate: bool = True  # rotate cube randomly (ignored for sphere)
     # random_shapes parameters
@@ -224,12 +223,8 @@ def simulate(cfg: SimConfig) -> SimulatedData:
     else:
         # Fallback path with per-view progress logging
         projs = []
-        for i in progress_iter(
-            range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"
-        ):
-            p = forward_project_view(
-                geom, grid, det, vol, view_index=i, gather_dtype=gather
-            )
+        for i in progress_iter(range(cfg.n_views), total=cfg.n_views, desc="Simulate: views"):
+            p = forward_project_view(geom, grid, det, vol, view_index=i, gather_dtype=gather)
             projs.append(p)
         proj = jnp.stack(projs, axis=0)
 

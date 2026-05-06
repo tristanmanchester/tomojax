@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import numpy as np
 
 
 def _wrap_shift(idx: jnp.ndarray | int, n: int) -> jnp.ndarray:
@@ -10,7 +11,7 @@ def _wrap_shift(idx: jnp.ndarray | int, n: int) -> jnp.ndarray:
     index is preserved and the interval becomes ``[-floor(n/2), ceil(n/2))``.
     """
     threshold = (int(n) + 1) // 2
-    idx_arr = jnp.asarray(idx)
+    idx_arr = jnp.asarray(idx)  # pyright: ignore[reportUnknownMemberType]
     return jnp.where(idx_arr < threshold, idx_arr, idx_arr - int(n))
 
 
@@ -19,8 +20,8 @@ def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, j
 
     Inputs are 2D arrays (nv, nu). Returns integer-pixel shifts in (u, v).
     """
-    ref = ref.astype(jnp.float32)
-    tgt = tgt.astype(jnp.float32)
+    ref = ref.astype(np.float32)
+    tgt = tgt.astype(np.float32)
     F1 = jnp.fft.rfft2(ref)
     F2 = jnp.fft.rfft2(tgt)
     G = F1 * jnp.conj(F2)
@@ -30,8 +31,8 @@ def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, j
     # Locate peak
     flat_idx = jnp.argmax(corr)
     nv, nu = ref.shape
-    v_idx = (flat_idx // nu).astype(jnp.int32)
-    u_idx = (flat_idx % nu).astype(jnp.int32)
-    du = _wrap_shift(u_idx, nu).astype(jnp.float32)
-    dv = _wrap_shift(v_idx, nv).astype(jnp.float32)
+    v_idx = (flat_idx // nu).astype(np.int32)
+    u_idx = (flat_idx % nu).astype(np.int32)
+    du = _wrap_shift(u_idx, nu).astype(np.float32)
+    dv = _wrap_shift(v_idx, nv).astype(np.float32)
     return du, dv

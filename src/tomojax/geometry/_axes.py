@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, overload
+from typing import TYPE_CHECKING, cast, overload
 
 import numpy as np
 
-from ..core.geometry.base import Grid, GridDict
+from tomojax.core.geometry.base import Grid, GridDict
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 try:  # pragma: no cover - JAX might be absent in build docs
     import jax  # type: ignore
     import jax.numpy as jnp  # type: ignore
 
-    type JaxArray = jax.Array
-    _JAX_ARRAY_TYPES = (jax.Array,)  # type: ignore[attr-defined]
+    _jax_array_types = (jax.Array,)  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - non-JAX contexts
     jax = None  # type: ignore[assignment]
     jnp = None  # type: ignore[assignment]
-    type JaxArray = Any
-    _JAX_ARRAY_TYPES: tuple[type, ...] = ()
+    _jax_array_types: tuple[type[object], ...] = ()
+
+_JAX_ARRAY_TYPES = _jax_array_types
 
 
 INTERNAL_VOLUME_AXES = "xyz"
@@ -38,10 +41,9 @@ def _norm_axes(axes: str) -> str:
 
 def axes_to_perm(src: str, dst: str) -> tuple[int, int, int]:
     """Return permutation bringing `src` axis order into `dst` order."""
-
     s = _norm_axes(src)
     d = _norm_axes(dst)
-    return tuple(s.index(axis) for axis in d)
+    return cast("tuple[int, int, int]", tuple(s.index(axis) for axis in d))
 
 
 @overload
@@ -49,37 +51,35 @@ def transpose_volume(volume: np.ndarray, src: str, dst: str) -> np.ndarray: ...
 
 
 @overload
-def transpose_volume(volume: JaxArray, src: str, dst: str) -> JaxArray: ...
+def transpose_volume(volume: object, src: str, dst: str) -> object: ...
 
 
-@overload
-def transpose_volume(volume: object, src: str, dst: str) -> np.ndarray | JaxArray: ...
-
-
-def transpose_volume(volume: object, src: str, dst: str) -> np.ndarray | JaxArray:
+def transpose_volume(volume: object, src: str, dst: str) -> object:
     """Transpose a volume from `src` axis order to `dst` order.
 
     Keeps numpy arrays as numpy and JAX arrays as JAX when possible.
     """
-
     perm = axes_to_perm(src, dst)
 
-    if _JAX_ARRAY_TYPES and isinstance(volume, _JAX_ARRAY_TYPES):  # pragma: no cover - exercised in GPU envs
+    if _JAX_ARRAY_TYPES and isinstance(
+        volume,
+        _JAX_ARRAY_TYPES,
+    ):  # pragma: no cover - exercised in GPU envs
         if jnp is None:
             raise RuntimeError("JAX array transpose requested but jax.numpy is unavailable")
         if perm == (0, 1, 2):
             return volume
-        return jnp.transpose(volume, axes=perm)
+        return cast("object", jnp.transpose(volume, axes=perm))
 
     if isinstance(volume, np.ndarray):
         if perm == (0, 1, 2):
-            return volume
-        return np.transpose(volume, axes=perm)
+            return cast("object", volume)
+        return cast("object", volume.transpose(perm))
 
     arr = np.asarray(volume)
     if perm == (0, 1, 2):
-        return arr
-    return np.transpose(arr, axes=perm)
+        return cast("object", arr)
+    return cast("object", np.transpose(arr, axes=perm))
 
 
 def _grid_dims(grid: GridLike | None) -> tuple[int, int, int] | None:
@@ -121,7 +121,6 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | No
 
     Returns "xyz", "zyx", or None if ambiguous.
     """
-
     if len(vol_shape) != 3:
         return None
     if is_shape_xyz(vol_shape, grid):
@@ -133,12 +132,12 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | No
 
 
 __all__ = [
-    "INTERNAL_VOLUME_AXES",
     "DISK_VOLUME_AXES",
+    "INTERNAL_VOLUME_AXES",
     "VOLUME_AXES_ATTR",
     "axes_to_perm",
-    "transpose_volume",
     "infer_disk_axes",
     "is_shape_xyz",
     "is_shape_zyx",
+    "transpose_volume",
 ]

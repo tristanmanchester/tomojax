@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 import sys
-from typing import Sequence
+
+from tomojax.core import setup_logging
 
 from ..data.preprocess import PreprocessConfig, preprocess_nxtomo
-from ..utils.logging import setup_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:

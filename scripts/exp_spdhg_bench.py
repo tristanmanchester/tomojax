@@ -55,8 +55,8 @@ from tomojax.data.simulate import SimConfig, make_phantom
 from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
-from tomojax.utils.fov import cylindrical_mask_xy
-from tomojax.utils.subprocesses import run_command
+from tomojax.geometry import cylindrical_mask_xy
+from tomojax.backends._subprocesses import run_command
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
 from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
@@ -553,7 +553,7 @@ def prepare_volume_mask(
 def resolve_gather_dtype(args: argparse.Namespace) -> str:
     gather = str(args.gather_dtype)
     if gather == "auto":
-        from tomojax.utils.memory import default_gather_dtype
+        from tomojax.backends import default_gather_dtype
 
         gather = default_gather_dtype()
     return gather

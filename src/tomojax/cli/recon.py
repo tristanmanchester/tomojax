@@ -3,32 +3,33 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import logging
-import numpy as np
-import jax.numpy as jnp
 import os
 import sys
 
+import jax.numpy as jnp
+import numpy as np
+
+from tomojax.backends import estimate_views_per_batch_info
+from tomojax.core import log_jax_env, setup_logging
+from tomojax.geometry import (
+    DISK_VOLUME_AXES,
+    compute_roi,
+    cylindrical_mask_xy,
+    grid_from_detector_fov,
+    grid_from_detector_fov_slices,
+)
+
 from ..calibration.detector_grid import detector_grid_from_geometry_inputs
+from ..core.geometry import Detector, Grid
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..core.geometry import Detector, Grid
 from ..recon.fbp import FBPConfig, fbp
 from ..recon.fista_tv import FistaConfig, fista_tv
 from ..recon.quicklook import save_quicklook_png
-from ..recon.spdhg_tv import spdhg_tv, SPDHGConfig
-from ..utils.logging import setup_logging, log_jax_env
-from ..utils.memory import estimate_views_per_batch_info
-from ..utils.axes import DISK_VOLUME_AXES
+from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
 from ._runtime import transfer_guard_context
 from .config import parse_args_with_config
 from .manifest import build_manifest, save_manifest
-
-from ..utils.fov import (
-    compute_roi,
-    grid_from_detector_fov_slices,
-    grid_from_detector_fov,
-)
-from ..utils.fov import cylindrical_mask_xy
 
 
 def _parse_views_per_batch(value: str) -> int | str:
@@ -118,7 +119,7 @@ def _resolve_recon_grid_for_cli(
                 return grid_from_detector_fov_slices(grid, detector, crop_y_to_u=True)
             return grid_from_detector_fov(grid, detector, crop_y_to_u=False)
         if roi_mode == "cube":
-            from ..utils.fov import grid_from_detector_fov_cube as _grid_cube
+            from tomojax.geometry import grid_from_detector_fov_cube as _grid_cube
 
             return _grid_cube(grid, detector, crop_y_to_u=is_parallel)
         if roi_mode == "bbox":
@@ -372,7 +373,7 @@ def main() -> None:
             geometry_meta.get("detector_roll_deg"),
         )
 
-    from ..utils.memory import default_gather_dtype as _default_gather_dtype
+    from tomojax.backends import default_gather_dtype as _default_gather_dtype
 
     _gather = str(args.gather_dtype)
     if _gather == "auto":
@@ -468,12 +469,8 @@ def main() -> None:
             tv_prox_iters=int(args.tv_prox_iters),
             support=vol_mask,
             positivity=bool(args.positivity),
-            lower_bound=(
-                float(args.lower_bound) if args.lower_bound is not None else None
-            ),
-            upper_bound=(
-                float(args.upper_bound) if args.upper_bound is not None else None
-            ),
+            lower_bound=(float(args.lower_bound) if args.lower_bound is not None else None),
+            upper_bound=(float(args.upper_bound) if args.upper_bound is not None else None),
         )
         algorithm_config = {
             "iters": int(cfg.iters),

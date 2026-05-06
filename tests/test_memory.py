@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
-from tomojax.utils import memory as memory_utils
+# check-public-imports: allow-private
+import tomojax.backends._memory as memory_utils
 
 
 def test_memory_helpers_cover_batch_estimation_and_backend_defaults(monkeypatch):

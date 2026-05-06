@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import jax.numpy as jnp
 
-from ..core.geometry.base import Grid, Detector, Geometry
+from tomojax.core import progress_iter
+
+from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.multires import (
-    bin_projections,
-    bin_volume,
     create_resolution_pyramid,
-    scale_detector,
-    scale_grid,
     upsample_volume,
     validate_scale_factor,
 )
 from .fista_tv import FistaConfig, fista_tv
-from ..utils.logging import progress_iter
-
 
 _validated_scale_factor = validate_scale_factor
 
@@ -60,7 +56,7 @@ def fista_multires(
     x_init = None
     prev_factor: int | None = None
     loss_hist = []
-    level_plan = list(zip(levels, iters_per_level))
+    level_plan = list(zip(levels, iters_per_level, strict=False))
     for lvl, iters in progress_iter(level_plan, total=len(level_plan), desc="Multires: levels"):
         g = lvl["grid"]
         d = lvl["detector"]

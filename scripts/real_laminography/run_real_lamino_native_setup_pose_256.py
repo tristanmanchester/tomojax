@@ -46,7 +46,7 @@ from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume
-from tomojax.utils.json import normalize_json
+from tomojax.io import normalize_json
 
 
 def _json_safe(value: Any) -> Any:

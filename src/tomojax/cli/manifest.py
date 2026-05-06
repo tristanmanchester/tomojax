@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -10,8 +10,7 @@ import platform
 import sys
 from typing import Any
 
-from tomojax.utils.json import normalize_json
-
+from tomojax.io import normalize_json
 
 SCHEMA_VERSION = 1
 
@@ -23,12 +22,12 @@ def _normalize_json(value: Any) -> Any:
 
 def _format_timestamp(timestamp: datetime | str | None) -> str:
     if timestamp is None:
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
     if isinstance(timestamp, str):
         return timestamp
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _tomojax_version() -> str | None:
@@ -139,7 +138,7 @@ def build_manifest(
 def save_manifest(path: str | os.PathLike[str], manifest: Mapping[str, Any]) -> None:
     """Write a manifest JSON sidecar, creating parent directories as needed."""
     out_path = Path(path)
-    if out_path.parent != Path("."):
+    if out_path.parent != Path():
         out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as fh:
         json.dump(_normalize_json(manifest), fh, indent=2, sort_keys=True, allow_nan=False)

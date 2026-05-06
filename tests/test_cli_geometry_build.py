@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+
 import imageio.v3 as iio
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
+from tomojax.backends import ViewsPerBatchEstimate
+from tomojax.cli import recon as recon_cli
+from tomojax.core.geometry import Grid, ParallelGeometry, RotationAxisGeometry
 from tomojax.data.geometry_meta import (
     build_geometry_from_meta,
     build_nominal_geometry_from_meta,
 )
-from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo, save_nxtomo
-from tomojax.cli import recon as recon_cli
-from tomojax.core.geometry import Grid, ParallelGeometry
-from tomojax.core.geometry import RotationAxisGeometry
-from tomojax.utils.memory import ViewsPerBatchEstimate
+from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 
 
 def _parallel_meta(**updates):
@@ -148,7 +148,7 @@ def test_build_geometry_from_meta_preserves_saved_detector_roll_metadata():
 
     _, _, geom = build_geometry_from_meta(meta, apply_saved_alignment=True)
 
-    assert getattr(geom, "detector_roll_deg") == pytest.approx(1.5)
+    assert geom.detector_roll_deg == pytest.approx(1.5)
 
 
 def test_build_geometry_from_meta_rejects_unsupported_geometry_types():

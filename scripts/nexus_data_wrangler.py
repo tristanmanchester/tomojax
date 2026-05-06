@@ -36,7 +36,7 @@ from dataclasses import dataclass
 import numpy as np
 import h5py
 
-from tomojax.utils.axes import DISK_VOLUME_AXES, VOLUME_AXES_ATTR
+from tomojax.geometry import DISK_VOLUME_AXES, VOLUME_AXES_ATTR
 from tomojax.data.contrast import flat_dark_to_absorption
 
 

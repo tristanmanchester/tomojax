@@ -9,17 +9,17 @@ pipelines, while keeping simulation-friendly metadata.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import logging
 import os
-from typing import Mapping, TypedDict
+from typing import TypedDict
 
 import h5py
 import numpy as np
 
-from ..core.geometry.base import Detector, DetectorDict, Grid, GridDict
-from ..utils.axes import (
+from tomojax.geometry import (
     DISK_VOLUME_AXES,
     INTERNAL_VOLUME_AXES,
     VOLUME_AXES_ATTR,
@@ -28,6 +28,7 @@ from ..utils.axes import (
     transpose_volume,
 )
 
+from ..core.geometry.base import Detector, DetectorDict, Grid, GridDict
 
 LOG = logging.getLogger(__name__)
 
@@ -99,9 +100,7 @@ class NXTomoMetadata:
             misalign_spec=data.get("misalign_spec"),
             simulation_artefacts=data.get("simulation_artefacts"),
             frame=None if data.get("frame") is None else str(data.get("frame")),
-            sample_name=(
-                None if data.get("sample_name") is None else str(data.get("sample_name"))
-            ),
+            sample_name=(None if data.get("sample_name") is None else str(data.get("sample_name"))),
             source_name=None if source_name is None else str(source_name),
             source_type=None if source_type is None else str(source_type),
             source_probe=None if source_probe is None else str(source_probe),

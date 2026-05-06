@@ -73,3 +73,291 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   `docs/tomojax-v2/`, `justfile`, and `pyproject.toml`.
 - No references to the removed archived install, quickstart, CLI, reference,
   concepts, tutorials, or troubleshooting pages remain in those current files.
+
+## 2026-05-06 — Milestone 0 Architecture-Smell Audit
+
+### Summary
+
+- Re-read `AGENTS.md` and the canonical phased plan before starting further
+  migration work.
+- Verified the v2 design docs and guardrail files are present in the checkout.
+- Updated `.agent/PLANS.md` from the blank template into an active Milestone 0
+  bridge plan.
+- Confirmed the live source tree is still transitional:
+  - no top-level `src/tomojax/*` package currently has the required v2 `api.py`
+    and `README.md` pair;
+  - forbidden `tomojax.utils` production imports remain in
+    `align/io/checkpoint.py`, `calibration/_json.py`, and `cli/manifest.py`;
+  - old top-level owners such as `tomojax.data`, `tomojax.calibration`, and
+    `tomojax.bench` still exist outside the canonical v2 owner list;
+  - nested old alignment/core geometry packages remain exposed under
+    `align/geometry`, `align/model`, `align/objectives`, `align/io`, and
+    `core/geometry`.
+
+### Decisions
+
+- Keep strict Ruff, basedpyright, import-linter, and public-private import
+  checks in place. Current failures should drive migration/deletion work rather
+  than guardrail weakening.
+- Treat `tomojax.utils` as the first cleanup target because it is explicitly
+  forbidden by the v2 architecture and has a small production import footprint.
+- Do not start Phase 1 skeleton work until Milestone 0 records which old
+  surfaces are being deleted, migrated, or temporarily retained as benchmark
+  references.
+
+### Validation
+
+- `sifs agent-context --json` reported the current SIFS CLI contract.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run basedpyright` failed on the transitional tree with 4456 errors and
+  9341 warnings. First reported errors include:
+  - `align/_config.py`: hyphenated `GaugePolicyInput` is not normalized before
+    calling `resolve_alignment_schedule`;
+  - `align/_observer.py`: unnecessary `isinstance` check;
+  - `align/_pose_stage.py`: private usage and many unknown JAX typing errors;
+  - `tests/test_views.py`: dummy geometry does not satisfy the `Geometry`
+    protocol return type.
+
+### Risks
+
+- The import-linter contract currently reflects only part of the old package
+  graph and must be replaced when the v2 deep-module skeleton lands.
+- The typecheck failure volume is high enough that new errors can be hidden
+  unless each scoped migration is validated narrowly before rerunning broader
+  checks.
+
+## 2026-05-06 — Move JSON Serialization Out Of `tomojax.utils`
+
+### Summary
+
+- Added the first v2-owned deep module surface:
+  - `src/tomojax/io/api.py`
+  - `src/tomojax/io/__init__.py`
+  - `src/tomojax/io/_json.py`
+  - `src/tomojax/io/README.md`
+- Moved the shared JSON normalization contract from forbidden
+  `tomojax.utils.json` into `tomojax.io`.
+- Updated production consumers in alignment checkpoints, calibration JSON, and
+  CLI manifests to import through the public `tomojax.io` facade.
+- Updated JSON utility tests to assert the new public API and deleted
+  `src/tomojax/utils/json.py`.
+- Added `tomojax.io` to `.importlinter` so the new module owner is included in
+  executable import-boundary checks.
+
+### Decisions
+
+- `tomojax.io` owns artifact/metadata serialization helpers. This keeps JSON
+  normalization out of generic utilities while avoiding a premature dependency
+  on future dataset or verifier schemas.
+- Kept `calibration/_json.py` as a temporary internal adapter because the whole
+  `tomojax.calibration` owner is transitional and will be migrated or deleted
+  under the v2 geometry/motion/nuisance plan.
+
+### Validation
+
+- `uv run ruff check src/tomojax/io src/tomojax/calibration/_json.py tests/test_json_utils.py`
+  passed.
+- `uv run basedpyright src/tomojax/io` passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py -q`
+  passed: 18 tests.
+- `just imports` passed after adding `tomojax.io` to `.importlinter`.
+- `rg -n "tomojax\\.utils\\.json|utils/json" src tests docs .agent` found no
+  remaining references.
+
+### Risks
+
+- Other `tomojax.utils` modules still remain (`axes`, `fov`, `logging`,
+  `memory`, `phasecorr`, and `subprocesses`) and need owner-by-owner migration
+  or deletion before the v2 skeleton is clean.
+
+## 2026-05-06 — Move Axis And FOV Helpers Into `tomojax.geometry`
+
+### Summary
+
+- Added the second v2-owned deep module surface:
+  - `src/tomojax/geometry/api.py`
+  - `src/tomojax/geometry/__init__.py`
+  - `src/tomojax/geometry/_axes.py`
+  - `src/tomojax/geometry/_fov.py`
+  - `src/tomojax/geometry/README.md`
+- Moved axis-order and detector field-of-view helpers from forbidden
+  `tomojax.utils` modules into `tomojax.geometry`.
+- Updated production consumers in NXtomo IO, reconstruction CLI, alignment CLI,
+  and pose-stage masking to import through the public `tomojax.geometry`
+  facade.
+- Updated geometry/FOV tests to assert the new public API and deleted
+  `src/tomojax/utils/axes.py` and `src/tomojax/utils/fov.py`.
+- Added `tomojax.geometry` to `.importlinter` so it participates in the current
+  executable import-boundary checks.
+
+### Decisions
+
+- `tomojax.geometry` owns axis-order metadata and detector-FOV ROI helpers
+  because these helpers describe geometry conventions and reconstruction domains
+  rather than generic utilities.
+- Kept existing behavior intact, including the private white-box monkeypatch in
+  `tests/test_regression_geometry_io.py`, but marked it with the explicit
+  public-import checker exception so this remaining test coupling is visible.
+
+### Validation
+
+- `uv run ruff check src/tomojax/geometry tests/test_regression_geometry_io.py tests/test_axes_io.py tests/test_issue_fix_pr.py`
+  passed.
+- `uv run basedpyright src/tomojax/geometry` passed with 0 errors and 0
+  warnings.
+- `uv run pytest tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py -q`
+  passed: 66 tests.
+- `just imports` passed after adding `tomojax.geometry` to `.importlinter`.
+- `rg -n "utils\\.axes|utils\\.fov|tomojax\\.utils\\.axes|tomojax\\.utils\\.fov|from tomojax\\.utils import axes" src/tomojax tests`
+  found no remaining axis/FOV utility references.
+
+### Risks
+
+- `tomojax.geometry` currently depends on the transitional
+  `tomojax.core.geometry.base` types. Phase 1 should decide whether those types
+  move into top-level `tomojax.geometry` or remain as lower-level core
+  primitives.
+- `tomojax.utils` still contains logging, memory, phase-correlation, and
+  subprocess helper surfaces that need explicit v2 owners or deletion.
+
+## 2026-05-06 — Move Phase Correlation Into `tomojax.motion`
+
+### Summary
+
+- Added the third v2-owned deep module surface:
+  - `src/tomojax/motion/api.py`
+  - `src/tomojax/motion/__init__.py`
+  - `src/tomojax/motion/_phasecorr.py`
+  - `src/tomojax/motion/README.md`
+- Moved phase-correlation translation estimation from forbidden
+  `tomojax.utils.phasecorr` into `tomojax.motion`.
+- Updated the alignment stage-loop initializer to import `phase_corr_shift`
+  through the public `tomojax.motion` facade.
+- Updated phase-correlation tests to assert the public API while keeping the
+  `_wrap_shift` white-box check explicit with a public-import checker exception.
+- Added `tomojax.motion` to `.importlinter`.
+
+### Decisions
+
+- `tomojax.motion` owns phase-correlation because it estimates per-view motion
+  for alignment initialization, not generic utility behavior.
+- Used a narrow pyright suppression on `jnp.asarray` in the private
+  implementation because the current JAX stubs expose that member as partially
+  unknown. The public API remains typed and the module-level basedpyright gate
+  is green.
+
+### Validation
+
+- `uv run ruff check src/tomojax/motion tests/test_phasecorr.py` passed.
+- `uv run basedpyright src/tomojax/motion` passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_phasecorr.py -q` passed: 5 tests.
+- `just imports` passed after adding `tomojax.motion` to `.importlinter`.
+
+### Risks
+
+- `tomojax.motion` currently contains only a seed/initializer primitive. Phase 1
+  still needs to define whether full per-view pose parameterizations live here
+  or stay under `tomojax.align` until the geometry optimizer milestone.
+
+## 2026-05-06 — Move Backend Memory Probes Into `tomojax.backends`
+
+### Summary
+
+- Added the fourth v2-owned deep module surface:
+  - `src/tomojax/backends/api.py`
+  - `src/tomojax/backends/__init__.py`
+  - `src/tomojax/backends/_memory.py`
+  - `src/tomojax/backends/_subprocesses.py`
+  - `src/tomojax/backends/README.md`
+- Moved memory budgeting, gather-dtype selection, and `nvidia-smi` probing out
+  of forbidden `tomojax.utils`.
+- Updated CLI and simulation consumers to import backend helpers through the
+  public `tomojax.backends` facade.
+- Updated memory tests to keep private white-box checks explicit with
+  public-import checker exceptions.
+- Added `tomojax.backends` to `.importlinter`.
+
+### Decisions
+
+- `tomojax.backends` owns device-memory and gather-dtype heuristics because
+  those helpers are runtime backend policy rather than generic utilities.
+- Kept `_subprocesses.py` private to `tomojax.backends` instead of exposing a
+  generic command runner.
+
+### Validation
+
+- `uv run ruff check src/tomojax/backends tests/test_memory.py` passed.
+- `uv run pytest tests/test_memory.py tests/test_cli_geometry_build.py tests/test_small_module_coverage.py -q`
+  passed: 40 tests.
+- `just imports` passed after adding `tomojax.backends` to `.importlinter`.
+
+### Failures And Risks
+
+- `uv run basedpyright src/tomojax/backends` currently fails on private dynamic
+  JAX/device-probe code and subprocess wrapper typing. This is narrower than
+  the repo-wide transitional typecheck failure, but it is still type debt in the
+  moved implementation.
+- Phase 1 should decide whether backend probes stay as Python runtime helpers or
+  become a smaller typed policy layer with untyped adapter code hidden behind
+  explicit boundaries.
+
+## 2026-05-06 — Remove The `tomojax.utils` Package
+
+### Summary
+
+- Added the fifth v2-owned deep module surface:
+  - `src/tomojax/core/api.py`
+  - `src/tomojax/core/__init__.py`
+  - `src/tomojax/core/_logging.py`
+  - `src/tomojax/core/README.md`
+- Moved logging setup, JAX environment logging, progress iteration, and duration
+  formatting into `tomojax.core`.
+- Updated reconstruction, alignment, data simulation, and CLI consumers to use
+  `tomojax.core`.
+- Removed the now-empty `src/tomojax/utils` package after moving JSON, axis/FOV,
+  phase-correlation, backend-memory, subprocess, and logging helpers to explicit
+  v2 owners.
+
+### Decisions
+
+- `tomojax.core` owns shared runtime instrumentation for now because these
+  helpers are used across numerical modules and CLI surfaces.
+- Kept CLI-specific logging setup in the same public core facade until Phase 1
+  creates a fuller `tomojax.cli` deep module. This avoids recreating a generic
+  utility bucket under a different name.
+
+### Validation
+
+- `uv run ruff check src/tomojax/core/_logging.py src/tomojax/core/api.py src/tomojax/core/__init__.py tests/test_logging.py tests/test_small_module_coverage.py`
+  passed.
+- `uv run basedpyright src/tomojax/core/_logging.py src/tomojax/core/api.py src/tomojax/core/__init__.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_logging.py tests/test_small_module_coverage.py -q`
+  passed: 9 tests.
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py -q`
+  passed: 105 tests.
+- `just imports` passed.
+- `fd -p 'src/tomojax/utils' -a` found no remaining `tomojax.utils` package.
+- `rg -n "tomojax\\.utils|from \\.\\.utils|from tomojax\\.utils|import tomojax\\.utils" src/tomojax tests`
+  found no code/test imports. Remaining matches are only explanatory README
+  references in the new owner modules.
+- `just check` currently fails during
+  `uv run ruff check --fix src tests tools` after formatting. Current failure
+  shape is broad transitional legacy lint debt, beginning with ambiguous
+  Unicode in `src/tomojax/__init__.py`, import/type-checking/style findings in
+  `src/tomojax/align/_config.py`, and old pose-stage lint/type annotation
+  findings in `src/tomojax/align/_pose_stage.py`. The command reported 2065
+  errors total, 448 fixed, and 1617 remaining.
+
+### Risks
+
+- `tomojax.core` now has a new public facade, but the rest of the old
+  `tomojax.core` package still lacks a complete v2 `api.py` boundary for
+  geometry/projector/validation internals.
+- Some tests still deliberately white-box private moved implementations. Those
+  exceptions are explicit but should be eliminated as Phase 1 public APIs settle.
+- `just check` remains the milestone target, but passing it requires continuing
+  the planned migration/deletion of old transitional modules rather than
+  weakening or mass-suppressing checks.

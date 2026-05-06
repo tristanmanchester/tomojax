@@ -1,7 +1,10 @@
 import jax
 import jax.numpy as jnp
 
-from tomojax.utils.phasecorr import _wrap_shift, phase_corr_shift
+from tomojax.motion import phase_corr_shift
+
+# check-public-imports: allow-private
+from tomojax.motion._phasecorr import _wrap_shift
 
 
 def test_wrap_shift_maps_nyquist_boundary_to_negative_half_extent() -> None:

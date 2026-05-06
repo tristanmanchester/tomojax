@@ -9,4 +9,9 @@ layers =
     tomojax.align
     tomojax.data
     tomojax.recon
+    tomojax.backends
     tomojax.calibration
+    tomojax.motion
+    tomojax.geometry
+    tomojax.io
+    tomojax.core

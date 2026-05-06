@@ -5,11 +5,11 @@ import logging
 import os
 import sys
 
+from tomojax.core import log_jax_env, setup_logging
+
 from ..data.artefacts import SimulationArtefacts, validate_simulation_artefacts
 from ..data.simulate import SimConfig, simulate_to_file
-from ..utils.logging import setup_logging, log_jax_env
 from ._runtime import transfer_guard_context
-
 
 _ARTEFACT_OPTION_STRINGS = {
     "--poisson-scale",
@@ -63,12 +63,24 @@ def main() -> None:
         help="Phantom type. Use 'cube' or 'sphere' for a single centered object.",
     )
     # rotate the single cube randomly by default; sphere is unaffected
-    p.add_argument("--single-rotate", dest="single_rotate", action="store_true", default=True,
-                   help="Rotate the single cube randomly in 3D (default: on)")
+    p.add_argument(
+        "--single-rotate",
+        dest="single_rotate",
+        action="store_true",
+        default=True,
+        help="Rotate the single cube randomly in 3D (default: on)",
+    )
     p.add_argument("--no-single-rotate", dest="single_rotate", action="store_false")
     # single-object phantom args (used for phantom=cube|sphere)
-    p.add_argument("--single-size", type=float, default=0.5, help="Relative size of cube side or sphere diameter (0-1). Default 0.5")
-    p.add_argument("--single-value", type=float, default=1.0, help="Intensity value for the single object")
+    p.add_argument(
+        "--single-size",
+        type=float,
+        default=0.5,
+        help="Relative size of cube side or sphere diameter (0-1). Default 0.5",
+    )
+    p.add_argument(
+        "--single-value", type=float, default=1.0, help="Intensity value for the single object"
+    )
     # random_shapes args
     p.add_argument("--n-cubes", type=int, default=8)
     p.add_argument("--n-spheres", type=int, default=7)
@@ -105,7 +117,9 @@ def main() -> None:
         default="none",
     )
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--progress", action="store_true", help="Show progress bars if tqdm is available")
+    p.add_argument(
+        "--progress", action="store_true", help="Show progress bars if tqdm is available"
+    )
     p.add_argument(
         "--transfer-guard",
         choices=["off", "log", "disallow"],
@@ -150,16 +164,30 @@ def main() -> None:
             artefacts = None
 
     cfg = SimConfig(
-        nx=args.nx, ny=args.ny, nz=args.nz,
-        nu=args.nu, nv=args.nv, n_views=args.n_views,
-        geometry=args.geometry, tilt_deg=args.tilt_deg, tilt_about=args.tilt_about,
+        nx=args.nx,
+        ny=args.ny,
+        nz=args.nz,
+        nu=args.nu,
+        nv=args.nv,
+        n_views=args.n_views,
+        geometry=args.geometry,
+        tilt_deg=args.tilt_deg,
+        tilt_about=args.tilt_about,
         rotation_deg=(float(args.rotation_deg) if args.rotation_deg is not None else None),
-        phantom=args.phantom, noise=args.noise, noise_level=args.noise_level, seed=args.seed,
+        phantom=args.phantom,
+        noise=args.noise,
+        noise_level=args.noise_level,
+        seed=args.seed,
         artefacts=artefacts,
-        single_size=args.single_size, single_value=args.single_value, single_rotate=bool(args.single_rotate),
-        n_cubes=args.n_cubes, n_spheres=args.n_spheres,
-        min_size=args.min_size, max_size=args.max_size,
-        min_value=args.min_value, max_value=args.max_value,
+        single_size=args.single_size,
+        single_value=args.single_value,
+        single_rotate=bool(args.single_rotate),
+        n_cubes=args.n_cubes,
+        n_spheres=args.n_spheres,
+        min_size=args.min_size,
+        max_size=args.max_size,
+        min_value=args.min_value,
+        max_value=args.max_value,
         max_rot_deg=args.max_rot_deg,
         lamino_thickness_ratio=args.lamino_thickness_ratio,
     )

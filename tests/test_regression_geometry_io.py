@@ -3,11 +3,19 @@ import numpy as np
 import pytest
 
 from tomojax.core.geometry.base import Detector, Grid
-from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, convert, load_nxtomo, load_npz, save_npz
+from tomojax.data.io_hdf5 import (
+    LoadedNXTomo,
+    NXTomoMetadata,
+    convert,
+    load_npz,
+    load_nxtomo,
+    save_npz,
+)
 from tomojax.data.phantoms import random_cubes_spheres
-from tomojax.utils import axes as axes_mod
-from tomojax.utils.axes import infer_disk_axes
-from tomojax.utils.fov import grid_from_detector_fov_cube
+from tomojax.geometry import grid_from_detector_fov_cube, infer_disk_axes
+
+# check-public-imports: allow-private
+import tomojax.geometry._axes as axes_mod
 
 
 def test_infer_disk_axes_returns_none_without_grid_for_ambiguous_non_cubic_shapes():

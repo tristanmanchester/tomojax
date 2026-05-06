@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any
 
-from tomojax.utils.json import JsonValue, drop_none as _drop_none, normalize_json as _normalize_json
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+from tomojax.io import JsonValue, drop_none as _drop_none, normalize_json as _normalize_json
 
 
 def normalize_json(value: Any) -> JsonValue:

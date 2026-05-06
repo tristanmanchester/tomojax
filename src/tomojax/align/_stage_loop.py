@@ -1,44 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 import logging
 import time
-from typing import Iterable, Mapping, TypedDict
+from typing import TypedDict
 
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry.base import Geometry, Grid, Detector
+from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.geometry.views import stack_view_poses
-from ..core.projector import forward_project_view_T
 from ..core.multires import upsample_volume
+from ..core.projector import forward_project_view_T
 from ..core.validation import (
     validate_grid,
     validate_projection_stack,
 )
 from ..recon.fista_tv import FistaConfig, fista_tv
-from .objectives.loss_specs import (
-    loss_spec_name,
-    resolve_loss_for_level,
-    validate_loss_schedule_levels,
-)
-from .model.gauge import (
-    active_gauge_dofs,
-    normalize_gauge_fix,
-)
-from .geometry.geometry_applier import (
-    BaseGeometryArrays,
-    apply_alignment_state,
-    apply_setup_to_detector_grid,
-)
-from .model.schedules import (
-    ResolvedAlignmentStage,
-)
-from .model.state import PoseState, alignment_state_from_checkpoint
-from .model.dofs import DOF_INDEX
-from .geometry.geometry_blocks import (
-    add_geometry_acquisition_diagnostics,
-    summarize_geometry_calibration_stats,
+from ._config import (
+    AlignConfig,
+    _resolved_schedule_for_cfg,
 )
 from ._observer import (
     ObserverAction,
@@ -47,26 +29,45 @@ from ._observer import (
     _normalize_observer_action,
     adapt_legacy_observer,
 )
+from ._pose_stage import align
+from ._profiles import profile_policy_from_config
 from ._results import (
-    AlignMultiresInfo,
     AlignMultiresCheckpointCallback,
+    AlignMultiresInfo,
     AlignMultiresResumeState,
     AlignResumeState,
     _record_stat_conversion_error,
     enrich_multires_stage_stat as _enrich_multires_stage_stat,
 )
-from ._pose_stage import align
 from ._setup_stage import (
     _geometry_calibration_payload,
     _geometry_with_setup_state,
     _optimize_setup_geometry_bilevel_for_level,
 )
-from ._config import (
-    AlignConfig,
-    _resolved_schedule_for_cfg,
+from .geometry.geometry_applier import (
+    BaseGeometryArrays,
+    apply_alignment_state,
+    apply_setup_to_detector_grid,
 )
-from ._profiles import profile_policy_from_config
+from .geometry.geometry_blocks import (
+    add_geometry_acquisition_diagnostics,
+    summarize_geometry_calibration_stats,
+)
+from .model.dofs import DOF_INDEX
+from .model.gauge import (
+    active_gauge_dofs,
+    normalize_gauge_fix,
+)
+from .model.schedules import (
+    ResolvedAlignmentStage,
+)
+from .model.state import PoseState, alignment_state_from_checkpoint
 from .objectives.loss_adapters import build_loss_adapter
+from .objectives.loss_specs import (
+    loss_spec_name,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
+)
 from .proposals import ProposalCandidate, score_pose_stack_candidates
 
 _SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
@@ -433,7 +434,10 @@ def _run_multires_level_stages(
         if resuming_this_level:
             if int(stage.index) < level_resume.resume_stage_index:
                 continue
-            if int(stage.index) == level_resume.resume_stage_index and level_resume.resume_stage_completed:
+            if (
+                int(stage.index) == level_resume.resume_stage_index
+                and level_resume.resume_stage_completed
+            ):
                 continue
         stage_global_start = level_resume.global_before_level + len(level_stats)
         if stage.stage_role == "proposal":
@@ -471,9 +475,7 @@ def _run_multires_level_stages(
                 "proposal_best_index": int(proposal_info.get("best_index") or 0),
                 "proposal_improved": bool(proposal_info.get("improved") or False),
                 "proposal_candidate_count": len(proposal_info.get("values") or []),
-                "proposal_backend_provenance": dict(
-                    proposal_info.get("backend_provenance") or {}
-                ),
+                "proposal_backend_provenance": dict(proposal_info.get("backend_provenance") or {}),
                 "wall_time": float(proposal_wall_time),
             }
             enriched = stage_runtime.enrich_stats(
@@ -531,7 +533,9 @@ def _run_multires_level_stages(
             continue
 
         pose_optimizer = _pose_stage_optimizer_or_raise(stage)
-        pose_gauge_fix = "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
+        pose_gauge_fix = (
+            "mean_translation" if stage.gauge_policy == "anchor_mean" else cfg.gauge_fix
+        )
         cfg_stage = replace(
             cfg,
             schedule=None,
@@ -1161,7 +1165,7 @@ def align_multires(
                 config=seed_cfg,
             )
             T_nom = stack_view_poses(geometry, y.shape[0])
-            from ..utils.phasecorr import phase_corr_shift
+            from tomojax.motion import phase_corr_shift
 
             vm_pred = jax.vmap(
                 lambda T: forward_project_view_T(

@@ -12,7 +12,7 @@ try:
 except Exception:  # pragma: no cover - optional
     psutil = None
 
-from tomojax.utils.subprocesses import run_command
+from tomojax.backends._subprocesses import run_command
 
 
 def _sample_child_rss(child) -> int | None:

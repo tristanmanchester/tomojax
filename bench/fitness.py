@@ -2544,7 +2544,7 @@ def _resolve_objective(metrics: dict[str, Any], profile: dict[str, Any]) -> tupl
 
 
 def _json_safe(value: Any) -> Any:
-    from tomojax.utils.json import normalize_json
+    from tomojax.io import normalize_json
 
     return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
 

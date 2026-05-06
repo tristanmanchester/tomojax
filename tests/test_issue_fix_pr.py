@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import numpy as np
-import jax.numpy as jnp
-import pytest
 import warnings
 
-from tomojax.core.geometry.base import Grid, Detector
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
 from tomojax.cli.align import _resolve_recon_grid_and_mask
-from tomojax.recon.fbp import _fft_filter_rows
-from tomojax.recon.filters import _FILTER_CACHE, get_filter, get_filter_np
-from tomojax.utils.fov import (
+from tomojax.core.geometry.base import Detector, Grid
+from tomojax.geometry import (
     compute_roi,
     grid_from_detector_fov,
     grid_from_detector_fov_cube,
     grid_from_detector_fov_slices,
 )
+from tomojax.recon.fbp import _fft_filter_rows
+from tomojax.recon.filters import _FILTER_CACHE, get_filter, get_filter_np
 
 
 def _full_fft_filter_rows(rows: np.ndarray, du: float, filter_name: str) -> np.ndarray:

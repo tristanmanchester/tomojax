@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import logging
 import math
 import re
 import time
-from typing import Any, Callable, Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from tomojax.core import format_duration, progress_iter
+from tomojax.geometry import cylindrical_mask_xy
 
 from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.geometry.views import stack_view_poses
@@ -21,16 +25,7 @@ from ..core.validation import (
     validate_projection_stack,
     validate_volume,
 )
-from ..utils.fov import cylindrical_mask_xy
-from ..utils.logging import format_duration, progress_iter
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
-from ._profiles import profile_policy_from_config
-from .objectives.loss_adapters import LossAdapter, build_loss_adapter
-from .objectives.loss_specs import (
-    loss_is_within_relative_tolerance,
-    loss_spec_name,
-    resolve_loss_for_level,
-)
 from ._observer import (
     ObserverAction,
     ObserverCallback,
@@ -38,8 +33,10 @@ from ._observer import (
     _normalize_observer_action,
     adapt_legacy_observer,
 )
+from ._profiles import profile_policy_from_config
 from ._reconstruction_stage import _run_reconstruction_step
 from ._results import AlignCheckpointCallback, AlignInfo, AlignResumeState, _set_float_stat
+from .geometry.parametrizations import se3_from_5d
 from .model.dofs import bounds_vectors
 from .model.gauge import (
     GaugeFixMode,
@@ -60,8 +57,13 @@ from .objectives.fixed_volume import (
     alignment_projector_backend_provenance,
     project_and_score_stack,
 )
+from .objectives.loss_adapters import LossAdapter, build_loss_adapter
+from .objectives.loss_specs import (
+    loss_is_within_relative_tolerance,
+    loss_spec_name,
+    resolve_loss_for_level,
+)
 from .optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
-from .geometry.parametrizations import se3_from_5d
 
 
 def _should_prefer_gn_candidate(
@@ -276,7 +278,7 @@ class PoseConstraintContext:
     gauge_dofs: tuple[str, ...]
 
     @classmethod
-    def from_setup(cls, setup: _AlignSetupState) -> "PoseConstraintContext":
+    def from_setup(cls, setup: _AlignSetupState) -> PoseConstraintContext:
         return cls(
             active_mask_tuple=setup.active_mask_tuple,
             active_mask_bool=setup.active_mask_bool,
@@ -356,7 +358,7 @@ class PoseMotionContext:
         params5: jnp.ndarray,
         resume_state: AlignResumeState | None,
         constraint_ctx: PoseConstraintContext,
-    ) -> "PoseMotionContext":
+    ) -> PoseMotionContext:
         scan_coordinate = scan_coordinate_from_geometry(geometry, n_views)
         motion_model = build_pose_motion_model(
             pose_model=str(cfg.pose_model),
@@ -1747,11 +1749,11 @@ def align(
 
 
 __all__ = [
-    "align",
     "_evaluate_align_loss",
     "_is_expected_align_eval_failure",
     "_second_difference_gram",
     "_select_gn_candidate",
     "_should_prefer_gn_candidate",
     "_smooth_gn_candidate",
+    "align",
 ]

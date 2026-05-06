@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping, Required, TypedDict, cast
+from typing import Any, Required, TypedDict, cast
 from uuid import uuid4
 
 import numpy as np
 
-from tomojax.utils.json import normalize_json as _normalize_json
-
+from tomojax.io import normalize_json as _normalize_json
 
 CHECKPOINT_KIND = "tomojax.align.checkpoint"
 SCHEMA_VERSION = 1
@@ -298,10 +298,10 @@ def save_alignment_checkpoint(
 ) -> None:
     """Atomically write an alignment checkpoint as `.npz` plus JSON metadata."""
     out_path = Path(path)
-    if out_path.parent != Path("."):
+    if out_path.parent != Path():
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    normalized_metadata = cast(CheckpointMetadata, normalize_json(dict(metadata)))
+    normalized_metadata = cast("CheckpointMetadata", normalize_json(dict(metadata)))
     normalized_metadata["checkpoint_kind"] = CHECKPOINT_KIND
     normalized_metadata["schema_version"] = SCHEMA_VERSION
     normalized_metadata["has_motion_coeffs"] = motion_coeffs is not None
@@ -336,7 +336,7 @@ def save_alignment_checkpoint(
 
 
 def _fsync_parent(path: Path) -> None:
-    parent = path.parent if path.parent != Path("") else Path(".")
+    parent = path.parent if path.parent != Path() else Path()
     try:
         fd = os.open(parent, os.O_RDONLY)
     except OSError:
@@ -388,7 +388,7 @@ def load_alignment_checkpoint(path: str | os.PathLike[str]) -> AlignmentCheckpoi
                 motion_coeffs=motion_coeffs,
                 loss_history=[float(v) for v in np.asarray(z["loss_history"]).reshape(-1)],
                 outer_stats=[dict(item) for item in outer_stats],
-                metadata=cast(CheckpointMetadata, dict(metadata)),
+                metadata=cast("CheckpointMetadata", dict(metadata)),
             )
     except CheckpointError:
         raise

@@ -1,10 +1,9 @@
-import numpy as np
 import h5py
+import numpy as np
 import pytest
 
 from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo, validate_nxtomo
-from tomojax.utils.axes import DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES
-
+from tomojax.geometry import DISK_VOLUME_AXES, INTERNAL_VOLUME_AXES
 
 GRID_META = {"nx": 4, "ny": 3, "nz": 2, "vx": 1.0, "vy": 1.0, "vz": 1.0}
 DET_META = {"nu": 6, "nv": 3, "du": 1.0, "dv": 1.0, "det_center": [0.0, 0.0]}

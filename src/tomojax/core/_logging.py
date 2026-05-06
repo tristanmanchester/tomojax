@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 import math
 import os
-from typing import Iterable, Iterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -21,8 +24,12 @@ def setup_logging(level: str = "INFO") -> None:
 def log_jax_env() -> None:
     try:
         import jax
+
         logging.info("JAX backend: %s", jax.default_backend())
-        logging.info("Devices: %s", jax.devices())
+        logging.info(
+            "Devices: %s",
+            repr(jax.devices()),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        )
     except Exception:  # pragma: no cover
         logging.info("JAX not available for logging")
 
@@ -50,7 +57,7 @@ def progress_iter[T](
     try:
         from tqdm import tqdm  # type: ignore
 
-        leave = os.environ.get("TOMOJAX_PROGRESS_LEAVE", "0").lower() in ("1","true","yes","on")
+        leave = os.environ.get("TOMOJAX_PROGRESS_LEAVE", "0").lower() in ("1", "true", "yes", "on")
         for x in tqdm(iterable, total=total, desc=desc, dynamic_ncols=True, leave=leave):
             yield x
     except Exception:
@@ -63,12 +70,12 @@ def progress_iter[T](
         else:
             step = max(1, total // 10)
             for i, x in enumerate(iterable, 1):
-                if i == 1 or i == total or i % step == 0:
+                if i in (1, total) or i % step == 0:
                     print(f"{desc} {i}/{total}", flush=True)
                 yield x
 
 
-def format_duration(seconds: float | None) -> str:
+def format_duration(seconds: float | None) -> str:  # noqa: PLR0911
     """Render a wall-clock duration as a compact human-readable string."""
     if seconds is None:
         return "-"

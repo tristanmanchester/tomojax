@@ -1,29 +1,30 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 import logging
-import numpy as np
-import jax.numpy as jnp
 import os
 import sys
-from typing import Any, Callable
+from typing import Any
 
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..align.model.dofs import (
-    DofBounds,
-    normalize_alignment_dofs,
-    normalize_bounds,
+import jax.numpy as jnp
+import numpy as np
+
+from tomojax.core import log_jax_env, setup_logging
+from tomojax.geometry import (
+    DISK_VOLUME_AXES,
+    compute_roi,
+    cylindrical_mask_xy,
+    grid_from_detector_fov,
+    grid_from_detector_fov_slices,
 )
-from ..align.objectives.loss_specs import (
-    AlignmentLossConfig,
-    parse_loss_schedule,
-    parse_loss_spec,
-    validate_loss_schedule_levels,
+
+from ..align._profiles import (
+    normalize_alignment_profile,
+    profile_policy_from_config,
+    resolve_profiled_cli_defaults,
 )
-from ..align.io.params_export import save_alignment_params_csv, save_alignment_params_json
-from ..core.geometry import Grid, Detector
 from ..align.io.checkpoint import (
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
@@ -36,31 +37,32 @@ from ..align.io.checkpoint import (
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
 )
-from ..align.pipeline import (
-    align,
-    AlignConfig,
-    AlignResumeState,
-    AlignMultiresResumeState,
-)
-from ..align._profiles import (
-    normalize_alignment_profile,
-    profile_policy_from_config,
-    resolve_profiled_cli_defaults,
+from ..align.io.params_export import save_alignment_params_csv, save_alignment_params_json
+from ..align.model.dofs import (
+    DofBounds,
+    normalize_alignment_dofs,
+    normalize_bounds,
 )
 from ..align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
+from ..align.objectives.loss_specs import (
+    AlignmentLossConfig,
+    parse_loss_schedule,
+    parse_loss_spec,
+    validate_loss_schedule_levels,
+)
+from ..align.pipeline import (
+    AlignConfig,
+    AlignMultiresResumeState,
+    AlignResumeState,
+    align,
+)
 from ..calibration.manifest import build_calibrated_geometry_metadata_patch
-from ..utils.logging import setup_logging, log_jax_env
-from ..utils.axes import DISK_VOLUME_AXES
+from ..core.geometry import Detector, Grid
+from ..data.geometry_meta import build_geometry_from_meta
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ._runtime import transfer_guard_context
 from .config import parse_args_with_config
 from .manifest import build_manifest, save_manifest
-
-from ..utils.fov import (
-    compute_roi,
-    grid_from_detector_fov_slices,
-    grid_from_detector_fov,
-    cylindrical_mask_xy,
-)
 
 
 def _positive_float(value: str) -> float:
@@ -909,7 +911,7 @@ def _build_align_cli_run_plan(
     except ValueError as exc:
         parser.error(str(exc))
 
-    from ..utils.memory import default_gather_dtype as _default_gather_dtype
+    from tomojax.backends import default_gather_dtype as _default_gather_dtype
 
     gather_dtype = str(args.gather_dtype)
     if gather_dtype == "auto":

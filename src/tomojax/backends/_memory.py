@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Optional
-import os
+from functools import cache
 import math
-from functools import lru_cache
+import os
+from typing import cast
 
-from .subprocesses import check_output_command
+from tomojax.backends._subprocesses import check_output_command
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class ViewsPerBatchEstimate:
     """Memory-estimator result for callers that need fallback diagnostics."""
 
     views_per_batch: int
-    free_bytes: Optional[int]
+    free_bytes: int | None
     fallback_used: bool
     fallback_reason: str | None = None
 
@@ -42,7 +42,7 @@ def _normalized_safety_fraction(safety_frac: float) -> float:
     return min(max(frac, 1e-6), 1.0)
 
 
-def _host_available_memory_bytes() -> Optional[int]:
+def _host_available_memory_bytes() -> int | None:
     """Best-effort host available-memory query using stdlib facilities only."""
     try:
         names = getattr(os, "sysconf_names", {})
@@ -57,31 +57,32 @@ def _host_available_memory_bytes() -> Optional[int]:
         return None
 
 
-def _free_bytes_from_memory_info(info: object) -> Optional[int]:
+def _free_bytes_from_memory_info(info: object) -> int | None:  # noqa: PLR0911
     """Extract free bytes from JAX/XLA memory-info shapes."""
     if isinstance(info, Mapping):
+        mapping = cast("Mapping[str, object]", info)
         for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
-            if key in info:
+            if key in mapping:
                 try:
-                    return int(info[key])
+                    return int(cast("object", mapping[key]))
                 except (TypeError, ValueError):
                     return None
-        if "bytes_limit" in info and "bytes_in_use" in info:
+        if "bytes_limit" in mapping and "bytes_in_use" in mapping:
             try:
-                return max(0, int(info["bytes_limit"]) - int(info["bytes_in_use"]))
+                return max(0, int(mapping["bytes_limit"]) - int(mapping["bytes_in_use"]))
             except (TypeError, ValueError):
                 return None
         return None
 
     if isinstance(info, tuple | list) and len(info) >= 1:
         try:
-            return int(info[0])
+            return int(cast("object", info[0]))
         except (TypeError, ValueError):
             return None
     return None
 
 
-def device_free_memory_bytes() -> Optional[int]:
+def device_free_memory_bytes() -> int | None:
     """Best-effort query of free device memory (bytes).
 
     - Prefer JAX's device API when available: `jax.device_get_memory_info` (>=0.4.14).
@@ -122,7 +123,7 @@ def estimate_views_per_batch(
     checkpoint_projector: bool = True,
     algo: str = "fbp",
     safety_frac: float = 0.75,
-    free_bytes_override: Optional[int] = None,
+    free_bytes_override: int | None = None,
 ) -> int:
     """Estimate a safe views_per_batch for FBP/FISTA based on memory.
 
@@ -159,7 +160,7 @@ def estimate_views_per_batch_info(
     checkpoint_projector: bool = True,
     algo: str = "fbp",
     safety_frac: float = 0.75,
-    free_bytes_override: Optional[int] = None,
+    free_bytes_override: int | None = None,
     fallback_batch: int = 8,
 ) -> ViewsPerBatchEstimate:
     """Estimate views-per-batch and report whether a fallback was required.
@@ -185,12 +186,9 @@ def estimate_views_per_batch_info(
     #   but account a term to keep the bound conservative.
     per_view = proj_bytes * rays + vol_bytes * vox + gather_bytes * rays
 
-    # Static accumulator and small constants
-    # FISTA holds extra TV dual variables (≈3 volumes) during proximal steps.
-    if algo.lower() == "fbp":
-        static_bytes = vol_bytes * vox
-    else:
-        static_bytes = vol_bytes * vox * 4  # x + (p1,p2,p3)
+    # Static accumulator and small constants. FISTA holds extra TV dual
+    # variables (about 3 volumes) during proximal steps.
+    static_bytes = vol_bytes * vox if algo.lower() == "fbp" else vol_bytes * vox * 4
 
     # Algorithm factor: FISTA uses both fwd and VJP per batch; FBP uses only VJP
     algo_factor = 1.5 if algo.lower() == "fbp" else 2.0
@@ -273,7 +271,7 @@ def default_gather_dtype() -> str:
     return "fp32"
 
 
-@lru_cache(maxsize=None)
+@cache
 def _device_supports_dtype(dtype_name: str) -> bool:
     """Heuristic check whether the active accelerator can JIT kernels with `dtype`."""
     try:
@@ -300,8 +298,8 @@ def _device_supports_dtype(dtype_name: str) -> bool:
         return False
 
 
-@lru_cache(maxsize=None)
-def _gpu_compute_capability() -> Optional[tuple[int, int]]:
+@cache
+def _gpu_compute_capability() -> tuple[int, int] | None:
     """Return (major, minor) compute capability for the first CUDA device, if available."""
     try:
         output = check_output_command(  # nosec B603,B607
@@ -319,7 +317,7 @@ def _gpu_compute_capability() -> Optional[tuple[int, int]]:
     return None
 
 
-def _current_backend() -> Optional[str]:
+def _current_backend() -> str | None:
     """Best-effort helper to query the active JAX backend name."""
     try:
         import jax  # type: ignore

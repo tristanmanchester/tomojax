@@ -34,7 +34,7 @@ from tomojax.core.projector import forward_project_view
 from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-from tomojax.utils.json import normalize_json
+from tomojax.io import normalize_json
 
 try:
     from scripts.alignment_visuals import (

@@ -39,7 +39,7 @@ from tomojax.recon.fista_tv_core import (
     projection_loss_arrays,
 )
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid
-from tomojax.utils.json import normalize_json
+from tomojax.io import normalize_json
 
 from run_real_lamino_native_setup_pose_256 import (
     _apply_projection_background,

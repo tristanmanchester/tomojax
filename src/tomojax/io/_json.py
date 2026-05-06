@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 import math
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, cast
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 
-def normalize_json(
-    value: Any,
+def normalize_json(  # noqa: PLR0911
+    value: object,
     *,
     namespace: bool = False,
     sort_mapping_keys: bool = False,
@@ -38,7 +41,7 @@ def normalize_json(
             catch_to_dict_errors=catch_to_dict_errors,
         )
     if isinstance(value, Mapping):
-        items = value.items()
+        items: Iterable[tuple[object, object]] = cast("Mapping[object, object]", value).items()
         if sort_mapping_keys:
             items = sorted(items, key=lambda item: str(item[0]))
         return {
@@ -58,7 +61,7 @@ def normalize_json(
                 sort_mapping_keys=sort_mapping_keys,
                 catch_to_dict_errors=catch_to_dict_errors,
             )
-            for v in value
+            for v in cast("Iterable[object]", value)
         ]
 
     array_value = _normalize_array(value)
@@ -86,16 +89,14 @@ def normalize_json(
     return str(value)
 
 
-def drop_none(payload: Mapping[str, Any], **normalize_options: bool) -> dict[str, JsonValue]:
+def drop_none(payload: Mapping[str, object], **normalize_options: bool) -> dict[str, JsonValue]:
     """Return a JSON-compatible dict without keys whose value is ``None``."""
     return {
-        str(k): normalize_json(v, **normalize_options)
-        for k, v in payload.items()
-        if v is not None
+        str(k): normalize_json(v, **normalize_options) for k, v in payload.items() if v is not None
     }
 
 
-def _is_argparse_namespace(value: Any) -> bool:
+def _is_argparse_namespace(value: object) -> bool:
     try:
         import argparse
 
@@ -111,14 +112,14 @@ class _Unhandled:
 _UNHANDLED = _Unhandled()
 
 
-def _normalize_array(value: Any) -> Any:
+def _normalize_array(value: object) -> object:
     try:
         import numpy as np
 
         if isinstance(value, np.generic):
-            return value.item()
+            return cast("object", value.item())
         if isinstance(value, np.ndarray):
-            return value.tolist()
+            return cast("object", value.tolist())
     except Exception:
         pass
 
@@ -126,7 +127,7 @@ def _normalize_array(value: Any) -> Any:
         import jax
 
         if isinstance(value, jax.Array):
-            return value.tolist()
+            return cast("object", value.tolist())
     except Exception:
         pass
 

@@ -15,9 +15,13 @@ import logging
 import os
 import time
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 
+from tomojax.core import log_jax_env, setup_logging
+
+from ..align.objectives.loss_specs import parse_loss_spec
+from ..align.pipeline import AlignConfig, align
 from ..bench.loss_experiment import (
     make_gt_dataset as _make_gt_dataset,
     make_misaligned_dataset as _make_misaligned_dataset,
@@ -28,10 +32,6 @@ from ..bench.loss_experiment import (
 )
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..align.objectives.loss_specs import parse_loss_spec
-from ..align.pipeline import align, AlignConfig
-from ..utils.logging import setup_logging, log_jax_env
-
 
 type BenchmarkResultValue = str | float | None
 
@@ -135,66 +135,65 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
                 )
                 status = "missing"
                 p_est_np = None  # type: ignore[assignment]
+            elif not is_gn:
+                logging.warning("[%s] skipped: not an LS-like loss (GN-only mode)", run_name)
+                status = "skipped"
+                p_est_np = None  # type: ignore[assignment]
             else:
-                if not is_gn:
-                    logging.warning("[%s] skipped: not an LS-like loss (GN-only mode)", run_name)
-                    status = "skipped"
-                    p_est_np = None  # type: ignore[assignment]
-                else:
-                    outer_iters = (
-                        args.outer_iters
-                        if run_name not in high_iter_losses
-                        else max(args.outer_iters, 8)
-                    )
-                    recon_iters = (
-                        args.recon_iters
-                        if run_name not in high_iter_losses
-                        else max(args.recon_iters, 30)
-                    )
-                    cfg = AlignConfig(
-                        outer_iters=outer_iters,
-                        recon_iters=recon_iters,
-                        lambda_tv=0.005,
-                        tv_prox_iters=10,
-                        lr_rot=rot_rates.get(run_name, 5e-4),
-                        lr_trans=trans_rates.get(run_name, 5e-2),
-                        views_per_batch=1,
-                        projector_unroll=1,
-                        checkpoint_projector=True,
-                        gather_dtype="auto",
-                        opt_method="gn",
-                        gn_damping=1e-3,
-                        w_rot=1e-3,
-                        w_trans=1e-3,
-                        seed_translations=False,
-                        log_summary=True,
-                        log_compact=True,
-                        recon_L=None,
-                        early_stop=True,
-                        early_stop_rel_impr=1e-3,
-                        early_stop_patience=2,
-                        loss=parse_loss_spec(run_name),
-                    )
-                    if levels is not None:
-                        from ..align.pipeline import align_multires
+                outer_iters = (
+                    args.outer_iters
+                    if run_name not in high_iter_losses
+                    else max(args.outer_iters, 8)
+                )
+                recon_iters = (
+                    args.recon_iters
+                    if run_name not in high_iter_losses
+                    else max(args.recon_iters, 30)
+                )
+                cfg = AlignConfig(
+                    outer_iters=outer_iters,
+                    recon_iters=recon_iters,
+                    lambda_tv=0.005,
+                    tv_prox_iters=10,
+                    lr_rot=rot_rates.get(run_name, 5e-4),
+                    lr_trans=trans_rates.get(run_name, 5e-2),
+                    views_per_batch=1,
+                    projector_unroll=1,
+                    checkpoint_projector=True,
+                    gather_dtype="auto",
+                    opt_method="gn",
+                    gn_damping=1e-3,
+                    w_rot=1e-3,
+                    w_trans=1e-3,
+                    seed_translations=False,
+                    log_summary=True,
+                    log_compact=True,
+                    recon_L=None,
+                    early_stop=True,
+                    early_stop_rel_impr=1e-3,
+                    early_stop_patience=2,
+                    loss=parse_loss_spec(run_name),
+                )
+                if levels is not None:
+                    from ..align.pipeline import align_multires
 
-                        x_est, p_est, info = align_multires(
-                            geom, grid, det, projections, factors=levels, cfg=cfg
-                        )
-                    else:
-                        x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
-                    p_est_np = np.asarray(p_est)
-                    x_est_np = np.asarray(x_est)
-                    save_meta = meta_mis.copy_metadata()
-                    save_meta.thetas_deg = np.asarray(thetas)
-                    save_meta.volume = x_est_np
-                    save_meta.align_params = p_est_np
-                    save_meta.frame = str(meta_mis.frame or "sample")
-                    save_nxtomo(
-                        out_path,
-                        projections=np.asarray(meta_mis.projections),
-                        metadata=save_meta,
+                    x_est, p_est, info = align_multires(
+                        geom, grid, det, projections, factors=levels, cfg=cfg
                     )
+                else:
+                    x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
+                p_est_np = np.asarray(p_est)
+                x_est_np = np.asarray(x_est)
+                save_meta = meta_mis.copy_metadata()
+                save_meta.thetas_deg = np.asarray(thetas)
+                save_meta.volume = x_est_np
+                save_meta.align_params = p_est_np
+                save_meta.frame = str(meta_mis.frame or "sample")
+                save_nxtomo(
+                    out_path,
+                    projections=np.asarray(meta_mis.projections),
+                    metadata=save_meta,
+                )
 
             if status == "ok" and p_est_np is not None:
                 abs_m = _metrics_abs(true_params, p_est_np, du=du, dv=dv)
@@ -305,9 +304,7 @@ def _best_result(
         return None
     return min(
         ok,
-        key=lambda result: (
-            result.get("rot_rmse_deg", 1e9) + result.get("trans_rmse_px", 1e9)
-        ),
+        key=lambda result: (result.get("rot_rmse_deg", 1e9) + result.get("trans_rmse_px", 1e9)),
     )
 
 

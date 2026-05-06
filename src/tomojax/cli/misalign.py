@@ -3,17 +3,19 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import numpy as np
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
+from tomojax.core import log_jax_env, setup_logging
+
+from ..align.geometry.parametrizations import se3_from_5d
 from ..core.geometry import LaminographyGeometry, ParallelGeometry
 from ..core.geometry.views import stack_view_poses
-from ..align.geometry.parametrizations import se3_from_5d
 from ..core.projector import forward_project_view_T
-from ..utils.logging import setup_logging, log_jax_env
+from ..data.geometry_meta import build_geometry_from_meta
+from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ._runtime import transfer_guard_context
 
 
@@ -161,20 +163,19 @@ def _apply_step(schedule: np.ndarray, thetas_deg: jnp.ndarray, params: dict[str,
             end = max(at, min(n - 1, int(params["until_index"])))
         else:
             end = n - 1
+    elif "width_deg" in params:
+        width = float(_parse_number_with_unit(params["width_deg"])[0])
+        th = np.asarray(thetas_deg)
+        target = float(th[at]) + width
+        end = int(np.argmin(np.abs(th - target)))
+        end = max(at, min(n - 1, end))
+    elif "until_deg" in params:
+        target = float(_parse_number_with_unit(params["until_deg"])[0])
+        th = np.asarray(thetas_deg)
+        end = int(np.argmin(np.abs(th - target)))
+        end = max(at, min(n - 1, end))
     else:
-        if "width_deg" in params:
-            width = float(_parse_number_with_unit(params["width_deg"])[0])
-            th = np.asarray(thetas_deg)
-            target = float(th[at]) + width
-            end = int(np.argmin(np.abs(th - target)))
-            end = max(at, min(n - 1, end))
-        elif "until_deg" in params:
-            target = float(_parse_number_with_unit(params["until_deg"])[0])
-            th = np.asarray(thetas_deg)
-            end = int(np.argmin(np.abs(th - target)))
-            end = max(at, min(n - 1, end))
-        else:
-            end = n - 1
+        end = n - 1
     # Delta or absolute target
     if "to" in params:
         tgt = float(_parse_number_with_unit(params["to"])[0])
@@ -227,7 +228,7 @@ def _build_schedules(
 def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
     import json
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     out: list[tuple[str, str, dict[str, str]]] = []
     # Two accepted layouts:
@@ -348,7 +349,7 @@ def main() -> None:
     )
     thetas = np.asarray(meta.thetas_deg, dtype=np.float32)
     vol = jnp.asarray(meta.volume, jnp.float32)
-    n_views = int(len(thetas))
+    n_views = len(thetas)
 
     # Build deterministic schedules if requested
     pert_specs: list[tuple[str, str, dict[str, str]]] = []

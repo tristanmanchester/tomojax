@@ -1,31 +1,33 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 import functools
 import math
-from typing import Any, Callable, Iterator, Tuple
+from typing import Any
 
-import numpy as np
 import jax
-import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plt
+import jax.numpy as jnp
+import numpy as np
 
-from ..core.geometry.base import Grid, Detector, Geometry, _grid_volume_origin
+from tomojax.core import progress_iter
+
+from ..core.geometry.base import Detector, Geometry, Grid, _grid_volume_origin
 from ..core.geometry.parallel import ParallelGeometry
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import backproject_view_T
 from ..core.validation import (
-    validate_grid,
     validate_detector_grid,
+    validate_grid,
     validate_pose_stack,
     validate_projection_stack,
 )
 from .filters import get_filter_np
-from ..utils.logging import progress_iter
 
-_RFFT_FILTER_CACHE: "OrderedDict[Tuple[str, int, float, str], np.ndarray]" = OrderedDict()
+_RFFT_FILTER_CACHE: OrderedDict[tuple[str, int, float, str], np.ndarray] = OrderedDict()
 _RFFT_FILTER_CACHE_CAP = 8
 _UNSET: Any = object()
 
@@ -239,7 +241,9 @@ def _run_parallel_fbp_direct(
         c11 = take(iv1, iu1) * wu1[:, :, None] * wv1[None, None, :]
         return c00 + c01 + c10 + c11
 
-    def body(accum: jnp.ndarray, inputs: tuple[jnp.ndarray, jnp.ndarray]) -> tuple[jnp.ndarray, None]:
+    def body(
+        accum: jnp.ndarray, inputs: tuple[jnp.ndarray, jnp.ndarray]
+    ) -> tuple[jnp.ndarray, None]:
         T, image = inputs
         x_world = T[0, 0] * X + T[0, 1] * Y + T[0, 3]
         z_world = T[2, 2] * Z + T[2, 3]
@@ -305,10 +309,7 @@ def _parallel_fbp_z_integer_kernel(
         t00 = plt.load(T_ref.at[view_idx, 0, 0])
         t01 = plt.load(T_ref.at[view_idx, 0, 1])
         t03 = plt.load(T_ref.at[view_idx, 0, 3])
-        iu = (
-            (t00 * x + t01 * y + t03 - jnp.float32(det_center_x)) / jnp.float32(du)
-            + u_offset
-        )
+        iu = (t00 * x + t01 * y + t03 - jnp.float32(det_center_x)) / jnp.float32(du) + u_offset
         iu0 = jnp.floor(iu).astype(jnp.int32)
         iu1 = iu0 + 1
         wu1 = iu - iu0.astype(jnp.float32)

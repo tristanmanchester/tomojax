@@ -4,7 +4,7 @@ import logging
 import sys
 import types
 
-from tomojax.utils import logging as logging_utils
+import tomojax.core as logging_utils
 
 
 def test_logging_helpers_cover_progress_and_duration(monkeypatch):
@@ -18,7 +18,7 @@ def test_logging_helpers_cover_progress_and_duration(monkeypatch):
     assert list(logging_utils.progress_iter([1, 2, 3], desc="plain")) == [1, 2, 3]
 
     fake_tqdm = types.ModuleType("tqdm")
-    fake_tqdm.tqdm = lambda iterable, **kwargs: iterable
+    fake_tqdm.tqdm = lambda iterable, **_kwargs: iterable
     monkeypatch.setitem(sys.modules, "tqdm", fake_tqdm)
     monkeypatch.setenv("TOMOJAX_PROGRESS", "1")
     assert list(logging_utils.progress_iter([1, 2], total=2, desc="bar")) == [1, 2]

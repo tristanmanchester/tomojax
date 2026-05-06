@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tomojax.utils.json import drop_none, normalize_json
+from tomojax.io import drop_none, normalize_json
 
 
 @dataclass
