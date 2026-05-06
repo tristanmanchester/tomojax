@@ -11,51 +11,50 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Alternating solver and continuation
-- Goal: prove the first real Schur geometry update inside the deterministic
-  32^3 Phase 7 smoke loop.
+- Phase: Nuisance models and weak DOF handling
+- Goal: make synthetic benchmark nuisance artifacts exercise the owned
+  background-gradient model.
 
 ### Scope
 
 - In scope:
-  - Record corrupted-initial versus true-geometry supported DOF recovery in the
-    smoke verification payload.
-  - Add a focused deterministic 32^3 smoke assertion that runs the supported
-    joint Schur LM geometry update with the synthetic truth volume.
-  - Verify projection residual improvement, accepted Schur diagnostics, and
-    gauge-canonical supported DOF recovery artifacts.
+  - Realize `background_drift = low_frequency_vertical_gradient` as a per-view
+    vertical-gradient background field in synthetic projections.
+  - Record the gradient coefficients in `nuisance_truth.json`.
+  - Add focused dataset tests proving clean projections skip but record the
+    nuisance, while dirty projections apply the vertical field.
 - Out of scope:
-  - Artifact-shape polishing beyond fields needed to prove the update.
-  - Changing the stopped-reconstruction default geometry-update source.
-  - Nuisance model changes.
+  - Alternating solver ingestion of generated benchmark projections.
+  - Stripe/ring bias fields.
+  - Changing align-auto defaults.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: `tomojax.datasets`, using the public nuisance contract
+  shape already implemented in `tomojax.nuisance`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
+- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
+- `docs/tomojax-v2/07_synthetic_generator_pseudocode.md`
 
 ### Tasks
 
-- [x] Add initial-vs-final supported DOF recovery fields to verification.
-- [x] Add focused Schur-in-loop smoke test with corrupted initial geometry.
+- [x] Add vertical background-gradient realization to synthetic writer.
+- [x] Add focused synthetic dataset tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the Schur-in-loop recovery evidence slice.
+- [x] Commit the synthetic background-gradient nuisance slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
-  passed: 2 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+- `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed: 1 file reformatted, 1 file left unchanged.
+- `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_nuisance_background.py -q`
   passed: 10 tests.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py -q`
-  passed: 5 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -63,12 +62,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep the default smoke on the stopped-reconstruction volume source; use the
-  existing fixed-synthetic-truth source only for the focused Schur recovery
-  vertical-slice assertion.
+- Keep the dataset writer NumPy-only and deterministic; this slice should not
+  introduce solver coupling.
 
 ### Risks
 
-- Risk: the stopped-reconstruction default still limits DOF recovery tightness.
-- Mitigation: this slice records that evidence separately and uses the
-  truth-volume smoke only to prove the Schur update mechanics and artifacts.
+- Risk: generated benchmark datasets still are not consumed by the alternating
+  solver path.
+- Mitigation: this slice fixes the nuisance artifact truth/apply contract first
+  so later ingestion has meaningful nuisance-bearing projections.

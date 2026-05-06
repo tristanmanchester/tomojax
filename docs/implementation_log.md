@@ -4129,3 +4129,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The stopped-reconstruction default still limits geometry-recovery tightness.
   The verification payload now exposes that separately from the fixed-truth
   Schur recovery assertion.
+
+## 2026-05-06 — Phase 8 Synthetic Background Gradient Nuisance
+
+### Summary
+
+- Updated the synthetic dataset writer so
+  `background_drift = low_frequency_vertical_gradient` realizes a per-view
+  detector-row background-gradient coefficient instead of a scalar offset.
+- `nuisance_truth.json` now records `background_vertical_gradient` and reports
+  it separately in `applied_terms`.
+- Dirty synthetic projections apply the vertical background field as
+  `gradient_i * linspace(-1, 1, detector_rows)`.
+- Added a focused combined-nuisance dataset test that reconstructs a dirty view
+  from clean projections, gain truth, and background-gradient truth.
+
+### Decisions
+
+- Kept the dataset writer NumPy-only and deterministic. This slice fixes the
+  synthetic artifact truth/apply contract without coupling the writer to the
+  alternating solver.
+
+### Validation
+
+- `uv run ruff format src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed: 1 file reformatted, 1 file left unchanged.
+- `uv run ruff check src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed.
+- `uv run basedpyright src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_synthetic_datasets.py tests/test_nuisance_background.py -q`
+  passed: 10 tests.
+- `just imports` passed.
+
+### Risks
+
+- Generated benchmark projections are still metadata-only for `align-auto`;
+  the alternating solver does not yet consume them as its observed input.

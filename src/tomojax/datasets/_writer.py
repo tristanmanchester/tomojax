@@ -145,6 +145,7 @@ def _resize_nearest(image: NDArray[np.float32], shape: tuple[int, int]) -> NDArr
 def _realize_nuisance(spec: SyntheticDatasetSpec, n_views: int) -> dict[str, object]:
     gain = _gain_drift(spec.nuisance, n_views)
     offset = _background_offset(spec.nuisance, n_views)
+    vertical_gradient = _background_vertical_gradient(spec.nuisance, n_views)
     return {
         "schema": "tomojax.synthetic_nuisance_truth.v1",
         "source": "benchmark_manifest",
@@ -152,9 +153,13 @@ def _realize_nuisance(spec: SyntheticDatasetSpec, n_views: int) -> dict[str, obj
         "applied_terms": {
             "gain": gain is not None,
             "offset": offset is not None,
+            "background_vertical_gradient": vertical_gradient is not None,
         },
         "gain": None if gain is None else [float(value) for value in gain],
         "offset": None if offset is None else [float(value) for value in offset],
+        "background_vertical_gradient": (
+            None if vertical_gradient is None else [float(value) for value in vertical_gradient]
+        ),
     }
 
 
@@ -171,6 +176,11 @@ def _apply_nuisance(
     if isinstance(raw_offset, list):
         offset = np.asarray(raw_offset, dtype=np.float32)
         out += offset[:, None, None]
+    raw_gradient = nuisance.get("background_vertical_gradient")
+    if isinstance(raw_gradient, list):
+        gradient = np.asarray(raw_gradient, dtype=np.float32)
+        vertical = np.linspace(-1.0, 1.0, out.shape[1], dtype=np.float32)
+        out += gradient[:, None, None] * vertical[None, :, None]
     return out.astype(np.float32)
 
 
@@ -201,6 +211,13 @@ def _background_offset(
 ) -> NDArray[np.float32] | None:
     if nuisance.get("background_offset") == "small_linear":
         return np.linspace(-0.015, 0.015, n_views, dtype=np.float32)
+    return None
+
+
+def _background_vertical_gradient(
+    nuisance: dict[str, float | int | str | bool],
+    n_views: int,
+) -> NDArray[np.float32] | None:
     if nuisance.get("background_drift") == "low_frequency_vertical_gradient":
         return (np.float32(0.02) * np.sin(np.linspace(0.0, np.pi, n_views))).astype(np.float32)
     return None

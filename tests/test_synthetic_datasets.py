@@ -129,7 +129,11 @@ def test_generate_synthetic_dataset_applies_gain_offset_nuisance(tmp_path: Path)
         json.loads(drifted.nuisance_truth.read_text(encoding="utf-8")),
     )
     assert nuisance["schema"] == "tomojax.synthetic_nuisance_truth.v1"
-    assert nuisance["applied_terms"] == {"gain": True, "offset": True}
+    assert nuisance["applied_terms"] == {
+        "gain": True,
+        "offset": True,
+        "background_vertical_gradient": False,
+    }
     gain = cast("list[float]", nuisance["gain"])
     offset = cast("list[float]", nuisance["offset"])
     assert len(gain) == 8
@@ -165,7 +169,63 @@ def test_generate_clean_synthetic_dataset_records_but_skips_nuisance(tmp_path: P
         "dict[str, Any]",
         json.loads(clean.nuisance_truth.read_text(encoding="utf-8")),
     )
-    assert nuisance["applied_terms"] == {"gain": True, "offset": False}
+    assert nuisance["applied_terms"] == {
+        "gain": True,
+        "offset": False,
+        "background_vertical_gradient": False,
+    }
+
+
+def test_generate_synthetic_dataset_applies_vertical_background_nuisance(
+    tmp_path: Path,
+) -> None:
+    clean = generate_synthetic_dataset(
+        "synth128_combined_nuisance_jumps",
+        tmp_path / "clean",
+        size=32,
+        clean=True,
+        views=8,
+    )
+    drifted = generate_synthetic_dataset(
+        "synth128_combined_nuisance_jumps",
+        tmp_path / "drifted",
+        size=32,
+        clean=False,
+        views=8,
+    )
+
+    clean_projections = np.load(clean.projections)
+    drifted_projections = np.load(drifted.projections)
+    nuisance = cast(
+        "dict[str, Any]",
+        json.loads(drifted.nuisance_truth.read_text(encoding="utf-8")),
+    )
+    assert nuisance["applied_terms"] == {
+        "gain": True,
+        "offset": False,
+        "background_vertical_gradient": True,
+    }
+    gain = np.asarray(cast("list[float]", nuisance["gain"]), dtype=np.float32)
+    gradient = np.asarray(
+        cast("list[float]", nuisance["background_vertical_gradient"]),
+        dtype=np.float32,
+    )
+    assert gradient.shape == (8,)
+    assert float(np.max(np.abs(gradient))) > 0.0
+
+    view_index = int(np.argmax(np.abs(gradient)))
+    vertical = np.linspace(-1.0, 1.0, drifted_projections.shape[1], dtype=np.float32)
+    expected = (
+        clean_projections[view_index] * gain[view_index] + gradient[view_index] * vertical[:, None]
+    )
+    np.testing.assert_allclose(drifted_projections[view_index], expected, atol=1.0e-6)
+
+    clean_nuisance = cast(
+        "dict[str, Any]",
+        json.loads(clean.nuisance_truth.read_text(encoding="utf-8")),
+    )
+    assert clean_nuisance["applied_terms"]["background_vertical_gradient"] is True
+    np.testing.assert_array_equal(clean_projections, np.load(clean.projections))
 
 
 def _array_hash(path: Path) -> str:
