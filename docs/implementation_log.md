@@ -1922,3 +1922,42 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: clean `_profiles.py` import/type-alias
   findings, then proceed through `_quality_policy.py` and
   `_reconstruction_stage.py`.
+
+## 2026-05-06 — Clean Alignment Profile Typing
+
+### Summary
+
+- Converted `_profiles.py` public type aliases to PEP 695 `type` aliases.
+- Moved annotation-only `Mapping`, `ProjectorBackend`, and `Regulariser`
+  imports behind `TYPE_CHECKING` and replaced parent-relative imports with
+  absolute type-checking imports.
+- Kept runtime behavior unchanged by using string-based `cast` targets where
+  the imported type names are no longer available at runtime.
+
+### Decisions
+
+- Treated profile policy typing as its own small cleanup slice rather than
+  mixing it with reconstruction-stage lint work.
+- Let Ruff apply the file-local docstring spacing and cast-quoting fixes after
+  the manual import/type-alias edit.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_profiles.py` passed.
+- `uv run ruff format src/tomojax/align/_profiles.py` passed.
+- `uv run pytest tests/test_align_profiles.py -q` passed: 6 tests.
+- `just imports` passed.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
+  formatting. `_profiles.py` is no longer in the failure list; the first
+  remaining blocker is `_quality_policy.py` UP040, followed by
+  `_reconstruction_stage.py`, `_results.py`, `_setup_stage.py`, and broader
+  repository lint backlog. Formatter churn from `just check` was reverted
+  outside this slice.
+
+### Risks
+
+- Runtime casts now use string targets for annotation-only types; focused
+  profile tests passed, but broader config/CLI paths were not run in this
+  slice.
+- Proposed next fix for `just check`: convert `_quality_policy.py` to a PEP
+  695 alias, then continue into `_reconstruction_stage.py`.

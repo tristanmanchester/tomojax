@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Literal, Mapping, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from ..core.backend_policy import ProjectorBackend
-from ..recon.types import Regulariser
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from tomojax.core.backend_policy import ProjectorBackend
+    from tomojax.recon.types import Regulariser
 
 
-AlignmentProfile: TypeAlias = Literal["lightning", "tortoise"]
-AlignmentProfileInput: TypeAlias = AlignmentProfile | str
-FallbackPolicy: TypeAlias = Literal["fallback", "strict"]
-QualityTier: TypeAlias = Literal["fast", "reference"]
+type AlignmentProfile = Literal["lightning", "tortoise"]
+type AlignmentProfileInput = AlignmentProfile | str
+type FallbackPolicy = Literal["fallback", "strict"]
+type QualityTier = Literal["fast", "reference"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +37,6 @@ class AlignmentProfilePolicy:
 
 def normalize_alignment_profile(value: AlignmentProfileInput) -> AlignmentProfile:
     """Normalize a public alignment profile value."""
-
     profile = str(value).strip().lower().replace("-", "_")
     if profile in {"", "default", "fast", "lightning"}:
         return "lightning"
@@ -45,7 +47,6 @@ def normalize_alignment_profile(value: AlignmentProfileInput) -> AlignmentProfil
 
 def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePolicy:
     """Return the baseline policy for a normalized alignment profile."""
-
     profile = normalize_alignment_profile(value)
     if profile == "tortoise":
         return AlignmentProfilePolicy(
@@ -76,18 +77,17 @@ def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePo
 
 def profile_policy_from_config(cfg: object) -> AlignmentProfilePolicy:
     """Build a policy snapshot from an already-normalized alignment config."""
-
     return AlignmentProfilePolicy(
         align_profile=normalize_alignment_profile(getattr(cfg, "align_profile", "lightning")),
-        projector_backend=cast(ProjectorBackend, getattr(cfg, "projector_backend", "jax")),
+        projector_backend=cast("ProjectorBackend", getattr(cfg, "projector_backend", "jax")),
         gather_dtype=str(getattr(cfg, "gather_dtype", "fp32")),
-        regulariser=cast(Regulariser, getattr(cfg, "regulariser", "tv")),
+        regulariser=cast("Regulariser", getattr(cfg, "regulariser", "tv")),
         recon_algo=str(getattr(cfg, "recon_algo", "fista")),
         views_per_batch=int(getattr(cfg, "views_per_batch", 1)),
         checkpoint_projector=bool(getattr(cfg, "checkpoint_projector", True)),
         pose_model=str(getattr(cfg, "pose_model", "per_view")),
-        quality_tier=cast(QualityTier, getattr(cfg, "quality_tier", "fast")),
-        fallback_policy=cast(FallbackPolicy, getattr(cfg, "fallback_policy", "fallback")),
+        quality_tier=cast("QualityTier", getattr(cfg, "quality_tier", "fast")),
+        fallback_policy=cast("FallbackPolicy", getattr(cfg, "fallback_policy", "fallback")),
     )
 
 
@@ -98,7 +98,6 @@ def resolve_profiled_cli_defaults(
     configured_keys: set[str],
 ) -> dict[str, object]:
     """Apply profile defaults only for options the user/config did not specify."""
-
     policy = alignment_profile_policy(align_profile)
     defaults = policy.to_dict()
     resolved = dict(current)
