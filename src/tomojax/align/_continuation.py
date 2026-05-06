@@ -49,7 +49,7 @@ def reference_continuation_schedule(
         return _make_schedule(
             name=name,
             preview_iterations=1,
-            preview_updates=1,
+            preview_updates=8,
             final_iterations=1,
             final_updates=1,
         )

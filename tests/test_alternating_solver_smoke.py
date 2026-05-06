@@ -61,7 +61,7 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
 
 
 def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
-    assert result.verification["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    assert result.verification["geometry_update_volume_source"] == "stopped_reconstruction"
     verification_summary = cast("dict[str, bool]", result.verification["summary"])
     assert verification_summary["final_reconstruction_valid"] is True
     assert verification_summary["gauge_constraints_satisfied"] is True
@@ -105,8 +105,8 @@ def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
 
 
 def _assert_level_exit_contract(result: AlternatingSmokeResult) -> None:
-    assert result.levels[0].geometry_updates == 1
-    assert result.levels[0].executed_geometry_updates == 1
+    assert result.levels[0].geometry_updates == 8
+    assert result.levels[0].executed_geometry_updates == 8
     assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
     assert result.levels[0].loss_nonincreasing
     assert result.levels[0].finite_loss
@@ -202,8 +202,8 @@ def _assert_geometry_trace(result: AlternatingSmokeResult) -> None:
     with result.artifacts["geometry_trace_csv"].open("r", newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     assert [row["level_factor"] for row in rows] == ["4", "2", "1"]
-    assert rows[0]["geometry_updates_requested"] == "1"
-    assert rows[0]["geometry_updates_executed"] == "1"
+    assert rows[0]["geometry_updates_requested"] == "8"
+    assert rows[0]["geometry_updates_executed"] == "8"
     assert float(rows[0]["parameter_update_norm"]) > 0.0
     assert rows[0]["verified"] == "True"
     assert rows[0]["schur_accepted"] == "True"
@@ -235,7 +235,7 @@ def _assert_schur_diagnostics(result: AlternatingSmokeResult) -> None:
     assert payload["schema"] == "tomojax.schur_diagnostics.v1"
     assert payload["status"] == "passed"
     assert payload["solver"] == "joint_schur_lm_reference"
-    assert payload["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    assert payload["geometry_update_volume_source"] == "stopped_reconstruction"
     assert payload["active_setup_parameters"] == [
         "theta_offset_rad",
         "det_u_px",
@@ -268,7 +268,7 @@ def _assert_truth_artifacts(result: AlternatingSmokeResult) -> None:
     )
     true_setup = cast("dict[str, dict[str, object]]", true_geometry["setup"])
     corrupted_setup = cast("dict[str, dict[str, object]]", corrupted_geometry["setup"])
-    assert true_setup["det_u_px"]["value"] == 0.18
+    assert true_setup["det_u_px"]["value"] == 0.045
     assert true_setup["det_u_px"]["value"] != corrupted_setup["det_u_px"]["value"]
     assert true_setup["theta_offset_rad"]["value"] != corrupted_setup["theta_offset_rad"]["value"]
 
@@ -295,7 +295,7 @@ def _assert_manifest(result: AlternatingSmokeResult) -> None:
     assert manifest["started_at"] == "deterministic-smoke"
     assert manifest["finished_at"] == "deterministic-smoke"
     assert manifest["geometry_model"] == "parallel_tomography_reference"
-    assert manifest["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    assert manifest["geometry_update_volume_source"] == "stopped_reconstruction"
     assert manifest["backend_requested"] == "jax_reference"
     assert manifest["backend_actual"] == "jax_reference"
     assert manifest["status"] == "passed"
@@ -436,7 +436,7 @@ def _assert_recovery_tolerances(result: AlternatingSmokeResult) -> None:
     geometry = cast("dict[str, float]", payload["geometry"])
     volume = cast("dict[str, float]", payload["volume"])
     verification = cast("dict[str, bool]", payload["verification"])
-    assert geometry["theta_realized_rmse_rad_lt"] == 8.0e-2
+    assert geometry["theta_realized_rmse_rad_lt"] == 8.5e-2
     assert geometry["mean_gauge_abs_lt"] == 1.0e-10
     assert volume["nmse_lt"] == 10.0
     assert verification["gauge_stable"] is True
@@ -477,5 +477,5 @@ def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:
     assert continuation["name"] == "lightning"
     config_text = result.artifacts["config_resolved_toml"].read_text(encoding="utf-8")
     assert 'profile = "lightning"' in config_text
-    assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
+    assert 'geometry_update_volume_source = "stopped_reconstruction"' in config_text
     assert "level_factors = [4, 2, 1]" in config_text

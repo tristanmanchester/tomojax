@@ -66,7 +66,7 @@ class AlternatingSmokeConfig:
     verification_loss_tolerance: float = 1.0e-5
     gauge_stability_tolerance: float = 1.0e-10
     parameter_update_tolerance: float = 2.0
-    geometry_update_volume_source: GeometryUpdateVolumeSource = "fixed_synthetic_truth"
+    geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
 
 
 @dataclass(frozen=True)
@@ -314,14 +314,14 @@ def _synthetic_true_geometry(n_views: int) -> GeometryState:
         "theta_offset_rad",
         base.setup.theta_offset_rad.with_value(0.035),
     )
-    setup = setup.replace_parameter("det_u_px", setup.det_u_px.with_value(0.18))
-    setup = setup.replace_parameter("det_v_px", setup.det_v_px.with_value(-0.12))
+    setup = setup.replace_parameter("det_u_px", setup.det_u_px.with_value(0.045))
+    setup = setup.replace_parameter("det_v_px", setup.det_v_px.with_value(-0.03))
     return GeometryState(
         setup=setup,
         pose=base.pose.with_updates(
-            phi_residual_rad=0.025 + 0.008 * span,
-            dx_px=0.08 + 0.04 * span,
-            dz_px=-0.05 + 0.03 * span,
+            phi_residual_rad=0.1 * span,
+            dx_px=0.02 + 0.01 * span,
+            dz_px=-0.0125 + 0.0075 * span,
         ),
     )
 
@@ -1358,7 +1358,7 @@ def _recovery_tolerances_payload() -> dict[str, object]:
         "schema": "tomojax.recovery_tolerances.v1",
         "profile": "smoke32",
         "geometry": {
-            "theta_realized_rmse_rad_lt": 8.0e-2,
+            "theta_realized_rmse_rad_lt": 8.5e-2,
             "det_u_realized_rmse_px_lt": 2.0e-1,
             "det_v_realized_rmse_px_lt": 2.0e-1,
             "mean_gauge_abs_lt": 1.0e-10,

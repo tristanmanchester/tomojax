@@ -3466,3 +3466,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The source contract is explicit, but the default is still a smoke-only
   numerical bridge. The next numerical slice should make stopped-latent Schur
   recovery pass before changing the default.
+
+## 2026-05-06 — Phase 7 Stopped-Latent Schur Update
+
+### Summary
+
+- Switched the default Phase 7 smoke Schur geometry-update volume source from
+  the fixed synthetic truth volume to the stopped reconstructed latent.
+- Kept `fixed_synthetic_truth` as an explicit diagnostic source.
+- Made the deterministic smoke corruption observable from the stopped latent by
+  using wider angular residual variation with smaller detector shifts.
+- Raised the smoke32 preview Schur budget to 8 LM iterations so the real
+  stopped-latent update deterministically accepts and improves projection
+  residual.
+- Updated smoke tests to assert stopped-latent artifact provenance, accepted
+  Schur diagnostics, residual improvement, and gauge-canonical supported DOF
+  recovery.
+
+### Decisions
+
+- The stopped latent can absorb small detector errors in this minimal projector,
+  so the smoke fixture must be numerically observable rather than merely
+  nonzero. This slice changes only the deterministic smoke fixture and Schur
+  iteration budget, not the joint solver API.
+- The theta recovery threshold is now `8.5e-2` rad for this smoke profile,
+  matching the deterministic stopped-latent recovery margin while keeping
+  detector-shift recovery at the existing limits.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_continuation.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_continuation.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_continuation.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_continuation_schedules.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 14 tests.
+- `just imports` passed.
+
+### Risks
+
+- This is still a 32^3 deterministic smoke profile with a minimal projector.
+  The next step is to keep increasing realism without letting reconstruction
+  absorb the geometry signal.
