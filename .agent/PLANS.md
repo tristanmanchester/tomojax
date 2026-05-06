@@ -11,23 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 verification semantics
-- Goal: prevent rejected Schur geometry updates from counting as verified levels.
+- Phase: Phase 8 synthetic benchmark ingestion
+- Goal: refresh the all-five 32^3 benchmark summary after the verification gate.
 
 ### Scope
 
 - In scope:
-  - Require accepted Schur diagnostics for level verification when a geometry
-    update is executed.
-  - Cover the stopped-reconstruction setup-global sidecar case where
-    reconstruction absorbs the residual and Schur rejects the update.
-  - Record the changed verification semantics and focused validation.
+  - Rerun all five planned 32^3 sidecar benchmark cases after the
+    Schur-accepted verification gate.
+  - Render the comparison markdown from the refreshed `benchmark_result.json`
+    files.
+  - Update the tracked benchmark summary and implementation log with current
+    timing/recovery results.
 - Out of scope:
   - Adding or changing artifact/report/observability fields.
   - New benchmark ingestion behavior.
   - Solver tuning beyond command-line flags already supported.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` alternating orchestration and verification.
+- Deep module owner: `tomojax.align` run artifacts with public
+  `tomojax.datasets` sidecar generation/loading and `tomojax.bench` comparison.
 
 ### Design Sources
 
@@ -38,22 +40,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add Schur-accepted requirement to executed geometry-update verification.
-- [x] Add focused stopped-reconstruction sidecar regression.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md`.
-- [x] Commit the verification semantics slice.
+- [x] Rerun all five 32^3 sidecar benchmark cases.
+- [x] Render refreshed comparison markdown.
+- [x] Update tracked benchmark summary and implementation log.
+- [x] Run `just imports`.
+- [x] Commit refreshed benchmark summary.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
-  passed: 3 files left unchanged.
-- `uv run ruff check src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
+- `JAX_PLATFORM_NAME=cpu uv run python` generated five 32^3 sidecar datasets
+  under `.artifacts/phase8_multi_case_32_after_accept_gate/datasets`.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
+  five existing sidecar directories.
+- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32_after_accept_gate/benchmark_comparison.md`
   passed.
-- `uv run basedpyright src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_orchestration.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
-  passed: 11 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -61,11 +61,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- A level with a rejected Schur update is not verified, even if the stopped
-  reconstruction makes projection loss non-increasing.
+- Four rejected-Schur cases now report no verified geometry timing; the thermal
+  drift case still reports a verified geometry time and supported-DOF
+  improvement.
 
 ### Risks
 
-- Risk: this may make existing smoke summaries stricter.
-- Mitigation: cover both the rejected sidecar case and existing alternating
-  smoke behavior in focused tests.
+- Risk: generated run artifacts remain ignored under `.artifacts/`.
+- Mitigation: commit the concise markdown summary and implementation-log
+  evidence.

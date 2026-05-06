@@ -5428,8 +5428,9 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   `--profile smoke32`, gain/offset nuisance fitting, and background nuisance
   fitting.
 - Collected the five `benchmark_result.json` files and rendered
-  `.artifacts/phase8_multi_case_32/benchmark_comparison.md` with
-  `tomojax-synthetic-benchmark-compare`.
+  `.artifacts/phase8_multi_case_32_after_accept_gate/benchmark_comparison.md`
+  with `tomojax-synthetic-benchmark-compare` after the Schur-accepted
+  verification gate was added.
 - Added a tracked concise run summary at
   `docs/benchmark_runs/2026-05-06-phase8-multi-case-32.md`.
 
@@ -5437,11 +5438,11 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 | Benchmark | Status | Criteria | Geometry | Volume NMSE | Final residual | Time to verified (s) | Total time (s) |
 |---|---|---|---|---:|---:|---:|---:|
-| `synth128_setup_global_tomo` | failed | failed | failed | 0.693523 | 0 | 9.8828 | 9.9782 |
-| `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 0.662409 | 0.331717 | n/a | 13.6580 |
-| `synth128_lamino_axis_roll_pose` | failed | failed | failed | 0.635030 | 0.00978141 | n/a | 13.3269 |
-| `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 0.608258 | 0.000758991 | 12.4230 | 12.5270 |
-| `synth128_combined_nuisance_jumps` | failed | failed | failed | 0.700399 | 0.00452363 | 12.8806 | 12.9807 |
+| `synth128_setup_global_tomo` | failed | failed | failed | 0.693523 | 0 | n/a | 11.8977 |
+| `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 0.662409 | 0.331717 | n/a | 13.5123 |
+| `synth128_lamino_axis_roll_pose` | failed | failed | failed | 0.635030 | 0.00978141 | n/a | 12.7293 |
+| `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 0.608258 | 0.000758991 | 13.2750 | 13.3758 |
+| `synth128_combined_nuisance_jumps` | failed | failed | failed | 0.700399 | 0.00567048 | n/a | 13.4462 |
 
 Recovery details:
 
@@ -5474,10 +5475,13 @@ Recovery details:
   `tomojax.datasets.generate_synthetic_dataset`.
 - `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke ...` completed for all
   five existing sidecar directories.
-- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32/benchmark_comparison.md`
+- `uv run tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_multi_case_32_after_accept_gate/benchmark_comparison.md`
   passed.
 - `just imports` passed after recording the documentation summary.
 - `just imports` passed again after extending the summary to all five cases.
+- The all-five pass was rerun after the Schur-accepted verification gate; four
+  rejected-Schur cases now report `time_to_verified_geometry_seconds = null`.
+- `just imports` passed after refreshing the tracked benchmark summary.
 
 ### Risks
 
