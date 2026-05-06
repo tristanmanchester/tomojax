@@ -3137,3 +3137,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - `geometry_trace.csv` is per continuation level, not yet per accepted/rejected
   LM/GN step.
+
+## 2026-05-06 — Phase 7 Verification Report Shape
+
+### Summary
+
+- Added contract-shaped `status`, `summary`, `metrics`, and `escalation`
+  sections to the Phase 7 smoke `verification.json`.
+- Kept existing smoke-specific keys so deterministic checks can still inspect
+  seed, schedule, levels, thresholds, and recovery details.
+- Updated artifact validation so `verification.json` must include the new
+  top-level report sections.
+
+### Decisions
+
+- Used the first solver-level loss as `metrics.residual_before` rather than the
+  legacy smoke `initial_loss`, which compares the true volume against synthetic
+  observations and is not a run-start residual.
+- Reported `summary.projection_residual_improved` truthfully from the smoke
+  metrics; the current tiny smoke path may report `false` while still passing
+  the smoke recovery checks.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/verify/_artifacts.py tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- The smoke run still uses placeholder geometry updates, so the new verification
+  summary is a report-shape contract rather than proof of full optimiser
+  convergence.

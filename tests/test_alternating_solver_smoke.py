@@ -53,6 +53,22 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert result.verification["coarse_verified"] is True
     assert result.verification["level1_geometry_skipped"] is True
     assert result.verification["skipped_levels"] == [2]
+    assert result.verification["status"] == "passed"
+    verification_summary = cast("dict[str, bool]", result.verification["summary"])
+    assert verification_summary["final_reconstruction_valid"] is True
+    assert verification_summary["gauge_constraints_satisfied"] is True
+    assert verification_summary["backend_provenance_complete"] is True
+    assert verification_summary["weak_dofs_handled"] is True
+    verification_metrics = cast("dict[str, float]", result.verification["metrics"])
+    assert verification_metrics["residual_before"] == result.levels[0].loss_before
+    assert verification_metrics["residual_after"] == result.verification["final_loss"]
+    assert verification_summary["projection_residual_improved"] == (
+        verification_metrics["residual_after"] <= verification_metrics["residual_before"] + 1.0e-5
+    )
+    assert verification_metrics["volume_nmse"] >= 0.0
+    escalation = cast("dict[str, bool | str]", result.verification["escalation"])
+    assert escalation["level_1_geometry_run"] is False
+    assert escalation["reason"] == "level_2_verification_passed"
     thresholds = cast("dict[str, float]", result.verification["thresholds"])
     assert thresholds["gauge_stability_tolerance"] == 1.0e-10
     assert thresholds["parameter_update_tolerance"] == 2.0

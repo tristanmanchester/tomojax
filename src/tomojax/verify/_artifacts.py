@@ -201,7 +201,16 @@ def _validate_verification(
         payload,
         issues,
         artifact="verification.json",
-        keys=("initial_loss", "final_loss", "levels", "geometry_recovery"),
+        keys=(
+            "status",
+            "summary",
+            "metrics",
+            "escalation",
+            "initial_loss",
+            "final_loss",
+            "levels",
+            "geometry_recovery",
+        ),
     )
 
 
