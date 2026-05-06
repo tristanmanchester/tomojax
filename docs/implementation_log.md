@@ -4686,3 +4686,35 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The diagnostic confirms the stopped volume gauge problem but does not solve it.
   The next implementation slice should transfer or neutralise detector-shift
   gauge between the latent volume and geometry rather than changing tolerances.
+
+## 2026-05-06 — Phase 7 Stopped-Volume Gauge Prototype
+
+### Summary
+
+- Prototyped simple detector-shift gauge corrections for the sidecar
+  stopped-reconstruction path without committing code changes.
+- Integer volume rolls along candidate latent axes did not recover `det_u_px`
+  to the existing smoke tolerance.
+- Projection centre-of-mass initialisation for `det_u_px` improved detector-u
+  recovery in isolation but either still missed tolerance or degraded theta
+  recovery.
+
+### Decisions
+
+- Do not commit a synthetic-only volume shift or projection-COM registration
+  patch.
+- Keep the existing fixed-truth Schur recovery test as the supported solver
+  recovery gate.
+- Keep the stopped-reconstruction sidecar contract as the current executable
+  gap until reconstruction/volume gauge handling has a principled design.
+
+### Validation
+
+- Prototype runs were executed with `JAX_PLATFORM_NAME=cpu uv run python` against
+  generated `synth128_thermal_object_drift` 32^3 sidecars.
+- No source changes were kept from the prototype.
+
+### Risks
+
+- The default stopped-reconstruction path still improves projection residual
+  but does not meet absolute detector-shift recovery tolerance.

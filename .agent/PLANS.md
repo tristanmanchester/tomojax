@@ -12,17 +12,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 7 alternating solver and continuation vertical slice
-- Goal: record reconstruction/volume gauge diagnostics for sidecar stopped
-  reconstruction runs.
+- Goal: neutralise the stopped-volume detector-shift gauge enough for sidecar
+  stopped-reconstruction recovery to meet the existing geometry tolerances.
 
 ### Scope
 
 - In scope:
-  - Add compact verification metrics that compare initial/final stopped-volume
-    projection losses under true and corrupted geometry for sidecar runs.
-  - Expose whether the stopped volume is closer to the corrupted gauge than the
-    true gauge.
-  - Add focused assertions for the current sidecar stopped-reconstruction gap.
+  - Use the `stopped_volume_gauge` diagnostics to guide the smallest
+    reconstruction/volume gauge correction.
+  - Preserve fixed-truth sidecar Schur recovery as an isolating solver check.
+  - Convert the stopped-reconstruction sidecar contract from explicit recovery
+    gap to passing recovery when the gauge correction works.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
@@ -39,34 +39,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add stopped-volume gauge diagnostic payload.
-- [x] Add focused assertions for sidecar stopped-volume gauge evidence.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md`.
-- [ ] Commit the stopped-volume gauge diagnostic slice.
+- [x] Prototype a detector-shift gauge correction for the stopped volume.
+- [ ] Add or update focused stopped-reconstruction sidecar recovery assertions.
+- [ ] Run focused validation and `just imports`.
+- [ ] Update `docs/implementation_log.md`.
+- [ ] Commit the stopped-volume gauge correction slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
-  passed: 3 files left unchanged after the final patch.
-- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
-  passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
-  passed: 16 tests.
-- `just imports` passed.
+- Pending.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Do not relax recovery tolerances. This slice is diagnostic evidence for the
-  next reconstruction-gauge fix.
+- Do not relax recovery tolerances or switch default behavior to fixed truth.
+- Prototype result: integer volume rolls and projection-COM det_u initialisation
+  improve det_u in isolation but either leave det_u outside tolerance or damage
+  theta recovery. Do not commit these as implementation.
 
 ### Risks
 
-- Risk: diagnostics can turn into placeholder artifact polish.
-- Mitigation: add only metrics used by the focused sidecar regression test and
-  keep the next implementation target tied to those numbers.
+- Risk: a detector-shift correction can become synthetic-only registration.
+- Mitigation: constrain changes to geometry/volume gauge handling and verify
+  with projection-domain residuals, not truth-volume registration.
