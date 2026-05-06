@@ -11,16 +11,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 7 — alternating solver and continuation
-- Goal: add explicit verification predicates to the Phase 7 smoke early-exit logic.
+- Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
+- Goal: persist smoke input arrays and recovery tolerances with the Phase 7
+  deterministic run.
 
 ### Scope
 
 - In scope:
-  - Record loss, finite-loss, gauge-stability, and parameter-update checks per
-    continuation level.
-  - Gate smoke verification on those checks.
-  - Add focused tests for the richer verification payload.
+  - Persist observed projections and mask arrays from the deterministic smoke
+    run.
+  - Emit a smoke `recovery_tolerances.json` artifact.
+  - Add those artifacts to `artifact_index.json` and focused tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -35,12 +36,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add per-level verification predicate fields.
-- [x] Gate smoke verification on the predicate bundle.
-- [x] Extend focused tests.
+- [x] Write projection and mask input arrays.
+- [x] Emit recovery tolerances.
+- [x] Extend artifact index/test coverage.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the Phase 7 verification predicate slice.
+- [x] Commit the smoke input artifact slice.
 
 ### Validation
 
@@ -59,11 +60,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep the richer predicates deterministic and cheap for the smoke path.
-- Do not claim held-out residual support in this slice.
+- Use `.npy` arrays for smoke input artifacts, matching existing synthetic
+  dataset artifacts.
+- Keep recovery tolerances explicit and smoke-specific.
 
 ### Risks
 
-- Risk: parameter update checks are smoke-scale heuristics, not production
-  trust-region acceptance.
-- Mitigation: record the thresholds and measured norms in verification payloads.
+- Risk: the Phase 7 smoke run is not yet a full 128^3 synthetic dataset.
+- Mitigation: persist the same core input artifact classes so the smoke run is
+  benchmark-auditable.

@@ -32,10 +32,12 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_artifact_index(result, expected)
     _assert_summary_rows(result)
     _assert_saved_volume(result)
+    _assert_input_arrays(result)
     _assert_manifest(result)
     _assert_gauge_reports(result)
     _assert_audit_reports(result)
     _assert_residual_metrics(result)
+    _assert_recovery_tolerances(result)
     assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
     assert abs(float(np.mean(result.final_geometry.pose.phi_residual_rad))) < 1.0e-12
 
@@ -85,9 +87,12 @@ def _expected_artifacts() -> set[str]:
         "input_summary_json",
         "mask_summary_json",
         "observability_report_json",
+        "observed_projections_npy",
         "pose_decomposition_csv",
         "pose_params_csv",
+        "projection_mask_npy",
         "projection_stats_json",
+        "recovery_tolerances_json",
         "residual_metrics_csv",
         "run_manifest_json",
         "verification_json",
@@ -120,6 +125,17 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:
     saved_volume = cast("NDArray[np.float32]", np.load(result.artifacts["final_volume_npy"]))
     np.testing.assert_allclose(saved_volume, result.final_volume)
+
+
+def _assert_input_arrays(result: AlternatingSmokeResult) -> None:
+    projections = cast("NDArray[np.float32]", np.load(result.artifacts["observed_projections_npy"]))
+    mask = cast("NDArray[np.bool_]", np.load(result.artifacts["projection_mask_npy"]))
+
+    assert projections.shape == (4, 32, 32)
+    assert projections.dtype == np.float32
+    assert mask.shape == projections.shape
+    assert mask.dtype == np.bool_
+    assert bool(np.all(mask))
 
 
 def _assert_manifest(result: AlternatingSmokeResult) -> None:
@@ -174,6 +190,17 @@ def _assert_residual_metrics(result: AlternatingSmokeResult) -> None:
         metric_rows = list(csv.DictReader(fh))
     assert [row["level_factor"] for row in metric_rows] == ["4", "2", "1"]
     assert metric_rows[0]["parameter_update_small"] == "True"
+
+
+def _assert_recovery_tolerances(result: AlternatingSmokeResult) -> None:
+    payload = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["recovery_tolerances_json"].read_text(encoding="utf-8")),
+    )
+    geometry = cast("dict[str, float]", payload["geometry"])
+    verification = cast("dict[str, bool]", payload["verification"])
+    assert geometry["mean_dx_abs_px_lt"] == 1.0e-10
+    assert verification["gauge_stable"] is True
 
 
 def test_alternating_solver_smoke_is_deterministic(tmp_path: Path) -> None:

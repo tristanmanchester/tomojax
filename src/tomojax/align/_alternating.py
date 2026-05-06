@@ -472,7 +472,10 @@ def _write_artifacts(
         "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
         "pose_params_csv": output_dir / "pose_params.csv",
         "observability_report_json": output_dir / "observability_report.json",
+        "observed_projections_npy": output_dir / "observed_projections.npy",
+        "projection_mask_npy": output_dir / "projection_mask.npy",
         "projection_stats_json": output_dir / "projection_stats.json",
+        "recovery_tolerances_json": output_dir / "recovery_tolerances.json",
         "residual_metrics_csv": output_dir / "residual_metrics.csv",
         "run_manifest_json": output_dir / "run_manifest.json",
         "verification_json": output_dir / "verification.json",
@@ -485,6 +488,9 @@ def _write_artifacts(
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
     _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
     _write_json(artifacts["mask_summary_json"], _mask_summary_payload(mask))
+    _write_array(artifacts["observed_projections_npy"], observed)
+    _write_mask_array(artifacts["projection_mask_npy"], mask)
+    _write_json(artifacts["recovery_tolerances_json"], _recovery_tolerances_payload())
     _write_json(artifacts["gauge_policy_json"], _gauge_policy_payload())
     _write_json(artifacts["gauge_report_json"], _gauge_report_payload(gauge_report))
     _write_json(artifacts["observability_report_json"], _observability_report_payload())
@@ -633,9 +639,12 @@ def _artifact_description(name: str) -> str:
         "input_summary_json": "Synthetic input shape and dtype summary",
         "mask_summary_json": "Projection mask coverage summary",
         "observability_report_json": "Smoke observability placeholder report",
+        "observed_projections_npy": "Observed synthetic smoke projections",
         "pose_decomposition_csv": "Final realised per-view pose decomposition",
         "pose_params_csv": "Final per-view pose parameters",
+        "projection_mask_npy": "Valid projection mask",
         "projection_stats_json": "Observed projection summary statistics",
+        "recovery_tolerances_json": "Smoke recovery tolerance contract",
         "residual_metrics_csv": "Per-level residual metrics",
         "run_manifest_json": "Resolved smoke run manifest",
         "verification_json": "Smoke verification report",
@@ -661,8 +670,17 @@ def _write_config_resolved(path: Path, schedule: ContinuationSchedule) -> None:
 
 
 def _write_final_volume(path: Path, volume: jax.Array) -> None:
+    _write_array(path, volume)
+
+
+def _write_array(path: Path, array: jax.Array) -> None:
     with path.open("wb") as handle:
-        np.save(handle, np.asarray(jax.device_get(volume), dtype=np.float32), allow_pickle=False)
+        np.save(handle, np.asarray(jax.device_get(array), dtype=np.float32), allow_pickle=False)
+
+
+def _write_mask_array(path: Path, mask: jax.Array) -> None:
+    with path.open("wb") as handle:
+        np.save(handle, np.asarray(jax.device_get(mask), dtype=bool), allow_pickle=False)
 
 
 def _run_manifest_payload(
@@ -722,6 +740,23 @@ def _mask_summary_payload(mask: jax.Array) -> dict[str, object]:
         "valid_pixels": valid,
         "total_pixels": total,
         "valid_fraction": float(valid / total),
+    }
+
+
+def _recovery_tolerances_payload() -> dict[str, object]:
+    return {
+        "schema": "tomojax.recovery_tolerances.v1",
+        "profile": "smoke32",
+        "geometry": {
+            "mean_dx_abs_px_lt": 1.0e-10,
+            "mean_phi_abs_rad_lt": 1.0e-10,
+        },
+        "verification": {
+            "loss_nonincreasing": True,
+            "finite_loss": True,
+            "gauge_stable": True,
+            "parameter_update_small": True,
+        },
     }
 
 

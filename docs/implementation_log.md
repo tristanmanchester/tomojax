@@ -2825,3 +2825,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - `parameter_update_small` is a smoke-scale heuristic, not the final
   trust-region update acceptance metric.
+
+## 2026-05-06 — Phase 7 Smoke Input Artifacts
+
+### Summary
+
+- Persisted `observed_projections.npy` and `projection_mask.npy` from the
+  deterministic Phase 7 smoke run.
+- Added `recovery_tolerances.json` with smoke-specific geometry and
+  verification tolerances.
+- Added the new input artifacts to `artifact_index.json` and focused smoke
+  tests.
+
+### Decisions
+
+- Used `.npy` arrays for smoke input artifacts, matching the existing synthetic
+  dataset writer contract.
+- Kept recovery tolerances smoke-specific and explicit; this is not a full
+  128^3 synthetic benchmark manifest yet.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 6 tests.
+- `just imports` passed.
+
+### Risks
+
+- The smoke run now persists benchmark-style input arrays, but the full 128^3
+  synthetic suite still lives in the dataset generator path and is not yet run
+  end-to-end through Phase 7.
