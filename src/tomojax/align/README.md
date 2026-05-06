@@ -50,8 +50,9 @@ Forbidden dependencies:
 - Public imports should come through this package facade.
 - `run_alignment_smoke` is a tiny v2 wiring check. It is not the final
   optimiser.
-- `solve_pose_only_lm` currently optimises only `dx_px` and `dz_px`; the
-  remaining pose DOFs are frozen until the reference projector supports them.
+- `solve_pose_only_lm` currently optimises `phi_residual_rad`, `dx_px`, and
+  `dz_px`; `alpha_rad` and `beta_rad` are frozen until the reference projector
+  supports out-of-plane pose effects.
 - `solve_setup_only_lm` currently optimises only `det_u_px` and active
   `det_v_px`; roll, axis rotation, and theta setup terms remain frozen until
   the reference projector models them.

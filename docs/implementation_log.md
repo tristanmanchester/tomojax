@@ -1017,3 +1017,47 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - Full physical angle/pose sensitivity remains incomplete until the projector
   models axis rotations, detector roll, and laminography geometry.
+
+## 2026-05-06 — Add Phi Residual To Pose-Only LM
+
+### Summary
+
+- Extended `tomojax.align.solve_pose_only_lm` to optimise per-view
+  `phi_residual_rad` along with `dx_px` and `dz_px`.
+- Kept `alpha_rad` and `beta_rad` frozen because the reference projector does
+  not yet model out-of-plane pose effects.
+- Added deterministic tests for phi recovery and gauge canonicalisation into
+  `theta_offset_rad`.
+- Updated the `tomojax.align` README to reflect the active/frozen pose DOFs.
+
+### Decisions
+
+- Reused the existing finite-difference damped LM normal equation for the
+  expanded pose vector. This keeps the implementation consistent with the
+  detector-shift pose solver while the full 5-DOF projector is still being
+  built.
+- Used a more asymmetric 7^3 fixture for phi recovery tests. A smaller earlier
+  fixture had a sign ambiguity for one view.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_pose_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_pose_lm.py tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_pose_lm.py tests/test_forward_reference.py tests/test_vertical_smoke.py tests/test_setup_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 20 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py -q`
+  passed: 143 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Pose-only LM is still not the full 5-DOF solver until alpha/beta effects and
+  trust-region mechanics are implemented.

@@ -43,11 +43,10 @@ def solve_pose_only_lm(
     mask: jax.Array | None = None,
     config: PoseOnlyLMConfig | None = None,
 ) -> PoseOnlyLMResult:
-    """Solve per-view detector shifts with damped Gauss-Newton/LM."""
+    """Solve supported per-view pose DOFs with damped Gauss-Newton/LM."""
     cfg = config or PoseOnlyLMConfig()
     vol = jnp.asarray(volume, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     setup_shift = jnp.asarray([geometry.setup.det_u_px.value, dz_setup], dtype=jnp.float32)
     params = _pack_pose(geometry)
@@ -58,7 +57,7 @@ def solve_pose_only_lm(
         residual = _residual_for_params(
             vol,
             obs,
-            theta,
+            geometry,
             setup_shift,
             params,
             mask=mask,
@@ -73,7 +72,7 @@ def solve_pose_only_lm(
             raw = _residual_for_params(
                 vol,
                 obs,
-                theta,
+                geometry,
                 setup_shift,
                 candidate,
                 mask=mask,
@@ -110,40 +109,50 @@ def solve_pose_only_lm(
         initial_loss=float(initial_loss),
         final_loss=float(final_loss),
         iterations=iterations,
-        active_dofs=("dx_px", "dz_px"),
-        frozen_dofs=("alpha_rad", "beta_rad", "phi_residual_rad"),
+        active_dofs=("phi_residual_rad", "dx_px", "dz_px"),
+        frozen_dofs=("alpha_rad", "beta_rad"),
     )
 
 
 def _pack_pose(geometry: GeometryState) -> jax.Array:
+    phi = jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
     dx = jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32)
     dz = jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32)
-    return jnp.concatenate([dx, dz], axis=0)
+    return jnp.concatenate([phi, dx, dz], axis=0)
 
 
 def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> GeometryState:
     n_views = geometry.pose.n_views
-    dx = np.asarray(params[:n_views], dtype=np.float64)
-    dz = np.asarray(params[n_views:], dtype=np.float64)
-    return GeometryState(setup=geometry.setup, pose=geometry.pose.with_updates(dx_px=dx, dz_px=dz))
+    phi, dx, dz = _split_params(params, n_views=n_views)
+    return GeometryState(
+        setup=geometry.setup,
+        pose=geometry.pose.with_updates(
+            phi_residual_rad=np.asarray(phi, dtype=np.float64),
+            dx_px=np.asarray(dx, dtype=np.float64),
+            dz_px=np.asarray(dz, dtype=np.float64),
+        ),
+    )
 
 
-def _split_params(params: jax.Array) -> tuple[jax.Array, jax.Array]:
-    half = params.shape[0] // 2
-    return params[:half], params[half:]
+def _split_params(params: jax.Array, *, n_views: int) -> tuple[jax.Array, jax.Array, jax.Array]:
+    phi = params[:n_views]
+    dx = params[n_views : 2 * n_views]
+    dz = params[2 * n_views :]
+    return phi, dx, dz
 
 
 def _residual_for_params(
     volume: jax.Array,
     observed: jax.Array,
-    theta: jax.Array,
+    geometry: GeometryState,
     setup_shift: jax.Array,
     params: jax.Array,
     *,
     mask: jax.Array | None,
     sigma: float,
 ) -> jax.Array:
-    dx_pose, dz_pose = _split_params(params)
+    phi_pose, dx_pose, dz_pose = _split_params(params, n_views=geometry.pose.n_views)
+    theta = jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32) + phi_pose
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,
@@ -165,9 +174,9 @@ def _loss_for_params(
     mask: jax.Array | None,
     cfg: PoseOnlyLMConfig,
 ) -> jax.Array:
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dx_pose, dz_pose = _split_params(params)
+    phi_pose, dx_pose, dz_pose = _split_params(params, n_views=geometry.pose.n_views)
+    theta = jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32) + phi_pose
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,

@@ -34,8 +34,8 @@ def test_pose_only_lm_recovers_detector_shift_pose_components() -> None:
     )
 
     assert result.final_loss < result.initial_loss
-    assert result.active_dofs == ("dx_px", "dz_px")
-    assert result.frozen_dofs == ("alpha_rad", "beta_rad", "phi_residual_rad")
+    assert result.active_dofs == ("phi_residual_rad", "dx_px", "dz_px")
+    assert result.frozen_dofs == ("alpha_rad", "beta_rad")
     np.testing.assert_allclose(result.geometry.pose.dx_px, true_pose.dx_px, atol=0.08)
     np.testing.assert_allclose(result.geometry.pose.dz_px, true_pose.dz_px, atol=0.08)
 
@@ -67,8 +67,69 @@ def test_pose_only_lm_canonicalizes_solved_gauges() -> None:
     )
 
 
+def test_pose_only_lm_recovers_phi_residual_pose_component() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    true_pose = nominal.pose.with_updates(
+        phi_residual_rad=np.array([0.08, -0.05], dtype=np.float64),
+    )
+    truth = GeometryState(setup=nominal.setup, pose=true_pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_pose_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=PoseOnlyLMConfig(max_iterations=10, damping=1e-3, delta=1.0),
+    )
+
+    assert result.final_loss < result.initial_loss
+    np.testing.assert_allclose(
+        result.geometry.pose.phi_residual_rad,
+        true_pose.phi_residual_rad,
+        atol=0.025,
+    )
+
+
+def test_pose_only_lm_canonicalizes_solved_phi_gauge() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    true_pose = nominal.pose.with_updates(
+        phi_residual_rad=np.array([0.04, 0.08], dtype=np.float64),
+    )
+    truth = GeometryState(setup=nominal.setup, pose=true_pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_pose_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=PoseOnlyLMConfig(max_iterations=10, damping=1e-3),
+    )
+
+    np.testing.assert_allclose(
+        np.mean(result.canonicalized_geometry.state.pose.phi_residual_rad),
+        0.0,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        result.canonicalized_geometry.state.setup.theta_offset_rad.value
+        + result.canonicalized_geometry.state.pose.phi_residual_rad,
+        result.geometry.setup.theta_offset_rad.value + result.geometry.pose.phi_residual_rad,
+        atol=1e-8,
+    )
+
+
 def _asymmetric_volume() -> jnp.ndarray:
     volume = jnp.zeros((6, 6, 6), dtype=jnp.float32)
     volume = volume.at[1, :, 2].set(1.0)
     volume = volume.at[4, :, 4].set(0.6)
     return volume.at[2, :, 1].set(0.3)
+
+
+def _theta_asymmetric_volume() -> jnp.ndarray:
+    volume = jnp.zeros((7, 7, 7), dtype=jnp.float32)
+    volume = volume.at[1, 2, 1].set(1.0)
+    volume = volume.at[5, 1, 4].set(0.7)
+    volume = volume.at[2, 5, 6].set(0.4)
+    return volume.at[4, 4, 2].set(0.2)
