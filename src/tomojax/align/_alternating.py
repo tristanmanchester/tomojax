@@ -1535,6 +1535,7 @@ def _write_config_resolved(
             validated = sidecar_payload.get("validated")
             n_views = sidecar_payload.get("n_views")
             projections = sidecar_payload.get("projections")
+            consistency = sidecar_payload.get("consistency")
             lines.append(f"synthetic_dataset_sidecars_validated = {str(bool(validated)).lower()}")
             if isinstance(n_views, int | float | str):
                 lines.append(f"synthetic_dataset_sidecar_views = {int(n_views)}")
@@ -1546,6 +1547,12 @@ def _write_config_resolved(
                     lines.append(f"synthetic_dataset_projection_shape = {shape!r}")
                 if isinstance(dtype, str):
                     lines.append(f'synthetic_dataset_projection_dtype = "{dtype}"')
+            if isinstance(consistency, dict):
+                consistency_payload = cast("dict[object, object]", consistency)
+                passed = consistency_payload.get("passed")
+                lines.append(
+                    f"synthetic_dataset_sidecar_consistency_passed = {str(bool(passed)).lower()}"
+                )
     lines.extend((f"level_factors = {list(schedule.level_factors)!r}", ""))
     _ = path.write_text(
         "\n".join(lines),

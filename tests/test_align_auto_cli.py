@@ -182,6 +182,16 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
         "name": "synth128_setup_global_tomo",
         "nuisance_applied_to_projections": False,
         "sidecar_readback": {
+            "consistency": {
+                "checks": {
+                    "geometry_views_match_manifest": True,
+                    "mask_shape_matches_projections": True,
+                    "projection_detector_shape_matches_manifest": True,
+                    "projection_views_match_manifest": True,
+                    "volume_shape_matches_manifest": True,
+                },
+                "passed": True,
+            },
             "corrupted_det_u_px": 0.0,
             "n_views": 4,
             "nominal_det_u_px": 0.0,
@@ -221,6 +231,8 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     projections = cast("dict[str, object]", sidecar_readback["projections"])
     assert projections["shape"] == [4, 40, 40]
     assert projections["dtype"] == "float32"
+    consistency = cast("dict[str, object]", sidecar_readback["consistency"])
+    assert consistency["passed"] is True
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert 'synthetic_dataset_name = "synth128_setup_global_tomo"' in config_text
     assert "synthetic_dataset_nuisance_applied = false" in config_text
@@ -228,6 +240,7 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     assert "synthetic_dataset_sidecar_views = 4" in config_text
     assert "synthetic_dataset_projection_shape = [4, 40, 40]" in config_text
     assert 'synthetic_dataset_projection_dtype = "float32"' in config_text
+    assert "synthetic_dataset_sidecar_consistency_passed = true" in config_text
     nuisance = cast(
         "dict[str, object]",
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
@@ -267,6 +280,8 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     assert sidecar_readback["n_views"] == 4
     projections = cast("dict[str, object]", sidecar_readback["projections"])
     assert projections["shape"] == [4, 48, 48]
+    consistency = cast("dict[str, object]", sidecar_readback["consistency"])
+    assert consistency["passed"] is True
     manifest = cast(
         "dict[str, object]",
         json.loads((out_dir / "run_manifest.json").read_text(encoding="utf-8")),

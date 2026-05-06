@@ -139,6 +139,7 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "volume": sidecars.volume.to_dict(),
         "projections": sidecars.projections.to_dict(),
         "mask": sidecars.mask.to_dict(),
+        "consistency": sidecars.consistency.to_dict(),
     }
 
 

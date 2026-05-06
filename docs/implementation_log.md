@@ -4459,3 +4459,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Structural consistency is necessary but not sufficient for solver ingestion;
   physical projector compatibility remains unverified.
+
+## 2026-05-06 — Phase 8 Align-Auto Synthetic Consistency Readback
+
+### Summary
+
+- Extended `align-auto` sidecar readback payloads with
+  `SyntheticDatasetConsistency`.
+- `verification.json` and `run_manifest.json` now carry the loader's structural
+  consistency checks under `synthetic_dataset.sidecar_readback.consistency`.
+- `config_resolved.toml` now records
+  `synthetic_dataset_sidecar_consistency_passed`.
+- Added focused CLI assertions for clean and nuisance-applied generated
+  sidecars.
+
+### Decisions
+
+- Keep consistency reporting under `sidecar_readback` so it is clearly
+  provenance/readback metadata, not solver-ingestion evidence.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed: 1 file reformatted, 2 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_align_auto_cli.py tests/test_synthetic_datasets.py -q`
+  passed: 16 tests.
+- `just imports` passed.
+
+### Risks
+
+- Structural consistency still does not prove that generated NumPy-smoke
+  projections are compatible with the JAX reference projector.
