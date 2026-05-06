@@ -388,9 +388,7 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     det_v_missing = cast("list[str]", det_v_evidence["missing_evidence"])
     assert "correlation" not in det_v_missing
     assert "validation_improvement_gate_not_available_in_smoke" not in det_v_missing
-    theta_scale_evidence = cast("dict[str, object]", decisions["theta_scale"]["evidence"])
-    assert theta_scale_evidence["correlation"] is None
-    assert theta_scale_evidence["validation_improvement"] is None
+    _assert_theta_scale_missing_evidence(decisions)
     dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
     assert dofs["setup"]["det_u_px"]["status"] == "evaluated"
     assert dofs["setup"]["det_u_px"]["observable"] is True
@@ -407,6 +405,24 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
 
     _assert_failure_report(result)
     _assert_backend_report(result)
+
+
+def _assert_theta_scale_missing_evidence(
+    decisions: dict[str, dict[str, object]],
+) -> None:
+    theta_scale_evidence = cast("dict[str, object]", decisions["theta_scale"]["evidence"])
+    assert theta_scale_evidence["curvature"] is None
+    assert theta_scale_evidence["curvature_passed"] is False
+    assert theta_scale_evidence["correlation"] is None
+    assert theta_scale_evidence["correlation_passed"] is False
+    assert theta_scale_evidence["accepted_step_passed"] is False
+    assert theta_scale_evidence["validation_improvement"] is None
+    assert theta_scale_evidence["validation_improvement_passed"] is False
+    theta_scale_missing = cast("list[str]", theta_scale_evidence["missing_evidence"])
+    assert "curvature" in theta_scale_missing
+    assert "correlation" in theta_scale_missing
+    assert "accepted_step" in theta_scale_missing
+    assert "validation_improvement_gate_not_available_in_smoke" in theta_scale_missing
 
 
 def _assert_failure_report(result: AlternatingSmokeResult) -> None:

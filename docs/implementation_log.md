@@ -5379,3 +5379,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 ### Risks
 
 - The verifier checks report structure, not prose completeness.
+
+## 2026-05-06 — Phase 8 Theta-Scale Missing Evidence
+
+### Summary
+
+- Made the frozen `theta_scale` weak-DOF decision report the same explicit
+  missing evidence categories used by active weak-DOF policy checks.
+- The `observability_report.json` weak-DOF evidence now marks unavailable
+  curvature, correlation, accepted-step, and validation-improvement evidence for
+  `theta_scale`.
+- Added focused alternating smoke assertions for the frozen `theta_scale`
+  evidence while preserving the active `det_v_px` report-only decision.
+
+### Decisions
+
+- Keep `theta_scale` frozen until the reference projector and Schur update have
+  an identifiable scale parameter.
+- Treat this as report clarity only; no optimisation behavior changed.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed: 2 files left unchanged after the final patch.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed.
+
+### Risks
+
+- This clarifies frozen-DOF evidence only; it does not enable `theta_scale`
+  recovery.

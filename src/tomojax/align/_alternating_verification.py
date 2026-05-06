@@ -604,6 +604,7 @@ def _weak_dof_policy_payload(
         curvature=det_v_curvature,
         correlation=det_v_correlation,
         accepted=diagnostics.accepted if diagnostics is not None else False,
+        accepted_available=diagnostics is not None,
         curvature_floor=curvature_floor,
         correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,
@@ -617,6 +618,7 @@ def _weak_dof_policy_payload(
         curvature=None,
         correlation=None,
         accepted=False,
+        accepted_available=False,
         curvature_floor=curvature_floor,
         correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,
@@ -646,6 +648,7 @@ def _weak_dof_decision(
     curvature: float | None,
     correlation: Mapping[str, object] | None,
     accepted: bool,
+    accepted_available: bool,
     curvature_floor: float,
     correlation_abs_max_ceiling: float,
     accepted_step_required: bool,
@@ -655,13 +658,21 @@ def _weak_dof_decision(
 ) -> dict[str, object]:
     curvature_passed = curvature is not None and curvature >= curvature_floor
     correlation_passed = bool(correlation["passed"]) if correlation is not None else False
-    accepted_passed = bool(accepted) if accepted_step_required else True
+    accepted_passed = (
+        bool(accepted)
+        if accepted_step_required and accepted_available
+        else not accepted_step_required
+    )
     validation_improvement_passed = (
         bool(validation_improvement["passed"]) if validation_improvement is not None else False
     )
     missing_evidence = []
+    if curvature is None:
+        missing_evidence.append("curvature")
     if correlation is None:
         missing_evidence.append("correlation")
+    if accepted_step_required and not accepted_available:
+        missing_evidence.append("accepted_step")
     if validation_improvement is None:
         missing_evidence.append(missing_validation)
     if not active:
