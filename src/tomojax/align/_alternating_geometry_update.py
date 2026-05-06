@@ -1,0 +1,74 @@
+"""Geometry-update helpers for alternating smoke runs."""
+# pyright: reportAny=false, reportPrivateUsage=false, reportUnknownMemberType=false
+# pyright: reportUnusedFunction=false
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import jax
+
+from tomojax.align._joint_schur_lm import (
+    JointSchurLMConfig,
+    JointSchurLMResult,
+    solve_joint_schur_lm,
+)
+
+if TYPE_CHECKING:
+    from tomojax.align._alternating_types import GeometryUpdateVolumeSource
+    from tomojax.align._continuation import ContinuationLevel
+    from tomojax.geometry import GaugeReport, GeometryState
+
+
+def _run_geometry_updates(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    mask: jax.Array,
+    level: ContinuationLevel,
+    updates: int,
+    *,
+    sigma: float,
+    fit_gain_offset_nuisance: bool,
+    fit_background_nuisance: bool,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        geometry,
+        mask=mask,
+        config=JointSchurLMConfig(
+            max_iterations=max(1, int(updates)),
+            damping=1.0e-3,
+            delta=level.residual_delta,
+            sigma=sigma,
+            setup_trust_radius=level.trust_radius_px,
+            pose_trust_radius=level.trust_radius_px,
+            parameter_prior_strength=level.prior_strength,
+            fit_gain_offset=fit_gain_offset_nuisance,
+            fit_background_offset=fit_background_nuisance,
+        ),
+    )
+    return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
+
+
+def _geometry_update_volume(
+    *,
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    source: GeometryUpdateVolumeSource,
+) -> jax.Array:
+    if source == "fixed_synthetic_truth":
+        return jax.lax.stop_gradient(truth_volume)
+    if source == "stopped_reconstruction":
+        return jax.lax.stop_gradient(stopped_volume)
+    raise ValueError(f"unknown geometry update volume source {source!r}")
+
+
+def _geometry_updates_for_level(
+    level: ContinuationLevel,
+    coarse_verified: bool,
+) -> tuple[int, str | None]:
+    if level.role == "final" and coarse_verified:
+        return 0, "coarse_verification_passed"
+    return level.geometry_updates, None

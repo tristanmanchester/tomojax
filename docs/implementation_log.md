@@ -3,6 +3,46 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-06 — Split Alternating Solver Private Implementation
+
+### Summary
+
+- Kept `src/tomojax/align/_alternating.py` as the public-compatible facade for
+  `AlternatingAlignmentSolver`, `AlternatingSmokeConfig`,
+  `AlternatingSmokeResult`, and `run_alternating_solver_smoke`.
+- Moved the alternating smoke loop into
+  `src/tomojax/align/_alternating_orchestration.py`.
+- Moved Schur geometry-update helpers into
+  `src/tomojax/align/_alternating_geometry_update.py`.
+- Moved per-level skip, residual-filter summary, and coarse-verification timing
+  helpers into `src/tomojax/align/_alternating_level_helpers.py`.
+
+### Decisions
+
+- Preserved existing private boundaries for artifact writing, verification and
+  report payloads, held-out checks, smoke inputs, and smoke config/result
+  dataclasses instead of renaming those files during the cleanup.
+- Did not add benchmark-ingestion behavior in this slice.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- This was a structural cleanup, so behavior coverage relies on the existing
+  deterministic alternating smoke tests.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary

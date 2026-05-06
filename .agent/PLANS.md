@@ -12,19 +12,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 synthetic benchmark ingestion
-- Goal: validate paired synthetic benchmark report artifacts in the run
-  artifact verifier.
+- Goal: split the alternating solver private implementation before adding more
+  benchmark-ingestion behavior.
 
 ### Scope
 
 - In scope:
-  - Require `benchmark_report.md` when `benchmark_result.json` is present.
-  - Check the report contains the benchmark title and manifest evaluation section.
-  - Add focused verifier coverage for missing benchmark reports.
+  - Keep `tomojax.align._alternating` as the public-compatible facade.
+  - Move the alternating loop into a private orchestration implementation.
+  - Move geometry-update and per-level smoke helpers into cohesive private files.
+  - Preserve existing artifact, verification/report payload, held-out check, and
+    config/result helper boundaries.
 - Out of scope:
-  - Stripe/ring bias fields.
-  - Larger 128^3 benchmark runtime.
-  - Detector-shift volume gauge correction.
+  - New benchmark ingestion behavior.
+  - Artifact-shape polishing.
+  - Public API changes.
   - Further legacy Ruff cleanup.
 - Deep module owner: `tomojax.align`.
 
@@ -37,22 +39,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add optional benchmark-report validation.
-- [x] Add focused verifier coverage for missing benchmark report.
+- [x] Split alternating orchestration from the public facade.
+- [x] Move geometry-update helpers out of the facade.
+- [x] Move level-summary/time-state helpers out of the facade.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [ ] Commit the benchmark report-verifier slice.
+- [x] Commit the align-module cleanup slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
-  passed: 2 files left unchanged.
-- `uv run ruff check src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
+  passed: 4 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
   passed.
-- `uv run basedpyright src/tomojax/verify/_artifacts.py tests/test_verify_artifacts.py`
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/align/_alternating_orchestration.py src/tomojax/align/_alternating_geometry_update.py src/tomojax/align/_alternating_level_helpers.py`
   passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_verify_artifacts.py -q`
-  passed: 4 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -60,12 +63,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Benchmark report validation is optional and only applies when a benchmark
-  result artifact is present.
+- `_alternating.py` remains importable so the existing public facade in
+  `tomojax.align.api` does not change.
 
 ### Risks
 
-- Risk: making benchmark reports mandatory would break non-benchmark smoke
-  runs.
-- Mitigation: require `benchmark_report.md` only when `benchmark_result.json`
-  exists.
+- Risk: moving private helpers could accidentally change smoke-run behavior.
+- Mitigation: preserve existing tests and add focused import/API coverage if
+  needed before running the 32^3 smoke tests.
