@@ -31,6 +31,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
         assert path.exists()
     _assert_artifact_index(result, expected)
     _assert_summary_rows(result)
+    _assert_geometry_trace(result)
     _assert_saved_volume(result)
     _assert_truth_artifacts(result)
     _assert_input_arrays(result)
@@ -99,6 +100,7 @@ def _expected_artifacts() -> set[str]:
         "gauge_report_json",
         "geometry_final_json",
         "geometry_initial_json",
+        "geometry_trace_csv",
         "geometry_true_json",
         "ground_truth_volume_npy",
         "input_summary_json",
@@ -150,6 +152,19 @@ def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
     assert rows[-1]["executed_geometry_updates"] == "0"
     assert rows[0]["loss_nonincreasing"] == "True"
     assert rows[0]["gauge_stable"] == "True"
+
+
+def _assert_geometry_trace(result: AlternatingSmokeResult) -> None:
+    with result.artifacts["geometry_trace_csv"].open("r", newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert [row["level_factor"] for row in rows] == ["4", "2", "1"]
+    assert rows[0]["geometry_updates_requested"] == "1"
+    assert rows[0]["geometry_updates_executed"] == "1"
+    assert rows[0]["parameter_update_norm"] == "1.25"
+    assert rows[0]["verified"] == "True"
+    assert rows[1]["skipped_level"] == "True"
+    assert rows[2]["skipped_geometry"] == "True"
+    assert rows[2]["early_exit_reason"] == "coarse_verification_passed"
 
 
 def _assert_saved_volume(result: AlternatingSmokeResult) -> None:

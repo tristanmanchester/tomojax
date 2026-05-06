@@ -3100,3 +3100,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 ### Risks
 
 - Human-facing PNG previews and plots are still not emitted by the smoke run.
+
+## 2026-05-06 — Phase 7 Geometry Trace Artifact
+
+### Summary
+
+- Added `geometry_trace.csv` to the deterministic Phase 7 smoke artifact
+  bundle.
+- Recorded per-level geometry update trace rows with requested/executed update
+  counts, loss delta, gauge and parameter-update predicates, skip state, and
+  early-exit reason.
+- Indexed the trace artifact and extended smoke tests to verify the deterministic
+  geometry trace rows.
+
+### Decisions
+
+- Derived the trace from `AlternatingLevelSummary` in this slice because the
+  smoke path still uses gauge canonicalisation as its geometry update rather
+  than real inner LM/GN steps.
+- Left per-inner-step trace granularity for the upcoming geometry optimiser
+  implementation.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py tests/test_align_auto_cli.py -q`
+  passed: 8 tests.
+- `just imports` passed.
+
+### Risks
+
+- `geometry_trace.csv` is per continuation level, not yet per accepted/rejected
+  LM/GN step.

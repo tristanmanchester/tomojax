@@ -12,17 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: persist deterministic preview-slice artifacts for the Phase 7 smoke
-  bundle.
+- Goal: persist a deterministic geometry trace for the Phase 7 smoke bundle.
 
 ### Scope
 
 - In scope:
-  - Write central truth, final, and error preview slices under
-    `preview_slices/`.
-  - Record a preview-slice summary JSON with shape, axis, index, and aggregate
-    stats.
-  - Index nested preview-slice artifacts and keep focused validation passing.
+  - Write `geometry_trace.csv` from the existing per-level geometry update
+    summaries.
+  - Include level, role, attempted/executed updates, loss delta, gauge/update
+    predicates, skip state, and early-exit reason.
+  - Index the trace artifact and extend focused smoke tests.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -37,12 +36,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add nested preview-slice artifact paths.
-- [x] Write central truth/final/error preview slices and summary.
+- [x] Add `geometry_trace.csv` artifact path.
+- [x] Write deterministic per-level geometry trace rows.
 - [x] Extend smoke artifact/index tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the preview-slice artifact slice.
+- [x] Commit the geometry trace artifact slice.
 
 ### Validation
 
@@ -61,13 +60,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Keep preview slices as `.npy` arrays for the smoke path so tests can validate
-  deterministic numeric content without image rendering dependencies.
-- Store nested artifact paths relative to the run directory in
-  `artifact_index.json`.
+- Derive geometry trace rows from `AlternatingLevelSummary` in this slice,
+  rather than introducing a second per-update trace model before real LM/GN
+  updates exist.
 
 ### Risks
 
-- Risk: preview image and plot artifacts are still absent.
-- Mitigation: this slice records deterministic preview data first and leaves
-  human-facing rendering for a separate UI/reporting pass.
+- Risk: geometry trace granularity is per level, not per inner LM/GN step.
+- Mitigation: keep the schema explicit and refine granularity when real
+  geometry optimiser steps replace the smoke canonicalisation update.

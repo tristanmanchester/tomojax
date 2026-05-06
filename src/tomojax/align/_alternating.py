@@ -535,6 +535,7 @@ def _write_artifacts(
         "gauge_report_json": output_dir / "gauge_report.json",
         "geometry_final_json": output_dir / "geometry_final.json",
         "geometry_initial_json": output_dir / "geometry_initial.json",
+        "geometry_trace_csv": output_dir / "geometry_trace.csv",
         "geometry_true_json": output_dir / "geometry_true.json",
         "ground_truth_volume_npy": output_dir / "ground_truth_volume.npy",
         "input_summary_json": output_dir / "input_summary.json",
@@ -590,6 +591,7 @@ def _write_artifacts(
     write_pose_decomposition_csv(artifacts["pose_decomposition_csv"], final_geometry)
     _ = write_fista_trace_csv(fista_result, artifacts["fista_trace_csv"])
     _write_alignment_summary(artifacts["alignment_summary_csv"], summaries)
+    _write_geometry_trace(artifacts["geometry_trace_csv"], summaries)
     _write_residual_map_artifacts(
         artifacts["residual_map_raw_npy"],
         artifacts["residual_map_summary_json"],
@@ -642,6 +644,51 @@ def _write_alignment_summary(
         writer.writeheader()
         for summary in summaries:
             writer.writerow(_summary_payload(summary))
+
+
+def _write_geometry_trace(path: Path, summaries: tuple[AlternatingLevelSummary, ...]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "level_factor",
+                "role",
+                "geometry_updates_requested",
+                "geometry_updates_executed",
+                "loss_before",
+                "loss_after",
+                "loss_delta",
+                "loss_nonincreasing",
+                "gauge_stable",
+                "parameter_update_norm",
+                "parameter_update_small",
+                "verified",
+                "skipped_geometry",
+                "skipped_level",
+                "early_exit_reason",
+            ],
+        )
+        writer.writeheader()
+        for summary in summaries:
+            writer.writerow(
+                {
+                    "level_factor": summary.level_factor,
+                    "role": summary.role,
+                    "geometry_updates_requested": summary.geometry_updates,
+                    "geometry_updates_executed": summary.executed_geometry_updates,
+                    "loss_before": summary.loss_before,
+                    "loss_after": summary.loss_after,
+                    "loss_delta": summary.loss_after - summary.loss_before,
+                    "loss_nonincreasing": summary.loss_nonincreasing,
+                    "gauge_stable": summary.gauge_stable,
+                    "parameter_update_norm": summary.parameter_update_norm,
+                    "parameter_update_small": summary.parameter_update_small,
+                    "verified": summary.verified,
+                    "skipped_geometry": summary.skipped_geometry,
+                    "skipped_level": summary.skipped_level,
+                    "early_exit_reason": summary.early_exit_reason,
+                }
+            )
 
 
 def _write_residual_metrics(
@@ -874,6 +921,7 @@ def _artifact_description(name: str) -> str:
         "geometry_corrupted_json": "Corrupted synthetic input geometry state",
         "geometry_final_json": "Final canonical geometry state",
         "geometry_initial_json": "Initial corrupted geometry state",
+        "geometry_trace_csv": "Per-level geometry update trace",
         "geometry_true_json": "True uncorrupted synthetic geometry state",
         "ground_truth_volume_npy": "Ground-truth synthetic smoke volume",
         "input_summary_json": "Synthetic input shape and dtype summary",
