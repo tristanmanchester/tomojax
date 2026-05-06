@@ -12,18 +12,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Nuisance models and weak DOF handling
-- Goal: replace the smoke observability placeholder with Schur-backed weak DOF evidence.
+- Goal: add report-only weak DOF decisions from Schur observability evidence.
 
 ### Scope
 
 - In scope:
-  - Feed the last Schur result into `observability_report.json`.
-  - Record Schur condition/eigenvalue evidence in the report.
-  - Emit explicit `det_v_px` and `theta_scale` weak/frozen statuses.
+  - Add conservative decision entries for `det_v_px` and `theta_scale`.
+  - Base decisions on available Schur curvature and accepted-step evidence.
+  - Record thresholds and reasons in `observability_report.json`.
   - Update focused artifact tests.
 - Out of scope:
   - Auto-activating `det_v_px` or `theta_scale`.
-  - Full correlation-based weak DOF policy.
+  - Correlation and validation-improvement gates beyond available smoke data.
   - Further legacy Ruff cleanup.
 - Deep module owner: `tomojax.align`.
 
@@ -34,12 +34,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Thread Schur result into observability report writer.
-- [x] Replace placeholder weak-mode payload with Schur-backed evidence.
+- [x] Add weak DOF decision helper.
+- [x] Emit decisions and thresholds in observability artifacts.
 - [x] Add focused smoke artifact assertions.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the observability slice.
+- [x] Commit the weak-DOF decision slice.
 
 ### Validation
 
@@ -58,12 +58,11 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Treat this as evidence reporting only. Activation/deactivation decisions for
-  weak DOFs remain a later Phase 8 slice.
+- Decisions are advisory/report-only until setup/pose parameter activation has
+  a full validation-improvement gate.
 
 ### Risks
 
-- Risk: curvature evidence is coarse because supported Schur setup parameters
-  are only theta offset, det_u, and active det_v.
-- Mitigation: report status and reasons explicitly rather than pretending full
-  weak-DOF policy is complete.
+- Risk: smoke data only supports curvature and accepted-step evidence, not the
+  full correlation and validation-improvement policy.
+- Mitigation: mark missing evidence explicitly and keep decisions conservative.

@@ -1695,6 +1695,11 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
             else "no Schur eigenvalue fell below the weak-mode threshold",
         }
     ]
+    weak_dof_policy = _weak_dof_policy_payload(
+        diagnostics=diagnostics,
+        det_v_active=det_v_active,
+        det_v_curvature=min_schur_eigenvalue if det_v_active else None,
+    )
     return {
         "schema": "tomojax.observability_report.v1",
         "status": status,
@@ -1704,6 +1709,7 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
         "schur_condition_number": schur_condition,
         "schur_min_eigenvalue": min_schur_eigenvalue,
         "schur_eigenvalues": [float(value) for value in schur_eigenvalues],
+        "weak_dof_policy": weak_dof_policy,
         "dofs": {
             "setup": {
                 "det_u_px": {
@@ -1775,6 +1781,90 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
         },
         "weak_modes": weak_modes,
         "handled_frozen_dofs": ["theta_scale"] if det_v_active else ["det_v_px", "theta_scale"],
+    }
+
+
+def _weak_dof_policy_payload(
+    *,
+    diagnostics: JointSchurDiagnostics | None,
+    det_v_active: bool,
+    det_v_curvature: float | None,
+) -> dict[str, object]:
+    curvature_floor = 1.0e-8
+    accepted_step_required = True
+    missing_validation = "validation_improvement_gate_not_available_in_smoke"
+    det_v_decision = _weak_dof_decision(
+        name="det_v_px",
+        active=det_v_active,
+        curvature=det_v_curvature,
+        accepted=diagnostics.accepted if diagnostics is not None else False,
+        curvature_floor=curvature_floor,
+        accepted_step_required=accepted_step_required,
+        frozen_reason="det_v_px is frozen in the current geometry",
+        missing_validation=missing_validation,
+    )
+    theta_scale_decision = _weak_dof_decision(
+        name="theta_scale",
+        active=False,
+        curvature=None,
+        accepted=False,
+        curvature_floor=curvature_floor,
+        accepted_step_required=accepted_step_required,
+        frozen_reason="theta_scale is unsupported by the current reference projector",
+        missing_validation=missing_validation,
+    )
+    return {
+        "schema": "tomojax.weak_dof_policy.v1",
+        "mode": "report_only",
+        "thresholds": {
+            "curvature_floor": curvature_floor,
+            "accepted_step_required": accepted_step_required,
+        },
+        "decisions": {
+            "det_v_px": det_v_decision,
+            "theta_scale": theta_scale_decision,
+        },
+    }
+
+
+def _weak_dof_decision(
+    *,
+    name: str,
+    active: bool,
+    curvature: float | None,
+    accepted: bool,
+    curvature_floor: float,
+    accepted_step_required: bool,
+    frozen_reason: str,
+    missing_validation: str,
+) -> dict[str, object]:
+    curvature_passed = curvature is not None and curvature >= curvature_floor
+    accepted_passed = bool(accepted) if accepted_step_required else True
+    if not active:
+        decision = "keep_frozen"
+        reason = frozen_reason
+    elif curvature_passed and accepted_passed:
+        decision = "keep_active_with_prior"
+        reason = "curvature and accepted-step evidence are sufficient for report-only smoke policy"
+    else:
+        decision = "freeze_or_prior_required"
+        reason = "insufficient curvature or accepted-step evidence"
+    return {
+        "name": name,
+        "active": active,
+        "decision": decision,
+        "reason": reason,
+        "evidence": {
+            "curvature": curvature,
+            "curvature_floor": curvature_floor,
+            "curvature_passed": curvature_passed,
+            "accepted_step": accepted,
+            "accepted_step_required": accepted_step_required,
+            "accepted_step_passed": accepted_passed,
+            "correlation": None,
+            "validation_improvement": None,
+            "missing_evidence": ["correlation", missing_validation],
+        },
     }
 
 

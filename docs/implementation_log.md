@@ -3906,3 +3906,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The evidence is limited to supported Schur setup DOFs in the current smoke
   geometry. Full weak-DOF policy still needs correlation and validation
   improvement rules.
+
+## 2026-05-06 — Phase 8 Report-Only Weak DOF Decisions
+
+### Summary
+
+- Added a `weak_dof_policy` block to `observability_report.json`.
+- The report now emits conservative decisions for `det_v_px` and `theta_scale`
+  with thresholds, curvature evidence, accepted-step evidence, and explicit
+  missing evidence fields.
+- `det_v_px` is reported as `keep_active_with_prior` in the current smoke run
+  when Schur curvature and accepted-step evidence pass.
+- `theta_scale` remains `keep_frozen` because it is not yet supported by the
+  reference projector or identifiable-scale policy.
+
+### Decisions
+
+- The policy is report-only. It does not mutate the geometry state or change
+  active DOF selection until correlation and validation-improvement gates exist.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_verify_artifacts.py -q`
+  passed: 7 tests.
+- `just imports` passed.
+
+### Risks
+
+- The smoke report lacks correlation and validation-improvement evidence, so
+  those fields are intentionally marked missing rather than inferred.
