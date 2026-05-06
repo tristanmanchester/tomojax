@@ -1771,3 +1771,36 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Proposed next fix for `just check`: split `_align_summary_parts` first,
   then tackle `_run_alignment_step` and `_build_pose_objective_bundle` as
   separate behavior-preserving decomposition slices.
+
+## 2026-05-06 — Split Pose Alignment Summary Formatting
+
+### Summary
+
+- Split `_align_summary_parts` into smaller helpers for GN, L-BFGS, GD, and
+  alignment-loss formatting.
+- Preserved the existing compact and verbose log message text while removing
+  `_align_summary_parts` from the local complexity blocker list.
+
+### Decisions
+
+- Kept the formatting helpers private to `_pose_stage.py` because they are only
+  used by this pipeline's outer-iteration logging.
+- Split by output branch instead of introducing a formatter object or changing
+  the `OuterStat` payload contract.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_pose_stage.py` now reports five local
+  PLR0912/PLR0915 complexity findings.
+- `uv run ruff format --check src/tomojax/align/_pose_stage.py` passed.
+- `uv run pytest tests/test_align_quick.py tests/test_align_chunking.py -q -k 'log_summary or log_compact or smooth_pose_model or pose_model'`
+  passed: 9 tests, 43 deselected.
+
+### Risks
+
+- `just check` remains blocked by `_pose_stage.py` complexity findings in
+  `_build_pose_objective_bundle`, `_run_alignment_step`, and `align`, followed
+  by legacy import/type-alias findings in `_profiles.py` and
+  `_reconstruction_stage.py`.
+- Proposed next fix for `just check`: split `_run_alignment_step` into
+  optimizer-kind helpers before tackling `_build_pose_objective_bundle`.
