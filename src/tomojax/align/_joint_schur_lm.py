@@ -58,6 +58,9 @@ class JointSchurDiagnostics:
     accepted: bool = False
     current_loss: float = float("nan")
     candidate_loss: float = float("nan")
+    predicted_reduction: float = float("nan")
+    actual_reduction: float = float("nan")
+    reduction_ratio: float | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -79,6 +82,9 @@ class JointSchurDiagnostics:
             "accepted": self.accepted,
             "current_loss": self.current_loss,
             "candidate_loss": self.candidate_loss,
+            "predicted_reduction": self.predicted_reduction,
+            "actual_reduction": self.actual_reduction,
+            "reduction_ratio": self.reduction_ratio,
         }
 
 
@@ -159,6 +165,9 @@ def solve_joint_schur_lm(
         candidate_loss = _loss_for_params(vol, obs, geometry, candidate, mask=mask, cfg=cfg)
         current_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
         accepted = bool(candidate_loss <= current_loss)
+        actual_reduction = float(current_loss - candidate_loss)
+        predicted_reduction = schur.diagnostics.predicted_reduction
+        reduction_ratio = _reduction_ratio(actual_reduction, predicted_reduction)
         params = candidate if accepted else params
         next_damping = adapt_joint_schur_damping(damping, accepted=accepted, config=cfg)
         iterations += 1
@@ -169,6 +178,9 @@ def solve_joint_schur_lm(
             accepted=accepted,
             current_loss=float(current_loss),
             candidate_loss=float(candidate_loss),
+            predicted_reduction=predicted_reduction,
+            actual_reduction=actual_reduction,
+            reduction_ratio=reduction_ratio,
         )
         damping = next_damping
         if float(jnp.linalg.norm(schur.step)) < 1e-5:
@@ -298,6 +310,7 @@ def schur_step_from_jacobian(
     step = raw_step * trust_scale
     dense_step = dense_step_unscaled * trust_scale
     pose_step_matrix = (pose_step * trust_scale).reshape((n_views, pose_dim))
+    predicted_reduction = _predicted_reduction(gradient, hessian, step)
     schur_eigenvalues = _eigvalsh_tuple(schur_matrix)
     diagnostics = JointSchurDiagnostics(
         schur_condition=float(jnp.linalg.cond(schur_matrix)),
@@ -315,6 +328,7 @@ def schur_step_from_jacobian(
         pose_update_max_by_dof=tuple(
             float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
         ),
+        predicted_reduction=predicted_reduction,
     )
     return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
 
@@ -336,6 +350,21 @@ def _trust_scale(
         pose_limit = jnp.asarray(max(float(pose_trust_radius), 0.0), dtype=jnp.float32)
         scale = jnp.minimum(scale, pose_limit / jnp.maximum(pose_norm, 1e-12))
     return scale
+
+
+def _predicted_reduction(
+    gradient: jax.Array,
+    hessian: jax.Array,
+    step: jax.Array,
+) -> float:
+    model_change = jnp.vdot(gradient, step).real + 0.5 * jnp.vdot(step, hessian @ step).real
+    return -float(model_change)
+
+
+def _reduction_ratio(actual_reduction: float, predicted_reduction: float) -> float | None:
+    if abs(predicted_reduction) <= 1e-12:
+        return None
+    return float(actual_reduction / predicted_reduction)
 
 
 def _eigvalsh_tuple(matrix: jax.Array) -> tuple[float, ...]:

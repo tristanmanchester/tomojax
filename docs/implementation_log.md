@@ -1384,6 +1384,17 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
   passed: 149 tests.
 - `just check` failed at `uv run ruff check --fix src tests tools` after
+  `uv run ruff format src tests tools`; current first failures include
+  `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
+  in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
+  findings. Formatter-only churn from this command was reverted outside this
+  reduction-diagnostics slice.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py tests/test_forward_reference.py tests/test_residual_filters.py tests/test_reference_fista.py tests/test_reference_fista_schedule.py tests/test_vertical_smoke.py tests/test_pose_lm.py tests/test_setup_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 149 tests.
+- `just check` failed at `uv run ruff check --fix src tests tools` after
   `uv run ruff format src tests tools`; first current failures include
   `RUF002` in `src/tomojax/__init__.py`, `TC003`/`TID252`/`UP040`/`PLR0912`
   in `src/tomojax/align/_config.py`, and many other transitional legacy Ruff
@@ -1396,6 +1407,50 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - The damping policy is accepted/rejected only; actual/predicted reduction and
   adaptive radius updates remain future Phase 6 work.
+- Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
+  separate milestone instead of mixing repository-wide lint churn into Phase 6
+  numerical solver work.
+
+## 2026-05-06 — Add Joint Schur Reduction Diagnostics
+
+### Summary
+
+- Added predicted reduction diagnostics for the final trust-scaled Schur step
+  using the damped quadratic normal-equation model.
+- Recorded actual candidate reduction from the robust nonlinear objective and
+  an actual/predicted reduction ratio.
+- Extended `JointSchurDiagnostics` and `normal_eq_summary.json` with:
+  - `predicted_reduction`
+  - `actual_reduction`
+  - `reduction_ratio`
+- Added deterministic tests for the quadratic predicted-reduction formula,
+  solver diagnostics, and artifact fields.
+
+### Decisions
+
+- `reduction_ratio` is `None` when the predicted reduction is numerically zero;
+  this occurs at convergence and avoids reporting an unstable ratio.
+- The ratio is diagnostic-only for this slice. Adaptive radius or damping
+  policy based on actual/predicted reduction remains future Phase 6 work.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run ruff format --check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_v2_module_skeleton.py -q`
+  passed: 7 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- Predicted reduction is computed from the current IRLS quadratic model, while
+  actual reduction comes from the robust nonlinear objective. The ratio should
+  be treated as a trust-region diagnostic, not a correctness metric by itself.
 - Proposed next fix for `just check`: continue the legacy Ruff cleanup as a
   separate milestone instead of mixing repository-wide lint churn into Phase 6
   numerical solver work.

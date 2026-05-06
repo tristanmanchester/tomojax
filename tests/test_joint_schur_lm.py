@@ -63,9 +63,16 @@ def test_schur_step_matches_dense_normal_solve() -> None:
         pose_dim=3,
         damping=1e-2,
     )
+    hessian = jacobian.T @ jacobian + jnp.eye(8, dtype=jnp.float32) * 1e-2
+    gradient = jacobian.T @ residual
+    predicted = -float(
+        jnp.vdot(gradient, step.step).real + 0.5 * jnp.vdot(step.step, hessian @ step.step).real
+    )
 
     np.testing.assert_allclose(np.asarray(step.step), np.asarray(step.dense_step), atol=5e-6)
     assert step.diagnostics.dense_step_difference_norm < 7e-6
+    np.testing.assert_allclose(step.diagnostics.predicted_reduction, predicted, atol=1e-7)
+    assert step.diagnostics.predicted_reduction > 0.0
     assert np.isfinite(step.diagnostics.schur_condition)
     assert len(step.diagnostics.global_eigenvalues) == 8
     assert len(step.diagnostics.schur_eigenvalues) == 2
@@ -156,6 +163,12 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     assert result.diagnostics.dense_step_difference_norm < 2e-4
     assert result.diagnostics.accepted is True
     assert result.diagnostics.next_damping <= result.diagnostics.damping
+    assert result.diagnostics.predicted_reduction > 0.0
+    assert result.diagnostics.actual_reduction >= 0.0
+    if result.diagnostics.reduction_ratio is None:
+        assert result.diagnostics.predicted_reduction <= 1e-12
+    else:
+        assert result.diagnostics.reduction_ratio >= 0.0
     canonical = result.canonicalized_geometry.state
     np.testing.assert_allclose(
         canonical.setup.theta_offset_rad.value + canonical.pose.phi_residual_rad,
@@ -214,6 +227,9 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert "accepted" in payload["diagnostics"]
     assert "current_loss" in payload["diagnostics"]
     assert "candidate_loss" in payload["diagnostics"]
+    assert "predicted_reduction" in payload["diagnostics"]
+    assert "actual_reduction" in payload["diagnostics"]
+    assert "reduction_ratio" in payload["diagnostics"]
     assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
     assert len(payload["diagnostics"]["setup_correlation_matrix"]) == 2
 
