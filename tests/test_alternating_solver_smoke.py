@@ -60,6 +60,10 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
     assert mean_dx_abs <= 1.0e-10
     assert mean_phi_abs <= 1.0e-10
     assert recovery["mean_dx_abs_px_limit"] == 1.0e-10
+    volume_recovery = cast("dict[str, float | bool]", result.verification["volume_recovery"])
+    assert volume_recovery["passed"] is True
+    assert cast("float", volume_recovery["nmse"]) <= cast("float", volume_recovery["nmse_limit"])
+    assert cast("float", volume_recovery["rmse"]) >= 0.0
     assert result.levels[0].geometry_updates == 1
     assert result.levels[0].executed_geometry_updates == 1
     assert result.levels[0].residual_filter_kinds == ("lowpass_gaussian",)
@@ -228,8 +232,10 @@ def _assert_recovery_tolerances(result: AlternatingSmokeResult) -> None:
         json.loads(result.artifacts["recovery_tolerances_json"].read_text(encoding="utf-8")),
     )
     geometry = cast("dict[str, float]", payload["geometry"])
+    volume = cast("dict[str, float]", payload["volume"])
     verification = cast("dict[str, bool]", payload["verification"])
     assert geometry["mean_dx_abs_px_lt"] == 1.0e-10
+    assert volume["nmse_lt"] == 10.0
     assert verification["gauge_stable"] is True
 
 

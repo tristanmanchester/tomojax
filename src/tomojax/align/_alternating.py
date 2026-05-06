@@ -241,6 +241,8 @@ def _run_alternating_solver_smoke_impl(
             coarse_verified=coarse_verified,
             true_geometry=true_geometry,
             final_geometry=geometry,
+            truth_volume=truth,
+            final_volume=volume,
             summaries=tuple(summaries),
         ),
     )
@@ -388,9 +390,12 @@ def _verification_payload(
     coarse_verified: bool,
     true_geometry: GeometryState,
     final_geometry: GeometryState,
+    truth_volume: jax.Array,
+    final_volume: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
 ) -> dict[str, object]:
-    recovery = _geometry_recovery_payload(true_geometry, final_geometry)
+    geometry_recovery = _geometry_recovery_payload(true_geometry, final_geometry)
+    volume_recovery = _volume_recovery_payload(truth_volume, final_volume)
     return {
         "schema": "tomojax.alternating_smoke.verification.v1",
         "seed": cfg.seed,
@@ -413,7 +418,8 @@ def _verification_payload(
             "gauge_stability_tolerance": cfg.gauge_stability_tolerance,
             "parameter_update_tolerance": cfg.parameter_update_tolerance,
         },
-        "geometry_recovery": recovery,
+        "geometry_recovery": geometry_recovery,
+        "volume_recovery": volume_recovery,
         "levels": [_summary_payload(summary) for summary in summaries],
     }
 
@@ -450,6 +456,30 @@ def _geometry_recovery_payload(
         "mean_phi_abs_rad_passed": mean_phi_abs <= mean_phi_limit,
         "mean_phi_abs_rad_limit": mean_phi_limit,
         "passed": mean_dx_abs <= mean_dx_limit and mean_phi_abs <= mean_phi_limit,
+    }
+
+
+def _volume_recovery_payload(truth_volume: jax.Array, final_volume: jax.Array) -> dict[str, object]:
+    truth = jnp.asarray(truth_volume, dtype=jnp.float32)
+    final = jnp.asarray(final_volume, dtype=jnp.float32)
+    diff = final - truth
+    mse = jnp.mean(diff * diff)
+    truth_energy = jnp.mean(truth * truth)
+    nmse = float(mse / jnp.maximum(truth_energy, jnp.asarray(1.0e-12, dtype=jnp.float32)))
+    rmse = float(jnp.sqrt(mse))
+    mae = float(jnp.mean(jnp.abs(diff)))
+    tolerances = _recovery_tolerances_payload()["volume"]
+    if not isinstance(tolerances, dict):
+        raise TypeError("volume recovery tolerances must be a mapping")
+    typed_tolerances = cast("dict[str, float]", tolerances)
+    nmse_limit = float(typed_tolerances["nmse_lt"])
+    return {
+        "rmse": rmse,
+        "mae": mae,
+        "nmse": nmse,
+        "nmse_limit": nmse_limit,
+        "nmse_passed": nmse <= nmse_limit,
+        "passed": nmse <= nmse_limit,
     }
 
 
@@ -795,6 +825,9 @@ def _recovery_tolerances_payload() -> dict[str, object]:
         "geometry": {
             "mean_dx_abs_px_lt": 1.0e-10,
             "mean_phi_abs_rad_lt": 1.0e-10,
+        },
+        "volume": {
+            "nmse_lt": 10.0,
         },
         "verification": {
             "loss_nonincreasing": True,

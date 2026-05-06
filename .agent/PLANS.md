@@ -12,16 +12,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Synthetic benchmark foundation / Phase 7 smoke artifacts
-- Goal: record geometry recovery metrics in the Phase 7 deterministic smoke
-  verification report.
+- Goal: record final volume recovery metrics in the Phase 7 deterministic
+  smoke verification report.
 
 ### Scope
 
 - In scope:
-  - Compute final-vs-true smoke geometry recovery metrics after
-    canonicalisation.
-  - Compare those metrics against `recovery_tolerances.json` thresholds.
-  - Record the metrics and pass/fail flags in `verification.json`.
+  - Compute final-vs-truth volume RMSE, MAE, and NMSE.
+  - Compare volume NMSE against a smoke-specific recovery tolerance.
+  - Record the metrics and pass/fail flags in `verification.json` and
+    `recovery_tolerances.json`.
 - Out of scope:
   - Further legacy Ruff cleanup.
   - GPU/Pallas fast paths.
@@ -36,12 +36,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add geometry recovery metric computation.
-- [x] Record recovery pass/fail in verification artifacts.
+- [x] Add volume recovery tolerances.
+- [x] Compute final volume recovery metrics.
 - [x] Extend focused smoke tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the smoke recovery metrics slice.
+- [x] Commit the smoke volume metrics slice.
 
 ### Validation
 
@@ -60,13 +60,12 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Use the same smoke-specific recovery tolerances written to
-  `recovery_tolerances.json`.
-- Keep metrics deterministic and limited to the DOFs represented in the current
-  reference projector.
+- Keep the tolerance loose enough for the one-iteration smoke FISTA path while
+  still recording the metric needed by the benchmark contract.
 
 ### Risks
 
-- Risk: smoke recovery metrics cover only gauge-canonicalized mean pose
-  recovery, not full 5-DOF pose recovery.
-- Mitigation: record the limited metric names explicitly.
+- Risk: one-iteration smoke reconstruction is not intended to produce high
+  volume quality.
+- Mitigation: record metrics for audit now and leave stricter benchmark
+  thresholds for larger schedules.
