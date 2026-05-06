@@ -525,3 +525,50 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   recorded in the Milestone 0 cleanup entry.
 - Geometry state JSON/CSV artifact writing is still missing and should be added
   before optimizer milestones rely on geometry provenance.
+
+## 2026-05-06 — Add Geometry Artifact Serialization
+
+### Summary
+
+- Added versioned geometry setup JSON payloads for `GeometryState`.
+- Added `write_geometry_json` and `read_geometry_json` for
+  `geometry_initial.json` / `geometry_final.json`-compatible artifacts.
+- Added `write_pose_params_csv` and `read_pose_params_csv` for per-view 5-DOF
+  pose arrays.
+- Added `write_pose_decomposition_csv` for realised setup-plus-pose channels:
+  `theta_offset + phi_residual`, `det_u + dx`, and `det_v + dz`.
+- Added `tests/test_geometry_serialization.py` covering JSON/CSV round-trip,
+  contract artifact filenames, schema version, active parameter metadata, and
+  decomposition values.
+
+### Decisions
+
+- Geometry artifact serialization lives in `tomojax.geometry` because these
+  files encode geometry-state contracts. Run-level artifact indexing remains a
+  future `tomojax.verify` responsibility.
+- Pose arrays are stored in CSV artifacts while setup parameter metadata lives
+  in JSON. This matches the v2 artifact contract and keeps per-view arrays easy
+  to inspect.
+
+### Validation
+
+- `uv run ruff check src/tomojax/geometry tests/test_geometry_serialization.py tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py`
+  passed.
+- `uv run basedpyright src/tomojax/geometry tests/test_geometry_serialization.py tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_geometry_serialization.py tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py -q`
+  passed: 8 tests.
+- `uv run ruff format --check src/tomojax/geometry tests/test_geometry_serialization.py tests/test_geometry_gauges.py tests/test_v2_module_skeleton.py`
+  passed.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+- `uv run pytest tests/test_json_utils.py tests/test_manifest.py tests/test_align_checkpoint.py tests/test_axes_io.py tests/test_regression_geometry_io.py tests/test_issue_fix_pr.py tests/test_cli_geometry_build.py tests/test_align_roi.py tests/test_phasecorr.py tests/test_memory.py tests/test_logging.py tests/test_small_module_coverage.py tests/test_v2_module_skeleton.py tests/test_synthetic_datasets.py tests/test_geometry_gauges.py tests/test_geometry_serialization.py -q`
+  passed: 116 tests.
+
+### Risks
+
+- `just check` remains blocked by broad transitional legacy Ruff failures
+  recorded in the Milestone 0 cleanup entry.
+- The serializer does not yet write full run artifact indexes or observability
+  reports. Those remain part of later `tomojax.verify` and optimiser slices.

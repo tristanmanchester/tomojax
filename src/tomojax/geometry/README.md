@@ -19,6 +19,9 @@ datasets, CLI entrypoints, reconstruction, and alignment.
   `GeometryState`
 - Gauge helpers: `canonicalize_geometry_gauges`, `CanonicalizedGeometry`,
   `GaugeReport`, `GaugeTransfer`
+- Artifact helpers: `geometry_state_to_dict`, `geometry_state_from_dict`,
+  `write_geometry_json`, `read_geometry_json`, `write_pose_params_csv`,
+  `read_pose_params_csv`, `write_pose_decomposition_csv`
 
 ## Dependencies
 
@@ -35,9 +38,11 @@ datasets, or CLI modules.
   reconstruction tests.
 - Gauge canonicalisation transfers mean residual pose components into setup
   parameters while preserving realised setup-plus-pose channels.
+- Geometry JSON payloads include a `schema_version` and setup parameter
+  metadata. Pose arrays are carried by CSV artifacts.
 
 ## Tests
 
 Covered by `tests/test_axes_io.py`, `tests/test_regression_geometry_io.py`,
-`tests/test_issue_fix_pr.py`, `tests/test_geometry_gauges.py`, and CLI
-geometry-build tests.
+`tests/test_issue_fix_pr.py`, `tests/test_geometry_gauges.py`,
+`tests/test_geometry_serialization.py`, and CLI geometry-build tests.

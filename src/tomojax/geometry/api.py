@@ -24,10 +24,21 @@ from tomojax.geometry._gauges import (
     GaugeTransfer,
     canonicalize_geometry_gauges,
 )
+from tomojax.geometry._serialization import (
+    GEOMETRY_STATE_SCHEMA_VERSION,
+    geometry_state_from_dict,
+    geometry_state_to_dict,
+    read_geometry_json,
+    read_pose_params_csv,
+    write_geometry_json,
+    write_pose_decomposition_csv,
+    write_pose_params_csv,
+)
 from tomojax.geometry._state import GeometryState, PoseParameters, ScalarParameter, SetupParameters
 
 __all__ = [
     "DISK_VOLUME_AXES",
+    "GEOMETRY_STATE_SCHEMA_VERSION",
     "INTERNAL_VOLUME_AXES",
     "VOLUME_AXES_ATTR",
     "CanonicalizedGeometry",
@@ -42,11 +53,18 @@ __all__ = [
     "canonicalize_geometry_gauges",
     "compute_roi",
     "cylindrical_mask_xy",
+    "geometry_state_from_dict",
+    "geometry_state_to_dict",
     "grid_from_detector_fov",
     "grid_from_detector_fov_cube",
     "grid_from_detector_fov_slices",
     "infer_disk_axes",
     "is_shape_xyz",
     "is_shape_zyx",
+    "read_geometry_json",
+    "read_pose_params_csv",
     "transpose_volume",
+    "write_geometry_json",
+    "write_pose_decomposition_csv",
+    "write_pose_params_csv",
 ]
