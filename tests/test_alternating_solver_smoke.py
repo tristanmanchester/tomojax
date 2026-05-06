@@ -727,6 +727,11 @@ def test_alternating_smoke_can_enable_gain_offset_nuisance(tmp_path: Path) -> No
     )
     diagnostics = cast("dict[str, object]", schur["diagnostics"])
     assert diagnostics["gain_offset_fit"] is True
+    gain_offset_model = cast("dict[str, object]", diagnostics["gain_offset_model"])
+    assert gain_offset_model["schema"] == "tomojax.gain_offset_model.v1"
+    assert len(cast("list[float]", gain_offset_model["gain"])) == 4
+    assert len(cast("list[float]", gain_offset_model["offset"])) == 4
+    assert diagnostics["background_offset_model"] is None
 
 
 def test_alternating_smoke_can_enable_background_nuisance(tmp_path: Path) -> None:
@@ -747,6 +752,11 @@ def test_alternating_smoke_can_enable_background_nuisance(tmp_path: Path) -> Non
     )
     diagnostics = cast("dict[str, object]", schur["diagnostics"])
     assert diagnostics["background_offset_fit"] is True
+    assert diagnostics["gain_offset_model"] is None
+    background_offset_model = cast("dict[str, object]", diagnostics["background_offset_model"])
+    assert background_offset_model["schema"] == "tomojax.background_offset_model.v1"
+    assert len(cast("list[float]", background_offset_model["constant"])) == 4
+    assert len(cast("list[float]", background_offset_model["vertical_gradient"])) == 4
 
 
 def test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume(

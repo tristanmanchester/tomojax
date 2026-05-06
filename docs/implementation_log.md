@@ -158,6 +158,41 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - The recorded nuisance estimates are diagnostic payloads. Automatic escalation
   and weak-DOF decisions still need additional Phase 8 policy work.
 
+## 2026-05-06 — Cover Nuisance Estimates In Smoke Artifacts
+
+### Summary
+
+- Extended alternating smoke tests to assert that `schur_diagnostics.json`
+  contains the fitted gain/offset nuisance model when gain/offset fitting is
+  enabled.
+- Extended alternating smoke tests to assert that `schur_diagnostics.json`
+  contains the fitted background nuisance model when background fitting is
+  enabled.
+- Verified disabled nuisance branches still serialize `None` for the unrelated
+  model payload.
+
+### Decisions
+
+- This slice adds artifact-level coverage for the previous diagnostics payload
+  change without changing solver behavior or artifact schema names.
+
+### Validation
+
+- `uv run ruff format tests/test_alternating_solver_smoke.py` passed.
+- `uv run ruff check tests/test_alternating_solver_smoke.py` passed.
+- `uv run basedpyright tests/test_alternating_solver_smoke.py` passed with 0
+  errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Risks
+
+- The smoke artifact coverage uses the lightning profile for runtime. Broader
+  Phase 8 nuisance policy still needs benchmark-case validation.
+
 ## 2026-05-06 — Milestone 0 Guardrail Preparation
 
 ### Summary

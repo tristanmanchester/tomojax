@@ -12,15 +12,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8 nuisance models and weak DOF handling
-- Goal: record fitted nuisance estimates in Schur diagnostics.
+- Goal: verify fitted nuisance estimates are recorded in run artifacts.
 
 ### Scope
 
 - In scope:
-  - Include fitted gain/offset estimates in joint Schur diagnostics when
-    enabled.
-  - Include fitted background estimates in joint Schur diagnostics when enabled.
-  - Preserve existing geometry-update behavior and artifact schemas.
+  - Add alternating smoke artifact coverage for gain/offset diagnostics.
+  - Add alternating smoke artifact coverage for background diagnostics.
+  - Preserve existing artifact schema and solver behavior.
 - Out of scope:
   - New nuisance solver blocks.
   - Automatic weak-DOF activation changes.
@@ -37,22 +36,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add nuisance estimate payloads to Schur diagnostics.
-- [x] Add focused diagnostics tests.
+- [x] Add artifact-level gain/offset nuisance coverage.
+- [x] Add artifact-level background nuisance coverage.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md`.
-- [x] Commit the nuisance diagnostics slice.
+- [x] Commit the nuisance artifact coverage slice.
 
 ### Validation
 
-- `uv run ruff format src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
-  passed.
-- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
-  passed.
-- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
-  passed.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
-  passed: 8 tests.
+- `uv run ruff format tests/test_alternating_solver_smoke.py` passed.
+- `uv run ruff check tests/test_alternating_solver_smoke.py` passed.
+- `uv run basedpyright tests/test_alternating_solver_smoke.py` passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -60,10 +56,10 @@ and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Diagnostics record the nuisance estimate for the current accepted parameter
-  state rather than each rejected candidate.
+- This slice adds coverage only; the previous solver diagnostics payload is the
+  implementation under test.
 
 ### Risks
 
-- Risk: diagnostics could imply nuisance fitting ran when it was disabled.
-- Mitigation: keep payloads `None` unless the matching fit flag is enabled.
+- Risk: artifact coverage could add runtime by running more smoke profiles.
+- Mitigation: reuse existing lightning nuisance smoke tests.
