@@ -644,7 +644,7 @@ def _artifact_description(name: str) -> str:
         "ground_truth_volume_npy": "Ground-truth synthetic smoke volume",
         "input_summary_json": "Synthetic input shape and dtype summary",
         "mask_summary_json": "Projection mask coverage summary",
-        "observability_report_json": "Smoke observability placeholder report",
+        "observability_report_json": "Schur observability and weak-DOF report",
         "observed_projections_npy": "Observed synthetic smoke projections",
         "plots_summary_json": "Plot-ready convergence summary",
         "pose_decomposition_csv": "Final realised per-view pose decomposition",

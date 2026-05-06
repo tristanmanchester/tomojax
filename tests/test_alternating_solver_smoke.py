@@ -370,7 +370,15 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     det_v_evidence = cast("dict[str, object]", decisions["det_v_px"]["evidence"])
     assert det_v_evidence["curvature_passed"] is True
     assert det_v_evidence["accepted_step_passed"] is True
-    assert det_v_evidence["validation_improvement"] is None
+    assert det_v_evidence["validation_improvement_passed"] is True
+    det_v_validation = cast("dict[str, object]", det_v_evidence["validation_improvement"])
+    assert det_v_validation["kind"] == "schur_actual_reduction"
+    assert float(cast("float", det_v_validation["actual_reduction"])) > 0.0
+    assert det_v_validation["accepted"] is True
+    det_v_missing = cast("list[str]", det_v_evidence["missing_evidence"])
+    assert "validation_improvement_gate_not_available_in_smoke" not in det_v_missing
+    theta_scale_evidence = cast("dict[str, object]", decisions["theta_scale"]["evidence"])
+    assert theta_scale_evidence["validation_improvement"] is None
     dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
     assert dofs["setup"]["det_u_px"]["status"] == "evaluated"
     assert dofs["setup"]["det_u_px"]["observable"] is True

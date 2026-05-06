@@ -11,22 +11,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 7 alternating solver and continuation vertical slice
-- Goal: neutralise the stopped-volume detector-shift gauge enough for sidecar
-  stopped-reconstruction recovery to meet the existing geometry tolerances.
+- Phase: Phase 8 nuisance models and weak DOF handling
+- Goal: replace weak-DOF validation-improvement placeholder evidence with real
+  Schur improvement evidence in the smoke observability policy.
 
 ### Scope
 
 - In scope:
-  - Use the `stopped_volume_gauge` diagnostics to guide the smallest
-    reconstruction/volume gauge correction.
-  - Preserve fixed-truth sidecar Schur recovery as an isolating solver check.
-  - Convert the stopped-reconstruction sidecar contract from explicit recovery
-    gap to passing recovery when the gauge correction works.
+  - Populate weak-DOF policy evidence from Schur actual reduction when
+    diagnostics exist.
+  - Keep inactive/frozen DOFs explicit.
+  - Update focused observability assertions.
 - Out of scope:
   - Stripe/ring bias fields.
   - Larger 128^3 benchmark runtime.
-  - New placeholder artifact/report polish.
+  - Detector-shift volume gauge correction.
   - Further legacy Ruff cleanup.
 - Deep module owner: `tomojax.align`.
 
@@ -39,28 +38,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Prototype a detector-shift gauge correction for the stopped volume.
-- [ ] Add or update focused stopped-reconstruction sidecar recovery assertions.
-- [ ] Run focused validation and `just imports`.
-- [ ] Update `docs/implementation_log.md`.
-- [ ] Commit the stopped-volume gauge correction slice.
+- [x] Add Schur validation-improvement evidence to weak DOF decisions.
+- [x] Update focused observability assertions.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [ ] Commit the weak-DOF evidence slice.
 
 ### Validation
 
-- Pending.
+- `uv run ruff format src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed: 3 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Do not relax recovery tolerances or switch default behavior to fixed truth.
-- Prototype result: integer volume rolls and projection-COM det_u initialisation
-  improve det_u in isolation but either leave det_u outside tolerance or damage
-  theta recovery. Do not commit these as implementation.
+- Do not change weak-DOF decisions in this slice; add evidence only.
 
 ### Risks
 
-- Risk: a detector-shift correction can become synthetic-only registration.
-- Mitigation: constrain changes to geometry/volume gauge handling and verify
-  with projection-domain residuals, not truth-volume registration.
+- Risk: Schur actual reduction is optimisation evidence, not a held-out
+  validation metric.
+- Mitigation: label it as `schur_actual_reduction` and keep held-out validation
+  for a later policy slice.

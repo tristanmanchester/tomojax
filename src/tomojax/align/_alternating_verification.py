@@ -587,6 +587,7 @@ def _weak_dof_policy_payload(
     curvature_floor = 1.0e-8
     accepted_step_required = True
     missing_validation = "validation_improvement_gate_not_available_in_smoke"
+    det_v_validation_improvement = _schur_validation_improvement_payload(diagnostics)
     det_v_decision = _weak_dof_decision(
         name="det_v_px",
         active=det_v_active,
@@ -595,6 +596,7 @@ def _weak_dof_policy_payload(
         curvature_floor=curvature_floor,
         accepted_step_required=accepted_step_required,
         frozen_reason="det_v_px is frozen in the current geometry",
+        validation_improvement=det_v_validation_improvement,
         missing_validation=missing_validation,
     )
     theta_scale_decision = _weak_dof_decision(
@@ -605,6 +607,7 @@ def _weak_dof_policy_payload(
         curvature_floor=curvature_floor,
         accepted_step_required=accepted_step_required,
         frozen_reason="theta_scale is unsupported by the current reference projector",
+        validation_improvement=None,
         missing_validation=missing_validation,
     )
     return {
@@ -630,10 +633,17 @@ def _weak_dof_decision(
     curvature_floor: float,
     accepted_step_required: bool,
     frozen_reason: str,
+    validation_improvement: Mapping[str, object] | None,
     missing_validation: str,
 ) -> dict[str, object]:
     curvature_passed = curvature is not None and curvature >= curvature_floor
     accepted_passed = bool(accepted) if accepted_step_required else True
+    validation_improvement_passed = (
+        bool(validation_improvement["passed"]) if validation_improvement is not None else False
+    )
+    missing_evidence = ["correlation"]
+    if validation_improvement is None:
+        missing_evidence.append(missing_validation)
     if not active:
         decision = "keep_frozen"
         reason = frozen_reason
@@ -656,9 +666,26 @@ def _weak_dof_decision(
             "accepted_step_required": accepted_step_required,
             "accepted_step_passed": accepted_passed,
             "correlation": None,
-            "validation_improvement": None,
-            "missing_evidence": ["correlation", missing_validation],
+            "validation_improvement": validation_improvement,
+            "validation_improvement_passed": validation_improvement_passed,
+            "missing_evidence": missing_evidence,
         },
+    }
+
+
+def _schur_validation_improvement_payload(
+    diagnostics: JointSchurDiagnostics | None,
+) -> dict[str, object] | None:
+    if diagnostics is None:
+        return None
+    actual_reduction = float(diagnostics.actual_reduction)
+    reduction_ratio = diagnostics.reduction_ratio
+    return {
+        "kind": "schur_actual_reduction",
+        "actual_reduction": actual_reduction,
+        "reduction_ratio": None if reduction_ratio is None else float(reduction_ratio),
+        "accepted": bool(diagnostics.accepted),
+        "passed": bool(diagnostics.accepted and actual_reduction > 0.0),
     }
 
 

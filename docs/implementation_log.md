@@ -4718,3 +4718,38 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - The default stopped-reconstruction path still improves projection residual
   but does not meet absolute detector-shift recovery tolerance.
+
+## 2026-05-06 — Phase 8 Weak DOF Validation Evidence
+
+### Summary
+
+- Replaced the active `det_v_px` weak-DOF validation-improvement placeholder in
+  `observability_report.json` with real Schur step evidence.
+- The report now records `schur_actual_reduction`, reduction ratio when
+  available, accepted-step status, and a pass flag for active DOFs with Schur
+  diagnostics.
+- Kept `theta_scale` frozen and explicit; it still reports missing validation
+  evidence because the current reference projector does not support that DOF.
+
+### Decisions
+
+- Keep the weak-DOF policy in `report_only` mode for this slice.
+- Treat Schur actual reduction as optimisation evidence, not held-out validation;
+  correlation and held-out policy gates remain future work.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed: 3 files left unchanged.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py -q`
+  passed: 10 tests.
+- `just imports` passed.
+
+### Risks
+
+- The evidence is still smoke-level Schur reduction, not a held-out weak-DOF
+  acceptance gate.
