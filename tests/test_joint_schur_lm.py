@@ -48,6 +48,9 @@ def test_schur_step_matches_dense_normal_solve() -> None:
     np.testing.assert_allclose(np.asarray(step.step), np.asarray(step.dense_step), atol=5e-6)
     assert step.diagnostics.dense_step_difference_norm < 7e-6
     assert np.isfinite(step.diagnostics.schur_condition)
+    assert len(step.diagnostics.global_eigenvalues) == 8
+    assert len(step.diagnostics.schur_eigenvalues) == 2
+    assert len(step.diagnostics.pose_block_conditions) == 2
 
 
 def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
@@ -126,6 +129,10 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert payload["active_setup_parameters"] == ["theta_offset_rad", "det_u_px"]
     assert payload["active_pose_dofs"] == ["phi_residual_rad", "dx_px", "dz_px"]
     assert "schur_condition" in payload["diagnostics"]
+    assert "global_eigenvalues" in payload["diagnostics"]
+    assert "schur_eigenvalues" in payload["diagnostics"]
+    assert "pose_block_conditions" in payload["diagnostics"]
+    assert len(payload["diagnostics"]["pose_block_conditions"]) == 1
 
 
 def _theta_asymmetric_volume() -> jnp.ndarray:

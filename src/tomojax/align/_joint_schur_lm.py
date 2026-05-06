@@ -37,13 +37,19 @@ class JointSchurDiagnostics:
     setup_update_norm: float
     pose_update_norm: float
     dense_step_difference_norm: float
+    global_eigenvalues: tuple[float, ...] = ()
+    schur_eigenvalues: tuple[float, ...] = ()
+    pose_block_conditions: tuple[float, ...] = ()
 
-    def to_dict(self) -> dict[str, float]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "schur_condition": self.schur_condition,
             "setup_update_norm": self.setup_update_norm,
             "pose_update_norm": self.pose_update_norm,
             "dense_step_difference_norm": self.dense_step_difference_norm,
+            "global_eigenvalues": list(self.global_eigenvalues),
+            "schur_eigenvalues": list(self.schur_eigenvalues),
+            "pose_block_conditions": list(self.pose_block_conditions),
         }
 
 
@@ -80,6 +86,9 @@ def solve_joint_schur_lm(
         setup_update_norm=0.0,
         pose_update_norm=0.0,
         dense_step_difference_norm=0.0,
+        global_eigenvalues=(),
+        schur_eigenvalues=(),
+        pose_block_conditions=(),
     )
     iterations = 0
 
@@ -193,6 +202,7 @@ def schur_step_from_jacobian(
     schur_matrix = h_gg
     schur_rhs = -g_g
     pose_blocks: list[tuple[jax.Array, jax.Array, jax.Array]] = []
+    pose_block_conditions: list[float] = []
     for view in range(n_views):
         start = n_setup + view * pose_dim
         stop = start + pose_dim
@@ -205,6 +215,7 @@ def schur_step_from_jacobian(
         schur_matrix = schur_matrix - h_gp @ inv_hpp_hpg
         schur_rhs = schur_rhs + h_gp @ inv_hpp_gp
         pose_blocks.append((h_pp, h_pg, g_p))
+        pose_block_conditions.append(float(jnp.linalg.cond(h_pp)))
 
     setup_step = jnp.linalg.solve(schur_matrix, schur_rhs)
     pose_steps: list[jax.Array] = []
@@ -219,8 +230,16 @@ def schur_step_from_jacobian(
         setup_update_norm=float(jnp.linalg.norm(setup_step)),
         pose_update_norm=float(jnp.linalg.norm(pose_step)),
         dense_step_difference_norm=float(jnp.linalg.norm(step - dense_step)),
+        global_eigenvalues=_eigvalsh_tuple(hessian),
+        schur_eigenvalues=_eigvalsh_tuple(schur_matrix),
+        pose_block_conditions=tuple(pose_block_conditions),
     )
     return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
+
+
+def _eigvalsh_tuple(matrix: jax.Array) -> tuple[float, ...]:
+    values = jnp.linalg.eigvalsh(matrix)
+    return tuple(float(value) for value in values)
 
 
 def _active_setup_parameters(geometry: GeometryState) -> tuple[str, ...]:

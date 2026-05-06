@@ -48,6 +48,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add `normal_eq_summary.json` artifact writer for joint Schur diagnostics.
 - [x] Add artifact readback test.
 - [x] Re-run validation commands for the artifact contract.
+- [x] Add global/Schur eigenvalues and pose-block condition diagnostics.
+- [x] Re-run validation commands for enriched diagnostics.
 
 ### Validation
 
