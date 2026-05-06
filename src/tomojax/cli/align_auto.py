@@ -58,6 +58,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dataset-out-dir",
         help="Directory for generated synthetic benchmark artifacts. Defaults under --out-dir.",
     )
+    _ = parser.add_argument(
+        "--fit-gain-offset-nuisance",
+        action="store_true",
+        help="Fit per-view gain/offset nuisance during Schur geometry updates.",
+    )
     return parser
 
 
@@ -87,6 +92,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             size=size,
             n_views=int(args.views),
             schedule=reference_continuation_schedule(profile),
+            fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             synthetic_dataset_name=dataset_name,
             synthetic_dataset_artifact_dir=dataset_dir,
         )

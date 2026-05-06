@@ -62,6 +62,7 @@ def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
 
 def _assert_verification_contract(result: AlternatingSmokeResult) -> None:
     assert result.verification["geometry_update_volume_source"] == "stopped_reconstruction"
+    assert result.verification["fit_gain_offset_nuisance"] is False
     assert result.verification["synthetic_dataset"] is None
     verification_summary = cast("dict[str, bool]", result.verification["summary"])
     assert verification_summary["final_reconstruction_valid"] is True
@@ -312,6 +313,7 @@ def _assert_manifest(result: AlternatingSmokeResult) -> None:
     assert manifest["finished_at"] == "deterministic-smoke"
     assert manifest["geometry_model"] == "parallel_tomography_reference"
     assert manifest["geometry_update_volume_source"] == "stopped_reconstruction"
+    assert manifest["fit_gain_offset_nuisance"] is False
     assert "synthetic128_benchmark" not in cast("dict[str, object]", manifest["dataset"])
     assert manifest["backend_requested"] == "jax_reference"
     assert manifest["backend_actual"] == "jax_reference"
@@ -496,4 +498,25 @@ def test_alternating_smoke_records_non_default_profile(tmp_path: Path) -> None:
     config_text = result.artifacts["config_resolved_toml"].read_text(encoding="utf-8")
     assert 'profile = "lightning"' in config_text
     assert 'geometry_update_volume_source = "stopped_reconstruction"' in config_text
+    assert "fit_gain_offset_nuisance = false" in config_text
     assert "level_factors = [4, 2, 1]" in config_text
+
+
+def test_alternating_smoke_can_enable_gain_offset_nuisance(tmp_path: Path) -> None:
+    result = run_alternating_solver_smoke(
+        tmp_path,
+        config=AlternatingSmokeConfig(
+            schedule=reference_continuation_schedule("lightning"),
+            fit_gain_offset_nuisance=True,
+        ),
+    )
+
+    assert result.verification["fit_gain_offset_nuisance"] is True
+    assert result.levels[0].schur_diagnostics is not None
+    assert result.levels[0].schur_diagnostics.gain_offset_fit is True
+    schur = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["schur_diagnostics_json"].read_text(encoding="utf-8")),
+    )
+    diagnostics = cast("dict[str, object]", schur["diagnostics"])
+    assert diagnostics["gain_offset_fit"] is True

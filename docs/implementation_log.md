@@ -3795,3 +3795,40 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 - Gain/offset fitting is recomputed inside finite-difference residual
   evaluation, so this is correctness-first rather than performance-first.
+
+## 2026-05-06 — Phase 8 Align-Auto Gain/Offset Nuisance Toggle
+
+### Summary
+
+- Added `fit_gain_offset_nuisance` to `AlternatingSmokeConfig`.
+- Threaded the option into Schur geometry updates through
+  `JointSchurLMConfig.fit_gain_offset`.
+- Added `--fit-gain-offset-nuisance` to the Phase 7/8 `align-auto` smoke CLI.
+- Recorded the resolved option in `verification.json`, `run_manifest.json`, and
+  `config_resolved.toml`.
+- Added focused smoke and CLI tests proving the opt-in command path emits
+  Schur diagnostics with `gain_offset_fit=true` while the default path remains
+  disabled.
+
+### Decisions
+
+- Kept gain/offset nuisance fitting disabled by default until nuisance-bearing
+  benchmark datasets are loaded directly by the solver path.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py src/tomojax/cli/align_auto.py tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py`
+  passed.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py -q`
+  passed: 9 tests.
+- `just imports` passed.
+
+### Risks
+
+- The default smoke still has no nuisance drift. This slice exposes and records
+  the opt-in path; benchmark ingestion should exercise it with nuisance-bearing
+  synthetic data.
