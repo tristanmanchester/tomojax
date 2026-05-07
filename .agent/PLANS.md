@@ -11,17 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 held-out Schur acceptance gate
-- Goal: prevent stopped-reconstruction Schur updates from being accepted when
-  they reduce training loss but worsen independent held-out projection loss.
+- Phase: Phase 8/9 held-out Schur acceptance CUDA gate
+- Goal: evaluate whether held-out Schur acceptance improves or safely rejects
+  stopped setup-global updates on the realistic 128^3/256-view supported-only
+  gate.
 
 ### Scope
 
 - In scope:
-  - Gate stopped-reconstruction geometry updates with the existing held-out
-    mask before accepting them into the alternating state.
-  - Revert geometry to the pre-update state when held-out residual worsens.
-  - Add focused tests and validation.
+  - Rerun the existing 128^3/256-view supported-only sidecar with held-out
+    Schur acceptance enabled.
+  - Record pass/fail, recovery, residual, NMSE, Schur acceptance, CUDA device,
+    runtime, and peak sampled memory.
+  - Update benchmark notes and implementation log.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -35,7 +37,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
 
 ### Design Sources
 
@@ -46,10 +48,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add held-out Schur acceptance/reversion for stopped reconstruction.
-- [x] Add focused tests for rejection and fixed-truth exemption.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run the held-out Schur acceptance CUDA gate.
+- [x] Extract metrics and compare with the anchored Schur-volume gate.
+- [x] Update benchmark notes and `docs/implementation_log.md`.
+- [x] Run `just imports` and commit the gate summary.
 
 ### Validation
 

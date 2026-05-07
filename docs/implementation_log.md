@@ -3,6 +3,38 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Held-Out Schur CUDA Gate
+
+### Summary
+
+- Reran the 128^3/256-view supported-only `synth128_setup_global_tomo` CUDA gate
+  after adding held-out Schur acceptance for stopped-reconstruction geometry
+  updates.
+- The run selected `cuda:0`, completed in `3:46.25`, peaked at 6075 MiB sampled
+  GPU memory, and wrote artifacts under
+  `.artifacts/phase8_heldout_schur_gate/runs/128_supported_only_256views_heldout_schur_gpu/`.
+- Benchmark status still failed: det_u RMSE `4.131494` px, theta RMSE
+  `0.024615` rad, final residual `1.106979`, volume NMSE `0.299566`, and
+  projection-loss classification `reconstruction_absorbed_geometry`.
+- The held-out guard did not reject the bad trajectory because held-out loss
+  improved slightly at each level. A single held-out view with the same stopped
+  volume is not independent enough to detect this geometry absorption failure.
+- Recorded the result in
+  `docs/benchmark_runs/2026-05-07-phase8-heldout-schur-gate.md`.
+
+### Validation
+
+- `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda
+  CUDA_VISIBLE_DEVICES=0 uv run tomojax-align-auto-smoke ...` completed with
+  exit status 0.
+- `just imports` passed after the gate summary update.
+
+### Remaining Work
+
+- Move to a stronger setup-validation objective or gauge-regularized
+  reconstruction. One-view held-out acceptance does not solve the stopped
+  setup-global recovery blocker.
+
 ## 2026-05-07 — Phase 8 Held-Out Schur Acceptance Gate
 
 ### Summary
