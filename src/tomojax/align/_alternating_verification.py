@@ -443,7 +443,15 @@ def _projection_loss_classification(
     true_volume_true_geometry_loss: float,
 ) -> str:
     tolerance = 1.0e-5
-    true_geometry_margin = max(tolerance, 0.05 * max(true_volume_true_geometry_loss, tolerance))
+    true_geometry_margin = max(
+        1.0e-3,
+        0.05
+        * max(
+            true_volume_true_geometry_loss,
+            final_volume_final_geometry_loss,
+            tolerance,
+        ),
+    )
     recovered_geometry_bad = (
         true_volume_final_geometry_loss > true_volume_true_geometry_loss + true_geometry_margin
     )

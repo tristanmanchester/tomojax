@@ -6443,11 +6443,35 @@ Key artifacts:
   -q` passed: 2 tests.
 - `just imports` passed.
 
+### Refreshed GPU Diagnostics
+
+Reran the 64^3/64-view supported-only setup-global diagnostics on
+`jax_default_backend = "gpu"` and `selected_jax_device = "cuda:0"` with the new
+loss-provenance fields.
+
+| Mode | Status | Criteria | det_u RMSE px | theta RMSE rad | Final residual | Schur train loss | True vol/final geom | True vol/true geom | Classification | Total time s |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth` + pose prior `1e6` | passed | passed | 0.0890679 | 0.00109202 | 1.39905 | 0.000189625 | 0.000809495 | 0 | `independent_projection_losses_consistent` | 75.3539 |
+| `stopped_reconstruction` + pose prior `1e6` | failed | failed | 7.25 | 0.0218166 | 1.05102 | 0.367724 | 0.884522 | 0 | `reconstruction_absorbed_geometry` | 78.2245 |
+
+Artifacts:
+
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_reporting/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_reporting/`
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_reporting.md`
+
+Interpretation:
+
+- Fixed-truth still passes supported setup recovery and its true-volume
+  recovered-geometry loss remains close to the exact true-geometry loss.
+- Stopped-reconstruction still leaves geometry at nominal and has a large
+  true-volume recovered-geometry residual, while the final reconstructed volume
+  prefers the unrecovered geometry. This refresh makes
+  reconstruction/volume-gauge absorption the sharper next blocker.
+
 ### Remaining Work
 
-- Rerun the 64^3/64-view GPU supported-only fixed-truth and
-  stopped-reconstruction diagnostics so the on-disk benchmark artifacts include
-  the new independent-loss fields.
-- Use those refreshed artifacts to decide whether the next fix should target
-  reconstruction/volume gauge handling, Schur low-pass residuals, or the
-  remaining setup/pose gauge coupling.
+- Diagnose why stopped-gradient reconstruction absorbs the supported setup error
+  before the geometry update. The next code slice should compare reconstruction
+  normalization/gauge handling and possibly constrain the volume gauge before
+  Schur, rather than adding more report fields.

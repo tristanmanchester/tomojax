@@ -211,3 +211,24 @@ Compare artifact:
 Interpretation: fixed-truth joint can pass, but stopped-reconstruction does not
 move geometry under the same strong pose-prior settings. The next blocker is
 reconstruction/volume gauge handling or reconstruction absorption of geometry.
+
+## Reporting-Provenance Refresh
+
+After separating Schur training loss from independent all-view projection
+losses, the strong-pose-prior fixed-truth and stopped-reconstruction diagnostics
+were rerun on `cuda:0`.
+
+Runs:
+
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_reporting/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_reporting/`
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_reporting.md`
+
+| Mode | Status | det_u RMSE px | theta RMSE rad | Final residual | Schur train loss | True vol/final geom | True vol/true geom | Classification | Time s |
+|---|---|---:|---:|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth` | passed | 0.0890679 | 0.00109202 | 1.39905 | 0.000189625 | 0.000809495 | 0 | `independent_projection_losses_consistent` | 75.3539 |
+| `stopped_reconstruction` | failed | 7.25 | 0.0218166 | 1.05102 | 0.367724 | 0.884522 | 0 | `reconstruction_absorbed_geometry` | 78.2245 |
+
+Interpretation: the refreshed artifacts confirm that the fixed-truth oracle is
+geometrically consistent while stopped reconstruction is absorbing supported
+setup error into the reconstructed volume/geometry gauge.

@@ -41,9 +41,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Include loss provenance in synthetic benchmark artifacts and markdown.
 - [x] Add focused artifact contract tests.
 - [x] Run focused validation and `just imports`.
-- [ ] Rerun supported-only fixed-truth/stopped-reconstruction diagnostics if the
+- [x] Rerun supported-only fixed-truth/stopped-reconstruction diagnostics if the
   artifact shape change needs fresh benchmark files.
-- [ ] Update docs and commit the reporting-honesty slice.
+- [x] Update docs and commit the refreshed reporting-classification slice.
 
 ### Validation
 
@@ -59,6 +59,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
   -q` passed: 2 tests.
 - `just imports` passed.
+- GPU fixed-truth refresh passed:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_reporting/`.
+- GPU stopped-reconstruction refresh failed as expected:
+  `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_reporting/`.
+- Compare artifact:
+  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_reporting.md`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
@@ -68,9 +74,9 @@ and proposed next fix before stopping.
 - The previous stopped-reconstruction diagnosis relied on `final_loss` fields
   that can mean Schur training loss. This slice makes the benchmark artifacts
   explicit before further solver changes.
-- Fresh GPU artifacts were not rerun in this slice; the code/test change verifies
-  the new artifact contract on CPU temp outputs. Existing GPU artifacts remain
-  valid for solver behavior but do not contain the new loss-provenance fields.
+- Fresh GPU artifacts now include the new loss-provenance fields. Fixed-truth is
+  independently consistent; stopped-reconstruction is classified as
+  `reconstruction_absorbed_geometry`.
 
 ### Risks
 
