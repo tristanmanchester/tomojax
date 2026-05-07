@@ -11,25 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 constrained stopped-reconstruction preview
-- Goal: add an explicit early x-step constraint for stopped-reconstruction
-  alignment so setup-global Schur updates can be evaluated before the preview
-  volume is allowed to absorb geometry.
+- Phase: Phase 8/9 constrained stopped-preview CUDA gate
+- Goal: evaluate the new constrained first stopped-preview policy on the
+  realistic 128^3/256-view supported-only `synth128_setup_global_tomo` gate.
 
 ### Scope
 
 - In scope:
-  - Add a typed alternating-solver policy for the first stopped preview
-    reconstruction.
-  - Wire the policy through `align-auto`, config artifacts, verification
-    payloads, and focused tests.
-  - Validate with focused CPU tests and `just imports`.
+  - Run `align-auto` on the existing 128^3/256-view supported-only sidecar
+    using `--stopped-preview-policy constant_cylindrical_first_level`.
+  - Record CUDA device, runtime, artifacts, geometry recovery, final residual,
+    volume NMSE, and Schur acceptance.
+  - Update benchmark-run notes and `docs/implementation_log.md`.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Changing default benchmark criteria or adding new report fields unrelated
-    to the policy.
+  - Changing default benchmark criteria or adding new report fields.
   - Pose-only solver changes.
   - Running old/current TomoJAX automatically.
   - Parsing non-JSON current artifacts.
@@ -38,7 +36,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
 
 ### Design Sources
 
@@ -49,11 +47,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add the constrained-first-preview policy to config/types/orchestration.
-- [x] Wire the CLI and artifact payloads.
-- [x] Add focused tests.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run the 128^3/256-view stopped constrained-preview CUDA gate.
+- [x] Extract pass/fail, recovery, residual, NMSE, Schur, device, and timing.
+- [x] Update benchmark-run notes and `docs/implementation_log.md`.
+- [x] Run `just imports` and commit the gate summary/artifacts.
 
 ### Validation
 
