@@ -11,25 +11,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 five-case synthetic benchmark classification
-- Goal: record the completed five-case `128^3` CUDA benchmark pass and commit a
-  concise classification summary before starting the next functional slice.
+- Phase: Phase 8/9 stopped-reconstruction preview scale
+- Goal: fix the stopped-reconstruction setup-global failure by normalising the
+  core-adjoint backprojection preview volume so geometry updates do not see a
+  volume that is orders of magnitude larger than the object attenuation scale.
 
 ### Scope
 
 - In scope:
-  - Record the five stopped-reconstruction benchmark artifacts and comparison
-    report path.
-  - Classify each failure as unsupported model term versus solver/reconstruction
-    behavior.
-  - Identify the next highest-impact functional slice.
+  - Normalise `reconstruct_backprojection_reference` by view count and an
+    approximate ray path length through the reconstruction grid.
+  - Add focused reconstruction tests that prevent explosive backprojection
+    scale.
+  - Rerun a setup-global stopped-reconstruction CUDA diagnostic.
+  - Record whether geometry recovery improves versus the five-case baseline.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Implementing the next solver/reconstruction fix in this summary commit.
-- Deep module owner: `tomojax.align` for benchmark behavior and
-  `tomojax.bench`/docs for classification artifacts.
+  - Changing Schur setup/pose policy beyond using the existing staged active
+    DOFs.
+- Deep module owner: `tomojax.recon` for reference preview reconstruction and
+  `tomojax.align` for the stopped-volume diagnostic.
 
 ### Design Sources
 
@@ -40,10 +43,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run all five `128^3` CUDA benchmark cases.
-- [x] Regenerate the synthetic benchmark comparison report.
-- [x] Classify failures in a concise benchmark-run summary.
-- [x] Update `docs/implementation_log.md` and commit the classification summary.
+- [x] Implement backprojection preview normalisation.
+- [x] Add focused reconstruction tests and run validation.
+- [x] Rerun setup-global stopped-reconstruction CUDA diagnostic.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 

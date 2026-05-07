@@ -12,6 +12,7 @@ from tomojax.forward import core_projection_geometry_from_state
 from tomojax.recon._backprojection_accumulation import sum_backproject_views_chunked
 
 if TYPE_CHECKING:
+    from tomojax.forward import CoreProjectionGeometry
     from tomojax.geometry import GeometryState
 
 
@@ -45,4 +46,13 @@ def reconstruct_backprojection_reference(
         detector_shape=(int(proj.shape[1]), int(proj.shape[2])),
     )
     volume = sum_backproject_views_chunked(core, proj)
-    return (volume / jnp.asarray(max(int(proj.shape[0]), 1), dtype=jnp.float32)).astype(jnp.float32)
+    normalisation = jnp.asarray(
+        max(int(proj.shape[0]), 1) * _reference_path_length_voxels(core),
+        dtype=jnp.float32,
+    )
+    return (volume / normalisation).astype(jnp.float32)
+
+
+def _reference_path_length_voxels(core: CoreProjectionGeometry) -> int:
+    grid = core.grid
+    return max(int(grid.nx), int(grid.ny), int(grid.nz), 1)

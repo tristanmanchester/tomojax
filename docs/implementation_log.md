@@ -8207,6 +8207,59 @@ gauge handling for setup-global recovery because it has the cleanest oracle
 split: fixed-truth geometry passes while stopped-reconstruction fails on the
 same realistic scale gate.
 
+## 2026-05-07 — Phase 8/9 Stopped-Reconstruction Preview Scale
+
+### Summary
+
+- Normalised the geometry-aware core-adjoint backprojection preview by view
+  count and an approximate ray path length through the reconstruction grid.
+- This fixes the most obvious stopped-reconstruction scale bug: the setup-global
+  preview volume was previously orders of magnitude larger than the true
+  attenuation volume and FISTA barely changed it.
+- Added a focused reconstruction test assertion to keep the backprojection
+  preview scale bounded relative to projection scale.
+
+### CUDA Evidence
+
+Reran `synth128_setup_global_tomo` at `128^3`, 256 views, `reference` profile,
+`stopped_reconstruction`, `core_trilinear_ray`, `cuda:0`, and preallocation
+disabled.
+
+Artifact:
+
+- `.artifacts/phase8_stopped_recon_scale/128_setup_global_stopped_cuda/`
+
+Comparison against the five-case stopped-reconstruction baseline:
+
+| Metric | Before | After |
+|---|---:|---:|
+| final volume norm | 11197.73 | 87.48 |
+| truth volume norm | 169.95 | 169.95 |
+| volume NMSE | 4261.17 | 0.631 |
+| final residual | 631.88 | 2.737 |
+| `det_u_realized_rmse_px` | 13.76 | 11.50 |
+| `axis_error_rad` | 1.0996 | 0.01343 |
+| `detector_roll_error_rad` | 0.4044 | 0.02065 |
+| `theta_realized_rmse_rad` | 0.11065 | 0.03014 |
+| sampled peak GPU memory | 1317 MiB | 1257 MiB |
+
+The benchmark still fails all four setup-global geometry criteria. The scale
+bug is fixed, but the stopped reconstruction is still not sharp/accurate enough
+for Schur to recover setup geometry; remaining work is reconstruction quality
+and/or gauge handling, not projector memory.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_backprojection_uses_geometry_and_preserves_shape
+  tests/test_reference_fista.py::test_reference_fista_reduces_projection_loss_and_keeps_nonnegative
+  -q` passed: 2 tests in 5.63 seconds.
+- `uv run ruff check src/tomojax/recon/_reference.py
+  tests/test_reference_fista.py` passed.
+- `uv run basedpyright src/tomojax/recon/_reference.py
+  tests/test_reference_fista.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8/9 Pose-Policy Narrowing
 
 ### Summary

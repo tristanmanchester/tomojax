@@ -74,6 +74,7 @@ def test_reference_backprojection_uses_geometry_and_preserves_shape() -> None:
     assert volume.shape == truth.shape
     assert volume.dtype == jnp.float32
     assert float(jnp.max(volume)) > 0.0
+    assert float(jnp.mean(volume)) <= float(jnp.max(projections))
     reprojection = project_parallel_reference(volume, geometry)
     assert reprojection.shape == projections.shape
 
