@@ -454,6 +454,9 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(  # noq
     sidecar_readback = cast("dict[str, object]", synthetic_dataset["sidecar_readback"])
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
+    true_object_motion = cast("dict[str, object]", sidecar_readback["true_object_motion"])
+    assert true_object_motion["has_nonzero_motion"] is True
+    assert float(cast("float", true_object_motion["tx_zero_model_rmse_px"])) > 0.0
     readback_tolerances = cast("dict[str, object]", sidecar_readback["recovery_tolerances"])
     assert readback_tolerances["core_solver"] == "flags_object_motion_suspected"
     observed = cast("NDArray[np.float32]", np.load(out_dir / "observed_projections.npy"))
@@ -486,6 +489,9 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(  # noq
         "synthetic_sidecar_unsupported_dof",
         "smooth_pose_drift",
     ]
+    object_recovery = cast("dict[str, object]", benchmark_result["object_motion_recovery"])
+    assert object_recovery["enabled"] is False
+    assert object_recovery["tx_rmse_px"] == true_object_motion["tx_zero_model_rmse_px"]
     benchmark_report = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
     assert "# Benchmark: synth128_thermal_object_drift" in benchmark_report
     assert "reimagined_align_auto_smoke" in benchmark_report
@@ -655,10 +661,10 @@ def _assert_benchmark_criteria_and_runtime(
         benchmark_result["benchmark_manifest_evaluation_summary"],
     )
     assert criteria_summary == {
-        "failed": 0,
-        "not_evaluated": 1,
+        "failed": 1,
+        "not_evaluated": 0,
         "passed": 1,
-        "status": "partially_evaluated",
+        "status": "failed",
         "total": 2,
     }
     runtime = cast("dict[str, object]", benchmark_result["runtime"])

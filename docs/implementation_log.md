@@ -3,6 +3,39 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8/9 Object-Motion Recovery Criterion Slice
+
+### Summary
+
+- Added object-motion truth summary to `align-auto` synthetic sidecar readback,
+  including tx span, nonzero-motion flag, and zero-model tx RMSE.
+- Added an `object_motion_recovery` benchmark-result payload. Until an
+  operational object-frame motion solver is enabled, it records the zero-model
+  tx RMSE and `enabled=false`.
+- `object_motion_enabled_tx_rmse_px_lt` now evaluates as a real criterion:
+  it fails without an enabled solver and can pass only when an enabled estimate
+  reports tx RMSE below threshold.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  -q` passed: 18 tests in 46.84 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- The criterion is now measurable and honestly fails for the current core
+  solver. A real object-frame motion solver is still required for this
+  criterion to pass on Dataset 4.
+
 ## 2026-05-07 — Phase 8/9 Object-Motion Sidecar API Slice
 
 ### Summary

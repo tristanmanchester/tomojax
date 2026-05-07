@@ -929,6 +929,7 @@ def _benchmark_result_payload(
         final_geometry=final_geometry,
         sidecar_readback=sidecar_readback,
     )
+    object_motion_recovery = _object_motion_recovery_payload(sidecar_readback=sidecar_readback)
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
@@ -937,6 +938,7 @@ def _benchmark_result_payload(
         bad_view_detection=bad_view_detection,
         pose_jump_exclusion=pose_jump_exclusion,
         object_motion_suspicion=object_motion_suspicion,
+        object_motion_recovery=object_motion_recovery,
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -1003,6 +1005,7 @@ def _benchmark_result_payload(
         "bad_view_detection": bad_view_detection,
         "pose_jump_exclusion": pose_jump_exclusion,
         "object_motion_suspicion": object_motion_suspicion,
+        "object_motion_recovery": object_motion_recovery,
         "backend": backend_payload,
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
@@ -1142,6 +1145,28 @@ def _object_motion_suspicion_payload(
     }
 
 
+def _object_motion_recovery_payload(
+    *,
+    sidecar_readback: Mapping[object, object],
+) -> dict[str, object]:
+    truth = sidecar_readback.get("true_object_motion")
+    truth_payload: Mapping[object, object]
+    if isinstance(truth, Mapping):
+        truth_payload = cast("Mapping[object, object]", truth)
+    else:
+        truth_payload = {}
+    zero_rmse = truth_payload.get("tx_zero_model_rmse_px")
+    tx_rmse = float(zero_rmse) if isinstance(zero_rmse, int | float) else None
+    return {
+        "schema": "tomojax.object_motion_recovery.v1",
+        "enabled": False,
+        "estimate_source": None,
+        "tx_rmse_px": tx_rmse,
+        "truth": dict(truth_payload),
+        "reason": "object-frame motion solver is not enabled",
+    }
+
+
 def _smooth_pose_drift_payload(geometry: GeometryState) -> dict[str, object]:
     dx = np.asarray(geometry.pose.dx_px, dtype=np.float64)
     dz = np.asarray(geometry.pose.dz_px, dtype=np.float64)
@@ -1198,6 +1223,7 @@ def _benchmark_manifest_evaluation(
     bad_view_detection: Mapping[str, object] | None = None,
     pose_jump_exclusion: Mapping[str, object] | None = None,
     object_motion_suspicion: Mapping[str, object] | None = None,
+    object_motion_recovery: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
@@ -1209,6 +1235,7 @@ def _benchmark_manifest_evaluation(
             bad_view_detection=bad_view_detection,
             pose_jump_exclusion=pose_jump_exclusion,
             object_motion_suspicion=object_motion_suspicion,
+            object_motion_recovery=object_motion_recovery,
         )
         for name, threshold in criteria.items()
     }
@@ -1224,6 +1251,7 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
     bad_view_detection: Mapping[str, object] | None,
     pose_jump_exclusion: Mapping[str, object] | None,
     object_motion_suspicion: Mapping[str, object] | None,
+    object_motion_recovery: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if name == "backend_policy":
         return _backend_policy_evaluation(threshold=threshold, backend=backend)
@@ -1247,6 +1275,11 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
         return _core_solver_policy_evaluation(
             threshold=threshold,
             object_motion_suspicion=object_motion_suspicion,
+        )
+    if name == "object_motion_enabled_tx_rmse_px_lt":
+        return _object_motion_enabled_tx_rmse_evaluation(
+            threshold=threshold,
+            object_motion_recovery=object_motion_recovery,
         )
     if name in _MISSING_POLICY_CRITERION_REASONS:
         return {
@@ -1283,9 +1316,6 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
 
 _MISSING_POLICY_CRITERION_REASONS = {
     "beats_current_default_nmse": "current-default comparison baseline is not in benchmark_result",
-    "object_motion_enabled_tx_rmse_px_lt": (
-        "object-motion solver metrics are not in benchmark_result"
-    ),
 }
 
 
@@ -1376,6 +1406,45 @@ def _core_solver_policy_evaluation(
         if suspected
         else "no object-motion suspicion evidence recorded",
         "evidence_sources": evidence_sources if isinstance(evidence_sources, list) else [],
+    }
+
+
+def _object_motion_enabled_tx_rmse_evaluation(
+    *,
+    threshold: object,
+    object_motion_recovery: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if not isinstance(threshold, int | float):
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "object-motion tx RMSE threshold is not numeric",
+        }
+    if object_motion_recovery is None:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "object-motion recovery payload is not in benchmark_result",
+        }
+    value = object_motion_recovery.get("tx_rmse_px")
+    enabled = bool(object_motion_recovery.get("enabled"))
+    if not isinstance(value, int | float):
+        return {
+            "status": "failed",
+            "value": None,
+            "threshold": float(threshold),
+            "reason": "object-frame motion solver did not provide tx RMSE",
+        }
+    passed = enabled and float(value) < float(threshold)
+    return {
+        "status": "passed" if passed else "failed",
+        "value": float(value),
+        "threshold": float(threshold),
+        "reason": "object-frame motion tx recovery within tolerance"
+        if passed
+        else "object-frame motion solver is not enabled",
     }
 
 

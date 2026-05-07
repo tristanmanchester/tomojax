@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+import numpy as np
+
 from tomojax.align.api import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
@@ -285,11 +287,34 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
             [],
         ),
         "unsupported_dof_status": sidecars.manifest.get("unsupported_dof_status"),
+        "true_object_motion": _sidecar_object_motion_payload(sidecars),
     }
     detector_grid = sidecars.manifest.get("detector_grid")
     if isinstance(detector_grid, str):
         payload["detector_grid"] = detector_grid
     return payload
+
+
+def _sidecar_object_motion_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, object]:
+    trace = sidecars.true_motion
+    zero = type(trace).zeros(trace.n_views)
+    return {
+        "schema": "tomojax.object_motion_truth.v1",
+        "n_views": trace.n_views,
+        "tx_span_px": float(np.max(trace.tx_obj_px) - np.min(trace.tx_obj_px))
+        if trace.n_views
+        else 0.0,
+        "tx_zero_model_rmse_px": trace.tx_rmse_px(zero) if trace.n_views else 0.0,
+        "has_nonzero_motion": bool(
+            trace.n_views
+            and (
+                np.any(np.abs(trace.tx_obj_px) > 0.0)
+                or np.any(np.abs(trace.ty_obj_px) > 0.0)
+                or np.any(np.abs(trace.tz_obj_px) > 0.0)
+                or np.any(np.abs(trace.rot_obj_z_deg) > 0.0)
+            )
+        ),
+    }
 
 
 def _parse_active_pose_dofs(raw: str) -> tuple[str, ...]:

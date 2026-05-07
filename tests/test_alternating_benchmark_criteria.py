@@ -167,6 +167,37 @@ def test_benchmark_manifest_evaluates_object_motion_suspicion_payload() -> None:
     assert core_solver["evidence_sources"] == ["synthetic_sidecar_unsupported_dof"]
 
 
+def test_benchmark_manifest_fails_object_motion_recovery_without_enabled_solver() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"object_motion_enabled_tx_rmse_px_lt": 1.5},
+        geometry_recovery={},
+        object_motion_recovery={
+            "enabled": False,
+            "tx_rmse_px": 7.0,
+        },
+    )
+
+    recovery = cast("dict[str, object]", evaluation["object_motion_enabled_tx_rmse_px_lt"])
+    assert recovery["status"] == "failed"
+    assert recovery["value"] == 7.0
+    assert recovery["reason"] == "object-frame motion solver is not enabled"
+
+
+def test_benchmark_manifest_passes_object_motion_recovery_when_enabled() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"object_motion_enabled_tx_rmse_px_lt": 1.5},
+        geometry_recovery={},
+        object_motion_recovery={
+            "enabled": True,
+            "tx_rmse_px": 0.75,
+        },
+    )
+
+    recovery = cast("dict[str, object]", evaluation["object_motion_enabled_tx_rmse_px_lt"])
+    assert recovery["status"] == "passed"
+    assert recovery["value"] == 0.75
+
+
 def test_object_motion_suspicion_payload_uses_sidecar_and_smooth_pose() -> None:
     geometry = GeometryState.zeros(5)
     geometry = GeometryState(
