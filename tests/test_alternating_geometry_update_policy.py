@@ -15,6 +15,7 @@ from tomojax.align._alternating_geometry_update import (
     _active_setup_parameters,
     _anchored_geometry_update_volume,
     _det_u_recentering_shift_px,
+    _run_geometry_updates,
 )
 from tomojax.align.api import (
     AlternatingSmokeConfig,
@@ -284,6 +285,71 @@ def test_stopped_preview_policy_is_inactive_for_fixed_truth() -> None:
     assert _effective_preview_initialization(config, level) == "backprojection"
     assert _effective_preview_volume_support(config, level) == "none"
     assert _effective_preview_residual_filter_mode(config, level) == "continuation"
+
+
+def test_setup_only_geometry_update_solver_recovers_setup_without_pose() -> None:
+    volume = _tiny_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    truth_setup = nominal.setup.replace_parameter(
+        "det_u_px",
+        nominal.setup.det_u_px.with_value(0.25),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+    level = reference_continuation_schedule("reference").levels[0]
+
+    geometry, _report, result = _run_geometry_updates(
+        volume,
+        observed,
+        nominal,
+        jnp.ones_like(observed),
+        level,
+        6,
+        sigma=1.0,
+        setup_prior_strength=None,
+        pose_prior_strength=None,
+        active_setup_parameters=("det_u_px",),
+        solver="setup_only_lm",
+        pose_frozen=True,
+        active_pose_dofs=(),
+        fit_gain_offset_nuisance=False,
+        fit_background_nuisance=False,
+    )
+
+    assert result.active_setup_parameters == ("det_u_px",)
+    assert result.active_pose_dofs == ()
+    assert result.diagnostics.accepted is True
+    assert result.final_loss < result.initial_loss
+    np.testing.assert_allclose(geometry.setup.det_u_px.value, 0.25, atol=0.08)
+
+
+def test_setup_only_geometry_update_solver_requires_frozen_pose() -> None:
+    volume = _tiny_asymmetric_volume()
+    geometry = GeometryState.zeros(2)
+    observed = project_parallel_reference(volume, geometry)
+    level = reference_continuation_schedule("reference").levels[0]
+
+    with np.testing.assert_raises_regex(
+        ValueError,
+        "setup_only_lm geometry updates require frozen pose DOFs",
+    ):
+        _ = _run_geometry_updates(
+            volume,
+            observed,
+            geometry,
+            jnp.ones_like(observed),
+            level,
+            1,
+            sigma=1.0,
+            setup_prior_strength=None,
+            pose_prior_strength=None,
+            active_setup_parameters=("det_u_px",),
+            solver="setup_only_lm",
+            pose_frozen=False,
+            active_pose_dofs=(),
+            fit_gain_offset_nuisance=False,
+            fit_background_nuisance=False,
+        )
 
 
 def test_stopped_preview_policy_reuses_first_preview_for_later_geometry_updates() -> None:

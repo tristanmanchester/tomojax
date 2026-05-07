@@ -3,6 +3,42 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8/9 Setup-Only Geometry Update Option
+
+### Summary
+
+- Added a typed `geometry_update_solver` option with `joint_schur` as the
+  default and `setup_only_lm` as a pose-frozen setup-only diagnostic path.
+- Wired the option through `align-auto`, resolved config, run manifest,
+  verification payloads, and benchmark result artifacts.
+- Adapted setup-only LM diagnostics into the existing Schur-shaped
+  geometry-update summary so the alternating loop and artifact writers keep the
+  same public surface.
+- Focused unit coverage verifies setup-only LM recovers a corrupted `det_u_px`
+  setup parameter when pose DOFs are frozen, and rejects non-frozen pose runs.
+- An attempted 4-view `align-auto` smoke with setup-only LM produced a NaN in
+  JSON artifact writing, so the existing 4-view smoke remains on default
+  `joint_schur`; realistic setup-only evidence should come from the 128^3
+  supported-only gate, not the 4-view wiring smoke.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_setup_only_geometry_update_solver_recovers_setup_without_pose
+  tests/test_alternating_geometry_update_policy.py::test_setup_only_geometry_update_solver_requires_frozen_pose
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 3 tests in 38.72 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py src/tomojax/align/api.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-08 — Phase 8 Staged Theta CUDA Gate
 
 ### Summary

@@ -11,11 +11,17 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align._joint_schur_lm import (
+    JointSchurDiagnostics,
     JointSchurLMConfig,
     JointSchurLMResult,
     PoseSchurDof,
     SetupSchurParameter,
     solve_joint_schur_lm,
+)
+from tomojax.align._setup_lm import (
+    SetupOnlyLMConfig,
+    SetupOnlyLMResult,
+    solve_setup_only_lm,
 )
 
 if TYPE_CHECKING:
@@ -37,6 +43,7 @@ def _run_geometry_updates(
     setup_prior_strength: float | None,
     pose_prior_strength: float | None,
     active_setup_parameters: tuple[str, ...],
+    solver: str,
     pose_frozen: bool,
     active_pose_dofs: tuple[str, ...],
     fit_gain_offset_nuisance: bool,
@@ -54,6 +61,26 @@ def _run_geometry_updates(
             active_setup_parameters=setup_parameters,
         )
     )
+    if solver == "setup_only_lm":
+        if not pose_frozen or pose_dofs:
+            raise ValueError("setup_only_lm geometry updates require frozen pose DOFs")
+        result = solve_setup_only_lm(
+            volume,
+            observed,
+            geometry,
+            mask=mask,
+            config=SetupOnlyLMConfig(
+                max_iterations=max(1, int(updates)),
+                damping=1.0e-3,
+                delta=level.residual_delta,
+                sigma=sigma,
+                active_parameters=setup_parameters,
+            ),
+        )
+        adapted = _setup_only_result_as_schur_result(result)
+        return adapted.canonicalized_geometry.state, adapted.canonicalized_geometry.report, adapted
+    if solver != "joint_schur":
+        raise ValueError(f"unknown geometry update solver {solver!r}")
     result = solve_joint_schur_lm(
         volume,
         observed,
@@ -87,6 +114,37 @@ def _run_geometry_updates(
         ),
     )
     return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
+
+
+def _setup_only_result_as_schur_result(result: SetupOnlyLMResult) -> JointSchurLMResult:
+    initial_loss = float(result.initial_loss)
+    final_loss = float(result.final_loss)
+    accepted = final_loss <= initial_loss
+    diagnostics = JointSchurDiagnostics(
+        schur_condition=1.0,
+        setup_update_norm=abs(initial_loss - final_loss),
+        pose_update_norm=0.0,
+        dense_step_difference_norm=0.0,
+        accepted=accepted,
+        current_loss=initial_loss,
+        candidate_loss=final_loss,
+        predicted_reduction=max(initial_loss - final_loss, 0.0),
+        actual_reduction=initial_loss - final_loss,
+        reduction_ratio=1.0 if final_loss < initial_loss else None,
+        residual_filter_kinds=("raw",),
+    )
+    return JointSchurLMResult(
+        geometry=result.geometry,
+        canonicalized_geometry=result.canonicalized_geometry,
+        initial_loss=initial_loss,
+        final_loss=final_loss,
+        iterations=int(result.iterations),
+        active_setup_parameters=result.active_parameters,
+        active_pose_dofs=(),
+        frozen_parameters=result.frozen_parameters,
+        diagnostics=diagnostics,
+        iteration_diagnostics=(diagnostics,),
+    )
 
 
 def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter, ...]:

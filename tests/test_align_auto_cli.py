@@ -628,6 +628,7 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
     assert manifest["variant"] == "supported_only"
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
+    assert 'geometry_update_solver = "joint_schur"' in config_text
     assert "geometry_update_pose_frozen = true" in config_text
     assert "geometry_update_pose_activate_at_level_factor = 1" in config_text
     assert "geometry_update_theta_activate_at_level_factor = 1" in config_text
@@ -650,6 +651,7 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
         json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
     )
     assert benchmark_result["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    assert benchmark_result["geometry_update_solver"] == "joint_schur"
     assert benchmark_result["preview_volume_support"] == "cylindrical"
     assert benchmark_result["preview_initialization"] == "zero"
     assert benchmark_result["preview_tv_scale"] == 0.0

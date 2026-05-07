@@ -164,6 +164,7 @@ def _verification_payload(
         "n_views": cfg.n_views,
         "schedule": schedule.name,
         "geometry_update_volume_source": geometry_update_volume_source,
+        "geometry_update_solver": cfg.geometry_update_solver,
         "geometry_update_active_setup_parameters": list(
             cfg.geometry_update_active_setup_parameters
         ),

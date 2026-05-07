@@ -11,18 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 staged theta CUDA gate
-- Goal: evaluate staged `theta_offset_rad` activation on the realistic
-  128^3/256-view supported-only stopped setup-global gate.
+- Phase: Phase 8/9 setup-only geometry update option
+- Goal: expose the existing core-projector setup-only LM solver inside the
+  alternating smoke path for pose-frozen setup-global diagnostics.
 
 ### Scope
 
 - In scope:
-  - Rerun the existing 128^3/256-view supported-only sidecar with
-    `--geometry-update-theta-activate-at-level-factor 1`.
-  - Combine with the current best preview center-gauge setting.
-  - Record pass/fail, recovery, residual, NMSE, Schur acceptance, CUDA device,
-    runtime, and peak sampled memory.
+  - Add a typed `geometry_update_solver` option for `joint_schur` vs
+    `setup_only_lm`.
+  - Use setup-only LM only for pose-frozen/no-pose-DOF runs.
+  - Preserve existing artifact contracts by adapting setup-only diagnostics into
+    the current geometry-update summary shape.
+  - Add focused tests and validation.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -36,7 +37,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
+- Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
@@ -47,13 +48,29 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run the staged-theta CUDA gate.
-- [x] Extract metrics and compare with the center-gauge gate.
-- [x] Update benchmark notes and `docs/implementation_log.md`.
-- [x] Run `just imports` and commit the gate summary.
+- [x] Add setup-only LM geometry-update option.
+- [x] Wire CLI/config/artifact payloads.
+- [x] Add focused tests.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_setup_only_geometry_update_solver_recovers_setup_without_pose
+  tests/test_alternating_geometry_update_policy.py::test_setup_only_geometry_update_solver_requires_frozen_pose
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 3 tests in 38.72 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py src/tomojax/align/api.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed after the setup-only solver option.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in

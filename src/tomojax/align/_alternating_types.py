@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import GeometryState
 
 GeometryUpdateVolumeSource = Literal["fixed_synthetic_truth", "stopped_reconstruction"]
+GeometryUpdateSolver = Literal["joint_schur", "setup_only_lm"]
 PreviewInitialization = Literal["average_projection", "backprojection", "constant", "zero"]
 PreviewResidualFilterMode = Literal["continuation", "raw"]
 PreviewVolumeSupport = Literal["cylindrical", "none", "spherical"]
@@ -37,6 +38,7 @@ class AlternatingSmokeConfig:
     heldout_residual_tolerance: float = 1.0e-5
     heldout_view_index: int | None = -1
     geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
+    geometry_update_solver: GeometryUpdateSolver = "joint_schur"
     geometry_update_setup_prior_strength: float | None = None
     geometry_update_pose_prior_strength: float | None = None
     geometry_update_pose_frozen: bool = False
