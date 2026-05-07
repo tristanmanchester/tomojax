@@ -3,6 +3,86 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — GPU Memory Diagnostic Pause Summary
+
+### Summary
+
+- Pausing at a diagnostic/report boundary; no new Phase 8 ingestion,
+  report-shape, observability, refactor, or benchmark feature slice is started.
+- The realistic diagnostic target remains `synth128_setup_global_tomo` at
+  64^3/64 views on JAX GPU with nuisance disabled. The 32^3/4-view smoke is
+  wiring/CI coverage only and is not alignment-quality evidence.
+- The current uncommitted laminography metadata work is outside this pause
+  summary and is intentionally not part of this commit.
+
+### Current Best Diagnosis
+
+- The original five-case benchmark failures remain mixed unsupported-geometry
+  and gauge/solver-policy failures, not a single alignment-quality verdict.
+  Detector roll, axis tilt, alpha/beta, and theta scale now have scoped support
+  slices, but laminography, object drift, automatic weak-DOF activation, and
+  scenario-specific classification still need separate work.
+- The realistic setup-global 64^3/64-view ladder initially failed in both
+  `fixed_synthetic_truth` and `stopped_reconstruction`, so the first blocker was
+  setup/pose/theta coupling or geometry convention mapping rather than
+  reconstruction alone.
+- After the core-projector rebaseline and supported-only oracle narrowing,
+  `fixed_synthetic_truth` passes supported-only setup recovery when pose is
+  frozen, strongly prior-constrained, or filtered Schur residuals are used.
+  The best filtered runs recovered det_u and theta to near-zero error on
+  `cuda:0`.
+- Under matching strong-pose-prior settings,
+  `stopped_reconstruction` still failed with det_u RMSE 7.25 px,
+  theta RMSE 0.0218166 rad, Schur train loss about 0.361978, and independent
+  true-volume/final-geometry projection loss about 0.884522. That supports the
+  current interpretation that stopped reconstruction is absorbing geometry
+  error into the reconstructed volume/geometry gauge.
+- The GPU memory regression isolated so far was in the finite-difference Schur
+  Jacobian path: all parameter perturbations were evaluated with a single
+  `jax.vmap`, materialising parameter x view x volume work arrays. The observed
+  failure was a 12.14 GiB allocation shaped like
+  `f32[194,64,64,64,64]`. Projector, backprojector, one FISTA iteration,
+  nuisance fitting, and single Schur updates all completed on the 64-view
+  ladder after finite-difference columns were accumulated sequentially.
+
+### Commands Run
+
+- Component memory probes over 1/4/16/64 views for projector, backprojector,
+  one FISTA iteration, fixed-truth Schur, stopped-volume Schur, and
+  fixed-truth Schur with nuisance.
+- Realistic 64^3/64-view `synth128_setup_global_tomo` runs through existing
+  sidecar ingestion for `fixed_synthetic_truth` and
+  `stopped_reconstruction`.
+- Supported-only oracle refreshes through `tomojax-align-auto-smoke` on
+  JAX GPU, including pose-frozen, strong-pose-prior, staged-pose,
+  zero-mean-pose, reporting-provenance, and filtered-Schur diagnostics.
+- Comparison reports rendered with `tomojax-synthetic-benchmark-compare`.
+- Slice-level validation already recorded in the preceding implementation-log
+  entries: focused CPU `pytest`, `uv run ruff check ...`,
+  `uv run basedpyright ...`, and `just imports`.
+
+### Artifacts Produced
+
+- `.artifacts/phase8_setup_global_gpu_ladder/`
+- `.artifacts/phase8_supported_only_oracle/`
+- `.artifacts/phase8_core_projector/`
+- `docs/benchmark_runs/2026-05-06-phase8-setup-global-gpu-ladder.md`
+- `docs/benchmark_runs/2026-05-07-phase8-core-projector-rebaseline.md`
+- `docs/benchmark_runs/2026-05-07-phase8-supported-only-oracle.md`
+
+### Remaining Open Questions
+
+- Whether broader active setup/pose blocks need chunked Schur accumulation
+  beyond sequential finite-difference columns once more supported DOFs are
+  enabled together.
+- Whether production stopped-reconstruction alignment needs stronger volume
+  gauge constraints, a different preview reconstruction hand-off, anchored or
+  zero-mean pose parameterisation, or staged pose activation before setup and
+  pose can recover together.
+- How each unsupported five-case scenario criterion should be classified after
+  the detector roll, axis tilt, alpha/beta, and theta-scale slices without
+  relaxing geometry tolerances.
+
 ## 2026-05-07 — Phase 8 Theta-Scale Opt-In Setup Slice
 
 ### Summary
