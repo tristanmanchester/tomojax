@@ -3,6 +3,47 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 128^3 Supported-Only Scale Gate
+
+Ran the next realistic laptop-GPU scale gate for supported-only
+`synth128_setup_global_tomo` before further benchmark/provenance cleanup. The
+valid scale-gate dataset is 128^3 with 256 views and nuisance disabled; an
+earlier fixed-truth command accidentally used the smoke CLI default of 4 views
+and is discarded as scale evidence.
+
+- Fixed-truth oracle Schur geometry update on `cuda:0` passed the benchmark
+  manifest geometry criteria at full view count:
+  `det_u_realized_rmse_px=2.28882e-05`,
+  `theta_realized_rmse_rad=4.10218e-06`, `det_v_realized_rmse_px=0`.
+  Peak observed GPU memory was 6071 MB and `/usr/bin/time -v` wall time was
+  2:55.81 with max host RSS 2933348 KB.
+- The top-level fixed-truth `benchmark_result.json` status remains `failed`
+  because the preview reconstruction volume NMSE gate fails
+  (`volume_nmse=4262.16`, final residual 618.138), but the oracle geometry
+  manifest status is `passed`; this was sufficient to run the requested stopped
+  diagnostic.
+- Anchored stopped reconstruction with pose frozen and only `det_u_px` active
+  ran on `cuda:0` against the same sidecar directory. It failed manifest
+  geometry criteria with `det_u_realized_rmse_px=0.594401` against the 0.5 px
+  threshold and `theta_realized_rmse_rad=0.0218166` because theta is frozen in
+  this diagnostic. Volume NMSE was 0.871336, final residual 4.06514, Schur
+  accepted the final update, peak observed GPU memory was 6071 MB, and wall time
+  was 2:45.36 with max host RSS 2775420 KB.
+- Artifacts:
+  `.artifacts/phase8_supported128_scale_gate/datasets/synth128_setup_global_tomo_128_supported_only/`,
+  `.artifacts/phase8_supported128_scale_gate/runs/128_supported_only_256views_fixed_truth_reference_gpu/`,
+  `.artifacts/phase8_supported128_scale_gate/runs/128_supported_only_256views_stopped_anchor_detu_gpu/`,
+  and
+  `.artifacts/phase8_supported128_scale_gate/benchmark_comparison_128_supported_only.md`.
+- Summary recorded in
+  `docs/benchmark_runs/2026-05-07-phase8-128-supported-scale-gate.md`.
+
+Interpretation: the full-view fixed-truth oracle Schur path is not blocked by
+setup/pose/theta convention mapping at 128^3, and the run did not reproduce a
+12 GiB memory blow-up. The stopped anchored run still misses strict detector
+shift recovery, keeping the next blocker on stopped reconstruction/volume gauge
+handling.
+
 ## 2026-05-07 — Phase 8 Missing-Policy Criterion Reason Slice
 
 ### Summary
