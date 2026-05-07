@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import jax
+import numpy as np
 
 from tomojax.align._joint_schur_lm import (
     JointSchurLMConfig,
@@ -43,7 +44,15 @@ def _run_geometry_updates(
     parameter_prior_strength: float | None = None,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
     setup_parameters = _active_setup_parameters(active_setup_parameters)
-    pose_dofs = () if pose_frozen else _active_pose_dofs(active_pose_dofs)
+    pose_dofs = (
+        ()
+        if pose_frozen
+        else _active_pose_dofs(
+            active_pose_dofs,
+            geometry,
+            active_setup_parameters=setup_parameters,
+        )
+    )
     result = solve_joint_schur_lm(
         volume,
         observed,
@@ -79,13 +88,6 @@ def _run_geometry_updates(
     return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
 
 
-def _active_pose_dofs(raw: tuple[str, ...]) -> tuple[PoseSchurDof, ...]:
-    allowed = {"alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"}
-    if any(name not in allowed for name in raw):
-        raise ValueError(f"unsupported active pose DOFs {raw!r}")
-    return cast("tuple[PoseSchurDof, ...]", tuple(raw))
-
-
 def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter, ...]:
     allowed = {
         "axis_rot_x_rad",
@@ -98,7 +100,44 @@ def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter,
     }
     if any(name not in allowed for name in raw):
         raise ValueError(f"unsupported active setup parameters {raw!r}")
-    return cast("tuple[SetupSchurParameter, ...]", tuple(raw))
+    return cast(
+        "tuple[SetupSchurParameter, ...]",
+        tuple(name for name in raw if name != "theta_scale"),
+    )
+
+
+def _active_pose_dofs(
+    raw: tuple[str, ...],
+    geometry: GeometryState,
+    *,
+    active_setup_parameters: tuple[SetupSchurParameter, ...],
+) -> tuple[PoseSchurDof, ...]:
+    allowed = {"alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"}
+    if any(name not in allowed for name in raw):
+        raise ValueError(f"unsupported active pose DOFs {raw!r}")
+    if _is_global_setup_block(active_setup_parameters) and not _any_pose_signal(geometry, raw):
+        return ()
+    active = tuple(
+        name
+        for name in raw
+        if name not in {"alpha_rad", "beta_rad"} or _pose_dof_has_signal(geometry, name)
+    )
+    return cast("tuple[PoseSchurDof, ...]", active)
+
+
+def _is_global_setup_block(active_setup_parameters: tuple[SetupSchurParameter, ...]) -> bool:
+    return {"detector_roll_rad", "axis_rot_x_rad", "axis_rot_y_rad"}.issubset(
+        set(active_setup_parameters)
+    )
+
+
+def _any_pose_signal(geometry: GeometryState, names: tuple[str, ...]) -> bool:
+    return any(_pose_dof_has_signal(geometry, name) for name in names)
+
+
+def _pose_dof_has_signal(geometry: GeometryState, name: str) -> bool:
+    values = np.asarray(getattr(geometry.pose, name), dtype=np.float64)
+    return bool(np.max(np.abs(values)) > 1.0e-12)
 
 
 def _setup_trust_radius(

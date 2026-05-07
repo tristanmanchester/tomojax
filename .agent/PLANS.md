@@ -11,27 +11,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 streamed Schur runtime follow-up
-- Goal: keep the low-memory Schur normal-equation path from the previous slice,
-  but batch/JIT view-local reductions so realistic `128^3` diagnostics are not
-  dominated by Python dispatch.
+- Phase: Phase 8/9 setup-global Schur staging policy
+- Goal: turn the existing weak-DOF observability evidence into the first
+  functional geometry-update staging rule needed by the realistic setup-global
+  benchmark: keep `theta_scale` frozen until an identifiable scale policy exists
+  and avoid activating zero-initialized per-view tilt pose DOFs that can absorb
+  global axis/roll recovery.
 
 ### Scope
 
 - In scope:
-  - Replace Python per-view/per-parameter Schur accumulation with a JAX-scanned
-    view contribution.
-  - Preserve low-memory local Jacobian materialisation only within one view.
-  - Validate against the dense Schur reference on small cases.
-  - Rerun a focused CUDA diagnostic and record runtime/memory.
-  - Update docs/logs and commit the runtime slice.
+  - Filter `theta_scale` out of alternating-loop Schur setup updates while
+    preserving explicit low-level Schur solver support.
+  - Filter `alpha_rad`/`beta_rad` out of alternating-loop pose updates when the
+    current pose has no nonzero tilt signal to update.
+  - Add focused tests for the private align policy and preserve direct Schur
+    theta-scale coverage.
+  - Rerun a focused CUDA diagnostic that previously failed because requested
+    active DOFs over-parameterised the setup-global case.
+  - Update docs/logs and commit the staging slice.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-- Deep module owner: `tomojax.forward` for projector memory behaviour,
-  `tomojax.recon` for reconstruction/backprojection, and `tomojax.align` for
-  Schur geometry-update accumulation.
+  - Replacing this staging rule with a final theta-scale identifiability model.
+  - Nuisance, bad-view/jump, object-drift, or backend fast-path feature work.
+- Deep module owner: `tomojax.align` for alternating Schur geometry-update
+  policy.
 
 ### Design Sources
 
@@ -42,10 +48,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Batch/JIT streamed Schur normal-equation accumulation.
-- [x] Run focused Schur/recon tests, type/lint checks, and `just imports`.
-- [x] Run a CUDA diagnostic with preallocation disabled.
-- [x] Update `docs/implementation_log.md` and commit the runtime slice.
+- [x] Implement alternating-loop Schur active-DOF filtering.
+- [x] Add focused tests and preserve direct solver theta-scale coverage.
+- [x] Run focused CPU validation and `just imports`.
+- [x] Rerun the CUDA setup-global fixed-truth diagnostic with the previously
+      requested active DOFs.
+- [x] Update `docs/implementation_log.md` and commit the staging slice.
 
 ### Validation
 
@@ -82,6 +90,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   with peak sampled GPU memory 735 MiB.
 - 128^3/256-view full-5DOF fixed-truth CUDA probe completed in about 253
   seconds with peak sampled GPU memory 1265 MiB.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  -q` passed: 5 tests in 9.67 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 49.91 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed after the Schur staging policy update.
+- CUDA setup-global fixed-truth rerun with `theta_scale` and all five pose DOFs
+  requested resolved to active setup-only Schur updates, passed all 4/4 manifest
+  geometry criteria, and peaked at 1259 MiB sampled GPU memory. Artifact:
+  `.artifacts/phase8_setup_staging_policy/128_setup_global_policy_filtered_setup_only_fixed_truth_cuda/`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.

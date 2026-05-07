@@ -8022,3 +8022,79 @@ Artifacts:
 - `uv run basedpyright src/tomojax/align/_joint_schur_lm.py
   src/tomojax/forward/_filters.py tests/test_joint_schur_lm.py` passed with
   0 errors, 0 warnings, and 0 notes.
+
+## 2026-05-07 — Phase 8/9 Setup-Global Schur Staging Policy
+
+### Summary
+
+- Made the existing `theta_scale` weak-DOF policy functional in the alternating
+  Schur loop: callers may still request `theta_scale`, and the low-level Schur
+  solver still supports explicit theta-scale tests, but the alternating
+  benchmark path keeps it frozen until an identifiable scale policy exists.
+- Added a setup-global staging rule for the alternating Schur block: when the
+  active setup block includes detector roll plus both axis tilt parameters and
+  the current pose has no nonzero pose signal, the per-view pose block is kept
+  frozen. This prevents zero-initialized per-view pose from absorbing global
+  axis/roll/theta recovery in `synth128_setup_global_tomo`.
+- Preserved the default 32^3 alternating smoke behavior: the smoke artifact test
+  still records active `phi_residual_rad`, `dx_px`, and `dz_px` pose DOFs for
+  the small deterministic case.
+
+### GPU Evidence
+
+Reran the previously failing realistic setup-global diagnostic on `cuda:0` with
+JAX GPU, preallocation disabled, `core_trilinear_ray`, fixed synthetic truth,
+and the intentionally overcomplete requested DOF set:
+
+```text
+--size 128 --views 256
+--synthetic-dataset synth128_setup_global_tomo
+--apply-synthetic-nuisance
+--geometry-update-volume-source fixed_synthetic_truth
+--geometry-update-active-setup-parameters theta_offset_rad,det_u_px,detector_roll_rad,axis_rot_x_rad,axis_rot_y_rad,theta_scale
+--geometry-update-active-pose-dofs alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px
+--geometry-update-pose-activate-at-level-factor 4
+```
+
+Artifacts:
+
+- `.artifacts/phase8_setup_staging_policy/128_setup_global_policy_filtered_setup_only_fixed_truth_cuda/`
+- Prior comparison probe before full pose freezing:
+  `.artifacts/phase8_setup_staging_policy/128_setup_global_policy_filtered_full5_fixed_truth_cuda/`
+
+Resolved Schur block and recovery:
+
+| Metric | Result |
+|---|---:|
+| selected JAX device | `cuda:0` |
+| active setup in Schur | `theta_offset_rad, det_u_px, detector_roll_rad, axis_rot_x_rad, axis_rot_y_rad` |
+| active pose in Schur | none |
+| `theta_scale` observability | frozen |
+| manifest geometry criteria | 4 passed, 0 failed |
+| `axis_error_rad` | `8.667108985656071e-06` |
+| `det_u_realized_rmse_px` | `6.29425048828125e-05` |
+| `detector_roll_error_rad` | `6.064394824352101e-06` |
+| `theta_realized_rmse_rad` | `5.62641633505575e-06` |
+| sampled peak GPU memory | 1259 MiB |
+
+The benchmark result top-level status remains `failed` because the existing
+projection-residual and nuisance-residual gates warn on the reconstruction path
+(`projection_residual_improvement`, `nuisance_residual_structure`). The
+setup-global geometry manifest criteria pass, which is the intended gate for
+this slice.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  -q` passed: 5 tests in 9.67 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 49.91 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
