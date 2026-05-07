@@ -8260,6 +8260,52 @@ and/or gauge handling, not projector memory.
   tests/test_reference_fista.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
+## 2026-05-07 — Phase 8/9 Setup-Global Preview Iteration Diagnosis
+
+### Summary
+
+Investigated whether the stopped-reconstruction setup-global failure is simply
+an underconverged preview volume or whether the reconstruction is absorbing
+geometry error before Schur. The probe reused the existing realistic
+`synth128_setup_global_tomo` sidecar at `128^3`, 256 views, `core_trilinear_ray`,
+`stopped_reconstruction`, and `cuda:0`, varying only reference FISTA step size
+and preview iterations.
+
+Artifact:
+
+- `.artifacts/phase8_iteration_probe/setup_global_iteration_probe.csv`
+
+Results:
+
+| Step | Iterations | FISTA loss | Raw loss | Volume NMSE | det_u RMSE px | theta RMSE rad | roll err rad | axis err rad | Schur loss | Accepted |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|
+| 100 | 8 | 1.6968 | 1.6368 | 0.577 | 14.50 | 0.02182 | 0.01134 | 0.00944 | 1.6368 | no |
+| 100 | 32 | 0.7770 | 0.7767 | 0.619 | 13.26 | 0.03929 | 0.00984 | 0.01042 | 0.7430 | no |
+| 250 | 8 | 0.9684 | 0.9376 | 0.589 | 13.84 | 0.02182 | 0.00751 | 0.01619 | 0.9259 | no |
+| 250 | 32 | 0.7616 | 0.7615 | 0.629 | 13.25 | 0.03845 | 0.01298 | 0.01311 | 0.7284 | yes |
+
+The higher-iteration points reduce projection loss and, at step 250 with 32
+iterations, Schur accepts the candidate update. They do not recover setup
+geometry: det_u remains about 13 px from truth, theta worsens at 32 iterations,
+and volume NMSE is worse than the 8-iteration runs. This supports the current
+diagnosis that the reconstruction preview is absorbing geometry rather than
+being merely underconverged.
+
+Earlier anchoring probes remain relevant: zero initialization plus cylindrical
+support improved det_u to about 4.3 px and volume NMSE to about 0.465, while
+roll/axis recovery worsened. Backprojection plus cylindrical support and COM
+recentring probes also improved det_u but did not pass the full setup-global
+criterion set. The next functional slice should therefore constrain the early
+stopped-reconstruction x-step or geometry-update volume policy, then release
+that constraint after geometry has been pulled closer, instead of spending more
+cycles on additional preview iterations.
+
+### Validation
+
+- Diagnostic command completed on `cuda:0` with JAX GPU enabled and wrote the
+  CSV artifact above.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

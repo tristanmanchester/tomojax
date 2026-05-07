@@ -11,29 +11,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction FISTA step scale
-- Goal: improve stopped-reconstruction setup-global recovery by fixing the
-  reference preview FISTA step scale after backprojection normalization exposed
-  that eight iterations barely move the preview volume.
+- Phase: Phase 8/9 stopped-reconstruction iteration/anchoring diagnosis
+- Goal: determine whether the stopped-reconstruction setup-global failure is
+  caused by an underconverged preview or by the reconstruction absorbing
+  geometry error before Schur.
 
 ### Scope
 
 - In scope:
-  - Diagnose the FISTA gradient/step-size scaling on the existing setup-global
-    sidecar.
-  - Implement a conservative reference FISTA step normalization or profile
-    update that materially reduces preview data loss without destabilizing
-    smoke tests.
-  - Add focused reconstruction validation.
-  - Rerun setup-global stopped-reconstruction CUDA diagnostics.
+  - Run a deterministic setup-global FISTA iteration/step probe on the existing
+    128^3, 256-view CUDA sidecar.
+  - Compare projection loss, volume NMSE, Schur acceptance, and supported setup
+    recovery across fewer/more preview iterations.
+  - Classify whether additional preview compute improves geometry or mainly
+    improves projection fit while preserving corrupted geometry.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
   - Changing Schur setup/pose policy beyond using the existing staged active
     DOFs.
-- Deep module owner: `tomojax.recon` for reference preview reconstruction and
-  `tomojax.align` for the stopped-volume diagnostic.
+  - Adding report/provenance fields or benchmark wording cleanup.
+- Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
 ### Design Sources
 
@@ -44,11 +43,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Diagnose FISTA step-size scaling on setup-global sidecar.
-- [x] Implement step-scale fix.
-- [x] Run focused reconstruction validation and `just imports`.
-- [x] Rerun setup-global stopped-reconstruction CUDA diagnostic.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run 128^3 setup-global stopped-reconstruction iteration/step probe on
+  `cuda:0`.
+- [x] Classify the preview-iteration evidence.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
