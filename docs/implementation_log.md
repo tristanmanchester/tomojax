@@ -6292,3 +6292,102 @@ Important artifacts:
 - Does the unsupported axis/roll metadata in the synthetic128 manifest need
   clearer handling now that the v2 smoke projector only models theta and
   detector shifts?
+
+## 2026-05-07 — Phase 8 GPU Diagnostic Pause Addendum
+
+### Summary
+
+- Pausing after the current GPU memory-regression and setup-global diagnostic
+  work reached a clean commit boundary. No new feature, report-field, refactor,
+  or benchmark-ingestion slice is started here.
+- Current head before this documentation-only pause commit was `f030142`
+  (`Classify stopped reconstruction supported diagnostic`).
+- The 32^3/4-view benchmark remains CI/wiring coverage only and should not be
+  used to judge alignment quality.
+
+### Current Best Diagnosis
+
+- The original five-case 32^3 benchmark failures still mean only that the
+  sidecar ingestion, `benchmark_result.json`, `benchmark_report.md`, and compare
+  plumbing run end-to-end. They are not realistic recovery evidence.
+- The first realistic 64^3/64-view nuisance-free setup-global ladder on
+  `cuda:0` failed both `fixed_synthetic_truth` and `stopped_reconstruction`.
+  That pointed at setup/pose/theta coupling or convention mapping, not only
+  reconstruction/volume gauge handling.
+- Subsequent supported-only oracle diagnostics narrowed that interpretation:
+  fixed-truth can recover the supported setup DOFs when pose is frozen or held
+  by a strong pose prior, while the matching stopped-reconstruction run still
+  fails without moving geometry. That makes reconstruction/volume gauge handling
+  or geometry absorption the current blocker for production-like alternating
+  alignment, after accounting for setup/pose gauge coupling.
+
+### Fixed-Truth Versus Stopped-Reconstruction Evidence
+
+Supported-only 64^3/64-view `synth128_setup_global_tomo` evidence:
+
+| Mode | Status | det_u RMSE px | theta RMSE rad | Notes |
+|---|---|---:|---:|---|
+| `fixed_synthetic_truth`, pose frozen | passed | 0.089 | 0.001098 | Geometry update recovers supported setup DOFs. |
+| `fixed_synthetic_truth`, strong pose prior `1e6` | passed | 0.089 | 0.001091 | Joint Schur works when pose absorption is constrained. |
+| `fixed_synthetic_truth`, zero-mean gauge projection | near-pass | 0.201 | 1.37e-08 | Manifest criteria passed, internal `det_u` gate missed by about 0.001 px. |
+| `stopped_reconstruction`, strong pose prior `1e6` | failed | 7.25 | 0.0218166 | Geometry stayed at nominal despite the fixed-truth oracle passing. |
+
+### GPU Memory Finding
+
+- The confirmed memory regression source remains the Schur finite-difference
+  Jacobian path. The original 64^3/64-view fixed-truth run attempted a 12.14 GiB
+  allocation shaped like `f32[194,64,64,64,64]` because all parameter
+  perturbations were evaluated with a single `jax.vmap`.
+- The committed fix in `dc2aa74` changed the finite-difference Jacobian helper
+  to sequential column accumulation. After that, component probes passed on GPU
+  for 1/4/16/64 views across projector, backprojector, one FISTA iteration,
+  fixed-truth Schur, stopped-volume Schur, and fixed-truth Schur with nuisance.
+- The 64^3/64-view benchmark records `jax_default_backend = "gpu"` and
+  `selected_jax_device = "cuda:0"` in `benchmark_result.json`.
+
+### Commands And Artifacts
+
+Commands run during this diagnostic thread included:
+
+- GPU probe with venv NVIDIA library paths:
+  `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda uv run python -c 'import jax; ...'`
+- 64^3 sidecar generation for `synth128_setup_global_tomo` with 64 views.
+- Component probes:
+  `.artifacts/phase8_setup_global_gpu_ladder/probes/probe_components.py --views 1|4|16|64`
+- Realistic ladder runs through sidecar ingestion:
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir ... --geometry-update-volume-source fixed_synthetic_truth`
+  and
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir ... --geometry-update-volume-source stopped_reconstruction`
+- Supported-only oracle diagnostics through `tomojax-align-auto-smoke` with
+  `fixed_synthetic_truth`, `stopped_reconstruction`, pose freezing, strong pose
+  prior, staged pose activation, and zero-mean pose-step gauge projection.
+- Focused validation for the committed code slices:
+  `uv run ruff check ...`, `uv run basedpyright ...`,
+  `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_align_auto_cli.py -q`,
+  and `just imports`.
+
+Key artifacts:
+
+- `.artifacts/phase8_setup_global_gpu_ladder/`
+- `.artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_pass/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi_reference/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000/`
+- `docs/benchmark_runs/2026-05-06-phase8-setup-global-gpu-ladder.md`
+- `docs/benchmark_runs/2026-05-07-phase8-supported-only-oracle.md`
+
+### Remaining Open Questions
+
+- Why does stopped-reconstruction give the Schur solver a volume/geometry pair
+  that accepts no useful setup movement when fixed-truth passes under the same
+  supported-only geometry model?
+- Is the stopped-gradient reconstruction absorbing setup error into volume gauge,
+  detector shift, or missing normalization before the geometry update?
+- Should the next diagnostic compare independent all-view losses for
+  true-volume/true-geometry, true-volume/final-geometry,
+  final-volume/true-geometry, and final-volume/final-geometry before changing
+  solver behavior?
+- Can the near-pass zero-mean fixed-truth joint run be made robust without a hard
+  pose prior, or should the next production path use staged/frozen pose DOFs
+  until reconstruction gauge handling is corrected?
