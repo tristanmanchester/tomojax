@@ -733,12 +733,10 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
     )
     weak_mode_labels = () if diagnostics is None else diagnostics.weak_mode_labels
     status = "evaluated" if diagnostics is not None else "not_run"
-    det_v_active = (
-        False if schur_result is None else "det_v_px" in schur_result.active_setup_parameters
-    )
-    theta_scale_active = (
-        False if schur_result is None else "theta_scale" in schur_result.active_setup_parameters
-    )
+    active_setup = () if schur_result is None else schur_result.active_setup_parameters
+    active_pose = () if schur_result is None else schur_result.active_pose_dofs
+    det_v_active = "det_v_px" in active_setup
+    theta_scale_active = "theta_scale" in active_setup
     det_v_status = "evaluated" if det_v_active else "frozen"
     det_v_reason = (
         "active_in_schur_setup_block"
@@ -776,16 +774,12 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
         "weak_dof_policy": weak_dof_policy,
         "dofs": {
             "setup": {
-                "det_u_px": {
-                    "active": True,
-                    "observable": diagnostics is not None,
-                    "status": "evaluated" if diagnostics is not None else "not_run",
-                    "gauge_group": "detector_u",
-                    "curvature": None
-                    if not diagnostics or not diagnostics.schur_eigenvalues
-                    else float(max(diagnostics.schur_eigenvalues)),
-                    "reason": "included in supported Schur setup block",
-                },
+                "det_u_px": _setup_dof_observability(
+                    "det_u_px",
+                    active_setup=active_setup,
+                    diagnostics=diagnostics,
+                    gauge_group="detector_u",
+                ),
                 "det_v_px": {
                     "active": det_v_active,
                     "observable": det_v_active and diagnostics is not None,
@@ -794,30 +788,30 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
                     "curvature": min_schur_eigenvalue if det_v_active else None,
                     "reason": det_v_reason,
                 },
-                "detector_roll_rad": {
-                    "active": True,
-                    "observable": False,
-                    "status": "weak_not_evaluated",
-                    "gauge_group": "rotation",
-                },
-                "axis_rot_x_rad": {
-                    "active": True,
-                    "observable": False,
-                    "status": "weak_not_evaluated",
-                    "gauge_group": "axis",
-                },
-                "axis_rot_y_rad": {
-                    "active": True,
-                    "observable": False,
-                    "status": "weak_not_evaluated",
-                    "gauge_group": "axis",
-                },
-                "theta_offset_rad": {
-                    "active": True,
-                    "observable": False,
-                    "status": "weak_not_evaluated",
-                    "gauge_group": "rotation",
-                },
+                "detector_roll_rad": _setup_dof_observability(
+                    "detector_roll_rad",
+                    active_setup=active_setup,
+                    diagnostics=diagnostics,
+                    gauge_group="rotation",
+                ),
+                "axis_rot_x_rad": _setup_dof_observability(
+                    "axis_rot_x_rad",
+                    active_setup=active_setup,
+                    diagnostics=diagnostics,
+                    gauge_group="axis",
+                ),
+                "axis_rot_y_rad": _setup_dof_observability(
+                    "axis_rot_y_rad",
+                    active_setup=active_setup,
+                    diagnostics=diagnostics,
+                    gauge_group="axis",
+                ),
+                "theta_offset_rad": _setup_dof_observability(
+                    "theta_offset_rad",
+                    active_setup=active_setup,
+                    diagnostics=diagnostics,
+                    gauge_group="rotation",
+                ),
                 "theta_scale": {
                     "active": theta_scale_active,
                     "observable": theta_scale_active and diagnostics is not None,
@@ -830,19 +824,21 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
                 },
             },
             "pose": {
-                "alpha_rad": {"active": True, "observable": False, "status": "weak_not_evaluated"},
-                "beta_rad": {"active": True, "observable": False, "status": "weak_not_evaluated"},
-                "phi_residual_rad": {
-                    "active": True,
-                    "observable": False,
-                    "status": "gauge_canonicalised",
-                },
-                "dx_px": {
-                    "active": True,
-                    "observable": False,
-                    "status": "gauge_canonicalised",
-                },
-                "dz_px": {"active": True, "observable": False, "status": "weak_not_evaluated"},
+                "alpha_rad": _pose_dof_observability(
+                    "alpha_rad", active_pose=active_pose, diagnostics=diagnostics
+                ),
+                "beta_rad": _pose_dof_observability(
+                    "beta_rad", active_pose=active_pose, diagnostics=diagnostics
+                ),
+                "phi_residual_rad": _pose_dof_observability(
+                    "phi_residual_rad", active_pose=active_pose, diagnostics=diagnostics
+                ),
+                "dx_px": _pose_dof_observability(
+                    "dx_px", active_pose=active_pose, diagnostics=diagnostics
+                ),
+                "dz_px": _pose_dof_observability(
+                    "dz_px", active_pose=active_pose, diagnostics=diagnostics
+                ),
             },
         },
         "weak_modes": weak_modes,
@@ -850,6 +846,47 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
             det_v_active=det_v_active,
             theta_scale_active=theta_scale_active,
         ),
+    }
+
+
+def _setup_dof_observability(
+    name: str,
+    *,
+    active_setup: tuple[str, ...],
+    diagnostics: JointSchurDiagnostics | None,
+    gauge_group: str,
+) -> dict[str, object]:
+    active = name in active_setup
+    return {
+        "active": active,
+        "observable": active and diagnostics is not None,
+        "status": "evaluated" if active and diagnostics is not None else "frozen",
+        "gauge_group": gauge_group,
+        "curvature": None
+        if not active or diagnostics is None or not diagnostics.schur_eigenvalues
+        else float(max(diagnostics.schur_eigenvalues)),
+        "reason": "active_in_schur_setup_block" if active else "frozen_in_schur_setup_block",
+    }
+
+
+def _pose_dof_observability(
+    name: str,
+    *,
+    active_pose: tuple[str, ...],
+    diagnostics: JointSchurDiagnostics | None,
+) -> dict[str, object]:
+    active = name in active_pose
+    if not active:
+        status = "frozen"
+    elif name in {"phi_residual_rad", "dx_px", "dz_px"}:
+        status = "gauge_canonicalised"
+    else:
+        status = "evaluated" if diagnostics is not None else "not_run"
+    return {
+        "active": active,
+        "observable": active and diagnostics is not None,
+        "status": status,
+        "reason": "active_in_schur_pose_block" if active else "frozen_in_schur_pose_block",
     }
 
 

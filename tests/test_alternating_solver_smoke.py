@@ -389,14 +389,7 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
     assert all(isinstance(item, str) for item in det_v_missing)
     _assert_theta_scale_missing_evidence(decisions)
     dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
-    assert dofs["setup"]["det_u_px"]["status"] == "evaluated"
-    assert dofs["setup"]["det_u_px"]["observable"] is True
-    assert dofs["setup"]["det_v_px"]["status"] in {"evaluated", "frozen"}
-    assert isinstance(dofs["setup"]["det_v_px"]["observable"], bool)
-    assert dofs["setup"]["theta_scale"]["reason"] == (
-        "theta_scale is frozen until identifiable scale policy exists"
-    )
-    assert dofs["pose"]["dx_px"]["status"] == "gauge_canonicalised"
+    _assert_observability_dofs(dofs)
     weak_modes = cast("list[dict[str, object]]", observability["weak_modes"])
     assert weak_modes[0]["name"] == "schur_weak_modes"
     handled_frozen_dofs = cast("list[str]", observability["handled_frozen_dofs"])
@@ -405,6 +398,25 @@ def _assert_audit_reports(result: AlternatingSmokeResult) -> None:
 
     _assert_failure_report(result)
     _assert_backend_report(result)
+
+
+def _assert_observability_dofs(dofs: dict[str, dict[str, dict[str, object]]]) -> None:
+    assert dofs["setup"]["det_u_px"]["status"] == "evaluated"
+    assert dofs["setup"]["det_u_px"]["observable"] is True
+    assert dofs["setup"]["theta_offset_rad"]["status"] == "evaluated"
+    assert dofs["setup"]["theta_offset_rad"]["active"] is True
+    assert dofs["setup"]["theta_offset_rad"]["observable"] is True
+    assert dofs["setup"]["detector_roll_rad"]["status"] == "frozen"
+    assert dofs["setup"]["detector_roll_rad"]["active"] is False
+    assert dofs["setup"]["det_v_px"]["status"] in {"evaluated", "frozen"}
+    assert isinstance(dofs["setup"]["det_v_px"]["observable"], bool)
+    assert dofs["setup"]["theta_scale"]["reason"] == (
+        "theta_scale is frozen until identifiable scale policy exists"
+    )
+    assert dofs["pose"]["alpha_rad"]["active"] is False
+    assert dofs["pose"]["alpha_rad"]["status"] == "frozen"
+    assert dofs["pose"]["dx_px"]["status"] == "gauge_canonicalised"
+    assert dofs["pose"]["dz_px"]["status"] == "gauge_canonicalised"
 
 
 def _assert_theta_scale_missing_evidence(
@@ -617,6 +629,20 @@ def test_alternating_solver_ingests_generated_synthetic_sidecars(tmp_path: Path)
     assert result.levels[0].loss_after < result.levels[0].loss_before
     assert result.levels[0].schur_diagnostics is not None
     assert isinstance(result.levels[0].schur_diagnostics.accepted, bool)
+    observability = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["observability_report_json"].read_text(encoding="utf-8")),
+    )
+    dofs = cast("dict[str, dict[str, dict[str, object]]]", observability["dofs"])
+    assert dofs["setup"]["theta_offset_rad"]["active"] is True
+    assert dofs["setup"]["theta_offset_rad"]["status"] == "evaluated"
+    assert dofs["setup"]["det_u_px"]["active"] is True
+    assert dofs["pose"]["phi_residual_rad"]["active"] is True
+    assert dofs["pose"]["phi_residual_rad"]["status"] == "gauge_canonicalised"
+    assert dofs["pose"]["dx_px"]["active"] is True
+    assert dofs["pose"]["dx_px"]["status"] == "gauge_canonicalised"
+    assert dofs["pose"]["dz_px"]["active"] is True
+    assert dofs["pose"]["dz_px"]["status"] == "gauge_canonicalised"
 
     schur_payload = cast(
         "dict[str, object]",

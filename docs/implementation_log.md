@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Active-DOF Observability Reporting Slice
+
+Corrected `observability_report.json` DOF status generation so it follows the
+actual Schur active setup and pose blocks instead of hard-coded weak placeholders.
+Active setup parameters now report `active=true`, `status=evaluated`, and Schur
+curvature when diagnostics exist; frozen setup parameters report
+`status=frozen`. Active pose DOFs report `active=true`, with
+`phi_residual_rad`, `dx_px`, and `dz_px` retaining their gauge-canonicalised
+status, while inactive pose DOFs report `status=frozen`.
+
+This does not change solver maths, benchmark tolerances, or add new report
+fields. It makes the existing observability artifact accurately reflect
+supported DOFs that have already been wired through the Schur block.
+
+Validation:
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_observability.py
+  -q` passed: 2 tests in 0.81 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 112.65 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+Note: a broad CPU run of `tests/test_alternating_solver_smoke.py -q` completed
+and reported three failures in existing sidecar/recovery expectations after
+17:07. The focused tests above cover this slice; the broad smoke-file
+instability remains separate from the observability payload correction.
+
 ## 2026-05-07 — Phase 8 128^3 Supported-Only Scale Gate
 
 Ran the next realistic laptop-GPU scale gate for supported-only

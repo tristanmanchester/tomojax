@@ -11,24 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 missing-policy criterion reason slice
-- Goal: replace generic unsupported-DOF reasons for object-motion, bad-view,
-  jump-exclusion, and baseline-comparison benchmark criteria with explicit
-  missing-policy evidence reasons.
+- Phase: Phase 8 active-DOF observability reporting slice
+- Goal: make `observability_report.json` reflect the Schur setup and pose DOFs
+  that actually ran, so supported geometry DOFs are not reported as
+  `weak_not_evaluated` after they are wired into the active solver block.
 
 ### Scope
 
 - In scope:
-  - Add explicit criterion evaluation branches for `core_solver`,
-    `bad_views_flagged`, `pose_dx_dz_rmse_px_lt_except_jumps`,
-    `beats_current_default_nmse`, and `object_motion_enabled_tx_rmse_px_lt`.
-  - Keep these criteria `not_evaluated` until their required evidence payloads
-    exist.
-  - Add focused criterion-evaluator tests.
+  - Derive setup DOF `active`/`status`/`observable` from
+    `JointSchurLMResult.active_setup_parameters`.
+  - Derive pose DOF `active`/`status`/`observable` from
+    `JointSchurLMResult.active_pose_dofs`, preserving gauge-canonicalised
+    status for active `phi_residual_rad`, `dx_px`, and `dz_px`.
+  - Add focused alternating-smoke assertions for active theta/setup and active
+    pose observability payloads.
   - Update docs/logs and commit the slice.
 - Out of scope:
-  - Implementing object-motion solvers, bad-view detection, jump exclusion
-    metrics, current-default comparisons, or benchmark reruns.
+  - Changing solver maths, benchmark tolerances, or adding new report fields.
+  - Rerunning the 128^3 scale gate.
 - Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
 
 ### Design Sources
@@ -40,21 +41,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add explicit missing-evidence criterion branches.
-- [x] Add focused criterion-evaluator tests.
+- [x] Update observability DOF status generation from Schur active blocks.
+- [x] Add focused alternating-smoke tests.
 - [x] Run focused Ruff/type/tests and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_observability.py
+  -q` passed: 2 tests in 0.81 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_alternating_benchmark_criteria.py -q` passed: 10 tests in
-  0.65 seconds.
-- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
-  tests/test_alternating_benchmark_criteria.py` passed.
-- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
-  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
-  0 warnings, and 0 notes.
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 112.65 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -65,8 +69,8 @@ and proposed next fix before stopping.
 - The only supported v2 operator family is the existing core trilinear ray
   projector/backprojector (`core_trilinear_ray`).
 - Do not add a selector between rotate-and-sum and core trilinear ray.
-- Unsupported criteria may remain only with exact missing evidence reasons, not
-  generic unsupported placeholders.
+- Supported DOFs that are in the active Schur block must not be reported as
+  `weak_not_evaluated` in observability artifacts.
 
 ### Completed Previous Slices
 
@@ -84,9 +88,11 @@ and proposed next fix before stopping.
 - [x] Recovered det_v policy criterion committed: `f6fe3c4`.
 - [x] Backend policy criterion evaluation committed: `b040829`.
 - [x] Calibrated-grid backend provenance committed: `a0b69db`.
+- [x] Missing-policy criterion reasons committed: `9034b91`.
+- [x] 128^3 supported-only GPU scale gate committed: `d2fbd5a`.
 
 ### Risks
 
-- Risk: explicit missing-evidence branches can look like implementation.
-- Mitigation: keep status `not_evaluated` and name the absent payload required
-  to make each criterion real.
+- Risk: active status can be mistaken for an observability decision.
+- Mitigation: active Schur DOFs get `status=evaluated` only when diagnostics
+  exist; weak-DOF policy decisions remain separate and report-only.
