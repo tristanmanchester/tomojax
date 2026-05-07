@@ -759,6 +759,7 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
         diagnostics=diagnostics,
         det_v_active=det_v_active,
         det_v_curvature=min_schur_eigenvalue if det_v_active else None,
+        det_v_parameter_index=_setup_parameter_index(schur_result, "det_v_px"),
         theta_scale_active=theta_scale_active,
         theta_scale_curvature=min_schur_eigenvalue if theta_scale_active else None,
         theta_scale_parameter_index=_setup_parameter_index(schur_result, "theta_scale"),
@@ -866,6 +867,7 @@ def _weak_dof_policy_payload(
     diagnostics: JointSchurDiagnostics | None,
     det_v_active: bool,
     det_v_curvature: float | None,
+    det_v_parameter_index: int | None,
     theta_scale_active: bool,
     theta_scale_curvature: float | None,
     theta_scale_parameter_index: int | None,
@@ -876,15 +878,15 @@ def _weak_dof_policy_payload(
     det_v_validation_improvement = _schur_validation_improvement_payload(diagnostics)
     det_v_correlation = _setup_correlation_payload(
         diagnostics,
-        parameter_index=2 if det_v_active else None,
+        parameter_index=det_v_parameter_index,
     )
     det_v_decision = _weak_dof_decision(
         name="det_v_px",
         active=det_v_active,
         curvature=det_v_curvature,
         correlation=det_v_correlation,
-        accepted=diagnostics.accepted if diagnostics is not None and theta_scale_active else False,
-        accepted_available=diagnostics is not None and theta_scale_active,
+        accepted=diagnostics.accepted if diagnostics is not None and det_v_active else False,
+        accepted_available=diagnostics is not None and det_v_active,
         curvature_floor=curvature_floor,
         correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,

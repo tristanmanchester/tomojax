@@ -3,6 +3,35 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 7/8 det_v Observability-Gating Slice
+
+### Summary
+
+- Corrected report-only weak-DOF policy evidence for active `det_v_px`.
+- det_v correlation evidence now uses the actual active Schur setup-parameter
+  index instead of assuming a fixed setup ordering.
+- det_v accepted-step evidence is now available whenever det_v is active and
+  Schur diagnostics exist, independent of whether `theta_scale` is active.
+- Added a focused white-box observability payload test for a det_v-active,
+  theta-scale-frozen Schur result.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_observability.py
+  -q` passed: 1 test in 0.66 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- This slice only fixed existing report-only gating evidence. It does not
+  change automatic weak-DOF activation, schedules, tolerances, or benchmark
+  pass/fail criteria.
+
 ## 2026-05-07 — Phase 2 Parallel Laminography Acquisition Slice
 
 ### Summary
