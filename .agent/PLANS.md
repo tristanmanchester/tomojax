@@ -11,25 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 det_v policy criterion evaluation slice
-- Goal: make the documented `det_v_policy: recovered_or_reported_unobservable`
-  benchmark criterion evaluate against existing det_v recovery evidence when
-  recovery is available, while preserving not-evaluated status when the
-  unobservability report payload is not yet present.
+- Phase: Phase 8 backend policy criterion evaluation slice
+- Goal: evaluate documented `backend_policy` criteria against existing backend
+  provenance in `benchmark_result` so calibrated-grid fallback expectations are
+  real pass/fail criteria instead of unsupported placeholders.
 
 ### Scope
 
 - In scope:
-  - Evaluate `det_v_policy` as passed when `det_v_realized_rmse_px_passed` is
-    true.
-  - Leave `det_v_policy` not evaluated with a specific reason when det_v is not
-    recovered and no unobservability policy payload is available in
-    `benchmark_result`.
+  - Thread benchmark backend provenance into manifest criterion evaluation.
+  - Evaluate `backend_policy: calibrated_grid_fallback_explicit` as passed only
+    when backend fallbacks are explicitly recorded.
+  - Fail the criterion when no fallback evidence is present.
   - Add focused criterion-evaluator tests.
   - Update docs/logs and commit the slice.
 - Out of scope:
-  - Adding new benchmark result fields, wiring full observability reports into
-    benchmark_result, backend policy evaluation, or benchmark reruns.
+  - Implementing calibrated-grid fallback itself or rerunning benchmarks.
 - Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
 
 ### Design Sources
@@ -41,8 +38,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Evaluate recovered det_v policy criteria.
-- [x] Preserve not-evaluated status when unobservability evidence is missing.
+- [x] Thread backend provenance into manifest evaluation.
+- [x] Evaluate calibrated-grid fallback backend policy.
 - [x] Add focused criterion-evaluator tests.
 - [x] Run focused Ruff/type/tests and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
@@ -50,8 +47,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Validation
 
 - `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_alternating_benchmark_criteria.py -q` passed: 5 tests in
-  0.65 seconds.
+  tests/test_alternating_benchmark_criteria.py -q` passed: 6 tests in
+  0.66 seconds.
 - `uv run ruff check src/tomojax/align/_alternating_artifacts.py
   tests/test_alternating_benchmark_criteria.py` passed.
 - `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
@@ -67,8 +64,8 @@ and proposed next fix before stopping.
 - The only supported v2 operator family is the existing core trilinear ray
   projector/backprojector (`core_trilinear_ray`).
 - Do not add a selector between rotate-and-sum and core trilinear ray.
-- Policy criteria should only pass from concrete evidence. Missing policy
-  payloads remain `not_evaluated` with a specific reason.
+- Policy criteria should only pass from concrete evidence. Missing required
+  backend evidence should fail when the manifest explicitly requires it.
 
 ### Completed Previous Slices
 
@@ -83,10 +80,10 @@ and proposed next fix before stopping.
 - [x] Synthetic unsupported-term classification committed: `28e336f`.
 - [x] Benchmark criterion aliases committed: `fe83427`.
 - [x] Laminography solver residuals committed: `7002d42`.
+- [x] Recovered det_v policy criterion committed: `f6fe3c4`.
 
 ### Risks
 
-- Risk: policy criteria could become false positives if treated as ordinary
-  numeric metrics.
-- Mitigation: keep policy evaluation explicit and pass only when the recovered
-  branch is directly evidenced.
+- Risk: backend policy evaluation could infer support from the requested
+  projector name.
+- Mitigation: evaluate only explicit fallback provenance, not proxy labels.

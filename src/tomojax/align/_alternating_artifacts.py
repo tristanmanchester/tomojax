@@ -892,9 +892,19 @@ def _benchmark_result_payload(
         "dict[object, object]",
         sidecar_readback.get("recovery_tolerances", {}),
     )
+    backend_payload: dict[str, object] = {
+        "requested": "core_trilinear_ray",
+        "actual": "core_trilinear_ray",
+        "projection_operator": PROJECTION_OPERATOR,
+        "backprojector": "core_trilinear_ray_adjoint",
+        "jax_default_backend": jax.default_backend(),
+        "selected_jax_device": _selected_jax_device(),
+        "fallbacks": [],
+    }
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
+        backend=backend_payload,
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -958,15 +968,7 @@ def _benchmark_result_payload(
             "axis_error_rad": geometry_recovery.get("axis_error_rad"),
             "alpha_beta_rmse_rad": geometry_recovery.get("alpha_beta_rmse_rad"),
         },
-        "backend": {
-            "requested": "core_trilinear_ray",
-            "actual": "core_trilinear_ray",
-            "projection_operator": PROJECTION_OPERATOR,
-            "backprojector": "core_trilinear_ray_adjoint",
-            "jax_default_backend": jax.default_backend(),
-            "selected_jax_device": _selected_jax_device(),
-            "fallbacks": [],
-        },
+        "backend": backend_payload,
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
         "benchmark_manifest_evaluation": manifest_evaluation,
@@ -992,12 +994,14 @@ def _benchmark_manifest_evaluation(
     *,
     criteria: dict[object, object],
     geometry_recovery: dict[object, object],
+    backend: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
             name=str(name),
             threshold=threshold,
             geometry_recovery=geometry_recovery,
+            backend=backend,
         )
         for name, threshold in criteria.items()
     }
@@ -1008,7 +1012,10 @@ def _criterion_evaluation(
     name: str,
     threshold: object,
     geometry_recovery: dict[object, object],
+    backend: Mapping[str, object] | None,
 ) -> dict[str, object]:
+    if name == "backend_policy":
+        return _backend_policy_evaluation(threshold=threshold, backend=backend)
     if name == "det_v_policy":
         return _det_v_policy_evaluation(
             threshold=threshold,
@@ -1037,6 +1044,31 @@ def _criterion_evaluation(
         "value": float(value),
         "threshold": threshold_value,
         "reason": "evaluated against smoke geometry recovery metric",
+    }
+
+
+def _backend_policy_evaluation(
+    *,
+    threshold: object,
+    backend: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if threshold != "calibrated_grid_fallback_explicit":
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "unknown backend policy criterion",
+        }
+    fallbacks = None if backend is None else backend.get("fallbacks")
+    fallback_count = len(cast("list[object]", fallbacks)) if isinstance(fallbacks, list) else 0
+    passed = fallback_count > 0
+    return {
+        "status": "passed" if passed else "failed",
+        "value": fallback_count,
+        "threshold": threshold,
+        "reason": "explicit backend fallback provenance recorded"
+        if passed
+        else "expected calibrated-grid fallback provenance but backend fallbacks were empty",
     }
 
 

@@ -35,15 +35,32 @@ def test_benchmark_manifest_evaluates_axis_roll_combined_alias() -> None:
     assert axis_roll["threshold"] == radians(0.20)
 
 
-def test_benchmark_manifest_leaves_string_policy_criteria_not_evaluated() -> None:
+def test_benchmark_manifest_fails_backend_policy_without_explicit_fallback() -> None:
     evaluation = _benchmark_manifest_evaluation(
         criteria={"backend_policy": "calibrated_grid_fallback_explicit"},
         geometry_recovery={},
+        backend={"fallbacks": []},
     )
 
     backend = cast("dict[str, object]", evaluation["backend_policy"])
-    assert backend["status"] == "not_evaluated"
-    assert backend["reason"] == "unsupported_dof_not_evaluated"
+    assert backend["status"] == "failed"
+    assert backend["value"] == 0
+    assert backend["reason"] == (
+        "expected calibrated-grid fallback provenance but backend fallbacks were empty"
+    )
+
+
+def test_benchmark_manifest_passes_backend_policy_with_explicit_fallback() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"backend_policy": "calibrated_grid_fallback_explicit"},
+        geometry_recovery={},
+        backend={"fallbacks": [{"reason": "calibrated_grid_fallback"}]},
+    )
+
+    backend = cast("dict[str, object]", evaluation["backend_policy"])
+    assert backend["status"] == "passed"
+    assert backend["value"] == 1
+    assert backend["threshold"] == "calibrated_grid_fallback_explicit"
 
 
 def test_benchmark_manifest_evaluates_det_v_policy_when_recovered() -> None:

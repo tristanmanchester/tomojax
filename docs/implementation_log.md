@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Backend Policy Criterion Slice
+
+### Summary
+
+- Threaded backend provenance into synthetic benchmark manifest criterion
+  evaluation.
+- `backend_policy: calibrated_grid_fallback_explicit` now evaluates as a real
+  policy criterion: it passes only when backend fallback provenance is recorded
+  and fails when the fallback list is empty.
+- This makes missing calibrated-grid fallback evidence a failed benchmark policy
+  criterion instead of an unsupported placeholder.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py -q` passed: 6 tests in
+  0.66 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Actual calibrated-grid fallback provenance still needs to be emitted by runs
+  that use a noncanonical calibrated detector grid.
+- Bad-view policy, object-motion criteria, and pose-jump exclusions remain
+  future policy/report slices.
+
 ## 2026-05-07 — Phase 8 det_v Policy Criterion Slice
 
 ### Summary
