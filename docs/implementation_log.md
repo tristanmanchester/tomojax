@@ -8401,6 +8401,43 @@ coupling against fixed-truth normals, rather than staging det_u alone.
 - Staging code was reverted after the diagnostic.
 - The diagnostic completed on `cuda:0` with JAX GPU enabled in 267.28 seconds.
 
+## 2026-05-07 — Phase 8/9 Constrained Preview Diagnostics
+
+### Summary
+
+Ran constrained stopped-preview diagnostics for the same `128^3`, 256-view
+`synth128_setup_global_tomo` sidecar to test whether support and stronger TV
+regularisation prevent setup-global geometry absorption.
+
+Artifacts:
+
+- `.artifacts/phase8_constrained_preview/128_setup_global_stopped_cyl_tv1_cuda/`
+- `.artifacts/phase8_constrained_preview/128_setup_global_stopped_cyl_tv10_cuda/`
+- `.artifacts/phase8_constrained_preview/128_setup_global_stopped_sph_tv1_cuda/`
+
+Comparison:
+
+| Metric | Early anchor | Cyl TV1 | Cyl TV10 | Spherical TV1 |
+|---|---:|---:|---:|---:|
+| volume NMSE | 0.376 | 0.448 | 0.448 | 0.499 |
+| final residual | 1.193 | 1.989 | 1.988 | 2.433 |
+| `det_u_realized_rmse_px` | 4.23 | 0.56 | 0.56 | 1.30 |
+| `theta_realized_rmse_rad` | 0.01899 | 0.01837 | 0.01875 | 0.03261 |
+| `detector_roll_error_rad` | 0.01290 | 0.01246 | 0.03649 | 0.00719 |
+| `axis_error_rad` | 0.00513 | 0.01618 | 0.02752 | 0.06305 |
+| projection-loss classification | absorbed | consistent | consistent | absorbed |
+
+Cylindrical support is a useful detector-u constraint and moves the projection
+loss classifier away from absorption, but it worsens axis recovery. Stronger TV
+does not help and hurts detector roll. Spherical support is worse for this
+setup-global tomography case. No support/TV policy was promoted to a default
+because none improved the full setup-global recovery criteria.
+
+### Validation
+
+- All three diagnostics completed on `cuda:0` with JAX GPU enabled.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

@@ -11,17 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction staged setup diagnostic
-- Goal: test whether detector-u-first setup staging improves the realistic
-  setup-global stopped-reconstruction failure before committing policy changes.
+- Phase: Phase 8/9 stopped-reconstruction constrained preview diagnostic
+- Goal: test whether support and stronger TV constraints on the stopped
+  preview x-step reduce setup-global geometry absorption.
 
 ### Scope
 
 - In scope:
-  - Probe coarsest detector-u-only setup staging on the existing 128^3,
-    256-view setup-global sidecar.
-  - Compare recovery against the prior FISTA-step and early-anchor diagnostics.
-  - Keep only diagnostic documentation if staging opens a worse absorption path.
+  - Run constrained preview diagnostics on the existing 128^3, 256-view
+    setup-global sidecar.
+  - Compare geometry recovery against the prior FISTA-step, early-anchor, and
+    det_u-first staging diagnostics.
+  - Keep only policies that improve setup recovery, not just projection loss or
+    volume NMSE.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -41,10 +43,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Probe coarsest-level detector-u-only setup staging locally.
-- [x] Rerun 128^3 setup-global stopped-reconstruction CUDA diagnostic.
-- [x] Revert staging code after the diagnostic worsened theta/axis recovery.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Run cylindrical-support + stronger-TV stopped preview diagnostic.
+- [x] Classify whether geometry improves or reconstruction still absorbs setup.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic or policy
+  slice.
 
 ### Validation
 
@@ -70,6 +72,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   seconds but was not kept as source code because it worsened theta and axis
   recovery. Artifact:
   `.artifacts/phase8_staged_setup/128_setup_global_stopped_cuda/`.
+- Constrained-preview diagnostics completed on the same sidecar with
+  cylindrical support (`preview_tv_scale=1` and `10`) and spherical support
+  (`preview_tv_scale=1`). Artifacts under
+  `.artifacts/phase8_constrained_preview/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
