@@ -11,17 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 jump-excluded pose metric
-- Goal: make the `pose_dx_dz_rmse_px_lt_except_jumps` synthetic benchmark
-  criterion real using final-vs-true pose metrics with robust jump-neighborhood
-  exclusion.
+- Phase: Phase 8/9 object-motion suspicion criterion
+- Goal: make the Dataset 4 `core_solver: flags_object_motion_suspected`
+  criterion real by recording object-motion suspicion evidence from synthetic
+  sidecar metadata and smooth recovered pose drift.
 
 ### Scope
 
 - In scope:
-  - Add a jump-excluded pose metric payload to benchmark results.
-  - Evaluate `pose_dx_dz_rmse_px_lt_except_jumps` from that payload.
-  - Keep the metric local to `tomojax.align` artifact/benchmark output.
+  - Include unsupported sidecar DOF metadata in align-auto synthetic readback.
+  - Add an object-motion suspicion payload to benchmark results.
+  - Evaluate `core_solver: flags_object_motion_suspected` from that payload.
+  - Keep the detector local to `tomojax.align` and sidecar readback.
   - Add focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -29,8 +30,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Reworking report semantics or benchmark criteria.
   - Setup-global stopped-reconstruction policy changes.
   - Pose-only solver changes.
-  - Object-motion solver or pose-jump correction.
-  - New report fields beyond the jump-exclusion payload needed by the
+  - Object-motion solver or correction model.
+  - Current-default NMSE comparison.
+  - New report fields beyond the object-motion suspicion payload needed by the
     criterion.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
@@ -44,8 +46,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement jump-excluded dx/dz pose metric in benchmark result payload.
-- [x] Add focused criterion/payload tests.
+- [x] Implement object-motion suspicion payload in benchmark result.
+- [x] Add focused criterion/payload/readback tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 

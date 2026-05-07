@@ -3,6 +3,39 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Object-Motion Suspicion Criterion Slice
+
+### Summary
+
+- Added synthetic sidecar unsupported-DOF metadata to `align-auto` readback so
+  benchmark verification can see when a dataset intentionally contains
+  object-frame motion outside the core geometry model.
+- Added an `object_motion_suspicion` benchmark-result payload. It records
+  suspicion from synthetic sidecar metadata and from smooth canonical pose
+  drift spans.
+- `core_solver: flags_object_motion_suspected` now evaluates as a real
+  pass/fail benchmark criterion. The object-motion-enabled recovery criterion
+  remains unevaluated until an object-motion solver exists.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  -q` passed: 16 tests in 49.36 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- This slice flags object motion for the core solver. It does not implement the
+  object-frame motion model or `object_motion_enabled_tx_rmse_px_lt`.
+
 ## 2026-05-07 — Phase 8 det-v Policy Criterion Evidence Slice
 
 Made the existing `det_v_policy=recovered_or_reported_unobservable` benchmark

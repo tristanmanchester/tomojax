@@ -280,6 +280,11 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "mask": sidecars.mask.to_dict(),
         "consistency": sidecars.consistency.to_dict(),
         "recovery_tolerances": _sidecar_recovery_tolerances(sidecars),
+        "unsupported_dofs_not_evaluated": sidecars.manifest.get(
+            "unsupported_dofs_not_evaluated",
+            [],
+        ),
+        "unsupported_dof_status": sidecars.manifest.get("unsupported_dof_status"),
     }
     detector_grid = sidecars.manifest.get("detector_grid")
     if isinstance(detector_grid, str):

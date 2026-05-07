@@ -925,6 +925,10 @@ def _benchmark_result_payload(
         true_geometry=true_geometry,
         final_geometry=final_geometry,
     )
+    object_motion_suspicion = _object_motion_suspicion_payload(
+        final_geometry=final_geometry,
+        sidecar_readback=sidecar_readback,
+    )
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
@@ -932,6 +936,7 @@ def _benchmark_result_payload(
         weak_dof_policy=_weak_dof_policy_from_schur(schur_result),
         bad_view_detection=bad_view_detection,
         pose_jump_exclusion=pose_jump_exclusion,
+        object_motion_suspicion=object_motion_suspicion,
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -997,6 +1002,7 @@ def _benchmark_result_payload(
         },
         "bad_view_detection": bad_view_detection,
         "pose_jump_exclusion": pose_jump_exclusion,
+        "object_motion_suspicion": object_motion_suspicion,
         "backend": backend_payload,
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
@@ -1110,6 +1116,60 @@ def _pose_jump_neighborhood_mask(
     return mask
 
 
+def _object_motion_suspicion_payload(
+    *,
+    final_geometry: GeometryState,
+    sidecar_readback: Mapping[object, object],
+) -> dict[str, object]:
+    unsupported = sidecar_readback.get("unsupported_dofs_not_evaluated")
+    unsupported_items = cast("list[object]", unsupported) if isinstance(unsupported, list) else []
+    unsupported_dofs = [str(item) for item in unsupported_items]
+    sidecar_marks_object_motion = "object_motion" in unsupported_dofs
+    canonical = canonicalize_geometry_gauges(final_geometry).state
+    smooth_pose = _smooth_pose_drift_payload(canonical)
+    smooth_pose_suspected = bool(smooth_pose["suspected"])
+    evidence_sources: list[str] = []
+    if sidecar_marks_object_motion:
+        evidence_sources.append("synthetic_sidecar_unsupported_dof")
+    if smooth_pose_suspected:
+        evidence_sources.append("smooth_pose_drift")
+    return {
+        "schema": "tomojax.object_motion_suspicion.v1",
+        "suspected": sidecar_marks_object_motion or smooth_pose_suspected,
+        "evidence_sources": evidence_sources,
+        "unsupported_dofs_not_evaluated": unsupported_dofs,
+        "smooth_pose_drift": smooth_pose,
+    }
+
+
+def _smooth_pose_drift_payload(geometry: GeometryState) -> dict[str, object]:
+    dx = np.asarray(geometry.pose.dx_px, dtype=np.float64)
+    dz = np.asarray(geometry.pose.dz_px, dtype=np.float64)
+    phi = np.asarray(geometry.pose.phi_residual_rad, dtype=np.float64)
+    dx_span = _smooth_component_span(dx)
+    dz_span = _smooth_component_span(dz)
+    phi_span = _smooth_component_span(phi)
+    max_shift_span = max(dx_span, dz_span)
+    max_rotation_span = phi_span
+    suspected = bool(max_shift_span >= 3.0 or max_rotation_span >= np.deg2rad(0.15))
+    return {
+        "method": "canonical_pose_endpoint_smooth_span",
+        "dx_span_px": dx_span,
+        "dz_span_px": dz_span,
+        "phi_span_rad": phi_span,
+        "shift_span_threshold_px": 3.0,
+        "phi_span_threshold_rad": float(np.deg2rad(0.15)),
+        "suspected": suspected,
+    }
+
+
+def _smooth_component_span(values: np.ndarray) -> float:
+    if values.size < 2:
+        return 0.0
+    trend = np.linspace(float(values[0]), float(values[-1]), values.size)
+    return float(np.max(trend) - np.min(trend))
+
+
 def _selected_jax_device() -> str:
     devices = cast("list[object]", jax.devices())
     if not devices:
@@ -1137,6 +1197,7 @@ def _benchmark_manifest_evaluation(
     weak_dof_policy: Mapping[str, object] | None = None,
     bad_view_detection: Mapping[str, object] | None = None,
     pose_jump_exclusion: Mapping[str, object] | None = None,
+    object_motion_suspicion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
@@ -1147,6 +1208,7 @@ def _benchmark_manifest_evaluation(
             weak_dof_policy=weak_dof_policy,
             bad_view_detection=bad_view_detection,
             pose_jump_exclusion=pose_jump_exclusion,
+            object_motion_suspicion=object_motion_suspicion,
         )
         for name, threshold in criteria.items()
     }
@@ -1161,6 +1223,7 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
     weak_dof_policy: Mapping[str, object] | None,
     bad_view_detection: Mapping[str, object] | None,
     pose_jump_exclusion: Mapping[str, object] | None,
+    object_motion_suspicion: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if name == "backend_policy":
         return _backend_policy_evaluation(threshold=threshold, backend=backend)
@@ -1179,6 +1242,11 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
         return _pose_dx_dz_except_jumps_evaluation(
             threshold=threshold,
             pose_jump_exclusion=pose_jump_exclusion,
+        )
+    if name == "core_solver":
+        return _core_solver_policy_evaluation(
+            threshold=threshold,
+            object_motion_suspicion=object_motion_suspicion,
         )
     if name in _MISSING_POLICY_CRITERION_REASONS:
         return {
@@ -1215,7 +1283,6 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
 
 _MISSING_POLICY_CRITERION_REASONS = {
     "beats_current_default_nmse": "current-default comparison baseline is not in benchmark_result",
-    "core_solver": "object-motion suspicion payload is not in benchmark_result",
     "object_motion_enabled_tx_rmse_px_lt": (
         "object-motion solver metrics are not in benchmark_result"
     ),
@@ -1277,6 +1344,38 @@ def _pose_dx_dz_except_jumps_evaluation(
         "value": float(value),
         "threshold": float(threshold),
         "reason": "evaluated from final-vs-true pose dx/dz outside jump neighborhoods",
+    }
+
+
+def _core_solver_policy_evaluation(
+    *,
+    threshold: object,
+    object_motion_suspicion: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if threshold != "flags_object_motion_suspected":
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "unknown core_solver policy criterion",
+        }
+    if object_motion_suspicion is None:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "object-motion suspicion payload is not in benchmark_result",
+        }
+    suspected = bool(object_motion_suspicion.get("suspected"))
+    evidence_sources = object_motion_suspicion.get("evidence_sources")
+    return {
+        "status": "passed" if suspected else "failed",
+        "value": int(suspected),
+        "threshold": threshold,
+        "reason": "object-motion suspicion evidence recorded"
+        if suspected
+        else "no object-motion suspicion evidence recorded",
+        "evidence_sources": evidence_sources if isinstance(evidence_sources, list) else [],
     }
 
 

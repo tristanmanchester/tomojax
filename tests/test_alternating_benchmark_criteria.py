@@ -10,6 +10,7 @@ import numpy as np
 from tomojax.align._alternating_artifacts import (
     _backend_fallbacks_from_sidecar,
     _benchmark_manifest_evaluation,
+    _object_motion_suspicion_payload,
     _pose_jump_exclusion_payload,
 )
 from tomojax.geometry import GeometryState
@@ -148,6 +149,46 @@ def test_benchmark_manifest_reports_missing_object_motion_suspicion_payload() ->
     core_solver = cast("dict[str, object]", evaluation["core_solver"])
     assert core_solver["status"] == "not_evaluated"
     assert core_solver["reason"] == "object-motion suspicion payload is not in benchmark_result"
+
+
+def test_benchmark_manifest_evaluates_object_motion_suspicion_payload() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"core_solver": "flags_object_motion_suspected"},
+        geometry_recovery={},
+        object_motion_suspicion={
+            "suspected": True,
+            "evidence_sources": ["synthetic_sidecar_unsupported_dof"],
+        },
+    )
+
+    core_solver = cast("dict[str, object]", evaluation["core_solver"])
+    assert core_solver["status"] == "passed"
+    assert core_solver["value"] == 1
+    assert core_solver["evidence_sources"] == ["synthetic_sidecar_unsupported_dof"]
+
+
+def test_object_motion_suspicion_payload_uses_sidecar_and_smooth_pose() -> None:
+    geometry = GeometryState.zeros(5)
+    geometry = GeometryState(
+        setup=geometry.setup,
+        pose=geometry.pose.with_updates(
+            dx_px=np.linspace(0.0, 4.0, 5, dtype=np.float64),
+        ),
+    )
+
+    payload = _object_motion_suspicion_payload(
+        final_geometry=geometry,
+        sidecar_readback={"unsupported_dofs_not_evaluated": ["object_motion"]},
+    )
+
+    assert payload["suspected"] is True
+    assert payload["evidence_sources"] == [
+        "synthetic_sidecar_unsupported_dof",
+        "smooth_pose_drift",
+    ]
+    smooth_pose = cast("dict[str, object]", payload["smooth_pose_drift"])
+    assert smooth_pose["dx_span_px"] == 4.0
+    assert smooth_pose["suspected"] is True
 
 
 def test_benchmark_manifest_reports_missing_bad_view_detection_payload() -> None:

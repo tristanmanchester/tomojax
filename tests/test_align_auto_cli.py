@@ -381,6 +381,7 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     sidecar_readback = cast("dict[str, object]", synthetic_dataset["sidecar_readback"])
     assert sidecar_readback["validated"] is True
     assert sidecar_readback["n_views"] == 4
+    assert sidecar_readback["unsupported_dofs_not_evaluated"] == ["object_motion"]
     readback_tolerances = cast("dict[str, object]", sidecar_readback["recovery_tolerances"])
     assert "det_u_error_px_lt" in readback_tolerances
     projections = cast("dict[str, object]", sidecar_readback["projections"])
@@ -418,7 +419,7 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     )
 
 
-def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
+def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(  # noqa: PLR0915 - broad artifact smoke
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -479,6 +480,12 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
         isinstance(backend[key], str) and backend[key]
         for key in ("jax_default_backend", "selected_jax_device")
     )
+    object_motion = cast("dict[str, object]", benchmark_result["object_motion_suspicion"])
+    assert object_motion["suspected"] is True
+    assert object_motion["evidence_sources"] == [
+        "synthetic_sidecar_unsupported_dof",
+        "smooth_pose_drift",
+    ]
     benchmark_report = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
     assert "# Benchmark: synth128_thermal_object_drift" in benchmark_report
     assert "reimagined_align_auto_smoke" in benchmark_report
@@ -641,7 +648,7 @@ def _assert_benchmark_criteria_and_runtime(
         "dict[str, dict[str, object]]",
         benchmark_result["benchmark_manifest_evaluation"],
     )
-    assert criteria_evaluation["core_solver"]["status"] == "not_evaluated"
+    assert criteria_evaluation["core_solver"]["status"] == "passed"
     assert criteria_evaluation["core_solver"]["threshold"] == "flags_object_motion_suspected"
     criteria_summary = cast(
         "dict[str, object]",
@@ -649,8 +656,8 @@ def _assert_benchmark_criteria_and_runtime(
     )
     assert criteria_summary == {
         "failed": 0,
-        "not_evaluated": 2,
-        "passed": 0,
+        "not_evaluated": 1,
+        "passed": 1,
         "status": "partially_evaluated",
         "total": 2,
     }
