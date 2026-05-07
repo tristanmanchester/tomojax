@@ -11,26 +11,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 synthetic manifest unsupported-term classification slice
-- Goal: restore truthful synthetic sidecar classification for remaining
-  unsupported benchmark manifest terms so generated datasets do not claim
-  `all_supported` while object motion or unsupported nuisance/jump policies are
-  still not represented by the v2 core geometry/solver path.
+- Phase: Phase 8 benchmark manifest criterion alias slice
+- Goal: evaluate documented benchmark manifest geometry criteria aliases against
+  existing recovery metrics so supported roll/axis criteria no longer fall into
+  `unsupported_dof_not_evaluated` purely because of naming drift.
 
 ### Scope
 
 - In scope:
-  - Parse `true_object_motion` from the benchmark manifest.
-  - Classify unsupported manifest terms for object motion, sparse pose jumps,
-    bad views, partial-FOV invalid edges, and nuisance terms not realised by the
-    current sidecar writer.
-  - Preserve `supported_only` behaviour.
-  - Add focused synthetic sidecar tests for unsupported-term classification.
+  - Evaluate `detector_roll_error_deg_lt` as the existing
+    `detector_roll_error_rad` metric.
+  - Evaluate `axis_roll_error_deg_lt` as the max of existing axis and detector
+    roll error metrics.
+  - Keep string policy criteria report-only/not-evaluated until their policy
+    payloads exist.
+  - Add focused criterion-evaluator tests.
   - Update docs/logs and commit the slice.
 - Out of scope:
-  - Implementing object motion, jump detection, bad-view handling, partial-FOV
-    masks, or new nuisance fitting.
-- Deep module owner: `tomojax.datasets` for synthetic sidecar manifests.
+  - New benchmark result fields, policy evaluation payloads, tolerance changes,
+    or benchmark reruns.
+- Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
 
 ### Design Sources
 
@@ -41,24 +41,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Parse object-motion benchmark manifest data.
-- [x] Classify unsupported manifest terms in generated sidecars.
-- [x] Add focused synthetic sidecar tests.
+- [x] Add detector-roll criterion alias evaluation.
+- [x] Add axis+roll combined criterion evaluation.
+- [x] Add focused criterion-evaluator tests.
 - [x] Run focused Ruff/type/tests and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
 - `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_synthetic_datasets.py::test_generate_object_motion_dataset_marks_unsupported_manifest_terms
-  tests/test_synthetic_datasets.py::test_generate_combined_nuisance_dataset_marks_unmodelled_terms
-  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
-  -q` passed: 3 tests in 2.80 seconds.
-- `uv run ruff check src/tomojax/datasets/_specs.py
-  src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py` passed.
-- `uv run basedpyright src/tomojax/datasets/_specs.py
-  src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py` passed
-  with 0 errors, 0 warnings, and 0 notes.
+  tests/test_alternating_benchmark_criteria.py -q` passed: 3 tests in
+  0.67 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -69,9 +67,9 @@ and proposed next fix before stopping.
 - The only supported v2 operator family is the existing core trilinear ray
   projector/backprojector (`core_trilinear_ray`).
 - Do not add a selector between rotate-and-sum and core trilinear ray.
-- Synthetic dataset manifests must distinguish supported geometry terms from
-  remaining unsupported manifest terms; a generated sidecar should not report
-  `all_supported` unless the current v2 path really evaluates all listed terms.
+- Criteria that map to existing recovery metrics should be evaluated under all
+  documented aliases. Policy criteria remain not evaluated until a real policy
+  payload is available.
 
 ### Completed Previous Slices
 
@@ -83,10 +81,10 @@ and proposed next fix before stopping.
 - [x] Theta-scale opt-in setup updates committed: `be3d059`.
 - [x] Parallel laminography acquisition metadata committed: `7aa086c`.
 - [x] det_v observability gating evidence committed: `7c1e0fe`.
+- [x] Synthetic unsupported-term classification committed: `28e336f`.
 
 ### Risks
 
-- Risk: over-broad classification could mark already-supported DOFs as
-  unsupported again.
-- Mitigation: classify only manifest terms that are still not modelled by
-  `GeometryState`, sidecar projection generation, or the current solver path.
+- Risk: combined criteria can hide which component failed.
+- Mitigation: keep the value as the max component error and leave individual
+  axis/roll criteria evaluable where the manifest names them separately.

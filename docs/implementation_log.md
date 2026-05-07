@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Benchmark Criterion Alias Slice
+
+### Summary
+
+- Updated synthetic benchmark manifest evaluation to handle documented geometry
+  criterion aliases that map to existing recovery metrics.
+- `detector_roll_error_deg_lt` now evaluates against
+  `detector_roll_error_rad`.
+- `axis_roll_error_deg_lt` now evaluates against the max of `axis_error_rad`
+  and `detector_roll_error_rad`.
+- String policy criteria such as `backend_policy` remain report-only and
+  `not_evaluated` until a real policy payload is available.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py -q` passed: 3 tests in
+  0.67 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- `det_v_policy`, `backend_policy`, bad-view policy, object-motion criteria,
+  and pose-jump exclusions still need real policy/report payloads before they
+  can become evaluated criteria.
+
 ## 2026-05-07 — Phase 8 Synthetic Unsupported-Term Classification Slice
 
 ### Summary

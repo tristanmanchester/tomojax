@@ -1017,7 +1017,7 @@ def _criterion_evaluation(
             "threshold": threshold,
             "reason": "unsupported_dof_not_evaluated",
         }
-    value = geometry_recovery.get(metric_name)
+    value = _criterion_metric_value(metric_name, geometry_recovery)
     if not isinstance(value, int | float) or not isinstance(threshold, int | float):
         return {
             "status": "not_evaluated",
@@ -1066,17 +1066,34 @@ def _criterion_metric_name(name: str) -> str | None:
         "det_u_error_px_lt": "det_u_realized_rmse_px",
         "det_v_error_px_lt": "det_v_realized_rmse_px",
         "axis_error_deg_lt": "axis_error_rad",
+        "axis_roll_error_deg_lt": "axis_roll_error_rad",
         "alpha_beta_rmse_deg_lt": "alpha_beta_rmse_rad",
+        "detector_roll_error_deg_lt": "detector_roll_error_rad",
         "roll_error_deg_lt": "detector_roll_error_rad",
         "theta_offset_error_deg_lt": "theta_realized_rmse_rad",
         "theta_scale_error_lt": "theta_scale_error",
     }.get(name)
 
 
+def _criterion_metric_value(
+    metric_name: str,
+    geometry_recovery: dict[object, object],
+) -> object:
+    if metric_name != "axis_roll_error_rad":
+        return geometry_recovery.get(metric_name)
+    axis = geometry_recovery.get("axis_error_rad")
+    roll = geometry_recovery.get("detector_roll_error_rad")
+    if not isinstance(axis, int | float) or not isinstance(roll, int | float):
+        return None
+    return max(float(axis), float(roll))
+
+
 def _criterion_threshold_in_metric_units(name: str, threshold: float) -> float:
     if name in {
         "alpha_beta_rmse_deg_lt",
+        "axis_roll_error_deg_lt",
         "axis_error_deg_lt",
+        "detector_roll_error_deg_lt",
         "roll_error_deg_lt",
         "theta_offset_error_deg_lt",
     }:

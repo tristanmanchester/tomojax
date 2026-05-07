@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+# pyright: reportPrivateUsage=false
+from math import radians
+from typing import cast
+
+# check-public-imports: allow-private
+from tomojax.align._alternating_artifacts import _benchmark_manifest_evaluation
+
+
+def test_benchmark_manifest_evaluates_detector_roll_alias() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"detector_roll_error_deg_lt": 0.10},
+        geometry_recovery={"detector_roll_error_rad": radians(0.05)},
+    )
+
+    roll = cast("dict[str, object]", evaluation["detector_roll_error_deg_lt"])
+    assert roll["status"] == "passed"
+    assert roll["value"] == radians(0.05)
+    assert roll["threshold"] == radians(0.10)
+
+
+def test_benchmark_manifest_evaluates_axis_roll_combined_alias() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"axis_roll_error_deg_lt": 0.20},
+        geometry_recovery={
+            "axis_error_rad": radians(0.18),
+            "detector_roll_error_rad": radians(0.05),
+        },
+    )
+
+    axis_roll = cast("dict[str, object]", evaluation["axis_roll_error_deg_lt"])
+    assert axis_roll["status"] == "passed"
+    assert axis_roll["value"] == radians(0.18)
+    assert axis_roll["threshold"] == radians(0.20)
+
+
+def test_benchmark_manifest_leaves_string_policy_criteria_not_evaluated() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"backend_policy": "calibrated_grid_fallback_explicit"},
+        geometry_recovery={},
+    )
+
+    backend = cast("dict[str, object]", evaluation["backend_policy"])
+    assert backend["status"] == "not_evaluated"
+    assert backend["reason"] == "unsupported_dof_not_evaluated"
