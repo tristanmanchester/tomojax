@@ -401,6 +401,21 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
         json.loads((dataset_dir / "nuisance_truth.json").read_text(encoding="utf-8")),
     )
     assert nuisance["applied_to_projections"] is True
+    benchmark_result = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
+    )
+    bad_view_detection = cast("dict[str, object]", benchmark_result["bad_view_detection"])
+    assert bad_view_detection["schema"] == "tomojax.bad_view_detection.v1"
+    assert isinstance(bad_view_detection["flagged_view_indices"], list)
+    evaluation = cast(
+        "dict[str, dict[str, object]]",
+        benchmark_result["benchmark_manifest_evaluation"],
+    )
+    assert evaluation["bad_views_flagged"]["status"] in {"passed", "failed"}
+    assert evaluation["bad_views_flagged"]["reason"] == (
+        "evaluated from robust per-view residual outlier detection"
+    )
 
 
 def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(

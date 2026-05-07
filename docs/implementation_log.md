@@ -8689,6 +8689,34 @@ failure.
 - Pose prior probe completed on `cuda:0`; no source code changed.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 Bad-View Residual Detection
+
+### Summary
+
+Made the combined benchmark `bad_views_flagged` criterion executable instead of
+hard-coded `not_evaluated`. `benchmark_result.json` now includes a
+`bad_view_detection` payload derived from robust per-view final residual RMSE
+statistics, and manifest criterion evaluation uses that payload when
+`bad_views_flagged: true` is present.
+
+The detector is intentionally narrow: it flags view residual outliers using a
+median/MAD threshold and records flagged view indices, count, threshold, median,
+MAD, and max RMSE. It does not claim jump exclusion or object-motion support;
+those criteria remain separate.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_bad_view_detection_flags_view_residual_outlier
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset
+  -q` passed: 2 tests in 49.77 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py tests/test_align_auto_cli.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

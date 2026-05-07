@@ -11,25 +11,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 pose-only validation/regularisation probes
-- Goal: narrow the fixed-truth `synth128_pose_random_extreme` failure after
-  trust-radius and staged-activation variants failed to improve recovery.
+- Phase: Phase 8/9 bad-view residual detection
+- Goal: make the `bad_views_flagged` synthetic benchmark criterion real using
+  residual view statistics instead of leaving the combined-case criterion
+  unevaluated.
 
 ### Scope
 
 - In scope:
-  - Run direct true-volume pose-only Schur probes on the existing 128^3
-    sidecar.
-  - Stage `phi/dx/dz` before alpha/beta and compare against all-5 fixed-truth
-    evidence.
-  - Probe simple pose prior strengths.
-  - Promote policy code only if pose recovery improves.
+  - Add a bad-view detection payload to benchmark results.
+  - Evaluate `bad_views_flagged` from that payload.
+  - Keep the detector local to `tomojax.align` artifact/benchmark output.
+  - Add focused tests and rerun the combined synthetic artifact path at a small
+    scale if practical.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
   - Setup-global stopped-reconstruction policy changes.
-  - Report wording or criterion alias changes.
+  - Pose-only solver changes.
+  - New report fields beyond the bad-view payload needed by the criterion.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -42,11 +43,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run direct staged pose-only true-volume probe.
-- [x] Compare recovery against all-5 fixed-truth oracle.
-- [x] Probe low-level pose prior strengths.
-- [x] Update `docs/implementation_log.md` and commit either policy or
-  diagnostic evidence.
+- [x] Implement bad-view residual detection in benchmark result payload.
+- [x] Add focused criterion/payload tests.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 

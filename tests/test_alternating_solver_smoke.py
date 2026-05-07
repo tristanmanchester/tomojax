@@ -1,11 +1,18 @@
+# pyright: reportPrivateUsage=false, reportUnknownMemberType=false
 from __future__ import annotations
 
 import csv
 import json
 from typing import TYPE_CHECKING, cast
 
+import jax.numpy as jnp
 import numpy as np
 
+# check-public-imports: allow-private
+from tomojax.align._alternating_artifacts import (
+    _bad_view_detection_payload,
+    _bad_views_flagged_evaluation,
+)
 from tomojax.align.api import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
@@ -16,6 +23,7 @@ from tomojax.datasets import (
     generate_synthetic_dataset,
     load_synthetic_dataset_sidecars,
 )
+from tomojax.geometry import GeometryState
 from tomojax.verify import residual_structure_summary
 
 if TYPE_CHECKING:
@@ -574,6 +582,28 @@ def test_alternating_alignment_solver_runs_smoke_profile(tmp_path: Path) -> None
 
     assert result.final_volume.shape == (32, 32, 32)
     assert result.artifacts["verification_json"].exists()
+
+
+def test_bad_view_detection_flags_view_residual_outlier() -> None:
+    volume = np.zeros((4, 4, 4), dtype=np.float32)
+    observed = np.zeros((4, 4, 4), dtype=np.float32)
+    observed[2] = 10.0
+    mask = np.ones_like(observed, dtype=np.float32)
+
+    payload = _bad_view_detection_payload(
+        final_volume=jnp.asarray(volume),
+        final_geometry=GeometryState.zeros(4),
+        observed=jnp.asarray(observed),
+        mask=jnp.asarray(mask),
+    )
+
+    assert payload["flagged_view_indices"] == [2]
+    evaluation = _bad_views_flagged_evaluation(
+        threshold=True,
+        bad_view_detection=payload,
+    )
+    assert evaluation["status"] == "passed"
+    assert evaluation["value"] == 1
 
 
 def test_alternating_solver_ingests_generated_synthetic_sidecars(tmp_path: Path) -> None:

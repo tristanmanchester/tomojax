@@ -197,6 +197,10 @@ def _write_artifacts(
             summaries=summaries,
             failure_report=failure_report,
             schur_result=schur_result,
+            final_volume=final_volume,
+            final_geometry=final_geometry,
+            observed=observed,
+            mask=mask,
             geometry_update_volume_source=geometry_update_volume_source,
             preview_volume_support=preview_volume_support,
             preview_initialization=preview_initialization,
@@ -876,6 +880,10 @@ def _benchmark_result_payload(
     summaries: tuple[AlternatingLevelSummary, ...],
     failure_report: Mapping[str, object],
     schur_result: JointSchurLMResult | None,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    observed: jax.Array,
+    mask: jax.Array,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     preview_volume_support: str,
     preview_initialization: str,
@@ -904,11 +912,18 @@ def _benchmark_result_payload(
         "selected_jax_device": _selected_jax_device(),
         "fallbacks": _backend_fallbacks_from_sidecar(sidecar_readback),
     }
+    bad_view_detection = _bad_view_detection_payload(
+        final_volume=final_volume,
+        final_geometry=final_geometry,
+        observed=observed,
+        mask=mask,
+    )
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
         backend=backend_payload,
         weak_dof_policy=_weak_dof_policy_from_schur(schur_result),
+        bad_view_detection=bad_view_detection,
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -972,6 +987,7 @@ def _benchmark_result_payload(
             "axis_error_rad": geometry_recovery.get("axis_error_rad"),
             "alpha_beta_rmse_rad": geometry_recovery.get("alpha_beta_rmse_rad"),
         },
+        "bad_view_detection": bad_view_detection,
         "backend": backend_payload,
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
@@ -984,6 +1000,51 @@ def _benchmark_result_payload(
         "preview_initialization": preview_initialization,
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
+    }
+
+
+def _bad_view_detection_payload(
+    *,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    observed: jax.Array,
+    mask: jax.Array,
+) -> dict[str, object]:
+    rows = _view_residual_metric_rows(final_volume, final_geometry, observed, mask)
+    rmse = jnp.asarray(
+        [float(cast("int | float", row["rmse"])) for row in rows],
+        dtype=jnp.float32,
+    )
+    if rmse.size == 0:
+        return {
+            "schema": "tomojax.bad_view_detection.v1",
+            "method": "robust_view_rmse_mad",
+            "flagged_view_indices": [],
+            "threshold_rmse": None,
+            "median_rmse": None,
+            "mad_rmse": None,
+        }
+    median = jnp.median(rmse)
+    mad = jnp.median(jnp.abs(rmse - median))
+    robust_sigma = jnp.asarray(1.4826, dtype=jnp.float32) * mad
+    threshold = median + jnp.maximum(
+        jnp.asarray(2.0, dtype=jnp.float32) * robust_sigma,
+        jnp.asarray(0.005, dtype=jnp.float32) * jnp.maximum(
+            jnp.abs(median),
+            jnp.asarray(1.0, dtype=jnp.float32),
+        ),
+    )
+    flagged_mask = rmse > threshold
+    flagged = [int(index) for index, value in enumerate(np.asarray(flagged_mask)) if bool(value)]
+    return {
+        "schema": "tomojax.bad_view_detection.v1",
+        "method": "robust_view_rmse_mad",
+        "flagged_view_indices": flagged,
+        "flagged_count": len(flagged),
+        "threshold_rmse": float(threshold),
+        "median_rmse": float(median),
+        "mad_rmse": float(mad),
+        "max_rmse": float(jnp.max(rmse)),
     }
 
 
@@ -1012,6 +1073,7 @@ def _benchmark_manifest_evaluation(
     geometry_recovery: dict[object, object],
     backend: Mapping[str, object] | None = None,
     weak_dof_policy: Mapping[str, object] | None = None,
+    bad_view_detection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
@@ -1020,18 +1082,20 @@ def _benchmark_manifest_evaluation(
             geometry_recovery=geometry_recovery,
             backend=backend,
             weak_dof_policy=weak_dof_policy,
+            bad_view_detection=bad_view_detection,
         )
         for name, threshold in criteria.items()
     }
 
 
-def _criterion_evaluation(
+def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep reasons auditable.
     *,
     name: str,
     threshold: object,
     geometry_recovery: dict[object, object],
     backend: Mapping[str, object] | None,
     weak_dof_policy: Mapping[str, object] | None,
+    bad_view_detection: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if name == "backend_policy":
         return _backend_policy_evaluation(threshold=threshold, backend=backend)
@@ -1040,6 +1104,11 @@ def _criterion_evaluation(
             threshold=threshold,
             geometry_recovery=geometry_recovery,
             weak_dof_policy=weak_dof_policy,
+        )
+    if name == "bad_views_flagged":
+        return _bad_views_flagged_evaluation(
+            threshold=threshold,
+            bad_view_detection=bad_view_detection,
         )
     if name in _MISSING_POLICY_CRITERION_REASONS:
         return {
@@ -1075,7 +1144,6 @@ def _criterion_evaluation(
 
 
 _MISSING_POLICY_CRITERION_REASONS = {
-    "bad_views_flagged": "bad-view detection payload is not in benchmark_result",
     "beats_current_default_nmse": "current-default comparison baseline is not in benchmark_result",
     "core_solver": "object-motion suspicion payload is not in benchmark_result",
     "object_motion_enabled_tx_rmse_px_lt": (
@@ -1083,6 +1151,35 @@ _MISSING_POLICY_CRITERION_REASONS = {
     ),
     "pose_dx_dz_rmse_px_lt_except_jumps": "pose jump-exclusion mask is not in benchmark_result",
 }
+
+
+def _bad_views_flagged_evaluation(
+    *,
+    threshold: object,
+    bad_view_detection: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if threshold is not True:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "bad-view criterion currently expects boolean true",
+        }
+    if bad_view_detection is None:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": True,
+            "reason": "bad-view detection payload is not in benchmark_result",
+        }
+    flagged = bad_view_detection.get("flagged_view_indices")
+    flagged_count = len(cast("list[object]", flagged)) if isinstance(flagged, list) else 0
+    return {
+        "status": "passed" if flagged_count > 0 else "failed",
+        "value": flagged_count,
+        "threshold": True,
+        "reason": "evaluated from robust per-view residual outlier detection",
+    }
 
 
 def _backend_policy_evaluation(
