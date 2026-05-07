@@ -8115,6 +8115,60 @@ Follow-up before the five-case suite:
   0 warnings, and 0 notes.
 - `just imports` passed.
 
+## 2026-05-07 — Phase 8/9 Pose-Only Schur Normal Equations
+
+### Summary
+
+- The first five-case CUDA pass exposed a pose-only Schur bug in
+  `synth128_pose_random_extreme`: with `active_setup_parameters=()` and all five
+  pose DOFs active, the streamed normal-equation solver attempted to compute
+  `jnp.linalg.cond()` on an empty `(0, 0)` setup Schur matrix.
+- Added an explicit pose-only normal-equation path. It solves each per-view pose
+  block directly, emits finite diagnostics with empty setup Schur
+  eigen/correlation payloads, and preserves trust scaling and predicted
+  reduction reporting.
+- Reran the failed CUDA case; it now exits 0 and writes
+  `benchmark_result.json`.
+
+### CUDA Evidence
+
+Rerun command used `JAX_PLATFORMS=cuda`, `CUDA_VISIBLE_DEVICES=0`,
+`XLA_PYTHON_CLIENT_PREALLOCATE=false`, `core_trilinear_ray`, stopped
+reconstruction, `active_setup_parameters=()`, and all five pose DOFs.
+
+Artifact:
+
+- `.artifacts/phase8_five_case_128_cuda/synth128_pose_random_extreme/`
+
+Result summary:
+
+- selected JAX device: `cuda:0`
+- active setup in Schur: none
+- active pose in Schur:
+  `alpha_rad, beta_rad, phi_residual_rad, dx_px, dz_px`
+- exit: 0
+- benchmark status: failed
+- manifest criteria: 0 passed, 1 failed, 2 not evaluated
+- sampled peak GPU memory: 1257 MiB
+- total wall time: 123.44 seconds
+
+The case is now an executable benchmark failure rather than an infrastructure
+crash. Recovery remains poor, so the next classification slice should treat it
+as a solver/reconstruction failure unless fixed-truth pose-only evidence says
+otherwise.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_pose_only_update_without_setup_block
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  -q` passed: 2 tests in 22.15 seconds.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py
+  tests/test_joint_schur_lm.py` passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py
+  tests/test_joint_schur_lm.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8/9 Pose-Policy Narrowing
 
 ### Summary

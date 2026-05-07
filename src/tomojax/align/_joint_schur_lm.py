@@ -646,6 +646,18 @@ def schur_step_from_normal_equations(
     hess = jnp.asarray(hessian, dtype=jnp.float32)
     grad = jnp.asarray(gradient, dtype=jnp.float32)
     dense_step_unscaled = jnp.linalg.solve(hess, -grad)
+    if n_setup == 0:
+        return _pose_only_schur_step_from_normal_equations(
+            hess,
+            grad,
+            dense_step_unscaled=dense_step_unscaled,
+            per_view_blocks=per_view_blocks,
+            n_views=n_views,
+            pose_dim=pose_dim,
+            setup_trust_radius=setup_trust_radius,
+            pose_trust_radius=pose_trust_radius,
+            data_rows=data_rows,
+        )
 
     h_gg = hess[:n_setup, :n_setup]
     g_g = grad[:n_setup]
@@ -732,6 +744,84 @@ def schur_step_from_normal_equations(
             float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
         ),
         predicted_reduction=predicted_reduction,
+        setup_gradient_by_view=per_view_blocks.setup_gradient_by_view,
+        pose_gradient_by_view=per_view_blocks.pose_gradient_by_view,
+        setup_hessian_diag_by_view=per_view_blocks.setup_hessian_diag_by_view,
+        pose_hessian_diag_by_view=per_view_blocks.pose_hessian_diag_by_view,
+        setup_pose_coupling_norm_by_view=per_view_blocks.setup_pose_coupling_norm_by_view,
+    )
+    return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
+
+
+def _pose_only_schur_step_from_normal_equations(
+    hess: jax.Array,
+    grad: jax.Array,
+    *,
+    dense_step_unscaled: jax.Array,
+    per_view_blocks: _PerViewNormalBlockDiagnostics,
+    n_views: int,
+    pose_dim: int,
+    setup_trust_radius: float | None,
+    pose_trust_radius: float | None,
+    data_rows: int | None,
+) -> SchurStep:
+    pose_blocks: list[tuple[jax.Array, jax.Array]] = []
+    pose_block_conditions: list[float] = []
+    for view in range(n_views):
+        if pose_dim == 0:
+            continue
+        start = view * pose_dim
+        stop = start + pose_dim
+        h_pp = hess[start:stop, start:stop]
+        g_p = grad[start:stop]
+        pose_blocks.append((h_pp, g_p))
+        pose_block_conditions.append(float(jnp.linalg.cond(h_pp)))
+    pose_step = (
+        jnp.concatenate(
+            [jnp.linalg.solve(h_pp, -g_p) for h_pp, g_p in pose_blocks],
+            axis=0,
+        )
+        if pose_blocks
+        else jnp.asarray([], dtype=jnp.float32)
+    )
+    setup_step = jnp.asarray([], dtype=jnp.float32)
+    setup_trust_scale, pose_trust_scale = _trust_scales(
+        setup_step,
+        pose_step,
+        setup_trust_radius=setup_trust_radius,
+        pose_trust_radius=pose_trust_radius,
+    )
+    step = pose_step * pose_trust_scale
+    dense_step = dense_step_unscaled * pose_trust_scale
+    pose_step_matrix = (
+        step.reshape((n_views, pose_dim))
+        if pose_dim > 0
+        else jnp.zeros((n_views, 0), dtype=jnp.float32)
+    )
+    diagnostics = JointSchurDiagnostics(
+        schur_condition=1.0,
+        setup_update_norm=0.0,
+        pose_update_norm=float(jnp.linalg.norm(step)),
+        dense_step_difference_norm=float(jnp.linalg.norm(step - dense_step)),
+        global_eigenvalues=_eigvalsh_tuple(hess),
+        schur_eigenvalues=(),
+        pose_block_conditions=tuple(pose_block_conditions),
+        setup_correlation_matrix=(),
+        weak_mode_labels=(),
+        trust_scale=float(pose_trust_scale),
+        setup_trust_scale=float(setup_trust_scale),
+        pose_trust_scale=float(pose_trust_scale),
+        trust_clipped=bool(pose_trust_scale < 1.0),
+        setup_update_by_parameter=(),
+        pose_update_max_by_dof=tuple(
+            float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
+        ),
+        predicted_reduction=_predicted_reduction(
+            grad,
+            hess,
+            step,
+            data_rows=data_rows,
+        ),
         setup_gradient_by_view=per_view_blocks.setup_gradient_by_view,
         pose_gradient_by_view=per_view_blocks.pose_gradient_by_view,
         setup_hessian_diag_by_view=per_view_blocks.setup_hessian_diag_by_view,

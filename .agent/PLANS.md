@@ -11,32 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 setup-global Schur staging policy
-- Goal: keep the functional setup-global staging rule from the previous commit,
-  but narrow it so only global setup recovery freezes a zero-initialized pose
-  block; non-global pose-solving cases must keep all requested per-view 5-DOF
-  pose parameters active.
+- Phase: Phase 8/9 pose-only Schur bug fix
+- Goal: fix the pose-only joint Schur path exposed by the five-case CUDA pass
+  so `synth128_pose_random_extreme` can run with `active_setup_parameters=()`
+  and all five per-view pose DOFs active.
 
 ### Scope
 
 - In scope:
-  - Filter `theta_scale` out of alternating-loop Schur setup updates while
-    preserving explicit low-level Schur solver support.
-  - Remove over-broad zero-tilt filtering for `alpha_rad`/`beta_rad` outside the
-    global setup block.
-  - Preserve setup-global behavior where the full pose block freezes when the
-    global setup block is active and current pose is zero.
-  - Add focused tests that protect both setup-global staging and pose-case
-    activation.
-  - Update docs/logs and commit the staging slice.
+  - Support `n_setup == 0` in the streamed Schur normal-equation solver.
+  - Preserve diagnostics with empty setup Schur eigen/correlation data and
+    finite pose diagnostics.
+  - Add a focused pose-only Schur regression test.
+  - Rerun the failed `synth128_pose_random_extreme` CUDA benchmark case.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Replacing this staging rule with a final theta-scale identifiability model.
-  - Nuisance, bad-view/jump, object-drift, or backend fast-path feature work.
-- Deep module owner: `tomojax.align` for alternating Schur geometry-update
-  policy.
+  - Solving pose-random recovery quality beyond making the benchmark executable.
+- Deep module owner: `tomojax.align` for joint Schur behavior.
 
 ### Design Sources
 
@@ -47,10 +40,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Narrow alternating-loop pose filtering to the global setup block.
-- [x] Update focused policy tests.
-- [x] Run focused CPU validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the correction.
+- [x] Implement pose-only Schur normal-equation support.
+- [x] Add focused tests and run validation.
+- [x] Rerun the pose-random CUDA benchmark case.
+- [x] Update `docs/implementation_log.md` and commit the fix.
 
 ### Validation
 

@@ -475,6 +475,39 @@ def test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle() -> None:
     np.testing.assert_allclose(result.geometry.setup.theta_offset_rad.value, 0.04, atol=0.025)
 
 
+def test_joint_schur_lm_can_run_pose_only_update_without_setup_block() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    truth_pose = nominal.pose.with_updates(
+        phi_residual_rad=np.asarray([0.04, -0.03], dtype=np.float64),
+        dx_px=np.asarray([0.12, -0.10], dtype=np.float64),
+        dz_px=np.asarray([0.08, -0.07], dtype=np.float64),
+    )
+    truth = GeometryState(setup=nominal.setup, pose=truth_pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=8,
+            damping=1e-3,
+            delta=1.0,
+            active_setup_parameters=(),
+            active_pose_dofs=("phi_residual_rad", "dx_px", "dz_px"),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_setup_parameters == ()
+    assert result.active_pose_dofs == ("phi_residual_rad", "dx_px", "dz_px")
+    assert result.diagnostics.schur_condition == 1.0
+    assert result.diagnostics.schur_eigenvalues == ()
+    assert result.diagnostics.setup_correlation_matrix == ()
+    assert result.diagnostics.pose_update_norm >= 0.0
+
+
 def test_joint_schur_lm_can_run_det_u_only_setup_update() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(2)
