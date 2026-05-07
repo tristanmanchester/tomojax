@@ -23,7 +23,7 @@ setup-global diagnostics.
 
 | Run | Device | Source | Status | det_u RMSE px | theta RMSE rad | Total time s |
 |---|---|---|---|---:|---:|---:|
-| 32^3 CPU smoke | `cpu:0` | fixed truth | failed | 1.62574 | 0.0155630 | n/a |
+| 32^3 CPU smoke | `cpu:0` | fixed truth | geometry passed | 7.15256e-07 | 1.19844e-07 | n/a |
 | 64^3 GPU balanced | `cuda:0` | fixed truth | failed | 6.75000 | 0.0203247 | 30.0770 |
 | 64^3 GPU reference | `cuda:0` | fixed truth | failed | 7.12500 | 0.0224485 | 50.2916 |
 | 64^3 GPU reference | `cuda:0` | fixed truth, full raw/no-prior oracle | passed | 1.43051e-06 | 1.06805e-07 | 52.0031 |

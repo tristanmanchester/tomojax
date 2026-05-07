@@ -64,7 +64,7 @@ Artifacts:
 
 | Run | Device | Mode | Status | det_u RMSE px | theta RMSE rad | Schur accepted | Total time s | Notes |
 |---|---|---|---|---:|---:|---|---:|---|
-| 32^3 CPU smoke | `cpu:0` | fixed truth, pose frozen | failed | 1.62574 | 0.0155630 | mixed | n/a | Small smoke proves artifact wiring only. |
+| 32^3 CPU smoke | `cpu:0` | fixed truth, pose frozen | geometry passed | 7.15256e-07 | 1.19844e-07 | true | n/a | Refreshed after `a1e7fc9`; `benchmark_result.json` now records `core_trilinear_ray` and geometry criteria pass. Benchmark top-level status still reflects final-volume verification, so this remains wiring/oracle coverage only. |
 | 64^3 GPU balanced | `cuda:0` | fixed truth, pose frozen | failed | 6.75000 | 0.0203247 | final level accepted | 30.0770 | Final `det_u` only reached about 0.50 px from true 7.25 px. |
 | 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen | failed | 7.12500 | 0.0224485 | mostly rejected/limited | 50.2916 | Correct core provenance recorded; longer schedule did not fix setup recovery. |
 | 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen, raw/no-prior full oracle | geometry passed | 1.43051e-06 | 1.06805e-07 | true | 52.0031 | Geometry criteria pass; benchmark top-level status still reflects unrelated final-volume NMSE. |
@@ -123,6 +123,15 @@ accepted as a substitute for the 64^3/64-view diagnostic.
   tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
   tests/test_alternating_solver_smoke.py::test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap
   -q` passed: 21 tests in 200.80 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run tomojax-align-auto-smoke --out-dir
+  .artifacts/phase8_core_projector/runs/32_supported_only_fixed_truth_cpu
+  --profile smoke32 --synthetic-dataset synth128_setup_global_tomo
+  --dataset-out-dir .artifacts/phase8_core_projector/datasets --size 32
+  --views 8 --supported-only-setup-global
+  --geometry-update-volume-source fixed_synthetic_truth
+  --geometry-update-pose-frozen` completed and refreshed the 32^3 smoke
+  artifact with `backend.actual="core_trilinear_ray"` and
+  `selected_jax_device="cpu:0"`.
 - `just imports` passed.
 
 ### Remaining Work

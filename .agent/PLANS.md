@@ -62,19 +62,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   tests, and `just imports`.
 - [x] Run supported-only 32^3 smoke plus 64^3/64-view GPU fixed-truth and stopped
   anchored diagnostics under the core projector.
-- [ ] Update implementation log and commit the coherent rebaseline slice.
+- [x] Update implementation log and commit the coherent rebaseline slice.
 
 ### Validation
 
-- `uv run ruff format ...` passed for touched Python files.
 - `uv run ruff check ...` passed for touched Python files.
 - `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
   source and tests.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
   tests/test_reference_fista.py
   tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_det_u_only_setup_update
   tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
-  -q` passed: 18 tests.
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap
+  -q` passed: 21 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -91,10 +93,10 @@ and proposed next fix before stopping.
 - Unsupported DOFs in this slice are explicit: detector roll, axis tilt,
   laminography, alpha/beta, and object drift are not implemented by the adapter
   until their core convention mapping is defined and tested.
-- Preview backprojection now uses the core explicit adjoint. The tiny
-  `fista_reconstruct_reference` wrapper still uses reverse-mode over the core
-  forward projection for its masked robust loss and remains a follow-up before
-  the objective is fully complete.
+- Preview backprojection and `fista_reconstruct_reference` now use core
+  projection plus the core explicit adjoint for the data-gradient path. The
+  remaining `jax.value_and_grad` in the wrapper is only for the smoothed-TV
+  regulariser.
 - 64^3/64-view fixed-truth recovery passes under the core operator when the
   oracle Schur path uses raw geometry residuals, disables the level metadata
   prior, and does not early-exit after coarse preview verification:
