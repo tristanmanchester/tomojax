@@ -983,7 +983,7 @@ def _criterion_evaluation(
             "status": "not_evaluated",
             "value": None,
             "threshold": threshold,
-            "reason": "criterion has no smoke-run metric mapping",
+            "reason": "unsupported_dof_not_evaluated",
         }
     value = geometry_recovery.get(metric_name)
     if not isinstance(value, int | float) or not isinstance(threshold, int | float):

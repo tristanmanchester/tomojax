@@ -276,6 +276,9 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
         math.radians(0.1),
     )
     assert evaluation["axis_error_deg_lt"]["status"] == "not_evaluated"
+    assert evaluation["axis_error_deg_lt"]["reason"] == "unsupported_dof_not_evaluated"
+    assert evaluation["roll_error_deg_lt"]["status"] == "not_evaluated"
+    assert evaluation["roll_error_deg_lt"]["reason"] == "unsupported_dof_not_evaluated"
     evaluation_summary = cast(
         "dict[str, object]",
         benchmark_result["benchmark_manifest_evaluation_summary"],

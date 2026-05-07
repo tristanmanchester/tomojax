@@ -6532,3 +6532,31 @@ Interpretation:
   tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
   -q` passed: 2 tests.
 - `just imports` passed.
+
+## 2026-05-07 — Phase 8 Unsupported DOF Benchmark Classification
+
+### Summary
+
+- Updated synthetic benchmark manifest evaluation so criteria without a
+  supported v2 smoke metric mapping are reported as `not_evaluated` with reason
+  `unsupported_dof_not_evaluated`.
+- Added focused CLI artifact assertions for unsupported setup-global axis/roll
+  criteria.
+- This does not implement new DOFs; it prevents unsupported roll, axis tilt,
+  laminography, nuisance, jumps, or object-motion criteria from being mistaken
+  for supported recovery failures.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_artifacts.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_align_auto_cli.py` passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 3 tests.
+- `just imports` passed.
