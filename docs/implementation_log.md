@@ -8099,6 +8099,22 @@ this slice.
   0 warnings, and 0 notes.
 - `just imports` passed.
 
+Follow-up before the five-case suite:
+
+- Added an acquisition guard so the setup-global pose freeze applies only to
+  parallel tomography. Parallel laminography keeps all requested pose DOFs
+  active even when the setup block includes detector roll and axis tilt.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  -q` passed: 6 tests in 9.26 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8/9 Pose-Policy Narrowing
 
 ### Summary

@@ -8,7 +8,7 @@ from tomojax.align._alternating_geometry_update import (
     _active_pose_dofs,
     _active_setup_parameters,
 )
-from tomojax.geometry import GeometryState
+from tomojax.geometry import AcquisitionParameters, GeometryState
 
 
 def test_alternating_setup_policy_freezes_theta_scale() -> None:
@@ -93,3 +93,38 @@ def test_alternating_pose_policy_freezes_zero_pose_for_global_setup_block() -> N
     )
 
     assert active == ()
+
+
+def test_alternating_pose_policy_keeps_laminography_pose_for_global_setup_block() -> None:
+    geometry = GeometryState.zeros(4)
+    geometry = GeometryState(
+        setup=geometry.setup,
+        pose=geometry.pose,
+        acquisition=AcquisitionParameters.parallel_laminography(tilt_rad=1.0),
+    )
+
+    active = _active_pose_dofs(
+        (
+            "alpha_rad",
+            "beta_rad",
+            "phi_residual_rad",
+            "dx_px",
+            "dz_px",
+        ),
+        geometry,
+        active_setup_parameters=(
+            "theta_offset_rad",
+            "det_u_px",
+            "detector_roll_rad",
+            "axis_rot_x_rad",
+            "axis_rot_y_rad",
+        ),
+    )
+
+    assert active == (
+        "alpha_rad",
+        "beta_rad",
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )

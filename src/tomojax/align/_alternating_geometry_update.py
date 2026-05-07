@@ -115,7 +115,11 @@ def _active_pose_dofs(
     allowed = {"alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"}
     if any(name not in allowed for name in raw):
         raise ValueError(f"unsupported active pose DOFs {raw!r}")
-    if _is_global_setup_block(active_setup_parameters) and not _any_pose_signal(geometry, raw):
+    if (
+        geometry.acquisition.model == "parallel"
+        and _is_global_setup_block(active_setup_parameters)
+        and not _any_pose_signal(geometry, raw)
+    ):
         return ()
     return cast("tuple[PoseSchurDof, ...]", tuple(raw))
 
