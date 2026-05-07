@@ -60,11 +60,19 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
 ### Remaining Questions
 
-- The next required diagnostic is fixed-truth joint setup+pose on the same
-  supported-only dataset. If setup recovery is suppressed there, continue with
-  block-wise setup/pose trust and staged pose activation.
+- Fixed-truth joint setup+pose on the same supported-only dataset fails without
+  pose constraints by absorbing setup into per-view pose:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_baseline/`
+  ended with det_u realised RMSE 6.72424 px and theta realised RMSE
+  0.021352 rad.
+- Fixed-truth joint setup+pose passes with a strong pose prior:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000/`
+  ended with det_u realised RMSE 0.0890279 px and theta realised RMSE
+  0.00109136 rad. This classifies the joint blocker as setup absorption into
+  weakly constrained pose, not a fixed-truth projector/setup convention issue.
 - Stopped-reconstruction diagnostics remain blocked until fixed-truth joint
-  setup+pose is passing or sharply classified.
+  setup+pose has a principled staged/block-wise trust policy rather than an
+  effectively hard diagnostic pose prior.
 
 ## 2026-05-07 — Nominal Theta Geometry Root Fix
 

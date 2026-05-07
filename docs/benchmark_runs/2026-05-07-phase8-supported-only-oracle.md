@@ -68,7 +68,47 @@ fixed the trust adaptation scale and the same balanced oracle passed.
 
 ## Next
 
-Use this as the fixed-truth setup oracle baseline. The next diagnostic is the
-fixed-truth joint setup+pose run on the same supported-only sidecar, with
-block-wise trust or stronger/staged pose handling if setup is again absorbed
-into per-view pose.
+Use this as the fixed-truth setup oracle baseline.
+
+## Fixed-Truth Joint Follow-Up
+
+The unconstrained joint setup+pose fixed-truth run failed by absorbing setup
+motion into per-view pose:
+
+- Run:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_baseline/`
+- det_u realised RMSE: 6.72424 px.
+- theta realised RMSE: 0.021352 rad.
+- final setup: `det_u_px=0.526379`, `theta_offset_rad=0.00083023`.
+
+A strong pose-prior diagnostic passed the same supported-only sidecar:
+
+```bash
+LD_LIBRARY_PATH="$(find .venv/lib/python3.12/site-packages/nvidia -type d \( -path '*/lib' -o -path '*/lib64' \) | paste -sd: -)" \
+JAX_PLATFORMS=cuda \
+uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000 \
+  --profile balanced \
+  --synthetic-dataset-dir .artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only \
+  --geometry-update-volume-source fixed_synthetic_truth \
+  --geometry-update-pose-prior-strength 1000000.0
+```
+
+| Metric | Value |
+|---|---:|
+| det_u realised RMSE | 0.0890279 px |
+| theta realised RMSE | 0.00109136 rad |
+| final residual | 0.000189463 |
+| total wall time | 76.5889 s |
+
+Artifacts:
+
+- Passing joint run:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000/`
+- Fixed-truth comparison:
+  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_fixed_truth.md`
+
+Interpretation: fixed-truth joint setup+pose can pass the supported-only case
+when pose is staged/prior-constrained. The unconstrained joint failure is setup
+absorption into per-view pose, so the production path still needs a principled
+block-wise or staged trust policy before stopped-reconstruction can be judged.
