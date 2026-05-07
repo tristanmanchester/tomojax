@@ -181,6 +181,7 @@ def _write_artifacts(
         observed=observed,
         mask=mask,
         summaries=summaries,
+        schur_result=schur_result,
         verification=verification,
     )
     _write_json(

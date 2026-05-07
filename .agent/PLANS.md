@@ -11,25 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 smoke expectation cleanup slice
-- Goal: align slow alternating-smoke assertions with current synthetic sidecar
-  contracts so broad smoke validation no longer requires unsupported nuisance,
-  roll, or axis recovery to pass.
+- Phase: Phase 8 nuisance-corrected failure gate slice
+- Goal: make the existing `nuisance_residual_structure` failure gate evaluate
+  the residual after fitted Schur nuisance models are applied, so gain/offset
+  or background fitting is reflected in `failure_report.json`.
 
 ### Scope
 
 - In scope:
-  - Relax sidecar-ingestion smoke assertions from whole-geometry pass to
-    individual supported-DOF evidence where the synthetic scenario contains
-    currently unsupported nuisance/roll/axis terms.
-  - Keep stopped-reconstruction recovery-gap assertions focused on the recovery
-    gap and stopped-volume gauge payload shape, not a fixed nearest-geometry
-    label.
-  - Record the focused failing/passing smoke commands.
+  - Pass the final Schur diagnostics into failure report construction.
+  - Apply fitted gain/offset and background nuisance models to the predicted
+    projections before computing residual-structure evidence.
+  - Add a focused private unit test for the nuisance correction helper.
   - Update docs/logs and commit the slice.
 - Out of scope:
   - Changing solver maths, benchmark tolerances, or report payload shape.
-  - Reclassifying unsupported synthetic scenario terms as supported.
+  - Adding new nuisance report fields or rerunning benchmarks.
 - Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
 
 ### Design Sources
@@ -41,21 +38,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Update stale slow-smoke assertions.
-- [x] Rerun the three previously failing smoke tests.
+- [x] Apply diagnostic nuisance models inside failure-gate residual structure.
+- [x] Add focused helper test.
 - [x] Run focused Ruff/type/tests and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_observability.py
+  -q` passed: 3 tests in 0.91 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_alternating_solver_smoke.py::test_alternating_solver_ingests_generated_synthetic_sidecars
-  tests/test_alternating_solver_smoke.py::test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap
-  tests/test_alternating_solver_smoke.py::test_supported_dof_summary_reports_individual_dof_evidence
-  -q` passed: 3 tests in 335.52 seconds.
-- `uv run ruff check tests/test_alternating_solver_smoke.py` passed.
-- `uv run basedpyright tests/test_alternating_solver_smoke.py` passed with
-  0 errors, 0 warnings, and 0 notes.
+  tests/test_alternating_solver_smoke.py::test_alternating_smoke_can_enable_gain_offset_nuisance
+  -q` passed: 1 test in 31.04 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py` passed with 0 errors,
+  0 warnings, and 0 notes.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -66,8 +67,7 @@ and proposed next fix before stopping.
 - The only supported v2 operator family is the existing core trilinear ray
   projector/backprojector (`core_trilinear_ray`).
 - Do not add a selector between rotate-and-sum and core trilinear ray.
-- Smoke tests for unsupported synthetic terms should assert explicit individual
-  evidence, not accidental whole-run success.
+- Fitted nuisance models must be reflected in failure classification evidence.
 
 ### Completed Previous Slices
 
@@ -88,9 +88,11 @@ and proposed next fix before stopping.
 - [x] Missing-policy criterion reasons committed: `9034b91`.
 - [x] 128^3 supported-only GPU scale gate committed: `d2fbd5a`.
 - [x] Active Schur DOFs in observability committed: `7ab5013`.
+- [x] Smoke expectation cleanup committed: `44dda7e`.
 
 ### Risks
 
-- Risk: relaxing assertions can hide real regressions.
-- Mitigation: keep assertions on deterministic sidecar ingestion, finite traces,
-  individual supported-DOF metrics, and stopped-volume gauge payload shape.
+- Risk: failure reports can look improved because nuisance models are applied
+  to evidence only.
+- Mitigation: use the exact final Schur diagnostic models already used by the
+  geometry residual, without changing solver state or benchmark thresholds.

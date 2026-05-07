@@ -3,6 +3,35 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Nuisance-Corrected Failure Gate Slice
+
+Corrected the existing `nuisance_residual_structure` failure gate so it evaluates
+projection residual structure after applying any fitted Schur gain/offset and
+background nuisance diagnostic models. This keeps `failure_report.json` aligned
+with the residual used by the geometry update when `fit_gain_offset_nuisance` or
+`fit_background_nuisance` is enabled, without changing solver maths, benchmark
+tolerances, or adding new report fields.
+
+Validation:
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_alternating_observability.py
+  -q` passed: 3 tests in 0.91 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_smoke_can_enable_gain_offset_nuisance
+  -q` passed: 1 test in 31.04 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_observability.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `just imports` passed.
+
+The same CPU-test CUDA plugin warning about missing cuSPARSE appears before JAX
+falls back to CPU; GPU benchmark commands still use the explicit
+`LD_LIBRARY_PATH` setup from the scale-gate runs.
+
 ## 2026-05-07 — Phase 8 Smoke Expectation Cleanup Slice
 
 Fixed three slow alternating-smoke expectations that no longer matched current

@@ -1120,6 +1120,7 @@ def _failure_report_payload(
     observed: jax.Array,
     mask: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
+    schur_result: JointSchurLMResult | None,
     verification: Mapping[str, object],
 ) -> dict[str, object]:
     gates = _failure_gate_rows(
@@ -1128,6 +1129,7 @@ def _failure_report_payload(
         observed=observed,
         mask=mask,
         summaries=summaries,
+        schur_result=schur_result,
         verification=verification,
     )
     return failure_report_from_gates(gates)
@@ -1140,12 +1142,14 @@ def _failure_gate_rows(
     observed: jax.Array,
     mask: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
+    schur_result: JointSchurLMResult | None,
     verification: Mapping[str, object],
 ) -> list[dict[str, object]]:
     summary = cast("Mapping[str, object]", verification["summary"])
     valid_fraction = float(jnp.mean(jnp.asarray(mask, dtype=jnp.float32)))
     predicted = project_parallel_reference(final_volume, final_geometry)
-    residual_structure = residual_structure_summary(predicted - observed, mask)
+    corrected_predicted = _apply_diagnostic_nuisance(predicted, schur_result)
+    residual_structure = residual_structure_summary(corrected_predicted - observed, mask)
     return [
         {
             "name": "finite_outputs",
@@ -1185,6 +1189,72 @@ def _failure_gate_rows(
         },
         _synthetic_sidecar_consistency_gate(verification),
     ]
+
+
+def _apply_diagnostic_nuisance(
+    predicted: object,
+    schur_result: JointSchurLMResult | None,
+) -> jax.Array:
+    corrected = jnp.asarray(predicted, dtype=jnp.float32)
+    if schur_result is None:
+        return corrected
+    diagnostics = schur_result.diagnostics
+    if diagnostics.gain_offset_model is not None:
+        corrected = _apply_gain_offset_payload(corrected, diagnostics.gain_offset_model)
+    if diagnostics.background_offset_model is not None:
+        corrected = _apply_background_payload(corrected, diagnostics.background_offset_model)
+    return corrected
+
+
+def _apply_gain_offset_payload(predicted: jax.Array, payload: Mapping[str, object]) -> jax.Array:
+    values = jnp.asarray(predicted, dtype=jnp.float32)
+    gain = _payload_vector(payload, "gain", values.shape[0], default=1.0).reshape(
+        (values.shape[0],) + (1,) * (values.ndim - 1)
+    )
+    offset = _payload_vector(payload, "offset", values.shape[0], default=0.0).reshape(
+        (values.shape[0],) + (1,) * (values.ndim - 1)
+    )
+    return gain * values + offset
+
+
+def _apply_background_payload(predicted: jax.Array, payload: Mapping[str, object]) -> jax.Array:
+    values = jnp.asarray(predicted, dtype=jnp.float32)
+    if values.ndim != 3:
+        return values
+    constant = _payload_vector(payload, "constant", values.shape[0], default=0.0).reshape(
+        (values.shape[0], 1, 1)
+    )
+    gradient = _payload_vector(payload, "vertical_gradient", values.shape[0], default=0.0).reshape(
+        (values.shape[0], 1, 1)
+    )
+    ramp = _vertical_ramp(int(values.shape[1])).reshape((1, values.shape[1], 1))
+    return values + constant + gradient * ramp
+
+
+def _payload_vector(
+    payload: Mapping[str, object],
+    key: str,
+    n_views: int,
+    *,
+    default: float,
+) -> jax.Array:
+    raw = payload.get(key)
+    values = cast("list[object]", raw) if isinstance(raw, list) else None
+    if values is None or len(values) != int(n_views):
+        return jnp.full((int(n_views),), float(default), dtype=jnp.float32)
+    return jnp.asarray([_float_payload_value(value) for value in values], dtype=jnp.float32)
+
+
+def _float_payload_value(value: object) -> float:
+    if isinstance(value, int | float):
+        return float(value)
+    return 0.0
+
+
+def _vertical_ramp(rows: int) -> jax.Array:
+    if int(rows) <= 1:
+        return jnp.zeros((int(rows),), dtype=jnp.float32)
+    return jnp.linspace(-1.0, 1.0, int(rows), dtype=jnp.float32)
 
 
 def _synthetic_sidecar_consistency_gate(verification: Mapping[str, object]) -> dict[str, object]:

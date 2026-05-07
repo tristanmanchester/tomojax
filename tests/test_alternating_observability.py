@@ -3,8 +3,13 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 from typing import cast
 
+import numpy as np
+
 # check-public-imports: allow-private
-from tomojax.align._alternating_verification import _observability_report_payload
+from tomojax.align._alternating_verification import (
+    _apply_diagnostic_nuisance,
+    _observability_report_payload,
+)
 
 # check-public-imports: allow-private
 from tomojax.align._joint_schur_lm import JointSchurDiagnostics, JointSchurLMResult
@@ -92,3 +97,51 @@ def test_observability_reports_active_setup_and_pose_dofs() -> None:
     assert dofs["pose"]["dz_px"]["status"] == "gauge_canonicalised"
     assert dofs["pose"]["alpha_rad"]["active"] is False
     assert dofs["pose"]["alpha_rad"]["status"] == "frozen"
+
+
+def test_failure_gate_nuisance_correction_applies_final_schur_models() -> None:
+    geometry = GeometryState.zeros(2)
+    diagnostics = JointSchurDiagnostics(
+        schur_condition=2.0,
+        setup_update_norm=0.1,
+        pose_update_norm=0.2,
+        dense_step_difference_norm=0.0,
+        schur_eigenvalues=(0.5, 2.0),
+        accepted=True,
+        actual_reduction=0.25,
+        gain_offset_model={
+            "schema": "tomojax.gain_offset_model.v1",
+            "gain": [2.0, 0.5],
+            "offset": [1.0, -1.0],
+        },
+        background_offset_model={
+            "schema": "tomojax.background_offset_model.v1",
+            "basis": "constant_plus_vertical_gradient",
+            "constant": [0.25, -0.25],
+            "vertical_gradient": [0.5, -0.5],
+        },
+    )
+    result = JointSchurLMResult(
+        geometry=geometry,
+        canonicalized_geometry=canonicalize_geometry_gauges(geometry),
+        initial_loss=1.0,
+        final_loss=0.75,
+        iterations=1,
+        active_setup_parameters=("theta_offset_rad", "det_u_px"),
+        active_pose_dofs=(),
+        frozen_parameters=(),
+        diagnostics=diagnostics,
+        iteration_diagnostics=(diagnostics,),
+    )
+    predicted = np.ones((2, 3, 2), dtype=np.float32)
+
+    corrected = np.asarray(_apply_diagnostic_nuisance(predicted, result))
+
+    np.testing.assert_allclose(
+        corrected[0, :, 0],
+        np.asarray([2.75, 3.25, 3.75], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        corrected[1, :, 0],
+        np.asarray([-0.25, -0.75, -1.25], dtype=np.float32),
+    )
