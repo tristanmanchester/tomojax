@@ -206,6 +206,36 @@ diagnostics pass, so the projector/setup convention is no longer the blocker.
   tests/test_align_auto_cli.py -q` passed: 22 tests.
 - `just imports` passed.
 
+## 2026-05-07 — Stopped-Reconstruction Supported-Only Classification
+
+### Summary
+
+- Reran the supported-only 64^3/64-view setup-global case with
+  `geometry_update_volume_source=stopped_reconstruction` using the same strong
+  pose prior that passes fixed-truth joint setup+pose.
+- The run failed with no geometry recovery: final setup stayed nominal
+  (`det_u_px=0`, `theta_offset_rad=0`).
+
+### Result
+
+- Run:
+  `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000/`
+- Backend/device: JAX GPU on `cuda:0`.
+- det_u realised RMSE: 7.25 px.
+- theta realised RMSE: 0.0218166 rad.
+- final residual: 0.367724.
+- volume NMSE: 0.576871.
+- Compare artifact:
+  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_stopped_reconstruction.md`.
+
+### Interpretation
+
+Fixed-truth joint setup+pose passes with the strong pose prior, but
+stopped-reconstruction with the same geometry-update settings does not move
+geometry. This classifies the next blocker as reconstruction/volume gauge
+handling or reconstruction absorption of geometry, not nominal theta,
+sidecar/projector convention, GPU memory, or fixed-truth setup Schur.
+
 ## 2026-05-07 — Nominal Theta Geometry Root Fix
 
 ### Summary

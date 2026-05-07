@@ -44,6 +44,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add focused regression tests.
 - [x] Run focused validation and `just imports`.
 - [x] Rerun supported-only fixed-truth joint GPU benchmark with phi frozen.
+- [x] Rerun stopped-reconstruction diagnostic after fixed-truth classification.
 - [x] Update docs with result/blocker.
 - [x] Commit the staged/zero-mean pose slice.
 
@@ -58,6 +59,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Best non-hard-prior GPU run:
   `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi_reference/`
   passes manifest criteria but misses internal det_u gate by about 0.001 px.
+- Stopped-reconstruction strong-pose-prior run failed without moving geometry:
+  `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000/`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
@@ -70,6 +73,8 @@ and proposed next fix before stopping.
 - Zero-mean pose step projection nearly resolves fixed-truth joint setup+pose
   without a hard pose prior, but detector pose active still leaves det_u just
   outside the internal 0.2 px gate.
+- Stopped-reconstruction is now classified as reconstruction/volume gauge
+  handling or geometry absorption.
 
 ### Risks
 

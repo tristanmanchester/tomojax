@@ -191,3 +191,23 @@ Compare artifact:
 Interpretation: zero-mean pose step projection almost resolves fixed-truth joint
 setup+pose without a hard pose prior. The remaining narrow issue is detector
 shift accuracy when detector pose remains active.
+
+## Stopped-Reconstruction Classification
+
+Stopped reconstruction was rerun with the same strong pose prior that passes the
+fixed-truth joint diagnostic:
+
+- Run:
+  `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000/`
+- det_u realised RMSE: 7.25 px.
+- theta realised RMSE: 0.0218166 rad.
+- final residual: 0.367724.
+- volume NMSE: 0.576871.
+
+Compare artifact:
+
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_stopped_reconstruction.md`
+
+Interpretation: fixed-truth joint can pass, but stopped-reconstruction does not
+move geometry under the same strong pose-prior settings. The next blocker is
+reconstruction/volume gauge handling or reconstruction absorption of geometry.
