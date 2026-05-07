@@ -513,8 +513,18 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
             "--geometry-update-pose-frozen",
             "--geometry-update-active-pose-dofs",
             "dx_px,dz_px",
+            "--geometry-update-active-setup-parameters",
+            "det_u_px",
             "--geometry-update-pose-activate-at-level-factor",
             "1",
+            "--preview-volume-support",
+            "cylindrical",
+            "--preview-initialization",
+            "zero",
+            "--preview-tv-scale",
+            "0.0",
+            "--preview-residual-filter-mode",
+            "raw",
             "--views",
             "4",
         ]
@@ -532,7 +542,12 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
     assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
     assert "geometry_update_pose_frozen = true" in config_text
     assert "geometry_update_pose_activate_at_level_factor = 1" in config_text
+    assert 'geometry_update_active_setup_parameters = ["det_u_px"]' in config_text
     assert 'geometry_update_active_pose_dofs = ["dx_px", "dz_px"]' in config_text
+    assert 'preview_volume_support = "cylindrical"' in config_text
+    assert 'preview_initialization = "zero"' in config_text
+    assert "preview_tv_scale = 0.0" in config_text
+    assert 'preview_residual_filter_mode = "raw"' in config_text
     schur = cast(
         "dict[str, object]",
         json.loads((out_dir / "schur_diagnostics.json").read_text(encoding="utf-8")),
@@ -544,6 +559,10 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
         json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
     )
     assert benchmark_result["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    assert benchmark_result["preview_volume_support"] == "cylindrical"
+    assert benchmark_result["preview_initialization"] == "zero"
+    assert benchmark_result["preview_tv_scale"] == 0.0
+    assert benchmark_result["preview_residual_filter_mode"] == "raw"
     reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
     assert (
         reconstruction["final_residual"]

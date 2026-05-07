@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING
 
 import jax
+import jax.numpy as jnp
 
 from tomojax.align._alternating_artifacts import _write_artifacts
 from tomojax.align._alternating_geometry_update import (
@@ -39,16 +40,20 @@ from tomojax.align._alternating_verification import (
     _verification_payload,
 )
 from tomojax.align._continuation import reference_continuation_schedule
+from tomojax.forward import ResidualFilterConfig
 from tomojax.geometry import GaugeReport
 from tomojax.recon import (
     ReferenceFISTAConfig,
     ReferenceFISTAResult,
+    centered_volume_support,
     fista_reconstruct_reference,
+    reconstruct_average_reference,
     reconstruct_backprojection_reference,
 )
 
 if TYPE_CHECKING:
     from tomojax.align._joint_schur_lm import JointSchurLMResult
+    from tomojax.geometry import GeometryState
 
 
 def _run_alternating_solver_smoke_impl(
@@ -98,18 +103,24 @@ def _run_alternating_solver_smoke_impl(
         fista_result = fista_reconstruct_reference(
             observed,
             geometry,
-            initial_volume=(
-                volume
-                if volume is not None
-                else reconstruct_backprojection_reference(observed, geometry, depth=config.size)
+            initial_volume=_preview_initial_volume(
+                config,
+                observed,
+                geometry,
+                previous_volume=volume,
+            ),
+            volume_support=_preview_volume_support(
+                config,
+                shape=(config.size, config.size, config.size),
             ),
             mask=mask,
             config=ReferenceFISTAConfig(
                 iterations=level.reconstruction_iterations,
                 step_size=2.0e-3,
-                tv_weight=0.0,
+                tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
                 residual_sigma=level.residual_sigma,
                 residual_delta=level.residual_delta,
+                residual_filters=_preview_residual_filters(config, level.residual_filters),
             ),
         )
         volume = jax.lax.stop_gradient(fista_result.volume)
@@ -143,6 +154,7 @@ def _run_alternating_solver_smoke_impl(
                 sigma=residual_sigma_effective,
                 setup_prior_strength=config.geometry_update_setup_prior_strength,
                 pose_prior_strength=config.geometry_update_pose_prior_strength,
+                active_setup_parameters=config.geometry_update_active_setup_parameters,
                 pose_frozen=_pose_frozen_for_level(config, level.level_factor),
                 active_pose_dofs=config.geometry_update_active_pose_dofs,
                 fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
@@ -247,7 +259,12 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_pose_activate_at_level_factor=(
             config.geometry_update_pose_activate_at_level_factor
         ),
+        geometry_update_active_setup_parameters=config.geometry_update_active_setup_parameters,
         geometry_update_active_pose_dofs=config.geometry_update_active_pose_dofs,
+        preview_volume_support=config.preview_volume_support,
+        preview_initialization=config.preview_initialization,
+        preview_tv_scale=config.preview_tv_scale,
+        preview_residual_filter_mode=config.preview_residual_filter_mode,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,
         verification=_verification_payload(
@@ -287,3 +304,49 @@ def _pose_frozen_for_level(config: AlternatingSmokeConfig, level_factor: int) ->
         return True
     activate_at = config.geometry_update_pose_activate_at_level_factor
     return activate_at is not None and int(level_factor) > int(activate_at)
+
+
+def _preview_volume_support(
+    config: AlternatingSmokeConfig,
+    *,
+    shape: tuple[int, int, int],
+) -> jax.Array | None:
+    if config.preview_volume_support == "none":
+        return None
+    return centered_volume_support(shape, kind=config.preview_volume_support)
+
+
+def _preview_initial_volume(
+    config: AlternatingSmokeConfig,
+    observed: jax.Array,
+    geometry: GeometryState,
+    *,
+    previous_volume: jax.Array | None,
+) -> jax.Array:
+    if previous_volume is not None:
+        return previous_volume
+    if config.preview_initialization == "backprojection":
+        return reconstruct_backprojection_reference(observed, geometry, depth=config.size)
+    if config.preview_initialization == "zero":
+        return jnp.zeros((config.size, config.size, config.size), dtype=jnp.float32)
+    if config.preview_initialization == "constant":
+        fill_value = jnp.mean(jnp.asarray(observed, dtype=jnp.float32)) / jnp.asarray(
+            max(config.size, 1), dtype=jnp.float32
+        )
+        return jnp.full((config.size, config.size, config.size), fill_value, dtype=jnp.float32)
+    if config.preview_initialization == "average_projection":
+        return reconstruct_average_reference(observed, depth=config.size)
+    raise ValueError(f"unknown preview initialization {config.preview_initialization!r}")
+
+
+def _preview_residual_filters(
+    config: AlternatingSmokeConfig,
+    residual_filters: tuple[ResidualFilterConfig, ...],
+) -> tuple[ResidualFilterConfig, ...]:
+    if config.preview_residual_filter_mode == "continuation":
+        return residual_filters
+    if config.preview_residual_filter_mode == "raw":
+        return (ResidualFilterConfig(kind="raw"),)
+    raise ValueError(
+        f"unknown preview residual filter mode {config.preview_residual_filter_mode!r}"
+    )

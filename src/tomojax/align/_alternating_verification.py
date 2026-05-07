@@ -164,6 +164,13 @@ def _verification_payload(
         "n_views": cfg.n_views,
         "schedule": schedule.name,
         "geometry_update_volume_source": geometry_update_volume_source,
+        "geometry_update_active_setup_parameters": list(
+            cfg.geometry_update_active_setup_parameters
+        ),
+        "preview_volume_support": cfg.preview_volume_support,
+        "preview_initialization": cfg.preview_initialization,
+        "preview_tv_scale": cfg.preview_tv_scale,
+        "preview_residual_filter_mode": cfg.preview_residual_filter_mode,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,
         "synthetic_dataset": _synthetic_dataset_payload(cfg),

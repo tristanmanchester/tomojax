@@ -22,6 +22,8 @@ forward model.
 - `ReferenceReconstructionScheduleName`
 - `Regulariser`
 - `SPDHGConfig`
+- `VolumeSupportKind`
+- `centered_volume_support`
 - `fbp`
 - `fista_reconstruct_reference`
 - `fista_tv`
@@ -52,7 +54,10 @@ Forbidden dependencies:
 - Alignment must use stopped-gradient latent volumes.
 - Reconstruction traces must be suitable for artifact reports.
 - `fista_reconstruct_reference` is the first v2 JAX reference FISTA preview
-  contract. It uses the current minimal reference projector.
+  contract. It uses the current minimal reference projector and can optionally
+  project iterates into a nonnegative support mask.
+- `centered_volume_support` creates deterministic cylindrical or spherical
+  masks for synthetic reference diagnostics.
 - `reference_fista_schedule` resolves the v2 preview/final schedule contract;
   full pyramid execution belongs to a later orchestration milestone.
 - `reconstruct_average_reference` is a tiny smoke helper, not the final default

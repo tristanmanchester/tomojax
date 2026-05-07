@@ -23,6 +23,7 @@ class ContinuationLevel:
     trust_radius_px: float
     prior_strength: float
     residual_filters: tuple[ResidualFilterConfig, ...]
+    reconstruction_tv_weight: float = 0.0
     role: ContinuationLevelRole = "preview"
     skip_finer_if_verified: bool = True
     run_if_coarse_unverified: bool = False
@@ -102,6 +103,7 @@ def _make_schedule(
                 residual_filters=(
                     ResidualFilterConfig(kind="lowpass_gaussian", weight=1.0, sigma_px=1.0),
                 ),
+                reconstruction_tv_weight=1.0e-3,
                 role="preview",
                 skip_finer_if_verified=True,
             ),
@@ -122,6 +124,7 @@ def _make_schedule(
                         outer_sigma_px=1.6,
                     ),
                 ),
+                reconstruction_tv_weight=5.0e-4,
                 role="preview",
                 skip_finer_if_verified=True,
                 run_if_coarse_unverified=True,

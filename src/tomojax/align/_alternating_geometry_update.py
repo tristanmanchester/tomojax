@@ -12,6 +12,7 @@ from tomojax.align._joint_schur_lm import (
     JointSchurLMConfig,
     JointSchurLMResult,
     PoseSchurDof,
+    SetupSchurParameter,
     solve_joint_schur_lm,
 )
 
@@ -32,6 +33,7 @@ def _run_geometry_updates(
     sigma: float,
     setup_prior_strength: float | None,
     pose_prior_strength: float | None,
+    active_setup_parameters: tuple[str, ...],
     pose_frozen: bool,
     active_pose_dofs: tuple[str, ...],
     fit_gain_offset_nuisance: bool,
@@ -53,6 +55,7 @@ def _run_geometry_updates(
             parameter_prior_strength=level.prior_strength,
             setup_prior_strength=setup_prior_strength,
             pose_prior_strength=pose_prior_strength,
+            active_setup_parameters=_active_setup_parameters(active_setup_parameters),
             active_pose_dofs=() if pose_frozen else _active_pose_dofs(active_pose_dofs),
             fit_gain_offset=fit_gain_offset_nuisance,
             fit_background_offset=fit_background_nuisance,
@@ -66,6 +69,13 @@ def _active_pose_dofs(raw: tuple[str, ...]) -> tuple[PoseSchurDof, ...]:
     if any(name not in allowed for name in raw):
         raise ValueError(f"unsupported active pose DOFs {raw!r}")
     return cast("tuple[PoseSchurDof, ...]", tuple(raw))
+
+
+def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter, ...]:
+    allowed = {"theta_offset_rad", "det_u_px", "det_v_px"}
+    if any(name not in allowed for name in raw):
+        raise ValueError(f"unsupported active setup parameters {raw!r}")
+    return cast("tuple[SetupSchurParameter, ...]", tuple(raw))
 
 
 def _geometry_update_volume(

@@ -3,6 +3,114 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Anchored Preview Reconstruction Gate 1
+
+### Summary
+
+- Added optional `volume_support` to reference FISTA and project both candidate
+  and momentum state through nonnegativity/support constraints after every
+  update.
+- Added deterministic centered cylindrical/spherical support masks in
+  `tomojax.recon`.
+- Threaded preview support, preview initialization, preview TV scaling, and
+  preview residual-filter mode through the private alternating solver and
+  `align-auto` CLI.
+- Added setup-only Schur wiring for active setup-parameter subsets so the first
+  stopped schedule can freeze pose, `theta_offset_rad`, and `det_v_px` while
+  updating only `det_u_px`.
+- Ran supported-only 64^3/64-view stopped GPU diagnostics and reached Gate 1
+  with cylindrical support, continuation preview filters, preview TV, constant
+  initialization, and det_u-only stopped setup updates.
+
+### Diagnostics
+
+Dataset:
+`.artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only/`
+
+All stopped runs used JAX GPU on `cuda:0`, nuisance disabled, sidecar ingestion,
+`geometry_update_volume_source=stopped_reconstruction`,
+`geometry_update_active_setup_parameters=det_u_px`, and
+`geometry_update_pose_frozen=true`.
+
+| Mode | Profile | Support | Init | TV scale | Preview filters | det_u RMSE px | theta RMSE rad | True vol/final geom | Final volume/init geom | Final volume/true geom | Classification | Schur accepted | Time s |
+|---|---|---|---|---:|---|---:|---:|---:|---:|---:|---|---|---:|
+| baseline | reference | none | backprojection | 0 | raw | 7.25 | 0.0218166 | 0.884522 | 1.05091 | 1.40607 | `reconstruction_absorbed_geometry` | false | 18.9327 |
+| support only | reference | cylindrical | backprojection | 0 | raw | 4.28274 | 0.0218166 | 0.483220 | 1.38357 | 1.35286 | `training_loss_not_independent` | true | 12.3957 |
+| support + TV | reference | cylindrical | backprojection | 1 | raw | 4.28349 | 0.0218166 | 0.483309 | 1.38357 | 1.35286 | `training_loss_not_independent` | true | 12.3683 |
+| support + TV + filters | reference | cylindrical | backprojection | 1 | continuation | 4.28358 | 0.0218166 | 0.483320 | 1.38357 | 1.35286 | `training_loss_not_independent` | true | 13.5487 |
+| less geometry-aware init | reference | cylindrical | constant | 1 | continuation | 0.453199 | 0.0218166 | 0.0167246 | 1.87446 | 1.84208 | `independent_projection_losses_consistent` | true | 18.6021 |
+
+Gate 1 outcome:
+
+- First stopped setup stage now accepts useful detector-shift movement in the
+  anchored runs.
+- `det_u` RMSE improves from 7.25 px to 0.453199 px, below the 3 px gate.
+- True-volume/final-geometry loss drops from 0.884522 to 0.0167246.
+- Theta remains frozen in this diagnostic schedule; exact stopped theta recovery
+  is intentionally not required without an explicit orientation anchor.
+
+### Fixed-Truth Regression
+
+Fixed-truth supported-only Schur still passes after the anchored preview change:
+
+- Run:
+  `.artifacts/phase8_anchored_preview/runs/64_fixed_truth_pose_frozen_anchor_regression/`
+- Status: passed.
+- Device: `cuda:0`.
+- det_u RMSE: `1.00136e-05` px.
+- theta RMSE: `2.68284e-06` rad.
+- true-volume/final-geometry loss: `0.0`.
+
+### Detector Boundary Diagnostic
+
+The current reference projector uses periodic detector shifts. A one-off
+diagnostic compared the successful anchored stopped run with zero-fill and
+valid-overlap masked non-periodic detector-shift semantics.
+
+- Artifact:
+  `.artifacts/phase8_anchored_preview/detector_boundary_diagnostic.json`
+- Valid overlap fraction: `0.875`.
+- Wrap losses: true-volume/true-geometry `0.0`,
+  true-volume/final-geometry `0.0167246`,
+  true-volume/initial-geometry `0.884522`.
+- Valid-overlap masked zero-fill losses: true-volume/true-geometry `0.0`,
+  true-volume/final-geometry `0.0191139`,
+  true-volume/initial-geometry `1.01088`.
+
+Interpretation: non-periodic masked detector-shift semantics penalize the wrong
+detector shift more strongly while preserving zero loss for true geometry. This
+should be handled as the next detector-boundary slice, not mixed into the
+anchored-preview Gate 1 commit.
+
+### Validation
+
+- `uv run ruff format ...` passed for touched source and tests.
+- `uv run ruff check ...` passed for touched source and tests.
+- `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
+  source and tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
+  tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  -q` passed: 22 tests.
+- `just imports` passed.
+- `just check` did not pass because the repository-wide Ruff gate still hits
+  broad pre-existing legacy lint debt outside this slice after formatting
+  `src tests tools` (`src/tomojax/align/model/schedules.py`,
+  `src/tomojax/align/model/state.py`,
+  `src/tomojax/align/objectives/fixed_volume.py`, and many legacy tests).
+  The unrelated formatter churn from that attempt was reverted before commit.
+
+### Remaining Work
+
+- Gate 2 is not yet complete. Backprojection initialization with support/TV and
+  filters improves det_u only to about 4.28 px; the constant initialization is
+  the first configuration that reaches Gate 1.
+- Detector-boundary semantics should be addressed next because the current
+  projector wraps detector shifts.
+- Pose and theta should remain frozen until setup recovery is stronger; exact
+  stopped theta recovery still needs an explicit orientation anchor.
+
 ## 2026-05-07 — GPU Memory Diagnostic Pause
 
 ### Summary

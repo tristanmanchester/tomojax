@@ -8,6 +8,9 @@ from tomojax.align._alternating import (
     AlternatingSmokeConfig,
     AlternatingSmokeResult,
     GeometryUpdateVolumeSource,
+    PreviewInitialization,
+    PreviewResidualFilterMode,
+    PreviewVolumeSupport,
     run_alternating_solver_smoke,
 )
 from tomojax.align._continuation import (
@@ -48,6 +51,9 @@ __all__ = [
     "JointSchurLMResult",
     "PoseOnlyLMConfig",
     "PoseOnlyLMResult",
+    "PreviewInitialization",
+    "PreviewResidualFilterMode",
+    "PreviewVolumeSupport",
     "SetupOnlyLMConfig",
     "SetupOnlyLMResult",
     "adapt_joint_schur_damping",

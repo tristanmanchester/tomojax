@@ -13,6 +13,9 @@ from tomojax.align.api import (
     AlternatingSmokeConfig,
     ContinuationScheduleName,
     GeometryUpdateVolumeSource,
+    PreviewInitialization,
+    PreviewResidualFilterMode,
+    PreviewVolumeSupport,
     reference_continuation_schedule,
 )
 from tomojax.datasets import (
@@ -28,6 +31,9 @@ if TYPE_CHECKING:
 _PROFILE_CHOICES = ("smoke32", "lightning", "balanced", "reference")
 _SYNTHETIC_SIZE_CHOICES = (32, 64, 128)
 _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synthetic_truth")
+_PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "spherical")
+_PREVIEW_INITIALIZATION_CHOICES = ("backprojection", "zero", "constant", "average_projection")
+_PREVIEW_RESIDUAL_FILTER_MODE_CHOICES = ("continuation", "raw")
 SyntheticSize = Literal[32, 64, 128]
 
 
@@ -129,12 +135,44 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
+        "--geometry-update-active-setup-parameters",
+        default="theta_offset_rad,det_u_px",
+        help=(
+            "Comma-separated active setup parameters for Schur updates. "
+            "Supported names: theta_offset_rad, det_u_px, det_v_px."
+        ),
+    )
+    _ = parser.add_argument(
         "--geometry-update-pose-activate-at-level-factor",
         type=int,
         help=(
             "Keep pose frozen for coarser levels and activate configured pose DOFs "
             "at this continuation level factor or finer."
         ),
+    )
+    _ = parser.add_argument(
+        "--preview-volume-support",
+        choices=_PREVIEW_VOLUME_SUPPORT_CHOICES,
+        default="none",
+        help="Optional centered support mask for preview reconstruction.",
+    )
+    _ = parser.add_argument(
+        "--preview-initialization",
+        choices=_PREVIEW_INITIALIZATION_CHOICES,
+        default="backprojection",
+        help="Initial volume source for preview reconstruction.",
+    )
+    _ = parser.add_argument(
+        "--preview-tv-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor for continuation preview TV weights.",
+    )
+    _ = parser.add_argument(
+        "--preview-residual-filter-mode",
+        choices=_PREVIEW_RESIDUAL_FILTER_MODE_CHOICES,
+        default="continuation",
+        help="Residual filters used inside preview reconstruction.",
     )
     return parser
 
@@ -147,6 +185,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     geometry_update_volume_source = cast(
         "GeometryUpdateVolumeSource",
         args.geometry_update_volume_source,
+    )
+    preview_volume_support = cast("PreviewVolumeSupport", args.preview_volume_support)
+    preview_initialization = cast("PreviewInitialization", args.preview_initialization)
+    preview_residual_filter_mode = cast(
+        "PreviewResidualFilterMode",
+        args.preview_residual_filter_mode,
     )
     size = cast("SyntheticSize", int(args.size))
     views = int(args.views)
@@ -194,9 +238,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             geometry_update_pose_activate_at_level_factor=(
                 args.geometry_update_pose_activate_at_level_factor
             ),
+            geometry_update_active_setup_parameters=_parse_active_setup_parameters(
+                str(args.geometry_update_active_setup_parameters)
+            ),
             geometry_update_active_pose_dofs=_parse_active_pose_dofs(
                 str(args.geometry_update_active_pose_dofs)
             ),
+            preview_volume_support=preview_volume_support,
+            preview_initialization=preview_initialization,
+            preview_tv_scale=float(args.preview_tv_scale),
+            preview_residual_filter_mode=preview_residual_filter_mode,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,
@@ -238,6 +289,16 @@ def _parse_active_pose_dofs(raw: str) -> tuple[str, ...]:
     allowed = {"phi_residual_rad", "dx_px", "dz_px"}
     if any(value not in allowed for value in values):
         raise ValueError(f"unsupported --geometry-update-active-pose-dofs value {raw!r}")
+    return values
+
+
+def _parse_active_setup_parameters(raw: str) -> tuple[str, ...]:
+    if raw.strip().lower() in {"", "none"}:
+        return ()
+    values = tuple(part.strip() for part in raw.split(",") if part.strip())
+    allowed = {"theta_offset_rad", "det_u_px", "det_v_px"}
+    if any(value not in allowed for value in values):
+        raise ValueError(f"unsupported --geometry-update-active-setup-parameters value {raw!r}")
     return values
 
 

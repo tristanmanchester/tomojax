@@ -12,6 +12,9 @@ from tomojax.align._alternating_types import (
     AlternatingSmokeConfig,
     AlternatingSmokeResult,
     GeometryUpdateVolumeSource,
+    PreviewInitialization,
+    PreviewResidualFilterMode,
+    PreviewVolumeSupport,
 )
 
 if TYPE_CHECKING:
@@ -46,5 +49,8 @@ __all__ = [
     "AlternatingSmokeConfig",
     "AlternatingSmokeResult",
     "GeometryUpdateVolumeSource",
+    "PreviewInitialization",
+    "PreviewResidualFilterMode",
+    "PreviewVolumeSupport",
     "run_alternating_solver_smoke",
 ]

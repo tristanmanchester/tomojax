@@ -11,6 +11,7 @@ from tomojax.forward import project_parallel_reference
 from tomojax.geometry import GeometryState
 from tomojax.recon import (
     ReferenceFISTAConfig,
+    centered_volume_support,
     fista_reconstruct_reference,
     reconstruct_backprojection_reference,
     write_fista_trace_csv,
@@ -75,6 +76,39 @@ def test_reference_backprojection_uses_geometry_and_preserves_shape() -> None:
     assert float(jnp.max(volume)) > 0.0
     reprojection = project_parallel_reference(volume, geometry)
     assert reprojection.shape == projections.shape
+
+
+def test_reference_fista_projects_candidate_and_momentum_into_support() -> None:
+    truth = jnp.ones((6, 6, 6), dtype=jnp.float32)
+    geometry = GeometryState.zeros(2)
+    projections = project_parallel_reference(truth, geometry)
+    support = centered_volume_support((6, 6, 6), kind="cylindrical", radius_fraction=0.35)
+    warm_start = jnp.ones_like(truth)
+
+    result = fista_reconstruct_reference(
+        projections,
+        geometry,
+        initial_volume=warm_start,
+        volume_support=support,
+        config=ReferenceFISTAConfig(iterations=3, step_size=2e-3),
+    )
+
+    outside_support = jnp.where(support > 0, 0.0, result.volume)
+    assert float(jnp.max(jnp.abs(outside_support))) == 0.0
+    assert float(jnp.min(result.volume)) >= 0.0
+
+
+def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
+    cylinder = centered_volume_support((7, 7, 7), kind="cylindrical", radius_fraction=0.5)
+    sphere = centered_volume_support((7, 7, 7), kind="spherical", radius_fraction=0.5)
+
+    assert cylinder.shape == (7, 7, 7)
+    assert sphere.shape == (7, 7, 7)
+    assert cylinder.dtype == jnp.bool_
+    assert sphere.dtype == jnp.bool_
+    assert bool(cylinder[3, 3, 3])
+    assert bool(sphere[3, 3, 3])
+    assert int(jnp.sum(sphere)) < int(jnp.sum(cylinder))
 
 
 def _tiny_volume() -> jnp.ndarray:

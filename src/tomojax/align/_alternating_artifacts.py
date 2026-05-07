@@ -72,7 +72,12 @@ def _write_artifacts(
     geometry_update_pose_prior_strength: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
+    preview_volume_support: str,
+    preview_initialization: str,
+    preview_tv_scale: float,
+    preview_residual_filter_mode: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     verification: Mapping[str, object],
@@ -130,7 +135,12 @@ def _write_artifacts(
         geometry_update_pose_activate_at_level_factor=(
             geometry_update_pose_activate_at_level_factor
         ),
+        geometry_update_active_setup_parameters=geometry_update_active_setup_parameters,
         geometry_update_active_pose_dofs=geometry_update_active_pose_dofs,
+        preview_volume_support=preview_volume_support,
+        preview_initialization=preview_initialization,
+        preview_tv_scale=preview_tv_scale,
+        preview_residual_filter_mode=preview_residual_filter_mode,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
         synthetic_dataset=verification.get("synthetic_dataset"),
@@ -142,6 +152,10 @@ def _write_artifacts(
             observed,
             schedule,
             geometry_update_volume_source=geometry_update_volume_source,
+            preview_volume_support=preview_volume_support,
+            preview_initialization=preview_initialization,
+            preview_tv_scale=preview_tv_scale,
+            preview_residual_filter_mode=preview_residual_filter_mode,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
             fit_background_nuisance=fit_background_nuisance,
             synthetic_dataset=verification.get("synthetic_dataset"),
@@ -182,6 +196,10 @@ def _write_artifacts(
             summaries=summaries,
             failure_report=failure_report,
             geometry_update_volume_source=geometry_update_volume_source,
+            preview_volume_support=preview_volume_support,
+            preview_initialization=preview_initialization,
+            preview_tv_scale=preview_tv_scale,
+            preview_residual_filter_mode=preview_residual_filter_mode,
         )
         _write_json(artifacts["benchmark_result_json"], benchmark_result)
         _write_text(
@@ -856,6 +874,10 @@ def _benchmark_result_payload(
     summaries: tuple[AlternatingLevelSummary, ...],
     failure_report: Mapping[str, object],
     geometry_update_volume_source: GeometryUpdateVolumeSource,
+    preview_volume_support: str,
+    preview_initialization: str,
+    preview_tv_scale: float,
+    preview_residual_filter_mode: str,
 ) -> dict[str, object]:
     metrics = cast("dict[object, object]", verification.get("metrics", {}))
     verification_runtime = cast("dict[object, object]", verification.get("runtime", {}))
@@ -946,6 +968,10 @@ def _benchmark_result_payload(
             manifest_evaluation
         ),
         "geometry_update_volume_source": geometry_update_volume_source,
+        "preview_volume_support": preview_volume_support,
+        "preview_initialization": preview_initialization,
+        "preview_tv_scale": preview_tv_scale,
+        "preview_residual_filter_mode": preview_residual_filter_mode,
     }
 
 
@@ -1068,7 +1094,12 @@ def _write_config_resolved(
     geometry_update_pose_prior_strength: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
+    preview_volume_support: str,
+    preview_initialization: str,
+    preview_tv_scale: float,
+    preview_residual_filter_mode: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1094,8 +1125,16 @@ def _write_config_resolved(
             f"{int(geometry_update_pose_activate_at_level_factor)}"
         )
     lines.append(
+        "geometry_update_active_setup_parameters = "
+        f"{json.dumps(list(geometry_update_active_setup_parameters))}"
+    )
+    lines.append(
         f"geometry_update_active_pose_dofs = {json.dumps(list(geometry_update_active_pose_dofs))}"
     )
+    lines.append(f'preview_volume_support = "{preview_volume_support}"')
+    lines.append(f'preview_initialization = "{preview_initialization}"')
+    lines.append(f"preview_tv_scale = {float(preview_tv_scale)}")
+    lines.append(f'preview_residual_filter_mode = "{preview_residual_filter_mode}"')
     lines.append(f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}")
     lines.append(f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}")
     if isinstance(synthetic_dataset, dict):
@@ -1163,6 +1202,10 @@ def _run_manifest_payload(
     schedule: ContinuationSchedule,
     *,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
+    preview_volume_support: str,
+    preview_initialization: str,
+    preview_tv_scale: float,
+    preview_residual_filter_mode: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1187,6 +1230,10 @@ def _run_manifest_payload(
         "dataset": dataset,
         "geometry_model": "parallel_tomography_reference",
         "geometry_update_volume_source": geometry_update_volume_source,
+        "preview_volume_support": preview_volume_support,
+        "preview_initialization": preview_initialization,
+        "preview_tv_scale": preview_tv_scale,
+        "preview_residual_filter_mode": preview_residual_filter_mode,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,
         "continuation": {

@@ -11,21 +11,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 unsupported DOF classification
-- Goal: make benchmark manifest criteria for unsupported DOFs explicitly
-  `unsupported_dof_not_evaluated` instead of treating them as supported recovery
-  gates.
+- Phase: Phase 8 anchored preview reconstruction
+- Goal: make stopped-reconstruction preview volumes geometry-informative enough
+  that supported-only setup error reaches Schur instead of being absorbed into a
+  wrong-gauge preview volume.
 
 ### Scope
 
 - In scope:
-  - Update benchmark manifest criterion evaluation reasons for unsupported
-    criteria.
-  - Add focused CLI artifact assertions for unsupported axis/roll criteria.
-  - Run focused validation and import checks.
+  - Add optional support masks to reference FISTA and project both candidate and
+    momentum state into nonnegative support.
+  - Add centered cylindrical/spherical support generation in `tomojax.recon`.
+  - Thread preview support, small TV weights, residual filters, and initialization
+    choices through the alternating preview reconstruction path.
+  - Wire setup-only stopped diagnostics with `det_u_px` active and pose,
+    `theta_offset_rad`, and `det_v_px` frozen.
+  - Run supported-only 64^3/64-view stopped diagnostics until Gate 1 is measured.
 - Out of scope:
-  - Implementing additional DOFs or rerunning the full five-case benchmark.
-  - Legacy Ruff cleanup.
+  - Sidecar/report-field expansion, nominal theta, Schur trust/damping, pose
+    priors, Pallas, 128^3, real data, broad benchmark ingestion, or legacy Ruff
+    cleanup.
 - Deep module owner: `tomojax.align`.
 
 ### Design Sources
@@ -35,35 +40,53 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Mark unsupported manifest criteria as `unsupported_dof_not_evaluated`.
-- [x] Add focused artifact test assertions.
+- [x] Add support projection to reference FISTA.
+- [x] Add centered support generation and tests.
+- [x] Thread support/TV/residual filters/init choices through alternating
+  preview reconstruction.
+- [x] Add setup-only Schur active setup parameter wiring.
 - [x] Run focused validation and `just imports`.
-- [x] Update docs and commit the unsupported-DOF classification slice.
+- [x] Run supported-only 64^3/64-view stopped diagnostics and record Gate 1
+  outcome.
+- [x] Update implementation log, benchmark docs, and commit.
 
 ### Validation
 
-- `uv run ruff format ...` passed for touched benchmark artifact/test files.
-- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
-  tests/test_align_auto_cli.py`
-  passed.
-- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
-  tests/test_align_auto_cli.py`
-  passed with 0 errors and 0 warnings.
-- `JAX_PLATFORM_NAME=cpu uv run pytest` on three focused align-auto artifact
-  tests passed: 3 tests.
+- `uv run ruff format ...` passed for touched source and tests.
+- `uv run ruff check ...` passed for touched source and tests.
+- `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
+  source and tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
+  tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  -q` passed: 22 tests.
 - `just imports` passed.
+- `just check` did not pass due broad pre-existing repository Ruff debt outside
+  this slice; unrelated formatter churn from that command was reverted.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Unsupported criteria still count toward `not_evaluated` in the manifest
-  summary, but their reason is now explicit and machine-readable.
+- Fixed-truth supported-only recovery now passes with filtered Schur. Stopped
+  reconstruction remains at `det_u` RMSE 7.25 px with
+  `reconstruction_absorbed_geometry`.
+- First stopped schedule should freeze pose/theta/det_v and update only
+  `det_u_px`; theta recovery is not required without an explicit orientation
+  anchor.
+- Gate 1 passed with cylindrical support, preview TV, continuation preview
+  residual filters, constant preview initialization, and det_u-only stopped
+  setup updates: `det_u` RMSE `0.453199` px and true-volume/final-geometry loss
+  `0.0167246`.
 
 ### Risks
 
-- Risk: five-case runs generated before this slice still contain the older
-  generic reason string.
-- Mitigation: rerun the five-case comparison only after supported-only
-  production-like recovery is ready to judge.
+- Risk: support and TV can reduce volume gauge freedom but still leave detector
+  shift hidden by detector boundary semantics.
+- Mitigation: run a detector boundary diagnostic only after anchored stopped
+  reconstruction reaches at least Gate 1.
+- Detector-boundary diagnostic found current wrap semantics and stronger
+  wrong-geometry penalties under valid-overlap masked zero-fill semantics. Keep
+  that as the next slice.

@@ -28,7 +28,13 @@ if TYPE_CHECKING:
 
 _POSE_DIM = 3
 PoseSchurDof = Literal["phi_residual_rad", "dx_px", "dz_px"]
+SetupSchurParameter = Literal["det_u_px", "det_v_px", "theta_offset_rad"]
 _POSE_DOF_ORDER: tuple[PoseSchurDof, ...] = ("phi_residual_rad", "dx_px", "dz_px")
+_SETUP_PARAMETER_ORDER: tuple[SetupSchurParameter, ...] = (
+    "theta_offset_rad",
+    "det_u_px",
+    "det_v_px",
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,7 @@ class JointSchurLMConfig:
     parameter_prior_strength: float = 0.0
     setup_prior_strength: float | None = None
     pose_prior_strength: float | None = None
+    active_setup_parameters: tuple[SetupSchurParameter, ...] | None = None
     active_pose_dofs: tuple[PoseSchurDof, ...] = ("phi_residual_rad", "dx_px", "dz_px")
     residual_filters: tuple[ResidualFilterConfig, ...] = (ResidualFilterConfig(),)
     fit_gain_offset: bool = False
@@ -176,7 +183,7 @@ def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transi
     pose_dim = _pose_dim(cfg)
     params = _pack_joint(geometry, cfg)
     prior_reference = params
-    n_setup = _n_setup_params(geometry)
+    n_setup = _n_setup_params(geometry, cfg)
     initial_loss = _loss_for_params(
         vol,
         obs,
@@ -258,6 +265,7 @@ def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transi
             n_setup=n_setup,
             n_views=geometry.pose.n_views,
             pose_dim=pose_dim,
+            active_setup_parameters=_active_setup_parameters(geometry, cfg),
             active_pose_dofs=cfg.active_pose_dofs,
             canonicalize_pose_step_gauge=True,
             damping=damping,
@@ -386,7 +394,7 @@ def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transi
         initial_loss=float(initial_loss),
         final_loss=float(final_loss),
         iterations=iterations,
-        active_setup_parameters=_active_setup_parameters(geometry),
+        active_setup_parameters=_active_setup_parameters(geometry, cfg),
         active_pose_dofs=cfg.active_pose_dofs,
         frozen_parameters=_frozen_parameters(geometry, cfg),
         diagnostics=diagnostics,
@@ -488,6 +496,7 @@ def schur_step_from_jacobian(
     n_views: int,
     pose_dim: int,
     damping: float,
+    active_setup_parameters: tuple[SetupSchurParameter, ...] | None = None,
     active_pose_dofs: tuple[PoseSchurDof, ...] | None = None,
     canonicalize_pose_step_gauge: bool = False,
     setup_trust_radius: float | None = None,
@@ -550,6 +559,7 @@ def schur_step_from_jacobian(
             n_setup=n_setup,
             n_views=n_views,
             pose_dim=pose_dim,
+            active_setup_parameters=active_setup_parameters,
             active_pose_dofs=active_pose_dofs,
         )
     setup_trust_scale, pose_trust_scale = _trust_scales(
@@ -674,24 +684,35 @@ def _canonicalize_step_gauge(
     n_setup: int,
     n_views: int,
     pose_dim: int,
+    active_setup_parameters: tuple[SetupSchurParameter, ...] | None,
     active_pose_dofs: tuple[PoseSchurDof, ...] | None,
 ) -> tuple[jax.Array, jax.Array]:
     if pose_dim == 0:
         return setup_step, pose_step
     dofs = active_pose_dofs or _POSE_DOF_ORDER[:pose_dim]
+    setup_parameters = active_setup_parameters or _SETUP_PARAMETER_ORDER[:n_setup]
+    setup_index = {parameter: index for index, parameter in enumerate(setup_parameters)}
     pose_matrix = pose_step.reshape((n_views, pose_dim))
     setup = setup_step
     pose = pose_matrix
     for index, dof in enumerate(dofs):
         mean_step = jnp.mean(pose[:, index])
         pose = pose.at[:, index].add(-mean_step)
-        if dof == "phi_residual_rad":
-            setup = setup.at[0].add(mean_step)
-        elif dof == "dx_px":
-            setup = setup.at[1].add(mean_step)
-        elif dof == "dz_px" and n_setup >= 3:
-            setup = setup.at[2].add(mean_step)
+        target = _setup_gauge_target(dof)
+        target_index = None if target is None else setup_index.get(target)
+        if target_index is not None:
+            setup = setup.at[target_index].add(mean_step)
     return setup, pose.reshape(-1)
+
+
+def _setup_gauge_target(dof: PoseSchurDof) -> SetupSchurParameter | None:
+    if dof == "phi_residual_rad":
+        return "theta_offset_rad"
+    if dof == "dx_px":
+        return "det_u_px"
+    if dof == "dz_px":
+        return "det_v_px"
+    return None
 
 
 def _scale_dense_step(
@@ -750,7 +771,13 @@ def _weak_mode_labels(eigenvalues: tuple[float, ...]) -> tuple[str, ...]:
     )
 
 
-def _active_setup_parameters(geometry: GeometryState) -> tuple[str, ...]:
+def _active_setup_parameters(
+    geometry: GeometryState,
+    config: JointSchurLMConfig | None = None,
+) -> tuple[SetupSchurParameter, ...]:
+    if config is not None and config.active_setup_parameters is not None:
+        _validate_active_setup_parameters(config.active_setup_parameters, geometry=geometry)
+        return config.active_setup_parameters
     if geometry.setup.det_v_px.active:
         return ("theta_offset_rad", "det_u_px", "det_v_px")
     return ("theta_offset_rad", "det_u_px")
@@ -770,6 +797,12 @@ def _frozen_parameters(
     ]
     if not geometry.setup.det_v_px.active:
         frozen.append("det_v_px")
+    active_setup = _active_setup_parameters(geometry, config)
+    frozen.extend(
+        parameter
+        for parameter in _SETUP_PARAMETER_ORDER
+        if parameter not in active_setup and parameter not in frozen
+    )
     active_pose = (
         ("phi_residual_rad", "dx_px", "dz_px") if config is None else config.active_pose_dofs
     )
@@ -790,14 +823,36 @@ def _validate_active_pose_dofs(active_pose_dofs: tuple[PoseSchurDof, ...]) -> No
         raise ValueError(f"unknown active pose DOFs {unknown!r}")
 
 
-def _n_setup_params(geometry: GeometryState) -> int:
-    return 3 if geometry.setup.det_v_px.active else 2
+def _validate_active_setup_parameters(
+    active_setup_parameters: tuple[SetupSchurParameter, ...],
+    *,
+    geometry: GeometryState,
+) -> None:
+    if len(set(active_setup_parameters)) != len(active_setup_parameters):
+        raise ValueError("JointSchurLMConfig.active_setup_parameters must not contain duplicates")
+    unknown = tuple(
+        parameter
+        for parameter in active_setup_parameters
+        if parameter not in _SETUP_PARAMETER_ORDER
+    )
+    if unknown:
+        raise ValueError(f"unknown active setup parameters {unknown!r}")
+    if "det_v_px" in active_setup_parameters and not geometry.setup.det_v_px.active:
+        raise ValueError("det_v_px cannot be active when geometry det_v_px is inactive")
+
+
+def _n_setup_params(
+    geometry: GeometryState,
+    config: JointSchurLMConfig | None = None,
+) -> int:
+    return len(_active_setup_parameters(geometry, config))
 
 
 def _pack_joint(geometry: GeometryState, config: JointSchurLMConfig | None = None) -> jax.Array:
-    setup_values = [geometry.setup.theta_offset_rad.value, geometry.setup.det_u_px.value]
-    if geometry.setup.det_v_px.active:
-        setup_values.append(geometry.setup.det_v_px.value)
+    setup_values = [
+        _setup_parameter_values(geometry)[parameter]
+        for parameter in _active_setup_parameters(geometry, config)
+    ]
     if config is not None and _pose_dim(config) == 0:
         return jnp.asarray(setup_values, dtype=jnp.float32)
     active_pose = _active_pose_arrays(
@@ -806,6 +861,14 @@ def _pack_joint(geometry: GeometryState, config: JointSchurLMConfig | None = Non
     )
     pose_values = np.stack(active_pose, axis=1).reshape(-1)
     return jnp.asarray([*setup_values, *pose_values], dtype=jnp.float32)
+
+
+def _setup_parameter_values(geometry: GeometryState) -> dict[SetupSchurParameter, float]:
+    return {
+        "theta_offset_rad": geometry.setup.theta_offset_rad.value,
+        "det_u_px": geometry.setup.det_u_px.value,
+        "det_v_px": geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0,
+    }
 
 
 def _active_pose_arrays(
@@ -825,19 +888,24 @@ def _geometry_with_params(
     params: jax.Array,
     config: JointSchurLMConfig | None = None,
 ) -> GeometryState:
-    n_setup = _n_setup_params(geometry)
-    setup = geometry.setup.replace_parameter(
+    active_setup = _active_setup_parameters(geometry, config)
+    n_setup = len(active_setup)
+    setup_values = _setup_parameter_values(geometry)
+    for index, parameter in enumerate(active_setup):
+        setup_values[parameter] = float(params[index])
+    setup = geometry.setup
+    setup = setup.replace_parameter(
         "theta_offset_rad",
-        geometry.setup.theta_offset_rad.with_value(float(params[0])),
+        geometry.setup.theta_offset_rad.with_value(setup_values["theta_offset_rad"]),
     )
     setup = setup.replace_parameter(
         "det_u_px",
-        geometry.setup.det_u_px.with_value(float(params[1])),
+        geometry.setup.det_u_px.with_value(setup_values["det_u_px"]),
     )
     if geometry.setup.det_v_px.active:
         setup = setup.replace_parameter(
             "det_v_px",
-            geometry.setup.det_v_px.with_value(float(params[2])),
+            geometry.setup.det_v_px.with_value(setup_values["det_v_px"]),
         )
     active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
     if not active_pose_dofs:
@@ -862,10 +930,19 @@ def _split_joint(
     params: jax.Array,
     config: JointSchurLMConfig | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-    n_setup = _n_setup_params(geometry)
-    theta_offset = params[0]
-    det_u = params[1]
-    det_v = params[2] if geometry.setup.det_v_px.active else jnp.asarray(0.0, dtype=jnp.float32)
+    active_setup = _active_setup_parameters(geometry, config)
+    n_setup = len(active_setup)
+    setup_values = {
+        "theta_offset_rad": jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32),
+        "det_u_px": jnp.asarray(geometry.setup.det_u_px.value, dtype=jnp.float32),
+        "det_v_px": (
+            jnp.asarray(geometry.setup.det_v_px.value, dtype=jnp.float32)
+            if geometry.setup.det_v_px.active
+            else jnp.asarray(0.0, dtype=jnp.float32)
+        ),
+    }
+    for index, parameter in enumerate(active_setup):
+        setup_values[parameter] = params[index]
     active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
     pose_values = {
         "phi_residual_rad": jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
@@ -877,9 +954,9 @@ def _split_joint(
         for index, dof in enumerate(active_pose_dofs):
             pose_values[dof] = pose[:, index]
     return (
-        theta_offset,
-        det_u,
-        det_v,
+        setup_values["theta_offset_rad"],
+        setup_values["det_u_px"],
+        setup_values["det_v_px"],
         pose_values["phi_residual_rad"],
         pose_values["dx_px"],
         pose_values["dz_px"],
@@ -1074,7 +1151,7 @@ def _loss_for_params(
         params,
         prior_reference=prior_reference,
         cfg=cfg,
-        n_setup=_n_setup_params(geometry),
+        n_setup=_n_setup_params(geometry, cfg),
     )
     return data_loss + prior_loss
 
