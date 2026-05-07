@@ -101,7 +101,9 @@ and proposed next fix before stopping.
   `det_u` RMSE `1.43051e-06` px and theta RMSE `1.06805e-07` rad.
 - Anchored stopped det_u-only reaches `0.237177` px under the core projector,
   missing the strict `0.2` px criterion. The current blocker is stopped
-  reconstruction/volume gauge under the real operator.
+  trust scheduling/parameter scaling under the real operator: a direct stopped
+  Schur probe with the same stopped volume reaches `0.0611143` px when setup
+  trust clipping is removed.
 
 ### Risks
 

@@ -29,6 +29,14 @@ setup-global diagnostics.
 | 64^3 GPU reference | `cuda:0` | fixed truth, full raw/no-prior oracle | passed | 1.43051e-06 | 1.06805e-07 | 52.0031 |
 | 64^3 GPU reference | `cuda:0` | stopped reconstruction | failed | 0.237177 | 0.0218166 | 48.7828 |
 
+Stopped-volume Schur probe on the stopped run's final volume:
+
+| Probe | det_u error px |
+|---|---:|
+| raw, no prior, setup trust 0.5 | 0.377899 |
+| raw, no prior, setup trust 1.0 | 0.233153 |
+| raw, no prior, no setup trust clip | 0.0611143 |
+
 ## Interpretation
 
 The core operator path is wired and artifact provenance records
@@ -37,3 +45,6 @@ geometry residuals, disables the level metadata prior, and runs all scheduled
 levels instead of coarse early-exit. The remaining blocker is now the
 production-like stopped reconstruction path: the stopped det_u-only run is close
 to the prior 0.2 px Gate 3 threshold, but still fails at 0.237177 px.
+The stopped-volume probe shows the volume retains enough signal for a passing
+det_u update when trust clipping is removed, so the next blocker is the stopped
+trust schedule or parameter scaling under the core ray loss.

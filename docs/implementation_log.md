@@ -59,6 +59,14 @@ Artifacts:
 | 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen, raw/no-prior full oracle | passed | 1.43051e-06 | 1.06805e-07 | true | 52.0031 | Confirms v2-to-core adapter and supported setup scaling are valid when oracle Schur is not stopped by preview early-exit or metadata priors. |
 | 64^3 GPU reference | `cuda:0` | stopped reconstruction, cylindrical support, constant init, det_u only, pose frozen | failed | 0.237177 | 0.0218166 | true | 48.7828 | Near prior Gate 3 det_u tolerance but cannot be accepted while fixed-truth fails. |
 
+Additional stopped-volume Schur probe using the stopped run's final volume:
+
+| Probe | det_u final px | det_u error px | Interpretation |
+|---|---:|---:|---|
+| raw, no prior, setup trust 0.5 | 6.87210 | 0.377899 | Trust clipping still limits recovery. |
+| raw, no prior, setup trust 1.0 | 7.01685 | 0.233153 | Similar to anchored stopped diagnostic. |
+| raw, no prior, no setup trust clip | 7.18889 | 0.0611143 | Stopped volume contains enough signal; current trust schedule is the remaining limiter. |
+
 ### Current Blocker
 
 Fixed-truth core recovery passes after isolating the oracle from preview
@@ -66,7 +74,10 @@ continuation filters, metadata priors, and coarse early-exit. The supported
 v2-to-core adapter and setup scaling are therefore coherent for det_u and theta.
 The remaining production-like blocker is stopped reconstruction/volume gauge
 under the real operator: the anchored det_u-only stopped run improves strongly
-but misses the strict 0.2 px det_u criterion at 0.237177 px.
+but misses the strict 0.2 px det_u criterion at 0.237177 px. A direct stopped
+Schur probe with no setup trust clipping reaches 0.0611143 px, so the immediate
+next fix should address trust scheduling/parameter scaling for stopped det_u
+updates under the core ray loss before changing reconstruction behavior.
 
 ### Validation
 
