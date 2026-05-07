@@ -11,32 +11,27 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 2 per-view alpha/beta pose geometry vertical slice
-- Goal: promote `alpha_rad` and `beta_rad` from unsupported/frozen placeholders
-  to real per-view pose DOFs for the `core_trilinear_ray` v2 path, including
-  adapter semantics, pose/Schur packing, sidecar classification, artifacts,
-  docs, and focused tests.
+- Phase: Phase 7/CLI geometry-update activation follow-up
+- Goal: expose the newly supported setup and pose DOFs through `align-auto`
+  parsing/help and alternating private validation so benchmark diagnostics can
+  activate detector roll, axis tilt, and alpha/beta without bypassing the CLI.
 
 ### Scope
 
 - In scope:
-  - Apply `GeometryState.pose.alpha_rad` and `beta_rad` through the v2-to-core
-    pose stack while preserving the single `core_trilinear_ray` projector
-    family.
-  - Extend pose-only LM and joint Schur LM active pose packing/unpacking to
-    include alpha/beta as opt-in pose DOFs.
-  - Stop stripping/classifying alpha and beta as unsupported in generated
-    synthetic sidecars.
-  - Add focused CPU tests for alpha/beta projection semantics and pose/Schur
-    recovery on deterministic asymmetric phantoms.
+  - Update `align-auto` active pose DOF parsing/help for
+    `alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px`.
+  - Update `align-auto` active setup parsing/help for detector roll and axis
+    x/y tilt.
+  - Update alternating geometry-update validation to accept the same active DOF
+    names that joint Schur supports.
+  - Add focused CLI/unit tests for accepted and rejected active DOF lists.
   - Update docs/logs and commit the slice.
 - Out of scope:
-  - Parallel laminography, theta-scale activation, det_v gating, object drift,
-    projector selectors, threshold relaxation, legacy Ruff cleanup, or full
-    benchmark reruns.
-- Deep module owners: `tomojax.forward` for core adapter semantics,
-  `tomojax.align` for pose/Schur packing and recovery reporting, and
-  `tomojax.datasets` for sidecar unsupported-DOF classification.
+  - Changing default schedules, activating weak DOFs automatically, parallel
+    laminography, theta-scale activation, det_v gating, or benchmark reruns.
+- Deep module owners: `tomojax.cli` for CLI parsing and `tomojax.align` for
+  private alternating validation.
 
 ### Design Sources
 
@@ -48,29 +43,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Wire `alpha_rad` and `beta_rad` into `core_projection_geometry_from_state`
-  and `project_parallel_reference_arrays`.
-- [x] Extend pose-only and joint Schur active pose DOFs with alpha/beta.
-- [x] Remove alpha/beta from unsupported sidecar projection/classification.
-- [x] Add focused adapter and LM tests for alpha/beta pose rotations.
+- [x] Update `align-auto` active pose DOF parser/help.
+- [x] Update `align-auto` active setup parser/help.
+- [x] Update alternating geometry-update private validation.
+- [x] Add focused parser/CLI tests.
 - [x] Run focused Ruff/type/tests and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the alpha/beta slice.
+- [x] Update `docs/implementation_log.md` and commit the CLI activation slice.
 
 ### Validation
 
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
-  tests/test_pose_lm.py
-  tests/test_joint_schur_lm.py::test_joint_schur_lm_recovers_realized_supported_geometry
-  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_alpha_beta_pose_update
-  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_axis_tilt_setup_update
-  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_detector_roll_setup_update
-  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
-  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
-  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
-  -q` passed: 27 tests in 278.34 seconds.
-- `uv run ruff check ...` passed for touched source and tests.
-- `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
-  source and tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_align_auto_parses_supported_geometry_update_dofs
+  tests/test_align_auto_cli.py::test_align_auto_rejects_unknown_geometry_update_dofs
+  -q` passed: 3 tests in 0.67 seconds.
+- `uv run ruff check src/tomojax/cli/align_auto.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/cli/align_auto.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -95,6 +87,7 @@ and proposed next fix before stopping.
 - [x] Detector roll supported and committed: `2be6a99`.
 - [x] Axis tilt supported and committed with GPU diagnostic pause:
   `ac347d2`.
+- [x] Alpha/beta pose supported and committed: `aea525d`.
 
 ### Risks
 

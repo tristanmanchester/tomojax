@@ -3,6 +3,42 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 7 CLI Geometry-Update Activation Slice
+
+### Summary
+
+- Updated `align-auto` active pose DOF parsing/help to accept
+  `alpha_rad`, `beta_rad`, `phi_residual_rad`, `dx_px`, and `dz_px`.
+- Updated `align-auto` active setup parameter parsing/help to accept
+  `theta_offset_rad`, `det_u_px`, `det_v_px`, `detector_roll_rad`,
+  `axis_rot_x_rad`, and `axis_rot_y_rad`.
+- Updated alternating geometry-update private validation to accept the same
+  alpha/beta pose names now supported by joint Schur LM.
+- Defaults are unchanged: production-like smoke runs still activate
+  `phi_residual_rad`, `dx_px`, and `dz_px` unless explicitly configured.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_align_auto_parses_supported_geometry_update_dofs
+  tests/test_align_auto_cli.py::test_align_auto_rejects_unknown_geometry_update_dofs
+  -q` passed: 3 tests in 0.67 seconds.
+- `uv run ruff check src/tomojax/cli/align_auto.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/cli/align_auto.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Weak-DOF activation policy still decides when alpha/beta, axis tilt, detector
+  roll, and det_v should be enabled automatically in benchmark schedules.
+- This slice only exposed supported names through CLI/config validation; it did
+  not change benchmark defaults or rerun the synthetic ladder.
+
 ## 2026-05-07 — Phase 2 Alpha/Beta Pose Core Geometry Slice
 
 ### Summary

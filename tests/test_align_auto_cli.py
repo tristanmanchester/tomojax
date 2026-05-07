@@ -11,6 +11,8 @@ import pytest
 import tomojax.cli.align_auto as align_auto_cli
 from tomojax.datasets import generate_synthetic_dataset
 
+# pyright: reportPrivateUsage=false
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -34,7 +36,36 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "--supported-only-setup-global" in captured.out
     assert "--geometry-update-pose-frozen" in captured.out
     assert "--geometry-update-active-pose-dofs" in captured.out
+    assert "alpha_rad, beta_rad" in captured.out
     assert "--geometry-update-pose-activate-at-level-factor" in captured.out
+    assert "detector_roll_rad" in captured.out
+    assert "axis_rot_x_rad" in captured.out
+    assert "axis_rot_y_rad" in captured.out
+
+
+def test_align_auto_parses_supported_geometry_update_dofs() -> None:
+    assert align_auto_cli._parse_active_pose_dofs(
+        "alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px"
+    ) == ("alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px")
+    assert align_auto_cli._parse_active_setup_parameters(
+        "theta_offset_rad,det_u_px,det_v_px,detector_roll_rad,axis_rot_x_rad,axis_rot_y_rad"
+    ) == (
+        "theta_offset_rad",
+        "det_u_px",
+        "det_v_px",
+        "detector_roll_rad",
+        "axis_rot_x_rad",
+        "axis_rot_y_rad",
+    )
+    assert align_auto_cli._parse_active_pose_dofs("none") == ()
+    assert align_auto_cli._parse_active_setup_parameters("") == ()
+
+
+def test_align_auto_rejects_unknown_geometry_update_dofs() -> None:
+    with pytest.raises(ValueError, match="unsupported --geometry-update-active-pose-dofs"):
+        _ = align_auto_cli._parse_active_pose_dofs("omega_rad")
+    with pytest.raises(ValueError, match="unsupported --geometry-update-active-setup-parameters"):
+        _ = align_auto_cli._parse_active_setup_parameters("theta_scale")
 
 
 def test_align_auto_smoke_command_writes_core_artifacts(

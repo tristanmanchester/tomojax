@@ -131,7 +131,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="phi_residual_rad,dx_px,dz_px",
         help=(
             "Comma-separated active pose DOFs for Schur updates. "
-            "Supported names: phi_residual_rad, dx_px, dz_px."
+            "Supported names: alpha_rad, beta_rad, phi_residual_rad, dx_px, dz_px."
         ),
     )
     _ = parser.add_argument(
@@ -139,7 +139,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default="theta_offset_rad,det_u_px",
         help=(
             "Comma-separated active setup parameters for Schur updates. "
-            "Supported names: theta_offset_rad, det_u_px, det_v_px."
+            "Supported names: theta_offset_rad, det_u_px, det_v_px, "
+            "detector_roll_rad, axis_rot_x_rad, axis_rot_y_rad."
         ),
     )
     _ = parser.add_argument(
@@ -286,7 +287,7 @@ def _parse_active_pose_dofs(raw: str) -> tuple[str, ...]:
     if raw.strip().lower() in {"", "none"}:
         return ()
     values = tuple(part.strip() for part in raw.split(",") if part.strip())
-    allowed = {"phi_residual_rad", "dx_px", "dz_px"}
+    allowed = {"alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"}
     if any(value not in allowed for value in values):
         raise ValueError(f"unsupported --geometry-update-active-pose-dofs value {raw!r}")
     return values
@@ -296,7 +297,14 @@ def _parse_active_setup_parameters(raw: str) -> tuple[str, ...]:
     if raw.strip().lower() in {"", "none"}:
         return ()
     values = tuple(part.strip() for part in raw.split(",") if part.strip())
-    allowed = {"theta_offset_rad", "det_u_px", "det_v_px"}
+    allowed = {
+        "axis_rot_x_rad",
+        "axis_rot_y_rad",
+        "theta_offset_rad",
+        "det_u_px",
+        "det_v_px",
+        "detector_roll_rad",
+    }
     if any(value not in allowed for value in values):
         raise ValueError(f"unsupported --geometry-update-active-setup-parameters value {raw!r}")
     return values

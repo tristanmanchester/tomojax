@@ -80,7 +80,7 @@ def _run_geometry_updates(
 
 
 def _active_pose_dofs(raw: tuple[str, ...]) -> tuple[PoseSchurDof, ...]:
-    allowed = {"phi_residual_rad", "dx_px", "dz_px"}
+    allowed = {"alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"}
     if any(name not in allowed for name in raw):
         raise ValueError(f"unsupported active pose DOFs {raw!r}")
     return cast("tuple[PoseSchurDof, ...]", tuple(raw))
