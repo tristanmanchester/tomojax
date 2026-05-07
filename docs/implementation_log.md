@@ -8363,6 +8363,44 @@ iterations or report polishing.
   0 warnings, and 0 notes.
 - `just imports` passed.
 
+## 2026-05-07 — Phase 8/9 Detector-U-First Staging Probe
+
+### Summary
+
+Tested a detector-u-first setup staging policy for the realistic
+`synth128_setup_global_tomo` stopped-reconstruction failure. The probe kept the
+existing centroid-anchored stopped volume at the coarsest level, solved only
+`det_u_px` in that first setup update, and then released the full setup-global
+block at finer levels.
+
+Artifact:
+
+- `.artifacts/phase8_staged_setup/128_setup_global_stopped_cuda/`
+
+Comparison:
+
+| Metric | FISTA-step | Early anchor | det_u-first staging |
+|---|---:|---:|---:|
+| volume NMSE | 0.549 | 0.376 | 0.323 |
+| final residual | 0.808 | 1.193 | 0.520 |
+| `det_u_realized_rmse_px` | 12.74 | 4.23 | 4.57 |
+| `theta_realized_rmse_rad` | 0.02277 | 0.01899 | 0.43613 |
+| `detector_roll_error_rad` | 0.01152 | 0.01290 | 0.00149 |
+| `axis_error_rad` | 0.00658 | 0.00513 | 0.14498 |
+| setup-global criteria passed | no | no | no |
+
+The staged policy reduced residual and volume NMSE and improved detector roll,
+but it opened a worse theta/axis absorption path. The source change was not
+kept. The next functional attempt should address the underlying setup
+convention/coupling directly, likely by isolating axis/roll updates against a
+more constrained geometry-update volume or by checking setup/pose/theta
+coupling against fixed-truth normals, rather than staging det_u alone.
+
+### Validation
+
+- Staging code was reverted after the diagnostic.
+- The diagnostic completed on `cuda:0` with JAX GPU enabled in 267.28 seconds.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

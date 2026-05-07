@@ -11,25 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction early x-step anchoring
-- Goal: prevent the first stopped-reconstruction setup-global update from using
-  a preview volume whose detector-u shift has already absorbed the setup
-  geometry error.
+- Phase: Phase 8/9 stopped-reconstruction staged setup diagnostic
+- Goal: test whether detector-u-first setup staging improves the realistic
+  setup-global stopped-reconstruction failure before committing policy changes.
 
 ### Scope
 
 - In scope:
-  - Add a small coarsest-level stopped-volume anchoring policy for setup-global
-    Schur updates.
-  - Keep the public API and report schema unchanged.
-  - Add focused tests for the private anchoring helper.
-  - Rerun the setup-global stopped-reconstruction CUDA diagnostic.
+  - Probe coarsest detector-u-only setup staging on the existing 128^3,
+    256-view setup-global sidecar.
+  - Compare recovery against the prior FISTA-step and early-anchor diagnostics.
+  - Keep only diagnostic documentation if staging opens a worse absorption path.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Changing Schur setup/pose policy beyond using the existing staged active
-    DOFs.
+  - Committing policy code without benchmark improvement.
+  - Changing fixed-truth Schur policy.
   - Adding new CLI knobs for this first policy test.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
@@ -43,12 +41,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement coarsest-level detector-u recentering for the stopped Schur
-  volume when the setup-global block is active.
-- [x] Add focused helper tests.
-- [x] Run focused validation and `just imports`.
+- [x] Probe coarsest-level detector-u-only setup staging locally.
 - [x] Rerun 128^3 setup-global stopped-reconstruction CUDA diagnostic.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Revert staging code after the diagnostic worsened theta/axis recovery.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
@@ -70,6 +66,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - CUDA setup-global stopped-reconstruction rerun completed on the existing
   128^3/256-view sidecar in 128.65 seconds. Artifact:
   `.artifacts/phase8_early_anchor/128_setup_global_stopped_cuda/`.
+- Detector-u-first staging probe completed on the same sidecar in 267.28
+  seconds but was not kept as source code because it worsened theta and axis
+  recovery. Artifact:
+  `.artifacts/phase8_staged_setup/128_setup_global_stopped_cuda/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
