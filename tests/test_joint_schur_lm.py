@@ -230,12 +230,57 @@ def test_schur_step_applies_setup_trust_radius() -> None:
 
     assert clipped.diagnostics.trust_clipped is True
     assert 0.0 < clipped.diagnostics.trust_scale < 1.0
+    assert 0.0 < clipped.diagnostics.setup_trust_scale < 1.0
+    assert clipped.diagnostics.pose_trust_scale == 1.0
     assert clipped.diagnostics.setup_update_norm <= 0.050001
     np.testing.assert_allclose(
-        np.asarray(clipped.step),
-        np.asarray(unrestricted.step) * clipped.diagnostics.trust_scale,
+        np.asarray(clipped.step[:2]),
+        np.asarray(unrestricted.step[:2]) * clipped.diagnostics.setup_trust_scale,
         atol=1e-6,
     )
+    np.testing.assert_allclose(
+        np.asarray(clipped.step[2:]),
+        np.asarray(unrestricted.step[2:]),
+        atol=1e-6,
+    )
+
+
+def test_schur_step_pose_trust_does_not_clip_setup_step() -> None:
+    jacobian = jnp.asarray(
+        [
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+    residual = jnp.asarray([-0.2, 0.1, -10.0, 8.0, -6.0], dtype=jnp.float32)
+
+    unrestricted = schur_step_from_jacobian(
+        jacobian,
+        residual,
+        n_setup=2,
+        n_views=1,
+        pose_dim=3,
+        damping=1e-6,
+    )
+    clipped = schur_step_from_jacobian(
+        jacobian,
+        residual,
+        n_setup=2,
+        n_views=1,
+        pose_dim=3,
+        damping=1e-6,
+        setup_trust_radius=1.0,
+        pose_trust_radius=0.5,
+    )
+
+    assert clipped.diagnostics.setup_trust_scale == 1.0
+    assert 0.0 < clipped.diagnostics.pose_trust_scale < 1.0
+    np.testing.assert_allclose(np.asarray(clipped.step[:2]), np.asarray(unrestricted.step[:2]))
+    assert clipped.diagnostics.pose_update_norm <= 0.500001
 
 
 def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:

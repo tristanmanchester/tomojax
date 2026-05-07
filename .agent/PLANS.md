@@ -11,72 +11,67 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 fixed-truth joint setup+pose diagnostic
-- Goal: make the same 64^3/64-view supported-only setup-global sidecar pass
-  with fixed_synthetic_truth volume and joint setup+pose Schur enabled, or
-  produce a sharp blocker with artifacts.
+- Phase: Phase 8 Schur block-wise trust
+- Goal: prevent aggregate pose updates from shrinking valid setup updates in
+  the supported fixed-truth joint path.
 
 ### Scope
 
 - In scope:
-  - Run the fixed-truth joint setup+pose benchmark on
-    `.artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only`.
-  - If setup recovery is absorbed into pose, add the smallest block-wise or
-    staged pose trust/prior fix needed for this supported case.
-  - Keep the pose-frozen oracle as the baseline and do not judge the full
-    five-case suite yet.
-  - Record benchmark_result/benchmark_report/compare artifacts and a concise
-    benchmark summary.
+  - Replace global Schur trust scaling with separate setup and pose scaling.
+  - Preserve existing diagnostics compatibility while recording enough evidence
+    to show setup was not clipped by pose.
+  - Add a regression test where a large pose block and small setup block produce
+    an unclipped setup step with a clipped pose step.
+  - Rerun focused Schur/align tests and the supported-only fixed-truth joint GPU
+    benchmark without the effectively hard pose prior.
 - Out of scope:
-  - Stopped-reconstruction diagnosis until fixed-truth joint is passing or
-    sharply classified.
-  - Unsupported DOF implementation.
-  - New report fields unless required to classify this diagnostic honestly.
+  - Full per-DOF unit trust for every supported/unsupported future DOF.
+  - Stopped-reconstruction classification.
+  - Report-field expansion beyond diagnostics needed for this fix.
   - Legacy Ruff cleanup.
-- Deep module owner: `tomojax.align` and `tomojax.cli`.
+- Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/02_loss_and_optimiser_spec.md`
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
-- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 
 ### Tasks
 
-- [x] Run fixed-truth joint setup+pose benchmark on GPU.
-- [x] Inspect setup/pose trace against pose-frozen oracle baseline.
-- [x] Implement smallest trust/prior/staging fix if joint absorbs setup.
-- [x] Add focused regression tests for the fix.
+- [x] Implement separate setup/pose trust scaling in Schur step construction.
+- [x] Add block-wise trust regression test.
 - [x] Run focused validation and `just imports`.
-- [x] Update benchmark summary and implementation log.
-- [x] Commit the joint fixed-truth slice.
+- [x] Rerun supported-only fixed-truth joint GPU benchmark without hard pose
+  prior.
+- [x] Update docs with result/blocker.
+- [x] Commit the block-wise trust slice.
 
 ### Validation
 
-- No new code was required after `79851ea`; the fixed-truth joint pass used the
-  existing `--geometry-update-pose-prior-strength` CLI path.
-- GPU baseline joint run failed:
-  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_baseline/`.
-- GPU strong-pose-prior joint run passed:
-  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000/`.
-- Compare artifact:
-  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_fixed_truth.md`.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 11 tests.
+- `just imports` passed.
+- GPU no-hard-prior fixed-truth joint run still failed:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_block_trust/`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- The supported-only pose-frozen fixed-truth oracle passed in `79851ea`; use it
-  as the baseline for judging joint setup+pose.
-- Fixed-truth joint setup+pose passes only when pose is strongly constrained,
-  which classifies the unconstrained failure as setup absorption into per-view
-  pose.
+- The hard pose-prior run proves the fixed-truth joint path is recoverable, but
+  it is diagnostic. The production-quality next step is trust/gauge handling.
+- Block-wise setup/pose trust removes aggregate pose clipping but does not solve
+  the remaining setup/pose gauge coupling by itself.
 
 ### Risks
 
-- Risk: joint setup+pose may legitimately absorb global setup shifts into
-  per-view pose without stronger priors or staged pose activation.
-- Mitigation: keep this slice scoped to supported-only fixed-truth and record
-  the trace before changing the broader benchmark path.
+- Risk: setup/pose block-wise trust may improve detector recovery but still
+  leave theta absorbed into `phi_residual_rad`.
+- Mitigation: classify that separately and then stage/freeze `phi` rather than
+  broadening scope.

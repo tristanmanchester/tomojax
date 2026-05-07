@@ -74,6 +74,50 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   setup+pose has a principled staged/block-wise trust policy rather than an
   effectively hard diagnostic pose prior.
 
+## 2026-05-07 — Schur Block-Wise Trust Diagnostic
+
+### Summary
+
+- Replaced the single global Schur trust scale with separate setup and pose
+  trust scales so a large aggregate pose update no longer shrinks a valid setup
+  update.
+- Preserved the existing `trust_scale` diagnostic as the minimum block scale
+  and added explicit `setup_trust_scale` and `pose_trust_scale` diagnostics.
+- Added a regression test proving pose trust clipping leaves the setup step
+  unchanged when setup is within its trust radius.
+
+### GPU Result
+
+- Command:
+  `LD_LIBRARY_PATH="$(find .venv/lib/python3.12/site-packages/nvidia -type d \( -path '*/lib' -o -path '*/lib64' \) | paste -sd: -)" JAX_PLATFORMS=cuda uv run tomojax-align-auto-smoke --out-dir .artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_block_trust --profile balanced --synthetic-dataset-dir .artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only --geometry-update-volume-source fixed_synthetic_truth`
+- Backend/device: JAX GPU on `cuda:0`.
+- Status: failed.
+- det_u realised RMSE: 7.25 px.
+- theta realised RMSE: 0.0218166 rad.
+- First final-level candidate used separate scales:
+  `setup_trust_scale=0.617204`, `pose_trust_scale=0.0187305`, but the setup
+  update was `[theta=-1.04e-04, det_u=-0.5]` and the step was rejected.
+
+### Interpretation
+
+Block-wise trust fixes the mechanical aggregate-pose clipping issue, but it is
+not sufficient for the unconstrained fixed-truth joint case. The remaining
+blocker is setup/pose gauge coupling: without a strong pose prior or staged pose
+activation, the coupled Schur step can point setup in the wrong detector-shift
+direction. The previously recorded hard-prior diagnostic still passes, so the
+next implementation slice should parameterise or stage pose DOFs rather than
+returning to projector/setup convention debugging.
+
+### Validation
+
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 11 tests.
+- `just imports` passed.
+
 ## 2026-05-07 — Nominal Theta Geometry Root Fix
 
 ### Summary

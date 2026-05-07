@@ -112,3 +112,25 @@ Interpretation: fixed-truth joint setup+pose can pass the supported-only case
 when pose is staged/prior-constrained. The unconstrained joint failure is setup
 absorption into per-view pose, so the production path still needs a principled
 block-wise or staged trust policy before stopped-reconstruction can be judged.
+
+## Block-Wise Trust Follow-Up
+
+After implementing separate setup and pose trust scales, the unconstrained
+fixed-truth joint run still failed:
+
+- Run:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_block_trust/`
+- det_u realised RMSE: 7.25 px.
+- theta realised RMSE: 0.0218166 rad.
+- First final-level step:
+  `setup_trust_scale=0.617204`, `pose_trust_scale=0.0187305`.
+- The candidate setup update pointed in the wrong detector direction:
+  `[theta=-1.04e-04, det_u=-0.5]`, and the candidate was rejected.
+
+Compare artifact:
+
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_block_trust.md`
+
+Interpretation: block-wise trust removes aggregate pose clipping as the blocker.
+The remaining unconstrained joint blocker is setup/pose gauge coupling, likely
+requiring staged pose activation or a zero-mean/anchored pose parameterisation.

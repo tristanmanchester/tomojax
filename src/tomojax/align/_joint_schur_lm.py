@@ -65,6 +65,8 @@ class JointSchurDiagnostics:
     setup_correlation_matrix: tuple[tuple[float, ...], ...] = ()
     weak_mode_labels: tuple[str, ...] = ()
     trust_scale: float = 1.0
+    setup_trust_scale: float = 1.0
+    pose_trust_scale: float = 1.0
     trust_clipped: bool = False
     setup_update_by_parameter: tuple[float, ...] = ()
     pose_update_max_by_dof: tuple[float, ...] = ()
@@ -104,6 +106,8 @@ class JointSchurDiagnostics:
             "setup_correlation_matrix": [list(row) for row in self.setup_correlation_matrix],
             "weak_mode_labels": list(self.weak_mode_labels),
             "trust_scale": self.trust_scale,
+            "setup_trust_scale": self.setup_trust_scale,
+            "pose_trust_scale": self.pose_trust_scale,
             "trust_clipped": self.trust_clipped,
             "setup_update_by_parameter": list(self.setup_update_by_parameter),
             "pose_update_max_by_dof": list(self.pose_update_max_by_dof),
@@ -524,17 +528,21 @@ def schur_step_from_jacobian(
     pose_step = (
         jnp.concatenate(pose_steps, axis=0) if pose_steps else jnp.asarray([], dtype=jnp.float32)
     )
-    raw_step = jnp.concatenate([setup_step, pose_step], axis=0)
-    trust_scale = _trust_scale(
+    setup_trust_scale, pose_trust_scale = _trust_scales(
         setup_step,
         pose_step,
         setup_trust_radius=setup_trust_radius,
         pose_trust_radius=pose_trust_radius,
     )
-    step = raw_step * trust_scale
-    dense_step = dense_step_unscaled * trust_scale
+    step = jnp.concatenate([setup_step * setup_trust_scale, pose_step * pose_trust_scale], axis=0)
+    dense_step = _scale_dense_step(
+        dense_step_unscaled,
+        n_setup=n_setup,
+        setup_trust_scale=setup_trust_scale,
+        pose_trust_scale=pose_trust_scale,
+    )
     pose_step_matrix = (
-        (pose_step * trust_scale).reshape((n_views, pose_dim))
+        (pose_step * pose_trust_scale).reshape((n_views, pose_dim))
         if pose_dim > 0
         else jnp.zeros((n_views, 0), dtype=jnp.float32)
     )
@@ -547,17 +555,19 @@ def schur_step_from_jacobian(
     schur_eigenvalues = _eigvalsh_tuple(schur_matrix)
     diagnostics = JointSchurDiagnostics(
         schur_condition=float(jnp.linalg.cond(schur_matrix)),
-        setup_update_norm=float(jnp.linalg.norm(setup_step * trust_scale)),
-        pose_update_norm=float(jnp.linalg.norm(pose_step * trust_scale)),
+        setup_update_norm=float(jnp.linalg.norm(setup_step * setup_trust_scale)),
+        pose_update_norm=float(jnp.linalg.norm(pose_step * pose_trust_scale)),
         dense_step_difference_norm=float(jnp.linalg.norm(step - dense_step)),
         global_eigenvalues=_eigvalsh_tuple(hessian),
         schur_eigenvalues=schur_eigenvalues,
         pose_block_conditions=tuple(pose_block_conditions),
         setup_correlation_matrix=_correlation_matrix_tuple(schur_matrix),
         weak_mode_labels=_weak_mode_labels(schur_eigenvalues),
-        trust_scale=float(trust_scale),
-        trust_clipped=bool(trust_scale < 1.0),
-        setup_update_by_parameter=tuple(float(value) for value in setup_step * trust_scale),
+        trust_scale=float(jnp.minimum(setup_trust_scale, pose_trust_scale)),
+        setup_trust_scale=float(setup_trust_scale),
+        pose_trust_scale=float(pose_trust_scale),
+        trust_clipped=bool(jnp.minimum(setup_trust_scale, pose_trust_scale) < 1.0),
+        setup_update_by_parameter=tuple(float(value) for value in setup_step * setup_trust_scale),
         pose_update_max_by_dof=tuple(
             float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
         ),
@@ -613,23 +623,40 @@ def _per_view_normal_block_diagnostics(
     )
 
 
-def _trust_scale(
+def _trust_scales(
     setup_step: jax.Array,
     pose_step: jax.Array,
     *,
     setup_trust_radius: float | None,
     pose_trust_radius: float | None,
-) -> jax.Array:
-    scale = jnp.asarray(1.0, dtype=jnp.float32)
+) -> tuple[jax.Array, jax.Array]:
+    setup_scale = jnp.asarray(1.0, dtype=jnp.float32)
+    pose_scale = jnp.asarray(1.0, dtype=jnp.float32)
     if setup_trust_radius is not None:
         setup_norm = jnp.linalg.norm(setup_step)
         setup_limit = jnp.asarray(max(float(setup_trust_radius), 0.0), dtype=jnp.float32)
-        scale = jnp.minimum(scale, setup_limit / jnp.maximum(setup_norm, 1e-12))
+        setup_scale = jnp.minimum(setup_scale, setup_limit / jnp.maximum(setup_norm, 1e-12))
     if pose_trust_radius is not None:
         pose_norm = jnp.linalg.norm(pose_step)
         pose_limit = jnp.asarray(max(float(pose_trust_radius), 0.0), dtype=jnp.float32)
-        scale = jnp.minimum(scale, pose_limit / jnp.maximum(pose_norm, 1e-12))
-    return scale
+        pose_scale = jnp.minimum(pose_scale, pose_limit / jnp.maximum(pose_norm, 1e-12))
+    return setup_scale, pose_scale
+
+
+def _scale_dense_step(
+    dense_step: jax.Array,
+    *,
+    n_setup: int,
+    setup_trust_scale: jax.Array,
+    pose_trust_scale: jax.Array,
+) -> jax.Array:
+    return jnp.concatenate(
+        [
+            dense_step[:n_setup] * setup_trust_scale,
+            dense_step[n_setup:] * pose_trust_scale,
+        ],
+        axis=0,
+    )
 
 
 def _predicted_reduction(
