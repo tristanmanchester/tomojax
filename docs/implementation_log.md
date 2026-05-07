@@ -3,6 +3,75 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Train-View Reconstruction Policy
+
+### Summary
+
+- Added `preview_reconstruction_mask_source` with `all_views` as the default
+  and `train_views` as an opt-in policy that excludes the held-out validation
+  view from preview FISTA reconstruction.
+- Wired the option through `align-auto`, resolved config, verification, run
+  manifest, and benchmark result artifacts.
+- Disabled coarse early exit for `train_views`; the first diagnostic showed
+  that using the held-out view only for validation made the coarse held-out
+  check too easy and skipped finer levels while manifest geometry still failed.
+
+### 128^3 CUDA Gate
+
+Reran the 128^3/256-view supported-only `synth128_setup_global_tomo` stopped
+gate on `cuda:0` after disabling coarse early exit:
+
+- Artifact:
+  `.artifacts/phase8_train_view_reconstruction/runs/128_supported_only_256views_train_views_no_skip_gpu/`
+- Command log:
+  `.artifacts/phase8_train_view_reconstruction/logs/128_supported_only_256views_train_views_no_skip_gpu.log`
+- Wall time: `218.47` seconds.
+- Host max RSS: `2900024` KB.
+- Volume NMSE: `0.450992`.
+- Final residual: `1.767721`.
+- det_u RMSE: `3.861245` px.
+- theta RMSE: `0.021822` rad.
+- Held-out loss: `0.010941`.
+- Projection-loss classification:
+  `reconstruction_absorbed_geometry`.
+
+The train-view split improved over the accidental early-exit run but did not
+beat the best center-gauge stopped run and did not recover theta. The next
+functional step should make the geometry objective less dependent on a single
+absorbed stopped volume rather than only changing which projection views FISTA
+uses.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-train-view-reconstruction-gate.md`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_can_exclude_heldout_view
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_defaults_to_all_views
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 3 tests in 34.11 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_can_exclude_heldout_view
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_defaults_to_all_views
+  tests/test_alternating_geometry_update_policy.py::test_train_view_reconstruction_disables_coarse_early_exit
+  -q` passed: 3 tests in 0.88 seconds.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/api.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py
+  src/tomojax/align/api.py src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-08 — Phase 8 No-FISTA First-Preview Policy
 
 ### Summary

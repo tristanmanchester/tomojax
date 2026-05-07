@@ -11,22 +11,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 constrained early x-step diagnostic
-- Goal: prevent the first stopped-reconstruction preview from absorbing
-  setup-global geometry before Schur by adding a pose/geometry-safe constrained
-  early x-step policy.
+- Phase: Phase 8/9 held-out reconstruction diagnostic
+- Goal: make stopped-reconstruction geometry updates less self-fulfilling by
+  allowing preview reconstruction to exclude the held-out validation view.
 
 ### Scope
 
 - In scope:
-  - Add an explicit stopped-preview policy that uses the existing constant
-    cylindrical first-level volume without running FISTA before the first
-    geometry update.
-  - Keep the policy private to `tomojax.align` orchestration/config and wire it
-    through the existing CLI option.
-  - Preserve existing artifact/report shapes; no new fields.
-  - Add focused policy tests and run a realistic setup-global CUDA gate if
-    focused validation passes.
+  - Add an opt-in reconstruction mask policy for preview FISTA:
+    `all_views` vs `train_views`.
+  - Use the existing held-out mask split; do not add another validation
+    mechanism or report-only criterion.
+  - Wire the option through `align-auto` and resolved config/provenance.
+  - Add focused tests and run a realistic setup-global CUDA gate if validation
+    passes.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -52,8 +50,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add constrained no-FISTA first stopped-preview policy.
-- [x] Wire CLI/config resolved values through existing policy fields.
+- [x] Add preview reconstruction mask policy.
+- [x] Wire CLI/config/artifact provenance.
 - [x] Add focused tests.
 - [x] Run focused validation and `just imports`.
 - [x] Run the 128^3 supported-only CUDA gate if validation passes.
@@ -92,6 +90,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - CUDA 128^3/256-view supported-only stopped-reconstruction gate completed on
   `cuda:0` in 178.47 seconds with the no-FISTA first-preview policy. Artifact:
   `.artifacts/phase8_no_fista_first_preview/runs/128_supported_only_256views_no_fista_first_gpu/`.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_can_exclude_heldout_view
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_defaults_to_all_views
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 3 tests in 34.11 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_can_exclude_heldout_view
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_mask_source_defaults_to_all_views
+  tests/test_alternating_geometry_update_policy.py::test_train_view_reconstruction_disables_coarse_early_exit
+  -q` passed: 3 tests in 0.88 seconds.
+- `uv run ruff check src/tomojax/align/_alternating.py src/tomojax/align/api.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating.py
+  src/tomojax/align/api.py src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- CUDA 128^3/256-view supported-only train-view reconstruction gate completed
+  on `cuda:0` in 218.47 seconds after disabling coarse early exit. Artifact:
+  `.artifacts/phase8_train_view_reconstruction/runs/128_supported_only_256views_train_views_no_skip_gpu/`.
+- `just imports` passed after the train-view reconstruction policy.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in

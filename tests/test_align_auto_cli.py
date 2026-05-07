@@ -636,6 +636,7 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
     assert 'geometry_update_active_pose_dofs = ["dx_px", "dz_px"]' in config_text
     assert 'preview_volume_support = "cylindrical"' in config_text
     assert 'preview_initialization = "zero"' in config_text
+    assert 'preview_reconstruction_mask_source = "all_views"' in config_text
     assert "preview_tv_scale = 0.0" in config_text
     assert 'preview_residual_filter_mode = "raw"' in config_text
     assert "preview_center_l2_weight = 0.25" in config_text

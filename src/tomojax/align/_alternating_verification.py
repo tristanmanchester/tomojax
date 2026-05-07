@@ -173,6 +173,7 @@ def _verification_payload(
         ),
         "preview_volume_support": cfg.preview_volume_support,
         "preview_initialization": cfg.preview_initialization,
+        "preview_reconstruction_mask_source": cfg.preview_reconstruction_mask_source,
         "preview_tv_scale": cfg.preview_tv_scale,
         "preview_residual_filter_mode": cfg.preview_residual_filter_mode,
         "preview_center_l2_weight": cfg.preview_center_l2_weight,

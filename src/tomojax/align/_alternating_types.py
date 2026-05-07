@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 GeometryUpdateVolumeSource = Literal["fixed_synthetic_truth", "stopped_reconstruction"]
 GeometryUpdateSolver = Literal["joint_schur", "setup_only_lm"]
 PreviewInitialization = Literal["average_projection", "backprojection", "constant", "zero"]
+PreviewReconstructionMaskSource = Literal["all_views", "train_views"]
 PreviewResidualFilterMode = Literal["continuation", "raw"]
 PreviewVolumeSupport = Literal["cylindrical", "none", "spherical"]
 StoppedPreviewPolicy = Literal[
@@ -56,6 +57,7 @@ class AlternatingSmokeConfig:
     )
     preview_volume_support: PreviewVolumeSupport = "none"
     preview_initialization: PreviewInitialization = "backprojection"
+    preview_reconstruction_mask_source: PreviewReconstructionMaskSource = "all_views"
     preview_tv_scale: float = 1.0
     preview_residual_filter_mode: PreviewResidualFilterMode = "continuation"
     preview_center_l2_weight: float = 0.0

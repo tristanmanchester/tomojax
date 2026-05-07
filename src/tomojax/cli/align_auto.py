@@ -17,6 +17,7 @@ from tomojax.align.api import (
     GeometryUpdateSolver,
     GeometryUpdateVolumeSource,
     PreviewInitialization,
+    PreviewReconstructionMaskSource,
     PreviewResidualFilterMode,
     PreviewVolumeSupport,
     StoppedPreviewPolicy,
@@ -38,6 +39,7 @@ _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synth
 _GEOMETRY_UPDATE_SOLVER_CHOICES = ("joint_schur", "setup_only_lm")
 _PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "spherical")
 _PREVIEW_INITIALIZATION_CHOICES = ("backprojection", "zero", "constant", "average_projection")
+_PREVIEW_RECONSTRUCTION_MASK_SOURCE_CHOICES = ("all_views", "train_views")
 _PREVIEW_RESIDUAL_FILTER_MODE_CHOICES = ("continuation", "raw")
 _STOPPED_PREVIEW_POLICY_CHOICES = (
     "standard",
@@ -204,6 +206,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Scale factor for continuation preview TV weights.",
     )
     _ = parser.add_argument(
+        "--preview-reconstruction-mask-source",
+        choices=_PREVIEW_RECONSTRUCTION_MASK_SOURCE_CHOICES,
+        default="all_views",
+        help=(
+            "Projection mask used for preview reconstruction. train_views excludes "
+            "the configured held-out validation view."
+        ),
+    )
+    _ = parser.add_argument(
         "--preview-residual-filter-mode",
         choices=_PREVIEW_RESIDUAL_FILTER_MODE_CHOICES,
         default="continuation",
@@ -241,6 +252,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     geometry_update_solver = cast("GeometryUpdateSolver", args.geometry_update_solver)
     preview_volume_support = cast("PreviewVolumeSupport", args.preview_volume_support)
     preview_initialization = cast("PreviewInitialization", args.preview_initialization)
+    preview_reconstruction_mask_source = cast(
+        "PreviewReconstructionMaskSource",
+        args.preview_reconstruction_mask_source,
+    )
     preview_residual_filter_mode = cast(
         "PreviewResidualFilterMode",
         args.preview_residual_filter_mode,
@@ -308,6 +323,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             preview_volume_support=preview_volume_support,
             preview_initialization=preview_initialization,
+            preview_reconstruction_mask_source=preview_reconstruction_mask_source,
             preview_tv_scale=float(args.preview_tv_scale),
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=float(args.preview_center_l2_weight),

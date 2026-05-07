@@ -118,7 +118,7 @@ def _run_alternating_solver_smoke_impl(
                 level=level,
                 shape=(config.size, config.size, config.size),
             ),
-            mask=mask,
+            mask=_preview_reconstruction_mask(config, mask=mask, train_mask=train_mask),
             config=ReferenceFISTAConfig(
                 iterations=_preview_reconstruction_iterations(config, level),
                 step_size=_preview_fista_step_size(config),
@@ -237,8 +237,7 @@ def _run_alternating_solver_smoke_impl(
         coarse_verified, time_to_verified_geometry_seconds = _coarse_verification_state(
             level=level,
             checks_verified=(
-                verification_checks.verified
-                and config.geometry_update_volume_source != "fixed_synthetic_truth"
+                _allows_coarse_early_exit(config) and verification_checks.verified
             ),
             already_verified=coarse_verified,
             previous_time_to_verified=time_to_verified_geometry_seconds,
@@ -308,6 +307,7 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_active_pose_dofs=config.geometry_update_active_pose_dofs,
         preview_volume_support=config.preview_volume_support,
         preview_initialization=config.preview_initialization,
+        preview_reconstruction_mask_source=config.preview_reconstruction_mask_source,
         preview_tv_scale=config.preview_tv_scale,
         preview_residual_filter_mode=config.preview_residual_filter_mode,
         preview_center_l2_weight=config.preview_center_l2_weight,
@@ -402,6 +402,29 @@ def _preview_reconstruction_iterations(
     if _uses_no_fista_first_level(config, level):
         return 0
     return level.reconstruction_iterations
+
+
+def _preview_reconstruction_mask(
+    config: AlternatingSmokeConfig,
+    *,
+    mask: jax.Array,
+    train_mask: jax.Array,
+) -> jax.Array:
+    if config.preview_reconstruction_mask_source == "all_views":
+        return mask
+    if config.preview_reconstruction_mask_source == "train_views":
+        return train_mask
+    raise ValueError(
+        "unknown preview reconstruction mask source "
+        f"{config.preview_reconstruction_mask_source!r}"
+    )
+
+
+def _allows_coarse_early_exit(config: AlternatingSmokeConfig) -> bool:
+    return (
+        config.geometry_update_volume_source != "fixed_synthetic_truth"
+        and config.preview_reconstruction_mask_source != "train_views"
+    )
 
 
 def _preview_initial_volume(

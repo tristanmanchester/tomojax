@@ -269,6 +269,51 @@ def test_stopped_preview_no_fista_policy_skips_first_preview_reconstruction_only
     assert _preview_reconstruction_iterations(config, fine) == fine.reconstruction_iterations
 
 
+def test_preview_reconstruction_mask_source_can_exclude_heldout_view() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _preview_reconstruction_mask
+
+    mask = jnp.ones((3, 2, 2), dtype=jnp.float32)
+    train_mask = mask.at[-1, :, :].set(0.0)
+
+    selected = _preview_reconstruction_mask(
+        AlternatingSmokeConfig(preview_reconstruction_mask_source="train_views"),
+        mask=mask,
+        train_mask=train_mask,
+    )
+
+    np.testing.assert_array_equal(np.asarray(selected), np.asarray(train_mask))
+
+
+def test_preview_reconstruction_mask_source_defaults_to_all_views() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _preview_reconstruction_mask
+
+    mask = jnp.ones((3, 2, 2), dtype=jnp.float32)
+    train_mask = mask.at[-1, :, :].set(0.0)
+
+    selected = _preview_reconstruction_mask(
+        AlternatingSmokeConfig(),
+        mask=mask,
+        train_mask=train_mask,
+    )
+
+    np.testing.assert_array_equal(np.asarray(selected), np.asarray(mask))
+
+
+def test_train_view_reconstruction_disables_coarse_early_exit() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _allows_coarse_early_exit
+
+    assert _allows_coarse_early_exit(AlternatingSmokeConfig()) is True
+    assert (
+        _allows_coarse_early_exit(
+            AlternatingSmokeConfig(preview_reconstruction_mask_source="train_views")
+        )
+        is False
+    )
+
+
 def test_theta_activation_policy_freezes_theta_until_configured_level() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import _active_setup_parameters_for_level
