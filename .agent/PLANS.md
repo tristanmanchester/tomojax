@@ -11,18 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 anchored geometry-update volume
-- Goal: keep Schur setup updates from chasing later stopped reconstructions that
-  have already absorbed geometry by reusing the constrained first-preview
-  volume as the geometry-update volume.
+- Phase: Phase 8/9 anchored Schur-volume CUDA gate
+- Goal: evaluate whether reusing the constrained first-preview volume for Schur
+  geometry updates improves the realistic 128^3/256-view supported-only stopped
+  setup-global gate.
 
 ### Scope
 
 - In scope:
-  - Reuse the first constrained stopped preview as the Schur update volume for
-    later levels when `constant_cylindrical_first_level` is enabled.
-  - Keep final reconstruction output unchanged.
-  - Add focused orchestration tests and validation.
+  - Rerun `align-auto` on the existing 128^3/256-view supported-only sidecar
+    with `--stopped-preview-policy constant_cylindrical_first_level`.
+  - Record pass/fail, recovery, residual, NMSE, Schur acceptance, CUDA device,
+    runtime, and peak sampled memory.
+  - Update benchmark notes and implementation log.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -36,7 +37,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
 
 ### Design Sources
 
@@ -47,10 +48,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Reuse the constrained first preview for later Schur geometry updates.
-- [x] Add focused tests for anchor capture/reuse policy.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run the 128^3/256-view anchored Schur-volume CUDA gate.
+- [x] Extract result metrics and compare with the previous constrained gate.
+- [x] Update benchmark notes and `docs/implementation_log.md`.
+- [x] Run `just imports` and commit the gate summary.
 
 ### Validation
 

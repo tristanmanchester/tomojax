@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Anchored Schur-Volume CUDA Gate
+
+### Summary
+
+- Reran the 128^3/256-view supported-only `synth128_setup_global_tomo` CUDA gate
+  after changing the stopped-preview policy to reuse the constrained first
+  preview as the later Schur geometry-update volume.
+- The run selected `cuda:0`, completed in `3:43.10`, peaked at 6075 MiB sampled
+  GPU memory, and wrote artifacts under
+  `.artifacts/phase8_anchored_schur_volume_gate/runs/128_supported_only_256views_anchor_schur_volume_gpu/`.
+- Benchmark status still failed: det_u RMSE improved versus the immediately
+  previous constrained run (`5.345676` px to `4.127600` px) but remained far
+  outside the 0.5 px tolerance; theta RMSE was `0.025110` rad, final residual
+  was `1.107017`, volume NMSE was `0.299522`, and projection-loss
+  classification remained `reconstruction_absorbed_geometry`.
+- Final-level Schur accepted, but both manifest criteria failed. This rules out
+  the simple anchored Schur-volume policy as the full stopped setup-global fix.
+- Recorded the result in
+  `docs/benchmark_runs/2026-05-07-phase8-anchored-schur-volume-gate.md`.
+
+### Validation
+
+- `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda
+  CUDA_VISIBLE_DEVICES=0 uv run tomojax-align-auto-smoke ...` completed with
+  exit status 0.
+- `just imports` passed after the gate summary update.
+
+### Remaining Work
+
+- Move to a stronger setup-validation objective or gauge-regularized
+  reconstruction. The current evidence does not support solving stopped
+  setup-global recovery with more iterations or by reusing a different stopped
+  volume for Schur alone.
+
 ## 2026-05-07 — Phase 8 Anchored Schur Volume Slice
 
 ### Summary
