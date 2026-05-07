@@ -6500,6 +6500,7 @@ the Schur filter change.
 
 Artifacts:
 
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_filtered_reporting/`
 - `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_filtered_reporting/`
 - `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_filtered_reporting/`
 - `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_filtered_reporting.md`
@@ -6509,6 +6510,9 @@ Interpretation:
 - Continuation-filtered Schur makes the fixed-truth strong-pose-prior supported
   oracle essentially exact. The remaining blocker is no longer fixed-truth setup
   recovery under supported DOFs.
+- The refreshed fixed-truth pose-frozen oracle also passes on `cuda:0`
+  (`det_u` RMSE `1.33514e-05` px, theta RMSE `2.59716e-06` rad, true-volume
+  recovered-geometry loss `0.0`, true-volume true-geometry loss `0.0`).
 - Stopped reconstruction still fails and is classified as
   `reconstruction_absorbed_geometry`. The next implementation slice should
   target reconstruction/volume gauge handling rather than further Schur

@@ -241,12 +241,14 @@ finite-difference Jacobian path, the strong-pose-prior diagnostics were rerun on
 
 Runs:
 
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_filtered_reporting/`
 - `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_filtered_reporting/`
 - `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_filtered_reporting/`
 - `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_filtered_reporting.md`
 
 | Mode | Status | det_u RMSE px | theta RMSE rad | Schur train loss | True vol/final geom | Classification | Time s |
 |---|---|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth`, pose frozen | passed | 1.33514e-05 | 2.59716e-06 | 1.18979e-08 | 0 | `independent_projection_losses_consistent` | 16.5956 |
 | `fixed_synthetic_truth` | passed | 5.24164e-06 | 5.10065e-05 | 2.13915e-08 | 3.39969e-09 | `independent_projection_losses_consistent` | 106.826 |
 | `stopped_reconstruction` | failed | 7.25 | 0.0218166 | 0.361978 | 0.884522 | `reconstruction_absorbed_geometry` | 113.388 |
 
