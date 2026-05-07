@@ -249,6 +249,8 @@ def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transi
             n_setup=n_setup,
             n_views=geometry.pose.n_views,
             pose_dim=pose_dim,
+            active_pose_dofs=cfg.active_pose_dofs,
+            canonicalize_pose_step_gauge=True,
             damping=damping,
             setup_trust_radius=setup_trust_radius,
             pose_trust_radius=pose_trust_radius,
@@ -476,6 +478,8 @@ def schur_step_from_jacobian(
     n_views: int,
     pose_dim: int,
     damping: float,
+    active_pose_dofs: tuple[PoseSchurDof, ...] | None = None,
+    canonicalize_pose_step_gauge: bool = False,
     setup_trust_radius: float | None = None,
     pose_trust_radius: float | None = None,
     data_rows: int | None = None,
@@ -529,6 +533,15 @@ def schur_step_from_jacobian(
     pose_step = (
         jnp.concatenate(pose_steps, axis=0) if pose_steps else jnp.asarray([], dtype=jnp.float32)
     )
+    if canonicalize_pose_step_gauge:
+        setup_step, pose_step = _canonicalize_step_gauge(
+            setup_step,
+            pose_step,
+            n_setup=n_setup,
+            n_views=n_views,
+            pose_dim=pose_dim,
+            active_pose_dofs=active_pose_dofs,
+        )
     setup_trust_scale, pose_trust_scale = _trust_scales(
         setup_step,
         pose_step,
@@ -642,6 +655,33 @@ def _trust_scales(
         pose_limit = jnp.asarray(max(float(pose_trust_radius), 0.0), dtype=jnp.float32)
         pose_scale = jnp.minimum(pose_scale, pose_limit / jnp.maximum(pose_norm, 1e-12))
     return setup_scale, pose_scale
+
+
+def _canonicalize_step_gauge(
+    setup_step: jax.Array,
+    pose_step: jax.Array,
+    *,
+    n_setup: int,
+    n_views: int,
+    pose_dim: int,
+    active_pose_dofs: tuple[PoseSchurDof, ...] | None,
+) -> tuple[jax.Array, jax.Array]:
+    if pose_dim == 0:
+        return setup_step, pose_step
+    dofs = active_pose_dofs or _POSE_DOF_ORDER[:pose_dim]
+    pose_matrix = pose_step.reshape((n_views, pose_dim))
+    setup = setup_step
+    pose = pose_matrix
+    for index, dof in enumerate(dofs):
+        mean_step = jnp.mean(pose[:, index])
+        pose = pose.at[:, index].add(-mean_step)
+        if dof == "phi_residual_rad":
+            setup = setup.at[0].add(mean_step)
+        elif dof == "dx_px":
+            setup = setup.at[1].add(mean_step)
+        elif dof == "dz_px" and n_setup >= 3:
+            setup = setup.at[2].add(mean_step)
+    return setup, pose.reshape(-1)
 
 
 def _scale_dense_step(

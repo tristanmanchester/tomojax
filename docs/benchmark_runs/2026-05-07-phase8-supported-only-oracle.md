@@ -157,3 +157,37 @@ Compare artifact:
 Interpretation: staged pose activation is available but still needs an anchored
 or zero-mean pose parameterisation, or final pose refinement must avoid changing
 already verified setup.
+
+## Zero-Mean Pose Step Follow-Up
+
+The LM path now transfers mean pose steps into setup before trust scaling and
+candidate evaluation.
+
+Runs:
+
+- Unconstrained zero-mean joint:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_pose_step/`
+- Zero-mean with `phi_residual_rad` frozen:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi/`
+- Reference schedule, zero-mean with `phi_residual_rad` frozen:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi_reference/`
+
+Best non-hard-prior result:
+
+| Metric | Value |
+|---|---:|
+| det_u realised RMSE | 0.201021 px |
+| theta realised RMSE | 1.36732e-08 rad |
+| final residual | 0 |
+| total wall time | 102.388 s |
+
+This passes the manifest criteria (`det_u < 0.5 px`, `theta < 0.1 deg`) but
+misses the internal verification gate (`det_u < 0.2 px`) by about 0.001 px.
+
+Compare artifact:
+
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_zero_mean.md`
+
+Interpretation: zero-mean pose step projection almost resolves fixed-truth joint
+setup+pose without a hard pose prior. The remaining narrow issue is detector
+shift accuracy when detector pose remains active.

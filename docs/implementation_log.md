@@ -160,6 +160,52 @@ or use a zero-mean/anchored pose parameterisation inside LM.
   tests/test_align_auto_cli.py -q` passed: 21 tests.
 - `just imports` passed.
 
+## 2026-05-07 — Zero-Mean Pose Step Diagnostic
+
+### Summary
+
+- Added optional Schur step gauge projection inside `solve_joint_schur_lm`:
+  mean `phi_residual_rad`, `dx_px`, and active `dz_px` pose steps are
+  transferred into setup before trust scaling and candidate evaluation.
+- Kept direct `schur_step_from_jacobian` dense-solve tests unchanged by making
+  the projection opt-in for low-level calls and enabled in the LM solver path.
+- Added a regression test proving mean detector pose step is transferred into
+  setup and the residual pose step is zero-mean.
+
+### GPU Result
+
+- Unconstrained zero-mean joint:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_pose_step/`
+  improved detector setup but failed because active per-view `phi_residual_rad`
+  introduced theta variation: det_u RMSE 0.764954 px, theta RMSE 0.0219937 rad.
+- Zero-mean with `phi_residual_rad` frozen and `dx_px,dz_px` active:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi/`
+  passed theta but failed det_u: det_u RMSE 0.746027 px, theta RMSE
+  3.83419e-05 rad.
+- Reference schedule with zero-mean and `phi_residual_rad` frozen:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi_reference/`
+  passed manifest criteria but missed the internal 0.2 px geometry gate by
+  about 0.001 px: det_u RMSE 0.201021 px, theta RMSE 1.36732e-08 rad.
+- Compare artifact:
+  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_zero_mean.md`.
+
+### Interpretation
+
+The setup/pose gauge fix is materially better and nearly passes strict internal
+geometry recovery without a hard pose prior, but it is still not enough to move
+to stopped-reconstruction judgement. The remaining narrow blocker is final
+detector-shift accuracy when detector pose is active; pose-frozen and hard-prior
+diagnostics pass, so the projector/setup convention is no longer the blocker.
+
+### Validation
+
+- `uv run ruff check ...` on touched zero-mean source/test files passed.
+- `uv run basedpyright ...` on touched zero-mean source/test files passed with
+  0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py -q` passed: 22 tests.
+- `just imports` passed.
+
 ## 2026-05-07 — Nominal Theta Geometry Root Fix
 
 ### Summary
