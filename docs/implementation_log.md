@@ -7958,3 +7958,67 @@ Artifacts:
   src/tomojax/align/_joint_schur_lm.py src/tomojax/forward/_projector.py
   tests/test_joint_schur_lm.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
+
+## 2026-05-07 — Phase 8/9 Batched Streamed Schur Runtime Fix
+
+### Summary
+
+- Replaced the Python per-view/per-parameter streamed Schur loop with a
+  `jax.lax.scan` over views and a per-view `vmap` over local finite-difference
+  directions.
+- The normal-equation contract remains low memory: only one view's local
+  residual Jacobian is materialised at a time, then scattered into global
+  `J.T @ J` and `J.T @ r`.
+- Fixed `lowpass_gaussian` residual filtering under JAX transforms by computing
+  the static Gaussian kernel radius with Python `math.ceil()` instead of a JAX
+  scalar `.item()`.
+
+### GPU Evidence
+
+Reran the same fixed-truth setup-global diagnostics with
+`XLA_PYTHON_CLIENT_PREALLOCATE=false`, `JAX_PLATFORMS=cuda`, and all five pose
+DOFs active.
+
+| Probe | Exit | Wall time | Peak sampled GPU memory | Benchmark status |
+|---|---:|---:|---:|---|
+| `64^3`, 64 views, setup-global full 5-DOF | 0 | about 79 s | 735 MiB | failed criteria, run completed |
+| `128^3`, 256 views, setup-global full 5-DOF | 0 | 237.91 s reported runtime, about 253 s wall | 1265 MiB | failed criteria, run completed |
+
+Artifacts:
+
+- `.artifacts/phase8_jitted_schur_probe/64_setup_global_full5_fixed_truth_cuda/`
+- `.artifacts/phase8_jitted_schur_probe/128_setup_global_full5_fixed_truth_cuda/`
+- `.artifacts/phase8_jitted_schur_probe/logs/64_setup_global_full5_fixed_truth_cuda/`
+- `.artifacts/phase8_jitted_schur_probe/logs/128_setup_global_full5_fixed_truth_cuda/`
+
+128^3 fixed-truth benchmark details:
+
+- selected JAX device: `cuda:0`
+- backend actual: `core_trilinear_ray`
+- `geometry_updates_executed`: 10
+- `det_u_realized_rmse_px`: 0.0696, criterion passed
+- `detector_roll_error_rad`: 0.0004198, criterion passed
+- `axis_error_rad`: 0.002207, criterion failed
+- `theta_realized_rmse_rad`: 0.03399, criterion failed
+- `schur_train_loss`: `1.818e-08`
+
+### Interpretation
+
+- This closes the memory-regression slice as a usable diagnostic path: the
+  128^3/256-view full-5DOF fixed-truth run now completes on the laptop GPU
+  around a 1.3 GiB sampled peak rather than timing out or OOMing.
+- The remaining benchmark failure is now numerical/solver behaviour, not memory:
+  the expanded full-5DOF oracle overfits or misallocates theta/axis/theta-scale
+  under noisy setup-global data. The next functional slice should constrain or
+  stage active setup/pose DOFs for setup-global recovery, then rerun the
+  five-case suite.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 20 tests in 100.05 seconds.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/forward/_filters.py tests/test_joint_schur_lm.py` passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/forward/_filters.py tests/test_joint_schur_lm.py` passed with
+  0 errors, 0 warnings, and 0 notes.

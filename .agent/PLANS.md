@@ -11,23 +11,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 GPU memory-regression investigation
-- Goal: explain why the v2 `core_trilinear_ray` reference path is using much
-  more VRAM than old TomoJAX's streamed/chunked 5-DOF alignment path, then
-  implement the smallest chunking fix once the allocation source is isolated.
+- Phase: Phase 8/9 streamed Schur runtime follow-up
+- Goal: keep the low-memory Schur normal-equation path from the previous slice,
+  but batch/JIT view-local reductions so realistic `128^3` diagnostics are not
+  dominated by Python dispatch.
 
 ### Scope
 
 - In scope:
-  - Inspect v2 projector, FISTA/backprojector, and Schur residual/Jacobian
-    accumulation for all-view/all-parameter materialisation.
-  - Run focused diagnostic commands at realistic scale on `cuda:0` as needed to
-    identify the allocation owner.
-  - Implement chunked accumulation for the offending path when isolated.
-  - Update docs/logs and commit the memory-regression slice.
+  - Replace Python per-view/per-parameter Schur accumulation with a JAX-scanned
+    view contribution.
+  - Preserve low-memory local Jacobian materialisation only within one view.
+  - Validate against the dense Schur reference on small cases.
+  - Rerun a focused CUDA diagnostic and record runtime/memory.
+  - Update docs/logs and commit the runtime slice.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
+  - Reworking report semantics or benchmark criteria.
 - Deep module owner: `tomojax.forward` for projector memory behaviour,
   `tomojax.recon` for reconstruction/backprojection, and `tomojax.align` for
   Schur geometry-update accumulation.
@@ -41,10 +42,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Identify which path owns the high VRAM allocation.
-- [x] Add chunked accumulation or streaming where needed.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Batch/JIT streamed Schur normal-equation accumulation.
+- [x] Run focused Schur/recon tests, type/lint checks, and `just imports`.
+- [x] Run a CUDA diagnostic with preallocation disabled.
+- [x] Update `docs/implementation_log.md` and commit the runtime slice.
 
 ### Validation
 
@@ -69,6 +70,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   `.artifacts/phase8_streamed_schur_probe/logs/128_setup_global_full5_fixed_truth_cuda_rerun2/`
   and
   `.artifacts/phase8_streamed_schur_probe/logs/64_setup_global_full5_fixed_truth_cuda/`.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed after the batched Schur scan: 20 tests in 100.05 seconds.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/forward/_filters.py tests/test_joint_schur_lm.py` passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/forward/_filters.py tests/test_joint_schur_lm.py` passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed after the batched Schur update.
+- 64^3/64-view full-5DOF fixed-truth CUDA probe completed in about 79 seconds
+  with peak sampled GPU memory 735 MiB.
+- 128^3/256-view full-5DOF fixed-truth CUDA probe completed in about 253
+  seconds with peak sampled GPU memory 1265 MiB.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.

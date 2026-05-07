@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Literal
 
 import jax
@@ -75,7 +76,7 @@ def apply_residual_filter_schedule(
 
 def _gaussian_lowpass(residual: jax.Array, *, sigma_px: float) -> jax.Array:
     sigma = max(float(sigma_px), 1e-6)
-    radius = max(1, int(jnp.ceil(jnp.asarray(2.0 * sigma)).item()))
+    radius = max(1, math.ceil(2.0 * sigma))
     offsets = range(-radius, radius + 1)
     kernel = _gaussian_kernel(radius=radius, sigma_px=sigma)
     filtered = jnp.zeros_like(residual, dtype=jnp.float32)

@@ -759,78 +759,97 @@ def _stream_joint_normal_equations_for_geometry(
 ) -> _NormalEquations:
     n_views = int(geometry.pose.n_views)
     n_params = n_setup + n_views * pose_dim
-    hessian = jnp.zeros((n_params, n_params), dtype=jnp.float32)
-    gradient = jnp.zeros((n_params,), dtype=jnp.float32)
     step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
-    setup_gradient_by_view: list[tuple[float, ...]] = []
-    pose_gradient_by_view: list[tuple[float, ...]] = []
-    setup_hessian_diag_by_view: list[tuple[float, ...]] = []
-    pose_hessian_diag_by_view: list[tuple[float, ...]] = []
-    setup_pose_coupling_norm_by_view: list[float] = []
 
-    for view in range(n_views):
-        residual_view = _weighted_residual_view_for_params(
+    def view_contribution(view: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+        view_i = jnp.asarray(view, dtype=jnp.int32)
+        setup_indices = jnp.arange(n_setup, dtype=jnp.int32)
+        pose_indices = (
+            n_setup
+            + view_i * jnp.asarray(pose_dim, dtype=jnp.int32)
+            + jnp.arange(
+                pose_dim,
+                dtype=jnp.int32,
+            )
+        )
+        local_indices = jnp.concatenate([setup_indices, pose_indices], axis=0)
+        directions = jax.nn.one_hot(local_indices, n_params, dtype=jnp.float32)
+
+        def residual_for_direction(direction: jax.Array, sign: jax.Array) -> jax.Array:
+            return _weighted_residual_dynamic_view_for_params(
+                volume,
+                observed,
+                geometry,
+                params + sign * step * direction,
+                view_i,
+                mask=mask,
+                cfg=cfg,
+                weights=weights,
+            ).reshape(-1)
+
+        def plus_residual(direction: jax.Array) -> jax.Array:
+            return residual_for_direction(direction, jnp.float32(1.0))
+
+        def minus_residual(direction: jax.Array) -> jax.Array:
+            return residual_for_direction(direction, jnp.float32(-1.0))
+
+        plus = jax.vmap(plus_residual)(directions)
+        minus = jax.vmap(minus_residual)(directions)
+        jac_local = ((plus - minus) / (jnp.float32(2.0) * step)).T
+        residual_view = _weighted_residual_dynamic_view_for_params(
             volume,
             observed,
             geometry,
             params,
-            view,
+            view_i,
             mask=mask,
             cfg=cfg,
             weights=weights,
         ).reshape(-1)
-        setup_jac = _finite_difference_view_columns(
-            volume,
-            observed,
-            geometry,
-            params,
-            view,
-            parameter_indices=tuple(range(n_setup)),
-            mask=mask,
-            cfg=cfg,
-            weights=weights,
-            step=step,
+        local_gradient = jac_local.T @ residual_view
+        local_hessian = jac_local.T @ jac_local
+        return local_indices, local_gradient, local_hessian
+
+    def body(
+        carry: tuple[jax.Array, jax.Array],
+        view: jax.Array,
+    ) -> tuple[tuple[jax.Array, jax.Array], tuple[jax.Array, ...]]:
+        hessian_acc, gradient_acc = carry
+        local_indices, local_gradient, local_hessian = view_contribution(view)
+        hessian_acc = hessian_acc.at[local_indices[:, None], local_indices[None, :]].add(
+            local_hessian
         )
-        pose_start = n_setup + view * pose_dim
-        pose_indices = tuple(range(pose_start, pose_start + pose_dim))
-        pose_jac = _finite_difference_view_columns(
-            volume,
-            observed,
-            geometry,
-            params,
-            view,
-            parameter_indices=pose_indices,
-            mask=mask,
-            cfg=cfg,
-            weights=weights,
-            step=step,
+        gradient_acc = gradient_acc.at[local_indices].add(local_gradient)
+        setup_gradient = local_gradient[:n_setup]
+        setup_hessian = local_hessian[:n_setup, :n_setup]
+        pose_gradient = local_gradient[n_setup:]
+        pose_hessian = local_hessian[n_setup:, n_setup:]
+        setup_pose = local_hessian[:n_setup, n_setup:]
+        diagnostics = (
+            setup_gradient,
+            pose_gradient,
+            jnp.diag(setup_hessian),
+            jnp.diag(pose_hessian),
+            jnp.linalg.norm(setup_pose),
         )
-        setup_gradient = setup_jac.T @ residual_view
-        setup_hessian = setup_jac.T @ setup_jac
-        hessian = hessian.at[:n_setup, :n_setup].add(setup_hessian)
-        gradient = gradient.at[:n_setup].add(setup_gradient)
-        if pose_dim > 0:
-            pose_gradient = pose_jac.T @ residual_view
-            pose_hessian = pose_jac.T @ pose_jac
-            setup_pose = setup_jac.T @ pose_jac
-            hessian = hessian.at[:n_setup, pose_start : pose_start + pose_dim].add(setup_pose)
-            hessian = hessian.at[pose_start : pose_start + pose_dim, :n_setup].add(setup_pose.T)
-            hessian = hessian.at[
-                pose_start : pose_start + pose_dim,
-                pose_start : pose_start + pose_dim,
-            ].add(pose_hessian)
-            gradient = gradient.at[pose_start : pose_start + pose_dim].add(pose_gradient)
-            pose_gradient_by_view.append(tuple(float(value) for value in pose_gradient))
-            pose_hessian_diag_by_view.append(
-                tuple(float(value) for value in jnp.diag(pose_hessian))
-            )
-            setup_pose_coupling_norm_by_view.append(float(jnp.linalg.norm(setup_pose)))
-        else:
-            pose_gradient_by_view.append(())
-            pose_hessian_diag_by_view.append(())
-            setup_pose_coupling_norm_by_view.append(0.0)
-        setup_gradient_by_view.append(tuple(float(value) for value in setup_gradient))
-        setup_hessian_diag_by_view.append(tuple(float(value) for value in jnp.diag(setup_hessian)))
+        return (hessian_acc, gradient_acc), diagnostics
+
+    init = (
+        jnp.zeros((n_params, n_params), dtype=jnp.float32),
+        jnp.zeros((n_params,), dtype=jnp.float32),
+    )
+    (hessian, gradient), diagnostics = jax.lax.scan(
+        body,
+        init,
+        jnp.arange(n_views, dtype=jnp.int32),
+    )
+    (
+        setup_gradient_by_view_arr,
+        pose_gradient_by_view_arr,
+        setup_hessian_diag_by_view_arr,
+        pose_hessian_diag_by_view_arr,
+        setup_pose_coupling_norm_by_view_arr,
+    ) = diagnostics
 
     prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
     prior_diag = jnp.concatenate(
@@ -847,70 +866,33 @@ def _stream_joint_normal_equations_for_geometry(
         gradient=gradient,
         data_rows=int(observed.size),
         per_view_blocks=_PerViewNormalBlockDiagnostics(
-            setup_gradient_by_view=tuple(setup_gradient_by_view),
-            pose_gradient_by_view=tuple(pose_gradient_by_view),
-            setup_hessian_diag_by_view=tuple(setup_hessian_diag_by_view),
-            pose_hessian_diag_by_view=tuple(pose_hessian_diag_by_view),
-            setup_pose_coupling_norm_by_view=tuple(setup_pose_coupling_norm_by_view),
+            setup_gradient_by_view=_rows_to_tuple(setup_gradient_by_view_arr),
+            pose_gradient_by_view=_rows_to_tuple(pose_gradient_by_view_arr),
+            setup_hessian_diag_by_view=_rows_to_tuple(setup_hessian_diag_by_view_arr),
+            pose_hessian_diag_by_view=_rows_to_tuple(pose_hessian_diag_by_view_arr),
+            setup_pose_coupling_norm_by_view=tuple(
+                float(value) for value in setup_pose_coupling_norm_by_view_arr
+            ),
         ),
     )
 
 
-def _finite_difference_view_columns(
+def _rows_to_tuple(values: jax.Array) -> tuple[tuple[float, ...], ...]:
+    return tuple(tuple(float(item) for item in row) for row in values)
+
+
+def _weighted_residual_dynamic_view_for_params(
     volume: jax.Array,
     observed: jax.Array,
     geometry: GeometryState,
     params: jax.Array,
-    view: int,
-    *,
-    parameter_indices: tuple[int, ...],
-    mask: jax.Array | None,
-    cfg: JointSchurLMConfig,
-    weights: jax.Array,
-    step: jax.Array,
-) -> jax.Array:
-    columns = []
-    for index in parameter_indices:
-        delta = jnp.zeros_like(params).at[index].set(step)
-        plus = _weighted_residual_view_for_params(
-            volume,
-            observed,
-            geometry,
-            params + delta,
-            view,
-            mask=mask,
-            cfg=cfg,
-            weights=weights,
-        ).reshape(-1)
-        minus = _weighted_residual_view_for_params(
-            volume,
-            observed,
-            geometry,
-            params - delta,
-            view,
-            mask=mask,
-            cfg=cfg,
-            weights=weights,
-        ).reshape(-1)
-        columns.append((plus - minus) / (jnp.asarray(2.0, dtype=jnp.float32) * step))
-    if not columns:
-        rows = int(observed.shape[1]) * int(observed.shape[2])
-        return jnp.zeros((rows, 0), dtype=jnp.float32)
-    return jnp.stack(columns, axis=1)
-
-
-def _weighted_residual_view_for_params(
-    volume: jax.Array,
-    observed: jax.Array,
-    geometry: GeometryState,
-    params: jax.Array,
-    view: int,
+    view: jax.Array,
     *,
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
     weights: jax.Array,
 ) -> jax.Array:
-    predicted = _predicted_view_for_params(
+    predicted = _predicted_dynamic_view_for_params(
         volume,
         observed,
         geometry,
@@ -918,8 +900,21 @@ def _weighted_residual_view_for_params(
         view,
         config=cfg,
     )
-    obs_view = observed[view : view + 1]
-    mask_view = None if mask is None else mask[view : view + 1]
+    view_i = jnp.asarray(view, dtype=jnp.int32)
+    obs_view = jax.lax.dynamic_slice(
+        observed,
+        (view_i, 0, 0),
+        (1, int(observed.shape[1]), int(observed.shape[2])),
+    )
+    mask_view = (
+        None
+        if mask is None
+        else jax.lax.dynamic_slice(
+            mask,
+            (view_i, 0, 0),
+            (1, int(observed.shape[1]), int(observed.shape[2])),
+        )
+    )
     predicted = _with_fitted_nuisance(
         predicted,
         obs_view,
@@ -933,7 +928,12 @@ def _weighted_residual_view_for_params(
         cfg.residual_filters,
         mask=mask_view,
     ).residual
-    return filtered * weights[view : view + 1]
+    weight_view = jax.lax.dynamic_slice(
+        weights,
+        (view_i, 0, 0),
+        (1, int(observed.shape[1]), int(observed.shape[2])),
+    )
+    return filtered * weight_view
 
 
 def _per_view_normal_block_diagnostics(
@@ -1448,12 +1448,12 @@ def _predicted_for_params(
     )
 
 
-def _predicted_view_for_params(
+def _predicted_dynamic_view_for_params(
     volume: jax.Array,
     observed: jax.Array,
     geometry: GeometryState,
     params: jax.Array,
-    view: int,
+    view: jax.Array,
     *,
     config: JointSchurLMConfig | None = None,
 ) -> jax.Array:
@@ -1475,19 +1475,21 @@ def _predicted_view_for_params(
         params,
         config,
     )
-    view_slice = slice(int(view), int(view) + 1)
+    view_i = jnp.asarray(view, dtype=jnp.int32)
+    theta_nominal = jax.lax.dynamic_slice(
+        jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32),
+        (view_i,),
+        (1,),
+    )
     return project_parallel_reference_arrays(
         volume,
-        theta_rad=(
-            theta_scale
-            * jnp.asarray(geometry.pose.theta_nominal_rad[view_slice], dtype=jnp.float32)
-            + theta_offset
-            + phi_pose[view_slice]
-        ),
-        dx_px=det_u + dx_pose[view_slice],
-        dz_px=det_v + dz_pose[view_slice],
-        alpha_rad=alpha_pose[view_slice],
-        beta_rad=beta_pose[view_slice],
+        theta_rad=theta_scale * theta_nominal
+        + theta_offset
+        + jax.lax.dynamic_slice(phi_pose, (view_i,), (1,)),
+        dx_px=det_u + jax.lax.dynamic_slice(dx_pose, (view_i,), (1,)),
+        dz_px=det_v + jax.lax.dynamic_slice(dz_pose, (view_i,), (1,)),
+        alpha_rad=jax.lax.dynamic_slice(alpha_pose, (view_i,), (1,)),
+        beta_rad=jax.lax.dynamic_slice(beta_pose, (view_i,), (1,)),
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,
