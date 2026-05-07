@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tomojax.bench import (
+    load_current_baseline_artifact,
     load_synthetic_benchmark_result,
     load_synthetic_benchmark_results,
     synthetic_benchmark_comparison_markdown,
@@ -71,6 +72,41 @@ def test_loads_and_renders_synthetic_benchmark_comparison(tmp_path: Path) -> Non
     ]
 
 
+def test_synthetic_benchmark_comparison_includes_current_baseline(tmp_path: Path) -> None:
+    result_path = _write_result(
+        tmp_path / "run" / "benchmark_result.json",
+        benchmark="synth128_setup_global_tomo",
+        volume_nmse=0.25,
+    )
+    baseline_path = _write_current_baseline(
+        tmp_path / "baseline" / "benchmark_baseline_current.json",
+        benchmark="synth128_setup_global_tomo",
+        volume_nmse=0.4,
+    )
+
+    markdown = synthetic_benchmark_comparison_markdown(
+        [
+            load_synthetic_benchmark_result(result_path),
+            load_current_baseline_artifact(baseline_path),
+        ]
+    )
+
+    assert _row_cells(markdown, "synth128_setup_global_tomo", impl="current_default") == [
+        "synth128_setup_global_tomo",
+        "current_default",
+        "default",
+        "baseline",
+        "",
+        "",
+        "0.4",
+        "0.02",
+        "",
+        "",
+        str(baseline_path),
+    ]
+    assert markdown.index("current_default") < markdown.index("reimagined_align_auto_smoke")
+
+
 def test_writes_synthetic_benchmark_comparison(tmp_path: Path) -> None:
     result_path = _write_result(
         tmp_path / "run" / "benchmark_result.json",
@@ -99,6 +135,30 @@ def test_synthetic_benchmark_compare_cli_writes_report(
     assert exit_code == 0
     assert "synth128_setup_global_tomo" in out_path.read_text(encoding="utf-8")
     assert f"benchmark_comparison: {out_path}" in capsys.readouterr().out
+
+
+def test_synthetic_benchmark_compare_cli_accepts_current_baseline(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result_path = _write_result(
+        tmp_path / "run" / "benchmark_result.json",
+        benchmark="synth128_setup_global_tomo",
+    )
+    baseline_path = _write_current_baseline(
+        tmp_path / "baseline" / "benchmark_baseline_current.json",
+        benchmark="synth128_setup_global_tomo",
+        volume_nmse=0.5,
+    )
+
+    exit_code = synthetic_results_main(
+        [str(result_path), "--current-baseline", str(baseline_path)]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "current_default" in captured.out
+    assert "0.5" in captured.out
 
 
 def test_synthetic_benchmark_compare_cli_prints_report(
@@ -177,8 +237,41 @@ def _write_result(
     return path
 
 
-def _row_cells(markdown: str, benchmark: str) -> list[str]:
+def _row_cells(markdown: str, benchmark: str, *, impl: str | None = None) -> list[str]:
     for line in markdown.splitlines():
-        if line.startswith(f"| {benchmark} |"):
-            return [cell.strip() for cell in line.strip("|").split("|")]
+        if not line.startswith(f"| {benchmark} |"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if impl is None or cells[1] == impl:
+            return cells
     raise AssertionError(f"missing benchmark row {benchmark!r}")
+
+
+def _write_current_baseline(
+    path: Path,
+    *,
+    benchmark: str,
+    volume_nmse: float,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text(
+        json.dumps(
+            {
+                "schema": "tomojax.current_default_baseline.v1",
+                "benchmark": benchmark,
+                "implementation": "current_default",
+                "profile": "default",
+                "source_path": "current-metrics.json",
+                "volume_nmse": volume_nmse,
+                "reconstruction": {
+                    "volume_nmse": volume_nmse,
+                    "final_residual": 0.02,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path

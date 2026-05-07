@@ -3,6 +3,35 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 0 Current-Baseline Comparison Rows Slice
+
+### Summary
+
+- Extended the synthetic benchmark comparison loader with normalized
+  `benchmark_baseline_current.json` artifacts.
+- Added `tomojax-synthetic-benchmark-compare --current-baseline`, repeatable
+  for one or more current/default baseline rows.
+- Current baseline rows render in the same comparison table as reimagined
+  `benchmark_result.json` rows, with blank criteria/geometry/timing fields when
+  the current baseline artifact does not emit those values.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_bench_synthetic_results.py
+  -q` passed: 8 tests in 0.72 seconds.
+- `uv run ruff check src/tomojax/bench/synthetic_results.py
+  src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py` passed.
+- `uv run basedpyright src/tomojax/bench/synthetic_results.py
+  src/tomojax/bench/__init__.py tests/test_bench_synthetic_results.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- The comparison report can now include current baseline artifacts, but the
+  current-run adapter still needs to execute old/current TomoJAX automatically
+  and produce those artifacts for the full five-case suite.
+
 ## 2026-05-07 — Phase 0 Current-Default Baseline Normalizer Slice
 
 ### Summary

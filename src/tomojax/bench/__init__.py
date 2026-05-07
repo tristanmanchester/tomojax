@@ -36,6 +36,8 @@ from .forward_projector import (
 )
 from .synthetic_results import (
     SyntheticBenchmarkResult,
+    SyntheticComparisonArtifact,
+    load_current_baseline_artifact,
     load_synthetic_benchmark_result,
     load_synthetic_benchmark_results,
     synthetic_benchmark_comparison_markdown,
@@ -53,9 +55,11 @@ __all__ = [
     "ScenarioExpectation",
     "ScenarioSuite",
     "SyntheticBenchmarkResult",
+    "SyntheticComparisonArtifact",
     "benchmark_backend",
     "benchmark_sinogram_mode",
     "current_baseline_payload",
+    "load_current_baseline_artifact",
     "load_synthetic_benchmark_result",
     "load_synthetic_benchmark_results",
     "make_forward_projector_fixture",

@@ -11,18 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 0 current-default baseline normalizer
-- Goal: add a small current/default benchmark artifact normalizer that writes
-  `benchmark_baseline_current.json` and `.md` from explicit current-run metrics,
-  so the baseline-ingestion path has a producer-side contract.
+- Phase: Phase 0 current-baseline comparison rows
+- Goal: let the synthetic comparison report ingest normalized
+  `benchmark_baseline_current.json` artifacts alongside reimagined
+  `benchmark_result.json` runs.
 
 ### Scope
 
 - In scope:
-  - Add a `tomojax.bench.current_baseline` normalizer.
-  - Add a console entrypoint for normalizing current/default metrics JSON.
-  - Write `benchmark_baseline_current.json` and `.md`.
-  - Add focused tests.
+  - Load normalized current/default baseline artifacts.
+  - Render current/default rows in the existing synthetic comparison markdown.
+  - Extend the compare CLI with `--current-baseline`.
+  - Add focused comparison tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -31,7 +31,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Pose-only solver changes.
   - Running old/current TomoJAX automatically.
   - Parsing non-JSON current artifacts.
-  - Creating or inventing a baseline value when no source metrics are supplied.
+  - Running old/current TomoJAX automatically.
   - Object-motion solver or correction model.
   - Changing generated projection physics.
   - Marking baseline comparison as passing without a baseline artifact.
@@ -47,8 +47,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add current-default baseline normalizer and console entrypoint.
-- [x] Add focused normalizer tests.
+- [x] Add current baseline artifact loading to synthetic comparison.
+- [x] Extend comparison CLI with `--current-baseline`.
+- [x] Add focused comparison tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
