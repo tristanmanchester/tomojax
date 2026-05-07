@@ -157,6 +157,39 @@ setup/pose/theta convention mapping at 128^3, and the run did not reproduce a
 shift recovery, keeping the next blocker on stopped reconstruction/volume gauge
 handling.
 
+## 2026-05-07 — Phase 8 Jump-Excluded Pose Criterion Slice
+
+### Summary
+
+- Added a benchmark-result `pose_jump_exclusion` payload for synthetic runs.
+- The payload compares final and true canonicalized pose `dx_px`/`dz_px`,
+  detects sparse jump neighborhoods from true dx/dz first differences, and
+  reports RMSE outside those neighborhoods.
+- `pose_dx_dz_rmse_px_lt_except_jumps` now evaluates as a real pass/fail
+  benchmark criterion instead of remaining a missing-policy placeholder.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py -q` passed: 13 tests in
+  0.64 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset
+  tests/test_alternating_benchmark_criteria.py -q` passed: 14 tests in
+  47.59 seconds.
+- `just imports` passed.
+
+### Remaining Work
+
+- The metric only evaluates recovery outside known truth jump neighborhoods. It
+  does not implement pose-jump correction, nuisance fitting, object motion, or
+  current-default NMSE comparison.
+
 ## 2026-05-07 — Phase 8 Missing-Policy Criterion Reason Slice
 
 ### Summary

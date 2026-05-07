@@ -11,26 +11,27 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 bad-view residual detection
-- Goal: make the `bad_views_flagged` synthetic benchmark criterion real using
-  residual view statistics instead of leaving the combined-case criterion
-  unevaluated.
+- Phase: Phase 8/9 jump-excluded pose metric
+- Goal: make the `pose_dx_dz_rmse_px_lt_except_jumps` synthetic benchmark
+  criterion real using final-vs-true pose metrics with robust jump-neighborhood
+  exclusion.
 
 ### Scope
 
 - In scope:
-  - Add a bad-view detection payload to benchmark results.
-  - Evaluate `bad_views_flagged` from that payload.
-  - Keep the detector local to `tomojax.align` artifact/benchmark output.
-  - Add focused tests and rerun the combined synthetic artifact path at a small
-    scale if practical.
+  - Add a jump-excluded pose metric payload to benchmark results.
+  - Evaluate `pose_dx_dz_rmse_px_lt_except_jumps` from that payload.
+  - Keep the metric local to `tomojax.align` artifact/benchmark output.
+  - Add focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
   - Setup-global stopped-reconstruction policy changes.
   - Pose-only solver changes.
-  - New report fields beyond the bad-view payload needed by the criterion.
+  - Object-motion solver or pose-jump correction.
+  - New report fields beyond the jump-exclusion payload needed by the
+    criterion.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -43,7 +44,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement bad-view residual detection in benchmark result payload.
+- [x] Implement jump-excluded dx/dz pose metric in benchmark result payload.
 - [x] Add focused criterion/payload tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.

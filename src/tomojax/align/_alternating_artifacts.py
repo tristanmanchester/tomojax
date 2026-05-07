@@ -34,6 +34,7 @@ from tomojax.forward import PROJECTION_OPERATOR, project_parallel_reference, res
 from tomojax.geometry import (
     GaugeReport,
     GeometryState,
+    canonicalize_geometry_gauges,
     write_geometry_json,
     write_pose_decomposition_csv,
     write_pose_params_csv,
@@ -197,8 +198,9 @@ def _write_artifacts(
             summaries=summaries,
             failure_report=failure_report,
             schur_result=schur_result,
-            final_volume=final_volume,
+            true_geometry=true_geometry,
             final_geometry=final_geometry,
+            final_volume=final_volume,
             observed=observed,
             mask=mask,
             geometry_update_volume_source=geometry_update_volume_source,
@@ -880,8 +882,9 @@ def _benchmark_result_payload(
     summaries: tuple[AlternatingLevelSummary, ...],
     failure_report: Mapping[str, object],
     schur_result: JointSchurLMResult | None,
-    final_volume: jax.Array,
+    true_geometry: GeometryState,
     final_geometry: GeometryState,
+    final_volume: jax.Array,
     observed: jax.Array,
     mask: jax.Array,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
@@ -918,12 +921,17 @@ def _benchmark_result_payload(
         observed=observed,
         mask=mask,
     )
+    pose_jump_exclusion = _pose_jump_exclusion_payload(
+        true_geometry=true_geometry,
+        final_geometry=final_geometry,
+    )
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
         backend=backend_payload,
         weak_dof_policy=_weak_dof_policy_from_schur(schur_result),
         bad_view_detection=bad_view_detection,
+        pose_jump_exclusion=pose_jump_exclusion,
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -988,6 +996,7 @@ def _benchmark_result_payload(
             "alpha_beta_rmse_rad": geometry_recovery.get("alpha_beta_rmse_rad"),
         },
         "bad_view_detection": bad_view_detection,
+        "pose_jump_exclusion": pose_jump_exclusion,
         "backend": backend_payload,
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
@@ -1048,6 +1057,59 @@ def _bad_view_detection_payload(
     }
 
 
+def _pose_jump_exclusion_payload(
+    *,
+    true_geometry: GeometryState,
+    final_geometry: GeometryState,
+) -> dict[str, object]:
+    true_canonical = canonicalize_geometry_gauges(true_geometry).state
+    final_canonical = canonicalize_geometry_gauges(final_geometry).state
+    true_dx = np.asarray(true_canonical.pose.dx_px, dtype=np.float64)
+    true_dz = np.asarray(true_canonical.pose.dz_px, dtype=np.float64)
+    final_dx = np.asarray(final_canonical.pose.dx_px, dtype=np.float64)
+    final_dz = np.asarray(final_canonical.pose.dz_px, dtype=np.float64)
+    jump_mask = _pose_jump_neighborhood_mask(true_dx=true_dx, true_dz=true_dz)
+    keep = ~jump_mask
+    if not bool(np.any(keep)):
+        keep = np.ones_like(jump_mask, dtype=bool)
+    dx_error = final_dx[keep] - true_dx[keep]
+    dz_error = final_dz[keep] - true_dz[keep]
+    rmse = float(np.sqrt(np.mean(np.concatenate([dx_error, dz_error]) ** 2)))
+    excluded = [int(index) for index, value in enumerate(jump_mask) if bool(value)]
+    return {
+        "schema": "tomojax.pose_jump_exclusion.v1",
+        "method": "truth_pose_dx_dz_derivative_outlier_neighborhood",
+        "dx_dz_rmse_px_except_jumps": rmse,
+        "excluded_view_indices": excluded,
+        "excluded_count": len(excluded),
+        "evaluated_view_count": int(np.count_nonzero(keep)),
+    }
+
+
+def _pose_jump_neighborhood_mask(
+    *,
+    true_dx: np.ndarray,
+    true_dz: np.ndarray,
+    radius: int = 2,
+) -> np.ndarray:
+    n_views = int(true_dx.shape[0])
+    if n_views == 0:
+        return np.zeros((0,), dtype=bool)
+    deltas = np.hypot(np.diff(true_dx), np.diff(true_dz))
+    if deltas.size == 0:
+        return np.zeros((n_views,), dtype=bool)
+    median = float(np.median(deltas))
+    mad = float(np.median(np.abs(deltas - median)))
+    threshold = median + max(6.0 * 1.4826 * mad, 5.0)
+    jump_edges = np.nonzero(deltas > threshold)[0]
+    mask = np.zeros((n_views,), dtype=bool)
+    for edge in jump_edges:
+        start = max(0, int(edge) - radius + 1)
+        stop = min(n_views, int(edge) + radius + 2)
+        mask[start:stop] = True
+    return mask
+
+
 def _selected_jax_device() -> str:
     devices = cast("list[object]", jax.devices())
     if not devices:
@@ -1074,6 +1136,7 @@ def _benchmark_manifest_evaluation(
     backend: Mapping[str, object] | None = None,
     weak_dof_policy: Mapping[str, object] | None = None,
     bad_view_detection: Mapping[str, object] | None = None,
+    pose_jump_exclusion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
@@ -1083,6 +1146,7 @@ def _benchmark_manifest_evaluation(
             backend=backend,
             weak_dof_policy=weak_dof_policy,
             bad_view_detection=bad_view_detection,
+            pose_jump_exclusion=pose_jump_exclusion,
         )
         for name, threshold in criteria.items()
     }
@@ -1096,6 +1160,7 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
     backend: Mapping[str, object] | None,
     weak_dof_policy: Mapping[str, object] | None,
     bad_view_detection: Mapping[str, object] | None,
+    pose_jump_exclusion: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if name == "backend_policy":
         return _backend_policy_evaluation(threshold=threshold, backend=backend)
@@ -1109,6 +1174,11 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
         return _bad_views_flagged_evaluation(
             threshold=threshold,
             bad_view_detection=bad_view_detection,
+        )
+    if name == "pose_dx_dz_rmse_px_lt_except_jumps":
+        return _pose_dx_dz_except_jumps_evaluation(
+            threshold=threshold,
+            pose_jump_exclusion=pose_jump_exclusion,
         )
     if name in _MISSING_POLICY_CRITERION_REASONS:
         return {
@@ -1149,7 +1219,6 @@ _MISSING_POLICY_CRITERION_REASONS = {
     "object_motion_enabled_tx_rmse_px_lt": (
         "object-motion solver metrics are not in benchmark_result"
     ),
-    "pose_dx_dz_rmse_px_lt_except_jumps": "pose jump-exclusion mask is not in benchmark_result",
 }
 
 
@@ -1179,6 +1248,35 @@ def _bad_views_flagged_evaluation(
         "value": flagged_count,
         "threshold": True,
         "reason": "evaluated from robust per-view residual outlier detection",
+    }
+
+
+def _pose_dx_dz_except_jumps_evaluation(
+    *,
+    threshold: object,
+    pose_jump_exclusion: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if pose_jump_exclusion is None:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "pose jump-exclusion mask is not in benchmark_result",
+        }
+    value = pose_jump_exclusion.get("dx_dz_rmse_px_except_jumps")
+    if not isinstance(value, int | float) or not isinstance(threshold, int | float):
+        return {
+            "status": "not_evaluated",
+            "value": value,
+            "threshold": threshold,
+            "reason": "pose jump-exclusion value or threshold is not numeric",
+        }
+    passed = float(value) < float(threshold)
+    return {
+        "status": "passed" if passed else "failed",
+        "value": float(value),
+        "threshold": float(threshold),
+        "reason": "evaluated from final-vs-true pose dx/dz outside jump neighborhoods",
     }
 
 

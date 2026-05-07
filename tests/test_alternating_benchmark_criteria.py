@@ -4,11 +4,15 @@ from __future__ import annotations
 from math import radians
 from typing import cast
 
+import numpy as np
+
 # check-public-imports: allow-private
 from tomojax.align._alternating_artifacts import (
     _backend_fallbacks_from_sidecar,
     _benchmark_manifest_evaluation,
+    _pose_jump_exclusion_payload,
 )
+from tomojax.geometry import GeometryState
 
 
 def test_benchmark_manifest_evaluates_detector_roll_alias() -> None:
@@ -166,3 +170,43 @@ def test_benchmark_manifest_reports_missing_jump_exclusion_payload() -> None:
     pose = cast("dict[str, object]", evaluation["pose_dx_dz_rmse_px_lt_except_jumps"])
     assert pose["status"] == "not_evaluated"
     assert pose["reason"] == "pose jump-exclusion mask is not in benchmark_result"
+
+
+def test_benchmark_manifest_evaluates_jump_excluded_pose_metric() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"pose_dx_dz_rmse_px_lt_except_jumps": 2.0},
+        geometry_recovery={},
+        pose_jump_exclusion={"dx_dz_rmse_px_except_jumps": 1.25},
+    )
+
+    pose = cast("dict[str, object]", evaluation["pose_dx_dz_rmse_px_lt_except_jumps"])
+    assert pose["status"] == "passed"
+    assert pose["value"] == 1.25
+    assert pose["threshold"] == 2.0
+
+
+def test_pose_jump_exclusion_payload_uses_canonical_pose_and_excludes_jump() -> None:
+    truth = GeometryState.zeros(8)
+    truth = GeometryState(
+        setup=truth.setup,
+        pose=truth.pose.with_updates(
+            dx_px=np.array([0.0, 0.1, 0.2, 20.0, 20.1, 20.2, 20.3, 20.4]),
+            dz_px=np.array([0.0, -0.1, -0.2, -18.0, -18.1, -18.2, -18.3, -18.4]),
+        ),
+    )
+    final = GeometryState(
+        setup=truth.setup,
+        pose=truth.pose.with_updates(
+            dx_px=truth.pose.dx_px + 3.0,
+            dz_px=truth.pose.dz_px,
+        ),
+    )
+
+    payload = _pose_jump_exclusion_payload(
+        true_geometry=truth,
+        final_geometry=final,
+    )
+
+    assert payload["excluded_view_indices"] == [1, 2, 3, 4, 5]
+    assert payload["evaluated_view_count"] == 3
+    assert payload["dx_dz_rmse_px_except_jumps"] == 0.0
