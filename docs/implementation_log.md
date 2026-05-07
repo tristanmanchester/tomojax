@@ -8675,10 +8675,18 @@ much worse. This confirms the fixed-truth pose blocker is not activation order
 alone; alpha/beta needs validation, regularisation, or an observable-mode
 policy that prevents projection-loss-only overfitting.
 
+Also probed low-level all-5 pose-only Schur with true volume, 4 iterations,
+trust radius `0.5`, and parameter prior strengths `1e-4`, `1e-3`, `1e-2`, and
+`1e-1`. All four runs produced essentially the same recovery:
+`alpha_beta_rmse_rad ~= 0.02072`, `det_u_realized_rmse_px ~= 11.06`, and
+`theta_realized_rmse_rad ~= 0.1015`. Simple pose prior strength does not fix the
+failure.
+
 ### Validation
 
 - Diagnostic completed on `cuda:0` in 154.52 seconds and wrote
   `probe_result.json`.
+- Pose prior probe completed on `cuda:0`; no source code changed.
 - No source code changed in this diagnostic slice.
 
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
