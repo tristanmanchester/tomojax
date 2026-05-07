@@ -8524,6 +8524,42 @@ geometry.
   seconds and wrote the standard `align-auto` artifacts.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 Staged Constrained Policy Probe
+
+### Summary
+
+Tested a more specific stopped-reconstruction sequence after the iteration
+oracle showed that roll/axis recovery needs a better volume:
+
+- level 4: cylindrical support, centroid anchor, theta/det_u-only Schur;
+- levels 2 and 1: 32 FISTA iterations, no support, full setup-global Schur.
+
+Artifact:
+
+- `.artifacts/phase8_staged_constrained_policy_probe/128_setup_global_theta_detu_then_full_cuda/`
+
+Results:
+
+| Metric | Staged constrained probe |
+|---|---:|
+| volume NMSE | 0.317 |
+| `det_u_realized_rmse_px` | 6.54 |
+| `theta_realized_rmse_rad` | 0.29374 |
+| `detector_roll_error_rad` | 0.02329 |
+| `axis_error_rad` | 0.03012 |
+| setup-global criteria passed | no |
+
+The coarse theta/det_u-only update accepted but drove theta into a much worse
+gauge, and the finer full setup-global updates rejected. This policy was not
+promoted. The evidence now favours fixing reconstruction/geometry gauge
+handling directly instead of adding more hand-staged setup policies.
+
+### Validation
+
+- Diagnostic completed on `cuda:0` in 547.58 seconds and wrote
+  `probe_result.json`, `last_fista_trace.csv`, and `final_volume.npy`.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

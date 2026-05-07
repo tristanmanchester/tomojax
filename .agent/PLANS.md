@@ -11,21 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 reconstruction-iteration oracle diagnostic
-- Goal: determine whether more FISTA iterations improve setup-global geometry
-  or merely improve volume/residual while geometry remains absorbed.
+- Phase: Phase 8/9 staged constrained setup policy probe
+- Goal: test a functional stopped-reconstruction sequence that uses a
+  constrained coarse x-step for theta/det_u only, then reconstructs longer
+  before releasing roll/axis.
 
 ### Scope
 
 - In scope:
-  - Reconstruct the existing 128^3, 256-view setup-global sidecar using true
-    geometry for 8 and 32 iterations as oracle x-steps.
-  - Run supported setup-global Schur from the corrupted geometry against those
-    reconstructed volumes.
-  - Run a production-like stopped sequence with extra iterations after the
-    coarse anchored update.
-  - Classify whether additional iterations recover geometry or only improve
-    volume/residual.
+  - Run an ad hoc 128^3 setup-global sequence on the existing sidecar.
+  - Coarse level: cylindrical-support preview, centroid anchor, and
+    theta/det_u-only Schur.
+  - Finer levels: longer reconstruction and full setup-global Schur.
+  - Promote to solver policy only if full setup recovery improves.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -45,10 +43,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run true-geometry 8-iteration FISTA reconstruction oracle diagnostic.
-- [x] Run true-geometry 32-iteration FISTA reconstruction oracle diagnostic.
-- [x] Run production-like stopped 8/32/32 continuation diagnostic.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Run constrained theta/det_u coarse-stage probe.
+- [x] Compare full setup recovery against current anchor and support
+  diagnostics.
+- [x] Update `docs/implementation_log.md` and commit either policy or
+  diagnostic evidence.
 
 ### Validation
 
@@ -87,6 +86,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Production-like stopped 8/32/32 continuation improved volume/residual but not
   geometry. Artifact:
   `.artifacts/phase8_more_iterations_after_anchor/128_setup_global_stopped_8_32_32_cuda/`.
+- Constrained theta/det_u coarse-stage policy probe completed but worsened
+  theta and was not promoted. Artifact:
+  `.artifacts/phase8_staged_constrained_policy_probe/128_setup_global_theta_detu_then_full_cuda/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
