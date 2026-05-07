@@ -11,19 +11,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 held-out Schur acceptance CUDA gate
-- Goal: evaluate whether held-out Schur acceptance improves or safely rejects
-  stopped setup-global updates on the realistic 128^3/256-view supported-only
-  gate.
+- Phase: Phase 8/9 reconstruction gauge regularisation
+- Goal: add an opt-in stopped-reconstruction gauge penalty that discourages the
+  preview volume from translating laterally to absorb detector/setup geometry.
 
 ### Scope
 
 - In scope:
-  - Rerun the existing 128^3/256-view supported-only sidecar with held-out
-    Schur acceptance enabled.
-  - Record pass/fail, recovery, residual, NMSE, Schur acceptance, CUDA device,
-    runtime, and peak sampled memory.
-  - Update benchmark notes and implementation log.
+  - Add a typed center-of-mass gauge penalty to the reference FISTA objective.
+  - Wire an opt-in `align-auto`/alternating config knob through artifacts.
+  - Add focused reconstruction and CLI/config tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -37,7 +34,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
+- Deep module owners: `tomojax.recon` for the FISTA penalty and
+  `tomojax.align` for orchestration/CLI wiring.
 
 ### Design Sources
 
@@ -48,10 +46,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run the held-out Schur acceptance CUDA gate.
-- [x] Extract metrics and compare with the anchored Schur-volume gate.
-- [x] Update benchmark notes and `docs/implementation_log.md`.
-- [x] Run `just imports` and commit the gate summary.
+- [x] Add the center-of-mass gauge penalty to reference FISTA.
+- [x] Wire the preview gauge penalty through alternating config, CLI, and artifacts.
+- [x] Add focused tests.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 

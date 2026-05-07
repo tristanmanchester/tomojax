@@ -607,6 +607,8 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
             "0.0",
             "--preview-residual-filter-mode",
             "raw",
+            "--preview-center-l2-weight",
+            "0.25",
             "--stopped-preview-policy",
             "constant_cylindrical_first_level",
             "--views",
@@ -632,6 +634,7 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
     assert 'preview_initialization = "zero"' in config_text
     assert "preview_tv_scale = 0.0" in config_text
     assert 'preview_residual_filter_mode = "raw"' in config_text
+    assert "preview_center_l2_weight = 0.25" in config_text
     assert 'stopped_preview_policy = "constant_cylindrical_first_level"' in config_text
     schur = cast(
         "dict[str, object]",
@@ -648,6 +651,7 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
     assert benchmark_result["preview_initialization"] == "zero"
     assert benchmark_result["preview_tv_scale"] == 0.0
     assert benchmark_result["preview_residual_filter_mode"] == "raw"
+    assert benchmark_result["preview_center_l2_weight"] == 0.25
     assert benchmark_result["stopped_preview_policy"] == "constant_cylindrical_first_level"
     reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
     assert (

@@ -79,6 +79,7 @@ def _write_artifacts(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    preview_center_l2_weight: float,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
@@ -143,6 +144,7 @@ def _write_artifacts(
         preview_initialization=preview_initialization,
         preview_tv_scale=preview_tv_scale,
         preview_residual_filter_mode=preview_residual_filter_mode,
+        preview_center_l2_weight=preview_center_l2_weight,
         stopped_preview_policy=stopped_preview_policy,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
@@ -159,6 +161,7 @@ def _write_artifacts(
             preview_initialization=preview_initialization,
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
+            preview_center_l2_weight=preview_center_l2_weight,
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
             fit_background_nuisance=fit_background_nuisance,
@@ -211,6 +214,7 @@ def _write_artifacts(
             preview_initialization=preview_initialization,
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
+            preview_center_l2_weight=preview_center_l2_weight,
             stopped_preview_policy=stopped_preview_policy,
         )
         _write_json(artifacts["benchmark_result_json"], benchmark_result)
@@ -896,6 +900,7 @@ def _benchmark_result_payload(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    preview_center_l2_weight: float,
     stopped_preview_policy: str,
 ) -> dict[str, object]:
     metrics = cast("dict[object, object]", verification.get("metrics", {}))
@@ -1029,6 +1034,7 @@ def _benchmark_result_payload(
         "preview_initialization": preview_initialization,
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
+        "preview_center_l2_weight": preview_center_l2_weight,
         "stopped_preview_policy": stopped_preview_policy,
     }
 
@@ -1712,6 +1718,7 @@ def _write_config_resolved(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    preview_center_l2_weight: float,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
@@ -1745,11 +1752,16 @@ def _write_config_resolved(
     lines.append(
         f"geometry_update_active_pose_dofs = {json.dumps(list(geometry_update_active_pose_dofs))}"
     )
-    lines.append(f'preview_volume_support = "{preview_volume_support}"')
-    lines.append(f'preview_initialization = "{preview_initialization}"')
-    lines.append(f"preview_tv_scale = {float(preview_tv_scale)}")
-    lines.append(f'preview_residual_filter_mode = "{preview_residual_filter_mode}"')
-    lines.append(f'stopped_preview_policy = "{stopped_preview_policy}"')
+    lines.extend(
+        _preview_config_lines(
+            preview_volume_support=preview_volume_support,
+            preview_initialization=preview_initialization,
+            preview_tv_scale=preview_tv_scale,
+            preview_residual_filter_mode=preview_residual_filter_mode,
+            preview_center_l2_weight=preview_center_l2_weight,
+            stopped_preview_policy=stopped_preview_policy,
+        )
+    )
     lines.append(f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}")
     lines.append(f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}")
     if isinstance(synthetic_dataset, dict):
@@ -1795,6 +1807,25 @@ def _write_config_resolved(
     )
 
 
+def _preview_config_lines(
+    *,
+    preview_volume_support: str,
+    preview_initialization: str,
+    preview_tv_scale: float,
+    preview_residual_filter_mode: str,
+    preview_center_l2_weight: float,
+    stopped_preview_policy: str,
+) -> list[str]:
+    return [
+        f'preview_volume_support = "{preview_volume_support}"',
+        f'preview_initialization = "{preview_initialization}"',
+        f"preview_tv_scale = {float(preview_tv_scale)}",
+        f'preview_residual_filter_mode = "{preview_residual_filter_mode}"',
+        f"preview_center_l2_weight = {float(preview_center_l2_weight)}",
+        f'stopped_preview_policy = "{stopped_preview_policy}"',
+    ]
+
+
 def _write_final_volume(path: Path, volume: jax.Array) -> None:
     _write_array(path, volume)
 
@@ -1821,6 +1852,7 @@ def _run_manifest_payload(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    preview_center_l2_weight: float,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
@@ -1851,6 +1883,7 @@ def _run_manifest_payload(
         "preview_initialization": preview_initialization,
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
+        "preview_center_l2_weight": preview_center_l2_weight,
         "stopped_preview_policy": stopped_preview_policy,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,

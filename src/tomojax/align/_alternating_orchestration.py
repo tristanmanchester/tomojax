@@ -130,6 +130,7 @@ def _run_alternating_solver_smoke_impl(
                     level,
                     level.residual_filters,
                 ),
+                center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
             ),
         )
         volume = jax.lax.stop_gradient(fista_result.volume)
@@ -301,6 +302,7 @@ def _run_alternating_solver_smoke_impl(
         preview_initialization=config.preview_initialization,
         preview_tv_scale=config.preview_tv_scale,
         preview_residual_filter_mode=config.preview_residual_filter_mode,
+        preview_center_l2_weight=config.preview_center_l2_weight,
         stopped_preview_policy=config.stopped_preview_policy,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,

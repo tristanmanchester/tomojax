@@ -99,6 +99,27 @@ def test_reference_fista_projects_candidate_and_momentum_into_support() -> None:
     assert float(jnp.min(result.volume)) >= 0.0
 
 
+def test_reference_fista_center_l2_penalty_enters_regulariser() -> None:
+    geometry = GeometryState.zeros(1)
+    observed = jnp.zeros((1, 4, 4), dtype=jnp.float32)
+    warm_start = jnp.zeros((4, 4, 4), dtype=jnp.float32).at[:, :, 3].set(1.0)
+
+    result = fista_reconstruct_reference(
+        observed,
+        geometry,
+        initial_volume=warm_start,
+        config=ReferenceFISTAConfig(
+            iterations=1,
+            step_size=1.0e-3,
+            tv_weight=0.0,
+            center_l2_weight=2.0,
+        ),
+    )
+
+    assert result.trace[0].regulariser > 0.0
+    assert result.config.center_l2_weight == 2.0
+
+
 def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
     cylinder = centered_volume_support((7, 7, 7), kind="cylindrical", radius_fraction=0.5)
     sphere = centered_volume_support((7, 7, 7), kind="spherical", radius_fraction=0.5)

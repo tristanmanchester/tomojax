@@ -3,6 +3,45 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Preview Center Gauge Penalty Slice
+
+### Summary
+
+- Added `ReferenceFISTAConfig.center_l2_weight`, an opt-in lateral
+  center-of-mass gauge penalty for preview FISTA.
+- Wired the penalty through `AlternatingSmokeConfig.preview_center_l2_weight`
+  and `align-auto --preview-center-l2-weight`.
+- Recorded the resolved value in verification payloads, run manifests,
+  `config_resolved.toml`, and synthetic benchmark results.
+- Added focused reconstruction and CLI/config tests.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_fista_center_l2_penalty_enters_regulariser
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 2 tests in 37.02 seconds.
+- `uv run ruff check src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_reference_fista.py tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_reference_fista.py tests/test_align_auto_cli.py` passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Run the 128^3/256-view supported-only CUDA gate with a nonzero
+  `--preview-center-l2-weight` to determine whether the gauge penalty improves
+  stopped setup-global recovery.
+
 ## 2026-05-07 — Phase 8 Held-Out Schur CUDA Gate
 
 ### Summary

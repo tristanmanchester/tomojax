@@ -187,6 +187,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Residual filters used inside preview reconstruction.",
     )
     _ = parser.add_argument(
+        "--preview-center-l2-weight",
+        type=float,
+        default=0.0,
+        help="Opt-in lateral center-of-mass gauge penalty for preview FISTA.",
+    )
+    _ = parser.add_argument(
         "--stopped-preview-policy",
         choices=_STOPPED_PREVIEW_POLICY_CHOICES,
         default="standard",
@@ -275,6 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             preview_initialization=preview_initialization,
             preview_tv_scale=float(args.preview_tv_scale),
             preview_residual_filter_mode=preview_residual_filter_mode,
+            preview_center_l2_weight=float(args.preview_center_l2_weight),
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),

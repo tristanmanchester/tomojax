@@ -38,6 +38,7 @@ class ReferenceFISTAConfig:
     residual_delta: float = 1.0
     residual_filters: tuple[ResidualFilterConfig, ...] = (ResidualFilterConfig(),)
     non_negative: bool = True
+    center_l2_weight: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -195,13 +196,18 @@ def _loss_and_explicit_gradient(
         core,
         data_grad_projection,
     )
-    regulariser_value, regulariser_gradient = _smoothed_tv_value_and_grad(
+    tv_value, tv_gradient = _smoothed_tv_value_and_grad(
         volume,
         delta=config.tv_delta,
     )
-    scaled_regulariser = jnp.asarray(config.tv_weight, dtype=jnp.float32) * regulariser_value
+    center_value, center_gradient = _center_l2_value_and_grad(volume)
+    scaled_tv = jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_value
+    scaled_center = jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_value
+    scaled_regulariser = scaled_tv + scaled_center
     gradient = (
-        data_gradient + jnp.asarray(config.tv_weight, dtype=jnp.float32) * regulariser_gradient
+        data_gradient
+        + jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_gradient
+        + jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_gradient
     )
     return data.loss + scaled_regulariser, data.loss, scaled_regulariser, gradient
 
@@ -268,3 +274,23 @@ def _smoothed_tv(volume: jax.Array, *, delta: float) -> jax.Array:
         + jnp.sum(jnp.sqrt(dy * dy + d * d) - d)
         + jnp.sum(jnp.sqrt(dz * dz + d * d) - d)
     ) / jnp.asarray(vol.size, dtype=jnp.float32)
+
+
+def _center_l2_value_and_grad(volume: jax.Array) -> tuple[jax.Array, jax.Array]:
+    return jax.value_and_grad(_center_l2)(volume)
+
+
+def _center_l2(volume: jax.Array) -> jax.Array:
+    vol = jnp.maximum(jnp.asarray(volume, dtype=jnp.float32), 0.0)
+    mass = jnp.maximum(jnp.sum(vol), jnp.asarray(1.0e-6, dtype=jnp.float32))
+    y_axis = _centered_axis(int(vol.shape[1]))
+    x_axis = _centered_axis(int(vol.shape[2]))
+    y_com = jnp.sum(vol * y_axis[None, :, None]) / mass
+    x_com = jnp.sum(vol * x_axis[None, None, :]) / mass
+    return y_com * y_com + x_com * x_com
+
+
+def _centered_axis(size: int) -> jax.Array:
+    center = (float(size) - 1.0) / 2.0
+    half_width = max(float(size) / 2.0, 1.0)
+    return (jnp.arange(size, dtype=jnp.float32) - center) / half_width
