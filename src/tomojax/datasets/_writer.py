@@ -83,12 +83,14 @@ def generate_synthetic_dataset(
         spec,
         n_views=n_views,
         pose=None,
+        theta_deg=theta,
         pixel_scale=pixel_scale,
     )
     true_state = _geometry_state_from_spec(
         spec,
         n_views=n_views,
         pose=true_pose,
+        theta_deg=theta,
         pixel_scale=pixel_scale,
     )
     projections = _project_v2_smoke(volume, true_state)
@@ -306,6 +308,7 @@ def _geometry_state_from_spec(
     *,
     n_views: int,
     pose: dict[str, NDArray[np.float32]] | None,
+    theta_deg: NDArray[np.float32],
     pixel_scale: float,
 ) -> GeometryState:
     state = GeometryState.zeros(n_views)
@@ -347,7 +350,10 @@ def _geometry_state_from_spec(
         "theta_scale",
         setup.theta_scale.with_value(_setup_value(setup_values, "theta_scale", default=1.0)),
     )
-    return GeometryState(setup=setup, pose=_pose_params_from_table(pose, n_views=n_views))
+    return GeometryState(
+        setup=setup,
+        pose=_pose_params_from_table(pose, n_views=n_views, theta_deg=theta_deg),
+    )
 
 
 def _setup_value(
@@ -364,12 +370,16 @@ def _pose_params_from_table(
     pose: dict[str, NDArray[np.float32]] | None,
     *,
     n_views: int,
+    theta_deg: NDArray[np.float32],
 ) -> PoseParameters:
     if pose is None:
-        return PoseParameters.zeros(n_views)
+        return PoseParameters.zeros(n_views).with_updates(
+            theta_nominal_rad=np.deg2rad(theta_deg.astype(np.float64))
+        )
     return PoseParameters(
         alpha_rad=np.deg2rad(pose["alpha_deg"].astype(np.float64)),
         beta_rad=np.deg2rad(pose["beta_deg"].astype(np.float64)),
+        theta_nominal_rad=np.deg2rad(theta_deg.astype(np.float64)),
         phi_residual_rad=np.deg2rad(pose["phi_residual_deg"].astype(np.float64)),
         dx_px=pose["dx_px"].astype(np.float64),
         dz_px=pose["dz_px"].astype(np.float64),

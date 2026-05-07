@@ -3,6 +3,59 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Nominal Theta Geometry Root Fix
+
+### Summary
+
+- Made nominal acquisition theta first-class in `PoseParameters` as
+  `theta_nominal_rad`.
+- Added `GeometryState.theta_total_rad()` with the v2 realised-angle convention:
+  `theta_scale * theta_nominal_rad + theta_offset_rad + phi_residual_rad`.
+- Updated the reference projector, reference backprojector, setup-only LM,
+  pose-only LM, joint Schur LM, and geometry recovery metrics to use realised
+  theta instead of only `theta_offset_rad + phi_residual_rad`.
+- Preserved nominal theta in v2 pose CSV artifacts and pose-decomposition
+  reports, with old pose CSV readback defaulting missing `theta_nominal_rad` to
+  zeros.
+- Updated synthetic sidecar generation so 0..180 nominal acquisition angles are
+  carried into v2 nominal/corrupted/true pose metadata.
+
+### Diagnosis
+
+- The 64^3/64-view fixed-truth and stopped-reconstruction failures were not
+  explainable by reconstruction alone because fixed-truth also failed.
+- The highest-signal root cause found in this slice was a geometry convention
+  bug: sidecars recorded nominal acquisition theta, but v2 geometry state,
+  projection, solver residuals, and recovery metrics collapsed realised theta
+  to setup offset plus residual pose.
+- Focused synthetic coverage now verifies that sidecars preserve nominal theta,
+  true v2 geometry projects back to the stored clean projections at near-zero
+  MSE, and nominal/corrupted geometry has higher projection error.
+
+### Validation
+
+- `uv run ruff format ...` on touched source/test files passed.
+- `uv run ruff check ...` on touched source/test files passed.
+- `uv run basedpyright ...` on touched source/test files passed with 0 errors
+  and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_geometry_serialization.py
+  tests/test_geometry_gauges.py tests/test_synthetic_datasets.py
+  tests/test_forward_reference.py tests/test_reference_fista.py
+  tests/test_setup_lm.py tests/test_pose_lm.py tests/test_joint_schur_lm.py -q`
+  passed: 46 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Remaining Questions
+
+- Rerun the supported-only fixed-truth oracle benchmark after this commit to
+  confirm whether nominal theta was the main alignment-quality blocker.
+- If fixed-truth still fails, continue with Schur trust/block scaling and
+  setup/pose gauge coupling diagnostics rather than adding report fields.
+- If fixed-truth passes but stopped reconstruction fails, return to
+  reconstruction/volume gauge handling.
+
 ## 2026-05-06 — Split Alternating Solver Private Implementation
 
 ### Summary

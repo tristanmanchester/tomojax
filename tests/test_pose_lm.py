@@ -113,9 +113,8 @@ def test_pose_only_lm_canonicalizes_solved_phi_gauge() -> None:
         atol=1e-8,
     )
     np.testing.assert_allclose(
-        result.canonicalized_geometry.state.setup.theta_offset_rad.value
-        + result.canonicalized_geometry.state.pose.phi_residual_rad,
-        result.geometry.setup.theta_offset_rad.value + result.geometry.pose.phi_residual_rad,
+        result.canonicalized_geometry.state.theta_total_rad(),
+        result.geometry.theta_total_rad(),
         atol=1e-8,
     )
 

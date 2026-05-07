@@ -41,6 +41,7 @@ def test_geometry_json_and_pose_csv_round_trip_contract_artifacts(tmp_path) -> N
     assert restored.setup == state.setup
     np.testing.assert_allclose(restored.pose.alpha_rad, state.pose.alpha_rad)
     np.testing.assert_allclose(restored.pose.beta_rad, state.pose.beta_rad)
+    np.testing.assert_allclose(restored.pose.theta_nominal_rad, state.pose.theta_nominal_rad)
     np.testing.assert_allclose(restored.pose.phi_residual_rad, state.pose.phi_residual_rad)
     np.testing.assert_allclose(restored.pose.dx_px, state.pose.dx_px)
     np.testing.assert_allclose(restored.pose.dz_px, state.pose.dz_px)
@@ -69,11 +70,13 @@ def test_pose_decomposition_csv_records_realized_setup_plus_pose(tmp_path) -> No
     assert len(rows) == 3
     assert set(rows[0]) == {
         "view",
-        "realized_theta_offset_rad",
+        "theta_nominal_rad",
+        "realized_theta_total_rad",
         "realized_det_u_px",
         "realized_det_v_px",
     }
-    assert float(rows[0]["realized_theta_offset_rad"]) == 0.25
+    assert float(rows[0]["theta_nominal_rad"]) == 0.1
+    np.testing.assert_allclose(float(rows[0]["realized_theta_total_rad"]), 0.35)
     assert float(rows[1]["realized_det_u_px"]) == -1.5
     assert float(rows[2]["realized_det_v_px"]) == 2.75
 
@@ -89,6 +92,7 @@ def _example_state() -> GeometryState:
     pose = PoseParameters(
         alpha_rad=np.array([0.01, 0.02, 0.03], dtype=np.float64),
         beta_rad=np.array([-0.01, -0.02, -0.03], dtype=np.float64),
+        theta_nominal_rad=np.array([0.1, 0.2, 0.3], dtype=np.float64),
         phi_residual_rad=np.array([0.05, 0.0, -0.05], dtype=np.float64),
         dx_px=np.array([0.25, 0.5, 0.75], dtype=np.float64),
         dz_px=np.array([1.0, 1.125, 1.25], dtype=np.float64),

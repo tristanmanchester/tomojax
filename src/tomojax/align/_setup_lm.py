@@ -46,6 +46,7 @@ def solve_setup_only_lm(
     cfg = config or SetupOnlyLMConfig()
     vol = jnp.asarray(volume, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
+    theta_nominal = jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
     phi_pose = jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
     pose_dx = jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32)
     pose_dz = jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32)
@@ -58,6 +59,7 @@ def solve_setup_only_lm(
         residual = _residual_for_params(
             vol,
             obs,
+            theta_nominal,
             phi_pose,
             pose_dx,
             pose_dz,
@@ -75,6 +77,7 @@ def solve_setup_only_lm(
             raw = _residual_for_params(
                 vol,
                 obs,
+                theta_nominal,
                 phi_pose,
                 pose_dx,
                 pose_dz,
@@ -172,6 +175,7 @@ def _setup_values(
 def _residual_for_params(
     volume: jax.Array,
     observed: jax.Array,
+    theta_nominal: jax.Array,
     phi_pose: jax.Array,
     pose_dx: jax.Array,
     pose_dz: jax.Array,
@@ -182,9 +186,10 @@ def _residual_for_params(
     sigma: float,
 ) -> jax.Array:
     theta_offset, det_u, det_v = _setup_values(geometry, params)
+    theta_scale = jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
     predicted = project_parallel_reference_arrays(
         volume,
-        theta_rad=theta_offset + phi_pose,
+        theta_rad=theta_scale * theta_nominal + theta_offset + phi_pose,
         dx_px=det_u + pose_dx,
         dz_px=det_v + pose_dz,
     )
@@ -204,7 +209,12 @@ def _loss_for_params(
     cfg: SetupOnlyLMConfig,
 ) -> jax.Array:
     theta_offset, det_u, det_v = _setup_values(geometry, params)
-    theta = theta_offset + jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
+    theta = (
+        jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
+        * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
+        + theta_offset
+        + jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
+    )
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,

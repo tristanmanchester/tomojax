@@ -63,6 +63,7 @@ class SetupParameters:
 class PoseParameters:
     alpha_rad: NDArray[np.float64]
     beta_rad: NDArray[np.float64]
+    theta_nominal_rad: NDArray[np.float64]
     phi_residual_rad: NDArray[np.float64]
     dx_px: NDArray[np.float64]
     dz_px: NDArray[np.float64]
@@ -73,6 +74,7 @@ class PoseParameters:
         return cls(
             alpha_rad=values.copy(),
             beta_rad=values.copy(),
+            theta_nominal_rad=values.copy(),
             phi_residual_rad=values.copy(),
             dx_px=values.copy(),
             dz_px=values.copy(),
@@ -86,6 +88,7 @@ class PoseParameters:
         shapes = {
             self.alpha_rad.shape,
             self.beta_rad.shape,
+            self.theta_nominal_rad.shape,
             self.phi_residual_rad.shape,
             self.dx_px.shape,
             self.dz_px.shape,
@@ -98,12 +101,16 @@ class PoseParameters:
     def with_updates(
         self,
         *,
+        theta_nominal_rad: NDArray[np.float64] | None = None,
         phi_residual_rad: NDArray[np.float64] | None = None,
         dx_px: NDArray[np.float64] | None = None,
         dz_px: NDArray[np.float64] | None = None,
     ) -> PoseParameters:
         return replace(
             self,
+            theta_nominal_rad=(
+                self.theta_nominal_rad if theta_nominal_rad is None else theta_nominal_rad
+            ),
             phi_residual_rad=(
                 self.phi_residual_rad if phi_residual_rad is None else phi_residual_rad
             ),
@@ -120,3 +127,10 @@ class GeometryState:
     @classmethod
     def zeros(cls, n_views: int) -> GeometryState:
         return cls(setup=SetupParameters.defaults(), pose=PoseParameters.zeros(n_views))
+
+    def theta_total_rad(self) -> NDArray[np.float64]:
+        return (
+            self.setup.theta_scale.value * self.pose.theta_nominal_rad
+            + self.setup.theta_offset_rad.value
+            + self.pose.phi_residual_rad
+        )

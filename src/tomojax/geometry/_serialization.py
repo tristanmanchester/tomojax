@@ -26,13 +26,15 @@ POSE_PARAMS_FIELDS = (
     "view",
     "alpha_rad",
     "beta_rad",
+    "theta_nominal_rad",
     "phi_residual_rad",
     "dx_px",
     "dz_px",
 )
 POSE_DECOMPOSITION_FIELDS = (
     "view",
-    "realized_theta_offset_rad",
+    "theta_nominal_rad",
+    "realized_theta_total_rad",
     "realized_det_u_px",
     "realized_det_v_px",
 )
@@ -98,6 +100,7 @@ def write_pose_params_csv(path: Path, pose: PoseParameters) -> None:
                     "view": view,
                     "alpha_rad": float(pose.alpha_rad[view]),
                     "beta_rad": float(pose.beta_rad[view]),
+                    "theta_nominal_rad": float(pose.theta_nominal_rad[view]),
                     "phi_residual_rad": float(pose.phi_residual_rad[view]),
                     "dx_px": float(pose.dx_px[view]),
                     "dz_px": float(pose.dz_px[view]),
@@ -110,10 +113,11 @@ def read_pose_params_csv(path: Path) -> PoseParameters:
     with path.open("r", newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             for field, values in columns.items():
-                values.append(float(row[field]))
+                values.append(float(row.get(field, 0.0)))
     return PoseParameters(
         alpha_rad=np.asarray(columns["alpha_rad"], dtype=np.float64),
         beta_rad=np.asarray(columns["beta_rad"], dtype=np.float64),
+        theta_nominal_rad=np.asarray(columns["theta_nominal_rad"], dtype=np.float64),
         phi_residual_rad=np.asarray(columns["phi_residual_rad"], dtype=np.float64),
         dx_px=np.asarray(columns["dx_px"], dtype=np.float64),
         dz_px=np.asarray(columns["dz_px"], dtype=np.float64),
@@ -128,10 +132,8 @@ def write_pose_decomposition_csv(path: Path, state: GeometryState) -> None:
             writer.writerow(
                 {
                     "view": view,
-                    "realized_theta_offset_rad": (
-                        state.setup.theta_offset_rad.value
-                        + float(state.pose.phi_residual_rad[view])
-                    ),
+                    "theta_nominal_rad": float(state.pose.theta_nominal_rad[view]),
+                    "realized_theta_total_rad": float(state.theta_total_rad()[view]),
                     "realized_det_u_px": state.setup.det_u_px.value + float(state.pose.dx_px[view]),
                     "realized_det_v_px": state.setup.det_v_px.value + float(state.pose.dz_px[view]),
                 }

@@ -17,12 +17,17 @@ def test_canonicalize_gauges_zero_centres_dx_and_phi_residuals() -> None:
     pose = PoseParameters(
         alpha_rad=np.zeros(4, dtype=np.float64),
         beta_rad=np.zeros(4, dtype=np.float64),
+        theta_nominal_rad=np.linspace(0.0, 0.3, 4, dtype=np.float64),
         phi_residual_rad=np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float64),
         dx_px=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
         dz_px=np.array([5.0, 6.0, 7.0, 8.0], dtype=np.float64),
     )
     original_dx = setup.det_u_px.value + pose.dx_px
-    original_phi = setup.theta_offset_rad.value + pose.phi_residual_rad
+    original_theta = (
+        setup.theta_scale.value * pose.theta_nominal_rad
+        + setup.theta_offset_rad.value
+        + pose.phi_residual_rad
+    )
 
     result = canonicalize_geometry_gauges(GeometryState(setup=setup, pose=pose))
 
@@ -35,8 +40,8 @@ def test_canonicalize_gauges_zero_centres_dx_and_phi_residuals() -> None:
         original_dx,
     )
     np.testing.assert_allclose(
-        result.state.setup.theta_offset_rad.value + result.state.pose.phi_residual_rad,
-        original_phi,
+        result.state.theta_total_rad(),
+        original_theta,
     )
     assert [transfer.applied for transfer in result.report.transfers] == [True, True, False]
 
@@ -80,6 +85,7 @@ def test_pose_parameters_validate_shapes() -> None:
         _ = PoseParameters(
             alpha_rad=np.zeros(2, dtype=np.float64),
             beta_rad=np.zeros(3, dtype=np.float64),
+            theta_nominal_rad=np.zeros(2, dtype=np.float64),
             phi_residual_rad=np.zeros(2, dtype=np.float64),
             dx_px=np.zeros(2, dtype=np.float64),
             dz_px=np.zeros(2, dtype=np.float64),

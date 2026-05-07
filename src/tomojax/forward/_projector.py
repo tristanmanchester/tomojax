@@ -19,7 +19,7 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
 
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value + geometry.pose.phi_residual_rad)
+    theta = jnp.asarray(geometry.theta_total_rad())
     dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     dz = jnp.asarray(dz_setup + geometry.pose.dz_px)

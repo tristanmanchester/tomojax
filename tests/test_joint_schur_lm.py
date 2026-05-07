@@ -297,8 +297,8 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     assert len(result.diagnostics.actual_reduction_by_view) == 2
     canonical = result.canonicalized_geometry.state
     np.testing.assert_allclose(
-        canonical.setup.theta_offset_rad.value + canonical.pose.phi_residual_rad,
-        truth.setup.theta_offset_rad.value + truth.pose.phi_residual_rad,
+        canonical.theta_total_rad(),
+        truth.theta_total_rad(),
         atol=0.05,
     )
     np.testing.assert_allclose(

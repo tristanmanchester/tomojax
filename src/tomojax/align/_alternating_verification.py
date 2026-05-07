@@ -215,11 +215,9 @@ def _geometry_recovery_payload(
     if not isinstance(raw_tolerances, dict):
         raise TypeError("geometry recovery tolerances must be a mapping")
     tolerances = cast("dict[str, float]", raw_tolerances)
-    final_theta = final_geometry.setup.theta_offset_rad.value + final_geometry.pose.phi_residual_rad
-    initial_theta = (
-        initial_geometry.setup.theta_offset_rad.value + initial_geometry.pose.phi_residual_rad
-    )
-    true_theta = true_geometry.setup.theta_offset_rad.value + true_geometry.pose.phi_residual_rad
+    final_theta = final_geometry.theta_total_rad()
+    initial_theta = initial_geometry.theta_total_rad()
+    true_theta = true_geometry.theta_total_rad()
     final_u = final_geometry.setup.det_u_px.value + final_geometry.pose.dx_px
     initial_u = initial_geometry.setup.det_u_px.value + initial_geometry.pose.dx_px
     true_u = true_geometry.setup.det_u_px.value + true_geometry.pose.dx_px
@@ -932,6 +930,7 @@ def _finite_outputs(volume: jax.Array, geometry: GeometryState) -> bool:
     pose_values = (
         geometry.pose.alpha_rad,
         geometry.pose.beta_rad,
+        geometry.pose.theta_nominal_rad,
         geometry.pose.phi_residual_rad,
         geometry.pose.dx_px,
         geometry.pose.dz_px,

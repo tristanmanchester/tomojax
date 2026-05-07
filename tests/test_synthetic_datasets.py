@@ -15,6 +15,7 @@ from tomojax.datasets import (
     load_synthetic_dataset_sidecars,
     make_benchmark_phantom,
 )
+from tomojax.forward import project_parallel_reference
 from tomojax.geometry import read_geometry_json, read_pose_params_csv
 
 if TYPE_CHECKING:
@@ -126,6 +127,8 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     assert true_state.pose.n_views == 16
     assert true_state.setup.det_u_px.value == 3.625
     np.testing.assert_allclose(true_state.setup.theta_offset_rad.value, np.deg2rad(1.25))
+    expected_theta = np.deg2rad(np.linspace(0.0, 180.0, 16, endpoint=False))
+    np.testing.assert_allclose(true_state.pose.theta_nominal_rad, expected_theta)
     np.testing.assert_allclose(true_state.pose.phi_residual_rad, np.zeros(16))
 
     nominal_pose_params = read_pose_params_csv(
@@ -137,6 +140,15 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     )
     assert nominal_state.setup.det_u_px.value == 0.0
     assert nominal_state.pose.n_views == 16
+    np.testing.assert_allclose(nominal_state.pose.theta_nominal_rad, expected_theta)
+
+    volume = np.load(first.volume)
+    predicted_true = np.asarray(project_parallel_reference(volume, true_state))
+    predicted_nominal = np.asarray(project_parallel_reference(volume, nominal_state))
+    true_mse = float(np.mean((predicted_true - projections) ** 2))
+    nominal_mse = float(np.mean((predicted_nominal - projections) ** 2))
+    assert true_mse < 1.0e-10
+    assert nominal_mse > true_mse
 
 
 def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) -> None:

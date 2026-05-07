@@ -152,7 +152,12 @@ def _residual_for_params(
     sigma: float,
 ) -> jax.Array:
     phi_pose, dx_pose, dz_pose = _split_params(params, n_views=geometry.pose.n_views)
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32) + phi_pose
+    theta = (
+        jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
+        * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
+        + jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32)
+        + phi_pose
+    )
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,
@@ -176,7 +181,12 @@ def _loss_for_params(
 ) -> jax.Array:
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     phi_pose, dx_pose, dz_pose = _split_params(params, n_views=geometry.pose.n_views)
-    theta = jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32) + phi_pose
+    theta = (
+        jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
+        * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
+        + jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32)
+        + phi_pose
+    )
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta,

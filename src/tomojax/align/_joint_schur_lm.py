@@ -814,7 +814,12 @@ def _predicted_for_params(
     theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
     return project_parallel_reference_arrays(
         volume,
-        theta_rad=theta_offset + phi_pose,
+        theta_rad=(
+            jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
+            * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
+            + theta_offset
+            + phi_pose
+        ),
         dx_px=det_u + dx_pose,
         dz_px=det_v + dz_pose,
     )
