@@ -44,6 +44,8 @@ Artifacts:
   `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_gpu/`
 - 64^3/64-view GPU fixed-truth, reference:
   `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_reference_gpu/`
+- 64^3/64-view GPU fixed-truth, full raw/no-prior oracle:
+  `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_full_oracle_gpu/`
 - 64^3/64-view GPU stopped anchored det_u-only:
   `.artifacts/phase8_core_projector/runs/64_supported_only_stopped_anchor_gpu/`
 - Core sidecar dataset:
@@ -54,16 +56,17 @@ Artifacts:
 | 32^3 CPU smoke | `cpu:0` | fixed truth, pose frozen | failed | 1.62574 | 0.0155630 | mixed | n/a | Small smoke proves artifact wiring only. |
 | 64^3 GPU balanced | `cuda:0` | fixed truth, pose frozen | failed | 6.75000 | 0.0203247 | final level accepted | 30.0770 | Final `det_u` only reached about 0.50 px from true 7.25 px. |
 | 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen | failed | 7.12500 | 0.0224485 | mostly rejected/limited | 50.2916 | Correct core provenance recorded; longer schedule did not fix setup recovery. |
+| 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen, raw/no-prior full oracle | passed | 1.43051e-06 | 1.06805e-07 | true | 52.0031 | Confirms v2-to-core adapter and supported setup scaling are valid when oracle Schur is not stopped by preview early-exit or metadata priors. |
 | 64^3 GPU reference | `cuda:0` | stopped reconstruction, cylindrical support, constant init, det_u only, pose frozen | failed | 0.237177 | 0.0218166 | true | 48.7828 | Near prior Gate 3 det_u tolerance but cannot be accepted while fixed-truth fails. |
 
 ### Current Blocker
 
-Fixed-truth core recovery fails before stopped reconstruction can be judged.
-Because generation and Schur both use `core_trilinear_ray`, the failure is now
-most likely in the v2-to-core setup/pose convention mapping, finite-difference
-parameter scaling, trust-radius interpretation under the core ray loss, or
-theta/detector-shift coupling. It should be treated as an adapter/scaling
-blocker, not a reconstruction-gauge blocker yet.
+Fixed-truth core recovery passes after isolating the oracle from preview
+continuation filters, metadata priors, and coarse early-exit. The supported
+v2-to-core adapter and setup scaling are therefore coherent for det_u and theta.
+The remaining production-like blocker is stopped reconstruction/volume gauge
+under the real operator: the anchored det_u-only stopped run improves strongly
+but misses the strict 0.2 px det_u criterion at 0.237177 px.
 
 ### Validation
 
@@ -82,13 +85,13 @@ blocker, not a reconstruction-gauge blocker yet.
 
 - Fix the fixed-truth 64^3 setup recovery blocker under `core_trilinear_ray`
   before interpreting stopped reconstruction quality or rerunning the five-case
-  suite.
+  suite. Fixed-truth is now passing; keep this as a regression guard.
 - Replace the remaining reference FISTA volume-gradient path with the
   `fista_tv_core` explicit-adjoint loss/gradient path; projection already uses
   core, and preview backprojection uses the core adjoint, but the tiny FISTA
   wrapper still uses reverse-mode over the forward call for masked robust loss.
-- Once fixed-truth passes, rerun the anchored stopped diagnostic and then update
-  five-case reporting with unsupported DOFs classified as
+- Rerun and improve the anchored stopped diagnostic under the core projector,
+  then update five-case reporting with unsupported DOFs classified as
   `unsupported_dof_not_evaluated`.
 
 ## 2026-05-07 — Phase 8 Anchored Preview Reconstruction Gate 1

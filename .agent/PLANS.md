@@ -95,10 +95,13 @@ and proposed next fix before stopping.
   `fista_reconstruct_reference` wrapper still uses reverse-mode over the core
   forward projection for its masked robust loss and remains a follow-up before
   the objective is fully complete.
-- 64^3/64-view fixed-truth recovery fails under the core operator and is the
-  current blocker: fixed-truth reference leaves `det_u` RMSE at 7.125 px, while
-  anchored stopped det_u-only reaches 0.237177 px but cannot be accepted until
-  fixed-truth passes.
+- 64^3/64-view fixed-truth recovery passes under the core operator when the
+  oracle Schur path uses raw geometry residuals, disables the level metadata
+  prior, and does not early-exit after coarse preview verification:
+  `det_u` RMSE `1.43051e-06` px and theta RMSE `1.06805e-07` rad.
+- Anchored stopped det_u-only reaches `0.237177` px under the core projector,
+  missing the strict `0.2` px criterion. The current blocker is stopped
+  reconstruction/volume gauge under the real operator.
 
 ### Risks
 

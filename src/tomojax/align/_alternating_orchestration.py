@@ -52,6 +52,7 @@ from tomojax.recon import (
 )
 
 if TYPE_CHECKING:
+    from tomojax.align._continuation import ContinuationLevel
     from tomojax.align._joint_schur_lm import JointSchurLMResult
     from tomojax.geometry import GeometryState
 
@@ -159,6 +160,8 @@ def _run_alternating_solver_smoke_impl(
                 active_pose_dofs=config.geometry_update_active_pose_dofs,
                 fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
                 fit_background_nuisance=config.fit_background_nuisance,
+                residual_filters=_geometry_residual_filters(config, level.residual_filters),
+                parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
             )
             gauge_report = update_report
             last_schur_result = schur_result
@@ -198,7 +201,10 @@ def _run_alternating_solver_smoke_impl(
         previous_loss = loss_after
         coarse_verified, time_to_verified_geometry_seconds = _coarse_verification_state(
             level=level,
-            checks_verified=verification_checks.verified,
+            checks_verified=(
+                verification_checks.verified
+                and config.geometry_update_volume_source != "fixed_synthetic_truth"
+            ),
             already_verified=coarse_verified,
             previous_time_to_verified=time_to_verified_geometry_seconds,
             run_start=run_start,
@@ -350,3 +356,21 @@ def _preview_residual_filters(
     raise ValueError(
         f"unknown preview residual filter mode {config.preview_residual_filter_mode!r}"
     )
+
+
+def _geometry_residual_filters(
+    config: AlternatingSmokeConfig,
+    residual_filters: tuple[ResidualFilterConfig, ...],
+) -> tuple[ResidualFilterConfig, ...]:
+    if config.geometry_update_volume_source == "fixed_synthetic_truth":
+        return (ResidualFilterConfig(kind="raw"),)
+    return residual_filters
+
+
+def _geometry_parameter_prior_strength(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+) -> float:
+    if config.geometry_update_volume_source == "fixed_synthetic_truth":
+        return 0.0
+    return float(level.prior_strength)

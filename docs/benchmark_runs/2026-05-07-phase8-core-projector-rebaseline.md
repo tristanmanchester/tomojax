@@ -12,6 +12,8 @@ setup-global diagnostics.
   `.artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only/`
 - Fixed-truth GPU reference:
   `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_reference_gpu/`
+- Fixed-truth GPU full oracle:
+  `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_full_oracle_gpu/`
 - Stopped anchored GPU:
   `.artifacts/phase8_core_projector/runs/64_supported_only_stopped_anchor_gpu/`
 - CPU smoke:
@@ -24,13 +26,14 @@ setup-global diagnostics.
 | 32^3 CPU smoke | `cpu:0` | fixed truth | failed | 1.62574 | 0.0155630 | n/a |
 | 64^3 GPU balanced | `cuda:0` | fixed truth | failed | 6.75000 | 0.0203247 | 30.0770 |
 | 64^3 GPU reference | `cuda:0` | fixed truth | failed | 7.12500 | 0.0224485 | 50.2916 |
+| 64^3 GPU reference | `cuda:0` | fixed truth, full raw/no-prior oracle | passed | 1.43051e-06 | 1.06805e-07 | 52.0031 |
 | 64^3 GPU reference | `cuda:0` | stopped reconstruction | failed | 0.237177 | 0.0218166 | 48.7828 |
 
 ## Interpretation
 
 The core operator path is wired and artifact provenance records
-`core_trilinear_ray`, but fixed-truth setup recovery fails. That makes the next
-blocker adapter/scaling/trust behavior under the real projector, not stopped
-reconstruction quality. The stopped det_u-only run is close to the prior 0.2 px
-Gate 3 threshold, but it cannot be accepted while fixed-truth recovery is still
-failing under the same core operator.
+`core_trilinear_ray`. Fixed-truth passes once the oracle Schur path uses raw
+geometry residuals, disables the level metadata prior, and runs all scheduled
+levels instead of coarse early-exit. The remaining blocker is now the
+production-like stopped reconstruction path: the stopped det_u-only run is close
+to the prior 0.2 px Gate 3 threshold, but still fails at 0.237177 px.

@@ -19,6 +19,7 @@ from tomojax.align._joint_schur_lm import (
 if TYPE_CHECKING:
     from tomojax.align._alternating_types import GeometryUpdateVolumeSource
     from tomojax.align._continuation import ContinuationLevel
+    from tomojax.forward import ResidualFilterConfig
     from tomojax.geometry import GaugeReport, GeometryState
 
 
@@ -38,6 +39,8 @@ def _run_geometry_updates(
     active_pose_dofs: tuple[str, ...],
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
+    residual_filters: tuple[ResidualFilterConfig, ...] | None = None,
+    parameter_prior_strength: float | None = None,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
     result = solve_joint_schur_lm(
         volume,
@@ -51,8 +54,14 @@ def _run_geometry_updates(
             sigma=sigma,
             setup_trust_radius=level.trust_radius_px,
             pose_trust_radius=level.trust_radius_px,
-            residual_filters=level.residual_filters,
-            parameter_prior_strength=level.prior_strength,
+            residual_filters=level.residual_filters
+            if residual_filters is None
+            else residual_filters,
+            parameter_prior_strength=(
+                level.prior_strength
+                if parameter_prior_strength is None
+                else parameter_prior_strength
+            ),
             setup_prior_strength=setup_prior_strength,
             pose_prior_strength=pose_prior_strength,
             active_setup_parameters=_active_setup_parameters(active_setup_parameters),
