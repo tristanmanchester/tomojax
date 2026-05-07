@@ -11,24 +11,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 det-v policy criterion evidence slice
-- Goal: make the existing `det_v_policy` benchmark criterion use the
-  weak-DOF policy decision that is already emitted in observability artifacts,
-  instead of remaining `not_evaluated` whenever det_v is not recovered.
+- Phase: Phase 8/9 GPU memory-regression investigation
+- Goal: explain why the v2 `core_trilinear_ray` reference path is using much
+  more VRAM than old TomoJAX's streamed/chunked 5-DOF alignment path, then
+  implement the smallest chunking fix once the allocation source is isolated.
 
 ### Scope
 
 - In scope:
-  - Pass the report-only weak-DOF policy payload into benchmark manifest
-    criterion evaluation.
-  - Treat `det_v_policy=recovered_or_reported_unobservable` as passed when det_v
-    is either recovered or the policy decision says to keep it frozen.
-  - Add focused criterion evaluator tests.
-  - Update docs/logs and commit the slice.
+  - Inspect v2 projector, FISTA/backprojector, and Schur residual/Jacobian
+    accumulation for all-view/all-parameter materialisation.
+  - Run focused diagnostic commands at realistic scale on `cuda:0` as needed to
+    identify the allocation owner.
+  - Implement chunked accumulation for the offending path when isolated.
+  - Update docs/logs and commit the memory-regression slice.
 - Out of scope:
-  - Changing solver maths, benchmark tolerances, or report payload shape.
-  - Promoting weak-DOF policy from report-only to enforcement.
-- Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
+  - Report wording, criterion aliasing, or observability-field cleanup.
+  - Shrinking the benchmark as a substitute for fixing memory behaviour.
+- Deep module owner: `tomojax.forward` for projector memory behaviour,
+  `tomojax.recon` for reconstruction/backprojection, and `tomojax.align` for
+  Schur geometry-update accumulation.
 
 ### Design Sources
 
@@ -39,22 +41,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Wire weak-DOF policy into benchmark criterion evaluation.
-- [x] Add focused det_v policy tests.
-- [x] Run focused Ruff/type/tests and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Identify which path owns the high VRAM allocation.
+- [ ] Add chunked accumulation or streaming where needed.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
-- `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_alternating_benchmark_criteria.py -q` passed: 11 tests in
-  0.63 seconds.
-- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
-  tests/test_alternating_benchmark_criteria.py` passed.
-- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
-  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
-  0 warnings, and 0 notes.
-- `just imports` passed.
+- `just imports` passed after the diagnostic log update.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
@@ -91,6 +85,7 @@ and proposed next fix before stopping.
 
 ### Risks
 
-- Risk: a report-only policy pass can look like det_v numerical recovery.
-- Mitigation: keep criterion reasons explicit: numerical recovery and
-  reported-unobservable/frozen policy are distinct pass reasons.
+- Risk: full active setup/pose updates at `128^3` may expose memory or runtime
+  regressions before producing numerical recovery evidence.
+- Mitigation: record command, device, peak GPU memory, runtime, and failure
+  artifact path per case rather than shrinking the benchmark.

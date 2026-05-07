@@ -7814,3 +7814,72 @@ Interpretation:
   tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
   -q` passed: 3 tests.
 - `just imports` passed.
+
+## 2026-05-07 — Phase 8/9 GPU Memory Regression Diagnosis
+
+### Summary
+
+- Paused the five-case `128^3` CUDA benchmark pass after the corrected run
+  showed the same high-memory behaviour that blocks realistic 5-DOF alignment.
+- Isolated two separate VRAM observations:
+  - JAX's default GPU allocator preallocates most of the device pool. A trivial
+    `128^3` JAX allocation on `cuda:0` reported about `6021` MiB used with
+    `XLA_PYTHON_CLIENT_PREALLOCATE=true`, but about `211` MiB with
+    `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+  - The real v2 regression is the joint Schur LM implementation, which still
+    builds a dense finite-difference residual Jacobian before forming normal
+    equations.
+- The dense Jacobian scales as
+  `views * detector_rows * detector_cols * (setup_dofs + views * pose_dofs)`.
+  At realistic 5-DOF pose scale this is incompatible with the old TomoJAX
+  streamed/chunked memory envelope:
+
+| Case | Rows | Parameters | Dense Jacobian |
+|---|---:|---:|---:|
+| setup-global tomography, setup-only-ish | 6,553,600 | 6 | 0.15 GiB |
+| setup-global tomography, full 5-DOF pose | 6,553,600 | 1,286 | 31.40 GiB |
+| laminography axis/roll/pose, full 5-DOF pose | 9,437,184 | 1,287 | 45.25 GiB |
+| combined nuisance/jumps, full 5-DOF pose | 11,796,480 | 1,607 | 70.62 GiB |
+
+### Evidence
+
+- Artifact/log root: `.artifacts/phase8_memory_regression_probe/`
+- Default-preallocation probe:
+  - `prealloc_true`: selected `[CudaDevice(id=0)]`, max sampled GPU memory
+    `6021` MiB.
+  - `prealloc_false`: selected `[CudaDevice(id=0)]`, max sampled GPU memory
+    `211` MiB.
+- Five-case run root: `.artifacts/phase8_five_case_cuda/`
+  - The first two initial runs failed because `det_v_px` was requested active
+    for tomography geometries where det-v is inactive; this was a command
+    setup error, not a solver failure.
+  - `synth128_lamino_axis_roll_pose` with full setup plus all 5 pose DOFs
+    reached repeated JAX BFC allocation warnings while trying to allocate
+    another `48.00MiB` and was stopped after holding about `6049` MiB on the
+    laptop GPU for multiple minutes.
+
+### Diagnosis
+
+- Reconstruction FISTA core already has view-chunked loss and explicit
+  backprojection-gradient accumulation (`views_per_batch=1` by default in the
+  core path), so it is not the primary reason full 5-DOF alignment wants tens of
+  GiB.
+- Public forward projection helpers still return full projection stacks, so
+  verification/report paths can show allocator preallocation and should not be
+  used alone to judge memory efficiency.
+- The Schur geometry update is the highest-impact functional blocker:
+  `finite_difference_jacobian()` stacks every residual column, then
+  `schur_step_from_jacobian()` forms a dense global Hessian. Old TomoJAX's
+  memory profile came from streaming projector and alignment reductions; v2
+  needs the same normal-equation accumulation pattern for
+  `loss`, `J.T @ r`, `J.T @ J`, and per-view pose blocks without materialising
+  all views, all detector pixels, and all perturbation columns together.
+
+### Next Implementation Slice
+
+- Implement chunked Schur normal-equation accumulation over views and active
+  parameter groups.
+- Preserve the existing dense path as a small-problem reference test only.
+- Re-run the `128^3` setup-global full 5-DOF diagnostic with
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` to measure actual peak allocator use,
+  then rerun with default allocator settings for benchmark parity.
