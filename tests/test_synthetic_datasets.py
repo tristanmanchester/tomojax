@@ -244,6 +244,7 @@ def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) ->
 
     assert sidecars.dataset_dir == paths.dataset_dir
     assert sidecars.manifest["name"] == "synth128_lamino_axis_roll_pose"
+    assert sidecars.manifest["detector_grid"] == "calibrated_noncanonical"
     assert sidecars.artifacts["v2_true_geometry_json"] == paths.v2_true_geometry
     assert sidecars.true_geometry.pose.n_views == 8
     assert sidecars.true_geometry.acquisition.model == "parallel_laminography"

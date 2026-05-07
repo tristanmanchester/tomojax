@@ -3,6 +3,39 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Calibrated-Grid Backend Provenance Slice
+
+### Summary
+
+- Parsed optional `detector_grid` metadata from the synthetic benchmark
+  manifest and wrote it into generated dataset manifests when present.
+- Included detector-grid metadata in `align-auto` synthetic sidecar readback.
+- Benchmark backend provenance now records an explicit fallback row when
+  sidecar readback reports `detector_grid="calibrated_noncanonical"`.
+- The existing `backend_policy: calibrated_grid_fallback_explicit` criterion can
+  now pass from concrete sidecar-triggered provenance instead of proxy labels.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_synthetic_datasets.py::test_load_synthetic_dataset_sidecars_reads_manifest_index
+  tests/test_alternating_benchmark_criteria.py -q` passed: 8 tests in
+  2.66 seconds.
+- `uv run ruff check src/tomojax/datasets/_specs.py
+  src/tomojax/datasets/_writer.py src/tomojax/cli/align_auto.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_synthetic_datasets.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright` on the same focused source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- This slice records the policy/provenance decision. It does not add a new
+  projector backend or detector-grid transform path.
+- Bad-view policy, object-motion criteria, and pose-jump exclusions remain
+  future policy/report slices.
+
 ## 2026-05-07 — Phase 8 Backend Policy Criterion Slice
 
 ### Summary

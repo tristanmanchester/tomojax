@@ -5,7 +5,10 @@ from math import radians
 from typing import cast
 
 # check-public-imports: allow-private
-from tomojax.align._alternating_artifacts import _benchmark_manifest_evaluation
+from tomojax.align._alternating_artifacts import (
+    _backend_fallbacks_from_sidecar,
+    _benchmark_manifest_evaluation,
+)
 
 
 def test_benchmark_manifest_evaluates_detector_roll_alias() -> None:
@@ -61,6 +64,20 @@ def test_benchmark_manifest_passes_backend_policy_with_explicit_fallback() -> No
     assert backend["status"] == "passed"
     assert backend["value"] == 1
     assert backend["threshold"] == "calibrated_grid_fallback_explicit"
+
+
+def test_backend_fallbacks_from_sidecar_reports_calibrated_noncanonical_grid() -> None:
+    fallbacks = _backend_fallbacks_from_sidecar(
+        {"detector_grid": "calibrated_noncanonical"},
+    )
+
+    assert fallbacks == [
+        {
+            "reason": "calibrated_noncanonical_detector_grid",
+            "requested_policy": "calibrated_grid_fallback_explicit",
+            "actual_backend": "core_trilinear_ray",
+        }
+    ]
 
 
 def test_benchmark_manifest_evaluates_det_v_policy_when_recovered() -> None:

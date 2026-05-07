@@ -11,23 +11,27 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 backend policy criterion evaluation slice
-- Goal: evaluate documented `backend_policy` criteria against existing backend
-  provenance in `benchmark_result` so calibrated-grid fallback expectations are
-  real pass/fail criteria instead of unsupported placeholders.
+- Phase: Phase 8 calibrated-grid backend provenance slice
+- Goal: carry benchmark manifest detector-grid policy into sidecar readback and
+  benchmark backend provenance so `backend_policy:
+  calibrated_grid_fallback_explicit` has concrete evidence on calibrated-grid
+  synthetic datasets.
 
 ### Scope
 
 - In scope:
-  - Thread benchmark backend provenance into manifest criterion evaluation.
-  - Evaluate `backend_policy: calibrated_grid_fallback_explicit` as passed only
-    when backend fallbacks are explicitly recorded.
-  - Fail the criterion when no fallback evidence is present.
-  - Add focused criterion-evaluator tests.
+  - Parse optional `detector_grid` from the benchmark manifest.
+  - Write/read `detector_grid` through generated synthetic dataset manifests
+    and align-auto sidecar readback.
+  - Record explicit backend fallback provenance when a sidecar requests a
+    calibrated noncanonical detector grid.
+  - Add focused sidecar/backend policy tests.
   - Update docs/logs and commit the slice.
 - Out of scope:
-  - Implementing calibrated-grid fallback itself or rerunning benchmarks.
-- Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
+  - Changing projector kernels, adding new detector-grid transforms, or
+    rerunning benchmarks.
+- Deep module owners: `tomojax.datasets` for manifest metadata and
+  `tomojax.align`/`tomojax.cli` for benchmark provenance payloads.
 
 ### Design Sources
 
@@ -38,22 +42,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Thread backend provenance into manifest evaluation.
-- [x] Evaluate calibrated-grid fallback backend policy.
-- [x] Add focused criterion-evaluator tests.
+- [x] Parse and write detector-grid manifest metadata.
+- [x] Include detector-grid metadata in align-auto sidecar readback.
+- [x] Emit calibrated-grid backend fallback provenance.
+- [x] Add focused sidecar/backend policy tests.
 - [x] Run focused Ruff/type/tests and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
 - `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_alternating_benchmark_criteria.py -q` passed: 6 tests in
-  0.66 seconds.
-- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_synthetic_datasets.py::test_load_synthetic_dataset_sidecars_reads_manifest_index
+  tests/test_alternating_benchmark_criteria.py -q` passed: 8 tests in
+  2.66 seconds.
+- `uv run ruff check src/tomojax/datasets/_specs.py
+  src/tomojax/datasets/_writer.py src/tomojax/cli/align_auto.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_synthetic_datasets.py
   tests/test_alternating_benchmark_criteria.py` passed.
-- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
-  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
-  0 warnings, and 0 notes.
+- `uv run basedpyright` on the same focused source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -64,8 +71,8 @@ and proposed next fix before stopping.
 - The only supported v2 operator family is the existing core trilinear ray
   projector/backprojector (`core_trilinear_ray`).
 - Do not add a selector between rotate-and-sum and core trilinear ray.
-- Policy criteria should only pass from concrete evidence. Missing required
-  backend evidence should fail when the manifest explicitly requires it.
+- Backend policy criteria must use explicit sidecar/provenance metadata, not
+  infer fallback from benchmark names.
 
 ### Completed Previous Slices
 
@@ -81,9 +88,10 @@ and proposed next fix before stopping.
 - [x] Benchmark criterion aliases committed: `fe83427`.
 - [x] Laminography solver residuals committed: `7002d42`.
 - [x] Recovered det_v policy criterion committed: `f6fe3c4`.
+- [x] Backend policy criterion evaluation committed: `b040829`.
 
 ### Risks
 
-- Risk: backend policy evaluation could infer support from the requested
-  projector name.
-- Mitigation: evaluate only explicit fallback provenance, not proxy labels.
+- Risk: provenance can claim a fallback without any manifest trigger.
+- Mitigation: emit fallback rows only when sidecar readback explicitly reports
+  `detector_grid="calibrated_noncanonical"`.

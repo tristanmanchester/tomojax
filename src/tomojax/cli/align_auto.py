@@ -268,7 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, object]:
     """Return a compact verification payload for generated synthetic sidecars."""
-    return {
+    payload: dict[str, object] = {
         "validated": True,
         "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
         "n_views": sidecars.true_geometry.pose.n_views,
@@ -281,6 +281,10 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "consistency": sidecars.consistency.to_dict(),
         "recovery_tolerances": _sidecar_recovery_tolerances(sidecars),
     }
+    detector_grid = sidecars.manifest.get("detector_grid")
+    if isinstance(detector_grid, str):
+        payload["detector_grid"] = detector_grid
+    return payload
 
 
 def _parse_active_pose_dofs(raw: str) -> tuple[str, ...]:

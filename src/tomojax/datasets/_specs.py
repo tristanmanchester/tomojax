@@ -28,6 +28,7 @@ class SyntheticDatasetSpec:
     nuisance: dict[str, float | int | str | bool]
     pass_criteria: dict[str, float | int | str | bool]
     laminography_tilt_deg: float | None = None
+    detector_grid: str | None = None
 
 
 def default_benchmark_manifest_path() -> Path:
@@ -77,6 +78,7 @@ def _parse_spec(name: str, item: dict[str, Any]) -> SyntheticDatasetSpec:
         laminography_tilt_deg=(
             float(item["laminography_tilt_deg"]) if "laminography_tilt_deg" in item else None
         ),
+        detector_grid=str(item["detector_grid"]) if "detector_grid" in item else None,
     )
 
 

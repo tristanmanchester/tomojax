@@ -899,7 +899,7 @@ def _benchmark_result_payload(
         "backprojector": "core_trilinear_ray_adjoint",
         "jax_default_backend": jax.default_backend(),
         "selected_jax_device": _selected_jax_device(),
-        "fallbacks": [],
+        "fallbacks": _backend_fallbacks_from_sidecar(sidecar_readback),
     }
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
@@ -988,6 +988,18 @@ def _selected_jax_device() -> str:
     if not devices:
         return "unavailable"
     return str(devices[0])
+
+
+def _backend_fallbacks_from_sidecar(sidecar_readback: Mapping[object, object]) -> list[object]:
+    if sidecar_readback.get("detector_grid") != "calibrated_noncanonical":
+        return []
+    return [
+        {
+            "reason": "calibrated_noncanonical_detector_grid",
+            "requested_policy": "calibrated_grid_fallback_explicit",
+            "actual_backend": "core_trilinear_ray",
+        }
+    ]
 
 
 def _benchmark_manifest_evaluation(

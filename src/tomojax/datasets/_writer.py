@@ -548,7 +548,7 @@ def _dataset_manifest(
             for key, value in pass_criteria.items()
             if key in {"det_u_error_px_lt", "det_v_error_px_lt", "theta_offset_error_deg_lt"}
         }
-    return {
+    manifest: dict[str, object] = {
         "name": spec.name,
         "purpose": spec.purpose,
         "mode": spec.mode,
@@ -568,6 +568,9 @@ def _dataset_manifest(
         "artifacts": _manifest_artifact_map(paths),
         "recovery_tolerances": pass_criteria,
     }
+    if spec.detector_grid is not None:
+        manifest["detector_grid"] = spec.detector_grid
+    return manifest
 
 
 def _supported_only_setup(values: dict[str, float | str]) -> dict[str, float | str]:
