@@ -11,23 +11,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 staged pose activation
-- Goal: parameterise joint Schur active pose DOFs and transfer mean pose steps
-  into setup so fixed-truth supported setup recovery is not absorbed into pose.
+- Phase: Phase 8 reporting honesty
+- Goal: stop reporting the last Schur training loss as an independent final
+  projection residual and classify stopped-reconstruction absorption evidence.
 
 ### Scope
 
 - In scope:
-  - Extend `JointSchurLMConfig.active_pose_dofs` beyond all-or-none.
-  - Thread partial active pose DOFs through pack/split/update and CLI config.
-  - Transfer mean active pose steps into setup inside LM candidate construction.
-  - Add focused tests for `phi_residual_rad` frozen with detector pose active.
-  - Rerun focused Schur/align tests and the supported-only fixed-truth joint GPU
-    benchmark with `phi_residual_rad` frozen.
+  - Record `schur_train_loss` separately from independent all-view projection
+    losses.
+  - Record final-volume/final-geometry, final-volume/true-geometry,
+    true-volume/final-geometry, and true-volume/true-geometry all-view losses.
+  - Thread those losses into `benchmark_result.json` and `benchmark_report.md`.
+  - Add focused tests for the verification and benchmark artifact contract.
 - Out of scope:
-  - Full per-DOF unit trust for every supported/unsupported future DOF.
-  - Stopped-reconstruction classification.
-  - Report-field expansion beyond diagnostics needed for this fix.
+  - New solver behavior, reconstruction gauge fixes, low-pass Schur changes, or
+    benchmark scenario expansion.
   - Legacy Ruff cleanup.
 - Deep module owner: `tomojax.align`.
 
@@ -38,47 +37,43 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement partial active pose DOF packing/splitting/updating.
-- [x] Expose active pose DOFs through align-auto CLI/config.
-- [x] Implement zero-mean pose step gauge projection in LM.
-- [x] Add focused regression tests.
+- [x] Add independent projection-loss provenance to verification metrics.
+- [x] Include loss provenance in synthetic benchmark artifacts and markdown.
+- [x] Add focused artifact contract tests.
 - [x] Run focused validation and `just imports`.
-- [x] Rerun supported-only fixed-truth joint GPU benchmark with phi frozen.
-- [x] Rerun stopped-reconstruction diagnostic after fixed-truth classification.
-- [x] Update docs with result/blocker.
-- [x] Commit the staged/zero-mean pose slice.
+- [ ] Rerun supported-only fixed-truth/stopped-reconstruction diagnostics if the
+  artifact shape change needs fresh benchmark files.
+- [ ] Update docs and commit the reporting-honesty slice.
 
 ### Validation
 
-- `uv run ruff check ...` on touched staged/zero-mean source/test files passed.
-- `uv run basedpyright ...` on touched staged/zero-mean source/test files passed with
-  0 errors and 0 warnings.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py
-  tests/test_align_auto_cli.py -q` passed: 22 tests.
+- `uv run ruff format ...` passed for touched reporting source/test files.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 2 tests.
 - `just imports` passed.
-- Best non-hard-prior GPU run:
-  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_zero_mean_no_phi_reference/`
-  passes manifest criteria but misses internal det_u gate by about 0.001 px.
-- Stopped-reconstruction strong-pose-prior run failed without moving geometry:
-  `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000/`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Block-wise setup/pose trust removed aggregate clipping, but the unconstrained
-  joint candidate still pointed setup in the wrong detector direction. Stage
-  pose DOFs next.
-- Zero-mean pose step projection nearly resolves fixed-truth joint setup+pose
-  without a hard pose prior, but detector pose active still leaves det_u just
-  outside the internal 0.2 px gate.
-- Stopped-reconstruction is now classified as reconstruction/volume gauge
-  handling or geometry absorption.
+- The previous stopped-reconstruction diagnosis relied on `final_loss` fields
+  that can mean Schur training loss. This slice makes the benchmark artifacts
+  explicit before further solver changes.
+- Fresh GPU artifacts were not rerun in this slice; the code/test change verifies
+  the new artifact contract on CPU temp outputs. Existing GPU artifacts remain
+  valid for solver behavior but do not contain the new loss-provenance fields.
 
 ### Risks
 
-- Risk: setup/pose block-wise trust may improve detector recovery but still
-  leave theta absorbed into `phi_residual_rad`.
-- Mitigation: classify that separately and then stage/freeze `phi` rather than
-  broadening scope.
+- Risk: changing `residual_after` semantics may affect older smoke assertions.
+- Mitigation: preserve `schur_train_loss` as an explicit metric and update tests
+  to assert the new contract.

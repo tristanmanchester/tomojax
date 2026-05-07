@@ -106,8 +106,24 @@ def _verification_payload(
     level1_geometry_skipped = _level1_geometry_skipped(summaries)
     all_levels_verified = all(summary.verified for summary in summaries)
     residual_before = summaries[0].loss_before if summaries else initial_loss
+    loss_provenance = _projection_loss_provenance_payload(
+        schur_train_loss=final_loss,
+        truth_volume=truth_volume,
+        final_volume=final_volume,
+        observed=observed,
+        mask=mask,
+        initial_geometry=initial_geometry,
+        final_geometry=final_geometry,
+        true_geometry=true_geometry,
+        summaries=summaries,
+    )
+    independent_residual_after = cast(
+        "float", loss_provenance["final_volume_final_geometry_loss_all_views"]
+    )
     relative_improvement = (
-        float((residual_before - final_loss) / residual_before) if residual_before != 0.0 else 0.0
+        float((residual_before - independent_residual_after) / residual_before)
+        if residual_before != 0.0
+        else 0.0
     )
     return {
         "schema": "tomojax.alternating_smoke.verification.v1",
@@ -115,7 +131,7 @@ def _verification_payload(
         if geometry_recovery["passed"] and volume_recovery["passed"]
         else "failed",
         "summary": {
-            "projection_residual_improved": final_loss
+            "projection_residual_improved": independent_residual_after
             <= residual_before + cfg.verification_loss_tolerance,
             "final_reconstruction_valid": volume_recovery["passed"],
             "gauge_constraints_satisfied": _gauge_stable(
@@ -127,9 +143,10 @@ def _verification_payload(
         },
         "metrics": {
             "residual_before": residual_before,
-            "residual_after": final_loss,
+            "residual_after": independent_residual_after,
             "relative_improvement": relative_improvement,
-            "final_loss": final_loss,
+            "final_loss": independent_residual_after,
+            **loss_provenance,
             "volume_nmse": volume_recovery["nmse"],
         },
         "runtime": {
@@ -152,7 +169,8 @@ def _verification_payload(
         "synthetic_dataset": _synthetic_dataset_payload(cfg),
         "level_factors": list(schedule.level_factors),
         "initial_loss": initial_loss,
-        "final_loss": final_loss,
+        "final_loss": independent_residual_after,
+        "schur_train_loss": final_loss,
         "coarse_verified": coarse_verified,
         "level1_geometry_skipped": level1_geometry_skipped,
         "skipped_levels": [summary.level_factor for summary in summaries if summary.skipped_level],
@@ -358,6 +376,88 @@ def _stopped_volume_gauge_payload(
         "closer_to_initial_than_true": initial_loss < true_loss,
         "closer_to_final_than_true": final_loss < true_loss,
     }
+
+
+def _projection_loss_provenance_payload(
+    *,
+    schur_train_loss: float,
+    truth_volume: jax.Array,
+    final_volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
+    initial_geometry: GeometryState,
+    final_geometry: GeometryState,
+    true_geometry: GeometryState,
+    summaries: tuple[AlternatingLevelSummary, ...],
+) -> dict[str, object]:
+    final_volume_initial_geometry = _projection_loss_for_geometry(
+        final_volume, observed, mask, initial_geometry
+    )
+    final_volume_final_geometry = _projection_loss_for_geometry(
+        final_volume, observed, mask, final_geometry
+    )
+    final_volume_true_geometry = _projection_loss_for_geometry(
+        final_volume, observed, mask, true_geometry
+    )
+    true_volume_final_geometry = _projection_loss_for_geometry(
+        truth_volume, observed, mask, final_geometry
+    )
+    true_volume_true_geometry = _projection_loss_for_geometry(
+        truth_volume, observed, mask, true_geometry
+    )
+    heldout_loss = _last_heldout_residual_after(summaries)
+    classification = _projection_loss_classification(
+        schur_train_loss=schur_train_loss,
+        final_volume_final_geometry_loss=final_volume_final_geometry,
+        final_volume_true_geometry_loss=final_volume_true_geometry,
+        true_volume_final_geometry_loss=true_volume_final_geometry,
+        true_volume_true_geometry_loss=true_volume_true_geometry,
+    )
+    return {
+        "schur_train_loss": float(schur_train_loss),
+        "heldout_loss": heldout_loss,
+        "final_volume_initial_geometry_loss_all_views": final_volume_initial_geometry,
+        "final_volume_final_geometry_loss_all_views": final_volume_final_geometry,
+        "final_volume_true_geometry_loss_all_views": final_volume_true_geometry,
+        "true_volume_final_geometry_loss_all_views": true_volume_final_geometry,
+        "true_volume_true_geometry_loss_all_views": true_volume_true_geometry,
+        "projection_loss_classification": classification,
+    }
+
+
+def _last_heldout_residual_after(
+    summaries: tuple[AlternatingLevelSummary, ...],
+) -> float | None:
+    for summary in reversed(summaries):
+        if summary.heldout_residual_after is not None:
+            return float(summary.heldout_residual_after)
+    return None
+
+
+def _projection_loss_classification(
+    *,
+    schur_train_loss: float,
+    final_volume_final_geometry_loss: float,
+    final_volume_true_geometry_loss: float,
+    true_volume_final_geometry_loss: float,
+    true_volume_true_geometry_loss: float,
+) -> str:
+    tolerance = 1.0e-5
+    true_geometry_margin = max(tolerance, 0.05 * max(true_volume_true_geometry_loss, tolerance))
+    recovered_geometry_bad = (
+        true_volume_final_geometry_loss > true_volume_true_geometry_loss + true_geometry_margin
+    )
+    reconstruction_prefers_final_geometry = (
+        final_volume_final_geometry_loss <= final_volume_true_geometry_loss + tolerance
+    )
+    training_loss_low = schur_train_loss <= final_volume_final_geometry_loss + tolerance
+    if recovered_geometry_bad and reconstruction_prefers_final_geometry:
+        return "reconstruction_absorbed_geometry"
+    if recovered_geometry_bad and training_loss_low:
+        return "training_loss_not_independent"
+    if recovered_geometry_bad:
+        return "true_volume_recovered_geometry_residual_high"
+    return "independent_projection_losses_consistent"
 
 
 def _projection_loss_for_geometry(

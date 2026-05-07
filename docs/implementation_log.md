@@ -6391,3 +6391,63 @@ Key artifacts:
 - Can the near-pass zero-mean fixed-truth joint run be made robust without a hard
   pose prior, or should the next production path use staged/frozen pose DOFs
   until reconstruction gauge handling is corrected?
+
+## 2026-05-07 — Phase 8 Projection Loss Provenance Reporting
+
+### Summary
+
+- Updated the alternating smoke verification payload so `schur_train_loss` is
+  recorded separately from independent all-view projection losses.
+- `residual_after`, `final_loss`, and synthetic benchmark
+  `reconstruction.final_residual` now point at
+  `final_volume_final_geometry_loss_all_views`, not the last Schur training
+  loss.
+- Added benchmark-result and markdown-report fields for:
+  - `schur_train_loss`
+  - `heldout_loss`
+  - `final_volume_initial_geometry_loss_all_views`
+  - `final_volume_final_geometry_loss_all_views`
+  - `final_volume_true_geometry_loss_all_views`
+  - `true_volume_final_geometry_loss_all_views`
+  - `true_volume_true_geometry_loss_all_views`
+  - `projection_loss_classification`
+
+### Interpretation
+
+- This is an artifact/reporting honesty slice only. It does not change solver
+  behavior, reconstruction gauge handling, Schur trust scaling, or benchmark
+  scenario support.
+- Existing GPU supported-only artifacts still describe solver behavior, but they
+  predate these new loss-provenance fields. Fresh GPU diagnostics should be
+  rerun before using those reports for final stopped-reconstruction
+  classification.
+- The new classification labels are intended to distinguish a low Schur training
+  loss from a bad true-volume recovered-geometry residual, especially for
+  `stopped_reconstruction` cases where the reconstructed volume may absorb
+  geometry error.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 2 tests.
+- `just imports` passed.
+
+### Remaining Work
+
+- Rerun the 64^3/64-view GPU supported-only fixed-truth and
+  stopped-reconstruction diagnostics so the on-disk benchmark artifacts include
+  the new independent-loss fields.
+- Use those refreshed artifacts to decide whether the next fix should target
+  reconstruction/volume gauge handling, Schur low-pass residuals, or the
+  remaining setup/pose gauge coupling.

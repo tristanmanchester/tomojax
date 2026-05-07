@@ -804,6 +804,23 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             f"- Requested: {_markdown_cell(backend.get('requested'))}",
             f"- Actual: {_markdown_cell(backend.get('actual'))}",
             "",
+            "## Projection Loss Provenance",
+            "",
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| Schur train loss | {_markdown_cell(reconstruction.get('schur_train_loss'))} |",
+            f"| Heldout loss | {_markdown_cell(reconstruction.get('heldout_loss'))} |",
+            "| Final volume / final geometry | "
+            f"{_markdown_cell(reconstruction.get('final_volume_final_geometry_loss_all_views'))} |",
+            "| Final volume / true geometry | "
+            f"{_markdown_cell(reconstruction.get('final_volume_true_geometry_loss_all_views'))} |",
+            "| True volume / final geometry | "
+            f"{_markdown_cell(reconstruction.get('true_volume_final_geometry_loss_all_views'))} |",
+            "| True volume / true geometry | "
+            f"{_markdown_cell(reconstruction.get('true_volume_true_geometry_loss_all_views'))} |",
+            "| Classification | "
+            f"{_markdown_cell(reconstruction.get('projection_loss_classification'))} |",
+            "",
             "## Failure Labels",
             "",
             labels,
@@ -889,6 +906,24 @@ def _benchmark_result_payload(
             "volume_nmse": metrics.get("volume_nmse"),
             "final_residual": metrics.get("residual_after"),
             "relative_improvement": metrics.get("relative_improvement"),
+            "schur_train_loss": metrics.get("schur_train_loss"),
+            "heldout_loss": metrics.get("heldout_loss"),
+            "final_volume_initial_geometry_loss_all_views": metrics.get(
+                "final_volume_initial_geometry_loss_all_views"
+            ),
+            "final_volume_final_geometry_loss_all_views": metrics.get(
+                "final_volume_final_geometry_loss_all_views"
+            ),
+            "final_volume_true_geometry_loss_all_views": metrics.get(
+                "final_volume_true_geometry_loss_all_views"
+            ),
+            "true_volume_final_geometry_loss_all_views": metrics.get(
+                "true_volume_final_geometry_loss_all_views"
+            ),
+            "true_volume_true_geometry_loss_all_views": metrics.get(
+                "true_volume_true_geometry_loss_all_views"
+            ),
+            "projection_loss_classification": metrics.get("projection_loss_classification"),
         },
         "geometry_recovery": {
             "passed": geometry_recovery.get("passed"),

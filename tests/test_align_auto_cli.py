@@ -412,8 +412,7 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     dataset = cast("dict[str, object]", benchmark_result["dataset"])
     assert dataset["artifact_dir"] == str(dataset_paths.dataset_dir)
     assert dataset["volume_shape"] == [32, 32, 32]
-    reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
-    assert isinstance(reconstruction["final_residual"], float)
+    _assert_projection_loss_provenance(benchmark_result)
     geometry_recovery = cast("dict[str, object]", benchmark_result["geometry_recovery"])
     assert isinstance(geometry_recovery["supported_dofs_improved"], bool)
     backend = cast("dict[str, object]", benchmark_result["backend"])
@@ -428,6 +427,8 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert "## Geometry Recovery" in benchmark_report
     assert "## Benchmark Manifest Criteria" in benchmark_report
     assert "## Benchmark Manifest Evaluation" in benchmark_report
+    assert "## Projection Loss Provenance" in benchmark_report
+    assert "Schur train loss" in benchmark_report
     assert "flags_object_motion_suspected" in benchmark_report
     assert "## Backend Provenance" in benchmark_report
     assert "| reimagined_align_auto_smoke | smoke32 |" in benchmark_report
@@ -437,6 +438,20 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert 'geometry_update_volume_source = "stopped_reconstruction"' in config_text
     captured = capsys.readouterr()
     assert f"synthetic_dataset: {dataset_paths.dataset_dir}" in captured.out
+
+
+def _assert_projection_loss_provenance(benchmark_result: dict[str, object]) -> None:
+    reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
+    assert isinstance(reconstruction["final_residual"], float)
+    assert (
+        reconstruction["final_residual"]
+        == reconstruction["final_volume_final_geometry_loss_all_views"]
+    )
+    assert isinstance(reconstruction["schur_train_loss"], float)
+    assert isinstance(reconstruction["final_volume_true_geometry_loss_all_views"], float)
+    assert isinstance(reconstruction["true_volume_final_geometry_loss_all_views"], float)
+    assert isinstance(reconstruction["true_volume_true_geometry_loss_all_views"], float)
+    assert isinstance(reconstruction["projection_loss_classification"], str)
 
 
 def test_align_auto_accepts_geometry_update_volume_source(
@@ -526,6 +541,12 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
         json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
     )
     assert benchmark_result["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
+    assert (
+        reconstruction["final_residual"]
+        == reconstruction["final_volume_final_geometry_loss_all_views"]
+    )
+    assert isinstance(reconstruction["true_volume_true_geometry_loss_all_views"], float)
     criteria = cast("dict[str, object]", benchmark_result["benchmark_manifest_criteria"])
     assert set(criteria) == {"det_u_error_px_lt", "theta_offset_error_deg_lt"}
 
