@@ -8306,6 +8306,63 @@ cycles on additional preview iterations.
   CSV artifact above.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 Early Stopped-Volume Anchoring
+
+### Summary
+
+Added a narrow coarsest-level anchoring policy for setup-global
+`stopped_reconstruction` geometry updates. When the global setup block is active
+and `det_u_px` is one of the solved setup parameters, the Schur geometry-update
+volume is rolled along detector-u using the observed projection centroid before
+the first coarse update. Finer levels use the ordinary stopped reconstruction
+volume. This keeps the public API and artifact schema unchanged while testing
+the hypothesis that the early x-step must be constrained before geometry has
+been pulled closer.
+
+Reran the existing `synth128_setup_global_tomo` `128^3`, 256-view sidecar with
+the reference profile, `core_trilinear_ray`, `stopped_reconstruction`, and
+`cuda:0`.
+
+Artifact:
+
+- `.artifacts/phase8_early_anchor/128_setup_global_stopped_cuda/`
+
+Comparison against the prior FISTA-step stopped diagnostic:
+
+| Metric | FISTA-step | Early anchor |
+|---|---:|---:|
+| volume NMSE | 0.549 | 0.376 |
+| final residual | 0.808 | 1.193 |
+| `det_u_realized_rmse_px` | 12.74 | 4.23 |
+| `theta_realized_rmse_rad` | 0.02277 | 0.01899 |
+| `detector_roll_error_rad` | 0.01152 | 0.01290 |
+| `axis_error_rad` | 0.00658 | 0.00513 |
+| setup-global criteria passed | no | no |
+
+The policy reduces the dominant detector-u absorption and improves volume NMSE,
+but the benchmark still fails the setup-global geometry criteria and remains
+classified as `reconstruction_absorbed_geometry`. This makes the next blocker
+more specific: stopped reconstruction needs a stronger early geometry/volume
+constraint for detector roll and axis coupling, not simply more preview
+iterations or report polishing.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
+  0.89 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 49.86 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

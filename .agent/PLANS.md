@@ -11,26 +11,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction iteration/anchoring diagnosis
-- Goal: determine whether the stopped-reconstruction setup-global failure is
-  caused by an underconverged preview or by the reconstruction absorbing
-  geometry error before Schur.
+- Phase: Phase 8/9 stopped-reconstruction early x-step anchoring
+- Goal: prevent the first stopped-reconstruction setup-global update from using
+  a preview volume whose detector-u shift has already absorbed the setup
+  geometry error.
 
 ### Scope
 
 - In scope:
-  - Run a deterministic setup-global FISTA iteration/step probe on the existing
-    128^3, 256-view CUDA sidecar.
-  - Compare projection loss, volume NMSE, Schur acceptance, and supported setup
-    recovery across fewer/more preview iterations.
-  - Classify whether additional preview compute improves geometry or mainly
-    improves projection fit while preserving corrupted geometry.
+  - Add a small coarsest-level stopped-volume anchoring policy for setup-global
+    Schur updates.
+  - Keep the public API and report schema unchanged.
+  - Add focused tests for the private anchoring helper.
+  - Rerun the setup-global stopped-reconstruction CUDA diagnostic.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
   - Changing Schur setup/pose policy beyond using the existing staged active
     DOFs.
+  - Adding new CLI knobs for this first policy test.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -43,14 +43,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run 128^3 setup-global stopped-reconstruction iteration/step probe on
-  `cuda:0`.
-- [x] Classify the preview-iteration evidence.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Implement coarsest-level detector-u recentering for the stopped Schur
+  volume when the setup-global block is active.
+- [x] Add focused helper tests.
+- [x] Run focused validation and `just imports`.
+- [x] Rerun 128^3 setup-global stopped-reconstruction CUDA diagnostic.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
 - `just imports` passed after the diagnostic log update.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
+  0.89 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 49.86 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed after the early anchoring change.
+- CUDA setup-global stopped-reconstruction rerun completed on the existing
+  128^3/256-view sidecar in 128.65 seconds. Artifact:
+  `.artifacts/phase8_early_anchor/128_setup_global_stopped_cuda/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py

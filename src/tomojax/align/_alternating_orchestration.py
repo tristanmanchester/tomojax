@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 from tomojax.align._alternating_artifacts import _write_artifacts
 from tomojax.align._alternating_geometry_update import (
-    _geometry_update_volume,
+    _geometry_update_volume_for_level,
     _geometry_updates_for_level,
     _run_geometry_updates,
 )
@@ -140,10 +140,14 @@ def _run_alternating_solver_smoke_impl(
         update_report = GaugeReport(())
         geometry_before_update = geometry
         if geometry_updates > 0:
-            geometry_update_volume = _geometry_update_volume(
+            geometry_update_volume = _geometry_update_volume_for_level(
                 truth_volume=truth,
                 stopped_volume=volume,
+                observed=observed,
+                mask=train_mask,
+                level=level,
                 source=config.geometry_update_volume_source,
+                active_setup_parameters=config.geometry_update_active_setup_parameters,
             )
             geometry, update_report, schur_result = _run_geometry_updates(
                 geometry_update_volume,

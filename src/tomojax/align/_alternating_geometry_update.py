@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align._joint_schur_lm import (
@@ -161,6 +162,63 @@ def _geometry_update_volume(
     if source == "stopped_reconstruction":
         return jax.lax.stop_gradient(stopped_volume)
     raise ValueError(f"unknown geometry update volume source {source!r}")
+
+
+def _geometry_update_volume_for_level(
+    *,
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
+    level: ContinuationLevel,
+    source: GeometryUpdateVolumeSource,
+    active_setup_parameters: tuple[str, ...],
+) -> jax.Array:
+    volume = _geometry_update_volume(
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        source=source,
+    )
+    return _anchored_geometry_update_volume(
+        volume,
+        observed,
+        mask,
+        level=level,
+        source=source,
+        active_setup_parameters=active_setup_parameters,
+    )
+
+
+def _anchored_geometry_update_volume(
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    mask: jax.Array,
+    *,
+    level: ContinuationLevel,
+    source: GeometryUpdateVolumeSource,
+    active_setup_parameters: tuple[str, ...],
+) -> jax.Array:
+    if source != "stopped_reconstruction":
+        return stopped_volume
+    if int(level.level_factor) != 4:
+        return stopped_volume
+    active_setup = _active_setup_parameters(active_setup_parameters)
+    if "det_u_px" not in active_setup or not _is_global_setup_block(active_setup):
+        return stopped_volume
+    shift_px = _det_u_recentering_shift_px(observed, mask)
+    return jnp.roll(stopped_volume, shift=shift_px, axis=1)
+
+
+def _det_u_recentering_shift_px(observed: jax.Array, mask: jax.Array) -> int:
+    weighted = jnp.asarray(observed, dtype=jnp.float32) * jnp.asarray(mask, dtype=jnp.float32)
+    mass = jnp.sum(weighted)
+    if float(mass) <= 0.0:
+        return 0
+    cols = jnp.arange(weighted.shape[2], dtype=jnp.float32)
+    col_com = jnp.sum(weighted * cols[None, None, :]) / mass
+    center = jnp.asarray((int(weighted.shape[2]) - 1) / 2.0, dtype=jnp.float32)
+    det_u_estimate = center - col_com
+    return -int(np.rint(float(det_u_estimate)))
 
 
 def _geometry_updates_for_level(
