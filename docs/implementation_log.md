@@ -8438,6 +8438,51 @@ because none improved the full setup-global recovery criteria.
 - All three diagnostics completed on `cuda:0` with JAX GPU enabled.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 True-Geometry Reconstruction Oracle
+
+### Summary
+
+Ran an oracle reconstruction diagnostic to separate two possible blockers:
+
+- reconstructing the stopped preview under corrupted geometry absorbs setup
+  error;
+- the FISTA preview volume is not faithful enough for roll/axis Schur even when
+  reconstructed under true geometry.
+
+The diagnostic reconstructed the existing `128^3`, 256-view
+`synth128_setup_global_tomo` sidecar with true geometry, then ran the supported
+setup-global Schur update from corrupted geometry against that reconstructed
+volume.
+
+Artifact:
+
+- `.artifacts/phase8_true_geometry_recon_oracle/128_setup_global_true_recon_schur_cuda/`
+
+Results:
+
+| Metric | True-geometry reconstructed volume |
+|---|---:|
+| volume NMSE | 0.265 |
+| `det_u_realized_rmse_px` | 0.366 |
+| `theta_realized_rmse_rad` | 0.00049 |
+| `detector_roll_error_rad` | 0.00474 |
+| `axis_error_rad` | 0.01269 |
+| setup-global criteria passed | no |
+
+This oracle volume recovers det_u and theta within tolerance, unlike the
+ordinary stopped reconstruction path, but roll and axis still fail. That narrows
+the remaining setup-global blocker: the reference FISTA volume quality and/or
+volume gauge is not adequate for roll/axis Schur, even when the x-step uses true
+geometry. The next functional slice should improve the reconstruction step for
+roll/axis observability or use a geometry-update volume construction that
+preserves axis/roll-sensitive structure, rather than adding more setup staging.
+
+### Validation
+
+- Diagnostic completed on `cuda:0` with JAX GPU enabled in 159.64 seconds.
+- Wrote `oracle_result.json`, `fista_trace.csv`, and `oracle_reconstruction.npy`.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

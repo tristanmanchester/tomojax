@@ -11,19 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction constrained preview diagnostic
-- Goal: test whether support and stronger TV constraints on the stopped
-  preview x-step reduce setup-global geometry absorption.
+- Phase: Phase 8/9 true-geometry reconstruction oracle diagnostic
+- Goal: isolate whether setup-global stopped-reconstruction failure comes from
+  reconstructing under corrupted geometry or from insufficient FISTA volume
+  quality even when reconstruction uses true geometry.
 
 ### Scope
 
 - In scope:
-  - Run constrained preview diagnostics on the existing 128^3, 256-view
-    setup-global sidecar.
-  - Compare geometry recovery against the prior FISTA-step, early-anchor, and
-    det_u-first staging diagnostics.
-  - Keep only policies that improve setup recovery, not just projection loss or
-    volume NMSE.
+  - Reconstruct the existing 128^3, 256-view setup-global sidecar using true
+    geometry as an oracle x-step.
+  - Run supported setup-global Schur from the corrupted geometry against that
+    reconstructed volume.
+  - Compare recovery against fixed-truth and stopped-reconstruction evidence.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -43,10 +43,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run cylindrical-support + stronger-TV stopped preview diagnostic.
-- [x] Classify whether geometry improves or reconstruction still absorbs setup.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic or policy
-  slice.
+- [x] Run true-geometry FISTA reconstruction oracle diagnostic.
+- [x] Classify whether Schur recovers setup from the oracle reconstructed
+  volume.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
@@ -76,6 +76,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   cylindrical support (`preview_tv_scale=1` and `10`) and spherical support
   (`preview_tv_scale=1`). Artifacts under
   `.artifacts/phase8_constrained_preview/`.
+- True-geometry reconstruction oracle diagnostic completed on `cuda:0` in
+  159.64 seconds. Artifact:
+  `.artifacts/phase8_true_geometry_recon_oracle/128_setup_global_true_recon_schur_cuda/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
