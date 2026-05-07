@@ -134,3 +134,26 @@ Compare artifact:
 Interpretation: block-wise trust removes aggregate pose clipping as the blocker.
 The remaining unconstrained joint blocker is setup/pose gauge coupling, likely
 requiring staged pose activation or a zero-mean/anchored pose parameterisation.
+
+## Staged Pose Activation Follow-Up
+
+The code now supports explicit active pose DOF subsets and delayed activation by
+continuation level. Two staged GPU diagnostics were run:
+
+- All pose DOFs activated only at level factor 1:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_staged_pose_level1/`
+- Detector pose only (`dx_px,dz_px`) activated only at level factor 1:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_staged_pose_level1_no_phi/`
+
+Both failed strict criteria with det_u realised RMSE 0.583686 px and theta
+realised RMSE 0.00940296 rad. The coarse pose-frozen setup updates nearly
+recover setup, but the final pose-active candidate is rejected and leaves setup
+outside tolerance.
+
+Compare artifact:
+
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_staged_pose.md`
+
+Interpretation: staged pose activation is available but still needs an anchored
+or zero-mean pose parameterisation, or final pose refinement must avoid changing
+already verified setup.

@@ -36,6 +36,12 @@ class AlternatingSmokeConfig:
     geometry_update_setup_prior_strength: float | None = None
     geometry_update_pose_prior_strength: float | None = None
     geometry_update_pose_frozen: bool = False
+    geometry_update_pose_activate_at_level_factor: int | None = None
+    geometry_update_active_pose_dofs: tuple[str, ...] = (
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )
     fit_gain_offset_nuisance: bool = False
     fit_background_nuisance: bool = False
     synthetic_dataset_name: str | None = None

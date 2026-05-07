@@ -143,7 +143,8 @@ def _run_alternating_solver_smoke_impl(
                 sigma=residual_sigma_effective,
                 setup_prior_strength=config.geometry_update_setup_prior_strength,
                 pose_prior_strength=config.geometry_update_pose_prior_strength,
-                pose_frozen=config.geometry_update_pose_frozen,
+                pose_frozen=_pose_frozen_for_level(config, level.level_factor),
+                active_pose_dofs=config.geometry_update_active_pose_dofs,
                 fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
                 fit_background_nuisance=config.fit_background_nuisance,
             )
@@ -243,6 +244,10 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_setup_prior_strength=config.geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=config.geometry_update_pose_prior_strength,
         geometry_update_pose_frozen=config.geometry_update_pose_frozen,
+        geometry_update_pose_activate_at_level_factor=(
+            config.geometry_update_pose_activate_at_level_factor
+        ),
+        geometry_update_active_pose_dofs=config.geometry_update_active_pose_dofs,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,
         verification=_verification_payload(
@@ -275,3 +280,10 @@ def _run_alternating_solver_smoke_impl(
         verification=verification,
         artifacts=artifacts,
     )
+
+
+def _pose_frozen_for_level(config: AlternatingSmokeConfig, level_factor: int) -> bool:
+    if config.geometry_update_pose_frozen:
+        return True
+    activate_at = config.geometry_update_pose_activate_at_level_factor
+    return activate_at is not None and int(level_factor) > int(activate_at)

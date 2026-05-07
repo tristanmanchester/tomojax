@@ -120,6 +120,22 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Freeze per-view pose DOFs during Schur geometry updates.",
     )
+    _ = parser.add_argument(
+        "--geometry-update-active-pose-dofs",
+        default="phi_residual_rad,dx_px,dz_px",
+        help=(
+            "Comma-separated active pose DOFs for Schur updates. "
+            "Supported names: phi_residual_rad, dx_px, dz_px."
+        ),
+    )
+    _ = parser.add_argument(
+        "--geometry-update-pose-activate-at-level-factor",
+        type=int,
+        help=(
+            "Keep pose frozen for coarser levels and activate configured pose DOFs "
+            "at this continuation level factor or finer."
+        ),
+    )
     return parser
 
 
@@ -175,6 +191,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             geometry_update_setup_prior_strength=args.geometry_update_setup_prior_strength,
             geometry_update_pose_prior_strength=args.geometry_update_pose_prior_strength,
             geometry_update_pose_frozen=bool(args.geometry_update_pose_frozen),
+            geometry_update_pose_activate_at_level_factor=(
+                args.geometry_update_pose_activate_at_level_factor
+            ),
+            geometry_update_active_pose_dofs=_parse_active_pose_dofs(
+                str(args.geometry_update_active_pose_dofs)
+            ),
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,
@@ -207,6 +229,16 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "consistency": sidecars.consistency.to_dict(),
         "recovery_tolerances": _sidecar_recovery_tolerances(sidecars),
     }
+
+
+def _parse_active_pose_dofs(raw: str) -> tuple[str, ...]:
+    if raw.strip().lower() in {"", "none"}:
+        return ()
+    values = tuple(part.strip() for part in raw.split(",") if part.strip())
+    allowed = {"phi_residual_rad", "dx_px", "dz_px"}
+    if any(value not in allowed for value in values):
+        raise ValueError(f"unsupported --geometry-update-active-pose-dofs value {raw!r}")
+    return values
 
 
 def _sidecar_manifest_name(sidecars: SyntheticDatasetSidecars) -> str:

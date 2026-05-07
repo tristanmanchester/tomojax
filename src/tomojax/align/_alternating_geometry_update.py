@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 
 from tomojax.align._joint_schur_lm import (
     JointSchurLMConfig,
     JointSchurLMResult,
+    PoseSchurDof,
     solve_joint_schur_lm,
 )
 
@@ -32,6 +33,7 @@ def _run_geometry_updates(
     setup_prior_strength: float | None,
     pose_prior_strength: float | None,
     pose_frozen: bool,
+    active_pose_dofs: tuple[str, ...],
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
@@ -50,12 +52,19 @@ def _run_geometry_updates(
             parameter_prior_strength=level.prior_strength,
             setup_prior_strength=setup_prior_strength,
             pose_prior_strength=pose_prior_strength,
-            active_pose_dofs=() if pose_frozen else ("phi_residual_rad", "dx_px", "dz_px"),
+            active_pose_dofs=() if pose_frozen else _active_pose_dofs(active_pose_dofs),
             fit_gain_offset=fit_gain_offset_nuisance,
             fit_background_offset=fit_background_nuisance,
         ),
     )
     return result.canonicalized_geometry.state, result.canonicalized_geometry.report, result
+
+
+def _active_pose_dofs(raw: tuple[str, ...]) -> tuple[PoseSchurDof, ...]:
+    allowed = {"phi_residual_rad", "dx_px", "dz_px"}
+    if any(name not in allowed for name in raw):
+        raise ValueError(f"unsupported active pose DOFs {raw!r}")
+    return cast("tuple[PoseSchurDof, ...]", tuple(raw))
 
 
 def _geometry_update_volume(

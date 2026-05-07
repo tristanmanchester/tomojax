@@ -118,6 +118,48 @@ returning to projector/setup convention debugging.
   passed: 11 tests.
 - `just imports` passed.
 
+## 2026-05-07 — Staged Pose Activation Diagnostic
+
+### Summary
+
+- Extended joint Schur active pose DOFs from all-or-none to explicit subsets
+  such as `("dx_px", "dz_px")`.
+- Exposed `--geometry-update-active-pose-dofs` and
+  `--geometry-update-pose-activate-at-level-factor` in `align-auto` so coarse
+  setup updates can run with pose frozen before selected pose DOFs activate.
+- Added focused tests for partial pose DOF updates and the new CLI/config
+  surface.
+
+### GPU Result
+
+- Staged all pose DOFs at level factor 1:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_staged_pose_level1/`
+  failed with det_u realised RMSE 0.583686 px and theta realised RMSE
+  0.00940296 rad.
+- Staged detector pose only (`dx_px,dz_px`) at level factor 1:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_staged_pose_level1_no_phi/`
+  failed with the same final geometry. The final detector-pose candidate was
+  rejected, leaving setup just outside tolerance.
+- Compare artifact:
+  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_staged_pose.md`.
+
+### Interpretation
+
+Partial/staged pose activation is now available, but activating pose in the
+final geometry update does not yet pass the strict supported-only criteria. The
+hard pose-prior fixed-truth joint run remains the only passing joint diagnostic.
+The next fix should avoid perturbing verified setup during final pose activation
+or use a zero-mean/anchored pose parameterisation inside LM.
+
+### Validation
+
+- `uv run ruff check ...` on touched staged-pose source/test files passed.
+- `uv run basedpyright ...` on touched staged-pose source/test files passed with
+  0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py -q` passed: 21 tests.
+- `just imports` passed.
+
 ## 2026-05-07 — Nominal Theta Geometry Root Fix
 
 ### Summary

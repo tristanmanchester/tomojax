@@ -11,20 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 Schur block-wise trust
-- Goal: prevent aggregate pose updates from shrinking valid setup updates in
-  the supported fixed-truth joint path.
+- Phase: Phase 8 staged pose activation
+- Goal: parameterise joint Schur active pose DOFs so fixed-truth supported
+  setup recovery can freeze gauge-coupled `phi_residual_rad` without freezing
+  every pose DOF.
 
 ### Scope
 
 - In scope:
-  - Replace global Schur trust scaling with separate setup and pose scaling.
-  - Preserve existing diagnostics compatibility while recording enough evidence
-    to show setup was not clipped by pose.
-  - Add a regression test where a large pose block and small setup block produce
-    an unclipped setup step with a clipped pose step.
+  - Extend `JointSchurLMConfig.active_pose_dofs` beyond all-or-none.
+  - Thread partial active pose DOFs through pack/split/update and CLI config.
+  - Add focused tests for `phi_residual_rad` frozen with detector pose active.
   - Rerun focused Schur/align tests and the supported-only fixed-truth joint GPU
-    benchmark without the effectively hard pose prior.
+    benchmark with `phi_residual_rad` frozen.
 - Out of scope:
   - Full per-DOF unit trust for every supported/unsupported future DOF.
   - Stopped-reconstruction classification.
@@ -39,35 +38,38 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement separate setup/pose trust scaling in Schur step construction.
-- [x] Add block-wise trust regression test.
+- [x] Implement partial active pose DOF packing/splitting/updating.
+- [x] Expose active pose DOFs through align-auto CLI/config.
+- [x] Add focused regression tests.
 - [x] Run focused validation and `just imports`.
-- [x] Rerun supported-only fixed-truth joint GPU benchmark without hard pose
-  prior.
+- [x] Rerun supported-only fixed-truth joint GPU benchmark with phi frozen.
 - [x] Update docs with result/blocker.
-- [x] Commit the block-wise trust slice.
+- [x] Commit the staged pose activation slice.
 
 ### Validation
 
-- `uv run ruff check src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
-  passed.
-- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
-  passed with 0 errors and 0 warnings.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
-  passed: 11 tests.
+- `uv run ruff check ...` on touched staged-pose source/test files passed.
+- `uv run basedpyright ...` on touched staged-pose source/test files passed with
+  0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py -q` passed: 21 tests.
 - `just imports` passed.
-- GPU no-hard-prior fixed-truth joint run still failed:
-  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_block_trust/`.
+- GPU staged-pose runs still failed strict criteria:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_staged_pose_level1/`
+  and
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_staged_pose_level1_no_phi/`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- The hard pose-prior run proves the fixed-truth joint path is recoverable, but
-  it is diagnostic. The production-quality next step is trust/gauge handling.
-- Block-wise setup/pose trust removes aggregate pose clipping but does not solve
-  the remaining setup/pose gauge coupling by itself.
+- Block-wise setup/pose trust removed aggregate clipping, but the unconstrained
+  joint candidate still pointed setup in the wrong detector direction. Stage
+  pose DOFs next.
+- Staged pose activation is implemented, but final pose-active updates still
+  leave setup outside strict criteria. The next fix should anchor/zero-mean pose
+  during LM or protect verified setup during final pose refinement.
 
 ### Risks
 

@@ -71,6 +71,8 @@ def _write_artifacts(
     geometry_update_setup_prior_strength: float | None,
     geometry_update_pose_prior_strength: float | None,
     geometry_update_pose_frozen: bool,
+    geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_active_pose_dofs: tuple[str, ...],
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     verification: Mapping[str, object],
@@ -125,6 +127,10 @@ def _write_artifacts(
         geometry_update_setup_prior_strength=geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=geometry_update_pose_prior_strength,
         geometry_update_pose_frozen=geometry_update_pose_frozen,
+        geometry_update_pose_activate_at_level_factor=(
+            geometry_update_pose_activate_at_level_factor
+        ),
+        geometry_update_active_pose_dofs=geometry_update_active_pose_dofs,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
         synthetic_dataset=verification.get("synthetic_dataset"),
@@ -1026,6 +1032,8 @@ def _write_config_resolved(
     geometry_update_setup_prior_strength: float | None,
     geometry_update_pose_prior_strength: float | None,
     geometry_update_pose_frozen: bool,
+    geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_active_pose_dofs: tuple[str, ...],
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1045,6 +1053,14 @@ def _write_config_resolved(
     if geometry_update_pose_prior_strength is not None:
         lines.append(f"geometry_update_pose_prior_strength = {geometry_update_pose_prior_strength}")
     lines.append(f"geometry_update_pose_frozen = {str(bool(geometry_update_pose_frozen)).lower()}")
+    if geometry_update_pose_activate_at_level_factor is not None:
+        lines.append(
+            "geometry_update_pose_activate_at_level_factor = "
+            f"{int(geometry_update_pose_activate_at_level_factor)}"
+        )
+    lines.append(
+        f"geometry_update_active_pose_dofs = {json.dumps(list(geometry_update_active_pose_dofs))}"
+    )
     lines.append(f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}")
     lines.append(f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}")
     if isinstance(synthetic_dataset, dict):

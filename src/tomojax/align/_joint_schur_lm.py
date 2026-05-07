@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 _POSE_DIM = 3
 PoseSchurDof = Literal["phi_residual_rad", "dx_px", "dz_px"]
+_POSE_DOF_ORDER: tuple[PoseSchurDof, ...] = ("phi_residual_rad", "dx_px", "dz_px")
 
 
 @dataclass(frozen=True)
@@ -727,11 +728,16 @@ def _frozen_parameters(
 
 
 def _pose_dim(config: JointSchurLMConfig) -> int:
-    if config.active_pose_dofs == ():
-        return 0
-    if config.active_pose_dofs == ("phi_residual_rad", "dx_px", "dz_px"):
-        return _POSE_DIM
-    raise ValueError("JointSchurLMConfig.active_pose_dofs currently supports all pose DOFs or none")
+    _validate_active_pose_dofs(config.active_pose_dofs)
+    return len(config.active_pose_dofs)
+
+
+def _validate_active_pose_dofs(active_pose_dofs: tuple[PoseSchurDof, ...]) -> None:
+    if len(set(active_pose_dofs)) != len(active_pose_dofs):
+        raise ValueError("JointSchurLMConfig.active_pose_dofs must not contain duplicates")
+    unknown = tuple(dof for dof in active_pose_dofs if dof not in _POSE_DOF_ORDER)
+    if unknown:
+        raise ValueError(f"unknown active pose DOFs {unknown!r}")
 
 
 def _n_setup_params(geometry: GeometryState) -> int:
@@ -744,11 +750,24 @@ def _pack_joint(geometry: GeometryState, config: JointSchurLMConfig | None = Non
         setup_values.append(geometry.setup.det_v_px.value)
     if config is not None and _pose_dim(config) == 0:
         return jnp.asarray(setup_values, dtype=jnp.float32)
-    pose_values = np.stack(
-        [geometry.pose.phi_residual_rad, geometry.pose.dx_px, geometry.pose.dz_px],
-        axis=1,
-    ).reshape(-1)
+    active_pose = _active_pose_arrays(
+        geometry,
+        config.active_pose_dofs if config else _POSE_DOF_ORDER,
+    )
+    pose_values = np.stack(active_pose, axis=1).reshape(-1)
     return jnp.asarray([*setup_values, *pose_values], dtype=jnp.float32)
+
+
+def _active_pose_arrays(
+    geometry: GeometryState,
+    active_pose_dofs: tuple[PoseSchurDof, ...],
+) -> tuple[np.ndarray, ...]:
+    arrays = {
+        "phi_residual_rad": geometry.pose.phi_residual_rad,
+        "dx_px": geometry.pose.dx_px,
+        "dz_px": geometry.pose.dz_px,
+    }
+    return tuple(arrays[dof] for dof in active_pose_dofs)
 
 
 def _geometry_with_params(
@@ -770,18 +789,20 @@ def _geometry_with_params(
             "det_v_px",
             geometry.setup.det_v_px.with_value(float(params[2])),
         )
-    if config is not None and _pose_dim(config) == 0:
+    active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
+    if not active_pose_dofs:
         return GeometryState(setup=setup, pose=geometry.pose)
     pose_matrix = np.asarray(params[n_setup:], dtype=np.float64).reshape(
         geometry.pose.n_views,
-        _POSE_DIM,
+        len(active_pose_dofs),
     )
+    pose_updates = {dof: pose_matrix[:, index] for index, dof in enumerate(active_pose_dofs)}
     return GeometryState(
         setup=setup,
         pose=geometry.pose.with_updates(
-            phi_residual_rad=pose_matrix[:, 0],
-            dx_px=pose_matrix[:, 1],
-            dz_px=pose_matrix[:, 2],
+            phi_residual_rad=pose_updates.get("phi_residual_rad"),
+            dx_px=pose_updates.get("dx_px"),
+            dz_px=pose_updates.get("dz_px"),
         ),
     )
 
@@ -795,17 +816,24 @@ def _split_joint(
     theta_offset = params[0]
     det_u = params[1]
     det_v = params[2] if geometry.setup.det_v_px.active else jnp.asarray(0.0, dtype=jnp.float32)
-    if config is not None and _pose_dim(config) == 0:
-        return (
-            theta_offset,
-            det_u,
-            det_v,
-            jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
-            jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32),
-            jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32),
-        )
-    pose = params[n_setup:].reshape((geometry.pose.n_views, _POSE_DIM))
-    return theta_offset, det_u, det_v, pose[:, 0], pose[:, 1], pose[:, 2]
+    active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
+    pose_values = {
+        "phi_residual_rad": jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
+        "dx_px": jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32),
+        "dz_px": jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32),
+    }
+    if active_pose_dofs:
+        pose = params[n_setup:].reshape((geometry.pose.n_views, len(active_pose_dofs)))
+        for index, dof in enumerate(active_pose_dofs):
+            pose_values[dof] = pose[:, index]
+    return (
+        theta_offset,
+        det_u,
+        det_v,
+        pose_values["phi_residual_rad"],
+        pose_values["dx_px"],
+        pose_values["dz_px"],
+    )
 
 
 def _residual_for_params(
