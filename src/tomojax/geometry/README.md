@@ -16,7 +16,7 @@ datasets, CLI entrypoints, reconstruction, and alignment.
   `grid_from_detector_fov_cube`, `grid_from_detector_fov_slices`,
   `cylindrical_mask_xy`
 - State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
-  `GeometryState`
+  `AcquisitionParameters`, `GeometryState`
 - Gauge helpers: `canonicalize_geometry_gauges`, `CanonicalizedGeometry`,
   `GaugeReport`, `GaugeTransfer`
 - Artifact helpers: `geometry_state_to_dict`, `geometry_state_from_dict`,
@@ -38,8 +38,8 @@ datasets, or CLI modules.
   reconstruction tests.
 - Gauge canonicalisation transfers mean residual pose components into setup
   parameters while preserving realised setup-plus-pose channels.
-- Geometry JSON payloads include a `schema_version` and setup parameter
-  metadata. Pose arrays are carried by CSV artifacts.
+- Geometry JSON payloads include a `schema_version`, acquisition metadata, and
+  setup parameter metadata. Pose arrays are carried by CSV artifacts.
 
 ## Tests
 

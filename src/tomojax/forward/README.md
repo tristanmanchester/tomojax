@@ -57,13 +57,15 @@ Forbidden dependencies:
 - Detector roll uses a calibrated detector-grid transform: roll is applied
   around the zero-centre detector plane, while detector centre offsets remain
   independent.
-- Axis rotations use the core rotation-axis pose convention: x/y setup
-  rotations derive a lab-frame axis unit and `T_all` is built with
-  `axis_pose_stack`.
+- Axis rotations use the core rotation-axis pose convention: acquisition
+  metadata supplies the nominal parallel-tomography or parallel-laminography
+  axis, x/y setup rotations apply corrections on top of it, and `T_all` is
+  built with `axis_pose_stack`.
 - Alpha/beta pose rotations are composed after the nominal axis/theta pose in
   object coordinates, matching the sidecar geometry wrapper convention.
-- Laminography and object drift are explicit unsupported states until their
-  core convention mapping is defined.
+- Parallel laminography is represented as a tilted nominal rotation axis for
+  the same `core_trilinear_ray` operator. Object drift is an explicit
+  unsupported state until its core convention mapping is defined.
 - Residual filters are projection-domain JAX reference policies. The current
   public policies are `raw`, `lowpass_gaussian`, and
   `bandpass_difference_of_gaussians`.
@@ -73,4 +75,4 @@ Forbidden dependencies:
 - `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
 - `tests/test_forward_reference.py` covers the v2-to-core adapter, supported
   detector/theta shifts, detector roll, axis tilt, alpha/beta pose rotations,
-  and robust residual contracts.
+  parallel laminography nominal-axis mapping, and robust residual contracts.

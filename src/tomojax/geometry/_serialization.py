@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from tomojax.geometry._state import (
+    AcquisitionParameters,
     GaugeGroup,
     GeometryState,
+    LaminographyTiltAbout,
     PoseParameters,
     ScalarParameter,
     SetupParameters,
@@ -52,6 +54,7 @@ def geometry_state_to_dict(state: GeometryState) -> dict[str, object]:
             "theta_offset_rad": _parameter_to_dict(state.setup.theta_offset_rad),
             "theta_scale": _parameter_to_dict(state.setup.theta_scale),
         },
+        "acquisition": _acquisition_to_dict(state.acquisition),
         "pose": {"n_views": state.pose.n_views},
     }
 
@@ -75,6 +78,35 @@ def geometry_state_from_dict(payload: dict[str, object], pose: PoseParameters) -
             theta_scale=_parameter_from_dict(setup_payload["theta_scale"]),
         ),
         pose=pose,
+        acquisition=_acquisition_from_dict(payload.get("acquisition")),
+    )
+
+
+def _acquisition_to_dict(acquisition: AcquisitionParameters) -> dict[str, object]:
+    return {
+        "model": acquisition.model,
+        "laminography_tilt_rad": acquisition.laminography_tilt_rad,
+        "laminography_tilt_about": acquisition.laminography_tilt_about,
+    }
+
+
+def _acquisition_from_dict(payload: object) -> AcquisitionParameters:
+    if not isinstance(payload, dict):
+        return AcquisitionParameters.parallel()
+    data = cast("dict[object, object]", payload)
+    raw_model = data.get("model", "parallel")
+    model = str(raw_model)
+    if model == "parallel":
+        return AcquisitionParameters.parallel()
+    if model != "parallel_laminography":
+        raise ValueError(f"unsupported acquisition model {model!r}")
+    raw_tilt = data.get("laminography_tilt_rad", 0.0)
+    raw_about = str(data.get("laminography_tilt_about", "x"))
+    if raw_about not in {"x", "z"}:
+        raise ValueError("laminography_tilt_about must be 'x' or 'z'")
+    return AcquisitionParameters.parallel_laminography(
+        tilt_rad=float(raw_tilt) if isinstance(raw_tilt, int | float | str) else 0.0,
+        tilt_about=cast("LaminographyTiltAbout", raw_about),
     )
 
 

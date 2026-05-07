@@ -204,6 +204,11 @@ def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) ->
     assert sidecars.manifest["name"] == "synth128_lamino_axis_roll_pose"
     assert sidecars.artifacts["v2_true_geometry_json"] == paths.v2_true_geometry
     assert sidecars.true_geometry.pose.n_views == 8
+    assert sidecars.true_geometry.acquisition.model == "parallel_laminography"
+    np.testing.assert_allclose(
+        sidecars.true_geometry.acquisition.laminography_tilt_rad,
+        np.deg2rad(60.0),
+    )
     assert sidecars.true_geometry.setup.det_v_px.active is True
     assert sidecars.true_geometry.setup.det_u_px.value == -2.0
     assert sidecars.nominal_geometry.setup.det_u_px.value == 0.0

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
-# pyright: reportUnknownVariableType=false
 import csv
 from dataclasses import replace
 import json
@@ -11,6 +9,7 @@ import numpy as np
 
 from tomojax.geometry import (
     GEOMETRY_STATE_SCHEMA_VERSION,
+    AcquisitionParameters,
     GeometryState,
     PoseParameters,
     SetupParameters,
@@ -20,6 +19,9 @@ from tomojax.geometry import (
     write_pose_decomposition_csv,
     write_pose_params_csv,
 )
+
+# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false
+# pyright: reportUnknownVariableType=false
 
 
 def test_geometry_json_and_pose_csv_round_trip_contract_artifacts(tmp_path) -> None:
@@ -37,8 +39,12 @@ def test_geometry_json_and_pose_csv_round_trip_contract_artifacts(tmp_path) -> N
     assert payload["schema_version"] == GEOMETRY_STATE_SCHEMA_VERSION
     assert payload["setup"]["det_u_px"]["unit"] == "px"
     assert payload["setup"]["det_v_px"]["active"] is True
+    acquisition = cast("dict[str, Any]", payload["acquisition"])
+    assert acquisition["model"] == "parallel_laminography"
+    assert acquisition["laminography_tilt_about"] == "x"
     assert payload["pose"]["n_views"] == 3
     assert restored.setup == state.setup
+    assert restored.acquisition == state.acquisition
     np.testing.assert_allclose(restored.pose.alpha_rad, state.pose.alpha_rad)
     np.testing.assert_allclose(restored.pose.beta_rad, state.pose.beta_rad)
     np.testing.assert_allclose(restored.pose.theta_nominal_rad, state.pose.theta_nominal_rad)
@@ -97,4 +103,11 @@ def _example_state() -> GeometryState:
         dx_px=np.array([0.25, 0.5, 0.75], dtype=np.float64),
         dz_px=np.array([1.0, 1.125, 1.25], dtype=np.float64),
     )
-    return GeometryState(setup=setup, pose=pose)
+    return GeometryState(
+        setup=setup,
+        pose=pose,
+        acquisition=AcquisitionParameters.parallel_laminography(
+            tilt_rad=float(np.pi / 6.0),
+            tilt_about="x",
+        ),
+    )

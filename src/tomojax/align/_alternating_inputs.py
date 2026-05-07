@@ -105,6 +105,7 @@ def _synthetic_initial_geometry(n_views: int) -> GeometryState:
     return GeometryState(
         setup=base.setup,
         pose=base.pose,
+        acquisition=base.acquisition,
     )
 
 
@@ -124,6 +125,7 @@ def _synthetic_true_geometry(n_views: int) -> GeometryState:
             dx_px=0.02 + 0.01 * span,
             dz_px=-0.0125 + 0.0075 * span,
         ),
+        acquisition=base.acquisition,
     )
 
 
@@ -133,4 +135,4 @@ def _geometry_with_active_det_v(n_views: int) -> GeometryState:
         "det_v_px",
         replace(base.setup.det_v_px, value=0.0, active=True),
     )
-    return GeometryState(setup=setup, pose=base.pose)
+    return GeometryState(setup=setup, pose=base.pose, acquisition=base.acquisition)

@@ -239,7 +239,7 @@ def _geometry_with_params(
         "theta_scale",
         geometry.setup.theta_scale.with_value(values["theta_scale"]),
     )
-    return GeometryState(setup=setup, pose=geometry.pose)
+    return GeometryState(setup=setup, pose=geometry.pose, acquisition=geometry.acquisition)
 
 
 def _setup_values(

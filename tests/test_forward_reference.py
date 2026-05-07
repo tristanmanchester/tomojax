@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.forward import (
     PROJECTION_OPERATOR,
     core_projection_geometry_from_state,
@@ -20,7 +21,7 @@ from tomojax.forward import (
     residual_loss,
     robust_residual_scale,
 )
-from tomojax.geometry import GeometryState
+from tomojax.geometry import AcquisitionParameters, GeometryState
 
 
 def test_project_parallel_reference_shape_and_zero_pose_values() -> None:
@@ -172,6 +173,38 @@ def test_core_projection_geometry_applies_alpha_beta_residual_pose() -> None:
     provenance = core.provenance()
     assert np.isclose(float(cast("float", provenance["alpha_rad_max_abs"])), 0.20)
     assert np.isclose(float(cast("float", provenance["beta_rad_max_abs"])), 0.10)
+
+
+def test_core_projection_geometry_matches_core_laminography_pose_convention() -> None:
+    geometry = GeometryState.zeros(2)
+    geometry = GeometryState(
+        setup=geometry.setup,
+        pose=geometry.pose.with_updates(
+            theta_nominal_rad=np.array([0.0, np.pi / 3.0], dtype=np.float64),
+        ),
+        acquisition=AcquisitionParameters.parallel_laminography(
+            tilt_rad=float(np.deg2rad(30.0)),
+            tilt_about="x",
+        ),
+    )
+
+    core = core_projection_geometry_from_state((7, 7, 7), geometry)
+    reference = LaminographyGeometry(
+        grid=Grid(nx=7, ny=7, nz=7, vx=1.0, vy=1.0, vz=1.0),
+        detector=Detector(nu=7, nv=7, du=1.0, dv=1.0),
+        thetas_deg=[0.0, 60.0],
+        tilt_deg=30.0,
+        tilt_about="x",
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(core.t_all[:, :3, :3]),
+        np.asarray([reference.pose_for_view(0), reference.pose_for_view(1)])[:, :3, :3],
+        atol=1e-6,
+    )
+    provenance = core.provenance()
+    assert provenance["acquisition_model"] == "parallel_laminography"
+    assert np.isclose(float(cast("float", provenance["laminography_tilt_rad"])), np.deg2rad(30.0))
 
 
 def test_project_parallel_reference_applies_alpha_beta_pose() -> None:

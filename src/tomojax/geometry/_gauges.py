@@ -79,6 +79,6 @@ def canonicalize_geometry_gauges(state: GeometryState) -> CanonicalizedGeometry:
         )
 
     return CanonicalizedGeometry(
-        state=GeometryState(setup=setup, pose=pose),
+        state=GeometryState(setup=setup, pose=pose, acquisition=state.acquisition),
         report=GaugeReport(tuple(transfers)),
     )

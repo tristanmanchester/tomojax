@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 GaugeGroup = Literal["detector_u", "detector_v", "rotation", "axis", "none"]
+AcquisitionModel = Literal["parallel", "parallel_laminography"]
+LaminographyTiltAbout = Literal["x", "z"]
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,30 @@ class SetupParameters:
 
     def replace_parameter(self, name: str, parameter: ScalarParameter) -> SetupParameters:
         return replace(self, **{name: parameter})
+
+
+@dataclass(frozen=True)
+class AcquisitionParameters:
+    model: AcquisitionModel = "parallel"
+    laminography_tilt_rad: float = 0.0
+    laminography_tilt_about: LaminographyTiltAbout = "x"
+
+    @classmethod
+    def parallel(cls) -> AcquisitionParameters:
+        return cls()
+
+    @classmethod
+    def parallel_laminography(
+        cls,
+        *,
+        tilt_rad: float,
+        tilt_about: LaminographyTiltAbout = "x",
+    ) -> AcquisitionParameters:
+        return cls(
+            model="parallel_laminography",
+            laminography_tilt_rad=float(tilt_rad),
+            laminography_tilt_about=tilt_about,
+        )
 
 
 @dataclass(frozen=True)
@@ -127,10 +153,15 @@ class PoseParameters:
 class GeometryState:
     setup: SetupParameters
     pose: PoseParameters
+    acquisition: AcquisitionParameters = field(default_factory=AcquisitionParameters.parallel)
 
     @classmethod
     def zeros(cls, n_views: int) -> GeometryState:
-        return cls(setup=SetupParameters.defaults(), pose=PoseParameters.zeros(n_views))
+        return cls(
+            setup=SetupParameters.defaults(),
+            pose=PoseParameters.zeros(n_views),
+            acquisition=AcquisitionParameters.parallel(),
+        )
 
     def theta_total_rad(self) -> NDArray[np.float64]:
         return (

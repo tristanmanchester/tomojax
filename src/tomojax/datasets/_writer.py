@@ -21,6 +21,7 @@ from tomojax.forward import (
     project_parallel_reference,
 )
 from tomojax.geometry import (
+    AcquisitionParameters,
     GeometryState,
     PoseParameters,
     write_geometry_json,
@@ -170,7 +171,7 @@ def _core_projectable_state(state: GeometryState) -> GeometryState:
         dx_px=state.pose.dx_px,
         dz_px=state.pose.dz_px,
     )
-    return GeometryState(setup=setup, pose=pose)
+    return GeometryState(setup=setup, pose=pose, acquisition=state.acquisition)
 
 
 def _unsupported_dofs_not_evaluated(
@@ -410,9 +411,18 @@ def _geometry_state_from_spec(
         "theta_scale",
         setup.theta_scale.with_value(_setup_value(setup_values, "theta_scale", default=1.0)),
     )
+    acquisition = (
+        AcquisitionParameters.parallel_laminography(
+            tilt_rad=float(np.deg2rad(spec.laminography_tilt_deg)),
+            tilt_about="x",
+        )
+        if spec.laminography_tilt_deg is not None
+        else AcquisitionParameters.parallel()
+    )
     return GeometryState(
         setup=setup,
         pose=_pose_params_from_table(pose, n_views=n_views, theta_deg=theta_deg),
+        acquisition=acquisition,
     )
 
 

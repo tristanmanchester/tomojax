@@ -34,13 +34,20 @@ from tomojax.geometry._serialization import (
     write_pose_decomposition_csv,
     write_pose_params_csv,
 )
-from tomojax.geometry._state import GeometryState, PoseParameters, ScalarParameter, SetupParameters
+from tomojax.geometry._state import (
+    AcquisitionParameters,
+    GeometryState,
+    PoseParameters,
+    ScalarParameter,
+    SetupParameters,
+)
 
 __all__ = [
     "DISK_VOLUME_AXES",
     "GEOMETRY_STATE_SCHEMA_VERSION",
     "INTERNAL_VOLUME_AXES",
     "VOLUME_AXES_ATTR",
+    "AcquisitionParameters",
     "CanonicalizedGeometry",
     "GaugeReport",
     "GaugeTransfer",

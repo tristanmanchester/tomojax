@@ -3,6 +3,51 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 2 Parallel Laminography Acquisition Slice
+
+### Summary
+
+- Added typed acquisition metadata to `GeometryState` for parallel tomography
+  and parallel laminography, including nominal laminography tilt and tilt axis.
+- Geometry JSON sidecars now serialize/read acquisition metadata while older
+  payloads without the field still default to parallel tomography.
+- The v2 `core_trilinear_ray` adapter now builds the nominal rotation axis from
+  acquisition metadata and applies existing setup axis x/y corrections on top.
+  No rotate-and-sum path or projector selector was added.
+- Synthetic sidecar generation now records laminography acquisition metadata
+  for planned laminography scenarios, and geometry update/canonicalisation paths
+  preserve acquisition metadata.
+- Module READMEs were updated to document acquisition metadata and the
+  laminography nominal-axis mapping.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_forward_reference.py::test_core_projection_geometry_matches_core_laminography_pose_convention
+  tests/test_geometry_serialization.py::test_geometry_json_and_pose_csv_round_trip_contract_artifacts
+  tests/test_synthetic_datasets.py::test_load_synthetic_dataset_sidecars_reads_manifest_index
+  -q` passed: 3 tests in 3.02 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_inputs.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_setup_lm.py
+  src/tomojax/align/_pose_lm.py src/tomojax/datasets/_writer.py
+  src/tomojax/forward/_projector.py src/tomojax/geometry/__init__.py
+  src/tomojax/geometry/_gauges.py src/tomojax/geometry/_serialization.py
+  src/tomojax/geometry/_state.py src/tomojax/geometry/api.py
+  tests/test_forward_reference.py tests/test_geometry_serialization.py
+  tests/test_synthetic_datasets.py` passed.
+- `uv run basedpyright` on the same touched source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Laminography tilt is represented as acquisition metadata only; it is not yet
+  an active solved setup parameter.
+- The laminography benchmark scenario still needs a scoped solver/recovery pass
+  before its criteria stop being scenario-level future work.
+- Object drift and automatic weak-DOF activation remain separate planned
+  slices.
+
 ## 2026-05-07 — GPU Memory Diagnostic Pause Summary
 
 ### Summary

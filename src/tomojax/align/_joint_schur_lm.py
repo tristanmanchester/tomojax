@@ -951,7 +951,7 @@ def _geometry_with_params(
     )
     active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
     if not active_pose_dofs:
-        return GeometryState(setup=setup, pose=geometry.pose)
+        return GeometryState(setup=setup, pose=geometry.pose, acquisition=geometry.acquisition)
     pose_matrix = np.asarray(params[n_setup:], dtype=np.float64).reshape(
         geometry.pose.n_views,
         len(active_pose_dofs),
@@ -966,6 +966,7 @@ def _geometry_with_params(
             dx_px=pose_updates.get("dx_px"),
             dz_px=pose_updates.get("dz_px"),
         ),
+        acquisition=geometry.acquisition,
     )
 
 

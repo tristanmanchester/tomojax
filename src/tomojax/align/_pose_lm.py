@@ -149,6 +149,7 @@ def _geometry_with_params(
             dx_px=_as_float64_array(updates.get("dx_px")),
             dz_px=_as_float64_array(updates.get("dz_px")),
         ),
+        acquisition=geometry.acquisition,
     )
 
 

@@ -43,6 +43,9 @@ class CoreProjectionGeometry:
     axis_rot_y_rad: object = 0.0
     alpha_rad_max_abs: object = 0.0
     beta_rad_max_abs: object = 0.0
+    acquisition_model: str = "parallel"
+    laminography_tilt_rad: object = 0.0
+    laminography_tilt_about: str = "x"
 
     def provenance(self) -> dict[str, object]:
         """Return serialisable operator metadata for run artifacts."""
@@ -60,6 +63,9 @@ class CoreProjectionGeometry:
             "axis_rot_y_rad": _serialisable_scalar(self.axis_rot_y_rad),
             "alpha_rad_max_abs": _serialisable_scalar(self.alpha_rad_max_abs),
             "beta_rad_max_abs": _serialisable_scalar(self.beta_rad_max_abs),
+            "acquisition_model": self.acquisition_model,
+            "laminography_tilt_rad": _serialisable_scalar(self.laminography_tilt_rad),
+            "laminography_tilt_about": self.laminography_tilt_about,
         }
 
 
@@ -81,6 +87,7 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
+    nominal_axis = _nominal_axis_from_acquisition(geometry)
     return project_parallel_reference_arrays(
         vol,
         theta_rad=theta,
@@ -91,6 +98,10 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_rot_x,
         axis_rot_y_rad=axis_rot_y,
+        nominal_axis_unit=nominal_axis,
+        acquisition_model=geometry.acquisition.model,
+        laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
+        laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
     )
 
 
@@ -105,6 +116,10 @@ def project_parallel_reference_arrays(
     detector_roll_rad: jax.Array | float = 0.0,
     axis_rot_x_rad: jax.Array | float = 0.0,
     axis_rot_y_rad: jax.Array | float = 0.0,
+    nominal_axis_unit: jax.Array | tuple[float, float, float] = (0.0, 0.0, 1.0),
+    acquisition_model: str = "parallel",
+    laminography_tilt_rad: jax.Array | float = 0.0,
+    laminography_tilt_about: str = "x",
 ) -> jax.Array:
     """Project a volume from supported v2 pose arrays using core trilinear rays."""
     vol = jnp.asarray(volume, dtype=jnp.float32)
@@ -127,6 +142,10 @@ def project_parallel_reference_arrays(
         detector_roll_rad=detector_roll_rad,
         axis_rot_x_rad=axis_rot_x_rad,
         axis_rot_y_rad=axis_rot_y_rad,
+        nominal_axis_unit=nominal_axis_unit,
+        acquisition_model=acquisition_model,
+        laminography_tilt_rad=laminography_tilt_rad,
+        laminography_tilt_about=laminography_tilt_about,
     )
 
     def project_one(t_view: jax.Array) -> jax.Array:
@@ -167,6 +186,7 @@ def core_projection_geometry_from_state(
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
+    nominal_axis = _nominal_axis_from_acquisition(geometry)
     return core_projection_geometry_from_arrays(
         volume_shape,
         theta_rad=theta,
@@ -177,6 +197,10 @@ def core_projection_geometry_from_state(
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_rot_x,
         axis_rot_y_rad=axis_rot_y,
+        nominal_axis_unit=nominal_axis,
+        acquisition_model=geometry.acquisition.model,
+        laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
+        laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
         detector_shape=detector_shape,
         gather_dtype=gather_dtype,
         checkpoint_projector=checkpoint_projector,
@@ -197,6 +221,10 @@ def core_projection_geometry_from_arrays(
     detector_roll_rad: jax.Array | float = 0.0,
     axis_rot_x_rad: jax.Array | float = 0.0,
     axis_rot_y_rad: jax.Array | float = 0.0,
+    nominal_axis_unit: jax.Array | tuple[float, float, float] = (0.0, 0.0, 1.0),
+    acquisition_model: str = "parallel",
+    laminography_tilt_rad: jax.Array | float = 0.0,
+    laminography_tilt_about: str = "x",
     detector_shape: tuple[int, int] | None = None,
     gather_dtype: str = "fp32",
     checkpoint_projector: bool = True,
@@ -204,7 +232,7 @@ def core_projection_geometry_from_arrays(
     step_size: float | None = None,
     n_steps: int | None = None,
 ) -> CoreProjectionGeometry:
-    """Build core Grid/Detector/T_all for supported parallel tomography arrays."""
+    """Build core Grid/Detector/T_all for supported parallel acquisition arrays."""
     nx, ny, nz = _volume_shape(volume_shape)
     theta = jnp.asarray(theta_rad, dtype=jnp.float32)
     alpha = _pose_array_like(alpha_rad, theta, name="alpha_rad")
@@ -222,6 +250,7 @@ def core_projection_geometry_from_arrays(
     det_grid = _detector_grid_for_roll(detector, detector_roll_rad=roll)
     axis_x = jnp.asarray(axis_rot_x_rad, dtype=jnp.float32)
     axis_y = jnp.asarray(axis_rot_y_rad, dtype=jnp.float32)
+    nominal_axis = _normalize_axis_unit_jax(nominal_axis_unit)
     return CoreProjectionGeometry(
         grid=grid,
         detector=detector,
@@ -233,6 +262,7 @@ def core_projection_geometry_from_arrays(
             dz,
             axis_rot_x_rad=axis_x,
             axis_rot_y_rad=axis_y,
+            nominal_axis_unit=nominal_axis,
         ),
         det_grid=det_grid,
         gather_dtype=gather_dtype,
@@ -245,6 +275,9 @@ def core_projection_geometry_from_arrays(
         axis_rot_y_rad=axis_y,
         alpha_rad_max_abs=jnp.max(jnp.abs(alpha)),
         beta_rad_max_abs=jnp.max(jnp.abs(beta)),
+        acquisition_model=acquisition_model,
+        laminography_tilt_rad=laminography_tilt_rad,
+        laminography_tilt_about=laminography_tilt_about,
     )
 
 
@@ -257,9 +290,10 @@ def _stack_core_poses(
     *,
     axis_rot_x_rad: jax.Array,
     axis_rot_y_rad: jax.Array,
+    nominal_axis_unit: jax.Array,
 ) -> jax.Array:
     axis = axis_unit_from_rotations(
-        (0.0, 0.0, 1.0),
+        nominal_axis_unit,
         axis_rot_x_deg=axis_rot_x_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
         axis_rot_y_deg=axis_rot_y_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
     )
@@ -298,6 +332,24 @@ def _pose_array_like(value: jax.Array | float, theta: jax.Array, *, name: str) -
     if array.shape != theta.shape:
         raise ValueError(f"{name} must be scalar or match theta_rad shape")
     return array
+
+
+def _nominal_axis_from_acquisition(geometry: GeometryState) -> jax.Array:
+    acquisition = geometry.acquisition
+    if acquisition.model == "parallel":
+        return jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)
+    tilt = jnp.asarray(acquisition.laminography_tilt_rad, dtype=jnp.float32)
+    c, s = jnp.cos(tilt), jnp.sin(tilt)
+    if acquisition.laminography_tilt_about == "x":
+        return _normalize_axis_unit_jax(jnp.asarray([0.0, s, c], dtype=jnp.float32))
+    return _normalize_axis_unit_jax(jnp.asarray([s, 0.0, c], dtype=jnp.float32))
+
+
+def _normalize_axis_unit_jax(axis: jax.Array | tuple[float, float, float]) -> jax.Array:
+    values = jnp.asarray(axis, dtype=jnp.float32)
+    if values.shape != (3,):
+        raise ValueError("nominal_axis_unit must be a 3-vector")
+    return values / jnp.maximum(jnp.linalg.norm(values), jnp.asarray(1e-8, dtype=jnp.float32))
 
 
 def _volume_shape(shape: tuple[int, ...]) -> tuple[int, int, int]:
