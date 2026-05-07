@@ -39,7 +39,11 @@ _GEOMETRY_UPDATE_SOLVER_CHOICES = ("joint_schur", "setup_only_lm")
 _PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "spherical")
 _PREVIEW_INITIALIZATION_CHOICES = ("backprojection", "zero", "constant", "average_projection")
 _PREVIEW_RESIDUAL_FILTER_MODE_CHOICES = ("continuation", "raw")
-_STOPPED_PREVIEW_POLICY_CHOICES = ("standard", "constant_cylindrical_first_level")
+_STOPPED_PREVIEW_POLICY_CHOICES = (
+    "standard",
+    "constant_cylindrical_first_level",
+    "constant_cylindrical_first_level_no_fista",
+)
 SyntheticSize = Literal[32, 64, 128]
 
 
@@ -218,7 +222,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional first stopped-reconstruction preview constraint. "
             "constant_cylindrical_first_level uses a constant initial volume, "
-            "cylindrical support, and raw residuals for the coarsest preview only."
+            "cylindrical support, and raw residuals for the coarsest preview only; "
+            "the no_fista variant also skips the coarsest reconstruction iterations."
         ),
     )
     return parser

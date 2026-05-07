@@ -11,25 +11,29 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 setup-only geometry update option
-- Goal: expose the existing core-projector setup-only LM solver inside the
-  alternating smoke path for pose-frozen setup-global diagnostics.
+- Phase: Phase 8/9 constrained early x-step diagnostic
+- Goal: prevent the first stopped-reconstruction preview from absorbing
+  setup-global geometry before Schur by adding a pose/geometry-safe constrained
+  early x-step policy.
 
 ### Scope
 
 - In scope:
-  - Add a typed `geometry_update_solver` option for `joint_schur` vs
-    `setup_only_lm`.
-  - Use setup-only LM only for pose-frozen/no-pose-DOF runs.
-  - Preserve existing artifact contracts by adapting setup-only diagnostics into
-    the current geometry-update summary shape.
-  - Add focused tests and validation.
+  - Add an explicit stopped-preview policy that uses the existing constant
+    cylindrical first-level volume without running FISTA before the first
+    geometry update.
+  - Keep the policy private to `tomojax.align` orchestration/config and wire it
+    through the existing CLI option.
+  - Preserve existing artifact/report shapes; no new fields.
+  - Add focused policy tests and run a realistic setup-global CUDA gate if
+    focused validation passes.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
   - Adding new benchmark/report fields.
   - Pose-only solver changes.
+  - Setup-only solver changes.
   - Running old/current TomoJAX automatically.
   - Parsing non-JSON current artifacts.
   - Object-motion solver or correction model.
@@ -48,10 +52,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add setup-only LM geometry-update option.
-- [x] Wire CLI/config/artifact payloads.
+- [x] Add constrained no-FISTA first stopped-preview policy.
+- [x] Wire CLI/config resolved values through existing policy fields.
 - [x] Add focused tests.
 - [x] Run focused validation and `just imports`.
+- [x] Run the 128^3 supported-only CUDA gate if validation passes.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
@@ -71,6 +76,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   src/tomojax/cli/align_auto.py tests/test_alternating_geometry_update_policy.py
   tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed after the setup-only solver option.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_stopped_preview_policy_constrains_first_preview_only
+  tests/test_alternating_geometry_update_policy.py::test_stopped_preview_no_fista_policy_skips_first_preview_reconstruction_only
+  tests/test_alternating_geometry_update_policy.py::test_stopped_preview_policy_reuses_first_preview_for_later_geometry_updates
+  -q` passed: 3 tests in 0.72 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed after the no-FISTA first-preview policy.
+- CUDA 128^3/256-view supported-only stopped-reconstruction gate completed on
+  `cuda:0` in 178.47 seconds with the no-FISTA first-preview policy. Artifact:
+  `.artifacts/phase8_no_fista_first_preview/runs/128_supported_only_256views_no_fista_first_gpu/`.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in

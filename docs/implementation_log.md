@@ -3,6 +3,61 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 No-FISTA First-Preview Policy
+
+### Summary
+
+- Added `constant_cylindrical_first_level_no_fista` as a stopped-preview policy
+  that reuses the existing constant cylindrical first-level volume but sets the
+  effective first-level reconstruction iterations to zero.
+- Kept the policy on the existing `stopped_preview_policy` config/CLI/artifact
+  surface, so no benchmark/report schema fields were added.
+- Focused policy tests cover both the existing constrained first-preview policy
+  and the new no-FISTA variant.
+
+### 128^3 CUDA Gate
+
+Reran the 128^3/256-view supported-only `synth128_setup_global_tomo` stopped
+gate on `cuda:0`:
+
+- Artifact:
+  `.artifacts/phase8_no_fista_first_preview/runs/128_supported_only_256views_no_fista_first_gpu/`
+- Command log:
+  `.artifacts/phase8_no_fista_first_preview/logs/128_supported_only_256views_no_fista_first_gpu.log`
+- Wall time: `178.47` seconds.
+- Host max RSS: `2856892` KB.
+- Volume NMSE: `0.491490`.
+- Final residual: `2.400696`.
+- det_u RMSE: `1.808249` px.
+- theta RMSE: `0.021008` rad.
+- Projection-loss classification:
+  `reconstruction_absorbed_geometry`.
+
+Skipping first-level FISTA improved det_u compared with the longer stopped
+8/32/32 run (`4.227196` px), but theta remained outside tolerance and final
+volume/residual worsened. This supports the current diagnosis: constrained early
+x-steps can reduce one absorbed gauge component, but a constant unoptimized
+volume is not informative enough for full setup-global recovery.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-no-fista-first-preview-gate.md`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_stopped_preview_policy_constrains_first_preview_only
+  tests/test_alternating_geometry_update_policy.py::test_stopped_preview_no_fista_policy_skips_first_preview_reconstruction_only
+  tests/test_alternating_geometry_update_policy.py::test_stopped_preview_policy_reuses_first_preview_for_later_geometry_updates
+  -q` passed: 3 tests in 0.72 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-08 — Phase 8/9 Setup-Only Geometry Update Option
 
 ### Summary

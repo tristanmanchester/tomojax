@@ -120,7 +120,7 @@ def _run_alternating_solver_smoke_impl(
             ),
             mask=mask,
             config=ReferenceFISTAConfig(
-                iterations=level.reconstruction_iterations,
+                iterations=_preview_reconstruction_iterations(config, level),
                 step_size=_preview_fista_step_size(config),
                 tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
                 residual_sigma=level.residual_sigma,
@@ -248,7 +248,7 @@ def _run_alternating_solver_smoke_impl(
             AlternatingLevelSummary(
                 level_factor=level.level_factor,
                 role=level.role,
-                reconstruction_iterations=level.reconstruction_iterations,
+                reconstruction_iterations=_preview_reconstruction_iterations(config, level),
                 geometry_updates=level.geometry_updates,
                 executed_geometry_updates=geometry_updates,
                 residual_filter_kinds=_residual_filter_kinds(level),
@@ -395,6 +395,15 @@ def _preview_fista_step_size(config: AlternatingSmokeConfig) -> float:
     return 100.0 * max(float(config.size), 1.0) / 128.0
 
 
+def _preview_reconstruction_iterations(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+) -> int:
+    if _uses_no_fista_first_level(config, level):
+        return 0
+    return level.reconstruction_iterations
+
+
 def _preview_initial_volume(
     config: AlternatingSmokeConfig,
     observed: jax.Array,
@@ -467,10 +476,24 @@ def _uses_constant_cylindrical_first_level(
     level: ContinuationLevel,
 ) -> bool:
     return (
-        config.stopped_preview_policy == "constant_cylindrical_first_level"
+        config.stopped_preview_policy
+        in {
+            "constant_cylindrical_first_level",
+            "constant_cylindrical_first_level_no_fista",
+        }
         and config.geometry_update_volume_source == "stopped_reconstruction"
         and level.role == "preview"
         and int(level.level_factor) == 4
+    )
+
+
+def _uses_no_fista_first_level(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+) -> bool:
+    return (
+        config.stopped_preview_policy == "constant_cylindrical_first_level_no_fista"
+        and _uses_constant_cylindrical_first_level(config, level)
     )
 
 
@@ -489,7 +512,11 @@ def _stopped_geometry_update_volume(
     constrained_first_preview_volume: jax.Array | None,
 ) -> jax.Array:
     if (
-        config.stopped_preview_policy == "constant_cylindrical_first_level"
+        config.stopped_preview_policy
+        in {
+            "constant_cylindrical_first_level",
+            "constant_cylindrical_first_level_no_fista",
+        }
         and config.geometry_update_volume_source == "stopped_reconstruction"
         and constrained_first_preview_volume is not None
         and not _uses_constant_cylindrical_first_level(config, level)

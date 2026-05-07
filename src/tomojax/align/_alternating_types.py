@@ -21,7 +21,11 @@ GeometryUpdateSolver = Literal["joint_schur", "setup_only_lm"]
 PreviewInitialization = Literal["average_projection", "backprojection", "constant", "zero"]
 PreviewResidualFilterMode = Literal["continuation", "raw"]
 PreviewVolumeSupport = Literal["cylindrical", "none", "spherical"]
-StoppedPreviewPolicy = Literal["standard", "constant_cylindrical_first_level"]
+StoppedPreviewPolicy = Literal[
+    "standard",
+    "constant_cylindrical_first_level",
+    "constant_cylindrical_first_level_no_fista",
+]
 
 
 @dataclass(frozen=True)

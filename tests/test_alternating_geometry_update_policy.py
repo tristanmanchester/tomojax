@@ -220,6 +220,7 @@ def test_stopped_preview_policy_constrains_first_preview_only() -> None:
         _effective_preview_initialization,
         _effective_preview_residual_filter_mode,
         _effective_preview_volume_support,
+        _preview_reconstruction_iterations,
     )
 
     schedule = reference_continuation_schedule("reference")
@@ -236,9 +237,36 @@ def test_stopped_preview_policy_constrains_first_preview_only() -> None:
     assert _effective_preview_initialization(config, coarse) == "constant"
     assert _effective_preview_volume_support(config, coarse) == "cylindrical"
     assert _effective_preview_residual_filter_mode(config, coarse) == "raw"
+    assert _preview_reconstruction_iterations(config, coarse) == coarse.reconstruction_iterations
     assert _effective_preview_initialization(config, fine) == "backprojection"
     assert _effective_preview_volume_support(config, fine) == "none"
     assert _effective_preview_residual_filter_mode(config, fine) == "continuation"
+    assert _preview_reconstruction_iterations(config, fine) == fine.reconstruction_iterations
+
+
+def test_stopped_preview_no_fista_policy_skips_first_preview_reconstruction_only() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import (
+        _effective_preview_initialization,
+        _effective_preview_residual_filter_mode,
+        _effective_preview_volume_support,
+        _preview_reconstruction_iterations,
+    )
+
+    schedule = reference_continuation_schedule("reference")
+    config = AlternatingSmokeConfig(
+        stopped_preview_policy="constant_cylindrical_first_level_no_fista",
+        geometry_update_volume_source="stopped_reconstruction",
+    )
+
+    coarse = schedule.levels[0]
+    fine = schedule.levels[-1]
+
+    assert _effective_preview_initialization(config, coarse) == "constant"
+    assert _effective_preview_volume_support(config, coarse) == "cylindrical"
+    assert _effective_preview_residual_filter_mode(config, coarse) == "raw"
+    assert _preview_reconstruction_iterations(config, coarse) == 0
+    assert _preview_reconstruction_iterations(config, fine) == fine.reconstruction_iterations
 
 
 def test_theta_activation_policy_freezes_theta_until_configured_level() -> None:
