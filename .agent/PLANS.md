@@ -11,32 +11,36 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 0 current-baseline comparison rows
-- Goal: let the synthetic comparison report ingest normalized
-  `benchmark_baseline_current.json` artifacts alongside reimagined
-  `benchmark_result.json` runs.
+- Phase: Phase 8/9 setup-global stopped-reconstruction diagnosis
+- Goal: classify whether extra preview/reconstruction iterations improve
+  stopped-reconstruction geometry recovery or merely let the reconstruction
+  absorb geometry error.
 
 ### Scope
 
 - In scope:
-  - Load normalized current/default baseline artifacts.
-  - Render current/default rows in the existing synthetic comparison markdown.
-  - Extend the compare CLI with `--current-baseline`.
-  - Add focused comparison tests.
+  - Summarize existing 128^3 setup-global GPU evidence comparing true-geometry
+    reconstruction oracle, early-anchor stopped reconstruction, constrained
+    preview probes, and longer stopped-reconstruction continuation.
+  - Record the diagnosis in `docs/implementation_log.md` and a concise
+    benchmark-run note.
+  - Keep the next implementation direction focused on a constrained early
+    reconstruction step if the evidence supports absorption.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Setup-global stopped-reconstruction policy changes.
+  - Setup-global stopped-reconstruction policy changes in this slice.
   - Pose-only solver changes.
   - Running old/current TomoJAX automatically.
   - Parsing non-JSON current artifacts.
-  - Running old/current TomoJAX automatically.
   - Object-motion solver or correction model.
   - Changing generated projection physics.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
-- Deep module owner: `tomojax.bench` for benchmark artifact normalization.
+  - Synthetic bad-view nuisance generation.
+- Deep module owner: docs-only diagnostic slice; next code owner is expected to
+  be `tomojax.align`.
 
 ### Design Sources
 
@@ -47,11 +51,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add current baseline artifact loading to synthetic comparison.
-- [x] Extend comparison CLI with `--current-baseline`.
-- [x] Add focused comparison tests.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Write the setup-global iteration/absorption diagnosis note.
+- [x] Update `docs/implementation_log.md`.
+- [x] Run docs-focused validation and `just imports`.
+- [ ] Commit the diagnostic slice.
 
 ### Validation
 

@@ -3,6 +3,36 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Iteration Absorption Diagnosis
+
+### Summary
+
+- Classified the current 128^3 `synth128_setup_global_tomo`
+  stopped-reconstruction failure mode from existing CUDA artifacts.
+- The longer stopped continuation improved volume NMSE from `0.375905` to
+  `0.212256` and final projection loss from `1.192685` to `0.176570`, but
+  geometry stayed bad: det_u remained about `4.23` px, theta remained about
+  `0.019` rad, axis worsened from `0.005128` rad to `0.012826` rad, and
+  detector roll stayed about `0.0125` rad.
+- Both stopped runs classified as `reconstruction_absorbed_geometry`; the
+  longer stopped volume preferred final geometry over true geometry
+  (`0.176570` versus `0.589315` projection loss).
+- The fixed-synthetic-truth 32-iteration oracle recovered the supported setup
+  DOFs, so the Schur setup update can pass when the volume gauge is correct.
+- Recorded the diagnosis in
+  `docs/benchmark_runs/2026-05-07-phase8-iteration-absorption-diagnosis.md`.
+
+### Validation
+
+- `uv run python - <<'PY' ...` inspected the existing verification artifacts.
+- `just imports` passed.
+
+### Remaining Work
+
+- Do not treat more stopped reconstruction iterations as the next fix by
+  itself. The next functional slice should constrain the early x-step so the
+  preview volume cannot absorb setup geometry before Schur recovery.
+
 ## 2026-05-07 — Phase 0 Current-Baseline Comparison Rows Slice
 
 ### Summary
