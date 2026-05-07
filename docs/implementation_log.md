@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Preview Center-Gauge CUDA Gate
+
+### Summary
+
+- Reran the 128^3/256-view supported-only `synth128_setup_global_tomo` CUDA gate
+  with `--preview-center-l2-weight 10.0` and `100.0`.
+- Both runs selected `cuda:0` and peaked at 6075 MiB sampled GPU memory.
+- Weight 10 failed but improved det_u from the held-out gate's `4.131494` px to
+  `3.589689` px, theta from `0.024615` rad to `0.022927` rad, volume NMSE from
+  `0.299566` to `0.282807`, and final residual from `1.106979` to `1.089416`.
+- Weight 100 failed but improved det_u further to `2.990294` px, volume NMSE to
+  `0.262462`, and final residual to `1.047002`; theta worsened to
+  `0.025660` rad.
+- Projection-loss classification remained `reconstruction_absorbed_geometry`
+  for both center-gauge runs.
+- Recorded the result in
+  `docs/benchmark_runs/2026-05-07-phase8-center-gauge-gate.md`.
+
+### Validation
+
+- `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda
+  CUDA_VISIBLE_DEVICES=0 uv run tomojax-align-auto-smoke ... --preview-center-l2-weight 10.0`
+  completed with exit status 0.
+- `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda
+  CUDA_VISIBLE_DEVICES=0 uv run tomojax-align-auto-smoke ... --preview-center-l2-weight 100.0`
+  completed with exit status 0.
+- `just imports` passed after the gate summary update.
+
+### Remaining Work
+
+- Center-gauge regularisation is directionally useful for det_u but does not
+  recover theta/setup. The next functional step should add a theta-specific
+  setup-validation or orientation-anchor mechanism.
+
 ## 2026-05-07 — Phase 8 Preview Center Gauge Penalty Slice
 
 ### Summary
