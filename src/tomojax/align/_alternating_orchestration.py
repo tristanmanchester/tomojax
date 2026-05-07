@@ -117,7 +117,7 @@ def _run_alternating_solver_smoke_impl(
             mask=mask,
             config=ReferenceFISTAConfig(
                 iterations=level.reconstruction_iterations,
-                step_size=2.0e-3,
+                step_size=_preview_fista_step_size(config),
                 tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
                 residual_sigma=level.residual_sigma,
                 residual_delta=level.residual_delta,
@@ -322,6 +322,12 @@ def _preview_volume_support(
     return centered_volume_support(shape, kind=config.preview_volume_support)
 
 
+def _preview_fista_step_size(config: AlternatingSmokeConfig) -> float:
+    if int(config.size) < 64:
+        return 2.0e-3
+    return 100.0 * max(float(config.size), 1.0) / 128.0
+
+
 def _preview_initial_volume(
     config: AlternatingSmokeConfig,
     observed: jax.Array,
@@ -332,6 +338,8 @@ def _preview_initial_volume(
     if previous_volume is not None:
         return previous_volume
     if config.preview_initialization == "backprojection":
+        if int(config.size) < 64:
+            return reconstruct_average_reference(observed, depth=config.size)
         return reconstruct_backprojection_reference(observed, geometry, depth=config.size)
     if config.preview_initialization == "zero":
         return jnp.zeros((config.size, config.size, config.size), dtype=jnp.float32)

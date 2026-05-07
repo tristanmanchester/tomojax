@@ -11,20 +11,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction preview scale
-- Goal: fix the stopped-reconstruction setup-global failure by normalising the
-  core-adjoint backprojection preview volume so geometry updates do not see a
-  volume that is orders of magnitude larger than the object attenuation scale.
+- Phase: Phase 8/9 stopped-reconstruction FISTA step scale
+- Goal: improve stopped-reconstruction setup-global recovery by fixing the
+  reference preview FISTA step scale after backprojection normalization exposed
+  that eight iterations barely move the preview volume.
 
 ### Scope
 
 - In scope:
-  - Normalise `reconstruct_backprojection_reference` by view count and an
-    approximate ray path length through the reconstruction grid.
-  - Add focused reconstruction tests that prevent explosive backprojection
-    scale.
-  - Rerun a setup-global stopped-reconstruction CUDA diagnostic.
-  - Record whether geometry recovery improves versus the five-case baseline.
+  - Diagnose the FISTA gradient/step-size scaling on the existing setup-global
+    sidecar.
+  - Implement a conservative reference FISTA step normalization or profile
+    update that materially reduces preview data loss without destabilizing
+    smoke tests.
+  - Add focused reconstruction validation.
+  - Rerun setup-global stopped-reconstruction CUDA diagnostics.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -43,8 +44,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement backprojection preview normalisation.
-- [x] Add focused reconstruction tests and run validation.
+- [x] Diagnose FISTA step-size scaling on setup-global sidecar.
+- [x] Implement step-scale fix.
+- [x] Run focused reconstruction validation and `just imports`.
 - [x] Rerun setup-global stopped-reconstruction CUDA diagnostic.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 

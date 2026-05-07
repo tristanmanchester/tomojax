@@ -8260,6 +8260,76 @@ and/or gauge handling, not projector memory.
   tests/test_reference_fista.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
+## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
+
+### Summary
+
+- Diagnosed the reference preview FISTA step scale on the existing
+  setup-global sidecar after backprojection normalization. The old `0.002`
+  preview step reduced raw projection loss by only about `3e-5` over 8
+  iterations.
+- Added a realistic-scale preview FISTA step policy: keep the historical tiny
+  smoke behavior for `size < 64`, and use `100 * size / 128` for 64/128
+  diagnostics.
+- Kept the deterministic 32^3 smoke artifact test passing by retaining the
+  average-projection initializer for tiny smoke runs while using normalized
+  core-adjoint backprojection at realistic scale.
+
+### CUDA Evidence
+
+Step-size sweep on the setup-global sidecar showed:
+
+| Step | Raw loss after 8 iters | Volume NMSE |
+|---:|---:|---:|
+| 0.002 | 2.7727 | 0.631 |
+| 10 | 2.6245 | 0.621 |
+| 50 | 2.1168 | 0.592 |
+| 100 | 1.6368 | 0.577 |
+| 250 | 0.9376 | 0.589 |
+| 500 | 0.8122 | 0.604 |
+
+Reran `synth128_setup_global_tomo` at `128^3`, 256 views, `reference` profile,
+`stopped_reconstruction`, `core_trilinear_ray`, `cuda:0`, and preallocation
+disabled.
+
+Artifact:
+
+- `.artifacts/phase8_stopped_recon_fista_step/128_setup_global_stopped_cuda/`
+
+Comparison against the scale-only stopped diagnostic:
+
+| Metric | Scale-only | FISTA-step |
+|---|---:|---:|
+| final volume norm | 87.48 | 141.13 |
+| truth volume norm | 169.95 | 169.95 |
+| volume NMSE | 0.631 | 0.549 |
+| final residual | 2.737 | 0.808 |
+| `axis_error_rad` | 0.01343 | 0.00658 |
+| `detector_roll_error_rad` | 0.02065 | 0.01152 |
+| `theta_realized_rmse_rad` | 0.03014 | 0.02277 |
+| `det_u_realized_rmse_px` | 11.50 | 12.74 |
+| sampled peak GPU memory | 1257 MiB | 1317 MiB |
+
+The benchmark still fails all setup-global geometry criteria. The
+reconstruction path is now scaled and meaningfully optimized, but the
+projection-loss classifier reports `reconstruction_absorbed_geometry`; the next
+blocker is preventing stopped reconstruction from absorbing setup misalignment
+before Schur, likely via anchoring, held-out/cross-view reconstruction, or a
+geometry-update volume policy rather than more FISTA step scaling.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  tests/test_reference_fista.py::test_reference_fista_reduces_projection_loss_and_keeps_nonnegative
+  -q` passed: 2 tests in 53.59 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_solver_smoke.py tests/test_reference_fista.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_solver_smoke.py tests/test_reference_fista.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8/9 Pose-Policy Narrowing
 
 ### Summary
