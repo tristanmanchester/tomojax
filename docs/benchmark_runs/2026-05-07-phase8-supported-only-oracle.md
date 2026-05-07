@@ -232,3 +232,24 @@ Runs:
 Interpretation: the refreshed artifacts confirm that the fixed-truth oracle is
 geometrically consistent while stopped reconstruction is absorbing supported
 setup error into the reconstructed volume/geometry gauge.
+
+## Filtered Schur Refresh
+
+After threading continuation residual filters into the actual Schur residual and
+finite-difference Jacobian path, the strong-pose-prior diagnostics were rerun on
+`cuda:0`.
+
+Runs:
+
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_filtered_reporting.md`
+
+| Mode | Status | det_u RMSE px | theta RMSE rad | Schur train loss | True vol/final geom | Classification | Time s |
+|---|---|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth` | passed | 5.24164e-06 | 5.10065e-05 | 2.13915e-08 | 3.39969e-09 | `independent_projection_losses_consistent` | 106.826 |
+| `stopped_reconstruction` | failed | 7.25 | 0.0218166 | 0.361978 | 0.884522 | `reconstruction_absorbed_geometry` | 113.388 |
+
+Interpretation: filtered Schur removes the remaining fixed-truth supported-only
+setup-recovery issue under the strong pose prior. Stopped reconstruction still
+absorbs the geometry error before the update.

@@ -13,7 +13,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align._lm_numerics import finite_difference_jacobian
-from tomojax.forward import project_parallel_reference_arrays, pseudo_huber_weights, residual_loss
+from tomojax.forward import (
+    ResidualFilterConfig,
+    apply_residual_filter_schedule,
+    project_parallel_reference_arrays,
+    pseudo_huber_weights,
+    residual_loss,
+)
 from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_geometry_gauges
 from tomojax.nuisance import estimate_background_offset, estimate_gain_offset
 
@@ -50,6 +56,7 @@ class JointSchurLMConfig:
     setup_prior_strength: float | None = None
     pose_prior_strength: float | None = None
     active_pose_dofs: tuple[PoseSchurDof, ...] = ("phi_residual_rad", "dx_px", "dz_px")
+    residual_filters: tuple[ResidualFilterConfig, ...] = (ResidualFilterConfig(),)
     fit_gain_offset: bool = False
     fit_background_offset: bool = False
 
@@ -94,6 +101,7 @@ class JointSchurDiagnostics:
     background_offset_fit: bool = False
     gain_offset_model: dict[str, object] | None = None
     background_offset_model: dict[str, object] | None = None
+    residual_filter_kinds: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -135,6 +143,7 @@ class JointSchurDiagnostics:
             "background_offset_fit": self.background_offset_fit,
             "gain_offset_model": self.gain_offset_model,
             "background_offset_model": self.background_offset_model,
+            "residual_filter_kinds": list(self.residual_filter_kinds),
         }
 
 
@@ -338,6 +347,7 @@ def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transi
             parameter_prior_strength=max(float(cfg.parameter_prior_strength), 0.0),
             gain_offset_fit=bool(cfg.fit_gain_offset),
             background_offset_fit=bool(cfg.fit_background_offset),
+            residual_filter_kinds=tuple(config.kind for config in cfg.residual_filters),
             **_nuisance_diagnostics_for_params(
                 vol,
                 obs,
@@ -897,9 +907,11 @@ def _residual_for_params(
         fit_background_offset=fit_background_offset,
     )
     residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
-    if mask is None:
-        return residual
-    return residual * jnp.asarray(mask, dtype=jnp.float32)
+    return apply_residual_filter_schedule(
+        residual,
+        cfg.residual_filters,
+        mask=mask,
+    ).residual
 
 
 def _with_parameter_prior_residual(
@@ -1044,7 +1056,18 @@ def _loss_for_params(
         fit_gain_offset=cfg.fit_gain_offset,
         fit_background_offset=cfg.fit_background_offset,
     )
-    data_loss = residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
+    residual = apply_residual_filter_schedule(
+        (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+        cfg.residual_filters,
+        mask=mask,
+    ).residual
+    data_loss = residual_loss(
+        residual,
+        jnp.zeros_like(residual),
+        mask=None,
+        sigma=1.0,
+        delta=cfg.delta,
+    ).loss
     if prior_reference is None:
         return data_loss
     prior_loss = _parameter_prior_loss(
@@ -1073,21 +1096,18 @@ def _loss_by_view_for_params(
         fit_gain_offset=cfg.fit_gain_offset,
         fit_background_offset=cfg.fit_background_offset,
     )
+    filtered = apply_residual_filter_schedule(
+        (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+        cfg.residual_filters,
+        mask=mask,
+    ).residual
     losses: list[float] = []
-    mask_array = None if mask is None else jnp.asarray(mask, dtype=jnp.float32)
     for view in range(geometry.pose.n_views):
-        mask_view = (
-            None
-            if mask_array is None
-            else mask_array[view]
-            if mask_array.ndim == observed.ndim
-            else mask_array
-        )
         loss = residual_loss(
-            predicted[view],
-            observed[view],
-            mask=mask_view,
-            sigma=cfg.sigma,
+            filtered[view],
+            jnp.zeros_like(filtered[view]),
+            mask=None,
+            sigma=1.0,
             delta=cfg.delta,
         ).loss
         losses.append(float(loss))

@@ -17,7 +17,7 @@ from tomojax.align import (
     solve_joint_schur_lm,
     write_joint_schur_normal_eq_summary,
 )
-from tomojax.forward import project_parallel_reference
+from tomojax.forward import ResidualFilterConfig, project_parallel_reference
 from tomojax.geometry import GeometryState
 from tomojax.nuisance import BackgroundOffsetModel, GainOffsetModel
 
@@ -500,6 +500,41 @@ def test_joint_schur_pose_prior_strength_damps_pose_drift() -> None:
     )
 
 
+def test_joint_schur_lowpass_residual_filter_produces_setup_step() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(4)
+    truth_setup = nominal.setup.replace_parameter(
+        "det_u_px",
+        nominal.setup.det_u_px.with_value(1.0),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    clean = project_parallel_reference(volume, truth)
+    rows = jnp.arange(clean.shape[1], dtype=jnp.float32)
+    cols = jnp.arange(clean.shape[2], dtype=jnp.float32)
+    checker = ((rows[:, None] + cols[None, :]) % 2.0) * 2.0 - 1.0
+    observed = clean + 0.05 * checker[None, :, :]
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=2,
+            damping=1.0e-3,
+            delta=1.0,
+            active_pose_dofs=(),
+            residual_filters=(
+                ResidualFilterConfig(kind="lowpass_gaussian", weight=1.0, sigma_px=1.0),
+            ),
+        ),
+    )
+
+    assert result.diagnostics.residual_filter_kinds == ("lowpass_gaussian",)
+    assert result.diagnostics.setup_update_norm > 0.0
+    assert result.geometry.setup.det_u_px.value > nominal.setup.det_u_px.value
+    assert abs(result.geometry.setup.det_u_px.value - truth.setup.det_u_px.value) < 0.25
+
+
 def test_joint_schur_gain_offset_nuisance_does_not_create_fake_geometry() -> None:
     volume = _theta_asymmetric_volume()
     geometry = GeometryState.zeros(2)
@@ -663,6 +698,7 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
         "background_offset_fit",
         "gain_offset_model",
         "background_offset_model",
+        "residual_filter_kinds",
     ):
         assert field in payload["diagnostics"]
     assert payload["diagnostics"]["parameter_prior_strength"] == 2.0e-3
@@ -670,6 +706,7 @@ def test_joint_schur_writes_normal_eq_summary_artifact(tmp_path: Path) -> None:
     assert payload["diagnostics"]["background_offset_fit"] is False
     assert payload["diagnostics"]["gain_offset_model"] is None
     assert payload["diagnostics"]["background_offset_model"] is None
+    assert payload["diagnostics"]["residual_filter_kinds"] == ["raw"]
     assert payload["diagnostics"]["next_setup_trust_radius"] is not None
     assert payload["diagnostics"]["next_pose_trust_radius"] is not None
     assert len(payload["diagnostics"]["current_loss_by_view"]) == 1

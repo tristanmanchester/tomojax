@@ -6475,3 +6475,60 @@ Interpretation:
   before the geometry update. The next code slice should compare reconstruction
   normalization/gauge handling and possibly constrain the volume gauge before
   Schur, rather than adding more report fields.
+
+## 2026-05-07 — Phase 8 Schur Continuation Residual Filters
+
+### Summary
+
+- Added `JointSchurLMConfig.residual_filters` and threaded continuation-level
+  residual filters into joint Schur geometry updates.
+- Schur now uses filtered residuals consistently for IRLS weights,
+  finite-difference Jacobian rows, candidate/current losses, and per-view
+  diagnostics.
+- Added a focused regression test showing a low-pass Schur residual produces a
+  useful setup detector-shift step under high-frequency projection noise.
+
+### Refreshed GPU Diagnostics
+
+Reran the supported-only 64^3/64-view setup-global diagnostics on `cuda:0` after
+the Schur filter change.
+
+| Mode | Status | Criteria | det_u RMSE px | theta RMSE rad | Final residual | Schur train loss | Schur accepted | True vol/final geom | Classification | Total time s |
+|---|---|---|---:|---:|---:|---:|---|---:|---|---:|
+| `fixed_synthetic_truth` + pose prior `1e6` | passed | passed | 5.24164e-06 | 5.10065e-05 | 1.40612 | 2.13915e-08 | true | 3.39969e-09 | `independent_projection_losses_consistent` | 106.826 |
+| `stopped_reconstruction` + pose prior `1e6` | failed | failed | 7.25 | 0.0218166 | 1.05102 | 0.361978 | false | 0.884522 | `reconstruction_absorbed_geometry` | 113.388 |
+
+Artifacts:
+
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_filtered_reporting.md`
+
+Interpretation:
+
+- Continuation-filtered Schur makes the fixed-truth strong-pose-prior supported
+  oracle essentially exact. The remaining blocker is no longer fixed-truth setup
+  recovery under supported DOFs.
+- Stopped reconstruction still fails and is classified as
+  `reconstruction_absorbed_geometry`. The next implementation slice should
+  target reconstruction/volume gauge handling rather than further Schur
+  trust/report work.
+
+### Validation
+
+- `uv run ruff format src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/align/_alternating_geometry_update.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/align/_alternating_geometry_update.py tests/test_joint_schur_lm.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/align/_alternating_geometry_update.py tests/test_joint_schur_lm.py`
+  passed with 0 errors and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 14 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 2 tests.
+- `just imports` passed.

@@ -49,6 +49,7 @@ def _run_geometry_updates(
             sigma=sigma,
             setup_trust_radius=level.trust_radius_px,
             pose_trust_radius=level.trust_radius_px,
+            residual_filters=level.residual_filters,
             parameter_prior_strength=level.prior_strength,
             setup_prior_strength=setup_prior_strength,
             pose_prior_strength=pose_prior_strength,
