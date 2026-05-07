@@ -16,10 +16,19 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 - Switched the deterministic preview backprojection helper from the hand-rolled
   rotate/shift inverse to the core explicit adjoint
   `sum_backproject_views_T`.
+- Switched the preview FISTA data gradient to an explicit core-adjoint update:
+  core `forward_project_view_T` builds residuals and
+  `sum_backproject_views_T` applies the data-gradient adjoint. The wrapper keeps
+  existing residual filters and pseudo-Huber weights without reverse-mode
+  differentiation through the projector data term.
 - Recorded core operator provenance in generated sidecar manifests, run
   manifests, backend reports, config files, and benchmark results.
 - Unsupported setup/pose DOFs in the adapter are now explicit errors rather
   than silently ignored: detector roll, axis rotations, alpha, and beta.
+- Synthetic sidecar generation for benchmark cases with unsupported DOFs now
+  records `unsupported_dof_status="unsupported_dof_not_evaluated"` and the
+  skipped DOF names in the manifest, while generating projections only from the
+  supported core-projectable geometry subset.
 
 ### Adapter Contract
 
@@ -48,6 +57,8 @@ Artifacts:
   `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_full_oracle_gpu/`
 - 64^3/64-view GPU stopped anchored det_u-only:
   `.artifacts/phase8_core_projector/runs/64_supported_only_stopped_anchor_gpu/`
+- 64^3/64-view GPU stopped anchored det_u-only with unclipped setup trust:
+  `.artifacts/phase8_core_projector/runs/64_supported_only_stopped_anchor_unclipped_detu_gpu/`
 - Core sidecar dataset:
   `.artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only/`
 
@@ -56,8 +67,9 @@ Artifacts:
 | 32^3 CPU smoke | `cpu:0` | fixed truth, pose frozen | failed | 1.62574 | 0.0155630 | mixed | n/a | Small smoke proves artifact wiring only. |
 | 64^3 GPU balanced | `cuda:0` | fixed truth, pose frozen | failed | 6.75000 | 0.0203247 | final level accepted | 30.0770 | Final `det_u` only reached about 0.50 px from true 7.25 px. |
 | 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen | failed | 7.12500 | 0.0224485 | mostly rejected/limited | 50.2916 | Correct core provenance recorded; longer schedule did not fix setup recovery. |
-| 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen, raw/no-prior full oracle | passed | 1.43051e-06 | 1.06805e-07 | true | 52.0031 | Confirms v2-to-core adapter and supported setup scaling are valid when oracle Schur is not stopped by preview early-exit or metadata priors. |
-| 64^3 GPU reference | `cuda:0` | stopped reconstruction, cylindrical support, constant init, det_u only, pose frozen | failed | 0.237177 | 0.0218166 | true | 48.7828 | Near prior Gate 3 det_u tolerance but cannot be accepted while fixed-truth fails. |
+| 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen, raw/no-prior full oracle | geometry passed | 1.43051e-06 | 1.06805e-07 | true | 52.0031 | Geometry criteria pass; benchmark top-level status still reflects unrelated final-volume NMSE. |
+| 64^3 GPU reference | `cuda:0` | stopped reconstruction, cylindrical support, constant init, det_u only, pose frozen | det_u Gate 3 failed | 0.237177 | 0.0218166 | true | 48.7828 | Trust clipping limited the detector-center correction. |
+| 64^3 GPU reference | `cuda:0` | stopped reconstruction, cylindrical support, constant init, det_u only, pose frozen, unclipped setup trust | det_u Gate 3 passed | 0.102502 | 0.0218166 | true | 42.1509 | Benchmark manifest still marks theta failed because theta is intentionally frozen in this setup-only diagnostic. |
 
 Additional stopped-volume Schur probe using the stopped run's final volume:
 
@@ -72,38 +84,55 @@ Additional stopped-volume Schur probe using the stopped run's final volume:
 Fixed-truth core recovery passes after isolating the oracle from preview
 continuation filters, metadata priors, and coarse early-exit. The supported
 v2-to-core adapter and setup scaling are therefore coherent for det_u and theta.
-The remaining production-like blocker is stopped reconstruction/volume gauge
-under the real operator: the anchored det_u-only stopped run improves strongly
-but misses the strict 0.2 px det_u criterion at 0.237177 px. A direct stopped
-Schur probe with no setup trust clipping reaches 0.0611143 px, so the immediate
-next fix should address trust scheduling/parameter scaling for stopped det_u
-updates under the core ray loss before changing reconstruction behavior.
+The v2-to-core adapter, fixed-truth oracle, and stopped setup-only det_u
+diagnostic now pass their supported geometry checks under the real operator.
+The remaining gap before broader benchmark reporting is semantic rather than a
+core-operator mismatch: five-case scenarios include unsupported DOFs that must
+be reported as `unsupported_dof_not_evaluated`, and stopped setup-only diagnostics
+intentionally freeze theta, so manifest-level theta criteria are not applicable
+to that diagnostic.
+
+### GPU Memory Finding
+
+The 64^3/64-view fixed-truth and stopped diagnostics now complete on the laptop
+GPU with JAX selecting `cuda:0` after the v2 reference path was rebaselined on
+the core trilinear projector and the preview FISTA data term was moved to an
+explicit core-adjoint gradient. The current best diagnosis is that the earlier
+memory regression was not the sidecar ingestion path or nuisance fitting; it was
+the reference reconstruction/gradient path materialising reverse-mode projector
+state through the all-view forward call. The fixed-truth oracle run exercises
+Schur geometry updates without stopped-reconstruction ambiguity, while the
+stopped det_u-only run exercises the production-like reconstruction-to-Schur
+hand-off.
+
+The remaining memory question is whether broader parameter blocks and the
+unsupported five-case scenarios still require chunked Schur accumulation once
+they are evaluated through supported geometry subsets. No smaller benchmark was
+accepted as a substitute for the 64^3/64-view diagnostic.
 
 ### Validation
 
-- `uv run ruff format ...` passed for touched source and tests.
 - `uv run ruff check ...` passed for touched source and tests.
 - `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
   source and tests.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
   tests/test_reference_fista.py
   tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_det_u_only_setup_update
   tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
-  -q` passed: 18 tests.
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap
+  -q` passed: 21 tests in 200.80 seconds.
 - `just imports` passed.
 
 ### Remaining Work
 
-- Fix the fixed-truth 64^3 setup recovery blocker under `core_trilinear_ray`
-  before interpreting stopped reconstruction quality or rerunning the five-case
-  suite. Fixed-truth is now passing; keep this as a regression guard.
-- Replace the remaining reference FISTA volume-gradient path with the
-  `fista_tv_core` explicit-adjoint loss/gradient path; projection already uses
-  core, and preview backprojection uses the core adjoint, but the tiny FISTA
-  wrapper still uses reverse-mode over the forward call for masked robust loss.
-- Rerun and improve the anchored stopped diagnostic under the core projector,
-  then update five-case reporting with unsupported DOFs classified as
+- Keep fixed-truth full-oracle and stopped det_u-only diagnostics as regression
+  guards while moving to benchmark reporting.
+- Update five-case reporting with unsupported DOFs classified as
   `unsupported_dof_not_evaluated`.
+  Sidecar manifests now record that classification; the full five-case compare
+  pass remains the next benchmark-reporting step.
 
 ## 2026-05-07 — Phase 8 Anchored Preview Reconstruction Gate 1
 

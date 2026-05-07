@@ -419,7 +419,7 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     geometry_recovery = cast("dict[str, object]", benchmark_result["geometry_recovery"])
     assert isinstance(geometry_recovery["supported_dofs_improved"], bool)
     backend = cast("dict[str, object]", benchmark_result["backend"])
-    assert backend["actual"] == "jax_reference"
+    assert backend["actual"] == "core_trilinear_ray"
     assert all(
         isinstance(backend[key], str) and backend[key]
         for key in ("jax_default_backend", "selected_jax_device")
@@ -435,7 +435,7 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     assert "flags_object_motion_suspected" in benchmark_report
     assert "## Backend Provenance" in benchmark_report
     assert "| reimagined_align_auto_smoke | smoke32 |" in benchmark_report
-    assert "jax_reference" in benchmark_report
+    assert "core_trilinear_ray" in benchmark_report
     config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
     assert f'synthetic_dataset_artifact_dir = "{dataset_paths.dataset_dir}"' in config_text
     assert 'geometry_update_volume_source = "stopped_reconstruction"' in config_text

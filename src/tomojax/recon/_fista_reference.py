@@ -12,16 +12,18 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.forward import (
     ResidualFilterConfig,
     apply_residual_filter_schedule,
-    project_parallel_reference,
+    core_projection_geometry_from_state,
     residual_loss,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tomojax.forward import CoreProjectionGeometry
     from tomojax.geometry import GeometryState
 
 
@@ -64,7 +66,7 @@ def fista_reconstruct_reference(
     mask: jax.Array | None = None,
     config: ReferenceFISTAConfig | None = None,
 ) -> ReferenceFISTAResult:
-    """Run a tiny JAX reference FISTA preview reconstruction."""
+    """Run the v2 preview FISTA path through the core explicit adjoint."""
     cfg = config or ReferenceFISTAConfig()
     observed = jnp.asarray(projections, dtype=jnp.float32)
     if observed.ndim != 3:
@@ -82,18 +84,24 @@ def fista_reconstruct_reference(
     volume_shape = (int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2]))
     support = _support_or_none(volume_support, shape=volume_shape)
     volume = _project_constraints(volume, support=support, config=cfg)
-
+    start = time.perf_counter()
+    core = core_projection_geometry_from_state(
+        volume_shape,
+        geometry,
+        detector_shape=(int(observed.shape[1]), int(observed.shape[2])),
+    )
     y = volume
     t = jnp.asarray(1.0, dtype=jnp.float32)
     step_size = jnp.asarray(cfg.step_size, dtype=jnp.float32)
     trace: list[ReferenceFISTATraceRow] = []
-    start = time.perf_counter()
-
     for iteration in range(max(0, int(cfg.iterations))):
-        (loss_value, (data_value, regulariser_value)), gradient = jax.value_and_grad(
-            _objective,
-            has_aux=True,
-        )(y, observed, geometry, mask, cfg)
+        loss_value, data_value, regulariser_value, gradient = _loss_and_explicit_gradient(
+            y,
+            observed,
+            core=core,
+            mask=mask,
+            config=cfg,
+        )
         candidate = y - step_size * gradient
         candidate = _project_constraints(candidate, support=support, config=cfg)
         next_t = (1.0 + jnp.sqrt(1.0 + 4.0 * t * t)) / 2.0
@@ -113,10 +121,9 @@ def fista_reconstruct_reference(
                 regulariser=float(regulariser_value),
                 step_size=float(step_size),
                 wall_time_s=time.perf_counter() - start,
-                backend="core_trilinear_ray",
+                backend="core_trilinear_ray_explicit_adjoint",
             )
         )
-
     return ReferenceFISTAResult(volume=volume.astype(jnp.float32), trace=tuple(trace), config=cfg)
 
 
@@ -155,32 +162,72 @@ def write_fista_trace_csv(result: ReferenceFISTAResult, path: str | Path) -> Pat
     return output_path
 
 
-def _objective(
+def _loss_and_explicit_gradient(
     volume: jax.Array,
     observed: jax.Array,
-    geometry: GeometryState,
+    *,
+    core: CoreProjectionGeometry,
     mask: jax.Array | None,
     config: ReferenceFISTAConfig,
-) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
-    predicted = project_parallel_reference(volume, geometry)
-    residual = apply_residual_filter_schedule(
-        (predicted - observed) / jnp.asarray(config.residual_sigma, dtype=jnp.float32),
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    predicted = _project_stack(volume, core=core)
+    whitened = (predicted - observed) / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
+    filtered = apply_residual_filter_schedule(
+        whitened,
         config.residual_filters,
         mask=mask,
     ).residual
     data = residual_loss(
-        residual,
-        jnp.zeros_like(residual),
+        filtered,
+        jnp.zeros_like(filtered),
         mask=None,
         sigma=1.0,
         delta=config.residual_delta,
-    ).loss
-    regulariser = jnp.asarray(config.tv_weight, dtype=jnp.float32) * _smoothed_tv(
+    )
+    data_grad_projection = (
+        filtered
+        * data.weights
+        / jnp.maximum(data.valid_count, jnp.asarray(1.0, dtype=jnp.float32))
+        / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
+    )
+    data_gradient = sum_backproject_views_T(
+        core.t_all,
+        core.grid,
+        core.detector,
+        data_grad_projection,
+        step_size=core.step_size,
+        n_steps=core.n_steps,
+        unroll=core.projector_unroll,
+        gather_dtype=core.gather_dtype,
+        det_grid=core.det_grid,
+    )
+    regulariser_value, regulariser_gradient = _smoothed_tv_value_and_grad(
         volume,
         delta=config.tv_delta,
     )
-    total = data + regulariser
-    return total, (data, regulariser)
+    scaled_regulariser = jnp.asarray(config.tv_weight, dtype=jnp.float32) * regulariser_value
+    gradient = (
+        data_gradient + jnp.asarray(config.tv_weight, dtype=jnp.float32) * regulariser_gradient
+    )
+    return data.loss + scaled_regulariser, data.loss, scaled_regulariser, gradient
+
+
+def _project_stack(volume: jax.Array, *, core: CoreProjectionGeometry) -> jax.Array:
+    def project_one(t_view: jax.Array) -> jax.Array:
+        return forward_project_view_T(
+            t_view,
+            core.grid,
+            core.detector,
+            volume,
+            step_size=core.step_size,
+            n_steps=core.n_steps,
+            use_checkpoint=core.checkpoint_projector,
+            unroll=core.projector_unroll,
+            gather_dtype=core.gather_dtype,
+            det_grid=core.det_grid,
+        )
+
+    return jax.vmap(project_one)(core.t_all).astype(jnp.float32)
 
 
 def _support_or_none(
@@ -206,6 +253,14 @@ def _project_constraints(
     if support is not None:
         projected = projected * support
     return projected
+
+
+def _smoothed_tv_value_and_grad(
+    volume: jax.Array,
+    *,
+    delta: float,
+) -> tuple[jax.Array, jax.Array]:
+    return jax.value_and_grad(_smoothed_tv)(volume, delta=delta)
 
 
 def _smoothed_tv(volume: jax.Array, *, delta: float) -> jax.Array:

@@ -53,9 +53,10 @@ Forbidden dependencies:
 - The default v2 reconstruction step is FISTA / Huber-TV FISTA.
 - Alignment must use stopped-gradient latent volumes.
 - Reconstruction traces must be suitable for artifact reports.
-- `fista_reconstruct_reference` is the first v2 JAX reference FISTA preview
-  contract. It uses the current minimal reference projector and can optionally
-  project iterates into a nonnegative support mask.
+- `fista_reconstruct_reference` is the v2 preview FISTA contract. It uses the
+  core trilinear ray projector for residuals and the core explicit adjoint for
+  data gradients, and can optionally project iterates into a nonnegative support
+  mask.
 - `centered_volume_support` creates deterministic cylindrical or spherical
   masks for synthetic reference diagnostics.
 - `reference_fista_schedule` resolves the v2 preview/final schedule contract;
@@ -63,7 +64,7 @@ Forbidden dependencies:
 - `reconstruct_average_reference` is a tiny smoke helper, not the final default
   reconstruction algorithm.
 - `reconstruct_backprojection_reference` is a deterministic geometry-aware
-  reference initializer for smoke and FISTA warm starts.
+  initializer using the core explicit adjoint for smoke and FISTA warm starts.
 
 ## Tests
 

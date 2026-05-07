@@ -36,7 +36,7 @@ def test_reference_fista_reduces_projection_loss_and_keeps_nonnegative() -> None
 
     assert len(result.trace) == 6
     assert result.trace[-1].loss < result.trace[0].loss
-    assert result.trace[-1].backend == "core_trilinear_ray"
+    assert result.trace[-1].backend == "core_trilinear_ray_explicit_adjoint"
     assert float(jnp.min(result.volume)) >= 0.0
     assert float(jnp.sum(result.volume)) > 0.0
 
@@ -61,7 +61,7 @@ def test_reference_fista_warm_start_and_trace_csv(tmp_path: Path) -> None:
     with trace_path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert [row["iteration"] for row in rows] == ["0", "1"]
-    assert rows[0]["backend"] == "core_trilinear_ray"
+    assert rows[0]["backend"] == "core_trilinear_ray_explicit_adjoint"
 
 
 def test_reference_backprojection_uses_geometry_and_preserves_shape() -> None:

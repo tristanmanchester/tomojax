@@ -52,7 +52,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Replace operational v2 forward projection with core trilinear ray calls.
 - [x] Add focused CPU tests for nominal theta and detector/pose shifts in the
   `GeometryState` -> core adapter.
-- [~] Replace rotate-and-sum preview backprojection and FISTA projection loss
+- [x] Replace rotate-and-sum preview backprojection and FISTA projection loss
   with core explicit adjoint / core FISTA arrays.
 - [x] Make unsupported DOFs explicit errors or `unsupported_dof_not_evaluated`,
   not silently ignored.
@@ -99,11 +99,15 @@ and proposed next fix before stopping.
   oracle Schur path uses raw geometry residuals, disables the level metadata
   prior, and does not early-exit after coarse preview verification:
   `det_u` RMSE `1.43051e-06` px and theta RMSE `1.06805e-07` rad.
-- Anchored stopped det_u-only reaches `0.237177` px under the core projector,
-  missing the strict `0.2` px criterion. The current blocker is stopped
-  trust scheduling/parameter scaling under the real operator: a direct stopped
-  Schur probe with the same stopped volume reaches `0.0611143` px when setup
-  trust clipping is removed.
+- Preview FISTA now uses core `forward_project_view_T` for residuals and
+  `sum_backproject_views_T` for the data-gradient adjoint.
+- Anchored stopped det_u-only now reaches `0.102502` px under the core projector
+  with setup trust unclipped for the pose-frozen det_u-only update, clearing the
+  det_u Gate 3 target. The benchmark manifest still marks theta failed because
+  this diagnostic intentionally freezes theta.
+- Benchmark sidecar generation records unsupported roll/axis/alpha/beta terms
+  as `unsupported_dof_not_evaluated` and projects only the supported
+  core-projectable geometry subset for wiring/reporting fixtures.
 
 ### Risks
 

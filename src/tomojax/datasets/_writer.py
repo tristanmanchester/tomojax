@@ -102,8 +102,10 @@ def generate_synthetic_dataset(
         pixel_scale=pixel_scale,
         setup_override=setup_override,
     )
-    projections = _project_v2_smoke(volume, true_state)
-    core_geometry = core_projection_geometry_from_state(volume.shape, true_state)
+    unsupported_dofs = _unsupported_dofs_not_evaluated(true_state, supported_only=supported_only)
+    projected_true_state = _core_projectable_state(true_state)
+    projections = _project_v2_smoke(volume, projected_true_state)
+    core_geometry = core_projection_geometry_from_state(volume.shape, projected_true_state)
     nuisance = _realize_nuisance(spec, n_views, applied_to_projections=not clean)
     if not clean:
         projections = _apply_nuisance(projections, nuisance)
@@ -124,10 +126,10 @@ def generate_synthetic_dataset(
     _write_motion_csv(paths.true_motion, n_views)
     write_geometry_json(paths.v2_nominal_geometry, nominal_state)
     write_geometry_json(paths.v2_corrupted_geometry, nominal_state)
-    write_geometry_json(paths.v2_true_geometry, true_state)
+    write_geometry_json(paths.v2_true_geometry, projected_true_state)
     write_pose_params_csv(paths.v2_nominal_pose, nominal_state.pose)
     write_pose_params_csv(paths.v2_corrupted_pose, nominal_state.pose)
-    write_pose_params_csv(paths.v2_true_pose, true_state.pose)
+    write_pose_params_csv(paths.v2_true_pose, projected_true_state.pose)
     _write_json(paths.nuisance_truth, nuisance)
     _write_json(paths.noise_truth, _noise_truth(spec))
     _write_json(
@@ -140,6 +142,7 @@ def generate_synthetic_dataset(
             paths,
             supported_only=supported_only,
             operator_provenance=core_geometry.provenance(),
+            unsupported_dofs_not_evaluated=unsupported_dofs,
         ),
     )
     return paths
@@ -155,6 +158,46 @@ def _project_v2_smoke(
     geometry: GeometryState,
 ) -> NDArray[np.float32]:
     return np.asarray(project_parallel_reference(jnp.asarray(volume), geometry), dtype=np.float32)
+
+
+def _core_projectable_state(state: GeometryState) -> GeometryState:
+    setup = state.setup
+    setup = setup.replace_parameter(
+        "detector_roll_rad",
+        setup.detector_roll_rad.with_value(0.0),
+    )
+    setup = setup.replace_parameter("axis_rot_x_rad", setup.axis_rot_x_rad.with_value(0.0))
+    setup = setup.replace_parameter("axis_rot_y_rad", setup.axis_rot_y_rad.with_value(0.0))
+    pose = PoseParameters(
+        alpha_rad=np.zeros_like(state.pose.alpha_rad),
+        beta_rad=np.zeros_like(state.pose.beta_rad),
+        theta_nominal_rad=state.pose.theta_nominal_rad,
+        phi_residual_rad=state.pose.phi_residual_rad,
+        dx_px=state.pose.dx_px,
+        dz_px=state.pose.dz_px,
+    )
+    return GeometryState(setup=setup, pose=pose)
+
+
+def _unsupported_dofs_not_evaluated(
+    state: GeometryState,
+    *,
+    supported_only: bool,
+) -> list[str]:
+    if supported_only:
+        return []
+    unsupported: list[str] = []
+    if abs(float(state.setup.detector_roll_rad.value)) > 0.0:
+        unsupported.append("detector_roll_rad")
+    if abs(float(state.setup.axis_rot_x_rad.value)) > 0.0:
+        unsupported.append("axis_rot_x_rad")
+    if abs(float(state.setup.axis_rot_y_rad.value)) > 0.0:
+        unsupported.append("axis_rot_y_rad")
+    if np.any(state.pose.alpha_rad != 0.0):
+        unsupported.append("alpha_rad")
+    if np.any(state.pose.beta_rad != 0.0):
+        unsupported.append("beta_rad")
+    return unsupported
 
 
 def _paths(dataset_dir: Path) -> SyntheticArtifactPaths:
@@ -459,6 +502,7 @@ def _dataset_manifest(
     paths: SyntheticArtifactPaths,
     supported_only: bool,
     operator_provenance: dict[str, object],
+    unsupported_dofs_not_evaluated: list[str],
 ) -> dict[str, object]:
     pass_criteria = dict(spec.pass_criteria)
     if supported_only:
@@ -480,6 +524,10 @@ def _dataset_manifest(
         "projection_operator": PROJECTION_OPERATOR,
         "operator_provenance": operator_provenance,
         "variant": "supported_only" if supported_only else "manifest",
+        "unsupported_dofs_not_evaluated": unsupported_dofs_not_evaluated,
+        "unsupported_dof_status": (
+            "unsupported_dof_not_evaluated" if unsupported_dofs_not_evaluated else "all_supported"
+        ),
         "artifacts": _manifest_artifact_map(paths),
         "recovery_tolerances": pass_criteria,
     }
