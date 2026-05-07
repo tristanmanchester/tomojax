@@ -54,6 +54,7 @@ tomojax-benchmark-suite = "tomojax.bench.benchmark_suite:main"
 tomojax-alignment-smoke-bench = "tomojax.bench.alignment_smoke:main"
 tomojax-pallas-sanity = "tomojax.bench.pallas_sanity:main"
 tomojax-synthetic-benchmark-compare = "tomojax.bench.synthetic_results:main"
+tomojax-current-baseline-normalize = "tomojax.bench.current_baseline:main"
 
 [dependency-groups]
 dev = [

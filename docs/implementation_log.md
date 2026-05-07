@@ -3,6 +3,35 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 0 Current-Default Baseline Normalizer Slice
+
+### Summary
+
+- Added `tomojax.bench.current_baseline`, a small normalizer for explicit
+  current/default TomoJAX metrics JSON.
+- Added the `tomojax-current-baseline-normalize` console entrypoint.
+- The normalizer writes `benchmark_baseline_current.json` and
+  `benchmark_baseline_current.md` with `volume_nmse`, benchmark/profile labels,
+  source path, and raw-source provenance.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_bench_current_baseline.py -q`
+  passed: 4 tests in 0.64 seconds.
+- `uv run ruff check src/tomojax/bench/current_baseline.py
+  src/tomojax/bench/__init__.py tests/test_bench_current_baseline.py
+  pyproject.toml` passed.
+- `uv run basedpyright src/tomojax/bench/current_baseline.py
+  src/tomojax/bench/__init__.py tests/test_bench_current_baseline.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- This normalizes a metrics JSON supplied by an operator or future adapter. It
+  does not yet execute old/current TomoJAX automatically on the five synthetic
+  datasets.
+
 ## 2026-05-07 — Phase 0/8 Current-Default Baseline Ingestion Slice
 
 ### Summary

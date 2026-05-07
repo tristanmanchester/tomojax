@@ -12,6 +12,10 @@ from .alignment_scenarios import (
     scenario_suite,
     validate_scenario_catalog,
 )
+from .current_baseline import (
+    current_baseline_payload,
+    write_current_baseline_artifacts,
+)
 from .forward_projector import (
     ForwardProjectorBenchmarkConfig,
     ForwardProjectorSuiteCase,
@@ -51,6 +55,7 @@ __all__ = [
     "SyntheticBenchmarkResult",
     "benchmark_backend",
     "benchmark_sinogram_mode",
+    "current_baseline_payload",
     "load_synthetic_benchmark_result",
     "load_synthetic_benchmark_results",
     "make_forward_projector_fixture",
@@ -69,5 +74,6 @@ __all__ = [
     "synthetic_benchmark_comparison_markdown",
     "validate_scenario_catalog",
     "write_benchmark_json",
+    "write_current_baseline_artifacts",
     "write_synthetic_benchmark_comparison_markdown",
 ]

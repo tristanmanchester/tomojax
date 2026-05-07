@@ -11,19 +11,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 0/8 current-default baseline ingestion
-- Goal: make `beats_current_default_nmse` evaluable from an explicit
-  current-default baseline artifact instead of leaving the criterion as a
-  missing placeholder.
+- Phase: Phase 0 current-default baseline normalizer
+- Goal: add a small current/default benchmark artifact normalizer that writes
+  `benchmark_baseline_current.json` and `.md` from explicit current-run metrics,
+  so the baseline-ingestion path has a producer-side contract.
 
 ### Scope
 
 - In scope:
-  - Add an `align-auto` option for a current-default baseline JSON artifact.
-  - Include baseline provenance and NMSE in benchmark-result payloads.
-  - Evaluate `beats_current_default_nmse` only when that explicit baseline is
-    present.
-  - Add focused criterion and CLI-help tests.
+  - Add a `tomojax.bench.current_baseline` normalizer.
+  - Add a console entrypoint for normalizing current/default metrics JSON.
+  - Write `benchmark_baseline_current.json` and `.md`.
   - Add focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -32,12 +30,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Setup-global stopped-reconstruction policy changes.
   - Pose-only solver changes.
   - Running old/current TomoJAX automatically.
-  - Creating or inventing a baseline value when no artifact is supplied.
+  - Parsing non-JSON current artifacts.
+  - Creating or inventing a baseline value when no source metrics are supplied.
   - Object-motion solver or correction model.
   - Changing generated projection physics.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
-- Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
+- Deep module owner: `tomojax.bench` for benchmark artifact normalization.
 
 ### Design Sources
 
@@ -48,9 +47,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add current-default baseline ingestion to align-auto.
-- [x] Add current-default comparison payload and criterion evaluation.
-- [x] Add focused criterion and CLI tests.
+- [x] Add current-default baseline normalizer and console entrypoint.
+- [x] Add focused normalizer tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
