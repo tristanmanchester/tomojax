@@ -3,6 +3,35 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8/9 Object-Motion Sidecar Truth Slice
+
+### Summary
+
+- Changed synthetic dataset generation so `true_motion.csv` is populated from
+  manifest `true_object_motion` terms instead of always writing zeros.
+- Dataset 4 now records the planned smoothstep object tx, sinusoidal ty, linear
+  tz, and smoothstep rot-z curves in its sidecar truth.
+- Datasets without object-frame motion still write deterministic zero motion.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_synthetic_datasets.py::test_generate_object_motion_dataset_marks_unsupported_manifest_terms
+  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
+  -q` passed: 2 tests in 4.28 seconds.
+- `uv run ruff check src/tomojax/datasets/_writer.py
+  tests/test_synthetic_datasets.py` passed.
+- `uv run basedpyright src/tomojax/datasets/_writer.py
+  tests/test_synthetic_datasets.py` passed with 0 errors, 0 warnings, and
+  0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- This adds ground-truth sidecar data only. The operational object-frame motion
+  model and `object_motion_enabled_tx_rmse_px_lt` benchmark criterion remain
+  unimplemented.
+
 ## 2026-05-07 — Phase 8 Object-Motion Suspicion Criterion Slice
 
 ### Summary

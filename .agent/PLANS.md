@@ -11,18 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 object-motion suspicion criterion
-- Goal: make the Dataset 4 `core_solver: flags_object_motion_suspected`
-  criterion real by recording object-motion suspicion evidence from synthetic
-  sidecar metadata and smooth recovered pose drift.
+- Phase: Phase 8/9 object-motion sidecar truth
+- Goal: make Dataset 4 synthetic sidecars record the planned true object-frame
+  motion instead of writing zero motion, so object-motion metrics and solvers
+  have real ground truth.
 
 ### Scope
 
 - In scope:
-  - Include unsupported sidecar DOF metadata in align-auto synthetic readback.
-  - Add an object-motion suspicion payload to benchmark results.
-  - Evaluate `core_solver: flags_object_motion_suspected` from that payload.
-  - Keep the detector local to `tomojax.align` and sidecar readback.
+  - Generate deterministic `true_motion.csv` from benchmark manifest
+    `true_object_motion`.
+  - Preserve zero motion for datasets without object-frame motion.
+  - Add focused synthetic sidecar tests for Dataset 4.
   - Add focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -31,9 +31,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Setup-global stopped-reconstruction policy changes.
   - Pose-only solver changes.
   - Object-motion solver or correction model.
+  - Object-motion benchmark-result recovery metrics.
   - Current-default NMSE comparison.
-  - New report fields beyond the object-motion suspicion payload needed by the
-    criterion.
+  - New report fields or criteria evaluation changes.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -46,8 +46,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement object-motion suspicion payload in benchmark result.
-- [x] Add focused criterion/payload/readback tests.
+- [x] Implement manifest-driven true object-motion CSV generation.
+- [x] Add focused synthetic dataset tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 

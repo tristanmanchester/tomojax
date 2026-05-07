@@ -124,7 +124,7 @@ def generate_synthetic_dataset(
         _true_geometry(spec, detector_shape, theta, setup_override=setup_override),
     )
     _write_pose_csv(paths.true_pose, true_pose)
-    _write_motion_csv(paths.true_motion, n_views)
+    _write_motion_csv(paths.true_motion, spec.true_object_motion, n_views)
     write_geometry_json(paths.v2_nominal_geometry, nominal_state)
     write_geometry_json(paths.v2_corrupted_geometry, nominal_state)
     write_geometry_json(paths.v2_true_geometry, projected_true_state)
@@ -628,7 +628,12 @@ def _write_pose_csv(path: Path, pose: dict[str, NDArray[np.float32]]) -> None:
             writer.writerow({field: float(pose[field][idx]) for field in fieldnames})
 
 
-def _write_motion_csv(path: Path, n_views: int) -> None:
+def _write_motion_csv(
+    path: Path,
+    motion: dict[str, float | str],
+    n_views: int,
+) -> None:
+    values = _make_object_motion_table(motion, n_views)
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(
             fh,
@@ -639,9 +644,43 @@ def _write_motion_csv(path: Path, n_views: int) -> None:
             writer.writerow(
                 {
                     "view": idx,
-                    "tx_obj_px": 0.0,
-                    "ty_obj_px": 0.0,
-                    "tz_obj_px": 0.0,
-                    "rot_obj_z_deg": 0.0,
+                    "tx_obj_px": float(values["tx_obj_px"][idx]),
+                    "ty_obj_px": float(values["ty_obj_px"][idx]),
+                    "tz_obj_px": float(values["tz_obj_px"][idx]),
+                    "rot_obj_z_deg": float(values["rot_obj_z_deg"][idx]),
                 }
             )
+
+
+def _make_object_motion_table(
+    motion: dict[str, float | str],
+    n_views: int,
+) -> dict[str, NDArray[np.float32]]:
+    return {
+        name: _object_motion_component(motion.get(name, 0.0), n_views)
+        for name in ("tx_obj_px", "ty_obj_px", "tz_obj_px", "rot_obj_z_deg")
+    }
+
+
+def _object_motion_component(value: float | str, n_views: int) -> NDArray[np.float32]:
+    if n_views <= 0:
+        return np.zeros((0,), dtype=np.float32)
+    if isinstance(value, int | float):
+        return np.full(n_views, float(value), dtype=np.float32)
+    text = str(value).replace(" ", "")
+    t = (
+        np.linspace(0.0, 1.0, n_views, dtype=np.float32)
+        if n_views > 1
+        else np.zeros(1, dtype=np.float32)
+    )
+    smooth = (3.0 * t**2 - 2.0 * t**3).astype(np.float32)
+    if text.endswith("*smoothstep(t)"):
+        return np.float32(float(text.removesuffix("*smoothstep(t)"))) * smooth
+    if text.endswith("*sin(2*pi*t)"):
+        return (
+            np.float32(float(text.removesuffix("*sin(2*pi*t)")))
+            * np.sin(np.float32(2.0 * np.pi) * t)
+        ).astype(np.float32)
+    if text.endswith("*t"):
+        return np.float32(float(text.removesuffix("*t"))) * t
+    return np.zeros(n_views, dtype=np.float32)

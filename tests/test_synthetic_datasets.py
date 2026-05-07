@@ -206,6 +206,21 @@ def test_generate_object_motion_dataset_marks_unsupported_manifest_terms(
     unsupported = cast("list[str]", manifest["unsupported_dofs_not_evaluated"])
     assert "object_motion" in unsupported
 
+    with paths.true_motion.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+
+    assert len(rows) == 8
+    tx = np.asarray([float(row["tx_obj_px"]) for row in rows], dtype=np.float32)
+    ty = np.asarray([float(row["ty_obj_px"]) for row in rows], dtype=np.float32)
+    tz = np.asarray([float(row["tz_obj_px"]) for row in rows], dtype=np.float32)
+    rot = np.asarray([float(row["rot_obj_z_deg"]) for row in rows], dtype=np.float32)
+    t = np.linspace(0.0, 1.0, 8, dtype=np.float32)
+    smooth = 3.0 * t**2 - 2.0 * t**3
+    np.testing.assert_allclose(tx, -12.0 * smooth, atol=1.0e-6)
+    np.testing.assert_allclose(ty, 2.0 * np.sin(2.0 * np.pi * t), atol=1.0e-6)
+    np.testing.assert_allclose(tz, 1.5 * t, atol=1.0e-6)
+    np.testing.assert_allclose(rot, 0.20 * smooth, atol=1.0e-6)
+
 
 def test_generate_combined_nuisance_dataset_marks_unmodelled_terms(
     tmp_path: Path,
