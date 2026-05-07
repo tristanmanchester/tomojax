@@ -67,24 +67,23 @@ def _run_alternating_solver_smoke_impl(
 ) -> AlternatingSmokeResult:
     run_start = time.perf_counter()
     schedule = config.schedule or reference_continuation_schedule()
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _prepare_output_dir(output_dir)
 
     inputs = build_smoke_inputs(config)
     truth, observed, mask = inputs.truth_volume, inputs.observed_projections, inputs.mask
     true_geometry, initial_geometry = inputs.true_geometry, inputs.initial_geometry
     train_mask, heldout_mask = _heldout_masks(mask, config.heldout_view_index)
 
-    geometry = initial_geometry
-    gauge_report = GaugeReport(())
+    geometry, gauge_report = initial_geometry, GaugeReport(())
     volume: jax.Array | None = None
     summaries: list[AlternatingLevelSummary] = []
-    fista_result: ReferenceFISTAResult | None = None
-    coarse_verified = False
-    time_to_verified_geometry_seconds: float | None = None
-    last_schur_result: JointSchurLMResult | None = None
+    fista_result: ReferenceFISTAResult | None
+    last_schur_result: JointSchurLMResult | None
+    constrained_first_preview_volume: jax.Array | None = None
+    fista_result, coarse_verified = None, False
+    time_to_verified_geometry_seconds, last_schur_result = None, None
 
-    initial_loss = _projection_loss(
+    initial_loss = previous_loss = _projection_loss(
         truth,
         observed,
         geometry,
@@ -92,7 +91,6 @@ def _run_alternating_solver_smoke_impl(
         schedule.levels[0],
         sigma=schedule.levels[0].residual_sigma,
     )
-    previous_loss = initial_loss
     for level in schedule.levels:
         if level.run_if_coarse_unverified and coarse_verified:
             summaries.append(
@@ -134,6 +132,8 @@ def _run_alternating_solver_smoke_impl(
             ),
         )
         volume = jax.lax.stop_gradient(fista_result.volume)
+        if _captures_constrained_first_preview_volume(config, level):
+            constrained_first_preview_volume = volume
         residual_sigma_estimated = _level_residual_sigma(volume, observed, geometry, mask, level)
         residual_sigma_effective = max(level.residual_sigma, residual_sigma_estimated)
         loss_before = _projection_loss(
@@ -151,7 +151,12 @@ def _run_alternating_solver_smoke_impl(
         if geometry_updates > 0:
             geometry_update_volume = _geometry_update_volume_for_level(
                 truth_volume=truth,
-                stopped_volume=volume,
+                stopped_volume=_stopped_geometry_update_volume(
+                    config,
+                    level,
+                    current_volume=volume,
+                    constrained_first_preview_volume=constrained_first_preview_volume,
+                ),
                 observed=observed,
                 mask=train_mask,
                 level=level,
@@ -319,6 +324,12 @@ def _run_alternating_solver_smoke_impl(
     )
 
 
+def _prepare_output_dir(output_dir: str | Path) -> Path:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
 def _pose_frozen_for_level(config: AlternatingSmokeConfig, level_factor: int) -> bool:
     if config.geometry_update_pose_frozen:
         return True
@@ -421,6 +432,30 @@ def _uses_constant_cylindrical_first_level(
         and level.role == "preview"
         and int(level.level_factor) == 4
     )
+
+
+def _captures_constrained_first_preview_volume(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+) -> bool:
+    return _uses_constant_cylindrical_first_level(config, level)
+
+
+def _stopped_geometry_update_volume(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    current_volume: jax.Array,
+    constrained_first_preview_volume: jax.Array | None,
+) -> jax.Array:
+    if (
+        config.stopped_preview_policy == "constant_cylindrical_first_level"
+        and config.geometry_update_volume_source == "stopped_reconstruction"
+        and constrained_first_preview_volume is not None
+        and not _uses_constant_cylindrical_first_level(config, level)
+    ):
+        return constrained_first_preview_volume
+    return current_volume
 
 
 def _geometry_residual_filters(

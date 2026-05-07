@@ -248,3 +248,47 @@ def test_stopped_preview_policy_is_inactive_for_fixed_truth() -> None:
     assert _effective_preview_initialization(config, level) == "backprojection"
     assert _effective_preview_volume_support(config, level) == "none"
     assert _effective_preview_residual_filter_mode(config, level) == "continuation"
+
+
+def test_stopped_preview_policy_reuses_first_preview_for_later_geometry_updates() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _stopped_geometry_update_volume
+
+    schedule = reference_continuation_schedule("reference")
+    config = AlternatingSmokeConfig(
+        stopped_preview_policy="constant_cylindrical_first_level",
+        geometry_update_volume_source="stopped_reconstruction",
+    )
+    first = _jax_array(np.full((2, 2, 2), 1.0, dtype=np.float32))
+    current = _jax_array(np.full((2, 2, 2), 2.0, dtype=np.float32))
+
+    reused = _stopped_geometry_update_volume(
+        config,
+        schedule.levels[-1],
+        current_volume=current,
+        constrained_first_preview_volume=first,
+    )
+
+    np.testing.assert_array_equal(np.asarray(reused), np.asarray(first))
+
+
+def test_stopped_preview_policy_uses_current_volume_for_first_geometry_update() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _stopped_geometry_update_volume
+
+    level = reference_continuation_schedule("reference").levels[0]
+    config = AlternatingSmokeConfig(
+        stopped_preview_policy="constant_cylindrical_first_level",
+        geometry_update_volume_source="stopped_reconstruction",
+    )
+    first = _jax_array(np.full((2, 2, 2), 1.0, dtype=np.float32))
+    current = _jax_array(np.full((2, 2, 2), 2.0, dtype=np.float32))
+
+    selected = _stopped_geometry_update_volume(
+        config,
+        level,
+        current_volume=current,
+        constrained_first_preview_volume=first,
+    )
+
+    np.testing.assert_array_equal(np.asarray(selected), np.asarray(current))

@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Anchored Schur Volume Slice
+
+### Summary
+
+- Changed the `constant_cylindrical_first_level` stopped-preview policy so the
+  constrained first preview volume is reused as the Schur geometry-update volume
+  at later stopped-reconstruction levels.
+- Final reconstruction output still comes from the normal continuation volume;
+  only the volume supplied to Schur geometry updates is anchored.
+- Added focused tests proving that the policy uses the current volume for the
+  first geometry update, reuses the constrained first preview for later stopped
+  updates, and remains inactive for fixed-truth oracle runs.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py -q` passed: 12 tests in
+  0.86 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Rerun the 128^3/256-view supported-only CUDA gate with
+  `--stopped-preview-policy constant_cylindrical_first_level` to determine
+  whether anchored Schur volumes improve stopped setup recovery.
+
 ## 2026-05-07 — Phase 8 Constrained Stopped-Preview CUDA Gate
 
 ### Summary
