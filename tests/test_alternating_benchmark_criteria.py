@@ -110,3 +110,36 @@ def test_benchmark_manifest_keeps_det_v_policy_not_evaluated_without_evidence() 
     assert det_v["reason"] == (
         "det_v was not recovered and unobservability policy evidence is not in benchmark_result"
     )
+
+
+def test_benchmark_manifest_reports_missing_object_motion_suspicion_payload() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"core_solver": "flags_object_motion_suspected"},
+        geometry_recovery={},
+    )
+
+    core_solver = cast("dict[str, object]", evaluation["core_solver"])
+    assert core_solver["status"] == "not_evaluated"
+    assert core_solver["reason"] == "object-motion suspicion payload is not in benchmark_result"
+
+
+def test_benchmark_manifest_reports_missing_bad_view_detection_payload() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"bad_views_flagged": True},
+        geometry_recovery={},
+    )
+
+    bad_views = cast("dict[str, object]", evaluation["bad_views_flagged"])
+    assert bad_views["status"] == "not_evaluated"
+    assert bad_views["reason"] == "bad-view detection payload is not in benchmark_result"
+
+
+def test_benchmark_manifest_reports_missing_jump_exclusion_payload() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"pose_dx_dz_rmse_px_lt_except_jumps": 2.0},
+        geometry_recovery={},
+    )
+
+    pose = cast("dict[str, object]", evaluation["pose_dx_dz_rmse_px_lt_except_jumps"])
+    assert pose["status"] == "not_evaluated"
+    assert pose["reason"] == "pose jump-exclusion mask is not in benchmark_result"

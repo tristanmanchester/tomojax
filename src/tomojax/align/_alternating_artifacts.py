@@ -1033,6 +1033,13 @@ def _criterion_evaluation(
             threshold=threshold,
             geometry_recovery=geometry_recovery,
         )
+    if name in _MISSING_POLICY_CRITERION_REASONS:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": _MISSING_POLICY_CRITERION_REASONS[name],
+        }
     metric_name = _criterion_metric_name(name)
     if metric_name is None:
         return {
@@ -1057,6 +1064,17 @@ def _criterion_evaluation(
         "threshold": threshold_value,
         "reason": "evaluated against smoke geometry recovery metric",
     }
+
+
+_MISSING_POLICY_CRITERION_REASONS = {
+    "bad_views_flagged": "bad-view detection payload is not in benchmark_result",
+    "beats_current_default_nmse": "current-default comparison baseline is not in benchmark_result",
+    "core_solver": "object-motion suspicion payload is not in benchmark_result",
+    "object_motion_enabled_tx_rmse_px_lt": (
+        "object-motion solver metrics are not in benchmark_result"
+    ),
+    "pose_dx_dz_rmse_px_lt_except_jumps": "pose jump-exclusion mask is not in benchmark_result",
+}
 
 
 def _backend_policy_evaluation(

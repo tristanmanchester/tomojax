@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Missing-Policy Criterion Reason Slice
+
+### Summary
+
+- Replaced generic `unsupported_dof_not_evaluated` reasons for policy-style
+  benchmark criteria with explicit missing-evidence reasons.
+- `core_solver`, `bad_views_flagged`,
+  `pose_dx_dz_rmse_px_lt_except_jumps`, `beats_current_default_nmse`, and
+  `object_motion_enabled_tx_rmse_px_lt` now remain `not_evaluated` with the
+  exact absent payload named.
+- This does not implement object-motion, bad-view detection, jump-exclusion
+  metrics, or current-default comparison. It makes the remaining report gaps
+  concrete and auditable.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py -q` passed: 10 tests in
+  0.65 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- The named payloads still need real implementations before these criteria can
+  pass or fail as measured benchmark criteria.
+
 ## 2026-05-07 — Phase 8 Calibrated-Grid Backend Provenance Slice
 
 ### Summary

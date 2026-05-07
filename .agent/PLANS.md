@@ -11,27 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 calibrated-grid backend provenance slice
-- Goal: carry benchmark manifest detector-grid policy into sidecar readback and
-  benchmark backend provenance so `backend_policy:
-  calibrated_grid_fallback_explicit` has concrete evidence on calibrated-grid
-  synthetic datasets.
+- Phase: Phase 8 missing-policy criterion reason slice
+- Goal: replace generic unsupported-DOF reasons for object-motion, bad-view,
+  jump-exclusion, and baseline-comparison benchmark criteria with explicit
+  missing-policy evidence reasons.
 
 ### Scope
 
 - In scope:
-  - Parse optional `detector_grid` from the benchmark manifest.
-  - Write/read `detector_grid` through generated synthetic dataset manifests
-    and align-auto sidecar readback.
-  - Record explicit backend fallback provenance when a sidecar requests a
-    calibrated noncanonical detector grid.
-  - Add focused sidecar/backend policy tests.
+  - Add explicit criterion evaluation branches for `core_solver`,
+    `bad_views_flagged`, `pose_dx_dz_rmse_px_lt_except_jumps`,
+    `beats_current_default_nmse`, and `object_motion_enabled_tx_rmse_px_lt`.
+  - Keep these criteria `not_evaluated` until their required evidence payloads
+    exist.
+  - Add focused criterion-evaluator tests.
   - Update docs/logs and commit the slice.
 - Out of scope:
-  - Changing projector kernels, adding new detector-grid transforms, or
-    rerunning benchmarks.
-- Deep module owners: `tomojax.datasets` for manifest metadata and
-  `tomojax.align`/`tomojax.cli` for benchmark provenance payloads.
+  - Implementing object-motion solvers, bad-view detection, jump exclusion
+    metrics, current-default comparisons, or benchmark reruns.
+- Deep module owner: `tomojax.align` for benchmark artifact/report evaluation.
 
 ### Design Sources
 
@@ -42,25 +40,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Parse and write detector-grid manifest metadata.
-- [x] Include detector-grid metadata in align-auto sidecar readback.
-- [x] Emit calibrated-grid backend fallback provenance.
-- [x] Add focused sidecar/backend policy tests.
+- [x] Add explicit missing-evidence criterion branches.
+- [x] Add focused criterion-evaluator tests.
 - [x] Run focused Ruff/type/tests and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
 - `JAX_PLATFORM_NAME=cpu uv run pytest
-  tests/test_synthetic_datasets.py::test_load_synthetic_dataset_sidecars_reads_manifest_index
-  tests/test_alternating_benchmark_criteria.py -q` passed: 8 tests in
-  2.66 seconds.
-- `uv run ruff check src/tomojax/datasets/_specs.py
-  src/tomojax/datasets/_writer.py src/tomojax/cli/align_auto.py
-  src/tomojax/align/_alternating_artifacts.py tests/test_synthetic_datasets.py
+  tests/test_alternating_benchmark_criteria.py -q` passed: 10 tests in
+  0.65 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
   tests/test_alternating_benchmark_criteria.py` passed.
-- `uv run basedpyright` on the same focused source/test set passed with
-  0 errors, 0 warnings, and 0 notes.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
@@ -71,8 +65,8 @@ and proposed next fix before stopping.
 - The only supported v2 operator family is the existing core trilinear ray
   projector/backprojector (`core_trilinear_ray`).
 - Do not add a selector between rotate-and-sum and core trilinear ray.
-- Backend policy criteria must use explicit sidecar/provenance metadata, not
-  infer fallback from benchmark names.
+- Unsupported criteria may remain only with exact missing evidence reasons, not
+  generic unsupported placeholders.
 
 ### Completed Previous Slices
 
@@ -89,9 +83,10 @@ and proposed next fix before stopping.
 - [x] Laminography solver residuals committed: `7002d42`.
 - [x] Recovered det_v policy criterion committed: `f6fe3c4`.
 - [x] Backend policy criterion evaluation committed: `b040829`.
+- [x] Calibrated-grid backend provenance committed: `a0b69db`.
 
 ### Risks
 
-- Risk: provenance can claim a fallback without any manifest trigger.
-- Mitigation: emit fallback rows only when sidecar readback explicitly reports
-  `detector_grid="calibrated_noncanonical"`.
+- Risk: explicit missing-evidence branches can look like implementation.
+- Mitigation: keep status `not_evaluated` and name the absent payload required
+  to make each criterion real.
