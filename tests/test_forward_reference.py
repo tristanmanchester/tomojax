@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import jax
 
 # pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
@@ -150,6 +152,57 @@ def test_project_parallel_reference_applies_axis_tilt() -> None:
     assert tilted.shape == base.shape
     core = core_projection_geometry_from_state((7, 7, 7), tilted_geometry)
     assert float(jnp.linalg.norm(core.t_all[:, :3, :3] - jnp.eye(3))) > 0.0
+
+
+def test_core_projection_geometry_applies_alpha_beta_residual_pose() -> None:
+    geometry = GeometryState.zeros(1)
+    pose = geometry.pose.with_updates(
+        alpha_rad=np.array([0.20], dtype=np.float64),
+        beta_rad=np.array([-0.10], dtype=np.float64),
+    )
+    geometry = GeometryState(setup=geometry.setup, pose=pose)
+
+    core = core_projection_geometry_from_state((7, 7, 7), geometry)
+
+    ca, sa = np.cos(0.20), np.sin(0.20)
+    cb, sb = np.cos(-0.10), np.sin(-0.10)
+    rx = np.array([[1.0, 0.0, 0.0], [0.0, ca, -sa], [0.0, sa, ca]])
+    ry = np.array([[cb, 0.0, sb], [0.0, 1.0, 0.0], [-sb, 0.0, cb]])
+    np.testing.assert_allclose(np.asarray(core.t_all[0, :3, :3]), ry @ rx, atol=1e-6)
+    provenance = core.provenance()
+    assert np.isclose(float(cast("float", provenance["alpha_rad_max_abs"])), 0.20)
+    assert np.isclose(float(cast("float", provenance["beta_rad_max_abs"])), 0.10)
+
+
+def test_project_parallel_reference_applies_alpha_beta_pose() -> None:
+    volume = jnp.zeros((7, 7, 7), dtype=jnp.float32)
+    volume = volume.at[1, :, 5].set(1.0)
+    volume = volume.at[5, :, 2].set(0.6)
+    geometry = GeometryState.zeros(1)
+    tilted_pose = geometry.pose.with_updates(
+        alpha_rad=np.array([0.18], dtype=np.float64),
+        beta_rad=np.array([-0.12], dtype=np.float64),
+    )
+    tilted_geometry = GeometryState(setup=geometry.setup, pose=tilted_pose)
+
+    base = project_parallel_reference(volume, geometry)
+    tilted = project_parallel_reference(volume, tilted_geometry)
+
+    assert float(jnp.linalg.norm(tilted - base)) > 0.0
+    np.testing.assert_allclose(
+        np.asarray(tilted),
+        np.asarray(
+            project_parallel_reference_arrays(
+                volume,
+                theta_rad=jnp.asarray([0.0], dtype=jnp.float32),
+                dx_px=jnp.asarray([0.0], dtype=jnp.float32),
+                dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+                alpha_rad=jnp.asarray([0.18], dtype=jnp.float32),
+                beta_rad=jnp.asarray([-0.12], dtype=jnp.float32),
+            )
+        ),
+        atol=1e-6,
+    )
 
 
 def test_project_parallel_reference_changes_smoothly_with_theta() -> None:

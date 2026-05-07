@@ -26,8 +26,8 @@ from tomojax.nuisance import estimate_background_offset, estimate_gain_offset
 if TYPE_CHECKING:
     from pathlib import Path
 
-_POSE_DIM = 3
-PoseSchurDof = Literal["phi_residual_rad", "dx_px", "dz_px"]
+_POSE_DIM = 5
+PoseSchurDof = Literal["alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"]
 SetupSchurParameter = Literal[
     "axis_rot_x_rad",
     "axis_rot_y_rad",
@@ -36,7 +36,13 @@ SetupSchurParameter = Literal[
     "detector_roll_rad",
     "theta_offset_rad",
 ]
-_POSE_DOF_ORDER: tuple[PoseSchurDof, ...] = ("phi_residual_rad", "dx_px", "dz_px")
+_POSE_DOF_ORDER: tuple[PoseSchurDof, ...] = (
+    "alpha_rad",
+    "beta_rad",
+    "phi_residual_rad",
+    "dx_px",
+    "dz_px",
+)
 _SETUP_PARAMETER_ORDER: tuple[SetupSchurParameter, ...] = (
     "theta_offset_rad",
     "det_u_px",
@@ -806,11 +812,7 @@ def _frozen_parameters(
     geometry: GeometryState,
     config: JointSchurLMConfig | None = None,
 ) -> tuple[str, ...]:
-    frozen = [
-        "alpha_rad",
-        "beta_rad",
-        "theta_scale",
-    ]
+    frozen = ["theta_scale"]
     if not geometry.setup.det_v_px.active:
         frozen.append("det_v_px")
     active_setup = _active_setup_parameters(geometry, config)
@@ -820,9 +822,9 @@ def _frozen_parameters(
         if parameter not in active_setup and parameter not in frozen
     )
     active_pose = (
-        ("phi_residual_rad", "dx_px", "dz_px") if config is None else config.active_pose_dofs
+        _POSE_DOF_ORDER if config is None else config.active_pose_dofs
     )
-    frozen.extend(dof for dof in ("phi_residual_rad", "dx_px", "dz_px") if dof not in active_pose)
+    frozen.extend(dof for dof in _POSE_DOF_ORDER if dof not in active_pose)
     return tuple(frozen)
 
 
@@ -895,6 +897,8 @@ def _active_pose_arrays(
     active_pose_dofs: tuple[PoseSchurDof, ...],
 ) -> tuple[np.ndarray, ...]:
     arrays = {
+        "alpha_rad": geometry.pose.alpha_rad,
+        "beta_rad": geometry.pose.beta_rad,
         "phi_residual_rad": geometry.pose.phi_residual_rad,
         "dx_px": geometry.pose.dx_px,
         "dz_px": geometry.pose.dz_px,
@@ -949,6 +953,8 @@ def _geometry_with_params(
     return GeometryState(
         setup=setup,
         pose=geometry.pose.with_updates(
+            alpha_rad=pose_updates.get("alpha_rad"),
+            beta_rad=pose_updates.get("beta_rad"),
             phi_residual_rad=pose_updates.get("phi_residual_rad"),
             dx_px=pose_updates.get("dx_px"),
             dz_px=pose_updates.get("dz_px"),
@@ -961,12 +967,14 @@ def _split_joint(
     params: jax.Array,
     config: JointSchurLMConfig | None = None,
 ) -> tuple[
-    jax.Array,
-    jax.Array,
-    jax.Array,
-    jax.Array,
-    jax.Array,
-    jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
     jax.Array,
     jax.Array,
     jax.Array,
@@ -989,6 +997,8 @@ def _split_joint(
         setup_values[parameter] = params[index]
     active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
     pose_values = {
+        "alpha_rad": jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32),
+        "beta_rad": jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32),
         "phi_residual_rad": jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
         "dx_px": jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32),
         "dz_px": jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32),
@@ -1004,6 +1014,8 @@ def _split_joint(
         setup_values["detector_roll_rad"],
         setup_values["axis_rot_x_rad"],
         setup_values["axis_rot_y_rad"],
+        pose_values["alpha_rad"],
+        pose_values["beta_rad"],
         pose_values["phi_residual_rad"],
         pose_values["dx_px"],
         pose_values["dz_px"],
@@ -1109,6 +1121,8 @@ def _predicted_for_params(
         detector_roll,
         axis_x,
         axis_y,
+        alpha_pose,
+        beta_pose,
         phi_pose,
         dx_pose,
         dz_pose,
@@ -1127,6 +1141,8 @@ def _predicted_for_params(
         ),
         dx_px=det_u + dx_pose,
         dz_px=det_v + dz_pose,
+        alpha_rad=alpha_pose,
+        beta_rad=beta_pose,
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,

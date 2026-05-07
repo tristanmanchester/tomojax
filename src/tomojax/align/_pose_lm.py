@@ -22,6 +22,7 @@ class PoseOnlyLMConfig:
     sigma: float = 1.0
     delta: float = 1.0
     finite_difference_step: float = 1e-3
+    active_pose_dofs: tuple[str, ...] = ("phi_residual_rad", "dx_px", "dz_px")
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,8 @@ def solve_pose_only_lm(
     obs = jnp.asarray(observed, dtype=jnp.float32)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     setup_shift = jnp.asarray([geometry.setup.det_u_px.value, dz_setup], dtype=jnp.float32)
-    params = _pack_pose(geometry)
+    _validate_active_pose_dofs(cfg.active_pose_dofs)
+    params = _pack_pose(geometry, active_pose_dofs=cfg.active_pose_dofs)
 
     initial_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
     iterations = 0
@@ -62,6 +64,7 @@ def solve_pose_only_lm(
             params,
             mask=mask,
             sigma=cfg.sigma,
+            active_pose_dofs=cfg.active_pose_dofs,
         )
         weights = jnp.sqrt(pseudo_huber_weights(residual, delta=cfg.delta)).reshape(-1)
 
@@ -77,6 +80,7 @@ def solve_pose_only_lm(
                 candidate,
                 mask=mask,
                 sigma=cfg.sigma,
+                active_pose_dofs=cfg.active_pose_dofs,
             )
             return raw.reshape(-1) * weights_current
 
@@ -100,7 +104,7 @@ def solve_pose_only_lm(
         if float(jnp.linalg.norm(step)) < 1e-5:
             break
 
-    solved = _geometry_with_params(geometry, params)
+    solved = _geometry_with_params(geometry, params, active_pose_dofs=cfg.active_pose_dofs)
     canonicalized = canonicalize_geometry_gauges(solved)
     final_loss = _loss_for_params(vol, obs, geometry, params, mask=mask, cfg=cfg)
     return PoseOnlyLMResult(
@@ -109,36 +113,67 @@ def solve_pose_only_lm(
         initial_loss=float(initial_loss),
         final_loss=float(final_loss),
         iterations=iterations,
-        active_dofs=("phi_residual_rad", "dx_px", "dz_px"),
-        frozen_dofs=("alpha_rad", "beta_rad"),
+        active_dofs=cfg.active_pose_dofs,
+        frozen_dofs=tuple(dof for dof in _POSE_DOF_ORDER if dof not in cfg.active_pose_dofs),
     )
 
 
-def _pack_pose(geometry: GeometryState) -> jax.Array:
-    phi = jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
-    dx = jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32)
-    dz = jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32)
-    return jnp.concatenate([phi, dx, dz], axis=0)
+_POSE_DOF_ORDER = ("alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px")
 
 
-def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> GeometryState:
+def _pack_pose(geometry: GeometryState, *, active_pose_dofs: tuple[str, ...]) -> jax.Array:
+    arrays = {
+        "alpha_rad": jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32),
+        "beta_rad": jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32),
+        "phi_residual_rad": jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
+        "dx_px": jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32),
+        "dz_px": jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32),
+    }
+    return jnp.concatenate([arrays[dof] for dof in active_pose_dofs], axis=0)
+
+
+def _geometry_with_params(
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    active_pose_dofs: tuple[str, ...],
+) -> GeometryState:
     n_views = geometry.pose.n_views
-    phi, dx, dz = _split_params(params, n_views=n_views)
+    updates = _split_params(params, n_views=n_views, active_pose_dofs=active_pose_dofs)
     return GeometryState(
         setup=geometry.setup,
         pose=geometry.pose.with_updates(
-            phi_residual_rad=np.asarray(phi, dtype=np.float64),
-            dx_px=np.asarray(dx, dtype=np.float64),
-            dz_px=np.asarray(dz, dtype=np.float64),
+            alpha_rad=_as_float64_array(updates.get("alpha_rad")),
+            beta_rad=_as_float64_array(updates.get("beta_rad")),
+            phi_residual_rad=_as_float64_array(updates.get("phi_residual_rad")),
+            dx_px=_as_float64_array(updates.get("dx_px")),
+            dz_px=_as_float64_array(updates.get("dz_px")),
         ),
     )
 
 
-def _split_params(params: jax.Array, *, n_views: int) -> tuple[jax.Array, jax.Array, jax.Array]:
-    phi = params[:n_views]
-    dx = params[n_views : 2 * n_views]
-    dz = params[2 * n_views :]
-    return phi, dx, dz
+def _split_params(
+    params: jax.Array,
+    *,
+    n_views: int,
+    active_pose_dofs: tuple[str, ...],
+) -> dict[str, jax.Array]:
+    matrix = params.reshape((len(active_pose_dofs), n_views))
+    return {dof: matrix[index] for index, dof in enumerate(active_pose_dofs)}
+
+
+def _validate_active_pose_dofs(active_pose_dofs: tuple[str, ...]) -> None:
+    if len(set(active_pose_dofs)) != len(active_pose_dofs):
+        raise ValueError("PoseOnlyLMConfig.active_pose_dofs must not contain duplicates")
+    unknown = tuple(dof for dof in active_pose_dofs if dof not in _POSE_DOF_ORDER)
+    if unknown:
+        raise ValueError(f"unknown active pose DOFs {unknown!r}")
+
+
+def _as_float64_array(value: jax.Array | None) -> np.ndarray | None:
+    if value is None:
+        return None
+    return np.asarray(value, dtype=np.float64)
 
 
 def _residual_for_params(
@@ -150,8 +185,24 @@ def _residual_for_params(
     *,
     mask: jax.Array | None,
     sigma: float,
+    active_pose_dofs: tuple[str, ...],
 ) -> jax.Array:
-    phi_pose, dx_pose, dz_pose = _split_params(params, n_views=geometry.pose.n_views)
+    updates = _split_params(
+        params,
+        n_views=geometry.pose.n_views,
+        active_pose_dofs=active_pose_dofs,
+    )
+    alpha_pose = updates.get(
+        "alpha_rad",
+        jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32),
+    )
+    beta_pose = updates.get("beta_rad", jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32))
+    phi_pose = updates.get(
+        "phi_residual_rad",
+        jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
+    )
+    dx_pose = updates.get("dx_px", jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32))
+    dz_pose = updates.get("dz_px", jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32))
     theta = (
         jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
         * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
@@ -163,6 +214,8 @@ def _residual_for_params(
         theta_rad=theta,
         dx_px=setup_shift[0] + dx_pose,
         dz_px=setup_shift[1] + dz_pose,
+        alpha_rad=alpha_pose,
+        beta_rad=beta_pose,
     )
     residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
     if mask is None:
@@ -180,7 +233,22 @@ def _loss_for_params(
     cfg: PoseOnlyLMConfig,
 ) -> jax.Array:
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    phi_pose, dx_pose, dz_pose = _split_params(params, n_views=geometry.pose.n_views)
+    updates = _split_params(
+        params,
+        n_views=geometry.pose.n_views,
+        active_pose_dofs=cfg.active_pose_dofs,
+    )
+    alpha_pose = updates.get(
+        "alpha_rad",
+        jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32),
+    )
+    beta_pose = updates.get("beta_rad", jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32))
+    phi_pose = updates.get(
+        "phi_residual_rad",
+        jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
+    )
+    dx_pose = updates.get("dx_px", jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32))
+    dz_pose = updates.get("dz_px", jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32))
     theta = (
         jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
         * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
@@ -192,5 +260,7 @@ def _loss_for_params(
         theta_rad=theta,
         dx_px=geometry.setup.det_u_px.value + dx_pose,
         dz_px=dz_setup + dz_pose,
+        alpha_rad=alpha_pose,
+        beta_rad=beta_pose,
     )
     return residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss

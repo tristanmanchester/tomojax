@@ -91,6 +91,42 @@ def test_pose_only_lm_recovers_phi_residual_pose_component() -> None:
     )
 
 
+def test_pose_only_lm_recovers_alpha_beta_pose_components() -> None:
+    volume = _roll_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.array([0.0, np.pi / 2.0], dtype=np.float64),
+        ),
+    )
+    true_pose = nominal.pose.with_updates(
+        alpha_rad=np.array([0.08, -0.06], dtype=np.float64),
+        beta_rad=np.array([-0.05, 0.07], dtype=np.float64),
+    )
+    truth = GeometryState(setup=nominal.setup, pose=true_pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_pose_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=PoseOnlyLMConfig(
+            max_iterations=12,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1e-2,
+            active_pose_dofs=("alpha_rad", "beta_rad"),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_dofs == ("alpha_rad", "beta_rad")
+    assert result.frozen_dofs == ("phi_residual_rad", "dx_px", "dz_px")
+    np.testing.assert_allclose(result.geometry.pose.alpha_rad, true_pose.alpha_rad, atol=0.025)
+    np.testing.assert_allclose(result.geometry.pose.beta_rad, true_pose.beta_rad, atol=0.025)
+
+
 def test_pose_only_lm_canonicalizes_solved_phi_gauge() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(2)
@@ -132,3 +168,11 @@ def _theta_asymmetric_volume() -> jnp.ndarray:
     volume = volume.at[5, 1, 4].set(0.7)
     volume = volume.at[2, 5, 6].set(0.4)
     return volume.at[4, 4, 2].set(0.2)
+
+
+def _roll_asymmetric_volume() -> jnp.ndarray:
+    volume = jnp.zeros((9, 9, 9), dtype=jnp.float32)
+    volume = volume.at[2, :, 6].set(1.0)
+    volume = volume.at[6, :, 2].set(0.7)
+    volume = volume.at[1, :, 1].set(0.3)
+    return volume.at[7, :, 5].set(0.2)

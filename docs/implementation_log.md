@@ -3,6 +3,60 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 2 Alpha/Beta Pose Core Geometry Slice
+
+### Summary
+
+- Promoted per-view `alpha_rad` and `beta_rad` from unsupported/frozen
+  placeholders to supported `core_trilinear_ray` v2 pose DOFs for parallel
+  tomography.
+- The v2-to-core adapter now composes alpha/beta residual rotations after the
+  nominal axis/theta world-from-object pose, matching the existing sidecar
+  geometry wrapper convention. Existing detector-shift signs and detector-grid
+  semantics are unchanged.
+- `project_parallel_reference_arrays` now accepts scalar or per-view
+  `alpha_rad`/`beta_rad` arrays and records alpha/beta max-absolute provenance.
+- Pose-only LM and joint Schur LM can pack, update, freeze, trace, and report
+  alpha/beta as explicit opt-in active pose DOFs. The default pose block remains
+  `phi_residual_rad`, `dx_px`, and `dz_px` until weak-DOF activation policy is
+  broadened.
+- Synthetic sidecar generation no longer projects alpha/beta away and no
+  longer classifies them as `unsupported_dof_not_evaluated`.
+- Verification and benchmark-manifest evaluation now emit
+  `alpha_beta_rmse_rad` and evaluate `alpha_beta_rmse_deg_lt` as a real metric.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
+  tests/test_pose_lm.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_recovers_realized_supported_geometry
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_alpha_beta_pose_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_axis_tilt_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_detector_roll_setup_update
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
+  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  -q` passed: 27 tests in 278.34 seconds.
+- `uv run ruff check src/tomojax/geometry/_state.py
+  src/tomojax/forward/_projector.py src/tomojax/align/_pose_lm.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/align/_setup_lm.py
+  src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/datasets/_writer.py
+  tests/test_forward_reference.py tests/test_pose_lm.py
+  tests/test_joint_schur_lm.py tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright` on the same focused source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Parallel laminography, theta-scale observability, det_v activation policy,
+  object drift, automatic weak alpha/beta/axis activation, and full five-case
+  benchmark recovery remain future vertical slices.
+- Alpha/beta are supported opt-in pose DOFs; they are intentionally not yet
+  enabled by default in alternating schedules because the weak-DOF policy still
+  needs gauge-aware activation rules.
+
 ## 2026-05-07 — GPU Memory Diagnostic Pause Addendum
 
 ### Summary

@@ -41,6 +41,8 @@ class CoreProjectionGeometry:
     detector_roll_rad: object = 0.0
     axis_rot_x_rad: object = 0.0
     axis_rot_y_rad: object = 0.0
+    alpha_rad_max_abs: object = 0.0
+    beta_rad_max_abs: object = 0.0
 
     def provenance(self) -> dict[str, object]:
         """Return serialisable operator metadata for run artifacts."""
@@ -56,6 +58,8 @@ class CoreProjectionGeometry:
             "detector_roll_rad": _serialisable_scalar(self.detector_roll_rad),
             "axis_rot_x_rad": _serialisable_scalar(self.axis_rot_x_rad),
             "axis_rot_y_rad": _serialisable_scalar(self.axis_rot_y_rad),
+            "alpha_rad_max_abs": _serialisable_scalar(self.alpha_rad_max_abs),
+            "beta_rad_max_abs": _serialisable_scalar(self.beta_rad_max_abs),
         }
 
 
@@ -68,17 +72,20 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
     vol = jnp.asarray(volume, dtype=jnp.float32)
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
-    _raise_for_unsupported_dofs(geometry)
     theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
     dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
+    alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
+    beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
     return project_parallel_reference_arrays(
         vol,
         theta_rad=theta,
+        alpha_rad=alpha,
+        beta_rad=beta,
         dx_px=dx,
         dz_px=dz,
         detector_roll_rad=detector_roll,
@@ -93,6 +100,8 @@ def project_parallel_reference_arrays(
     theta_rad: jax.Array,
     dx_px: jax.Array,
     dz_px: jax.Array,
+    alpha_rad: jax.Array | float = 0.0,
+    beta_rad: jax.Array | float = 0.0,
     detector_roll_rad: jax.Array | float = 0.0,
     axis_rot_x_rad: jax.Array | float = 0.0,
     axis_rot_y_rad: jax.Array | float = 0.0,
@@ -102,6 +111,8 @@ def project_parallel_reference_arrays(
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
     theta = jnp.asarray(theta_rad, dtype=jnp.float32)
+    alpha = _pose_array_like(alpha_rad, theta, name="alpha_rad")
+    beta = _pose_array_like(beta_rad, theta, name="beta_rad")
     dx = jnp.asarray(dx_px, dtype=jnp.float32)
     dz = jnp.asarray(dz_px, dtype=jnp.float32)
     if theta.shape != dx.shape or theta.shape != dz.shape:
@@ -109,6 +120,8 @@ def project_parallel_reference_arrays(
     core = core_projection_geometry_from_arrays(
         _volume_shape(vol.shape),
         theta_rad=theta,
+        alpha_rad=alpha,
+        beta_rad=beta,
         dx_px=dx,
         dz_px=dz,
         detector_roll_rad=detector_roll_rad,
@@ -145,8 +158,9 @@ def core_projection_geometry_from_state(
     n_steps: int | None = None,
 ) -> CoreProjectionGeometry:
     """Adapt supported v2 geometry state to core Grid/Detector/T_all."""
-    _raise_for_unsupported_dofs(geometry)
     theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
+    alpha = jnp.asarray(geometry.pose.alpha_rad, dtype=jnp.float32)
+    beta = jnp.asarray(geometry.pose.beta_rad, dtype=jnp.float32)
     dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
@@ -156,6 +170,8 @@ def core_projection_geometry_from_state(
     return core_projection_geometry_from_arrays(
         volume_shape,
         theta_rad=theta,
+        alpha_rad=alpha,
+        beta_rad=beta,
         dx_px=dx,
         dz_px=dz,
         detector_roll_rad=detector_roll,
@@ -176,6 +192,8 @@ def core_projection_geometry_from_arrays(
     theta_rad: jax.Array,
     dx_px: jax.Array,
     dz_px: jax.Array,
+    alpha_rad: jax.Array | float = 0.0,
+    beta_rad: jax.Array | float = 0.0,
     detector_roll_rad: jax.Array | float = 0.0,
     axis_rot_x_rad: jax.Array | float = 0.0,
     axis_rot_y_rad: jax.Array | float = 0.0,
@@ -189,6 +207,8 @@ def core_projection_geometry_from_arrays(
     """Build core Grid/Detector/T_all for supported parallel tomography arrays."""
     nx, ny, nz = _volume_shape(volume_shape)
     theta = jnp.asarray(theta_rad, dtype=jnp.float32)
+    alpha = _pose_array_like(alpha_rad, theta, name="alpha_rad")
+    beta = _pose_array_like(beta_rad, theta, name="beta_rad")
     dx = jnp.asarray(dx_px, dtype=jnp.float32)
     dz = jnp.asarray(dz_px, dtype=jnp.float32)
     if theta.ndim != 1 or dx.ndim != 1 or dz.ndim != 1:
@@ -207,6 +227,8 @@ def core_projection_geometry_from_arrays(
         detector=detector,
         t_all=_stack_core_poses(
             theta,
+            alpha,
+            beta,
             dx,
             dz,
             axis_rot_x_rad=axis_x,
@@ -221,11 +243,15 @@ def core_projection_geometry_from_arrays(
         detector_roll_rad=roll,
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,
+        alpha_rad_max_abs=jnp.max(jnp.abs(alpha)),
+        beta_rad_max_abs=jnp.max(jnp.abs(beta)),
     )
 
 
 def _stack_core_poses(
     theta_rad: jax.Array,
+    alpha_rad: jax.Array,
+    beta_rad: jax.Array,
     dx_px: jax.Array,
     dz_px: jax.Array,
     *,
@@ -238,9 +264,40 @@ def _stack_core_poses(
         axis_rot_y_deg=axis_rot_y_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
     )
     t_all = axis_pose_stack(theta_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32), axis)
+    residual = _pose_residual_rotation_stack(alpha_rad, beta_rad)
+    t_all = t_all.at[:, :3, :3].set(t_all[:, :3, :3] @ residual)
     t_all = t_all.at[:, 0, 3].set(-dx_px)
     t_all = t_all.at[:, 2, 3].set(-dz_px)
     return t_all.astype(jnp.float32)
+
+
+def _pose_residual_rotation_stack(alpha_rad: jax.Array, beta_rad: jax.Array) -> jax.Array:
+    alpha = jnp.asarray(alpha_rad, dtype=jnp.float32)
+    beta = jnp.asarray(beta_rad, dtype=jnp.float32)
+
+    def one(alpha_i: jax.Array, beta_i: jax.Array) -> jax.Array:
+        ca, sa = jnp.cos(alpha_i), jnp.sin(alpha_i)
+        cb, sb = jnp.cos(beta_i), jnp.sin(beta_i)
+        rx = jnp.asarray(
+            [[1.0, 0.0, 0.0], [0.0, ca, -sa], [0.0, sa, ca]],
+            dtype=jnp.float32,
+        )
+        ry = jnp.asarray(
+            [[cb, 0.0, sb], [0.0, 1.0, 0.0], [-sb, 0.0, cb]],
+            dtype=jnp.float32,
+        )
+        return ry @ rx
+
+    return jax.vmap(one)(alpha, beta)
+
+
+def _pose_array_like(value: jax.Array | float, theta: jax.Array, *, name: str) -> jax.Array:
+    array = jnp.asarray(value, dtype=jnp.float32)
+    if array.ndim == 0:
+        return jnp.full_like(theta, array)
+    if array.shape != theta.shape:
+        raise ValueError(f"{name} must be scalar or match theta_rad shape")
+    return array
 
 
 def _volume_shape(shape: tuple[int, ...]) -> tuple[int, int, int]:
@@ -266,12 +323,3 @@ def _serialisable_scalar(value: object) -> object:
         return float(value)  # pyright: ignore[reportArgumentType]
     except (TypeError, ValueError):
         return "dynamic"
-
-
-def _raise_for_unsupported_dofs(geometry: GeometryState) -> None:
-    if jnp.any(jnp.asarray(geometry.pose.alpha_rad) != 0.0) or jnp.any(
-        jnp.asarray(geometry.pose.beta_rad) != 0.0
-    ):
-        raise ValueError(
-            "alpha_rad and beta_rad are not supported by the v2 core_trilinear_ray adapter yet"
-        )

@@ -163,8 +163,8 @@ def _project_v2_smoke(
 def _core_projectable_state(state: GeometryState) -> GeometryState:
     setup = state.setup
     pose = PoseParameters(
-        alpha_rad=np.zeros_like(state.pose.alpha_rad),
-        beta_rad=np.zeros_like(state.pose.beta_rad),
+        alpha_rad=state.pose.alpha_rad,
+        beta_rad=state.pose.beta_rad,
         theta_nominal_rad=state.pose.theta_nominal_rad,
         phi_residual_rad=state.pose.phi_residual_rad,
         dx_px=state.pose.dx_px,
@@ -178,13 +178,10 @@ def _unsupported_dofs_not_evaluated(
     *,
     supported_only: bool,
 ) -> list[str]:
+    _ = state
     if supported_only:
         return []
     unsupported: list[str] = []
-    if np.any(state.pose.alpha_rad != 0.0):
-        unsupported.append("alpha_rad")
-    if np.any(state.pose.beta_rad != 0.0):
-        unsupported.append("beta_rad")
     return unsupported
 
 

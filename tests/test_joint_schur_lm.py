@@ -516,6 +516,45 @@ def test_joint_schur_lm_can_run_axis_tilt_setup_update() -> None:
     np.testing.assert_allclose(result.geometry.setup.axis_rot_y_rad.value, -0.10, atol=0.025)
 
 
+def test_joint_schur_lm_can_run_alpha_beta_pose_update() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.asarray([0.0, np.pi / 2.0], dtype=np.float64),
+        ),
+    )
+    truth_pose = nominal.pose.with_updates(
+        alpha_rad=np.asarray([0.08, -0.06], dtype=np.float64),
+        beta_rad=np.asarray([-0.05, 0.07], dtype=np.float64),
+    )
+    truth = GeometryState(setup=nominal.setup, pose=truth_pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=8,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1.0e-2,
+            active_setup_parameters=("det_u_px",),
+            active_pose_dofs=("alpha_rad", "beta_rad"),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_setup_parameters == ("det_u_px",)
+    assert result.active_pose_dofs == ("alpha_rad", "beta_rad")
+    assert "alpha_rad" not in result.frozen_parameters
+    assert "beta_rad" not in result.frozen_parameters
+    np.testing.assert_allclose(result.geometry.pose.alpha_rad, truth_pose.alpha_rad, atol=0.025)
+    np.testing.assert_allclose(result.geometry.pose.beta_rad, truth_pose.beta_rad, atol=0.025)
+
+
 def test_joint_schur_lm_can_freeze_phi_while_updating_detector_pose() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(2)

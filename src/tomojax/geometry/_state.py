@@ -101,6 +101,8 @@ class PoseParameters:
     def with_updates(
         self,
         *,
+        alpha_rad: NDArray[np.float64] | None = None,
+        beta_rad: NDArray[np.float64] | None = None,
         theta_nominal_rad: NDArray[np.float64] | None = None,
         phi_residual_rad: NDArray[np.float64] | None = None,
         dx_px: NDArray[np.float64] | None = None,
@@ -108,6 +110,8 @@ class PoseParameters:
     ) -> PoseParameters:
         return replace(
             self,
+            alpha_rad=self.alpha_rad if alpha_rad is None else alpha_rad,
+            beta_rad=self.beta_rad if beta_rad is None else beta_rad,
             theta_nominal_rad=(
                 self.theta_nominal_rad if theta_nominal_rad is None else theta_nominal_rad
             ),

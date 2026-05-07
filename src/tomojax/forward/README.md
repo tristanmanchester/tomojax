@@ -51,17 +51,19 @@ Forbidden dependencies:
 - Projection residuals must support masks and robust whitening.
 - Backend fast paths must report provenance and compare against the reference
   path.
-- Supported parallel-tomography DOFs are nominal theta, theta offset, phi
-  residual, detector u/v shift, detector roll, axis x/y tilt, and per-view
-  dx/dz.
+- Supported parallel-tomography DOFs are nominal theta, theta offset, per-view
+  alpha/beta/phi residuals, detector u/v shift, detector roll, axis x/y tilt,
+  and per-view dx/dz.
 - Detector roll uses a calibrated detector-grid transform: roll is applied
   around the zero-centre detector plane, while detector centre offsets remain
   independent.
 - Axis rotations use the core rotation-axis pose convention: x/y setup
   rotations derive a lab-frame axis unit and `T_all` is built with
   `axis_pose_stack`.
-- Laminography, alpha/beta, and object drift are explicit unsupported states
-  until their core convention mapping is defined.
+- Alpha/beta pose rotations are composed after the nominal axis/theta pose in
+  object coordinates, matching the sidecar geometry wrapper convention.
+- Laminography and object drift are explicit unsupported states until their
+  core convention mapping is defined.
 - Residual filters are projection-domain JAX reference policies. The current
   public policies are `raw`, `lowpass_gaussian`, and
   `bandpass_difference_of_gaussians`.
@@ -70,5 +72,5 @@ Forbidden dependencies:
 
 - `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
 - `tests/test_forward_reference.py` covers the v2-to-core adapter, supported
-  detector/theta shifts, detector roll, axis tilt, and robust residual
-  contracts.
+  detector/theta shifts, detector roll, axis tilt, alpha/beta pose rotations,
+  and robust residual contracts.

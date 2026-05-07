@@ -266,6 +266,21 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     axis_y_error = abs(float(final_geometry.setup.axis_rot_y_rad.value - true_axis_y))
     initial_axis_error = float(np.hypot(initial_axis_x_error, initial_axis_y_error))
     axis_error = float(np.hypot(axis_x_error, axis_y_error))
+    initial_alpha_beta_rmse = _alpha_beta_rmse_rad(initial_geometry, true_geometry)
+    alpha_beta_rmse = _alpha_beta_rmse_rad(final_geometry, true_geometry)
+    initial_alpha_rmse = _pose_component_rmse_rad(
+        initial_geometry.pose.alpha_rad,
+        true_geometry.pose.alpha_rad,
+    )
+    alpha_rmse = _pose_component_rmse_rad(
+        final_geometry.pose.alpha_rad,
+        true_geometry.pose.alpha_rad,
+    )
+    initial_beta_rmse = _pose_component_rmse_rad(
+        initial_geometry.pose.beta_rad,
+        true_geometry.pose.beta_rad,
+    )
+    beta_rmse = _pose_component_rmse_rad(final_geometry.pose.beta_rad, true_geometry.pose.beta_rad)
     mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px)))
     mean_phi_abs = abs(float(np.mean(final_geometry.pose.phi_residual_rad)))
     mean_dz_abs = abs(float(np.mean(final_geometry.pose.dz_px)))
@@ -275,6 +290,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     det_v_limit = float(tolerances["det_v_realized_rmse_px_lt"])
     roll_limit = float(tolerances["detector_roll_error_rad_lt"])
     axis_limit = float(tolerances["axis_error_rad_lt"])
+    alpha_beta_limit = float(tolerances["alpha_beta_rmse_rad_lt"])
     gauge_limit = float(tolerances["mean_gauge_abs_lt"])
     passed = (
         theta_rmse <= theta_limit
@@ -282,6 +298,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         and det_v_rmse <= det_v_limit
         and roll_error <= roll_limit
         and axis_error <= axis_limit
+        and alpha_beta_rmse <= alpha_beta_limit
         and mean_dx_abs <= gauge_limit
         and mean_phi_abs <= gauge_limit
         and (not det_v_gauge_active or mean_dz_abs <= gauge_limit)
@@ -291,6 +308,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     det_v_improved = bool(det_v_rmse < initial_det_v_rmse)
     roll_improved = bool(roll_error < initial_roll_error)
     axis_improved = bool(axis_error < initial_axis_error)
+    alpha_beta_improved = bool(alpha_beta_rmse < initial_alpha_beta_rmse)
     theta_supported = _supported_dof_acceptable_or_improved(
         initial_error=initial_theta_rmse,
         final_error=theta_rmse,
@@ -315,6 +333,11 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         initial_error=initial_axis_error,
         final_error=axis_error,
         limit=axis_limit,
+    )
+    alpha_beta_supported = _supported_dof_acceptable_or_improved(
+        initial_error=initial_alpha_beta_rmse,
+        final_error=alpha_beta_rmse,
+        limit=alpha_beta_limit,
     )
     return {
         "initial_theta_realized_rmse_rad": initial_theta_rmse,
@@ -344,6 +367,15 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         "axis_error_rad_limit": axis_limit,
         "axis_rot_x_error_rad": axis_x_error,
         "axis_rot_y_error_rad": axis_y_error,
+        "initial_alpha_beta_rmse_rad": initial_alpha_beta_rmse,
+        "alpha_beta_rmse_rad": alpha_beta_rmse,
+        "alpha_beta_rmse_rad_improved": alpha_beta_improved,
+        "alpha_beta_rmse_rad_passed": alpha_beta_rmse <= alpha_beta_limit,
+        "alpha_beta_rmse_rad_limit": alpha_beta_limit,
+        "initial_alpha_rmse_rad": initial_alpha_rmse,
+        "alpha_rmse_rad": alpha_rmse,
+        "initial_beta_rmse_rad": initial_beta_rmse,
+        "beta_rmse_rad": beta_rmse,
         "mean_dx_abs_px": mean_dx_abs,
         "mean_dx_abs_px_passed": mean_dx_abs <= gauge_limit,
         "mean_dx_abs_px_limit": gauge_limit,
@@ -359,9 +391,21 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
             and det_v_supported
             and roll_supported
             and axis_supported
+            and alpha_beta_supported
         ),
         "passed": passed,
     }
+
+
+def _alpha_beta_rmse_rad(geometry: GeometryState, truth: GeometryState) -> float:
+    alpha = np.asarray(geometry.pose.alpha_rad - truth.pose.alpha_rad, dtype=np.float64)
+    beta = np.asarray(geometry.pose.beta_rad - truth.pose.beta_rad, dtype=np.float64)
+    return float(np.sqrt(np.mean(np.concatenate([alpha, beta]) ** 2)))
+
+
+def _pose_component_rmse_rad(values: np.ndarray, truth: np.ndarray) -> float:
+    delta = np.asarray(values - truth, dtype=np.float64)
+    return float(np.sqrt(np.mean(delta * delta)))
 
 
 def _supported_dof_acceptable_or_improved(
@@ -601,6 +645,7 @@ def _recovery_tolerances_payload() -> dict[str, object]:
             "det_v_realized_rmse_px_lt": 2.0e-1,
             "detector_roll_error_rad_lt": float(np.deg2rad(0.05)),
             "axis_error_rad_lt": float(np.deg2rad(0.1)),
+            "alpha_beta_rmse_rad_lt": float(np.deg2rad(0.25)),
             "mean_gauge_abs_lt": 1.0e-10,
         },
         "volume": {

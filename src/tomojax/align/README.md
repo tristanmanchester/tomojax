@@ -70,12 +70,11 @@ Forbidden dependencies:
 - Public imports should come through this package facade.
 - `run_alignment_smoke` is a tiny v2 wiring check. It is not the final
   optimiser.
-- `solve_pose_only_lm` currently optimises `phi_residual_rad`, `dx_px`, and
-  `dz_px`; `alpha_rad` and `beta_rad` are frozen until the reference projector
-  supports out-of-plane pose effects.
-- `solve_setup_only_lm` currently optimises `theta_offset_rad`, `det_u_px`, and
-  active `det_v_px`; roll, axis rotation, and theta scale remain frozen until
-  the reference projector models them.
+- `solve_pose_only_lm` defaults to `phi_residual_rad`, `dx_px`, and `dz_px`;
+  `alpha_rad` and `beta_rad` are supported opt-in pose DOFs for focused stages.
+- `solve_setup_only_lm` defaults to `theta_offset_rad`, `det_u_px`, active
+  `det_v_px`, and detector roll. Axis rotations are supported opt-in setup
+  parameters; theta scale remains frozen until identifiable scale policy exists.
 - `solve_joint_schur_lm` is the first reference Schur setup+pose slice for the
   supported setup and pose DOFs. It has accepted/rejected damping adaptation and
   ratio-based trust-radius adaptation, but is not yet the final trust-region
