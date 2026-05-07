@@ -3,6 +3,132 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — GPU Memory Diagnostic Pause
+
+### Summary
+
+- Paused at a documentation-only boundary after the current GPU
+  memory-regression and setup-global diagnostics. No new feature, report-field,
+  refactor, or benchmark-ingestion slice is started here.
+- Current code head before this pause commit was `f66c9af` (`Record refreshed
+  pose-frozen oracle`).
+- The 32^3/4-view smoke benchmark remains CI/wiring coverage only and should
+  not be used to judge alignment quality.
+
+### Current Best Diagnosis
+
+- The five-case 32^3 benchmark failures are wiring evidence, not recovery
+  evidence: sidecar generation, sidecar ingestion, `benchmark_result.json`,
+  `benchmark_report.md`, and compare artifacts run end-to-end, but all current
+  stopped-reconstruction recovery gates fail at unrealistic view count.
+- The first realistic 64^3/64-view nuisance-free `synth128_setup_global_tomo`
+  ladder on `cuda:0` failed both `fixed_synthetic_truth` and
+  `stopped_reconstruction`, initially pointing at setup/pose/theta coupling or
+  geometry convention mapping.
+- Supported-only 64^3/64-view oracle refreshes narrowed that: filtered
+  fixed-truth Schur passes with pose frozen and with the strong pose prior,
+  while stopped reconstruction still leaves geometry at nominal. The current
+  production-like blocker is therefore reconstruction/volume gauge absorption
+  before Schur, after accounting for setup/pose gauge coupling.
+
+### Five-Case Benchmark Failures
+
+The 32^3 multi-case pass generated planned sidecars and completed all run and
+comparison artifacts, but failed recovery:
+
+| Benchmark | Status | Criteria | Geometry | Total Time s | Notes |
+|---|---|---|---|---:|---|
+| `synth128_setup_global_tomo` | failed | failed | failed | 11.5794 | `det_u=3.625`, `theta=0.0218166`, `det_v=0` |
+| `synth128_pose_random_extreme` | failed | partially_evaluated | failed | 13.3407 | `det_u=2.7415`, `det_v=2.5782`, `theta=0.2019` |
+| `synth128_lamino_axis_roll_pose` | failed | failed | failed | 13.3946 | `det_u=2.2334`, `det_v=0.7336`, `theta=0.1598` |
+| `synth128_thermal_object_drift` | failed | partially_evaluated | failed | 13.5649 | `det_u=1.4893`, `det_v=0.0512`, `theta=0.0052336`; label `nuisance_residual_structure` |
+| `synth128_combined_nuisance_jumps` | failed | failed | failed | 13.4880 | `det_u=3.8751`, `det_v=0.9955`, `theta=0.0309604` |
+
+### Fixed-Truth Versus Stopped Evidence
+
+Realistic setup-global ladder, nuisance disabled, 64^3 volume, 64 views,
+existing sidecar ingestion, `jax_default_backend="gpu"`,
+`selected_jax_device="cuda:0"`:
+
+| Mode | Status | Geometry | det_u RMSE px | det_v RMSE px | theta RMSE rad | Final Residual | Volume NMSE | Schur Accepted | Total Time s |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth` | failed | failed | 6.9338 | 0.00666 | 0.02211 | 0.856277 | 0.686109 | true | 37.5096 |
+| `stopped_reconstruction` | failed | failed | 7.25 | 0 | 0.02182 | 0 | 0.686110 | true | 24.8489 |
+
+Supported-only oracle refresh after Schur residual filtering:
+
+| Mode | Status | det_u RMSE px | theta RMSE rad | Schur train loss | True vol/final geom | Classification | Total Time s |
+|---|---|---:|---:|---:|---:|---|---:|
+| `fixed_synthetic_truth`, pose frozen | passed | 1.33514e-05 | 2.59716e-06 | 1.18979e-08 | 0 | `independent_projection_losses_consistent` | 16.5956 |
+| `fixed_synthetic_truth`, strong pose prior `1e6` | passed | 5.24164e-06 | 5.10065e-05 | 2.13915e-08 | 3.39969e-09 | `independent_projection_losses_consistent` | 106.826 |
+| `stopped_reconstruction`, strong pose prior `1e6` | failed | 7.25 | 0.0218166 | 0.361978 | 0.884522 | `reconstruction_absorbed_geometry` | 113.388 |
+
+### GPU Memory Finding
+
+- The confirmed memory-regression source was the Schur finite-difference
+  Jacobian path, not a need to shrink the benchmark. The original 64^3/64-view
+  fixed-truth run attempted a 12.14 GiB allocation shaped like
+  `f32[194,64,64,64,64]` because all parameter perturbations were evaluated by
+  a single `jax.vmap`.
+- Commit `dc2aa74` changed the shared finite-difference Jacobian helper to
+  accumulate columns sequentially. After that fix, component probes passed on
+  GPU for 1/4/16/64 views across projector, backprojector, one FISTA iteration,
+  fixed-truth Schur, stopped-volume Schur, and fixed-truth Schur with nuisance.
+- The 64^3/64-view benchmark results record `jax_default_backend="gpu"` and
+  `selected_jax_device="cuda:0"` in `benchmark_result.json`.
+
+### Commands And Artifacts
+
+Commands run in this diagnostic thread:
+
+- GPU probe:
+  `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda uv run python -c 'import jax; ...'`
+- 64^3 sidecar generation for nuisance-free `synth128_setup_global_tomo` with
+  64 views.
+- Component probes:
+  `.artifacts/phase8_setup_global_gpu_ladder/probes/probe_components.py --views 1|4|16|64`
+- Realistic ladder runs:
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir ... --geometry-update-volume-source fixed_synthetic_truth`
+  and
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir ... --geometry-update-volume-source stopped_reconstruction`
+- Compare:
+  `tomojax-synthetic-benchmark-compare ... --out .artifacts/phase8_setup_global_gpu_ladder/benchmark_comparison_64.md`
+- Supported-only oracle refreshes through `tomojax-align-auto-smoke` with
+  fixed-truth pose-frozen, fixed-truth strong-pose-prior, and
+  stopped-reconstruction strong-pose-prior modes.
+- Focused validation for the committed code slices:
+  `uv run ruff check ...`, `uv run basedpyright ...`,
+  `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py tests/test_align_auto_cli.py -q`,
+  and `just imports`.
+
+Key artifacts:
+
+- `docs/benchmark_runs/2026-05-06-phase8-multi-case-32.md`
+- `docs/benchmark_runs/2026-05-06-phase8-setup-global-gpu-ladder.md`
+- `docs/benchmark_runs/2026-05-07-phase8-supported-only-oracle.md`
+- `.artifacts/phase8_multi_case_32_benchmark_pass/`
+- `.artifacts/phase8_setup_global_gpu_ladder/`
+- `.artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_joint_pose_prior_1000000_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/runs/64_stopped_reconstruction_joint_pose_prior_1000000_filtered_reporting/`
+- `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only_filtered_reporting.md`
+
+### Remaining Open Questions
+
+- Why does stopped reconstruction produce a preview volume/geometry pair that
+  accepts no useful setup movement when filtered fixed-truth Schur now recovers
+  the supported setup DOFs?
+- Is stopped-gradient reconstruction absorbing setup error into volume gauge,
+  detector shift, missing normalization, or support/background degrees of
+  freedom before the geometry update?
+- Should the next diagnostic compare independent all-view losses for
+  true-volume/true-geometry, true-volume/final-geometry,
+  final-volume/initial-geometry, and final-volume/final-geometry before
+  changing solver behavior?
+- Should the next implementation slice constrain preview reconstruction gauge
+  or initialization before revisiting broader benchmark scenarios?
+
 ## 2026-05-07 — Supported-Only Fixed-Truth Oracle Pass
 
 ### Summary
