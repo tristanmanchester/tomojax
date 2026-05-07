@@ -101,6 +101,13 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
+        "--current-default-baseline-json",
+        help=(
+            "Optional current/default TomoJAX baseline JSON artifact with a volume_nmse "
+            "field for benchmark comparison criteria."
+        ),
+    )
+    _ = parser.add_argument(
         "--apply-synthetic-nuisance",
         action="store_true",
         help="Apply nuisance terms from the named synthetic benchmark to generated projections.",
@@ -228,6 +235,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         dataset_dir = dataset_paths.dataset_dir
         sidecar_readback = _sidecar_readback_payload(load_synthetic_dataset_sidecars(dataset_dir))
+    if sidecar_readback is not None and args.current_default_baseline_json is not None:
+        sidecar_readback["current_default_baseline"] = _current_default_baseline_payload(
+            Path(args.current_default_baseline_json)
+        )
     solver = AlternatingAlignmentSolver(
         AlternatingSmokeConfig(
             seed=int(args.seed),
@@ -315,6 +326,34 @@ def _sidecar_object_motion_payload(sidecars: SyntheticDatasetSidecars) -> dict[s
             )
         ),
     }
+
+
+def _current_default_baseline_payload(path: Path) -> dict[str, object]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("current-default baseline JSON must contain an object")
+    payload = cast("dict[object, object]", raw)
+    volume_nmse = _baseline_volume_nmse(payload)
+    if volume_nmse is None:
+        raise ValueError("current-default baseline JSON must contain numeric volume_nmse")
+    return {
+        "schema": "tomojax.current_default_baseline.v1",
+        "source_path": str(path),
+        "volume_nmse": volume_nmse,
+        "raw": {str(key): value for key, value in payload.items()},
+    }
+
+
+def _baseline_volume_nmse(payload: dict[object, object]) -> float | None:
+    direct = payload.get("volume_nmse")
+    if isinstance(direct, int | float):
+        return float(direct)
+    reconstruction = payload.get("reconstruction")
+    if isinstance(reconstruction, dict):
+        value = cast("dict[object, object]", reconstruction).get("volume_nmse")
+        if isinstance(value, int | float):
+            return float(value)
+    return None
 
 
 def _parse_active_pose_dofs(raw: str) -> tuple[str, ...]:

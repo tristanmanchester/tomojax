@@ -930,6 +930,10 @@ def _benchmark_result_payload(
         sidecar_readback=sidecar_readback,
     )
     object_motion_recovery = _object_motion_recovery_payload(sidecar_readback=sidecar_readback)
+    current_default_comparison = _current_default_comparison_payload(
+        sidecar_readback=sidecar_readback,
+        final_volume_nmse=metrics.get("volume_nmse"),
+    )
     manifest_evaluation = _benchmark_manifest_evaluation(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
@@ -939,6 +943,7 @@ def _benchmark_result_payload(
         pose_jump_exclusion=pose_jump_exclusion,
         object_motion_suspicion=object_motion_suspicion,
         object_motion_recovery=object_motion_recovery,
+        current_default_comparison=current_default_comparison,
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -1006,6 +1011,7 @@ def _benchmark_result_payload(
         "pose_jump_exclusion": pose_jump_exclusion,
         "object_motion_suspicion": object_motion_suspicion,
         "object_motion_recovery": object_motion_recovery,
+        "current_default_comparison": current_default_comparison,
         "backend": backend_payload,
         "failure_labels": failed_gates,
         "benchmark_manifest_criteria": manifest_criteria,
@@ -1150,11 +1156,9 @@ def _object_motion_recovery_payload(
     sidecar_readback: Mapping[object, object],
 ) -> dict[str, object]:
     truth = sidecar_readback.get("true_object_motion")
-    truth_payload: Mapping[object, object]
-    if isinstance(truth, Mapping):
-        truth_payload = cast("Mapping[object, object]", truth)
-    else:
-        truth_payload = {}
+    truth_payload: Mapping[object, object] = (
+        cast("Mapping[object, object]", truth) if isinstance(truth, Mapping) else {}
+    )
     zero_rmse = truth_payload.get("tx_zero_model_rmse_px")
     tx_rmse = float(zero_rmse) if isinstance(zero_rmse, int | float) else None
     return {
@@ -1164,6 +1168,40 @@ def _object_motion_recovery_payload(
         "tx_rmse_px": tx_rmse,
         "truth": dict(truth_payload),
         "reason": "object-frame motion solver is not enabled",
+    }
+
+
+def _current_default_comparison_payload(
+    *,
+    sidecar_readback: Mapping[object, object],
+    final_volume_nmse: object,
+) -> dict[str, object] | None:
+    baseline = sidecar_readback.get("current_default_baseline")
+    if not isinstance(baseline, Mapping):
+        return None
+    baseline_payload = cast("Mapping[object, object]", baseline)
+    baseline_nmse = baseline_payload.get("volume_nmse")
+    if not isinstance(baseline_nmse, int | float) or not isinstance(
+        final_volume_nmse,
+        int | float,
+    ):
+        return {
+            "schema": "tomojax.current_default_comparison.v1",
+            "baseline": dict(baseline_payload),
+            "baseline_volume_nmse": baseline_nmse,
+            "candidate_volume_nmse": final_volume_nmse,
+            "beats_current_default_nmse": None,
+            "reason": "candidate or baseline volume NMSE is not numeric",
+        }
+    candidate = float(final_volume_nmse)
+    baseline_value = float(baseline_nmse)
+    return {
+        "schema": "tomojax.current_default_comparison.v1",
+        "baseline": dict(baseline_payload),
+        "baseline_volume_nmse": baseline_value,
+        "candidate_volume_nmse": candidate,
+        "beats_current_default_nmse": candidate < baseline_value,
+        "nmse_delta": candidate - baseline_value,
     }
 
 
@@ -1224,6 +1262,7 @@ def _benchmark_manifest_evaluation(
     pose_jump_exclusion: Mapping[str, object] | None = None,
     object_motion_suspicion: Mapping[str, object] | None = None,
     object_motion_recovery: Mapping[str, object] | None = None,
+    current_default_comparison: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
@@ -1236,6 +1275,7 @@ def _benchmark_manifest_evaluation(
             pose_jump_exclusion=pose_jump_exclusion,
             object_motion_suspicion=object_motion_suspicion,
             object_motion_recovery=object_motion_recovery,
+            current_default_comparison=current_default_comparison,
         )
         for name, threshold in criteria.items()
     }
@@ -1252,6 +1292,7 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
     pose_jump_exclusion: Mapping[str, object] | None,
     object_motion_suspicion: Mapping[str, object] | None,
     object_motion_recovery: Mapping[str, object] | None,
+    current_default_comparison: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if name == "backend_policy":
         return _backend_policy_evaluation(threshold=threshold, backend=backend)
@@ -1280,6 +1321,11 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
         return _object_motion_enabled_tx_rmse_evaluation(
             threshold=threshold,
             object_motion_recovery=object_motion_recovery,
+        )
+    if name == "beats_current_default_nmse":
+        return _beats_current_default_nmse_evaluation(
+            threshold=threshold,
+            current_default_comparison=current_default_comparison,
         )
     if name in _MISSING_POLICY_CRITERION_REASONS:
         return {
@@ -1314,9 +1360,7 @@ def _criterion_evaluation(  # noqa: PLR0911 - explicit criterion branches keep r
     }
 
 
-_MISSING_POLICY_CRITERION_REASONS = {
-    "beats_current_default_nmse": "current-default comparison baseline is not in benchmark_result",
-}
+_MISSING_POLICY_CRITERION_REASONS: dict[str, str] = {}
 
 
 def _bad_views_flagged_evaluation(
@@ -1445,6 +1489,45 @@ def _object_motion_enabled_tx_rmse_evaluation(
         "reason": "object-frame motion tx recovery within tolerance"
         if passed
         else "object-frame motion solver is not enabled",
+    }
+
+
+def _beats_current_default_nmse_evaluation(
+    *,
+    threshold: object,
+    current_default_comparison: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if threshold is not True:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": threshold,
+            "reason": "beats-current-default criterion currently expects boolean true",
+        }
+    if current_default_comparison is None:
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": True,
+            "reason": "current-default comparison baseline is not in benchmark_result",
+        }
+    value = current_default_comparison.get("beats_current_default_nmse")
+    candidate = current_default_comparison.get("candidate_volume_nmse")
+    baseline = current_default_comparison.get("baseline_volume_nmse")
+    if not isinstance(value, bool):
+        return {
+            "status": "not_evaluated",
+            "value": None,
+            "threshold": True,
+            "reason": "current-default comparison did not produce a boolean result",
+        }
+    return {
+        "status": "passed" if value else "failed",
+        "value": bool(value),
+        "threshold": True,
+        "candidate_volume_nmse": candidate,
+        "baseline_volume_nmse": baseline,
+        "reason": "evaluated against explicit current-default baseline artifact",
     }
 
 

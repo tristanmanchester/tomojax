@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 0/8 Current-Default Baseline Ingestion Slice
+
+### Summary
+
+- Added `align-auto --current-default-baseline-json` to ingest an explicit
+  current/default TomoJAX baseline artifact with a numeric `volume_nmse` field,
+  either top-level or under `reconstruction.volume_nmse`.
+- Added `current_default_comparison` to synthetic benchmark results when a
+  baseline is supplied.
+- `beats_current_default_nmse` now evaluates from that explicit baseline. It
+  still remains `not_evaluated` when no baseline artifact is supplied, rather
+  than inventing a current-default value.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_current_default_baseline_payload_reads_direct_and_nested_nmse
+  -q` passed: 21 tests in 0.75 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_benchmark_criteria.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- This slice ingests a baseline artifact; it does not run old/current TomoJAX.
+  Phase 0's current-run adapter remains required to produce those baseline
+  artifacts automatically for the full five-case suite.
+
 ## 2026-05-07 — Phase 8/9 Object-Motion Recovery Criterion Slice
 
 ### Summary

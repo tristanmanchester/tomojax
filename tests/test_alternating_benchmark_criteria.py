@@ -198,6 +198,36 @@ def test_benchmark_manifest_passes_object_motion_recovery_when_enabled() -> None
     assert recovery["value"] == 0.75
 
 
+def test_benchmark_manifest_reports_missing_current_default_baseline() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"beats_current_default_nmse": True},
+        geometry_recovery={},
+    )
+
+    comparison = cast("dict[str, object]", evaluation["beats_current_default_nmse"])
+    assert comparison["status"] == "not_evaluated"
+    assert comparison["reason"] == (
+        "current-default comparison baseline is not in benchmark_result"
+    )
+
+
+def test_benchmark_manifest_passes_current_default_nmse_comparison() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"beats_current_default_nmse": True},
+        geometry_recovery={},
+        current_default_comparison={
+            "beats_current_default_nmse": True,
+            "candidate_volume_nmse": 0.4,
+            "baseline_volume_nmse": 0.6,
+        },
+    )
+
+    comparison = cast("dict[str, object]", evaluation["beats_current_default_nmse"])
+    assert comparison["status"] == "passed"
+    assert comparison["candidate_volume_nmse"] == 0.4
+    assert comparison["baseline_volume_nmse"] == 0.6
+
+
 def test_object_motion_suspicion_payload_uses_sidecar_and_smooth_pose() -> None:
     geometry = GeometryState.zeros(5)
     geometry = GeometryState(

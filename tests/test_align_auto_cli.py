@@ -30,6 +30,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "smoke32" in captured.out
     assert "--synthetic-dataset" in captured.out
     assert "--synthetic-dataset-dir" in captured.out
+    assert "--current-default-baseline-json" in captured.out
     assert "--apply-synthetic-nuisance" in captured.out
     assert "--fit-gain-offset-nuisance" in captured.out
     assert "--fit-background-nuisance" in captured.out
@@ -42,6 +43,19 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "axis_rot_x_rad" in captured.out
     assert "axis_rot_y_rad" in captured.out
     assert "theta_scale" in captured.out
+
+
+def test_current_default_baseline_payload_reads_direct_and_nested_nmse(tmp_path: Path) -> None:
+    direct = tmp_path / "direct.json"
+    _ = direct.write_text(json.dumps({"volume_nmse": 0.45}), encoding="utf-8")
+    nested = tmp_path / "nested.json"
+    _ = nested.write_text(
+        json.dumps({"reconstruction": {"volume_nmse": 0.67}}),
+        encoding="utf-8",
+    )
+
+    assert align_auto_cli._current_default_baseline_payload(direct)["volume_nmse"] == 0.45
+    assert align_auto_cli._current_default_baseline_payload(nested)["volume_nmse"] == 0.67
 
 
 def test_align_auto_parses_supported_geometry_update_dofs() -> None:

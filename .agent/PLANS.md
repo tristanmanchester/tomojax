@@ -11,18 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 object-motion recovery criterion
-- Goal: make `object_motion_enabled_tx_rmse_px_lt` measurable from
-  object-motion sidecar truth, while correctly failing until an operational
-  object-motion solver provides an enabled estimate.
+- Phase: Phase 0/8 current-default baseline ingestion
+- Goal: make `beats_current_default_nmse` evaluable from an explicit
+  current-default baseline artifact instead of leaving the criterion as a
+  missing placeholder.
 
 ### Scope
 
 - In scope:
-  - Include object-motion truth summary in align-auto sidecar readback.
-  - Add an object-motion recovery payload to benchmark results.
-  - Evaluate `object_motion_enabled_tx_rmse_px_lt` from that payload.
-  - Add focused criterion/readback tests.
+  - Add an `align-auto` option for a current-default baseline JSON artifact.
+  - Include baseline provenance and NMSE in benchmark-result payloads.
+  - Evaluate `beats_current_default_nmse` only when that explicit baseline is
+    present.
+  - Add focused criterion and CLI-help tests.
   - Add focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -30,10 +31,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Reworking report semantics or benchmark criteria.
   - Setup-global stopped-reconstruction policy changes.
   - Pose-only solver changes.
+  - Running old/current TomoJAX automatically.
+  - Creating or inventing a baseline value when no artifact is supplied.
   - Object-motion solver or correction model.
-  - Current-default NMSE comparison.
   - Changing generated projection physics.
-  - Marking object-motion recovery as passing without an enabled solver.
+  - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -46,9 +48,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add object-motion truth summary to sidecar readback.
-- [x] Add object-motion recovery payload and criterion evaluation.
-- [x] Add focused criterion/readback tests.
+- [x] Add current-default baseline ingestion to align-auto.
+- [x] Add current-default comparison payload and criterion evaluation.
+- [x] Add focused criterion and CLI tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
