@@ -3,6 +3,39 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Held-Out Schur Acceptance Gate
+
+### Summary
+
+- Added a held-out acceptance gate for stopped-reconstruction Schur geometry
+  updates in the alternating smoke path.
+- Stopped-reconstruction updates now compare held-out projection loss before
+  and after the candidate geometry update. If held-out loss worsens beyond the
+  configured tolerance, the alternating state reverts to the pre-update
+  geometry and the exposed Schur diagnostic is marked `accepted=false`.
+- Fixed-synthetic-truth oracle updates remain exempt so oracle diagnostics still
+  measure the Schur solver directly.
+- Added focused tests for stopped-update rejection, fixed-truth exemption, and
+  the existing constrained-preview volume reuse behavior.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py -q` passed: 14 tests in
+  4.89 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Rerun the 128^3/256-view supported-only stopped CUDA gate. This gate is
+  expected to prevent validation-worsening geometry acceptance; whether it is
+  enough to recover theta/det_u remains an empirical question.
+
 ## 2026-05-07 — Phase 8 Anchored Schur-Volume CUDA Gate
 
 ### Summary

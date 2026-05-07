@@ -16,12 +16,24 @@ from tomojax.align._alternating_geometry_update import (
     _anchored_geometry_update_volume,
     _det_u_recentering_shift_px,
 )
-from tomojax.align.api import AlternatingSmokeConfig, reference_continuation_schedule
+from tomojax.align.api import (
+    AlternatingSmokeConfig,
+    JointSchurLMConfig,
+    reference_continuation_schedule,
+    solve_joint_schur_lm,
+)
+from tomojax.forward import project_parallel_reference
 from tomojax.geometry import AcquisitionParameters, GeometryState
 
 
 def _jax_array(value: object) -> jax.Array:
     return cast("jax.Array", jnp.asarray(value, dtype=jnp.float32))
+
+
+def _tiny_asymmetric_volume() -> jax.Array:
+    volume = jnp.zeros((8, 8, 8), dtype=jnp.float32)
+    volume = volume.at[2:5, 3:6, 1:4].set(1.0)
+    return volume.at[5, 2, 6].set(0.5)
 
 
 def test_alternating_setup_policy_freezes_theta_scale() -> None:
@@ -292,3 +304,78 @@ def test_stopped_preview_policy_uses_current_volume_for_first_geometry_update() 
     )
 
     np.testing.assert_array_equal(np.asarray(selected), np.asarray(current))
+
+
+def test_heldout_acceptance_rejects_stopped_geometry_that_worsens_validation() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _apply_heldout_geometry_acceptance
+
+    volume = _tiny_asymmetric_volume()
+    before = GeometryState.zeros(2)
+    observed = project_parallel_reference(volume, before)
+    candidate_setup = before.setup.replace_parameter(
+        "det_u_px",
+        before.setup.det_u_px.with_value(2.0),
+    )
+    candidate = GeometryState(setup=candidate_setup, pose=before.pose)
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        before,
+        config=JointSchurLMConfig(max_iterations=0, active_setup_parameters=("det_u_px",)),
+    )
+    level = reference_continuation_schedule("reference").levels[0]
+    heldout_mask = jnp.ones_like(observed, dtype=jnp.float32).at[0, :, :].set(0.0)
+
+    geometry, _report, gated = _apply_heldout_geometry_acceptance(
+        AlternatingSmokeConfig(),
+        volume,
+        observed,
+        before_geometry=before,
+        candidate_geometry=candidate,
+        heldout_mask=heldout_mask,
+        level=level,
+        sigma=1.0,
+        update_report=result.canonicalized_geometry.report,
+        schur_result=result,
+    )
+
+    assert gated.diagnostics.accepted is False
+    assert gated.final_loss == gated.initial_loss
+    assert geometry.setup.det_u_px.value == before.setup.det_u_px.value
+
+
+def test_heldout_acceptance_does_not_gate_fixed_truth_oracle() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _apply_heldout_geometry_acceptance
+
+    volume = _tiny_asymmetric_volume()
+    before = GeometryState.zeros(2)
+    observed = project_parallel_reference(volume, before)
+    candidate_setup = before.setup.replace_parameter(
+        "det_u_px",
+        before.setup.det_u_px.with_value(2.0),
+    )
+    candidate = GeometryState(setup=candidate_setup, pose=before.pose)
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        before,
+        config=JointSchurLMConfig(max_iterations=0, active_setup_parameters=("det_u_px",)),
+    )
+    level = reference_continuation_schedule("reference").levels[0]
+
+    geometry, _report, _gated = _apply_heldout_geometry_acceptance(
+        AlternatingSmokeConfig(geometry_update_volume_source="fixed_synthetic_truth"),
+        volume,
+        observed,
+        before_geometry=before,
+        candidate_geometry=candidate,
+        heldout_mask=jnp.ones_like(observed, dtype=jnp.float32),
+        level=level,
+        sigma=1.0,
+        update_report=result.canonicalized_geometry.report,
+        schur_result=result,
+    )
+
+    assert geometry.setup.det_u_px.value == candidate.setup.det_u_px.value

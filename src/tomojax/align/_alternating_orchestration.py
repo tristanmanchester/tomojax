@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import time
@@ -44,7 +45,7 @@ from tomojax.align._alternating_verification import (
 )
 from tomojax.align._continuation import reference_continuation_schedule
 from tomojax.forward import ResidualFilterConfig
-from tomojax.geometry import GaugeReport
+from tomojax.geometry import GaugeReport, canonicalize_geometry_gauges
 from tomojax.recon import (
     ReferenceFISTAConfig,
     ReferenceFISTAResult,
@@ -181,10 +182,21 @@ def _run_alternating_solver_smoke_impl(
                 residual_filters=_geometry_residual_filters(config, level.residual_filters),
                 parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
             )
+            geometry, update_report, schur_result = _apply_heldout_geometry_acceptance(
+                config,
+                geometry_update_volume,
+                observed,
+                before_geometry=geometry_before_update,
+                candidate_geometry=geometry,
+                heldout_mask=heldout_mask,
+                level=level,
+                sigma=residual_sigma_effective,
+                update_report=update_report,
+                schur_result=schur_result,
+            )
             gauge_report = update_report
             last_schur_result = schur_result
-            loss_before = schur_result.initial_loss
-            loss_after = schur_result.final_loss
+            loss_before, loss_after = _schur_loss_pair(schur_result)
         else:
             schur_result = None
             loss_after = _projection_loss(
@@ -330,6 +342,10 @@ def _prepare_output_dir(output_dir: str | Path) -> Path:
     return out_dir
 
 
+def _schur_loss_pair(result: JointSchurLMResult) -> tuple[float, float]:
+    return result.initial_loss, result.final_loss
+
+
 def _pose_frozen_for_level(config: AlternatingSmokeConfig, level_factor: int) -> bool:
     if config.geometry_update_pose_frozen:
         return True
@@ -456,6 +472,70 @@ def _stopped_geometry_update_volume(
     ):
         return constrained_first_preview_volume
     return current_volume
+
+
+def _apply_heldout_geometry_acceptance(
+    config: AlternatingSmokeConfig,
+    volume: jax.Array,
+    observed: jax.Array,
+    *,
+    before_geometry: GeometryState,
+    candidate_geometry: GeometryState,
+    heldout_mask: jax.Array | None,
+    level: ContinuationLevel,
+    sigma: float,
+    update_report: GaugeReport,
+    schur_result: JointSchurLMResult,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
+    if config.geometry_update_volume_source != "stopped_reconstruction":
+        return candidate_geometry, update_report, schur_result
+    before = _projection_loss_or_none(
+        volume,
+        observed,
+        before_geometry,
+        heldout_mask,
+        level,
+        sigma=sigma,
+    )
+    after = _projection_loss_or_none(
+        volume,
+        observed,
+        candidate_geometry,
+        heldout_mask,
+        level,
+        sigma=sigma,
+    )
+    if before is None or after is None or after <= before + config.heldout_residual_tolerance:
+        return candidate_geometry, update_report, schur_result
+    canonicalized = canonicalize_geometry_gauges(before_geometry)
+    rejected_diagnostics = replace(
+        schur_result.diagnostics,
+        accepted=False,
+        actual_reduction=float(before - after),
+        reduction_ratio=None,
+    )
+    rejected_result = replace(
+        schur_result,
+        geometry=before_geometry,
+        canonicalized_geometry=canonicalized,
+        final_loss=schur_result.initial_loss,
+        diagnostics=rejected_diagnostics,
+    )
+    return canonicalized.state, canonicalized.report, rejected_result
+
+
+def _projection_loss_or_none(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    mask: jax.Array | None,
+    level: ContinuationLevel,
+    *,
+    sigma: float,
+) -> float | None:
+    if mask is None:
+        return None
+    return _projection_loss(volume, observed, geometry, mask, level, sigma=sigma)
 
 
 def _geometry_residual_filters(
