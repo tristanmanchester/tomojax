@@ -11,7 +11,12 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align._lm_numerics import finite_difference_jacobian
-from tomojax.forward import project_parallel_reference_arrays, pseudo_huber_weights, residual_loss
+from tomojax.forward import (
+    nominal_axis_unit_from_geometry,
+    project_parallel_reference_arrays,
+    pseudo_huber_weights,
+    residual_loss,
+)
 from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_geometry_gauges
 
 SetupLMParameter = Literal[
@@ -303,6 +308,7 @@ def _residual_for_params(
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,
+        nominal_axis_unit=nominal_axis_unit_from_geometry(geometry),
     )
     residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
     if mask is None:
@@ -339,5 +345,6 @@ def _loss_for_params(
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,
+        nominal_axis_unit=nominal_axis_unit_from_geometry(geometry),
     )
     return residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss

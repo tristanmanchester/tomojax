@@ -8,7 +8,7 @@ import numpy as np
 
 from tomojax.align import SetupOnlyLMConfig, solve_setup_only_lm
 from tomojax.forward import project_parallel_reference
-from tomojax.geometry import GeometryState
+from tomojax.geometry import AcquisitionParameters, GeometryState
 
 
 def test_setup_only_lm_recovers_active_detector_shift_components() -> None:
@@ -45,6 +45,30 @@ def test_setup_only_lm_recovers_active_detector_shift_components() -> None:
     )
     np.testing.assert_allclose(result.geometry.setup.det_u_px.value, 0.30, atol=0.08)
     np.testing.assert_allclose(result.geometry.setup.det_v_px.value, -0.20, atol=0.08)
+
+
+def test_setup_only_lm_residual_preserves_laminography_acquisition() -> None:
+    volume = _asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.array([0.0, np.pi / 3.0], dtype=np.float64),
+        ),
+        acquisition=AcquisitionParameters.parallel_laminography(
+            tilt_rad=float(np.deg2rad(30.0)),
+        ),
+    )
+    observed = project_parallel_reference(volume, nominal)
+
+    result = solve_setup_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=SetupOnlyLMConfig(max_iterations=0, active_parameters=("det_u_px",)),
+    )
+
+    assert result.initial_loss < 1.0e-10
 
 
 def test_setup_only_lm_keeps_inactive_detector_v_frozen() -> None:

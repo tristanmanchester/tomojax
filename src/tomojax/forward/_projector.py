@@ -87,7 +87,7 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
-    nominal_axis = _nominal_axis_from_acquisition(geometry)
+    nominal_axis = nominal_axis_unit_from_geometry(geometry)
     return project_parallel_reference_arrays(
         vol,
         theta_rad=theta,
@@ -186,7 +186,7 @@ def core_projection_geometry_from_state(
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
     axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
     axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
-    nominal_axis = _nominal_axis_from_acquisition(geometry)
+    nominal_axis = nominal_axis_unit_from_geometry(geometry)
     return core_projection_geometry_from_arrays(
         volume_shape,
         theta_rad=theta,
@@ -334,7 +334,8 @@ def _pose_array_like(value: jax.Array | float, theta: jax.Array, *, name: str) -
     return array
 
 
-def _nominal_axis_from_acquisition(geometry: GeometryState) -> jax.Array:
+def nominal_axis_unit_from_geometry(geometry: GeometryState) -> jax.Array:
+    """Return the nominal rotation-axis unit vector for a v2 geometry state."""
     acquisition = geometry.acquisition
     if acquisition.model == "parallel":
         return jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)

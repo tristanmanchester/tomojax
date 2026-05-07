@@ -8,7 +8,7 @@ import numpy as np
 
 from tomojax.align import PoseOnlyLMConfig, solve_pose_only_lm
 from tomojax.forward import project_parallel_reference
-from tomojax.geometry import GeometryState
+from tomojax.geometry import AcquisitionParameters, GeometryState
 
 
 def test_pose_only_lm_recovers_detector_shift_pose_components() -> None:
@@ -38,6 +38,30 @@ def test_pose_only_lm_recovers_detector_shift_pose_components() -> None:
     assert result.frozen_dofs == ("alpha_rad", "beta_rad")
     np.testing.assert_allclose(result.geometry.pose.dx_px, true_pose.dx_px, atol=0.08)
     np.testing.assert_allclose(result.geometry.pose.dz_px, true_pose.dz_px, atol=0.08)
+
+
+def test_pose_only_lm_residual_preserves_laminography_acquisition() -> None:
+    volume = _asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.array([0.0, np.pi / 3.0], dtype=np.float64),
+        ),
+        acquisition=AcquisitionParameters.parallel_laminography(
+            tilt_rad=float(np.deg2rad(30.0)),
+        ),
+    )
+    observed = project_parallel_reference(volume, nominal)
+
+    result = solve_pose_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=PoseOnlyLMConfig(max_iterations=0),
+    )
+
+    assert result.initial_loss < 1.0e-10
 
 
 def test_pose_only_lm_canonicalizes_solved_gauges() -> None:

@@ -16,6 +16,7 @@ The old rotate-and-sum approximation is not an operational v2 path.
 - `project_parallel_reference_arrays`
 - `core_projection_geometry_from_state`
 - `core_projection_geometry_from_arrays`
+- `nominal_axis_unit_from_geometry`
 - `CoreProjectionGeometry`
 - `PROJECTION_OPERATOR`
 - `apply_residual_filter`

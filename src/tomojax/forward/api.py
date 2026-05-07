@@ -15,6 +15,7 @@ from tomojax.forward._projector import (
     V2ProjectionOperatorName,
     core_projection_geometry_from_arrays,
     core_projection_geometry_from_state,
+    nominal_axis_unit_from_geometry,
     project_parallel_reference,
     project_parallel_reference_arrays,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "core_projection_geometry_from_arrays",
     "core_projection_geometry_from_state",
     "masked_whitened_residual",
+    "nominal_axis_unit_from_geometry",
     "project_parallel_reference",
     "project_parallel_reference_arrays",
     "pseudo_huber_loss",

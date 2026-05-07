@@ -18,7 +18,7 @@ from tomojax.align import (
     write_joint_schur_normal_eq_summary,
 )
 from tomojax.forward import ResidualFilterConfig, project_parallel_reference
-from tomojax.geometry import GeometryState
+from tomojax.geometry import AcquisitionParameters, GeometryState
 from tomojax.nuisance import BackgroundOffsetModel, GainOffsetModel
 
 if TYPE_CHECKING:
@@ -41,6 +41,34 @@ def test_joint_schur_damping_policy_adapts_and_clamps() -> None:
     fixed = JointSchurLMConfig(adapt_damping=False)
     assert adapt_joint_schur_damping(1.0, accepted=True, config=fixed) == 1.0
     assert adapt_joint_schur_damping(1.0, accepted=False, config=fixed) == 1.0
+
+
+def test_joint_schur_lm_residual_preserves_laminography_acquisition() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.array([0.0, np.pi / 3.0], dtype=np.float64),
+        ),
+        acquisition=AcquisitionParameters.parallel_laminography(
+            tilt_rad=float(np.deg2rad(30.0)),
+        ),
+    )
+    observed = project_parallel_reference(volume, nominal)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=0,
+            active_setup_parameters=("det_u_px",),
+            active_pose_dofs=(),
+        ),
+    )
+
+    assert result.initial_loss < 1.0e-10
 
 
 def test_joint_schur_trust_radius_policy_adapts_and_clamps() -> None:

@@ -16,6 +16,7 @@ from tomojax.align._lm_numerics import finite_difference_jacobian
 from tomojax.forward import (
     ResidualFilterConfig,
     apply_residual_filter_schedule,
+    nominal_axis_unit_from_geometry,
     project_parallel_reference_arrays,
     pseudo_huber_weights,
     residual_loss,
@@ -1157,6 +1158,7 @@ def _predicted_for_params(
         detector_roll_rad=detector_roll,
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,
+        nominal_axis_unit=nominal_axis_unit_from_geometry(geometry),
     )
 
 
