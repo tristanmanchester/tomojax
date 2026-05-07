@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8/9 Object-Motion Sidecar API Slice
+
+### Summary
+
+- Added a public `tomojax.motion.ObjectMotionTrace` container with CSV read and
+  write helpers for object-frame motion sidecars.
+- Synthetic sidecar loading now reads `true_motion.csv` into
+  `SyntheticDatasetSidecars.true_motion`.
+- Added focused tests for object-motion trace CSV round-trip, tx RMSE, shape
+  validation, zero-motion sidecars, and Dataset 4 true-motion sidecar readback.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_object_motion_trace.py
+  tests/test_synthetic_datasets.py::test_load_synthetic_dataset_sidecars_reads_zero_object_motion
+  tests/test_synthetic_datasets.py::test_generate_object_motion_dataset_marks_unsupported_manifest_terms
+  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
+  -q` passed: 5 tests in 4.51 seconds.
+- `uv run ruff check src/tomojax/motion src/tomojax/datasets/_loader.py
+  tests/test_object_motion_trace.py tests/test_synthetic_datasets.py` passed.
+- `uv run basedpyright src/tomojax/motion src/tomojax/datasets/_loader.py
+  tests/test_object_motion_trace.py tests/test_synthetic_datasets.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- The trace is a typed sidecar contract. It is not yet an operational
+  object-frame motion solver or the `object_motion_enabled_tx_rmse_px_lt`
+  benchmark metric.
+
 ## 2026-05-07 — Phase 8/9 Object-Motion Sidecar Truth Slice
 
 ### Summary

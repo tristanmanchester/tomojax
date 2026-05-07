@@ -3,12 +3,15 @@
 ## Purpose
 
 `tomojax.motion` owns motion-estimation primitives used to initialize or
-regularize alignment. The current Milestone 0 surface is the phase-correlation
-translation estimator migrated out of the forbidden `tomojax.utils` namespace.
+regularize alignment, plus typed object-frame motion traces used by synthetic
+benchmarks and future object-motion solvers.
 
 ## Public API
 
 - `phase_corr_shift(ref, tgt)`
+- `ObjectMotionTrace`
+- `read_object_motion_csv(path)`
+- `write_object_motion_csv(path, trace)`
 
 ## Dependencies
 
@@ -21,7 +24,9 @@ alignment orchestration, reconstruction solvers, datasets, or CLI modules.
 - Phase-correlation shifts use the half-open wrapped interval convention for
   even detector dimensions.
 - The implementation remains vectorizable with `jax.vmap`.
+- Object-motion traces are one-dimensional per-view arrays with matching view
+  counts.
 
 ## Tests
 
-Covered by `tests/test_phasecorr.py`.
+Covered by `tests/test_phasecorr.py` and `tests/test_object_motion_trace.py`.

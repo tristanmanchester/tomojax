@@ -1,5 +1,15 @@
 """Public motion-estimation helpers for TomoJAX."""
 
-from tomojax.motion.api import phase_corr_shift
+from tomojax.motion.api import (
+    ObjectMotionTrace,
+    phase_corr_shift,
+    read_object_motion_csv,
+    write_object_motion_csv,
+)
 
-__all__ = ["phase_corr_shift"]
+__all__ = [
+    "ObjectMotionTrace",
+    "phase_corr_shift",
+    "read_object_motion_csv",
+    "write_object_motion_csv",
+]

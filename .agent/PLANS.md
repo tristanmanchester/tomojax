@@ -11,18 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 object-motion sidecar truth
-- Goal: make Dataset 4 synthetic sidecars record the planned true object-frame
-  motion instead of writing zero motion, so object-motion metrics and solvers
-  have real ground truth.
+- Phase: Phase 8/9 object-motion sidecar API
+- Goal: expose Dataset 4 object-frame motion truth through the public
+  `tomojax.motion` and `tomojax.datasets` APIs so later object-motion solvers
+  and criteria can use a typed contract instead of ad hoc CSV parsing.
 
 ### Scope
 
 - In scope:
-  - Generate deterministic `true_motion.csv` from benchmark manifest
-    `true_object_motion`.
-  - Preserve zero motion for datasets without object-frame motion.
-  - Add focused synthetic sidecar tests for Dataset 4.
+  - Add a typed `ObjectMotionTrace` public motion container.
+  - Add CSV read/write helpers for object-motion traces.
+  - Load `true_motion.csv` into `SyntheticDatasetSidecars`.
+  - Add focused motion and dataset-loader tests.
   - Add focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -34,6 +34,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Object-motion benchmark-result recovery metrics.
   - Current-default NMSE comparison.
   - New report fields or criteria evaluation changes.
+  - Changing generated projection physics.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -46,8 +47,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement manifest-driven true object-motion CSV generation.
-- [x] Add focused synthetic dataset tests.
+- [x] Add typed object-motion trace API.
+- [x] Load object-motion truth from synthetic sidecars.
+- [x] Add focused motion and dataset-loader tests.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 

@@ -189,6 +189,22 @@ def test_generate_supported_only_setup_global_dataset_removes_unsupported_truth(
     assert true_state.setup.axis_rot_y_rad.value == 0.0
 
 
+def test_load_synthetic_dataset_sidecars_reads_zero_object_motion(tmp_path: Path) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=8,
+    )
+
+    sidecars = load_synthetic_dataset_sidecars(paths.dataset_dir)
+
+    assert sidecars.true_motion.n_views == 8
+    np.testing.assert_allclose(sidecars.true_motion.tx_obj_px, np.zeros(8))
+    np.testing.assert_allclose(sidecars.true_motion.ty_obj_px, np.zeros(8))
+
+
 def test_generate_object_motion_dataset_marks_unsupported_manifest_terms(
     tmp_path: Path,
 ) -> None:
@@ -220,6 +236,14 @@ def test_generate_object_motion_dataset_marks_unsupported_manifest_terms(
     np.testing.assert_allclose(ty, 2.0 * np.sin(2.0 * np.pi * t), atol=1.0e-6)
     np.testing.assert_allclose(tz, 1.5 * t, atol=1.0e-6)
     np.testing.assert_allclose(rot, 0.20 * smooth, atol=1.0e-6)
+
+    sidecars = load_synthetic_dataset_sidecars(paths.dataset_dir)
+    np.testing.assert_allclose(sidecars.true_motion.tx_obj_px, -12.0 * smooth, atol=1.0e-6)
+    np.testing.assert_allclose(
+        sidecars.true_motion.ty_obj_px,
+        2.0 * np.sin(2.0 * np.pi * t),
+        atol=1.0e-6,
+    )
 
 
 def test_generate_combined_nuisance_dataset_marks_unmodelled_terms(

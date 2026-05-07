@@ -11,6 +11,7 @@ from typing import cast
 import numpy as np
 
 from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
+from tomojax.motion import ObjectMotionTrace, read_object_motion_csv
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class SyntheticDatasetSidecars:
     volume: SyntheticArrayMetadata
     projections: SyntheticArrayMetadata
     mask: SyntheticArrayMetadata
+    true_motion: ObjectMotionTrace
     consistency: SyntheticDatasetConsistency
 
 
@@ -85,6 +87,7 @@ def load_synthetic_dataset_sidecars(dataset_dir: Path) -> SyntheticDatasetSideca
     volume = _read_array_metadata(artifacts, "ground_truth_volume_npy")
     projections = _read_array_metadata(artifacts, "projections_npy")
     mask = _read_array_metadata(artifacts, "mask_npy")
+    true_motion = read_object_motion_csv(artifacts["true_motion_csv"])
     consistency = _consistency_summary(
         manifest=manifest,
         true_geometry=true_geometry,
@@ -102,6 +105,7 @@ def load_synthetic_dataset_sidecars(dataset_dir: Path) -> SyntheticDatasetSideca
         volume=volume,
         projections=projections,
         mask=mask,
+        true_motion=true_motion,
         consistency=consistency,
     )
 
