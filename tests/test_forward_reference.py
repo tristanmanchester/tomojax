@@ -97,6 +97,37 @@ def test_core_projection_geometry_records_nominal_theta_and_shift() -> None:
     )
 
 
+def test_project_parallel_reference_applies_detector_roll() -> None:
+    volume = jnp.zeros((7, 7, 7), dtype=jnp.float32)
+    volume = volume.at[2, :, 4].set(1.0)
+    volume = volume.at[5, :, 1].set(0.5)
+    geometry = GeometryState.zeros(1)
+    rolled_setup = geometry.setup.replace_parameter(
+        "detector_roll_rad",
+        geometry.setup.detector_roll_rad.with_value(0.20),
+    )
+    rolled_geometry = GeometryState(setup=rolled_setup, pose=geometry.pose)
+
+    base = project_parallel_reference(volume, geometry)
+    rolled = project_parallel_reference(volume, rolled_geometry)
+
+    assert float(jnp.linalg.norm(rolled - base)) > 0.0
+    assert rolled.shape == base.shape
+    np.testing.assert_allclose(
+        np.asarray(rolled),
+        np.asarray(
+            project_parallel_reference_arrays(
+                volume,
+                theta_rad=jnp.asarray([0.0], dtype=jnp.float32),
+                dx_px=jnp.asarray([0.0], dtype=jnp.float32),
+                dz_px=jnp.asarray([0.0], dtype=jnp.float32),
+                detector_roll_rad=jnp.asarray(0.20, dtype=jnp.float32),
+            )
+        ),
+        atol=1e-6,
+    )
+
+
 def test_project_parallel_reference_changes_smoothly_with_theta() -> None:
     volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
     volume = volume.at[1, 2, 1].set(1.0)

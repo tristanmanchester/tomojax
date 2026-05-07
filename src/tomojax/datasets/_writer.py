@@ -162,10 +162,6 @@ def _project_v2_smoke(
 
 def _core_projectable_state(state: GeometryState) -> GeometryState:
     setup = state.setup
-    setup = setup.replace_parameter(
-        "detector_roll_rad",
-        setup.detector_roll_rad.with_value(0.0),
-    )
     setup = setup.replace_parameter("axis_rot_x_rad", setup.axis_rot_x_rad.with_value(0.0))
     setup = setup.replace_parameter("axis_rot_y_rad", setup.axis_rot_y_rad.with_value(0.0))
     pose = PoseParameters(
@@ -187,8 +183,6 @@ def _unsupported_dofs_not_evaluated(
     if supported_only:
         return []
     unsupported: list[str] = []
-    if abs(float(state.setup.detector_roll_rad.value)) > 0.0:
-        unsupported.append("detector_roll_rad")
     if abs(float(state.setup.axis_rot_x_rad.value)) > 0.0:
         unsupported.append("axis_rot_x_rad")
     if abs(float(state.setup.axis_rot_y_rad.value)) > 0.0:

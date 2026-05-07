@@ -11,33 +11,30 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 core projector rebaseline
-- Goal: retire the rotate-and-sum v2 operational projector path and make v2
-  generation, reconstruction preview, Schur updates, verification losses, and
-  benchmark artifacts consistently use the existing core trilinear ray
-  projector/backprojector.
+- Phase: Phase 2/5 detector-roll geometry vertical slice
+- Goal: promote `detector_roll_rad` from unsupported to a real core-trilinear
+  v2 geometry DOF for parallel tomography, including adapter semantics,
+  setup/Schur packing, sidecar classification, artifacts, docs, and focused
+  tests.
 
 ### Scope
 
 - In scope:
-  - Add a typed adapter from supported v2 `GeometryState` to core `Grid`,
-    `Detector`, detector grid, and per-view `T_all` pose matrices.
-  - Route `tomojax.forward.project_parallel_reference*` through the core
-    trilinear ray projector so existing v2 alignment paths use one projector
-    family without a backend selector between toy and core.
-  - Route preview backprojection through the core explicit adjoint and wire FISTA
-    preview through core projection loss/grad or equivalent core calls.
-  - Record core operator provenance in run artifacts and dataset manifests.
-  - Rebaseline small CPU adapter tests, supported-only 32^3 smoke, 64^3/64-view
-    GPU fixed-truth pose-frozen setup recovery, and anchored stopped setup-only
-    diagnostics.
+  - Apply `GeometryState.setup.detector_roll_rad` through the v2-to-core
+    detector grid while preserving the single `core_trilinear_ray` projector
+    family.
+  - Add detector-roll setup packing/unpacking for setup-only and joint Schur LM.
+  - Stop classifying detector roll as unsupported in generated benchmark
+    sidecars.
+  - Add focused CPU tests for detector-roll projection semantics and Schur/setup
+    recovery on a deterministic asymmetric phantom.
+  - Update docs/logs and commit the slice.
 - Out of scope:
-  - Detector-boundary rotate-sum polishing, laminography/roll/axis/object-drift
-    implementation, new long-term projector selectors, threshold relaxation,
-    legacy Ruff cleanup, or five-case reruns before the core path is coherent.
-- Deep module owners: `tomojax.forward` for the v2-to-core operator adapter,
-  `tomojax.recon` for preview reconstruction, `tomojax.align`/`tomojax.datasets`
-  for orchestration/artifact provenance.
+  - Axis tilt, laminography, alpha/beta pose, object drift, projector selectors,
+    threshold relaxation, legacy Ruff cleanup, or full five-case reruns.
+- Deep module owners: `tomojax.forward` for detector-grid adapter semantics,
+  `tomojax.align` for setup/Schur packing, and `tomojax.datasets` for sidecar
+  unsupported-DOF classification.
 
 ### Design Sources
 
@@ -49,40 +46,37 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Replace operational v2 forward projection with core trilinear ray calls.
-- [x] Add focused CPU tests for nominal theta and detector/pose shifts in the
-  `GeometryState` -> core adapter.
-- [x] Replace rotate-and-sum preview backprojection and FISTA projection loss
-  with core explicit adjoint / core FISTA arrays.
-- [x] Make unsupported DOFs explicit errors or `unsupported_dof_not_evaluated`,
-  not silently ignored.
-- [x] Record `core_trilinear_ray` operator provenance and core grid/detector
-  traversal settings in manifests and benchmark artifacts.
-- [x] Run focused Ruff/format/typecheck, relevant core/forward/recon/align/CLI
-  tests, and `just imports`.
-- [x] Run supported-only 32^3 smoke plus 64^3/64-view GPU fixed-truth and stopped
-  anchored diagnostics under the core projector.
-- [x] Update implementation log and commit the coherent rebaseline slice.
+- [x] Wire `detector_roll_rad` into `core_projection_geometry_from_state` and
+  `project_parallel_reference_arrays`.
+- [x] Extend setup-only and joint Schur active setup parameters with
+  `detector_roll_rad`.
+- [x] Remove detector roll from unsupported sidecar projection/classification.
+- [x] Add focused adapter and LM tests for detector roll.
+- [x] Run focused Ruff/type/tests and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the detector-roll slice.
 
 ### Validation
 
-- `uv run ruff check ...` passed for touched Python files.
+- `uv run ruff check ...` passed for touched source and tests.
 - `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
   source and tests.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
-  tests/test_reference_fista.py
+  tests/test_setup_lm.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_recovers_realized_supported_geometry
   tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
   tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_det_u_only_setup_update
-  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
-  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
-  tests/test_alternating_solver_smoke.py::test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap
-  -q` passed: 21 tests.
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_detector_roll_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_writes_normal_eq_summary_artifact
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
+  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  -q` passed: 24 tests.
 - `just imports` passed.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
-### Decisions And Deviations
+### Prior Decisions Still Binding
 
 - New decision: the v2 rotate-and-sum projector is no longer an operational
   projector path. The only supported v2 operator family is the existing core
@@ -90,26 +84,9 @@ and proposed next fix before stopping.
 - Do not add a long-term selector between rotate-and-sum and core trilinear ray.
   Any old rotate-sum behavior may remain only as deleted history or a narrowly
   private test fixture if unavoidable.
-- Unsupported DOFs in this slice are explicit: detector roll, axis tilt,
-  laminography, alpha/beta, and object drift are not implemented by the adapter
-  until their core convention mapping is defined and tested.
-- Preview backprojection and `fista_reconstruct_reference` now use core
-  projection plus the core explicit adjoint for the data-gradient path. The
-  remaining `jax.value_and_grad` in the wrapper is only for the smoothed-TV
-  regulariser.
-- 64^3/64-view fixed-truth recovery passes under the core operator when the
-  oracle Schur path uses raw geometry residuals, disables the level metadata
-  prior, and does not early-exit after coarse preview verification:
-  `det_u` RMSE `1.43051e-06` px and theta RMSE `1.06805e-07` rad.
-- Preview FISTA now uses core `forward_project_view_T` for residuals and
-  `sum_backproject_views_T` for the data-gradient adjoint.
-- Anchored stopped det_u-only now reaches `0.102502` px under the core projector
-  with setup trust unclipped for the pose-frozen det_u-only update, clearing the
-  det_u Gate 3 target. The benchmark manifest still marks theta failed because
-  this diagnostic intentionally freezes theta.
-- Benchmark sidecar generation records unsupported roll/axis/alpha/beta terms
-  as `unsupported_dof_not_evaluated` and projects only the supported
-  core-projectable geometry subset for wiring/reporting fixtures.
+- Detector roll convention will reuse `tomojax.calibration.detector_grid`
+  semantics: rotate the zero-centre detector grid in the detector plane, then
+  keep centre offsets independent.
 
 ### Risks
 

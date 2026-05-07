@@ -87,7 +87,7 @@ def _active_pose_dofs(raw: tuple[str, ...]) -> tuple[PoseSchurDof, ...]:
 
 
 def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter, ...]:
-    allowed = {"theta_offset_rad", "det_u_px", "det_v_px"}
+    allowed = {"theta_offset_rad", "det_u_px", "det_v_px", "detector_roll_rad"}
     if any(name not in allowed for name in raw):
         raise ValueError(f"unsupported active setup parameters {raw!r}")
     return cast("tuple[SetupSchurParameter, ...]", tuple(raw))

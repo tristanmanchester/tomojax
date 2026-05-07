@@ -953,6 +953,7 @@ def _benchmark_result_payload(
             "det_u_realized_rmse_px": geometry_recovery.get("det_u_realized_rmse_px"),
             "det_v_realized_rmse_px": geometry_recovery.get("det_v_realized_rmse_px"),
             "theta_realized_rmse_rad": geometry_recovery.get("theta_realized_rmse_rad"),
+            "detector_roll_error_rad": geometry_recovery.get("detector_roll_error_rad"),
         },
         "backend": {
             "requested": "core_trilinear_ray",
@@ -1061,12 +1062,13 @@ def _criterion_metric_name(name: str) -> str | None:
     return {
         "det_u_error_px_lt": "det_u_realized_rmse_px",
         "det_v_error_px_lt": "det_v_realized_rmse_px",
+        "roll_error_deg_lt": "detector_roll_error_rad",
         "theta_offset_error_deg_lt": "theta_realized_rmse_rad",
     }.get(name)
 
 
 def _criterion_threshold_in_metric_units(name: str, threshold: float) -> float:
-    if name == "theta_offset_error_deg_lt":
+    if name in {"roll_error_deg_lt", "theta_offset_error_deg_lt"}:
         return float(np.deg2rad(threshold))
     return threshold
 

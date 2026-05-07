@@ -3,6 +3,55 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 2/5 Detector Roll Core Geometry Slice
+
+### Summary
+
+- Promoted `detector_roll_rad` from unsupported to a supported
+  `core_trilinear_ray` v2 setup DOF for parallel tomography.
+- The v2-to-core adapter now builds a calibrated detector grid with detector
+  roll through `tomojax.calibration.detector_grid`, while keeping detector
+  centre shifts independent through the existing supported translation terms.
+- Setup-only LM and joint Schur LM can pack, update, freeze, trace, and report
+  `detector_roll_rad` as an active setup parameter.
+- Synthetic sidecar generation no longer projects detector roll away and no
+  longer classifies it as `unsupported_dof_not_evaluated`; axis rotations and
+  alpha/beta remain explicitly unsupported in this slice.
+- Verification and benchmark-manifest evaluation now emit
+  `detector_roll_error_rad` and evaluate `roll_error_deg_lt` as a real metric.
+
+### Validation
+
+- `uv run ruff check src/tomojax/forward/_projector.py
+  src/tomojax/align/_setup_lm.py src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/datasets/_writer.py
+  tests/test_forward_reference.py tests/test_setup_lm.py
+  tests/test_joint_schur_lm.py tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright` on the same focused source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
+  tests/test_setup_lm.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_recovers_realized_supported_geometry
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_det_u_only_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_detector_roll_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_writes_normal_eq_summary_artifact
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
+  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  -q` passed: 24 tests in 168.57 seconds.
+- `just imports` passed.
+
+### Remaining Work
+
+- Axis tilt, laminography, alpha/beta pose, theta-scale observability, object
+  drift, and full five-case benchmark recovery remain future vertical slices.
+- The named 4-view CLI synthetic smoke now evaluates `roll_error_deg_lt` and
+  currently fails it as expected for that small wiring diagnostic; this is a
+  real criterion now, not an unsupported placeholder.
+
 ## 2026-05-07 — Phase 8 Core Trilinear Ray Projector Rebaseline
 
 ### Summary

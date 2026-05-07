@@ -277,15 +277,18 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     )
     assert evaluation["axis_error_deg_lt"]["status"] == "not_evaluated"
     assert evaluation["axis_error_deg_lt"]["reason"] == "unsupported_dof_not_evaluated"
-    assert evaluation["roll_error_deg_lt"]["status"] == "not_evaluated"
-    assert evaluation["roll_error_deg_lt"]["reason"] == "unsupported_dof_not_evaluated"
+    assert evaluation["roll_error_deg_lt"]["status"] == "failed"
+    np.testing.assert_allclose(
+        float(cast("float", evaluation["roll_error_deg_lt"]["threshold"])),
+        math.radians(0.05),
+    )
     evaluation_summary = cast(
         "dict[str, object]",
         benchmark_result["benchmark_manifest_evaluation_summary"],
     )
     assert evaluation_summary == {
-        "failed": 2,
-        "not_evaluated": 2,
+        "failed": 3,
+        "not_evaluated": 1,
         "passed": 0,
         "status": "failed",
         "total": 4,
