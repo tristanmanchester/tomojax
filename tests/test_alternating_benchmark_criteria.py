@@ -44,3 +44,35 @@ def test_benchmark_manifest_leaves_string_policy_criteria_not_evaluated() -> Non
     backend = cast("dict[str, object]", evaluation["backend_policy"])
     assert backend["status"] == "not_evaluated"
     assert backend["reason"] == "unsupported_dof_not_evaluated"
+
+
+def test_benchmark_manifest_evaluates_det_v_policy_when_recovered() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"det_v_policy": "recovered_or_reported_unobservable"},
+        geometry_recovery={
+            "det_v_realized_rmse_px": 0.05,
+            "det_v_realized_rmse_px_passed": True,
+        },
+    )
+
+    det_v = cast("dict[str, object]", evaluation["det_v_policy"])
+    assert det_v["status"] == "passed"
+    assert det_v["value"] == 0.05
+    assert det_v["threshold"] == "recovered_or_reported_unobservable"
+
+
+def test_benchmark_manifest_keeps_det_v_policy_not_evaluated_without_evidence() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"det_v_policy": "recovered_or_reported_unobservable"},
+        geometry_recovery={
+            "det_v_realized_rmse_px": 4.0,
+            "det_v_realized_rmse_px_passed": False,
+        },
+    )
+
+    det_v = cast("dict[str, object]", evaluation["det_v_policy"])
+    assert det_v["status"] == "not_evaluated"
+    assert det_v["value"] == 4.0
+    assert det_v["reason"] == (
+        "det_v was not recovered and unobservability policy evidence is not in benchmark_result"
+    )

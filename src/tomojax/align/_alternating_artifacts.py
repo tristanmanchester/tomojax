@@ -1009,6 +1009,11 @@ def _criterion_evaluation(
     threshold: object,
     geometry_recovery: dict[object, object],
 ) -> dict[str, object]:
+    if name == "det_v_policy":
+        return _det_v_policy_evaluation(
+            threshold=threshold,
+            geometry_recovery=geometry_recovery,
+        )
     metric_name = _criterion_metric_name(name)
     if metric_name is None:
         return {
@@ -1032,6 +1037,31 @@ def _criterion_evaluation(
         "value": float(value),
         "threshold": threshold_value,
         "reason": "evaluated against smoke geometry recovery metric",
+    }
+
+
+def _det_v_policy_evaluation(
+    *,
+    threshold: object,
+    geometry_recovery: dict[object, object],
+) -> dict[str, object]:
+    recovered = geometry_recovery.get("det_v_realized_rmse_px_passed")
+    value = geometry_recovery.get("det_v_realized_rmse_px")
+    if recovered is True:
+        return {
+            "status": "passed",
+            "value": value,
+            "threshold": threshold,
+            "reason": "det_v recovered within geometry recovery tolerance",
+        }
+    return {
+        "status": "not_evaluated",
+        "value": value,
+        "threshold": threshold,
+        "reason": (
+            "det_v was not recovered and unobservability policy evidence is not "
+            "in benchmark_result"
+        ),
     }
 
 

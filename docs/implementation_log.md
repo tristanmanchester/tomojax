@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 det_v Policy Criterion Slice
+
+### Summary
+
+- Added explicit benchmark-manifest evaluation for
+  `det_v_policy: recovered_or_reported_unobservable`.
+- The criterion now passes when existing geometry recovery evidence reports
+  `det_v_realized_rmse_px_passed=True`.
+- If det_v is not recovered and no unobservability policy payload is present in
+  `benchmark_result`, the criterion remains `not_evaluated` with a specific
+  missing-evidence reason instead of being treated as an unsupported DOF.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py -q` passed: 5 tests in
+  0.65 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Wiring observability policy payloads into `benchmark_result` is still needed
+  before the `reported_unobservable` branch can be evaluated.
+- `backend_policy`, bad-view policy, object-motion criteria, and pose-jump
+  exclusions remain future policy/report slices.
+
 ## 2026-05-07 — Phase 2/7 Laminography Solver Residual Slice
 
 ### Summary
