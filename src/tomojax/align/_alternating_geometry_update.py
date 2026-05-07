@@ -94,6 +94,7 @@ def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter,
         "det_u_px",
         "det_v_px",
         "detector_roll_rad",
+        "theta_scale",
     }
     if any(name not in allowed for name in raw):
         raise ValueError(f"unsupported active setup parameters {raw!r}")

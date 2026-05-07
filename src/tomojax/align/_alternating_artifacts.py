@@ -953,6 +953,7 @@ def _benchmark_result_payload(
             "det_u_realized_rmse_px": geometry_recovery.get("det_u_realized_rmse_px"),
             "det_v_realized_rmse_px": geometry_recovery.get("det_v_realized_rmse_px"),
             "theta_realized_rmse_rad": geometry_recovery.get("theta_realized_rmse_rad"),
+            "theta_scale_error": geometry_recovery.get("theta_scale_error"),
             "detector_roll_error_rad": geometry_recovery.get("detector_roll_error_rad"),
             "axis_error_rad": geometry_recovery.get("axis_error_rad"),
             "alpha_beta_rmse_rad": geometry_recovery.get("alpha_beta_rmse_rad"),
@@ -1068,6 +1069,7 @@ def _criterion_metric_name(name: str) -> str | None:
         "alpha_beta_rmse_deg_lt": "alpha_beta_rmse_rad",
         "roll_error_deg_lt": "detector_roll_error_rad",
         "theta_offset_error_deg_lt": "theta_realized_rmse_rad",
+        "theta_scale_error_lt": "theta_scale_error",
     }.get(name)
 
 

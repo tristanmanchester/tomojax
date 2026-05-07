@@ -3,6 +3,60 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Theta-Scale Opt-In Setup Slice
+
+### Summary
+
+- Promoted `theta_scale` from hard-frozen/unsupported in setup solvers to a
+  supported opt-in setup parameter for setup-only LM and joint Schur LM.
+- Defaults remain frozen and observability-gated: existing smoke/alternating
+  schedules do not activate `theta_scale` unless explicitly configured.
+- `align-auto` and alternating geometry-update validation now accept
+  `theta_scale` in `geometry_update_active_setup_parameters`.
+- Verification now emits `initial_theta_scale_error`, `theta_scale_error`,
+  pass/improvement fields, and a `theta_scale_error_lt` benchmark criterion.
+- Observability reporting keeps frozen theta-scale as missing accepted-step
+  evidence, but reports active theta-scale from Schur diagnostics when it is
+  explicitly included in the setup block.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_setup_lm.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_recovers_realized_supported_geometry
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_det_u_only_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_detector_roll_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_axis_tilt_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_align_auto_parses_supported_geometry_update_dofs
+  tests/test_align_auto_cli.py::test_align_auto_rejects_unknown_geometry_update_dofs
+  -q` passed: 14 tests in 113.33 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  tests/test_setup_lm.py::test_setup_only_lm_recovers_theta_scale_when_explicitly_active
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_align_auto_parses_supported_geometry_update_dofs
+  tests/test_align_auto_cli.py::test_align_auto_rejects_unknown_geometry_update_dofs
+  -q` passed: 6 tests in 125.98 seconds.
+- `uv run ruff check src/tomojax/align/_setup_lm.py
+  src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tests/test_setup_lm.py tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright` on the same focused source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Automatic weak-DOF decision rules still need to decide when theta scale is
+  identifiable and should become active with a prior in benchmark schedules.
+- `det_v_px` observability gating, parallel laminography, object drift, and the
+  full synthetic benchmark ladder remain future vertical slices.
+
 ## 2026-05-07 — Phase 7 CLI Geometry-Update Activation Slice
 
 ### Summary

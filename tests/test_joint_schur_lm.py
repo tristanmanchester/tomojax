@@ -516,6 +516,42 @@ def test_joint_schur_lm_can_run_axis_tilt_setup_update() -> None:
     np.testing.assert_allclose(result.geometry.setup.axis_rot_y_rad.value, -0.10, atol=0.025)
 
 
+def test_joint_schur_lm_can_run_theta_scale_setup_update() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(5)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.linspace(-np.pi / 2.0, np.pi / 2.0, num=5, dtype=np.float64),
+        ),
+    )
+    truth_setup = nominal.setup.replace_parameter(
+        "theta_scale",
+        nominal.setup.theta_scale.with_value(1.04),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=8,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1.0e-2,
+            active_setup_parameters=("theta_scale",),
+            active_pose_dofs=(),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_setup_parameters == ("theta_scale",)
+    assert "theta_scale" not in result.frozen_parameters
+    np.testing.assert_allclose(result.geometry.setup.theta_scale.value, 1.04, atol=0.01)
+
+
 def test_joint_schur_lm_can_run_alpha_beta_pose_update() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(2)

@@ -255,6 +255,11 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     det_u_rmse = float(np.sqrt(np.mean((final_u - true_u) ** 2)))
     initial_det_v_rmse = float(np.sqrt(np.mean((initial_v - true_v) ** 2)))
     det_v_rmse = float(np.sqrt(np.mean((final_v - true_v) ** 2)))
+    true_theta_scale = true_geometry.setup.theta_scale.value
+    initial_theta_scale_error = abs(
+        float(initial_geometry.setup.theta_scale.value - true_theta_scale)
+    )
+    theta_scale_error = abs(float(final_geometry.setup.theta_scale.value - true_theta_scale))
     true_roll = true_geometry.setup.detector_roll_rad.value
     initial_roll_error = abs(float(initial_geometry.setup.detector_roll_rad.value - true_roll))
     roll_error = abs(float(final_geometry.setup.detector_roll_rad.value - true_roll))
@@ -288,6 +293,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     theta_limit = float(tolerances["theta_realized_rmse_rad_lt"])
     det_u_limit = float(tolerances["det_u_realized_rmse_px_lt"])
     det_v_limit = float(tolerances["det_v_realized_rmse_px_lt"])
+    theta_scale_limit = float(tolerances["theta_scale_error_lt"])
     roll_limit = float(tolerances["detector_roll_error_rad_lt"])
     axis_limit = float(tolerances["axis_error_rad_lt"])
     alpha_beta_limit = float(tolerances["alpha_beta_rmse_rad_lt"])
@@ -296,6 +302,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         theta_rmse <= theta_limit
         and det_u_rmse <= det_u_limit
         and det_v_rmse <= det_v_limit
+        and theta_scale_error <= theta_scale_limit
         and roll_error <= roll_limit
         and axis_error <= axis_limit
         and alpha_beta_rmse <= alpha_beta_limit
@@ -306,6 +313,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     theta_improved = bool(theta_rmse < initial_theta_rmse)
     det_u_improved = bool(det_u_rmse < initial_det_u_rmse)
     det_v_improved = bool(det_v_rmse < initial_det_v_rmse)
+    theta_scale_improved = bool(theta_scale_error < initial_theta_scale_error)
     roll_improved = bool(roll_error < initial_roll_error)
     axis_improved = bool(axis_error < initial_axis_error)
     alpha_beta_improved = bool(alpha_beta_rmse < initial_alpha_beta_rmse)
@@ -323,6 +331,11 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         initial_error=initial_det_v_rmse,
         final_error=det_v_rmse,
         limit=det_v_limit,
+    )
+    theta_scale_supported = _supported_dof_acceptable_or_improved(
+        initial_error=initial_theta_scale_error,
+        final_error=theta_scale_error,
+        limit=theta_scale_limit,
     )
     roll_supported = _supported_dof_acceptable_or_improved(
         initial_error=initial_roll_error,
@@ -355,6 +368,11 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         "det_v_realized_rmse_px_improved": det_v_improved,
         "det_v_realized_rmse_px_passed": det_v_rmse <= det_v_limit,
         "det_v_realized_rmse_px_limit": det_v_limit,
+        "initial_theta_scale_error": initial_theta_scale_error,
+        "theta_scale_error": theta_scale_error,
+        "theta_scale_error_improved": theta_scale_improved,
+        "theta_scale_error_passed": theta_scale_error <= theta_scale_limit,
+        "theta_scale_error_limit": theta_scale_limit,
         "initial_detector_roll_error_rad": initial_roll_error,
         "detector_roll_error_rad": roll_error,
         "detector_roll_error_rad_improved": roll_improved,
@@ -389,6 +407,7 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
             theta_supported
             and det_u_supported
             and det_v_supported
+            and theta_scale_supported
             and roll_supported
             and axis_supported
             and alpha_beta_supported
@@ -643,6 +662,7 @@ def _recovery_tolerances_payload() -> dict[str, object]:
             "theta_realized_rmse_rad_lt": 8.5e-2,
             "det_u_realized_rmse_px_lt": 2.0e-1,
             "det_v_realized_rmse_px_lt": 2.0e-1,
+            "theta_scale_error_lt": 1.0e-3,
             "detector_roll_error_rad_lt": float(np.deg2rad(0.05)),
             "axis_error_rad_lt": float(np.deg2rad(0.1)),
             "alpha_beta_rmse_rad_lt": float(np.deg2rad(0.25)),
@@ -716,6 +736,9 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
     det_v_active = (
         False if schur_result is None else "det_v_px" in schur_result.active_setup_parameters
     )
+    theta_scale_active = (
+        False if schur_result is None else "theta_scale" in schur_result.active_setup_parameters
+    )
     det_v_status = "evaluated" if det_v_active else "frozen"
     det_v_reason = (
         "active_in_schur_setup_block"
@@ -736,6 +759,9 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
         diagnostics=diagnostics,
         det_v_active=det_v_active,
         det_v_curvature=min_schur_eigenvalue if det_v_active else None,
+        theta_scale_active=theta_scale_active,
+        theta_scale_curvature=min_schur_eigenvalue if theta_scale_active else None,
+        theta_scale_parameter_index=_setup_parameter_index(schur_result, "theta_scale"),
     )
     return {
         "schema": "tomojax.observability_report.v1",
@@ -792,12 +818,14 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
                     "gauge_group": "rotation",
                 },
                 "theta_scale": {
-                    "active": False,
-                    "observable": False,
-                    "status": "frozen",
+                    "active": theta_scale_active,
+                    "observable": theta_scale_active and diagnostics is not None,
+                    "status": "evaluated" if theta_scale_active else "frozen",
                     "gauge_group": "none",
-                    "curvature": None,
-                    "reason": "theta_scale is frozen until identifiable scale policy exists",
+                    "curvature": min_schur_eigenvalue if theta_scale_active else None,
+                    "reason": "active_in_schur_setup_block"
+                    if theta_scale_active
+                    else "theta_scale is frozen until identifiable scale policy exists",
                 },
             },
             "pose": {
@@ -817,8 +845,20 @@ def _observability_report_payload(schur_result: JointSchurLMResult | None) -> di
             },
         },
         "weak_modes": weak_modes,
-        "handled_frozen_dofs": ["theta_scale"] if det_v_active else ["det_v_px", "theta_scale"],
+        "handled_frozen_dofs": _handled_frozen_weak_dofs(
+            det_v_active=det_v_active,
+            theta_scale_active=theta_scale_active,
+        ),
     }
+
+
+def _handled_frozen_weak_dofs(*, det_v_active: bool, theta_scale_active: bool) -> list[str]:
+    handled: list[str] = []
+    if not det_v_active:
+        handled.append("det_v_px")
+    if not theta_scale_active:
+        handled.append("theta_scale")
+    return handled
 
 
 def _weak_dof_policy_payload(
@@ -826,6 +866,9 @@ def _weak_dof_policy_payload(
     diagnostics: JointSchurDiagnostics | None,
     det_v_active: bool,
     det_v_curvature: float | None,
+    theta_scale_active: bool,
+    theta_scale_curvature: float | None,
+    theta_scale_parameter_index: int | None,
 ) -> dict[str, object]:
     curvature_floor = 1.0e-8
     accepted_step_required = True
@@ -840,8 +883,8 @@ def _weak_dof_policy_payload(
         active=det_v_active,
         curvature=det_v_curvature,
         correlation=det_v_correlation,
-        accepted=diagnostics.accepted if diagnostics is not None else False,
-        accepted_available=diagnostics is not None,
+        accepted=diagnostics.accepted if diagnostics is not None and theta_scale_active else False,
+        accepted_available=diagnostics is not None and theta_scale_active,
         curvature_floor=curvature_floor,
         correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,
@@ -851,16 +894,21 @@ def _weak_dof_policy_payload(
     )
     theta_scale_decision = _weak_dof_decision(
         name="theta_scale",
-        active=False,
-        curvature=None,
-        correlation=None,
-        accepted=False,
-        accepted_available=False,
+        active=theta_scale_active,
+        curvature=theta_scale_curvature,
+        correlation=_setup_correlation_payload(
+            diagnostics,
+            parameter_index=theta_scale_parameter_index,
+        ),
+        accepted=diagnostics.accepted if diagnostics is not None and theta_scale_active else False,
+        accepted_available=diagnostics is not None and theta_scale_active,
         curvature_floor=curvature_floor,
         correlation_abs_max_ceiling=0.98,
         accepted_step_required=accepted_step_required,
-        frozen_reason="theta_scale is unsupported by the current reference projector",
-        validation_improvement=None,
+        frozen_reason="theta_scale is frozen until identifiable scale policy exists",
+        validation_improvement=_schur_validation_improvement_payload(diagnostics)
+        if theta_scale_active
+        else None,
         missing_validation=missing_validation,
     )
     return {
@@ -876,6 +924,18 @@ def _weak_dof_policy_payload(
             "theta_scale": theta_scale_decision,
         },
     }
+
+
+def _setup_parameter_index(
+    schur_result: JointSchurLMResult | None,
+    name: str,
+) -> int | None:
+    if schur_result is None:
+        return None
+    try:
+        return list(schur_result.active_setup_parameters).index(name)
+    except ValueError:
+        return None
 
 
 def _weak_dof_decision(

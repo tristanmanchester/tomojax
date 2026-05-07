@@ -21,6 +21,7 @@ SetupLMParameter = Literal[
     "det_u_px",
     "det_v_px",
     "detector_roll_rad",
+    "theta_scale",
 ]
 
 
@@ -175,11 +176,9 @@ def _frozen_parameters(active: tuple[str, ...]) -> tuple[str, ...]:
         "detector_roll_rad",
         "axis_rot_x_rad",
         "axis_rot_y_rad",
-    )
-    unsupported = (
         "theta_scale",
     )
-    return tuple(name for name in (*all_supported, *unsupported) if name not in active)
+    return tuple(name for name in all_supported if name not in active)
 
 
 def _setup_parameter_values(geometry: GeometryState) -> dict[SetupLMParameter, float]:
@@ -190,6 +189,7 @@ def _setup_parameter_values(geometry: GeometryState) -> dict[SetupLMParameter, f
         "detector_roll_rad": geometry.setup.detector_roll_rad.value,
         "axis_rot_x_rad": geometry.setup.axis_rot_x_rad.value,
         "axis_rot_y_rad": geometry.setup.axis_rot_y_rad.value,
+        "theta_scale": geometry.setup.theta_scale.value,
     }
 
 
@@ -235,6 +235,10 @@ def _geometry_with_params(
         "axis_rot_y_rad",
         geometry.setup.axis_rot_y_rad.with_value(values["axis_rot_y_rad"]),
     )
+    setup = setup.replace_parameter(
+        "theta_scale",
+        geometry.setup.theta_scale.with_value(values["theta_scale"]),
+    )
     return GeometryState(setup=setup, pose=geometry.pose)
 
 
@@ -242,7 +246,7 @@ def _setup_values(
     geometry: GeometryState,
     params: jax.Array,
     config: SetupOnlyLMConfig | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
     active = _active_parameters(geometry, config)
     values = {
         "theta_offset_rad": jnp.asarray(geometry.setup.theta_offset_rad.value, dtype=jnp.float32),
@@ -255,6 +259,7 @@ def _setup_values(
         "detector_roll_rad": jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32),
         "axis_rot_x_rad": jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32),
         "axis_rot_y_rad": jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32),
+        "theta_scale": jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32),
     }
     for index, parameter in enumerate(active):
         values[parameter] = params[index]
@@ -265,6 +270,7 @@ def _setup_values(
         values["detector_roll_rad"],
         values["axis_rot_x_rad"],
         values["axis_rot_y_rad"],
+        values["theta_scale"],
     )
 
 
@@ -282,12 +288,11 @@ def _residual_for_params(
     sigma: float,
     config: SetupOnlyLMConfig | None = None,
 ) -> jax.Array:
-    theta_offset, det_u, det_v, detector_roll, axis_x, axis_y = _setup_values(
+    theta_offset, det_u, det_v, detector_roll, axis_x, axis_y, theta_scale = _setup_values(
         geometry,
         params,
         config,
     )
-    theta_scale = jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
     predicted = project_parallel_reference_arrays(
         volume,
         theta_rad=theta_scale * theta_nominal + theta_offset + phi_pose,
@@ -314,14 +319,13 @@ def _loss_for_params(
     mask: jax.Array | None,
     cfg: SetupOnlyLMConfig,
 ) -> jax.Array:
-    theta_offset, det_u, det_v, detector_roll, axis_x, axis_y = _setup_values(
+    theta_offset, det_u, det_v, detector_roll, axis_x, axis_y, theta_scale = _setup_values(
         geometry,
         params,
         cfg,
     )
     theta = (
-        jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
-        * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
+        theta_scale * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
         + theta_offset
         + jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32)
     )

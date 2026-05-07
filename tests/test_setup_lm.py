@@ -160,6 +160,41 @@ def test_setup_only_lm_recovers_theta_offset() -> None:
     np.testing.assert_allclose(result.geometry.setup.theta_offset_rad.value, 0.07, atol=0.025)
 
 
+def test_setup_only_lm_recovers_theta_scale_when_explicitly_active() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(5)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.linspace(-np.pi / 2.0, np.pi / 2.0, num=5, dtype=np.float64),
+        ),
+    )
+    truth_setup = nominal.setup.replace_parameter(
+        "theta_scale",
+        nominal.setup.theta_scale.with_value(1.04),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_setup_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=SetupOnlyLMConfig(
+            max_iterations=10,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1e-2,
+            active_parameters=("theta_scale",),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_parameters == ("theta_scale",)
+    assert "theta_scale" not in result.frozen_parameters
+    np.testing.assert_allclose(result.geometry.setup.theta_scale.value, 1.04, atol=0.01)
+
+
 def _asymmetric_volume() -> jnp.ndarray:
     volume = jnp.zeros((6, 6, 6), dtype=jnp.float32)
     volume = volume.at[1, :, 2].set(1.0)

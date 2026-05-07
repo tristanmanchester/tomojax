@@ -35,6 +35,7 @@ SetupSchurParameter = Literal[
     "det_v_px",
     "detector_roll_rad",
     "theta_offset_rad",
+    "theta_scale",
 ]
 _POSE_DOF_ORDER: tuple[PoseSchurDof, ...] = (
     "alpha_rad",
@@ -50,6 +51,7 @@ _SETUP_PARAMETER_ORDER: tuple[SetupSchurParameter, ...] = (
     "detector_roll_rad",
     "axis_rot_x_rad",
     "axis_rot_y_rad",
+    "theta_scale",
 )
 
 
@@ -812,7 +814,7 @@ def _frozen_parameters(
     geometry: GeometryState,
     config: JointSchurLMConfig | None = None,
 ) -> tuple[str, ...]:
-    frozen = ["theta_scale"]
+    frozen: list[str] = []
     if not geometry.setup.det_v_px.active:
         frozen.append("det_v_px")
     active_setup = _active_setup_parameters(geometry, config)
@@ -889,6 +891,7 @@ def _setup_parameter_values(geometry: GeometryState) -> dict[SetupSchurParameter
         "detector_roll_rad": geometry.setup.detector_roll_rad.value,
         "axis_rot_x_rad": geometry.setup.axis_rot_x_rad.value,
         "axis_rot_y_rad": geometry.setup.axis_rot_y_rad.value,
+        "theta_scale": geometry.setup.theta_scale.value,
     }
 
 
@@ -942,6 +945,10 @@ def _geometry_with_params(
         "axis_rot_y_rad",
         geometry.setup.axis_rot_y_rad.with_value(setup_values["axis_rot_y_rad"]),
     )
+    setup = setup.replace_parameter(
+        "theta_scale",
+        geometry.setup.theta_scale.with_value(setup_values["theta_scale"]),
+    )
     active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
     if not active_pose_dofs:
         return GeometryState(setup=setup, pose=geometry.pose)
@@ -975,6 +982,7 @@ def _split_joint(
         jax.Array,
         jax.Array,
         jax.Array,
+        jax.Array,
     jax.Array,
     jax.Array,
     jax.Array,
@@ -992,6 +1000,7 @@ def _split_joint(
         "detector_roll_rad": jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32),
         "axis_rot_x_rad": jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32),
         "axis_rot_y_rad": jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32),
+        "theta_scale": jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32),
     }
     for index, parameter in enumerate(active_setup):
         setup_values[parameter] = params[index]
@@ -1014,6 +1023,7 @@ def _split_joint(
         setup_values["detector_roll_rad"],
         setup_values["axis_rot_x_rad"],
         setup_values["axis_rot_y_rad"],
+        setup_values["theta_scale"],
         pose_values["alpha_rad"],
         pose_values["beta_rad"],
         pose_values["phi_residual_rad"],
@@ -1121,6 +1131,7 @@ def _predicted_for_params(
         detector_roll,
         axis_x,
         axis_y,
+        theta_scale,
         alpha_pose,
         beta_pose,
         phi_pose,
@@ -1134,8 +1145,7 @@ def _predicted_for_params(
     return project_parallel_reference_arrays(
         volume,
         theta_rad=(
-            jnp.asarray(geometry.setup.theta_scale.value, dtype=jnp.float32)
-            * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
+            theta_scale * jnp.asarray(geometry.pose.theta_nominal_rad, dtype=jnp.float32)
             + theta_offset
             + phi_pose
         ),

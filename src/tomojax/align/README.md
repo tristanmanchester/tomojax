@@ -74,7 +74,8 @@ Forbidden dependencies:
   `alpha_rad` and `beta_rad` are supported opt-in pose DOFs for focused stages.
 - `solve_setup_only_lm` defaults to `theta_offset_rad`, `det_u_px`, active
   `det_v_px`, and detector roll. Axis rotations are supported opt-in setup
-  parameters; theta scale remains frozen until identifiable scale policy exists.
+  parameters; theta scale is supported only as an explicit opt-in setup
+  parameter until identifiable scale policy activates it automatically.
 - `solve_joint_schur_lm` is the first reference Schur setup+pose slice for the
   supported setup and pose DOFs. It has accepted/rejected damping adaptation and
   ratio-based trust-radius adaptation, but is not yet the final trust-region

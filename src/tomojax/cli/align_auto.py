@@ -140,7 +140,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated active setup parameters for Schur updates. "
             "Supported names: theta_offset_rad, det_u_px, det_v_px, "
-            "detector_roll_rad, axis_rot_x_rad, axis_rot_y_rad."
+            "detector_roll_rad, axis_rot_x_rad, axis_rot_y_rad, theta_scale."
         ),
     )
     _ = parser.add_argument(
@@ -304,6 +304,7 @@ def _parse_active_setup_parameters(raw: str) -> tuple[str, ...]:
         "det_u_px",
         "det_v_px",
         "detector_roll_rad",
+        "theta_scale",
     }
     if any(value not in allowed for value in values):
         raise ValueError(f"unsupported --geometry-update-active-setup-parameters value {raw!r}")

@@ -41,6 +41,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "detector_roll_rad" in captured.out
     assert "axis_rot_x_rad" in captured.out
     assert "axis_rot_y_rad" in captured.out
+    assert "theta_scale" in captured.out
 
 
 def test_align_auto_parses_supported_geometry_update_dofs() -> None:
@@ -48,7 +49,8 @@ def test_align_auto_parses_supported_geometry_update_dofs() -> None:
         "alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px"
     ) == ("alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px")
     assert align_auto_cli._parse_active_setup_parameters(
-        "theta_offset_rad,det_u_px,det_v_px,detector_roll_rad,axis_rot_x_rad,axis_rot_y_rad"
+        "theta_offset_rad,det_u_px,det_v_px,detector_roll_rad,"
+        "axis_rot_x_rad,axis_rot_y_rad,theta_scale"
     ) == (
         "theta_offset_rad",
         "det_u_px",
@@ -56,6 +58,7 @@ def test_align_auto_parses_supported_geometry_update_dofs() -> None:
         "detector_roll_rad",
         "axis_rot_x_rad",
         "axis_rot_y_rad",
+        "theta_scale",
     )
     assert align_auto_cli._parse_active_pose_dofs("none") == ()
     assert align_auto_cli._parse_active_setup_parameters("") == ()
@@ -65,7 +68,7 @@ def test_align_auto_rejects_unknown_geometry_update_dofs() -> None:
     with pytest.raises(ValueError, match="unsupported --geometry-update-active-pose-dofs"):
         _ = align_auto_cli._parse_active_pose_dofs("omega_rad")
     with pytest.raises(ValueError, match="unsupported --geometry-update-active-setup-parameters"):
-        _ = align_auto_cli._parse_active_setup_parameters("theta_scale")
+        _ = align_auto_cli._parse_active_setup_parameters("tilt_rad")
 
 
 def test_align_auto_smoke_command_writes_core_artifacts(

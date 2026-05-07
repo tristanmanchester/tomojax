@@ -51,9 +51,9 @@ Forbidden dependencies:
 - Projection residuals must support masks and robust whitening.
 - Backend fast paths must report provenance and compare against the reference
   path.
-- Supported parallel-tomography DOFs are nominal theta, theta offset, per-view
-  alpha/beta/phi residuals, detector u/v shift, detector roll, axis x/y tilt,
-  and per-view dx/dz.
+- Supported parallel-tomography DOFs are nominal theta, theta scale, theta
+  offset, per-view alpha/beta/phi residuals, detector u/v shift, detector roll,
+  axis x/y tilt, and per-view dx/dz.
 - Detector roll uses a calibrated detector-grid transform: roll is applied
   around the zero-centre detector plane, while detector centre offsets remain
   independent.
