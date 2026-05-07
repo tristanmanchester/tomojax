@@ -29,7 +29,7 @@ from tomojax.align._alternating_verification import (
 from tomojax.align._joint_schur_lm import (
     joint_schur_normal_eq_summary,
 )
-from tomojax.forward import project_parallel_reference, residual_loss
+from tomojax.forward import PROJECTION_OPERATOR, project_parallel_reference, residual_loss
 from tomojax.geometry import (
     GaugeReport,
     GeometryState,
@@ -955,8 +955,10 @@ def _benchmark_result_payload(
             "theta_realized_rmse_rad": geometry_recovery.get("theta_realized_rmse_rad"),
         },
         "backend": {
-            "requested": "jax_reference",
-            "actual": "jax_reference",
+            "requested": "core_trilinear_ray",
+            "actual": "core_trilinear_ray",
+            "projection_operator": PROJECTION_OPERATOR,
+            "backprojector": "core_trilinear_ray_adjoint",
             "jax_default_backend": jax.default_backend(),
             "selected_jax_device": _selected_jax_device(),
             "fallbacks": [],
@@ -1107,9 +1109,10 @@ def _write_config_resolved(
     lines = [
         f'profile = "{schedule.name}"',
         'align_mode = "auto"',
-        'backend_requested = "jax_reference"',
-        'backend_actual = "jax_reference"',
-        'geometry_model = "parallel_tomography_reference"',
+        'backend_requested = "core_trilinear_ray"',
+        'backend_actual = "core_trilinear_ray"',
+        f'projection_operator = "{PROJECTION_OPERATOR}"',
+        'geometry_model = "parallel_tomography_core_trilinear_ray"',
         f'geometry_update_volume_source = "{geometry_update_volume_source}"',
     ]
     if geometry_update_setup_prior_strength is not None:
@@ -1228,7 +1231,8 @@ def _run_manifest_payload(
         "profile": schedule.name,
         "align_mode": "auto",
         "dataset": dataset,
-        "geometry_model": "parallel_tomography_reference",
+        "geometry_model": "parallel_tomography_core_trilinear_ray",
+        "projection_operator": PROJECTION_OPERATOR,
         "geometry_update_volume_source": geometry_update_volume_source,
         "preview_volume_support": preview_volume_support,
         "preview_initialization": preview_initialization,
@@ -1240,8 +1244,8 @@ def _run_manifest_payload(
             "name": schedule.name,
             "level_factors": list(schedule.level_factors),
         },
-        "backend_requested": "jax_reference",
-        "backend_actual": "jax_reference",
+        "backend_requested": "core_trilinear_ray",
+        "backend_actual": "core_trilinear_ray",
         "status": "passed",
     }
 

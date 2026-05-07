@@ -11,82 +11,98 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 anchored preview reconstruction
-- Goal: make stopped-reconstruction preview volumes geometry-informative enough
-  that supported-only setup error reaches Schur instead of being absorbed into a
-  wrong-gauge preview volume.
+- Phase: Phase 8 core projector rebaseline
+- Goal: retire the rotate-and-sum v2 operational projector path and make v2
+  generation, reconstruction preview, Schur updates, verification losses, and
+  benchmark artifacts consistently use the existing core trilinear ray
+  projector/backprojector.
 
 ### Scope
 
 - In scope:
-  - Add optional support masks to reference FISTA and project both candidate and
-    momentum state into nonnegative support.
-  - Add centered cylindrical/spherical support generation in `tomojax.recon`.
-  - Thread preview support, small TV weights, residual filters, and initialization
-    choices through the alternating preview reconstruction path.
-  - Wire setup-only stopped diagnostics with `det_u_px` active and pose,
-    `theta_offset_rad`, and `det_v_px` frozen.
-  - Run supported-only 64^3/64-view stopped diagnostics until Gate 1 is measured.
+  - Add a typed adapter from supported v2 `GeometryState` to core `Grid`,
+    `Detector`, detector grid, and per-view `T_all` pose matrices.
+  - Route `tomojax.forward.project_parallel_reference*` through the core
+    trilinear ray projector so existing v2 alignment paths use one projector
+    family without a backend selector between toy and core.
+  - Route preview backprojection through the core explicit adjoint and wire FISTA
+    preview through core projection loss/grad or equivalent core calls.
+  - Record core operator provenance in run artifacts and dataset manifests.
+  - Rebaseline small CPU adapter tests, supported-only 32^3 smoke, 64^3/64-view
+    GPU fixed-truth pose-frozen setup recovery, and anchored stopped setup-only
+    diagnostics.
 - Out of scope:
-  - Sidecar/report-field expansion, nominal theta, Schur trust/damping, pose
-    priors, Pallas, 128^3, real data, broad benchmark ingestion, or legacy Ruff
-    cleanup.
-- Deep module owner: `tomojax.align`.
+  - Detector-boundary rotate-sum polishing, laminography/roll/axis/object-drift
+    implementation, new long-term projector selectors, threshold relaxation,
+    legacy Ruff cleanup, or five-case reruns before the core path is coherent.
+- Deep module owners: `tomojax.forward` for the v2-to-core operator adapter,
+  `tomojax.recon` for preview reconstruction, `tomojax.align`/`tomojax.datasets`
+  for orchestration/artifact provenance.
 
 ### Design Sources
 
+- `docs/tomojax-v2/01_high_level_architecture.md`
 - `docs/tomojax-v2/02_loss_and_optimiser_spec.md`
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
+- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
+- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 
 ### Tasks
 
-- [x] Add support projection to reference FISTA.
-- [x] Add centered support generation and tests.
-- [x] Thread support/TV/residual filters/init choices through alternating
-  preview reconstruction.
-- [x] Add setup-only Schur active setup parameter wiring.
-- [x] Run focused validation and `just imports`.
-- [x] Run supported-only 64^3/64-view stopped diagnostics and record Gate 1
-  outcome.
-- [x] Update implementation log, benchmark docs, and commit.
+- [x] Replace operational v2 forward projection with core trilinear ray calls.
+- [x] Add focused CPU tests for nominal theta and detector/pose shifts in the
+  `GeometryState` -> core adapter.
+- [~] Replace rotate-and-sum preview backprojection and FISTA projection loss
+  with core explicit adjoint / core FISTA arrays.
+- [x] Make unsupported DOFs explicit errors or `unsupported_dof_not_evaluated`,
+  not silently ignored.
+- [x] Record `core_trilinear_ray` operator provenance and core grid/detector
+  traversal settings in manifests and benchmark artifacts.
+- [x] Run focused Ruff/format/typecheck, relevant core/forward/recon/align/CLI
+  tests, and `just imports`.
+- [x] Run supported-only 32^3 smoke plus 64^3/64-view GPU fixed-truth and stopped
+  anchored diagnostics under the core projector.
+- [ ] Update implementation log and commit the coherent rebaseline slice.
 
 ### Validation
 
-- `uv run ruff format ...` passed for touched source and tests.
-- `uv run ruff check ...` passed for touched source and tests.
+- `uv run ruff format ...` passed for touched Python files.
+- `uv run ruff check ...` passed for touched Python files.
 - `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
   source and tests.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
-  tests/test_joint_schur_lm.py
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
+  tests/test_reference_fista.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
   tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
-  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
-  -q` passed: 22 tests.
+  -q` passed: 18 tests.
 - `just imports` passed.
-- `just check` did not pass due broad pre-existing repository Ruff debt outside
-  this slice; unrelated formatter churn from that command was reverted.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Fixed-truth supported-only recovery now passes with filtered Schur. Stopped
-  reconstruction remains at `det_u` RMSE 7.25 px with
-  `reconstruction_absorbed_geometry`.
-- First stopped schedule should freeze pose/theta/det_v and update only
-  `det_u_px`; theta recovery is not required without an explicit orientation
-  anchor.
-- Gate 1 passed with cylindrical support, preview TV, continuation preview
-  residual filters, constant preview initialization, and det_u-only stopped
-  setup updates: `det_u` RMSE `0.453199` px and true-volume/final-geometry loss
-  `0.0167246`.
+- New decision: the v2 rotate-and-sum projector is no longer an operational
+  projector path. The only supported v2 operator family is the existing core
+  trilinear ray projector/backprojector (`core_trilinear_ray`).
+- Do not add a long-term selector between rotate-and-sum and core trilinear ray.
+  Any old rotate-sum behavior may remain only as deleted history or a narrowly
+  private test fixture if unavoidable.
+- Unsupported DOFs in this slice are explicit: detector roll, axis tilt,
+  laminography, alpha/beta, and object drift are not implemented by the adapter
+  until their core convention mapping is defined and tested.
+- Preview backprojection now uses the core explicit adjoint. The tiny
+  `fista_reconstruct_reference` wrapper still uses reverse-mode over the core
+  forward projection for its masked robust loss and remains a follow-up before
+  the objective is fully complete.
+- 64^3/64-view fixed-truth recovery fails under the core operator and is the
+  current blocker: fixed-truth reference leaves `det_u` RMSE at 7.125 px, while
+  anchored stopped det_u-only reaches 0.237177 px but cannot be accepted until
+  fixed-truth passes.
 
 ### Risks
 
-- Risk: support and TV can reduce volume gauge freedom but still leave detector
-  shift hidden by detector boundary semantics.
-- Mitigation: run a detector boundary diagnostic only after anchored stopped
-  reconstruction reaches at least Gate 1.
-- Detector-boundary diagnostic found current wrap semantics and stronger
-  wrong-geometry penalties under valid-overlap masked zero-fill semantics. Keep
-  that as the next slice.
+- Risk: current recovery metrics were calibrated against the toy projector and
+  may regress once the physical core ray operator is used.
+- Mitigation: rebaseline fixed-truth first; if fixed-truth fails, treat it as an
+  adapter/scaling blocker before interpreting stopped reconstruction quality.

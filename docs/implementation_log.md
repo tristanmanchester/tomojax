@@ -3,6 +3,94 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Core Trilinear Ray Projector Rebaseline
+
+### Summary
+
+- Retired the v2 rotate-and-sum projector as an operational path for the public
+  `tomojax.forward.project_parallel_reference*` API. Those names now adapt the
+  supported v2 `GeometryState` into core `Grid`, `Detector`, and per-view
+  `T_all`, then call the existing core trilinear ray projector.
+- Added typed forward provenance for the single supported v2 operator family:
+  `core_trilinear_ray`.
+- Switched the deterministic preview backprojection helper from the hand-rolled
+  rotate/shift inverse to the core explicit adjoint
+  `sum_backproject_views_T`.
+- Recorded core operator provenance in generated sidecar manifests, run
+  manifests, backend reports, config files, and benchmark results.
+- Unsupported setup/pose DOFs in the adapter are now explicit errors rather
+  than silently ignored: detector roll, axis rotations, alpha, and beta.
+
+### Adapter Contract
+
+- Supported in this slice: nominal theta, `theta_offset_rad`,
+  `phi_residual_rad`, `det_u_px`, `det_v_px`, per-view `dx_px`, and per-view
+  `dz_px` for parallel tomography.
+- Core grid defaults are explicit and recorded: unit voxel spacing, centered
+  volume origin by `Grid`, detector shape derived from volume/projection shape,
+  unit detector pixels, centered detector, `step_size=null`,
+  `n_steps=null`, `gather_dtype="fp32"`, checkpointed projector, and unroll 1.
+- Generation, Schur residual/Jacobian finite differences, verification losses,
+  residual artifacts, and sidecar consistency checks all reach the same core
+  operator through the forward public API.
+
+### Diagnostics
+
+Artifacts:
+
+- 32^3 CPU smoke:
+  `.artifacts/phase8_core_projector/runs/32_supported_only_fixed_truth_cpu/`
+- 64^3/64-view GPU fixed-truth, balanced:
+  `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_gpu/`
+- 64^3/64-view GPU fixed-truth, reference:
+  `.artifacts/phase8_core_projector/runs/64_supported_only_fixed_truth_reference_gpu/`
+- 64^3/64-view GPU stopped anchored det_u-only:
+  `.artifacts/phase8_core_projector/runs/64_supported_only_stopped_anchor_gpu/`
+- Core sidecar dataset:
+  `.artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only/`
+
+| Run | Device | Mode | Status | det_u RMSE px | theta RMSE rad | Schur accepted | Total time s | Notes |
+|---|---|---|---|---:|---:|---|---:|---|
+| 32^3 CPU smoke | `cpu:0` | fixed truth, pose frozen | failed | 1.62574 | 0.0155630 | mixed | n/a | Small smoke proves artifact wiring only. |
+| 64^3 GPU balanced | `cuda:0` | fixed truth, pose frozen | failed | 6.75000 | 0.0203247 | final level accepted | 30.0770 | Final `det_u` only reached about 0.50 px from true 7.25 px. |
+| 64^3 GPU reference | `cuda:0` | fixed truth, pose frozen | failed | 7.12500 | 0.0224485 | mostly rejected/limited | 50.2916 | Correct core provenance recorded; longer schedule did not fix setup recovery. |
+| 64^3 GPU reference | `cuda:0` | stopped reconstruction, cylindrical support, constant init, det_u only, pose frozen | failed | 0.237177 | 0.0218166 | true | 48.7828 | Near prior Gate 3 det_u tolerance but cannot be accepted while fixed-truth fails. |
+
+### Current Blocker
+
+Fixed-truth core recovery fails before stopped reconstruction can be judged.
+Because generation and Schur both use `core_trilinear_ray`, the failure is now
+most likely in the v2-to-core setup/pose convention mapping, finite-difference
+parameter scaling, trust-radius interpretation under the core ray loss, or
+theta/detector-shift coupling. It should be treated as an adapter/scaling
+blocker, not a reconstruction-gauge blocker yet.
+
+### Validation
+
+- `uv run ruff format ...` passed for touched source and tests.
+- `uv run ruff check ...` passed for touched source and tests.
+- `uv run basedpyright ...` passed with 0 errors and 0 warnings for touched
+  source and tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
+  tests/test_reference_fista.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 18 tests.
+- `just imports` passed.
+
+### Remaining Work
+
+- Fix the fixed-truth 64^3 setup recovery blocker under `core_trilinear_ray`
+  before interpreting stopped reconstruction quality or rerunning the five-case
+  suite.
+- Replace the remaining reference FISTA volume-gradient path with the
+  `fista_tv_core` explicit-adjoint loss/gradient path; projection already uses
+  core, and preview backprojection uses the core adjoint, but the tiny FISTA
+  wrapper still uses reverse-mode over the forward call for masked robust loss.
+- Once fixed-truth passes, rerun the anchored stopped diagnostic and then update
+  five-case reporting with unsupported DOFs classified as
+  `unsupported_dof_not_evaluated`.
+
 ## 2026-05-07 — Phase 8 Anchored Preview Reconstruction Gate 1
 
 ### Summary

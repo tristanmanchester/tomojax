@@ -113,7 +113,7 @@ def fista_reconstruct_reference(
                 regulariser=float(regulariser_value),
                 step_size=float(step_size),
                 wall_time_s=time.perf_counter() - start,
-                backend="jax_reference",
+                backend="core_trilinear_ray",
             )
         )
 

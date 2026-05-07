@@ -15,7 +15,11 @@ import numpy as np
 
 from tomojax.datasets._phantoms import make_benchmark_phantom
 from tomojax.datasets._specs import SyntheticDatasetSpec, synthetic128_spec
-from tomojax.forward import project_parallel_reference
+from tomojax.forward import (
+    PROJECTION_OPERATOR,
+    core_projection_geometry_from_state,
+    project_parallel_reference,
+)
 from tomojax.geometry import (
     GeometryState,
     PoseParameters,
@@ -99,6 +103,7 @@ def generate_synthetic_dataset(
         setup_override=setup_override,
     )
     projections = _project_v2_smoke(volume, true_state)
+    core_geometry = core_projection_geometry_from_state(volume.shape, true_state)
     nuisance = _realize_nuisance(spec, n_views, applied_to_projections=not clean)
     if not clean:
         projections = _apply_nuisance(projections, nuisance)
@@ -134,6 +139,7 @@ def generate_synthetic_dataset(
             n_views,
             paths,
             supported_only=supported_only,
+            operator_provenance=core_geometry.provenance(),
         ),
     )
     return paths
@@ -452,6 +458,7 @@ def _dataset_manifest(
     views: int,
     paths: SyntheticArtifactPaths,
     supported_only: bool,
+    operator_provenance: dict[str, object],
 ) -> dict[str, object]:
     pass_criteria = dict(spec.pass_criteria)
     if supported_only:
@@ -470,6 +477,8 @@ def _dataset_manifest(
         "phantom_seed": spec.phantom_seed,
         "pose_seed": spec.pose_seed,
         "artifact_contract": "tomojax-v2.synthetic-dataset.v1",
+        "projection_operator": PROJECTION_OPERATOR,
+        "operator_provenance": operator_provenance,
         "variant": "supported_only" if supported_only else "manifest",
         "artifacts": _manifest_artifact_map(paths),
         "recovery_tolerances": pass_criteria,

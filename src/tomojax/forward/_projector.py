@@ -1,28 +1,69 @@
-"""Minimal JAX reference projector."""
-# pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
+"""V2 forward projection through the core trilinear ray operator."""
+# pyright: reportAny=false, reportUnknownArgumentType=false
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import jax.numpy as jnp
 
+from tomojax.core.geometry import Detector, Grid
+from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+
 if TYPE_CHECKING:
     from tomojax.geometry import GeometryState
 
+V2ProjectionOperatorName = Literal["core_trilinear_ray"]
+
+PROJECTION_OPERATOR: V2ProjectionOperatorName = "core_trilinear_ray"
+
+
+@dataclass(frozen=True)
+class CoreProjectionGeometry:
+    """Core projector geometry derived from the supported v2 geometry state."""
+
+    grid: Grid
+    detector: Detector
+    t_all: jax.Array
+    det_grid: tuple[jax.Array, jax.Array]
+    operator: V2ProjectionOperatorName = PROJECTION_OPERATOR
+    step_size: float | None = None
+    n_steps: int | None = None
+    gather_dtype: str = "fp32"
+    checkpoint_projector: bool = True
+    projector_unroll: int = 1
+
+    def provenance(self) -> dict[str, object]:
+        """Return serialisable operator metadata for run artifacts."""
+        return {
+            "projection_operator": self.operator,
+            "grid": self.grid.to_dict(),
+            "detector": self.detector.to_dict(),
+            "step_size": self.step_size,
+            "n_steps": self.n_steps,
+            "gather_dtype": self.gather_dtype,
+            "checkpoint_projector": self.checkpoint_projector,
+            "projector_unroll": self.projector_unroll,
+        }
+
 
 def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> jax.Array:
-    """Project a cubic volume with a minimal differentiable parallel-beam model."""
+    """Project a 3D volume with the core trilinear ray projector.
+
+    The public v2 name is preserved for API continuity, but the implementation
+    is intentionally no longer the old rotate-and-sum approximation.
+    """
     vol = jnp.asarray(volume, dtype=jnp.float32)
     if vol.ndim != 3:
         raise ValueError("volume must be 3D")
-
-    theta = jnp.asarray(geometry.theta_total_rad())
-    dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px)
+    _raise_for_unsupported_dofs(geometry)
+    theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
+    dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
-    dz = jnp.asarray(dz_setup + geometry.pose.dz_px)
+    dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
     return project_parallel_reference_arrays(vol, theta_rad=theta, dx_px=dx, dz_px=dz)
 
 
@@ -33,91 +74,141 @@ def project_parallel_reference_arrays(
     dx_px: jax.Array,
     dz_px: jax.Array,
 ) -> jax.Array:
-    """Project a volume from JAX pose arrays with differentiable detector shifts."""
+    """Project a volume from supported v2 pose arrays using core trilinear rays."""
     vol = jnp.asarray(volume, dtype=jnp.float32)
+    if vol.ndim != 3:
+        raise ValueError("volume must be 3D")
     theta = jnp.asarray(theta_rad, dtype=jnp.float32)
     dx = jnp.asarray(dx_px, dtype=jnp.float32)
     dz = jnp.asarray(dz_px, dtype=jnp.float32)
     if theta.shape != dx.shape or theta.shape != dz.shape:
         raise ValueError("theta_rad, dx_px, and dz_px must have matching shapes")
-    return jax.vmap(_project_one_view, in_axes=(None, 0, 0, 0))(vol, theta, dx, dz)
+    core = core_projection_geometry_from_arrays(
+        _volume_shape(vol.shape),
+        theta_rad=theta,
+        dx_px=dx,
+        dz_px=dz,
+    )
+
+    def project_one(t_view: jax.Array) -> jax.Array:
+        return forward_project_view_T(
+            t_view,
+            core.grid,
+            core.detector,
+            vol,
+            step_size=core.step_size,
+            n_steps=core.n_steps,
+            use_checkpoint=core.checkpoint_projector,
+            unroll=core.projector_unroll,
+            gather_dtype=core.gather_dtype,
+            det_grid=core.det_grid,
+        )
+
+    return jax.vmap(project_one)(core.t_all).astype(jnp.float32)
 
 
-def _project_one_view(
-    volume: jax.Array,
+def core_projection_geometry_from_state(
+    volume_shape: tuple[int, int, int],
+    geometry: GeometryState,
+    *,
+    detector_shape: tuple[int, int] | None = None,
+    gather_dtype: str = "fp32",
+    checkpoint_projector: bool = True,
+    projector_unroll: int = 1,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+) -> CoreProjectionGeometry:
+    """Adapt supported v2 geometry state to core Grid/Detector/T_all."""
+    _raise_for_unsupported_dofs(geometry)
+    theta = jnp.asarray(geometry.theta_total_rad(), dtype=jnp.float32)
+    dx = jnp.asarray(geometry.setup.det_u_px.value + geometry.pose.dx_px, dtype=jnp.float32)
+    dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
+    dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
+    return core_projection_geometry_from_arrays(
+        volume_shape,
+        theta_rad=theta,
+        dx_px=dx,
+        dz_px=dz,
+        detector_shape=detector_shape,
+        gather_dtype=gather_dtype,
+        checkpoint_projector=checkpoint_projector,
+        projector_unroll=projector_unroll,
+        step_size=step_size,
+        n_steps=n_steps,
+    )
+
+
+def core_projection_geometry_from_arrays(
+    volume_shape: tuple[int, int, int],
+    *,
     theta_rad: jax.Array,
     dx_px: jax.Array,
     dz_px: jax.Array,
-) -> jax.Array:
-    rotated = _rotate_xy_linear(volume, theta_rad)
-    projection = jnp.sum(rotated, axis=1)
-    projection = _shift_periodic_linear(projection, dx_px=dx_px, dz_px=dz_px)
-    return projection.astype(jnp.float32)
+    detector_shape: tuple[int, int] | None = None,
+    gather_dtype: str = "fp32",
+    checkpoint_projector: bool = True,
+    projector_unroll: int = 1,
+    step_size: float | None = None,
+    n_steps: int | None = None,
+) -> CoreProjectionGeometry:
+    """Build core Grid/Detector/T_all for supported parallel tomography arrays."""
+    nx, ny, nz = _volume_shape(volume_shape)
+    theta = jnp.asarray(theta_rad, dtype=jnp.float32)
+    dx = jnp.asarray(dx_px, dtype=jnp.float32)
+    dz = jnp.asarray(dz_px, dtype=jnp.float32)
+    if theta.ndim != 1 or dx.ndim != 1 or dz.ndim != 1:
+        raise ValueError("theta_rad, dx_px, and dz_px must be one-dimensional")
+    if theta.shape != dx.shape or theta.shape != dz.shape:
+        raise ValueError("theta_rad, dx_px, and dz_px must have matching shapes")
+    rows, cols = detector_shape or (nx, nz)
+    grid = Grid(nx=nx, ny=ny, nz=nz, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=int(cols), nv=int(rows), du=1.0, dv=1.0)
+    return CoreProjectionGeometry(
+        grid=grid,
+        detector=detector,
+        t_all=_stack_core_poses(theta, dx, dz),
+        det_grid=get_detector_grid_device(detector),
+        gather_dtype=gather_dtype,
+        checkpoint_projector=bool(checkpoint_projector),
+        projector_unroll=int(projector_unroll),
+        step_size=step_size,
+        n_steps=n_steps,
+    )
 
 
-def _rotate_xy_linear(volume: jax.Array, theta_rad: jax.Array) -> jax.Array:
-    x_coords = jnp.arange(volume.shape[0], dtype=jnp.float32)
-    y_coords = jnp.arange(volume.shape[1], dtype=jnp.float32)
-    x_grid, y_grid = jnp.meshgrid(x_coords, y_coords, indexing="ij")
-    x_center = (jnp.asarray(volume.shape[0], dtype=jnp.float32) - 1.0) / 2.0
-    y_center = (jnp.asarray(volume.shape[1], dtype=jnp.float32) - 1.0) / 2.0
-    x_rel = x_grid - x_center
-    y_rel = y_grid - y_center
+def _stack_core_poses(theta_rad: jax.Array, dx_px: jax.Array, dz_px: jax.Array) -> jax.Array:
     cos_t = jnp.cos(theta_rad)
     sin_t = jnp.sin(theta_rad)
-    source_x = cos_t * x_rel + sin_t * y_rel + x_center
-    source_y = -sin_t * x_rel + cos_t * y_rel + y_center
-
-    def sample_slice(slice_xy: jax.Array) -> jax.Array:
-        return _sample_image_linear_zero(slice_xy, source_x=source_x, source_y=source_y)
-
-    return jax.vmap(sample_slice, in_axes=2, out_axes=2)(volume)
-
-
-def _sample_image_linear_zero(
-    image: jax.Array,
-    *,
-    source_x: jax.Array,
-    source_y: jax.Array,
-) -> jax.Array:
-    x0 = jnp.floor(source_x).astype(jnp.int32)
-    y0 = jnp.floor(source_y).astype(jnp.int32)
-    x1 = x0 + 1
-    y1 = y0 + 1
-    x_frac = source_x - jnp.floor(source_x)
-    y_frac = source_y - jnp.floor(source_y)
-    top = (1.0 - y_frac) * _take2d_zero(image, x0, y0) + y_frac * _take2d_zero(image, x0, y1)
-    bottom = (1.0 - y_frac) * _take2d_zero(image, x1, y0) + y_frac * _take2d_zero(
-        image,
-        x1,
-        y1,
+    zeros = jnp.zeros_like(theta_rad)
+    ones = jnp.ones_like(theta_rad)
+    row0 = jnp.stack((cos_t, -sin_t, zeros, -dx_px), axis=1)
+    row1 = jnp.stack((sin_t, cos_t, zeros, zeros), axis=1)
+    row2 = jnp.stack((zeros, zeros, ones, -dz_px), axis=1)
+    row3 = jnp.broadcast_to(
+        jnp.asarray((0.0, 0.0, 0.0, 1.0), dtype=jnp.float32),
+        row0.shape,
     )
-    return (1.0 - x_frac) * top + x_frac * bottom
+    return jnp.stack((row0, row1, row2, row3), axis=1).astype(jnp.float32)
 
 
-def _take2d_zero(image: jax.Array, x_index: jax.Array, y_index: jax.Array) -> jax.Array:
-    valid = (
-        (x_index >= 0) & (x_index < image.shape[0]) & (y_index >= 0) & (y_index < image.shape[1])
-    )
-    clipped_x = jnp.clip(x_index, 0, image.shape[0] - 1)
-    clipped_y = jnp.clip(y_index, 0, image.shape[1] - 1)
-    values = image[clipped_x, clipped_y]
-    return jnp.where(valid, values, 0.0)
+def _volume_shape(shape: tuple[int, ...]) -> tuple[int, int, int]:
+    if len(shape) != 3:
+        raise ValueError("volume shape must be 3D")
+    return cast("tuple[int, int, int]", tuple(int(axis) for axis in shape))
 
 
-def _shift_periodic_linear(image: jax.Array, *, dx_px: jax.Array, dz_px: jax.Array) -> jax.Array:
-    rows = jnp.arange(image.shape[0], dtype=jnp.float32) - dz_px
-    cols = jnp.arange(image.shape[1], dtype=jnp.float32) - dx_px
-    row0 = jnp.floor(rows).astype(jnp.int32)
-    col0 = jnp.floor(cols).astype(jnp.int32)
-    row_frac = rows - jnp.floor(rows)
-    col_frac = cols - jnp.floor(cols)
-
-    col1 = col0 + 1
-    row1 = row0 + 1
-    horizontally_shifted = (1.0 - col_frac) * jnp.take(
-        image, col0, axis=1, mode="wrap"
-    ) + col_frac * jnp.take(image, col1, axis=1, mode="wrap")
-    top_source = jnp.take(horizontally_shifted, row0, axis=0, mode="wrap")
-    bottom_values = jnp.take(horizontally_shifted, row1, axis=0, mode="wrap")
-    return (1.0 - row_frac)[:, None] * top_source + row_frac[:, None] * bottom_values
+def _raise_for_unsupported_dofs(geometry: GeometryState) -> None:
+    unsupported = {
+        "detector_roll_rad": geometry.setup.detector_roll_rad,
+        "axis_rot_x_rad": geometry.setup.axis_rot_x_rad,
+        "axis_rot_y_rad": geometry.setup.axis_rot_y_rad,
+    }
+    for name, parameter in unsupported.items():
+        if parameter.active and abs(float(parameter.value)) > 0.0:
+            raise ValueError(f"{name} is not supported by the v2 core_trilinear_ray adapter yet")
+    if jnp.any(jnp.asarray(geometry.pose.alpha_rad) != 0.0) or jnp.any(
+        jnp.asarray(geometry.pose.beta_rad) != 0.0
+    ):
+        raise ValueError(
+            "alpha_rad and beta_rad are not supported by the v2 core_trilinear_ray adapter yet"
+        )

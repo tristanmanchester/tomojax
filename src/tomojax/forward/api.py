@@ -9,7 +9,15 @@ from tomojax.forward._filters import (
     apply_residual_filter,
     apply_residual_filter_schedule,
 )
-from tomojax.forward._projector import project_parallel_reference, project_parallel_reference_arrays
+from tomojax.forward._projector import (
+    PROJECTION_OPERATOR,
+    CoreProjectionGeometry,
+    V2ProjectionOperatorName,
+    core_projection_geometry_from_arrays,
+    core_projection_geometry_from_state,
+    project_parallel_reference,
+    project_parallel_reference_arrays,
+)
 from tomojax.forward._residuals import (
     ResidualResult,
     masked_whitened_residual,
@@ -20,12 +28,17 @@ from tomojax.forward._residuals import (
 )
 
 __all__ = [
+    "PROJECTION_OPERATOR",
+    "CoreProjectionGeometry",
     "ResidualFilterConfig",
     "ResidualFilterKind",
     "ResidualFilterResult",
     "ResidualResult",
+    "V2ProjectionOperatorName",
     "apply_residual_filter",
     "apply_residual_filter_schedule",
+    "core_projection_geometry_from_arrays",
+    "core_projection_geometry_from_state",
     "masked_whitened_residual",
     "project_parallel_reference",
     "project_parallel_reference_arrays",

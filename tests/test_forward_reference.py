@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.forward import (
+    PROJECTION_OPERATOR,
+    core_projection_geometry_from_state,
     masked_whitened_residual,
     project_parallel_reference,
     project_parallel_reference_arrays,
@@ -30,8 +32,8 @@ def test_project_parallel_reference_shape_and_zero_pose_values() -> None:
 
 
 def test_project_parallel_reference_applies_detector_shift() -> None:
-    volume = jnp.zeros((4, 4, 4), dtype=jnp.float32)
-    volume = volume.at[0, :, 1].set(1.0)
+    volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
+    volume = volume.at[2, :, 2].set(1.0)
     geometry = GeometryState.zeros(1)
     shifted_pose = geometry.pose.with_updates(dx_px=np.array([1.0], dtype=np.float64))
     shifted_geometry = GeometryState(setup=geometry.setup, pose=shifted_pose)
@@ -39,12 +41,13 @@ def test_project_parallel_reference_applies_detector_shift() -> None:
     base = project_parallel_reference(volume, geometry)
     shifted = project_parallel_reference(volume, shifted_geometry)
 
-    np.testing.assert_allclose(np.asarray(shifted[0]), np.roll(np.asarray(base[0]), 1, axis=1))
+    assert float(shifted[0, 2, 1]) == float(base[0, 2, 2])
+    assert float(shifted[0, 2, 2]) == 0.0
 
 
 def test_project_parallel_reference_applies_fractional_detector_shift() -> None:
-    volume = jnp.zeros((4, 4, 4), dtype=jnp.float32)
-    volume = volume.at[0, :, 1].set(1.0)
+    volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
+    volume = volume.at[2, :, 2].set(1.0)
 
     shifted = project_parallel_reference_arrays(
         volume,
@@ -53,13 +56,13 @@ def test_project_parallel_reference_applies_fractional_detector_shift() -> None:
         dz_px=jnp.asarray([0.0], dtype=jnp.float32),
     )
 
-    row = np.asarray(shifted[0, 0])
-    np.testing.assert_allclose(row, [0.0, 2.0, 2.0, 0.0], atol=1e-6)
+    row = np.asarray(shifted[0, 2])
+    np.testing.assert_allclose(row, [0.0, 2.5, 2.5, 0.0, 0.0], atol=1e-6)
 
 
 def test_project_parallel_reference_arrays_is_differentiable_for_dx() -> None:
-    volume = jnp.zeros((4, 4, 4), dtype=jnp.float32)
-    volume = volume.at[0, :, 1].set(1.0)
+    volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
+    volume = volume.at[2, :, 2].set(1.0)
 
     def pixel_value(dx_px: jax.Array) -> jax.Array:
         projected = project_parallel_reference_arrays(
@@ -68,11 +71,30 @@ def test_project_parallel_reference_arrays_is_differentiable_for_dx() -> None:
             dx_px=jnp.asarray([dx_px], dtype=jnp.float32),
             dz_px=jnp.asarray([0.0], dtype=jnp.float32),
         )
-        return projected[0, 0, 1]
+        return projected[0, 2, 2]
 
     gradient = jax.grad(pixel_value)(jnp.asarray(0.25, dtype=jnp.float32))
 
     assert float(gradient) < 0.0
+
+
+def test_core_projection_geometry_records_nominal_theta_and_shift() -> None:
+    geometry = GeometryState.zeros(2)
+    pose = geometry.pose.with_updates(
+        theta_nominal_rad=np.array([0.0, np.pi / 2.0], dtype=np.float64),
+        dx_px=np.array([1.5, -2.0], dtype=np.float64),
+        dz_px=np.array([0.25, -0.5], dtype=np.float64),
+    )
+    geometry = GeometryState(setup=geometry.setup, pose=pose)
+
+    core = core_projection_geometry_from_state((8, 8, 8), geometry)
+
+    assert core.operator == PROJECTION_OPERATOR
+    np.testing.assert_allclose(np.asarray(core.t_all[0, :3, 3]), [-1.5, 0.0, -0.25])
+    np.testing.assert_allclose(np.asarray(core.t_all[1, :3, 3]), [2.0, 0.0, 0.5])
+    np.testing.assert_allclose(
+        np.asarray(core.t_all[1, :2, :2]), [[0.0, -1.0], [1.0, 0.0]], atol=1e-6
+    )
 
 
 def test_project_parallel_reference_changes_smoothly_with_theta() -> None:

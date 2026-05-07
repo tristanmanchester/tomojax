@@ -14,7 +14,7 @@ import numpy as np
 from tomojax.align._alternating_types import (
     _LevelVerificationChecks,
 )
-from tomojax.forward import project_parallel_reference, residual_loss
+from tomojax.forward import PROJECTION_OPERATOR, project_parallel_reference, residual_loss
 from tomojax.verify import failure_report_from_gates, residual_structure_summary
 
 if TYPE_CHECKING:
@@ -901,11 +901,11 @@ def _schur_validation_improvement_payload(
 def _backend_report_payload() -> dict[str, object]:
     return {
         "schema": "tomojax.backend_report.v1",
-        "requested": "jax_reference",
-        "actual": "jax_reference",
-        "actual_projector": "jax_reference",
-        "actual_backprojector": "jax_reference",
-        "actual_geometry_reductions": "jax_reference",
+        "requested": "core_trilinear_ray",
+        "actual": "core_trilinear_ray",
+        "actual_projector": PROJECTION_OPERATOR,
+        "actual_backprojector": "core_trilinear_ray_adjoint",
+        "actual_geometry_reductions": "core_trilinear_ray_finite_difference",
         "canonical_detector_grid": True,
         "calibrated_detector_grid": False,
         "pallas_eligible": False,
