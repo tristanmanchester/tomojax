@@ -7883,3 +7883,78 @@ Interpretation:
 - Re-run the `128^3` setup-global full 5-DOF diagnostic with
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` to measure actual peak allocator use,
   then rerun with default allocator settings for benchmark parity.
+
+## 2026-05-07 — Phase 8/9 Streamed Schur And Backprojection Memory Fix
+
+### Summary
+
+- Replaced the joint Schur LM hot path that built a dense residual Jacobian with
+  per-view streamed normal-equation accumulation.
+- Added `schur_step_from_normal_equations()` so the solver can consume
+  accumulated `J.T @ J` and `J.T @ r` directly while preserving the dense
+  `schur_step_from_jacobian()` routine as the small-problem reference.
+- Added chunked one-view adjoint accumulation for reference backprojection
+  helpers and preview FISTA explicit gradients. This removes the other observed
+  materialisation: `vmap(backproject_one)` over all views followed by a reduction
+  over a stack of full volumes.
+- Added an optional detector-shape argument to
+  `project_parallel_reference_arrays()` so streamed view-local projections can
+  match sidecar detector dimensions when evaluating one view at a time.
+
+### GPU Evidence
+
+Ran targeted CUDA diagnostics on the laptop GPU with:
+
+```text
+JAX_PLATFORMS=cuda
+CUDA_VISIBLE_DEVICES=0
+XLA_PYTHON_CLIENT_PREALLOCATE=false
+geometry_update_volume_source=fixed_synthetic_truth
+active setup = theta_offset_rad,det_u_px,detector_roll_rad,axis_rot_x_rad,axis_rot_y_rad,theta_scale
+active pose = alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px
+projector = core_trilinear_ray
+```
+
+| Probe | Result | Peak sampled GPU memory | Interpretation |
+|---|---:|---:|---|
+| `128^3`, 256 views, setup-global full 5-DOF | timed out at 900 s | 1235 MiB | dense-Jacobian and full-volume-stack memory regressions are removed; runtime now dominates |
+| `64^3`, 64 views, setup-global full 5-DOF | timed out at 900 s | 491 MiB | memory stays low at diagnostic scale, but Python-level streamed finite differences are too slow |
+
+Artifacts:
+
+- `.artifacts/phase8_streamed_schur_probe/logs/128_setup_global_full5_fixed_truth_cuda_rerun2/`
+- `.artifacts/phase8_streamed_schur_probe/logs/64_setup_global_full5_fixed_truth_cuda/`
+
+### Interpretation
+
+- The original >6 GiB behavior had three layers:
+  - JAX default preallocation made trivial workloads appear to use about 6 GiB.
+  - Dense Schur finite-difference Jacobians wanted tens of GiB for full
+    5-DOF 128^3 alignment.
+  - Reference backprojection/FISTA still vmapped all view adjoints into a stack
+    of full volumes, causing a 2.02 GiB allocation before Schur.
+- The current slice fixes the memory regressions without shrinking the
+  benchmark, but it is not yet a production-quality alignment path because
+  streamed finite differences are executed with too much Python/JAX dispatch
+  overhead.
+- The next functional slice should batch/JIT the streamed Schur reductions
+  while preserving the same low-memory normal-equation contract.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 20 tests in 268.87 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
+  tests/test_vertical_smoke.py
+  tests/test_joint_schur_lm.py::test_schur_step_matches_dense_normal_solve
+  tests/test_joint_schur_lm.py::test_joint_schur_streamed_normals_put_pure_setup_error_in_setup_gauge
+  -q` passed: 10 tests in 84.38 seconds.
+- `uv run ruff check src/tomojax/recon/_backprojection_accumulation.py
+  src/tomojax/recon/_reference.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/forward/_projector.py
+  tests/test_joint_schur_lm.py` passed.
+- `uv run basedpyright src/tomojax/recon/_backprojection_accumulation.py
+  src/tomojax/recon/_reference.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/forward/_projector.py
+  tests/test_joint_schur_lm.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.

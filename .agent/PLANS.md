@@ -42,13 +42,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Tasks
 
 - [x] Identify which path owns the high VRAM allocation.
-- [ ] Add chunked accumulation or streaming where needed.
+- [x] Add chunked accumulation or streaming where needed.
 - [x] Run focused validation and `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
 - `just imports` passed after the diagnostic log update.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
+  passed: 20 tests in 268.87 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
+  tests/test_vertical_smoke.py
+  tests/test_joint_schur_lm.py::test_schur_step_matches_dense_normal_solve
+  tests/test_joint_schur_lm.py::test_joint_schur_streamed_normals_put_pure_setup_error_in_setup_gauge
+  -q` passed: 10 tests in 84.38 seconds.
+- `uv run ruff check src/tomojax/recon/_backprojection_accumulation.py
+  src/tomojax/recon/_reference.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/forward/_projector.py
+  tests/test_joint_schur_lm.py` passed.
+- `uv run basedpyright src/tomojax/recon/_backprojection_accumulation.py
+  src/tomojax/recon/_reference.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/forward/_projector.py
+  tests/test_joint_schur_lm.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed after the streaming changes.
+- GPU diagnostic artifacts:
+  `.artifacts/phase8_streamed_schur_probe/logs/128_setup_global_full5_fixed_truth_cuda_rerun2/`
+  and
+  `.artifacts/phase8_streamed_schur_probe/logs/64_setup_global_full5_fixed_truth_cuda/`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.

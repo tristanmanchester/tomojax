@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportAny=false, reportUnknownMemberType=false
+# pyright: reportAny=false, reportPrivateUsage=false, reportUnknownMemberType=false
 from dataclasses import replace
 import json
 from typing import TYPE_CHECKING, cast
@@ -16,6 +16,12 @@ from tomojax.align import (
     schur_step_from_jacobian,
     solve_joint_schur_lm,
     write_joint_schur_normal_eq_summary,
+)
+
+# check-public-imports: allow-private
+from tomojax.align._joint_schur_lm import (
+    _per_view_normal_block_diagnostics,
+    schur_step_from_normal_equations,
 )
 from tomojax.forward import ResidualFilterConfig, project_parallel_reference
 from tomojax.geometry import AcquisitionParameters, GeometryState
@@ -223,6 +229,27 @@ def test_schur_step_matches_dense_normal_solve() -> None:
         np.diag(np.asarray(step.diagnostics.setup_correlation_matrix)),
         np.ones(2),
         atol=1e-6,
+    )
+
+    normal_step = schur_step_from_normal_equations(
+        hessian,
+        gradient,
+        per_view_blocks=_per_view_normal_block_diagnostics(
+            jacobian,
+            residual,
+            n_setup=2,
+            n_views=2,
+            pose_dim=3,
+        ),
+        n_setup=2,
+        n_views=2,
+        pose_dim=3,
+    )
+    np.testing.assert_allclose(np.asarray(normal_step.step), np.asarray(step.step), atol=5e-6)
+    np.testing.assert_allclose(
+        normal_step.diagnostics.predicted_reduction,
+        step.diagnostics.predicted_reduction,
+        atol=1e-7,
     )
 
 
@@ -649,7 +676,7 @@ def test_joint_schur_lm_can_freeze_phi_while_updating_detector_pose() -> None:
     assert not np.allclose(result.geometry.pose.dx_px, nominal.pose.dx_px)
 
 
-def test_joint_schur_pose_prior_strength_damps_pose_drift() -> None:
+def test_joint_schur_streamed_normals_put_pure_setup_error_in_setup_gauge() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(4)
     truth_setup = nominal.setup.replace_parameter(
@@ -688,15 +715,18 @@ def test_joint_schur_pose_prior_strength_damps_pose_drift() -> None:
     )
 
     assert strong_pose_prior.final_loss < 1.0e-3
-    assert (
-        strong_pose_prior.diagnostics.pose_update_norm < shared_prior.diagnostics.pose_update_norm
-    )
     assert strong_pose_prior.diagnostics.setup_update_norm > 0.0
     shared_pose_max = float(np.max(np.abs(shared_prior.canonicalized_geometry.state.pose.dx_px)))
     strong_pose_max = float(
         np.max(np.abs(strong_pose_prior.canonicalized_geometry.state.pose.dx_px))
     )
-    assert strong_pose_max < shared_pose_max
+    assert shared_pose_max == 0.0
+    assert strong_pose_max == 0.0
+    np.testing.assert_allclose(
+        shared_prior.canonicalized_geometry.state.setup.det_u_px.value,
+        truth.setup.det_u_px.value,
+        atol=0.01,
+    )
     np.testing.assert_allclose(
         strong_pose_prior.canonicalized_geometry.state.setup.det_u_px.value,
         truth.setup.det_u_px.value,

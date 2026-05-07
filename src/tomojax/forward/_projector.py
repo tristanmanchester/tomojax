@@ -120,6 +120,7 @@ def project_parallel_reference_arrays(
     acquisition_model: str = "parallel",
     laminography_tilt_rad: jax.Array | float = 0.0,
     laminography_tilt_about: str = "x",
+    detector_shape: tuple[int, int] | None = None,
 ) -> jax.Array:
     """Project a volume from supported v2 pose arrays using core trilinear rays."""
     vol = jnp.asarray(volume, dtype=jnp.float32)
@@ -146,6 +147,7 @@ def project_parallel_reference_arrays(
         acquisition_model=acquisition_model,
         laminography_tilt_rad=laminography_tilt_rad,
         laminography_tilt_about=laminography_tilt_about,
+        detector_shape=detector_shape,
     )
 
     def project_one(t_view: jax.Array) -> jax.Array:

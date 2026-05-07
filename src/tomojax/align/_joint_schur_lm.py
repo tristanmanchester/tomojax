@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align._lm_numerics import finite_difference_jacobian
 from tomojax.forward import (
     ResidualFilterConfig,
     apply_residual_filter_schedule,
@@ -187,7 +186,7 @@ class JointSchurLMResult:
     iteration_diagnostics: tuple[JointSchurDiagnostics, ...]
 
 
-def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transitions explicit.
+def solve_joint_schur_lm(
     volume: jax.Array,
     observed: jax.Array,
     geometry: GeometryState,
@@ -247,50 +246,34 @@ def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transi
         )
         weights = jnp.sqrt(pseudo_huber_weights(residual, delta=cfg.delta)).reshape(-1)
 
-        def weighted_residual(
-            candidate: jax.Array,
-            weights_current: jax.Array = weights,
-        ) -> jax.Array:
-            raw = _residual_for_params(
-                vol,
-                obs,
-                geometry,
-                candidate,
-                mask=mask,
-                cfg=cfg,
-                sigma=cfg.sigma,
-                fit_gain_offset=cfg.fit_gain_offset,
-                fit_background_offset=cfg.fit_background_offset,
-            )
-            data_residual = raw.reshape(-1) * weights_current
-            return _with_parameter_prior_residual(
-                data_residual,
-                candidate,
-                prior_reference=prior_reference,
-                cfg=cfg,
-                n_setup=n_setup,
-            )
-
-        r = weighted_residual(params)
-        data_rows = int(obs.size)
-        jacobian = finite_difference_jacobian(
-            weighted_residual,
+        equations = _stream_joint_normal_equations_for_geometry(
+            vol,
+            obs,
+            geometry,
             params,
-            step_size=cfg.finite_difference_step,
+            mask=mask,
+            cfg=cfg,
+            weights=weights.reshape(obs.shape),
+            n_setup=n_setup,
+            pose_dim=pose_dim,
+            damping=damping,
+            setup_prior_strength=_prior_strengths(cfg)[0],
+            pose_prior_strength=_prior_strengths(cfg)[1],
+            prior_reference=prior_reference,
         )
-        schur = schur_step_from_jacobian(
-            jacobian,
-            r,
+        schur = schur_step_from_normal_equations(
+            equations.hessian,
+            equations.gradient,
+            per_view_blocks=equations.per_view_blocks,
             n_setup=n_setup,
             n_views=geometry.pose.n_views,
             pose_dim=pose_dim,
             active_setup_parameters=_active_setup_parameters(geometry, cfg),
             active_pose_dofs=cfg.active_pose_dofs,
             canonicalize_pose_step_gauge=True,
-            damping=damping,
             setup_trust_radius=setup_trust_radius,
             pose_trust_radius=pose_trust_radius,
-            data_rows=data_rows,
+            data_rows=equations.data_rows,
         )
         candidate = params + schur.step
         candidate_loss = _loss_for_params(
@@ -499,6 +482,14 @@ class SchurStep:
 
 
 @dataclass(frozen=True)
+class _NormalEquations:
+    hessian: jax.Array
+    gradient: jax.Array
+    data_rows: int
+    per_view_blocks: _PerViewNormalBlockDiagnostics
+
+
+@dataclass(frozen=True)
 class _PerViewNormalBlockDiagnostics:
     setup_gradient_by_view: tuple[tuple[float, ...], ...]
     pose_gradient_by_view: tuple[tuple[float, ...], ...]
@@ -549,6 +540,8 @@ def schur_step_from_jacobian(
     pose_blocks: list[tuple[jax.Array, jax.Array, jax.Array]] = []
     pose_block_conditions: list[float] = []
     for view in range(n_views):
+        if pose_dim == 0:
+            continue
         start = n_setup + view * pose_dim
         stop = start + pose_dim
         h_gp = hessian[:n_setup, start:stop]
@@ -632,6 +625,315 @@ def schur_step_from_jacobian(
         setup_pose_coupling_norm_by_view=per_view_blocks.setup_pose_coupling_norm_by_view,
     )
     return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
+
+
+def schur_step_from_normal_equations(
+    hessian: jax.Array,
+    gradient: jax.Array,
+    *,
+    per_view_blocks: _PerViewNormalBlockDiagnostics,
+    n_setup: int,
+    n_views: int,
+    pose_dim: int,
+    active_setup_parameters: tuple[SetupSchurParameter, ...] | None = None,
+    active_pose_dofs: tuple[PoseSchurDof, ...] | None = None,
+    canonicalize_pose_step_gauge: bool = False,
+    setup_trust_radius: float | None = None,
+    pose_trust_radius: float | None = None,
+    data_rows: int | None = None,
+) -> SchurStep:
+    """Solve a Schur step from accumulated normal equations."""
+    hess = jnp.asarray(hessian, dtype=jnp.float32)
+    grad = jnp.asarray(gradient, dtype=jnp.float32)
+    dense_step_unscaled = jnp.linalg.solve(hess, -grad)
+
+    h_gg = hess[:n_setup, :n_setup]
+    g_g = grad[:n_setup]
+    schur_matrix = h_gg
+    schur_rhs = -g_g
+    pose_blocks: list[tuple[jax.Array, jax.Array, jax.Array]] = []
+    pose_block_conditions: list[float] = []
+    for view in range(n_views):
+        if pose_dim == 0:
+            continue
+        start = n_setup + view * pose_dim
+        stop = start + pose_dim
+        h_gp = hess[:n_setup, start:stop]
+        h_pg = hess[start:stop, :n_setup]
+        h_pp = hess[start:stop, start:stop]
+        g_p = grad[start:stop]
+        inv_hpp_hpg = jnp.linalg.solve(h_pp, h_pg)
+        inv_hpp_gp = jnp.linalg.solve(h_pp, g_p)
+        schur_matrix = schur_matrix - h_gp @ inv_hpp_hpg
+        schur_rhs = schur_rhs + h_gp @ inv_hpp_gp
+        if pose_dim > 0:
+            pose_blocks.append((h_pp, h_pg, g_p))
+            pose_block_conditions.append(float(jnp.linalg.cond(h_pp)))
+
+    setup_step = jnp.linalg.solve(schur_matrix, schur_rhs)
+    pose_steps: list[jax.Array] = []
+    if pose_dim > 0:
+        for h_pp, h_pg, g_p in pose_blocks:
+            pose_steps.append(jnp.linalg.solve(h_pp, -g_p - h_pg @ setup_step))
+    pose_step = (
+        jnp.concatenate(pose_steps, axis=0) if pose_steps else jnp.asarray([], dtype=jnp.float32)
+    )
+    if canonicalize_pose_step_gauge:
+        setup_step, pose_step = _canonicalize_step_gauge(
+            setup_step,
+            pose_step,
+            n_setup=n_setup,
+            n_views=n_views,
+            pose_dim=pose_dim,
+            active_setup_parameters=active_setup_parameters,
+            active_pose_dofs=active_pose_dofs,
+        )
+    setup_trust_scale, pose_trust_scale = _trust_scales(
+        setup_step,
+        pose_step,
+        setup_trust_radius=setup_trust_radius,
+        pose_trust_radius=pose_trust_radius,
+    )
+    step = jnp.concatenate([setup_step * setup_trust_scale, pose_step * pose_trust_scale], axis=0)
+    dense_step = _scale_dense_step(
+        dense_step_unscaled,
+        n_setup=n_setup,
+        setup_trust_scale=setup_trust_scale,
+        pose_trust_scale=pose_trust_scale,
+    )
+    pose_step_matrix = (
+        (pose_step * pose_trust_scale).reshape((n_views, pose_dim))
+        if pose_dim > 0
+        else jnp.zeros((n_views, 0), dtype=jnp.float32)
+    )
+    predicted_reduction = _predicted_reduction(
+        grad,
+        hess,
+        step,
+        data_rows=data_rows,
+    )
+    schur_eigenvalues = _eigvalsh_tuple(schur_matrix)
+    diagnostics = JointSchurDiagnostics(
+        schur_condition=float(jnp.linalg.cond(schur_matrix)),
+        setup_update_norm=float(jnp.linalg.norm(setup_step * setup_trust_scale)),
+        pose_update_norm=float(jnp.linalg.norm(pose_step * pose_trust_scale)),
+        dense_step_difference_norm=float(jnp.linalg.norm(step - dense_step)),
+        global_eigenvalues=_eigvalsh_tuple(hess),
+        schur_eigenvalues=schur_eigenvalues,
+        pose_block_conditions=tuple(pose_block_conditions),
+        setup_correlation_matrix=_correlation_matrix_tuple(schur_matrix),
+        weak_mode_labels=_weak_mode_labels(schur_eigenvalues),
+        trust_scale=float(jnp.minimum(setup_trust_scale, pose_trust_scale)),
+        setup_trust_scale=float(setup_trust_scale),
+        pose_trust_scale=float(pose_trust_scale),
+        trust_clipped=bool(jnp.minimum(setup_trust_scale, pose_trust_scale) < 1.0),
+        setup_update_by_parameter=tuple(float(value) for value in setup_step * setup_trust_scale),
+        pose_update_max_by_dof=tuple(
+            float(value) for value in jnp.max(jnp.abs(pose_step_matrix), axis=0)
+        ),
+        predicted_reduction=predicted_reduction,
+        setup_gradient_by_view=per_view_blocks.setup_gradient_by_view,
+        pose_gradient_by_view=per_view_blocks.pose_gradient_by_view,
+        setup_hessian_diag_by_view=per_view_blocks.setup_hessian_diag_by_view,
+        pose_hessian_diag_by_view=per_view_blocks.pose_hessian_diag_by_view,
+        setup_pose_coupling_norm_by_view=per_view_blocks.setup_pose_coupling_norm_by_view,
+    )
+    return SchurStep(step=step, dense_step=dense_step, diagnostics=diagnostics)
+
+
+def _stream_joint_normal_equations_for_geometry(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+    weights: jax.Array,
+    n_setup: int,
+    pose_dim: int,
+    damping: float,
+    setup_prior_strength: float,
+    pose_prior_strength: float,
+    prior_reference: jax.Array,
+) -> _NormalEquations:
+    n_views = int(geometry.pose.n_views)
+    n_params = n_setup + n_views * pose_dim
+    hessian = jnp.zeros((n_params, n_params), dtype=jnp.float32)
+    gradient = jnp.zeros((n_params,), dtype=jnp.float32)
+    step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
+    setup_gradient_by_view: list[tuple[float, ...]] = []
+    pose_gradient_by_view: list[tuple[float, ...]] = []
+    setup_hessian_diag_by_view: list[tuple[float, ...]] = []
+    pose_hessian_diag_by_view: list[tuple[float, ...]] = []
+    setup_pose_coupling_norm_by_view: list[float] = []
+
+    for view in range(n_views):
+        residual_view = _weighted_residual_view_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            view,
+            mask=mask,
+            cfg=cfg,
+            weights=weights,
+        ).reshape(-1)
+        setup_jac = _finite_difference_view_columns(
+            volume,
+            observed,
+            geometry,
+            params,
+            view,
+            parameter_indices=tuple(range(n_setup)),
+            mask=mask,
+            cfg=cfg,
+            weights=weights,
+            step=step,
+        )
+        pose_start = n_setup + view * pose_dim
+        pose_indices = tuple(range(pose_start, pose_start + pose_dim))
+        pose_jac = _finite_difference_view_columns(
+            volume,
+            observed,
+            geometry,
+            params,
+            view,
+            parameter_indices=pose_indices,
+            mask=mask,
+            cfg=cfg,
+            weights=weights,
+            step=step,
+        )
+        setup_gradient = setup_jac.T @ residual_view
+        setup_hessian = setup_jac.T @ setup_jac
+        hessian = hessian.at[:n_setup, :n_setup].add(setup_hessian)
+        gradient = gradient.at[:n_setup].add(setup_gradient)
+        if pose_dim > 0:
+            pose_gradient = pose_jac.T @ residual_view
+            pose_hessian = pose_jac.T @ pose_jac
+            setup_pose = setup_jac.T @ pose_jac
+            hessian = hessian.at[:n_setup, pose_start : pose_start + pose_dim].add(setup_pose)
+            hessian = hessian.at[pose_start : pose_start + pose_dim, :n_setup].add(setup_pose.T)
+            hessian = hessian.at[
+                pose_start : pose_start + pose_dim,
+                pose_start : pose_start + pose_dim,
+            ].add(pose_hessian)
+            gradient = gradient.at[pose_start : pose_start + pose_dim].add(pose_gradient)
+            pose_gradient_by_view.append(tuple(float(value) for value in pose_gradient))
+            pose_hessian_diag_by_view.append(
+                tuple(float(value) for value in jnp.diag(pose_hessian))
+            )
+            setup_pose_coupling_norm_by_view.append(float(jnp.linalg.norm(setup_pose)))
+        else:
+            pose_gradient_by_view.append(())
+            pose_hessian_diag_by_view.append(())
+            setup_pose_coupling_norm_by_view.append(0.0)
+        setup_gradient_by_view.append(tuple(float(value) for value in setup_gradient))
+        setup_hessian_diag_by_view.append(tuple(float(value) for value in jnp.diag(setup_hessian)))
+
+    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
+    prior_diag = jnp.concatenate(
+        [
+            jnp.full((n_setup,), float(setup_prior_strength), dtype=jnp.float32),
+            jnp.full((n_params - n_setup,), float(pose_prior_strength), dtype=jnp.float32),
+        ],
+        axis=0,
+    )
+    hessian = hessian + jnp.diag(prior_diag + jnp.asarray(damping, dtype=jnp.float32))
+    gradient = gradient + prior_diag * prior_delta
+    return _NormalEquations(
+        hessian=hessian,
+        gradient=gradient,
+        data_rows=int(observed.size),
+        per_view_blocks=_PerViewNormalBlockDiagnostics(
+            setup_gradient_by_view=tuple(setup_gradient_by_view),
+            pose_gradient_by_view=tuple(pose_gradient_by_view),
+            setup_hessian_diag_by_view=tuple(setup_hessian_diag_by_view),
+            pose_hessian_diag_by_view=tuple(pose_hessian_diag_by_view),
+            setup_pose_coupling_norm_by_view=tuple(setup_pose_coupling_norm_by_view),
+        ),
+    )
+
+
+def _finite_difference_view_columns(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    view: int,
+    *,
+    parameter_indices: tuple[int, ...],
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+    weights: jax.Array,
+    step: jax.Array,
+) -> jax.Array:
+    columns = []
+    for index in parameter_indices:
+        delta = jnp.zeros_like(params).at[index].set(step)
+        plus = _weighted_residual_view_for_params(
+            volume,
+            observed,
+            geometry,
+            params + delta,
+            view,
+            mask=mask,
+            cfg=cfg,
+            weights=weights,
+        ).reshape(-1)
+        minus = _weighted_residual_view_for_params(
+            volume,
+            observed,
+            geometry,
+            params - delta,
+            view,
+            mask=mask,
+            cfg=cfg,
+            weights=weights,
+        ).reshape(-1)
+        columns.append((plus - minus) / (jnp.asarray(2.0, dtype=jnp.float32) * step))
+    if not columns:
+        rows = int(observed.shape[1]) * int(observed.shape[2])
+        return jnp.zeros((rows, 0), dtype=jnp.float32)
+    return jnp.stack(columns, axis=1)
+
+
+def _weighted_residual_view_for_params(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    view: int,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+    weights: jax.Array,
+) -> jax.Array:
+    predicted = _predicted_view_for_params(
+        volume,
+        observed,
+        geometry,
+        params,
+        view,
+        config=cfg,
+    )
+    obs_view = observed[view : view + 1]
+    mask_view = None if mask is None else mask[view : view + 1]
+    predicted = _with_fitted_nuisance(
+        predicted,
+        obs_view,
+        mask=mask_view,
+        fit_gain_offset=cfg.fit_gain_offset,
+        fit_background_offset=cfg.fit_background_offset,
+    )
+    residual = (predicted - obs_view) / jnp.asarray(cfg.sigma, dtype=jnp.float32)
+    filtered = apply_residual_filter_schedule(
+        residual,
+        cfg.residual_filters,
+        mask=mask_view,
+    ).residual
+    return filtered * weights[view : view + 1]
 
 
 def _per_view_normal_block_diagnostics(
@@ -824,9 +1126,7 @@ def _frozen_parameters(
         for parameter in _SETUP_PARAMETER_ORDER
         if parameter not in active_setup and parameter not in frozen
     )
-    active_pose = (
-        _POSE_DOF_ORDER if config is None else config.active_pose_dofs
-    )
+    active_pose = _POSE_DOF_ORDER if config is None else config.active_pose_dofs
     frozen.extend(dof for dof in _POSE_DOF_ORDER if dof not in active_pose)
     return tuple(frozen)
 
@@ -976,15 +1276,15 @@ def _split_joint(
     params: jax.Array,
     config: JointSchurLMConfig | None = None,
 ) -> tuple[
-        jax.Array,
-        jax.Array,
-        jax.Array,
-        jax.Array,
-        jax.Array,
-        jax.Array,
-        jax.Array,
-        jax.Array,
-        jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
     jax.Array,
     jax.Array,
     jax.Array,
@@ -1060,23 +1360,6 @@ def _residual_for_params(
         cfg.residual_filters,
         mask=mask,
     ).residual
-
-
-def _with_parameter_prior_residual(
-    data_residual: jax.Array,
-    params: jax.Array,
-    *,
-    prior_reference: jax.Array,
-    cfg: JointSchurLMConfig,
-    n_setup: int,
-) -> jax.Array:
-    setup_strength, pose_strength = _prior_strengths(cfg)
-    if setup_strength == 0.0 and pose_strength == 0.0:
-        return data_residual
-    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
-    setup_prior = jnp.sqrt(jnp.asarray(setup_strength, dtype=jnp.float32)) * prior_delta[:n_setup]
-    pose_prior = jnp.sqrt(jnp.asarray(pose_strength, dtype=jnp.float32)) * prior_delta[n_setup:]
-    return jnp.concatenate([data_residual, setup_prior, pose_prior], axis=0)
 
 
 def _prior_strengths(cfg: JointSchurLMConfig) -> tuple[float, float]:
@@ -1159,6 +1442,60 @@ def _predicted_for_params(
         axis_rot_x_rad=axis_x,
         axis_rot_y_rad=axis_y,
         nominal_axis_unit=nominal_axis_unit_from_geometry(geometry),
+        acquisition_model=geometry.acquisition.model,
+        laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
+        laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
+    )
+
+
+def _predicted_view_for_params(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    view: int,
+    *,
+    config: JointSchurLMConfig | None = None,
+) -> jax.Array:
+    (
+        theta_offset,
+        det_u,
+        det_v,
+        detector_roll,
+        axis_x,
+        axis_y,
+        theta_scale,
+        alpha_pose,
+        beta_pose,
+        phi_pose,
+        dx_pose,
+        dz_pose,
+    ) = _split_joint(
+        geometry,
+        params,
+        config,
+    )
+    view_slice = slice(int(view), int(view) + 1)
+    return project_parallel_reference_arrays(
+        volume,
+        theta_rad=(
+            theta_scale
+            * jnp.asarray(geometry.pose.theta_nominal_rad[view_slice], dtype=jnp.float32)
+            + theta_offset
+            + phi_pose[view_slice]
+        ),
+        dx_px=det_u + dx_pose[view_slice],
+        dz_px=det_v + dz_pose[view_slice],
+        alpha_rad=alpha_pose[view_slice],
+        beta_rad=beta_pose[view_slice],
+        detector_roll_rad=detector_roll,
+        axis_rot_x_rad=axis_x,
+        axis_rot_y_rad=axis_y,
+        nominal_axis_unit=nominal_axis_unit_from_geometry(geometry),
+        acquisition_model=geometry.acquisition.model,
+        laminography_tilt_rad=geometry.acquisition.laminography_tilt_rad,
+        laminography_tilt_about=geometry.acquisition.laminography_tilt_about,
+        detector_shape=(int(observed.shape[1]), int(observed.shape[2])),
     )
 
 

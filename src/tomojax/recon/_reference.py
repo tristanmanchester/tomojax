@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.projector import sum_backproject_views_T
 from tomojax.forward import core_projection_geometry_from_state
+from tomojax.recon._backprojection_accumulation import sum_backproject_views_chunked
 
 if TYPE_CHECKING:
     from tomojax.geometry import GeometryState
@@ -44,15 +44,5 @@ def reconstruct_backprojection_reference(
         geometry,
         detector_shape=(int(proj.shape[1]), int(proj.shape[2])),
     )
-    volume = sum_backproject_views_T(
-        core.t_all,
-        core.grid,
-        core.detector,
-        proj,
-        step_size=core.step_size,
-        n_steps=core.n_steps,
-        unroll=core.projector_unroll,
-        gather_dtype=core.gather_dtype,
-        det_grid=core.det_grid,
-    )
+    volume = sum_backproject_views_chunked(core, proj)
     return (volume / jnp.asarray(max(int(proj.shape[0]), 1), dtype=jnp.float32)).astype(jnp.float32)

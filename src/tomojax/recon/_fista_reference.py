@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
+from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import (
     ResidualFilterConfig,
     apply_residual_filter_schedule,
     core_projection_geometry_from_state,
     residual_loss,
 )
+from tomojax.recon._backprojection_accumulation import sum_backproject_views_chunked
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -190,16 +191,9 @@ def _loss_and_explicit_gradient(
         / jnp.maximum(data.valid_count, jnp.asarray(1.0, dtype=jnp.float32))
         / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
     )
-    data_gradient = sum_backproject_views_T(
-        core.t_all,
-        core.grid,
-        core.detector,
+    data_gradient = sum_backproject_views_chunked(
+        core,
         data_grad_projection,
-        step_size=core.step_size,
-        n_steps=core.n_steps,
-        unroll=core.projector_unroll,
-        gather_dtype=core.gather_dtype,
-        det_grid=core.det_grid,
     )
     regulariser_value, regulariser_gradient = _smoothed_tv_value_and_grad(
         volume,
