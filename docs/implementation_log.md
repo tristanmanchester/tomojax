@@ -8560,6 +8560,41 @@ handling directly instead of adding more hand-staged setup policies.
   `probe_result.json`, `last_fista_trace.csv`, and `final_volume.npy`.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 Volume-Gauge Transfer Probe
+
+### Summary
+
+Tested a projection-centroid volume/geometry gauge transfer: after the coarse
+stopped reconstruction, roll the volume along detector-u by the centroid
+estimate and transfer the opposite shift into `det_u_px` before continuing with
+longer finer-level reconstructions and full setup-global Schur.
+
+Artifact:
+
+- `.artifacts/phase8_volume_gauge_transfer_probe/128_setup_global_projection_com_transfer_cuda/`
+
+Results:
+
+| Metric | Projection-COM transfer probe |
+|---|---:|
+| transferred det_u | 13 px |
+| volume NMSE | 0.205 |
+| `det_u_realized_rmse_px` | 3.47 |
+| `theta_realized_rmse_rad` | 0.03684 |
+| `detector_roll_error_rad` | 0.01131 |
+| `axis_error_rad` | 0.00976 |
+| setup-global criteria passed | no |
+
+All three Schur levels accepted, but the final geometry remained outside the
+setup-global tolerances. This transfer is better than leaving the volume fully
+absorbed, but it is not sufficient and should not be promoted as a policy.
+
+### Validation
+
+- Diagnostic completed on `cuda:0` in 460.59 seconds and wrote
+  `probe_result.json`, `last_fista_trace.csv`, and `final_volume.npy`.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

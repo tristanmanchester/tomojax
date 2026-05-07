@@ -11,17 +11,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 staged constrained setup policy probe
-- Goal: test a functional stopped-reconstruction sequence that uses a
-  constrained coarse x-step for theta/det_u only, then reconstructs longer
-  before releasing roll/axis.
+- Phase: Phase 8/9 volume-gauge transfer probe
+- Goal: test whether transferring the coarse projection-centroid shift into
+  det_u and the volume frame prevents stopped reconstruction from preserving
+  absorbed setup geometry.
 
 ### Scope
 
 - In scope:
   - Run an ad hoc 128^3 setup-global sequence on the existing sidecar.
-  - Coarse level: cylindrical-support preview, centroid anchor, and
-    theta/det_u-only Schur.
+  - Coarse level: transfer projection-centroid det_u into geometry and roll the
+    volume frame by the matching amount.
   - Finer levels: longer reconstruction and full setup-global Schur.
   - Promote to solver policy only if full setup recovery improves.
 - Out of scope:
@@ -43,7 +43,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run constrained theta/det_u coarse-stage probe.
+- [x] Run projection-centroid volume/geometry gauge-transfer probe.
 - [x] Compare full setup recovery against current anchor and support
   diagnostics.
 - [x] Update `docs/implementation_log.md` and commit either policy or
@@ -89,6 +89,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Constrained theta/det_u coarse-stage policy probe completed but worsened
   theta and was not promoted. Artifact:
   `.artifacts/phase8_staged_constrained_policy_probe/128_setup_global_theta_detu_then_full_cuda/`.
+- Projection-centroid volume-gauge transfer probe completed but still failed
+  setup-global recovery. Artifact:
+  `.artifacts/phase8_volume_gauge_transfer_probe/128_setup_global_projection_com_transfer_cuda/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
