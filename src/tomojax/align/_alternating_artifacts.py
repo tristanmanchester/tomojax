@@ -79,6 +79,7 @@ def _write_artifacts(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     verification: Mapping[str, object],
@@ -142,6 +143,7 @@ def _write_artifacts(
         preview_initialization=preview_initialization,
         preview_tv_scale=preview_tv_scale,
         preview_residual_filter_mode=preview_residual_filter_mode,
+        stopped_preview_policy=stopped_preview_policy,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
         synthetic_dataset=verification.get("synthetic_dataset"),
@@ -157,6 +159,7 @@ def _write_artifacts(
             preview_initialization=preview_initialization,
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
+            stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
             fit_background_nuisance=fit_background_nuisance,
             synthetic_dataset=verification.get("synthetic_dataset"),
@@ -208,6 +211,7 @@ def _write_artifacts(
             preview_initialization=preview_initialization,
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
+            stopped_preview_policy=stopped_preview_policy,
         )
         _write_json(artifacts["benchmark_result_json"], benchmark_result)
         _write_text(
@@ -892,6 +896,7 @@ def _benchmark_result_payload(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    stopped_preview_policy: str,
 ) -> dict[str, object]:
     metrics = cast("dict[object, object]", verification.get("metrics", {}))
     verification_runtime = cast("dict[object, object]", verification.get("runtime", {}))
@@ -1024,6 +1029,7 @@ def _benchmark_result_payload(
         "preview_initialization": preview_initialization,
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
+        "stopped_preview_policy": stopped_preview_policy,
     }
 
 
@@ -1706,6 +1712,7 @@ def _write_config_resolved(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1742,6 +1749,7 @@ def _write_config_resolved(
     lines.append(f'preview_initialization = "{preview_initialization}"')
     lines.append(f"preview_tv_scale = {float(preview_tv_scale)}")
     lines.append(f'preview_residual_filter_mode = "{preview_residual_filter_mode}"')
+    lines.append(f'stopped_preview_policy = "{stopped_preview_policy}"')
     lines.append(f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}")
     lines.append(f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}")
     if isinstance(synthetic_dataset, dict):
@@ -1813,6 +1821,7 @@ def _run_manifest_payload(
     preview_initialization: str,
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
+    stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1842,6 +1851,7 @@ def _run_manifest_payload(
         "preview_initialization": preview_initialization,
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
+        "stopped_preview_policy": stopped_preview_policy,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,
         "continuation": {

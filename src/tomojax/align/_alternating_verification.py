@@ -171,6 +171,7 @@ def _verification_payload(
         "preview_initialization": cfg.preview_initialization,
         "preview_tv_scale": cfg.preview_tv_scale,
         "preview_residual_filter_mode": cfg.preview_residual_filter_mode,
+        "stopped_preview_policy": cfg.stopped_preview_policy,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,
         "synthetic_dataset": _synthetic_dataset_payload(cfg),

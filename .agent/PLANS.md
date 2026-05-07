@@ -11,26 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 setup-global stopped-reconstruction diagnosis
-- Goal: classify whether extra preview/reconstruction iterations improve
-  stopped-reconstruction geometry recovery or merely let the reconstruction
-  absorb geometry error.
+- Phase: Phase 8/9 constrained stopped-reconstruction preview
+- Goal: add an explicit early x-step constraint for stopped-reconstruction
+  alignment so setup-global Schur updates can be evaluated before the preview
+  volume is allowed to absorb geometry.
 
 ### Scope
 
 - In scope:
-  - Summarize existing 128^3 setup-global GPU evidence comparing true-geometry
-    reconstruction oracle, early-anchor stopped reconstruction, constrained
-    preview probes, and longer stopped-reconstruction continuation.
-  - Record the diagnosis in `docs/implementation_log.md` and a concise
-    benchmark-run note.
-  - Keep the next implementation direction focused on a constrained early
-    reconstruction step if the evidence supports absorption.
+  - Add a typed alternating-solver policy for the first stopped preview
+    reconstruction.
+  - Wire the policy through `align-auto`, config artifacts, verification
+    payloads, and focused tests.
+  - Validate with focused CPU tests and `just imports`.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Setup-global stopped-reconstruction policy changes in this slice.
+  - Changing default benchmark criteria or adding new report fields unrelated
+    to the policy.
   - Pose-only solver changes.
   - Running old/current TomoJAX automatically.
   - Parsing non-JSON current artifacts.
@@ -39,8 +38,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: docs-only diagnostic slice; next code owner is expected to
-  be `tomojax.align`.
+- Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
@@ -51,10 +49,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Write the setup-global iteration/absorption diagnosis note.
-- [x] Update `docs/implementation_log.md`.
-- [x] Run docs-focused validation and `just imports`.
-- [ ] Commit the diagnostic slice.
+- [x] Add the constrained-first-preview policy to config/types/orchestration.
+- [x] Wire the CLI and artifact payloads.
+- [x] Add focused tests.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 

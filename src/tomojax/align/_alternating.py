@@ -15,6 +15,7 @@ from tomojax.align._alternating_types import (
     PreviewInitialization,
     PreviewResidualFilterMode,
     PreviewVolumeSupport,
+    StoppedPreviewPolicy,
 )
 
 if TYPE_CHECKING:
@@ -52,5 +53,6 @@ __all__ = [
     "PreviewInitialization",
     "PreviewResidualFilterMode",
     "PreviewVolumeSupport",
+    "StoppedPreviewPolicy",
     "run_alternating_solver_smoke",
 ]

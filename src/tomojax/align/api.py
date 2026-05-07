@@ -11,6 +11,7 @@ from tomojax.align._alternating import (
     PreviewInitialization,
     PreviewResidualFilterMode,
     PreviewVolumeSupport,
+    StoppedPreviewPolicy,
     run_alternating_solver_smoke,
 )
 from tomojax.align._continuation import (
@@ -56,6 +57,7 @@ __all__ = [
     "PreviewVolumeSupport",
     "SetupOnlyLMConfig",
     "SetupOnlyLMResult",
+    "StoppedPreviewPolicy",
     "adapt_joint_schur_damping",
     "adapt_joint_schur_trust_radius",
     "align",

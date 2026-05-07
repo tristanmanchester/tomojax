@@ -18,6 +18,7 @@ from tomojax.align.api import (
     PreviewInitialization,
     PreviewResidualFilterMode,
     PreviewVolumeSupport,
+    StoppedPreviewPolicy,
     reference_continuation_schedule,
 )
 from tomojax.datasets import (
@@ -36,6 +37,7 @@ _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synth
 _PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "spherical")
 _PREVIEW_INITIALIZATION_CHOICES = ("backprojection", "zero", "constant", "average_projection")
 _PREVIEW_RESIDUAL_FILTER_MODE_CHOICES = ("continuation", "raw")
+_STOPPED_PREVIEW_POLICY_CHOICES = ("standard", "constant_cylindrical_first_level")
 SyntheticSize = Literal[32, 64, 128]
 
 
@@ -184,6 +186,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="continuation",
         help="Residual filters used inside preview reconstruction.",
     )
+    _ = parser.add_argument(
+        "--stopped-preview-policy",
+        choices=_STOPPED_PREVIEW_POLICY_CHOICES,
+        default="standard",
+        help=(
+            "Optional first stopped-reconstruction preview constraint. "
+            "constant_cylindrical_first_level uses a constant initial volume, "
+            "cylindrical support, and raw residuals for the coarsest preview only."
+        ),
+    )
     return parser
 
 
@@ -202,6 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "PreviewResidualFilterMode",
         args.preview_residual_filter_mode,
     )
+    stopped_preview_policy = cast("StoppedPreviewPolicy", args.stopped_preview_policy)
     size = cast("SyntheticSize", int(args.size))
     views = int(args.views)
     out_dir = Path(args.out_dir)
@@ -262,6 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             preview_initialization=preview_initialization,
             preview_tv_scale=float(args.preview_tv_scale),
             preview_residual_filter_mode=preview_residual_filter_mode,
+            stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,

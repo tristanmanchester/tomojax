@@ -3,6 +3,50 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Constrained First Stopped Preview Policy
+
+### Summary
+
+- Added `StoppedPreviewPolicy` with
+  `constant_cylindrical_first_level` as an explicit opt-in policy for
+  stopped-reconstruction alternating runs.
+- When enabled, only the coarsest preview level of a stopped-reconstruction run
+  uses constant initialization, cylindrical support, and raw residual filters;
+  later levels return to the configured preview initialization/support/filter
+  settings. The policy is inactive for `fixed_synthetic_truth` oracle runs.
+- Wired `--stopped-preview-policy` through `align-auto`,
+  `AlternatingSmokeConfig`, verification payloads, `config_resolved.toml`,
+  run manifests, and synthetic `benchmark_result.json`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 11 tests in 33.45 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating.py src/tomojax/align/api.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating.py src/tomojax/align/api.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Run the realistic 128^3 setup-global CUDA gate with
+  `--stopped-preview-policy constant_cylindrical_first_level` to determine
+  whether the constrained first x-step improves setup recovery beyond the
+  previous stopped-reconstruction absorption failure.
+
 ## 2026-05-07 — Phase 8 Iteration Absorption Diagnosis
 
 ### Summary

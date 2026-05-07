@@ -16,7 +16,7 @@ from tomojax.align._alternating_geometry_update import (
     _anchored_geometry_update_volume,
     _det_u_recentering_shift_px,
 )
-from tomojax.align.api import reference_continuation_schedule
+from tomojax.align.api import AlternatingSmokeConfig, reference_continuation_schedule
 from tomojax.geometry import AcquisitionParameters, GeometryState
 
 
@@ -199,3 +199,52 @@ def test_anchoring_releases_outside_coarse_setup_global() -> None:
     )
 
     np.testing.assert_array_equal(np.asarray(anchored), np.asarray(stopped))
+
+
+def test_stopped_preview_policy_constrains_first_preview_only() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import (
+        _effective_preview_initialization,
+        _effective_preview_residual_filter_mode,
+        _effective_preview_volume_support,
+    )
+
+    schedule = reference_continuation_schedule("reference")
+    config = AlternatingSmokeConfig(
+        stopped_preview_policy="constant_cylindrical_first_level",
+        preview_initialization="backprojection",
+        preview_volume_support="none",
+        preview_residual_filter_mode="continuation",
+    )
+
+    coarse = schedule.levels[0]
+    fine = schedule.levels[-1]
+
+    assert _effective_preview_initialization(config, coarse) == "constant"
+    assert _effective_preview_volume_support(config, coarse) == "cylindrical"
+    assert _effective_preview_residual_filter_mode(config, coarse) == "raw"
+    assert _effective_preview_initialization(config, fine) == "backprojection"
+    assert _effective_preview_volume_support(config, fine) == "none"
+    assert _effective_preview_residual_filter_mode(config, fine) == "continuation"
+
+
+def test_stopped_preview_policy_is_inactive_for_fixed_truth() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import (
+        _effective_preview_initialization,
+        _effective_preview_residual_filter_mode,
+        _effective_preview_volume_support,
+    )
+
+    level = reference_continuation_schedule("reference").levels[0]
+    config = AlternatingSmokeConfig(
+        geometry_update_volume_source="fixed_synthetic_truth",
+        stopped_preview_policy="constant_cylindrical_first_level",
+        preview_initialization="backprojection",
+        preview_volume_support="none",
+        preview_residual_filter_mode="continuation",
+    )
+
+    assert _effective_preview_initialization(config, level) == "backprojection"
+    assert _effective_preview_volume_support(config, level) == "none"
+    assert _effective_preview_residual_filter_mode(config, level) == "continuation"

@@ -20,6 +20,7 @@ GeometryUpdateVolumeSource = Literal["fixed_synthetic_truth", "stopped_reconstru
 PreviewInitialization = Literal["average_projection", "backprojection", "constant", "zero"]
 PreviewResidualFilterMode = Literal["continuation", "raw"]
 PreviewVolumeSupport = Literal["cylindrical", "none", "spherical"]
+StoppedPreviewPolicy = Literal["standard", "constant_cylindrical_first_level"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class AlternatingSmokeConfig:
     preview_initialization: PreviewInitialization = "backprojection"
     preview_tv_scale: float = 1.0
     preview_residual_filter_mode: PreviewResidualFilterMode = "continuation"
+    stopped_preview_policy: StoppedPreviewPolicy = "standard"
     fit_gain_offset_nuisance: bool = False
     fit_background_nuisance: bool = False
     synthetic_dataset_name: str | None = None
