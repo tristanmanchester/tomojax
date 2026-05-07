@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Staged Theta CUDA Gate
+
+### Summary
+
+- Reran the 128^3/256-view supported-only `synth128_setup_global_tomo` CUDA gate
+  with `--geometry-update-theta-activate-at-level-factor 1` and
+  `--preview-center-l2-weight 100.0`.
+- The run selected `cuda:0`, completed in `3:48.57`, peaked at 6075 MiB sampled
+  GPU memory, and wrote artifacts under
+  `.artifacts/phase8_staged_theta_gate/runs/128_supported_only_256views_staged_theta_gpu/`.
+- Benchmark status still failed. Compared with center-gauge weight 100, staged
+  theta improved theta RMSE from `0.025660` rad to `0.023007` rad, but worsened
+  det_u RMSE from `2.990294` px to `3.539086` px, volume NMSE from `0.262462`
+  to `0.288342`, and final residual from `1.047002` to `1.091514`.
+- Projection-loss classification remained `reconstruction_absorbed_geometry`.
+- Recorded the result in
+  `docs/benchmark_runs/2026-05-08-phase8-staged-theta-gate.md`.
+
+### Validation
+
+- `LD_LIBRARY_PATH=<venv nvidia */lib paths> JAX_PLATFORMS=cuda
+  CUDA_VISIBLE_DEVICES=0 uv run tomojax-align-auto-smoke ...
+  --geometry-update-theta-activate-at-level-factor 1` completed with exit
+  status 0.
+- `just imports` passed after the gate summary update.
+
+### Remaining Work
+
+- Staged theta activation is not sufficient. The next functional step should be
+  a joint setup-validation objective or a more direct orientation anchor.
+
 ## 2026-05-08 — Phase 8 Staged Theta Activation Policy Slice
 
 ### Summary

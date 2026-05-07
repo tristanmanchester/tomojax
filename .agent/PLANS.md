@@ -11,16 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 staged theta activation policy
-- Goal: add a theta-specific setup policy so stopped reconstruction can recover
-  detector shift at coarse levels before allowing `theta_offset_rad` updates.
+- Phase: Phase 8/9 staged theta CUDA gate
+- Goal: evaluate staged `theta_offset_rad` activation on the realistic
+  128^3/256-view supported-only stopped setup-global gate.
 
 ### Scope
 
 - In scope:
-  - Add an optional `theta_offset_rad` activation level to alternating config.
-  - Wire it through `align-auto`, config artifacts, and focused tests.
-  - Validate with focused CPU tests and `just imports`.
+  - Rerun the existing 128^3/256-view supported-only sidecar with
+    `--geometry-update-theta-activate-at-level-factor 1`.
+  - Combine with the current best preview center-gauge setting.
+  - Record pass/fail, recovery, residual, NMSE, Schur acceptance, CUDA device,
+    runtime, and peak sampled memory.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -34,7 +36,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align`.
+- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
 
 ### Design Sources
 
@@ -45,11 +47,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add staged theta activation to setup-parameter selection.
-- [x] Wire CLI/artifact payloads.
-- [x] Add focused tests.
-- [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run the staged-theta CUDA gate.
+- [x] Extract metrics and compare with the center-gauge gate.
+- [x] Update benchmark notes and `docs/implementation_log.md`.
+- [x] Run `just imports` and commit the gate summary.
 
 ### Validation
 
