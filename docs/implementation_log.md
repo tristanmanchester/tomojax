@@ -8483,6 +8483,47 @@ preserves axis/roll-sensitive structure, rather than adding more setup staging.
 - Wrote `oracle_result.json`, `fista_trace.csv`, and `oracle_reconstruction.npy`.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 Reconstruction Iteration Oracle
+
+### Summary
+
+Extended the true-geometry oracle to 32 FISTA iterations and compared it with a
+production-like stopped continuation that keeps the coarse anchored update at 8
+iterations but uses 32 iterations at levels 2 and 1.
+
+Artifacts:
+
+- `.artifacts/phase8_true_geometry_recon_oracle/128_setup_global_true_recon32_schur_cuda/`
+- `.artifacts/phase8_more_iterations_after_anchor/128_setup_global_stopped_8_32_32_cuda/`
+
+Comparison:
+
+| Metric | True-geom 8 | True-geom 32 | Stopped 8/32/32 |
+|---|---:|---:|---:|
+| volume NMSE | 0.265 | 0.0215 | 0.212 |
+| final residual | n/a | n/a | 0.177 |
+| `det_u_realized_rmse_px` | 0.366 | 0.0029 | 4.23 |
+| `theta_realized_rmse_rad` | 0.00049 | 0.00033 | 0.01951 |
+| `detector_roll_error_rad` | 0.00474 | 0.00037 | 0.01251 |
+| `axis_error_rad` | 0.01269 | 0.00066 | 0.01283 |
+| setup-global criteria passed | no | yes | no |
+
+The 32-iteration true-geometry oracle passes all setup-global criteria, so the
+supported Schur solver can recover roll and axis from a sufficiently accurate
+FISTA volume. The stopped 8/32/32 sequence improves reconstruction quality and
+projection residual but leaves geometry bad. This matches the interpretation:
+more iterations help after the geometry is correct, but in the production
+alternating sequence they mostly improve the volume while preserving absorbed
+geometry.
+
+### Validation
+
+- True-geometry 32-iteration oracle completed on `cuda:0` in 277.27 seconds and
+  wrote `oracle_result.json`, `fista_trace.csv`, and `oracle_reconstruction.npy`.
+- Production-like stopped 8/32/32 diagnostic completed on `cuda:0` in 241.19
+  seconds and wrote the standard `align-auto` artifacts.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

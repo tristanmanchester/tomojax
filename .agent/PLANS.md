@@ -11,19 +11,21 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 true-geometry reconstruction oracle diagnostic
-- Goal: isolate whether setup-global stopped-reconstruction failure comes from
-  reconstructing under corrupted geometry or from insufficient FISTA volume
-  quality even when reconstruction uses true geometry.
+- Phase: Phase 8/9 reconstruction-iteration oracle diagnostic
+- Goal: determine whether more FISTA iterations improve setup-global geometry
+  or merely improve volume/residual while geometry remains absorbed.
 
 ### Scope
 
 - In scope:
   - Reconstruct the existing 128^3, 256-view setup-global sidecar using true
-    geometry as an oracle x-step.
-  - Run supported setup-global Schur from the corrupted geometry against that
-    reconstructed volume.
-  - Compare recovery against fixed-truth and stopped-reconstruction evidence.
+    geometry for 8 and 32 iterations as oracle x-steps.
+  - Run supported setup-global Schur from the corrupted geometry against those
+    reconstructed volumes.
+  - Run a production-like stopped sequence with extra iterations after the
+    coarse anchored update.
+  - Classify whether additional iterations recover geometry or only improve
+    volume/residual.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -43,9 +45,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run true-geometry FISTA reconstruction oracle diagnostic.
-- [x] Classify whether Schur recovers setup from the oracle reconstructed
-  volume.
+- [x] Run true-geometry 8-iteration FISTA reconstruction oracle diagnostic.
+- [x] Run true-geometry 32-iteration FISTA reconstruction oracle diagnostic.
+- [x] Run production-like stopped 8/32/32 continuation diagnostic.
 - [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
@@ -79,6 +81,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - True-geometry reconstruction oracle diagnostic completed on `cuda:0` in
   159.64 seconds. Artifact:
   `.artifacts/phase8_true_geometry_recon_oracle/128_setup_global_true_recon_schur_cuda/`.
+- True-geometry 32-iteration oracle passed all setup-global criteria in 277.27
+  seconds. Artifact:
+  `.artifacts/phase8_true_geometry_recon_oracle/128_setup_global_true_recon32_schur_cuda/`.
+- Production-like stopped 8/32/32 continuation improved volume/residual but not
+  geometry. Artifact:
+  `.artifacts/phase8_more_iterations_after_anchor/128_setup_global_stopped_8_32_32_cuda/`.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py -q`
   passed: 20 tests in 268.87 seconds.
 - `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
