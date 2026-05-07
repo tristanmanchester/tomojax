@@ -3,6 +3,30 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 det-v Policy Criterion Evidence Slice
+
+Made the existing `det_v_policy=recovered_or_reported_unobservable` benchmark
+criterion use the report-only weak-DOF policy evidence already produced for
+observability artifacts. The criterion still passes directly when det_v is
+numerically recovered; when it is not recovered, it can now pass if the
+weak-DOF decision reports `keep_frozen`. The pass reasons distinguish numerical
+recovery from reported-frozen policy evidence.
+
+No solver maths, benchmark tolerances, or benchmark-result top-level fields were
+changed.
+
+Validation:
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_benchmark_criteria.py -q` passed: 11 tests in
+  0.63 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_benchmark_criteria.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-07 — Phase 8 Nuisance-Corrected Failure Gate Slice
 
 Corrected the existing `nuisance_residual_structure` failure gate so it evaluates

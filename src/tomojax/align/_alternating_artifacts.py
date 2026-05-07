@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import csv
 from importlib.metadata import PackageNotFoundError, version
 import json
@@ -41,7 +42,6 @@ from tomojax.recon import ReferenceFISTAResult, write_fista_trace_csv
 from tomojax.verify import validate_run_artifacts
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
 
     from tomojax.align._alternating_types import (
@@ -196,6 +196,7 @@ def _write_artifacts(
             synthetic_dataset=synthetic_dataset_payload,
             summaries=summaries,
             failure_report=failure_report,
+            schur_result=schur_result,
             geometry_update_volume_source=geometry_update_volume_source,
             preview_volume_support=preview_volume_support,
             preview_initialization=preview_initialization,
@@ -874,6 +875,7 @@ def _benchmark_result_payload(
     synthetic_dataset: dict[object, object],
     summaries: tuple[AlternatingLevelSummary, ...],
     failure_report: Mapping[str, object],
+    schur_result: JointSchurLMResult | None,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     preview_volume_support: str,
     preview_initialization: str,
@@ -906,6 +908,7 @@ def _benchmark_result_payload(
         criteria=manifest_criteria,
         geometry_recovery=geometry_recovery,
         backend=backend_payload,
+        weak_dof_policy=_weak_dof_policy_from_schur(schur_result),
     )
     return {
         "schema": "tomojax.synthetic_benchmark_result.v1",
@@ -1008,6 +1011,7 @@ def _benchmark_manifest_evaluation(
     criteria: dict[object, object],
     geometry_recovery: dict[object, object],
     backend: Mapping[str, object] | None = None,
+    weak_dof_policy: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         str(name): _criterion_evaluation(
@@ -1015,6 +1019,7 @@ def _benchmark_manifest_evaluation(
             threshold=threshold,
             geometry_recovery=geometry_recovery,
             backend=backend,
+            weak_dof_policy=weak_dof_policy,
         )
         for name, threshold in criteria.items()
     }
@@ -1026,6 +1031,7 @@ def _criterion_evaluation(
     threshold: object,
     geometry_recovery: dict[object, object],
     backend: Mapping[str, object] | None,
+    weak_dof_policy: Mapping[str, object] | None,
 ) -> dict[str, object]:
     if name == "backend_policy":
         return _backend_policy_evaluation(threshold=threshold, backend=backend)
@@ -1033,6 +1039,7 @@ def _criterion_evaluation(
         return _det_v_policy_evaluation(
             threshold=threshold,
             geometry_recovery=geometry_recovery,
+            weak_dof_policy=weak_dof_policy,
         )
     if name in _MISSING_POLICY_CRITERION_REASONS:
         return {
@@ -1107,6 +1114,7 @@ def _det_v_policy_evaluation(
     *,
     threshold: object,
     geometry_recovery: dict[object, object],
+    weak_dof_policy: Mapping[str, object] | None,
 ) -> dict[str, object]:
     recovered = geometry_recovery.get("det_v_realized_rmse_px_passed")
     value = geometry_recovery.get("det_v_realized_rmse_px")
@@ -1117,6 +1125,14 @@ def _det_v_policy_evaluation(
             "threshold": threshold,
             "reason": "det_v recovered within geometry recovery tolerance",
         }
+    det_v_decision = _weak_dof_decision_from_policy(weak_dof_policy, "det_v_px")
+    if det_v_decision is not None and det_v_decision.get("decision") == "keep_frozen":
+        return {
+            "status": "passed",
+            "value": value,
+            "threshold": threshold,
+            "reason": str(det_v_decision.get("reason", "det_v reported unobservable")),
+        }
     return {
         "status": "not_evaluated",
         "value": value,
@@ -1126,6 +1142,25 @@ def _det_v_policy_evaluation(
             "in benchmark_result"
         ),
     }
+
+
+def _weak_dof_policy_from_schur(schur_result: JointSchurLMResult | None) -> Mapping[str, object]:
+    observability = _observability_report_payload(schur_result)
+    policy = observability.get("weak_dof_policy")
+    return cast("Mapping[str, object]", policy) if isinstance(policy, Mapping) else {}
+
+
+def _weak_dof_decision_from_policy(
+    weak_dof_policy: Mapping[str, object] | None,
+    name: str,
+) -> Mapping[str, object] | None:
+    if weak_dof_policy is None:
+        return None
+    decisions = weak_dof_policy.get("decisions")
+    if not isinstance(decisions, Mapping):
+        return None
+    decision = cast("Mapping[object, object]", decisions).get(name)
+    return cast("Mapping[str, object]", decision) if isinstance(decision, Mapping) else None
 
 
 def _benchmark_manifest_evaluation_summary(
