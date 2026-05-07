@@ -151,6 +151,44 @@ def test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts(tmp_pat
     assert nominal_mse > true_mse
 
 
+def test_generate_supported_only_setup_global_dataset_removes_unsupported_truth(
+    tmp_path: Path,
+) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_setup_global_tomo",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=8,
+        supported_only=True,
+    )
+
+    assert paths.dataset_dir.name == "synth128_setup_global_tomo_32_supported_only"
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+    assert manifest["variant"] == "supported_only"
+    assert set(cast("dict[str, object]", manifest["recovery_tolerances"])) == {
+        "det_u_error_px_lt",
+        "theta_offset_error_deg_lt",
+    }
+    true_geometry = cast("dict[str, Any]", json.loads(paths.true_geometry.read_text()))
+    true_setup = cast("dict[str, float]", true_geometry["setup"])
+    assert true_setup["det_u_px"] == 14.5
+    assert true_setup["theta_offset_deg"] == 1.25
+    assert true_setup["detector_roll_deg"] == 0.0
+    assert true_setup["axis_rot_x_deg"] == 0.0
+    assert true_setup["axis_rot_y_deg"] == 0.0
+    true_pose_params = read_pose_params_csv(paths.v2_true_pose)
+    expected_theta = np.deg2rad(np.linspace(0.0, 180.0, 8, endpoint=False))
+    np.testing.assert_allclose(true_pose_params.theta_nominal_rad, expected_theta)
+    np.testing.assert_allclose(true_pose_params.phi_residual_rad, np.zeros(8))
+    true_state = read_geometry_json(paths.v2_true_geometry, true_pose_params)
+    assert true_state.setup.det_u_px.value == 3.625
+    np.testing.assert_allclose(true_state.setup.theta_offset_rad.value, np.deg2rad(1.25))
+    assert true_state.setup.detector_roll_rad.value == 0.0
+    assert true_state.setup.axis_rot_x_rad.value == 0.0
+    assert true_state.setup.axis_rot_y_rad.value == 0.0
+
+
 def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) -> None:
     paths = generate_synthetic_dataset(
         "synth128_lamino_axis_roll_pose",

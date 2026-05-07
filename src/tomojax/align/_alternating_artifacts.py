@@ -70,6 +70,7 @@ def _write_artifacts(
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     geometry_update_setup_prior_strength: float | None,
     geometry_update_pose_prior_strength: float | None,
+    geometry_update_pose_frozen: bool,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     verification: Mapping[str, object],
@@ -123,6 +124,7 @@ def _write_artifacts(
         geometry_update_volume_source=geometry_update_volume_source,
         geometry_update_setup_prior_strength=geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=geometry_update_pose_prior_strength,
+        geometry_update_pose_frozen=geometry_update_pose_frozen,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
         synthetic_dataset=verification.get("synthetic_dataset"),
@@ -950,11 +952,12 @@ def _criterion_evaluation(
             "threshold": threshold,
             "reason": "criterion value or threshold is not numeric",
         }
-    passed = float(value) < float(threshold)
+    threshold_value = _criterion_threshold_in_metric_units(name, float(threshold))
+    passed = float(value) < threshold_value
     return {
         "status": "passed" if passed else "failed",
         "value": float(value),
-        "threshold": float(threshold),
+        "threshold": threshold_value,
         "reason": "evaluated against smoke geometry recovery metric",
     }
 
@@ -989,7 +992,14 @@ def _criterion_metric_name(name: str) -> str | None:
     return {
         "det_u_error_px_lt": "det_u_realized_rmse_px",
         "det_v_error_px_lt": "det_v_realized_rmse_px",
+        "theta_offset_error_deg_lt": "theta_realized_rmse_rad",
     }.get(name)
+
+
+def _criterion_threshold_in_metric_units(name: str, threshold: float) -> float:
+    if name == "theta_offset_error_deg_lt":
+        return float(np.deg2rad(threshold))
+    return threshold
 
 
 def _failed_gate_names(failure_report: Mapping[str, object]) -> list[str]:
@@ -1015,6 +1025,7 @@ def _write_config_resolved(
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     geometry_update_setup_prior_strength: float | None,
     geometry_update_pose_prior_strength: float | None,
+    geometry_update_pose_frozen: bool,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
     synthetic_dataset: object,
@@ -1033,6 +1044,7 @@ def _write_config_resolved(
         )
     if geometry_update_pose_prior_strength is not None:
         lines.append(f"geometry_update_pose_prior_strength = {geometry_update_pose_prior_strength}")
+    lines.append(f"geometry_update_pose_frozen = {str(bool(geometry_update_pose_frozen)).lower()}")
     lines.append(f"fit_gain_offset_nuisance = {str(bool(fit_gain_offset_nuisance)).lower()}")
     lines.append(f"fit_background_nuisance = {str(bool(fit_background_nuisance)).lower()}")
     if isinstance(synthetic_dataset, dict):

@@ -35,6 +35,7 @@ class AlternatingSmokeConfig:
     geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
     geometry_update_setup_prior_strength: float | None = None
     geometry_update_pose_prior_strength: float | None = None
+    geometry_update_pose_frozen: bool = False
     fit_gain_offset_nuisance: bool = False
     fit_background_nuisance: bool = False
     synthetic_dataset_name: str | None = None

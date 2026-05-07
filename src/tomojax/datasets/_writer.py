@@ -58,10 +58,12 @@ def generate_synthetic_dataset(
     size: SyntheticSize = 32,
     clean: bool = False,
     views: int | None = None,
+    supported_only: bool = False,
 ) -> SyntheticArtifactPaths:
     """Write deterministic synthetic dataset artifacts for a manifest spec."""
     spec = synthetic128_spec(name)
-    dataset_dir = output_dir / f"{name}_{size}"
+    dataset_suffix = f"{size}_supported_only" if supported_only else str(size)
+    dataset_dir = output_dir / f"{name}_{dataset_suffix}"
     dataset_dir.mkdir(parents=True, exist_ok=True)
     if clean:
         _remove_known_artifacts(dataset_dir)
@@ -79,12 +81,14 @@ def generate_synthetic_dataset(
     volume = make_benchmark_phantom(size, spec.phantom_seed)
     pixel_scale = float(size) / 128.0
     true_pose = _make_pose_table(spec, theta, pixel_scale=pixel_scale)
+    setup_override = _supported_only_setup(spec.true_setup) if supported_only else None
     nominal_state = _geometry_state_from_spec(
         spec,
         n_views=n_views,
         pose=None,
         theta_deg=theta,
         pixel_scale=pixel_scale,
+        setup_override=setup_override,
     )
     true_state = _geometry_state_from_spec(
         spec,
@@ -92,6 +96,7 @@ def generate_synthetic_dataset(
         pose=true_pose,
         theta_deg=theta,
         pixel_scale=pixel_scale,
+        setup_override=setup_override,
     )
     projections = _project_v2_smoke(volume, true_state)
     nuisance = _realize_nuisance(spec, n_views, applied_to_projections=not clean)
@@ -106,7 +111,10 @@ def generate_synthetic_dataset(
     nominal_geometry = _nominal_geometry(spec, detector_shape, theta)
     _write_json(paths.nominal_geometry, nominal_geometry)
     _write_json(paths.corrupted_geometry, nominal_geometry)
-    _write_json(paths.true_geometry, _true_geometry(spec, detector_shape, theta))
+    _write_json(
+        paths.true_geometry,
+        _true_geometry(spec, detector_shape, theta, setup_override=setup_override),
+    )
     _write_pose_csv(paths.true_pose, true_pose)
     _write_motion_csv(paths.true_motion, n_views)
     write_geometry_json(paths.v2_nominal_geometry, nominal_state)
@@ -117,7 +125,17 @@ def generate_synthetic_dataset(
     write_pose_params_csv(paths.v2_true_pose, true_state.pose)
     _write_json(paths.nuisance_truth, nuisance)
     _write_json(paths.noise_truth, _noise_truth(spec))
-    _write_json(paths.manifest, _dataset_manifest(spec, size, detector_shape, n_views, paths))
+    _write_json(
+        paths.manifest,
+        _dataset_manifest(
+            spec,
+            size,
+            detector_shape,
+            n_views,
+            paths,
+            supported_only=supported_only,
+        ),
+    )
     return paths
 
 
@@ -310,11 +328,19 @@ def _geometry_state_from_spec(
     pose: dict[str, NDArray[np.float32]] | None,
     theta_deg: NDArray[np.float32],
     pixel_scale: float,
+    setup_override: dict[str, float | str] | None = None,
 ) -> GeometryState:
     state = GeometryState.zeros(n_views)
-    setup_values = spec.true_setup if pose is not None else {}
+    setup_values = (
+        setup_override
+        if setup_override is not None and pose is not None
+        else spec.true_setup
+        if pose is not None
+        else {}
+    )
     setup = state.setup
-    det_v_active = abs(float(spec.true_setup.get("det_v_px", 0.0))) > 0.0
+    reference_setup = setup_override if setup_override is not None else spec.true_setup
+    det_v_active = abs(float(reference_setup.get("det_v_px", 0.0))) > 0.0
     setup = setup.replace_parameter(
         "det_v_px",
         replace(
@@ -406,10 +432,14 @@ def _nominal_geometry(
 
 
 def _true_geometry(
-    spec: SyntheticDatasetSpec, detector_shape: tuple[int, int], theta_deg: NDArray[np.float32]
+    spec: SyntheticDatasetSpec,
+    detector_shape: tuple[int, int],
+    theta_deg: NDArray[np.float32],
+    *,
+    setup_override: dict[str, float | str] | None = None,
 ) -> dict[str, object]:
     geom = _nominal_geometry(spec, detector_shape, theta_deg)
-    geom["setup"] = spec.true_setup
+    geom["setup"] = setup_override if setup_override is not None else spec.true_setup
     if spec.laminography_tilt_deg is not None:
         geom["laminography_tilt_deg"] = spec.laminography_tilt_deg
     return geom
@@ -421,7 +451,15 @@ def _dataset_manifest(
     detector_shape: tuple[int, int],
     views: int,
     paths: SyntheticArtifactPaths,
+    supported_only: bool,
 ) -> dict[str, object]:
+    pass_criteria = dict(spec.pass_criteria)
+    if supported_only:
+        pass_criteria = {
+            key: value
+            for key, value in pass_criteria.items()
+            if key in {"det_u_error_px_lt", "det_v_error_px_lt", "theta_offset_error_deg_lt"}
+        }
     return {
         "name": spec.name,
         "purpose": spec.purpose,
@@ -432,9 +470,19 @@ def _dataset_manifest(
         "phantom_seed": spec.phantom_seed,
         "pose_seed": spec.pose_seed,
         "artifact_contract": "tomojax-v2.synthetic-dataset.v1",
+        "variant": "supported_only" if supported_only else "manifest",
         "artifacts": _manifest_artifact_map(paths),
-        "recovery_tolerances": spec.pass_criteria,
+        "recovery_tolerances": pass_criteria,
     }
+
+
+def _supported_only_setup(values: dict[str, float | str]) -> dict[str, float | str]:
+    supported = dict(values)
+    supported["detector_roll_deg"] = 0.0
+    supported["axis_rot_x_deg"] = 0.0
+    supported["axis_rot_y_deg"] = 0.0
+    supported["theta_scale"] = 1.0
+    return supported
 
 
 def _manifest_artifact_map(paths: SyntheticArtifactPaths) -> dict[str, str]:

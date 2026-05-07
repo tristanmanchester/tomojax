@@ -3,6 +3,69 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Supported-Only Fixed-Truth Oracle Pass
+
+### Summary
+
+- Added a supported-only `synth128_setup_global_tomo` sidecar generation mode
+  for the setup oracle: clean projections, nominal theta 0..180, true
+  `det_u_px` and `theta_offset_deg`, and unsupported roll/axis/pose/nuisance
+  terms disabled.
+- Added a pose-frozen Schur configuration path through `align-auto` so the
+  existing sidecar ingestion, benchmark_result, benchmark_report, and compare
+  artifact path can run a fixed-truth setup-only oracle.
+- Scaled Schur predicted reduction by data residual rows so trust adaptation
+  compares against the same mean-loss scale used for actual reduction.
+- Added manifest evaluation for `theta_offset_error_deg_lt` by converting the
+  threshold to radians and comparing against realised theta RMSE.
+
+### GPU Oracle Result
+
+- Command:
+  `LD_LIBRARY_PATH="$(find .venv/lib/python3.12/site-packages/nvidia -type d \( -path '*/lib' -o -path '*/lib64' \) | paste -sd: -)" JAX_PLATFORMS=cuda uv run tomojax-align-auto-smoke --out-dir .artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_pass --profile balanced --synthetic-dataset-dir .artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only --geometry-update-volume-source fixed_synthetic_truth --geometry-update-pose-frozen`
+- Backend/device: `jax_default_backend="gpu"`, `selected_jax_device="cuda:0"`.
+- Status: passed.
+- det_u realised RMSE: 0.0890718 px, threshold 0.5 px.
+- theta realised RMSE: 0.00109812 rad, threshold 0.00174533 rad.
+- final residual: 0.000185589.
+- volume NMSE: 0.576863.
+- total wall time: 15.7484 s.
+
+### Artifacts
+
+- Dataset:
+  `.artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only/`
+- Passing run:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_pass/`
+- Benchmark result:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_pass/benchmark_result.json`
+- Benchmark report:
+  `.artifacts/phase8_supported_only_oracle/runs/64_fixed_truth_pose_frozen_pass/benchmark_report.md`
+- Compare report:
+  `.artifacts/phase8_supported_only_oracle/benchmark_comparison_supported_only.md`
+- Summary:
+  `docs/benchmark_runs/2026-05-07-phase8-supported-only-oracle.md`
+
+### Validation
+
+- `uv run ruff check ...` on touched source/test files passed.
+- `uv run basedpyright ...` on touched source/test files passed with 0 errors
+  and 0 warnings.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py
+  tests/test_synthetic_datasets.py tests/test_align_auto_cli.py
+  tests/test_bench_synthetic_results.py -q` passed: 37 tests.
+- `just imports` passed:
+  - `uv run lint-imports --config .importlinter`
+  - `uv run python tools/check_public_imports.py`
+
+### Remaining Questions
+
+- The next required diagnostic is fixed-truth joint setup+pose on the same
+  supported-only dataset. If setup recovery is suppressed there, continue with
+  block-wise setup/pose trust and staged pose activation.
+- Stopped-reconstruction diagnostics remain blocked until fixed-truth joint
+  setup+pose is passing or sharply classified.
+
 ## 2026-05-07 — Nominal Theta Geometry Root Fix
 
 ### Summary

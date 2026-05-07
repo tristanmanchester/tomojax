@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _POSE_DIM = 3
+PoseSchurDof = Literal["phi_residual_rad", "dx_px", "dz_px"]
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class JointSchurLMConfig:
     parameter_prior_strength: float = 0.0
     setup_prior_strength: float | None = None
     pose_prior_strength: float | None = None
+    active_pose_dofs: tuple[PoseSchurDof, ...] = ("phi_residual_rad", "dx_px", "dz_px")
     fit_gain_offset: bool = False
     fit_background_offset: bool = False
 
@@ -145,7 +147,7 @@ class JointSchurLMResult:
     iteration_diagnostics: tuple[JointSchurDiagnostics, ...]
 
 
-def solve_joint_schur_lm(
+def solve_joint_schur_lm(  # noqa: PLR0915 - iterative solver keeps state transitions explicit.
     volume: jax.Array,
     observed: jax.Array,
     geometry: GeometryState,
@@ -157,7 +159,8 @@ def solve_joint_schur_lm(
     cfg = config or JointSchurLMConfig()
     vol = jnp.asarray(volume, dtype=jnp.float32)
     obs = jnp.asarray(observed, dtype=jnp.float32)
-    params = _pack_joint(geometry)
+    pose_dim = _pose_dim(cfg)
+    params = _pack_joint(geometry, cfg)
     prior_reference = params
     n_setup = _n_setup_params(geometry)
     initial_loss = _loss_for_params(
@@ -197,6 +200,7 @@ def solve_joint_schur_lm(
             geometry,
             params,
             mask=mask,
+            cfg=cfg,
             sigma=cfg.sigma,
             fit_gain_offset=cfg.fit_gain_offset,
             fit_background_offset=cfg.fit_background_offset,
@@ -213,6 +217,7 @@ def solve_joint_schur_lm(
                 geometry,
                 candidate,
                 mask=mask,
+                cfg=cfg,
                 sigma=cfg.sigma,
                 fit_gain_offset=cfg.fit_gain_offset,
                 fit_background_offset=cfg.fit_background_offset,
@@ -238,7 +243,7 @@ def solve_joint_schur_lm(
             r,
             n_setup=n_setup,
             n_views=geometry.pose.n_views,
-            pose_dim=_POSE_DIM,
+            pose_dim=pose_dim,
             damping=damping,
             setup_trust_radius=setup_trust_radius,
             pose_trust_radius=pose_trust_radius,
@@ -339,10 +344,15 @@ def solve_joint_schur_lm(
         damping = next_damping
         setup_trust_radius = next_setup_trust_radius
         pose_trust_radius = next_pose_trust_radius
+        if accepted:
+            params = _pack_joint(
+                canonicalize_geometry_gauges(_geometry_with_params(geometry, params, cfg)).state,
+                cfg,
+            )
         if float(jnp.linalg.norm(schur.step)) < 1e-5:
             break
 
-    solved = _geometry_with_params(geometry, params)
+    solved = _geometry_with_params(geometry, params, cfg)
     canonicalized = canonicalize_geometry_gauges(solved)
     final_loss = _loss_for_params(
         vol,
@@ -360,8 +370,8 @@ def solve_joint_schur_lm(
         final_loss=float(final_loss),
         iterations=iterations,
         active_setup_parameters=_active_setup_parameters(geometry),
-        active_pose_dofs=("phi_residual_rad", "dx_px", "dz_px"),
-        frozen_parameters=_frozen_parameters(geometry),
+        active_pose_dofs=cfg.active_pose_dofs,
+        frozen_parameters=_frozen_parameters(geometry, cfg),
         diagnostics=diagnostics,
         iteration_diagnostics=tuple(iteration_diagnostics),
     )
@@ -502,13 +512,15 @@ def schur_step_from_jacobian(
         inv_hpp_gp = jnp.linalg.solve(h_pp, g_p)
         schur_matrix = schur_matrix - h_gp @ inv_hpp_hpg
         schur_rhs = schur_rhs + h_gp @ inv_hpp_gp
-        pose_blocks.append((h_pp, h_pg, g_p))
-        pose_block_conditions.append(float(jnp.linalg.cond(h_pp)))
+        if pose_dim > 0:
+            pose_blocks.append((h_pp, h_pg, g_p))
+            pose_block_conditions.append(float(jnp.linalg.cond(h_pp)))
 
     setup_step = jnp.linalg.solve(schur_matrix, schur_rhs)
     pose_steps: list[jax.Array] = []
-    for h_pp, h_pg, g_p in pose_blocks:
-        pose_steps.append(jnp.linalg.solve(h_pp, -g_p - h_pg @ setup_step))
+    if pose_dim > 0:
+        for h_pp, h_pg, g_p in pose_blocks:
+            pose_steps.append(jnp.linalg.solve(h_pp, -g_p - h_pg @ setup_step))
     pose_step = (
         jnp.concatenate(pose_steps, axis=0) if pose_steps else jnp.asarray([], dtype=jnp.float32)
     )
@@ -521,8 +533,17 @@ def schur_step_from_jacobian(
     )
     step = raw_step * trust_scale
     dense_step = dense_step_unscaled * trust_scale
-    pose_step_matrix = (pose_step * trust_scale).reshape((n_views, pose_dim))
-    predicted_reduction = _predicted_reduction(gradient, hessian, step)
+    pose_step_matrix = (
+        (pose_step * trust_scale).reshape((n_views, pose_dim))
+        if pose_dim > 0
+        else jnp.zeros((n_views, 0), dtype=jnp.float32)
+    )
+    predicted_reduction = _predicted_reduction(
+        gradient,
+        hessian,
+        step,
+        data_rows=data_rows,
+    )
     schur_eigenvalues = _eigvalsh_tuple(schur_matrix)
     diagnostics = JointSchurDiagnostics(
         schur_condition=float(jnp.linalg.cond(schur_matrix)),
@@ -615,9 +636,12 @@ def _predicted_reduction(
     gradient: jax.Array,
     hessian: jax.Array,
     step: jax.Array,
+    *,
+    data_rows: int | None,
 ) -> float:
     model_change = jnp.vdot(gradient, step).real + 0.5 * jnp.vdot(step, hessian @ step).real
-    return -float(model_change)
+    scale = 1 if data_rows is None else max(int(data_rows), 1)
+    return -float(model_change) / float(scale)
 
 
 def _reduction_ratio(actual_reduction: float, predicted_reduction: float) -> float | None:
@@ -654,7 +678,10 @@ def _active_setup_parameters(geometry: GeometryState) -> tuple[str, ...]:
     return ("theta_offset_rad", "det_u_px")
 
 
-def _frozen_parameters(geometry: GeometryState) -> tuple[str, ...]:
+def _frozen_parameters(
+    geometry: GeometryState,
+    config: JointSchurLMConfig | None = None,
+) -> tuple[str, ...]:
     frozen = [
         "alpha_rad",
         "beta_rad",
@@ -665,17 +692,31 @@ def _frozen_parameters(geometry: GeometryState) -> tuple[str, ...]:
     ]
     if not geometry.setup.det_v_px.active:
         frozen.append("det_v_px")
+    active_pose = (
+        ("phi_residual_rad", "dx_px", "dz_px") if config is None else config.active_pose_dofs
+    )
+    frozen.extend(dof for dof in ("phi_residual_rad", "dx_px", "dz_px") if dof not in active_pose)
     return tuple(frozen)
+
+
+def _pose_dim(config: JointSchurLMConfig) -> int:
+    if config.active_pose_dofs == ():
+        return 0
+    if config.active_pose_dofs == ("phi_residual_rad", "dx_px", "dz_px"):
+        return _POSE_DIM
+    raise ValueError("JointSchurLMConfig.active_pose_dofs currently supports all pose DOFs or none")
 
 
 def _n_setup_params(geometry: GeometryState) -> int:
     return 3 if geometry.setup.det_v_px.active else 2
 
 
-def _pack_joint(geometry: GeometryState) -> jax.Array:
+def _pack_joint(geometry: GeometryState, config: JointSchurLMConfig | None = None) -> jax.Array:
     setup_values = [geometry.setup.theta_offset_rad.value, geometry.setup.det_u_px.value]
     if geometry.setup.det_v_px.active:
         setup_values.append(geometry.setup.det_v_px.value)
+    if config is not None and _pose_dim(config) == 0:
+        return jnp.asarray(setup_values, dtype=jnp.float32)
     pose_values = np.stack(
         [geometry.pose.phi_residual_rad, geometry.pose.dx_px, geometry.pose.dz_px],
         axis=1,
@@ -683,7 +724,11 @@ def _pack_joint(geometry: GeometryState) -> jax.Array:
     return jnp.asarray([*setup_values, *pose_values], dtype=jnp.float32)
 
 
-def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> GeometryState:
+def _geometry_with_params(
+    geometry: GeometryState,
+    params: jax.Array,
+    config: JointSchurLMConfig | None = None,
+) -> GeometryState:
     n_setup = _n_setup_params(geometry)
     setup = geometry.setup.replace_parameter(
         "theta_offset_rad",
@@ -698,6 +743,8 @@ def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> Geometr
             "det_v_px",
             geometry.setup.det_v_px.with_value(float(params[2])),
         )
+    if config is not None and _pose_dim(config) == 0:
+        return GeometryState(setup=setup, pose=geometry.pose)
     pose_matrix = np.asarray(params[n_setup:], dtype=np.float64).reshape(
         geometry.pose.n_views,
         _POSE_DIM,
@@ -715,11 +762,21 @@ def _geometry_with_params(geometry: GeometryState, params: jax.Array) -> Geometr
 def _split_joint(
     geometry: GeometryState,
     params: jax.Array,
+    config: JointSchurLMConfig | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
     n_setup = _n_setup_params(geometry)
     theta_offset = params[0]
     det_u = params[1]
     det_v = params[2] if geometry.setup.det_v_px.active else jnp.asarray(0.0, dtype=jnp.float32)
+    if config is not None and _pose_dim(config) == 0:
+        return (
+            theta_offset,
+            det_u,
+            det_v,
+            jnp.asarray(geometry.pose.phi_residual_rad, dtype=jnp.float32),
+            jnp.asarray(geometry.pose.dx_px, dtype=jnp.float32),
+            jnp.asarray(geometry.pose.dz_px, dtype=jnp.float32),
+        )
     pose = params[n_setup:].reshape((geometry.pose.n_views, _POSE_DIM))
     return theta_offset, det_u, det_v, pose[:, 0], pose[:, 1], pose[:, 2]
 
@@ -731,11 +788,12 @@ def _residual_for_params(
     params: jax.Array,
     *,
     mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
     sigma: float,
     fit_gain_offset: bool,
     fit_background_offset: bool,
 ) -> jax.Array:
-    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
     predicted = _with_fitted_nuisance(
         predicted,
         observed,
@@ -810,8 +868,14 @@ def _predicted_for_params(
     volume: jax.Array,
     geometry: GeometryState,
     params: jax.Array,
+    *,
+    config: JointSchurLMConfig | None = None,
 ) -> jax.Array:
-    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(geometry, params)
+    theta_offset, det_u, det_v, phi_pose, dx_pose, dz_pose = _split_joint(
+        geometry,
+        params,
+        config,
+    )
     return project_parallel_reference_arrays(
         volume,
         theta_rad=(
@@ -850,7 +914,7 @@ def _nuisance_diagnostics_for_params(
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
 ) -> dict[str, dict[str, object] | None]:
-    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
     gain_offset_model = None
     background_offset_model = None
     corrected = predicted
@@ -877,7 +941,7 @@ def _loss_for_params(
     cfg: JointSchurLMConfig,
     prior_reference: jax.Array | None = None,
 ) -> jax.Array:
-    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
     predicted = _with_fitted_nuisance(
         predicted,
         observed,
@@ -906,7 +970,7 @@ def _loss_by_view_for_params(
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
 ) -> tuple[float, ...]:
-    predicted = _predicted_for_params(volume, geometry, params)
+    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
     predicted = _with_fitted_nuisance(
         predicted,
         observed,

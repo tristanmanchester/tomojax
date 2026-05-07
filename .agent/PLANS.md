@@ -11,31 +11,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8 nominal theta geometry root fix
-- Goal: make nominal acquisition theta first-class in v2 geometry,
-  serialization, projection, reconstruction, solver residuals, and recovery
-  metrics.
+- Phase: Phase 8 supported-only oracle benchmark
+- Goal: prove the 64^3/64-view setup-global supported-DOF oracle path after
+  the nominal-theta fix, before judging the five-case benchmark suite.
 
 ### Scope
 
 - In scope:
-  - Add `theta_nominal_rad` to `PoseParameters` with zeros-compatible defaults.
-  - Preserve `theta_nominal_rad` in geometry JSON and pose CSV read/write paths.
-  - Use `theta_total_i = theta_scale * theta_nominal_rad_i + theta_offset_rad
-    + phi_residual_rad_i` in projector, backprojector, pose-only/setup-only,
-    joint Schur, and recovery metrics.
-  - Generate synthetic sidecars with nominal theta 0..180 as nominal pose
-    metadata instead of losing it.
-  - Add focused tests proving sidecars preserve nominal theta, true geometry
-    projects to near-zero residual, and corrupted geometry is higher loss.
+  - Generate a clean supported-only `synth128_setup_global_tomo` 64^3/64-view
+    sidecar variant with nominal theta 0..180, active det_u/theta_offset,
+    optional det_v, and no unsupported roll/axis/pose/nuisance/object motion.
+  - Add a pose-frozen geometry-update path for the oracle run using
+    fixed_synthetic_truth through the existing sidecar/align-auto artifact path.
+  - Run the GPU benchmark and record benchmark_result/benchmark_report/compare
+    artifacts plus a concise markdown summary.
+  - Keep memory-safe sequential FD and record JAX backend/device provenance.
 - Out of scope:
-  - Schur block trust refactor.
-  - Supported-only oracle benchmark pass.
-  - New report fields beyond carrying nominal theta through existing artifacts.
-  - Tolerance relaxation or nuisance fitting.
+  - Five-case benchmark judgement.
+  - Stopped-reconstruction diagnosis unless fixed-truth supported-only passes.
+  - Unsupported DOF implementation.
+  - New report fields unless required for this oracle artifact.
   - Further legacy Ruff cleanup.
-- Deep module owner: `tomojax.geometry`, `tomojax.forward`, `tomojax.recon`,
-  `tomojax.align`, and `tomojax.datasets`.
+- Deep module owner: `tomojax.align`, `tomojax.cli`, and `tomojax.datasets`.
 
 ### Design Sources
 
@@ -46,36 +43,39 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add nominal theta to geometry state and serialization.
-- [x] Wire nominal theta into forward/backprojection and solver residuals.
-- [x] Wire nominal theta into sidecar generation/readback and recovery metrics.
-- [x] Add focused nominal-theta tests.
+- [x] Add supported-only sidecar generation/ingestion option.
+- [x] Add pose-frozen fixed-truth geometry-update path.
+- [x] Add focused tests for supported-only sidecar and pose-frozen CLI/config.
 - [x] Run focused validation and `just imports`.
-- [x] Update `docs/implementation_log.md`.
-- [x] Commit the nominal-theta slice.
+- [x] Run GPU 64^3/64-view supported-only fixed-truth benchmark.
+- [x] Write benchmark summary and implementation-log entry.
+- [x] Commit the supported-only oracle slice.
 
 ### Validation
 
-- `uv run ruff check ...` on the touched source/test files passed.
-- `uv run basedpyright ...` on the touched source/test files passed with
+- `uv run ruff check ...` on touched source/test files passed.
+- `uv run basedpyright ...` on touched source/test files passed with
   0 errors and 0 warnings.
-- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_geometry_serialization.py
-  tests/test_geometry_gauges.py tests/test_synthetic_datasets.py
-  tests/test_forward_reference.py tests/test_reference_fista.py
-  tests/test_setup_lm.py tests/test_pose_lm.py tests/test_joint_schur_lm.py -q`
-  passed: 46 tests.
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_joint_schur_lm.py
+  tests/test_synthetic_datasets.py tests/test_align_auto_cli.py
+  tests/test_bench_synthetic_results.py -q`
+  passed: 37 tests.
 - `just imports` passed.
+- GPU oracle command passed with JAX backend `gpu` and selected device `cuda:0`:
+  `tomojax-align-auto-smoke --profile balanced --synthetic-dataset-dir
+  .artifacts/phase8_supported_only_oracle/datasets/synth128_setup_global_tomo_64_supported_only
+  --geometry-update-volume-source fixed_synthetic_truth --geometry-update-pose-frozen`.
 
 If `just check` cannot pass, record the exact failing command, current failure,
 and proposed next fix before stopping.
 
 ### Decisions And Deviations
 
-- Treat nominal theta as the root geometry fix before rerunning honest
-  alignment benchmarks.
-- The 64^3/64-view fixed-truth failure diagnosis now points at a representation
-  bug: v2 was comparing only `theta_offset_rad + phi_residual_rad` and had lost
-  nominal acquisition theta from the solver/projector path.
+- Treat the existing five-case benchmark as blocked until this supported-only
+  oracle is either passing or has a sharper fixed-truth blocker.
+- The initial balanced oracle failed because Schur predicted reduction was on
+  raw residual-sum scale while actual reduction was mean loss; scaling by data
+  rows made trust adaptation comparable and the oracle passed.
 
 ### Risks
 

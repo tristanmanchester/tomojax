@@ -31,6 +31,7 @@ def _run_geometry_updates(
     sigma: float,
     setup_prior_strength: float | None,
     pose_prior_strength: float | None,
+    pose_frozen: bool,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
@@ -49,6 +50,7 @@ def _run_geometry_updates(
             parameter_prior_strength=level.prior_strength,
             setup_prior_strength=setup_prior_strength,
             pose_prior_strength=pose_prior_strength,
+            active_pose_dofs=() if pose_frozen else ("phi_residual_rad", "dx_px", "dz_px"),
             fit_gain_offset=fit_gain_offset_nuisance,
             fit_background_offset=fit_background_nuisance,
         ),

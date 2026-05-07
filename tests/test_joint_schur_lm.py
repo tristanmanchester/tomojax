@@ -313,6 +313,43 @@ def test_joint_schur_lm_recovers_realized_supported_geometry() -> None:
     )
 
 
+def test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    truth_setup = nominal.setup.replace_parameter(
+        "theta_offset_rad",
+        nominal.setup.theta_offset_rad.with_value(0.04),
+    )
+    truth_setup = truth_setup.replace_parameter(
+        "det_u_px",
+        nominal.setup.det_u_px.with_value(0.18),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=8,
+            damping=1e-3,
+            delta=1.0,
+            active_pose_dofs=(),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_pose_dofs == ()
+    assert "phi_residual_rad" in result.frozen_parameters
+    assert "dx_px" in result.frozen_parameters
+    assert "dz_px" in result.frozen_parameters
+    np.testing.assert_allclose(result.geometry.pose.phi_residual_rad, nominal.pose.phi_residual_rad)
+    np.testing.assert_allclose(result.geometry.pose.dx_px, nominal.pose.dx_px)
+    np.testing.assert_allclose(result.geometry.setup.det_u_px.value, 0.18, atol=0.04)
+    np.testing.assert_allclose(result.geometry.setup.theta_offset_rad.value, 0.04, atol=0.025)
+
+
 def test_joint_schur_pose_prior_strength_damps_pose_drift() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(4)

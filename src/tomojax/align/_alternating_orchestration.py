@@ -143,6 +143,7 @@ def _run_alternating_solver_smoke_impl(
                 sigma=residual_sigma_effective,
                 setup_prior_strength=config.geometry_update_setup_prior_strength,
                 pose_prior_strength=config.geometry_update_pose_prior_strength,
+                pose_frozen=config.geometry_update_pose_frozen,
                 fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
                 fit_background_nuisance=config.fit_background_nuisance,
             )
@@ -241,6 +242,7 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_volume_source=config.geometry_update_volume_source,
         geometry_update_setup_prior_strength=config.geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=config.geometry_update_pose_prior_strength,
+        geometry_update_pose_frozen=config.geometry_update_pose_frozen,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,
         verification=_verification_payload(

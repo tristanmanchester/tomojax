@@ -107,6 +107,19 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fit low-frequency background nuisance during Schur geometry updates.",
     )
+    _ = parser.add_argument(
+        "--supported-only-setup-global",
+        action="store_true",
+        help=(
+            "Generate a clean setup-global sidecar variant limited to supported "
+            "theta/detector-shift DOFs."
+        ),
+    )
+    _ = parser.add_argument(
+        "--geometry-update-pose-frozen",
+        action="store_true",
+        help="Freeze per-view pose DOFs during Schur geometry updates.",
+    )
     return parser
 
 
@@ -148,6 +161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             size=size,
             clean=not synthetic_nuisance_applied,
             views=views,
+            supported_only=bool(args.supported_only_setup_global),
         )
         dataset_dir = dataset_paths.dataset_dir
         sidecar_readback = _sidecar_readback_payload(load_synthetic_dataset_sidecars(dataset_dir))
@@ -160,6 +174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             geometry_update_volume_source=geometry_update_volume_source,
             geometry_update_setup_prior_strength=args.geometry_update_setup_prior_strength,
             geometry_update_pose_prior_strength=args.geometry_update_pose_prior_strength,
+            geometry_update_pose_frozen=bool(args.geometry_update_pose_frozen),
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),
             synthetic_dataset_name=dataset_name,

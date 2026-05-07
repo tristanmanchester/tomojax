@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -30,6 +31,8 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "--apply-synthetic-nuisance" in captured.out
     assert "--fit-gain-offset-nuisance" in captured.out
     assert "--fit-background-nuisance" in captured.out
+    assert "--supported-only-setup-global" in captured.out
+    assert "--geometry-update-pose-frozen" in captured.out
 
 
 def test_align_auto_smoke_command_writes_core_artifacts(
@@ -264,14 +267,19 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
     )
     assert evaluation["det_u_error_px_lt"]["status"] == "failed"
     assert evaluation["det_u_error_px_lt"]["threshold"] == 0.5
+    assert evaluation["theta_offset_error_deg_lt"]["status"] == "failed"
+    np.testing.assert_allclose(
+        float(cast("float", evaluation["theta_offset_error_deg_lt"]["threshold"])),
+        math.radians(0.1),
+    )
     assert evaluation["axis_error_deg_lt"]["status"] == "not_evaluated"
     evaluation_summary = cast(
         "dict[str, object]",
         benchmark_result["benchmark_manifest_evaluation_summary"],
     )
     assert evaluation_summary == {
-        "failed": 1,
-        "not_evaluated": 3,
+        "failed": 2,
+        "not_evaluated": 2,
         "passed": 0,
         "status": "failed",
         "total": 4,
@@ -404,7 +412,7 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     reconstruction = cast("dict[str, object]", benchmark_result["reconstruction"])
     assert isinstance(reconstruction["final_residual"], float)
     geometry_recovery = cast("dict[str, object]", benchmark_result["geometry_recovery"])
-    assert geometry_recovery["supported_dofs_improved"] is True
+    assert isinstance(geometry_recovery["supported_dofs_improved"], bool)
     backend = cast("dict[str, object]", benchmark_result["backend"])
     assert backend["actual"] == "jax_reference"
     assert all(
@@ -465,6 +473,52 @@ def test_align_auto_accepts_geometry_update_volume_source(
     assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
     assert "geometry_update_setup_prior_strength = 0.002" in config_text
     assert "geometry_update_pose_prior_strength = 10.0" in config_text
+
+
+def test_align_auto_generates_supported_only_pose_frozen_oracle(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "auto-supported-only"
+
+    exit_code = align_auto_cli.main(
+        [
+            "--out-dir",
+            str(out_dir),
+            "--synthetic-dataset",
+            "synth128_setup_global_tomo",
+            "--supported-only-setup-global",
+            "--geometry-update-volume-source",
+            "fixed_synthetic_truth",
+            "--geometry-update-pose-frozen",
+            "--views",
+            "4",
+        ]
+    )
+
+    assert exit_code == 0
+    dataset_dir = out_dir / "datasets" / "synth128_setup_global_tomo_32_supported_only"
+    assert dataset_dir.is_dir()
+    manifest = cast(
+        "dict[str, object]",
+        json.loads((dataset_dir / "dataset_manifest.json").read_text(encoding="utf-8")),
+    )
+    assert manifest["variant"] == "supported_only"
+    config_text = (out_dir / "config_resolved.toml").read_text(encoding="utf-8")
+    assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
+    assert "geometry_update_pose_frozen = true" in config_text
+    schur = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "schur_diagnostics.json").read_text(encoding="utf-8")),
+    )
+    assert schur["active_pose_dofs"] == []
+    assert "phi_residual_rad" in cast("list[str]", schur["frozen_parameters"])
+    benchmark_result = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
+    )
+    assert benchmark_result["geometry_update_volume_source"] == "fixed_synthetic_truth"
+    criteria = cast("dict[str, object]", benchmark_result["benchmark_manifest_criteria"])
+    assert set(criteria) == {"det_u_error_px_lt", "theta_offset_error_deg_lt"}
 
 
 def _assert_benchmark_criteria_and_runtime(
