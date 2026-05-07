@@ -8169,6 +8169,44 @@ otherwise.
   tests/test_joint_schur_lm.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
+## 2026-05-07 — Phase 8/9 Five-Case 128^3 CUDA Classification
+
+### Summary
+
+- Ran the documented five-case `128^3` synthetic suite on `cuda:0` using the
+  canonical `core_trilinear_ray` projector/backprojector, existing sidecar
+  generation/ingestion, stopped reconstruction, and `reference` profile.
+- Regenerated the synthetic benchmark comparison report.
+- Added a concise run summary under
+  `docs/benchmark_runs/2026-05-07_phase8_five_case_128_cuda.md`.
+
+Artifacts:
+
+- `.artifacts/phase8_five_case_128_cuda/summary.json`
+- `.artifacts/phase8_five_case_128_cuda/comparison_report.md`
+- `.artifacts/phase8_five_case_128_cuda/synth128_setup_global_tomo/`
+- `.artifacts/phase8_five_case_128_cuda/synth128_pose_random_extreme/`
+- `.artifacts/phase8_five_case_128_cuda/synth128_lamino_axis_roll_pose/`
+- `.artifacts/phase8_five_case_128_cuda/synth128_thermal_object_drift/`
+- `.artifacts/phase8_five_case_128_cuda/synth128_combined_nuisance_jumps/`
+- Oracle split for pose-only solver:
+  `.artifacts/phase8_five_case_128_cuda_oracle/synth128_pose_random_extreme_fixed_truth/`
+
+### Classification
+
+| Case | Criteria | Peak MiB | Classification |
+|---|---|---:|---|
+| `synth128_setup_global_tomo` | 0 passed, 4 failed | 1317 | stopped-reconstruction/volume-gauge failure; fixed-truth setup-only evidence passes |
+| `synth128_pose_random_extreme` | 0 passed, 1 failed, 2 not evaluated | 1257 | all-5 pose Schur solver/recovery failure; fixed-truth oracle also fails |
+| `synth128_lamino_axis_roll_pose` | 2 passed, 3 failed | 1327 | laminography setup+pose solver/reconstruction failure; backend fallback and det_v policy pass |
+| `synth128_thermal_object_drift` | 0 failed, 2 not evaluated | 1317 | unsupported object-frame drift and theta-scale policy gap |
+| `synth128_combined_nuisance_jumps` | 0 passed, 3 failed, 3 not evaluated | 1327 | combined unsupported bad-view/jump/object/nuisance behavior plus solver failure |
+
+The next highest-impact functional slice should target stopped-reconstruction
+gauge handling for setup-global recovery because it has the cleanest oracle
+split: fixed-truth geometry passes while stopped-reconstruction fails on the
+same realistic scale gate.
+
 ## 2026-05-07 — Phase 8/9 Pose-Policy Narrowing
 
 ### Summary

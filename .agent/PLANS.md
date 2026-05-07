@@ -11,25 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 pose-only Schur bug fix
-- Goal: fix the pose-only joint Schur path exposed by the five-case CUDA pass
-  so `synth128_pose_random_extreme` can run with `active_setup_parameters=()`
-  and all five per-view pose DOFs active.
+- Phase: Phase 8/9 five-case synthetic benchmark classification
+- Goal: record the completed five-case `128^3` CUDA benchmark pass and commit a
+  concise classification summary before starting the next functional slice.
 
 ### Scope
 
 - In scope:
-  - Support `n_setup == 0` in the streamed Schur normal-equation solver.
-  - Preserve diagnostics with empty setup Schur eigen/correlation data and
-    finite pose diagnostics.
-  - Add a focused pose-only Schur regression test.
-  - Rerun the failed `synth128_pose_random_extreme` CUDA benchmark case.
+  - Record the five stopped-reconstruction benchmark artifacts and comparison
+    report path.
+  - Classify each failure as unsupported model term versus solver/reconstruction
+    behavior.
+  - Identify the next highest-impact functional slice.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Solving pose-random recovery quality beyond making the benchmark executable.
-- Deep module owner: `tomojax.align` for joint Schur behavior.
+  - Implementing the next solver/reconstruction fix in this summary commit.
+- Deep module owner: `tomojax.align` for benchmark behavior and
+  `tomojax.bench`/docs for classification artifacts.
 
 ### Design Sources
 
@@ -40,10 +40,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement pose-only Schur normal-equation support.
-- [x] Add focused tests and run validation.
-- [x] Rerun the pose-random CUDA benchmark case.
-- [x] Update `docs/implementation_log.md` and commit the fix.
+- [x] Run all five `128^3` CUDA benchmark cases.
+- [x] Regenerate the synthetic benchmark comparison report.
+- [x] Classify failures in a concise benchmark-run summary.
+- [x] Update `docs/implementation_log.md` and commit the classification summary.
 
 ### Validation
 
