@@ -3,6 +3,35 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — just check Baseline Failure Note
+
+### Summary
+
+- Ran `just check` after the laminography and det_v observability slices.
+- The command is not a clean project-wide gate in the current branch: it first
+  ran `uv run ruff format src tests tools`, reformatting 71 files, then stopped
+  in `uv run ruff check --fix src tests tools` with broad pre-existing lint
+  failures.
+- The formatter/lint churn was reverted because it was unrelated to the active
+  vertical slices.
+
+### Failure Shape
+
+- Representative failures include missing docstrings and annotations in
+  `src/tomojax/align/model/schedules.py` and
+  `src/tomojax/align/model/state.py`, private/relative import style failures in
+  `src/tomojax/align/objectives/fixed_volume.py`, and many test-suite lint
+  failures such as unused fixture arguments, lambda assignments, and compound
+  assertions.
+- Ruff reported 1,682 total issues after applying 318 safe fixes before the
+  changes were reverted.
+
+### Decision
+
+- Keep using focused `pytest`, `ruff check`, `basedpyright`, and `just imports`
+  gates for scoped implementation slices until the legacy project-wide Ruff
+  backlog is handled in a separate cleanup milestone.
+
 ## 2026-05-07 — Phase 7/8 det_v Observability-Gating Slice
 
 ### Summary
