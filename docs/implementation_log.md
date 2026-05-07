@@ -8646,6 +8646,41 @@ radius shape.
   tests/test_joint_schur_lm.py::test_schur_step_pose_trust_does_not_clip_setup_step
   -q`, `ruff`, `basedpyright`, and `just imports`.
 
+## 2026-05-07 — Phase 8/9 Staged Pose-Only Solver Probe
+
+### Summary
+
+Tested a staged fixed-truth pose-only solve for
+`synth128_pose_random_extreme` using the true volume:
+
+1. solve `phi_residual_rad`, `dx_px`, `dz_px`;
+2. solve `alpha_rad`, `beta_rad`;
+3. polish all five pose DOFs.
+
+Artifact:
+
+- `.artifacts/phase8_staged_pose_probe/pose_random_true_volume_phi_trans_then_tilt_cuda/`
+
+Results:
+
+| Stage | Final loss | `alpha_beta_rmse_rad` | det_u RMSE px | theta RMSE rad |
+|---|---:|---:|---:|---:|
+| phi/dx/dz | 1.4528 | 0.0201 | 6.88 | 0.12445 |
+| alpha/beta | 1.4046 | 0.1007 | 6.88 | 0.12445 |
+| all-5 polish | 1.3678 | 0.0991 | 6.73 | 0.12549 |
+
+The first stage improves alpha/beta slightly as a side effect, but explicitly
+activating alpha/beta lowers projection loss while making alpha/beta recovery
+much worse. This confirms the fixed-truth pose blocker is not activation order
+alone; alpha/beta needs validation, regularisation, or an observable-mode
+policy that prevents projection-loss-only overfitting.
+
+### Validation
+
+- Diagnostic completed on `cuda:0` in 154.52 seconds and wrote
+  `probe_result.json`.
+- No source code changed in this diagnostic slice.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

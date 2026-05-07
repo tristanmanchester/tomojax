@@ -11,18 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 pose-only trust-radius diagnostic
-- Goal: test whether pose-only Schur failure in `synth128_pose_random_extreme`
-  is caused by global pose trust clipping or mixed angular/translation trust
-  scaling.
+- Phase: Phase 8/9 staged pose-only solver probe
+- Goal: test whether `synth128_pose_random_extreme` fixed-truth recovery needs
+  staged pose activation rather than solving all five pose DOFs at once.
 
 ### Scope
 
 - In scope:
-  - Probe pose-only Schur trust behavior on the fixed-truth
-    `synth128_pose_random_extreme` oracle.
-  - Test per-view and unit-aware pose trust variants locally.
-  - Keep no source change unless the fixed-truth pose oracle improves.
+  - Run direct true-volume pose-only Schur probes on the existing 128^3
+    sidecar.
+  - Stage `phi/dx/dz` before alpha/beta and compare against all-5 fixed-truth
+    evidence.
+  - Promote a staged pose policy only if pose recovery improves.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -41,11 +41,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run low-level fixed-truth pose-only Schur probe.
-- [x] Test per-view trust scaling and unit-aware trust scaling locally.
-- [x] Revert trust-scaling changes after the fixed-truth oracle worsened
-  alpha/beta recovery.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Run direct staged pose-only true-volume probe.
+- [x] Compare recovery against all-5 fixed-truth oracle.
+- [x] Update `docs/implementation_log.md` and commit either policy or
+  diagnostic evidence.
 
 ### Validation
 
