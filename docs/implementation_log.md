@@ -8595,6 +8595,57 @@ absorbed, but it is not sufficient and should not be promoted as a policy.
   `probe_result.json`, `last_fista_trace.csv`, and `final_volume.npy`.
 - No source code changed in this diagnostic slice.
 
+## 2026-05-07 — Phase 8/9 Pose-Only Trust-Radius Diagnostic
+
+### Summary
+
+Investigated the fixed-truth `synth128_pose_random_extreme` failure. The
+current pose-only Schur path applies one trust scale to the concatenated
+all-view pose vector. A low-level true-volume probe showed that 4 iterations
+improve alpha/beta to about `0.021 rad`, while later accepted iterations can
+lower projection loss and worsen pose recovery.
+
+Two local trust-scaling variants were tested and then reverted:
+
+- per-view 5-DOF trust clipping;
+- per-view unit-aware clipping with angular caps for alpha/beta/phi and pixel
+  caps for dx/dz.
+
+Artifacts:
+
+- `.artifacts/phase8_pose_per_view_trust/pose_random_fixed_truth_cuda/`
+- `.artifacts/phase8_pose_unit_trust/pose_random_fixed_truth_cuda/`
+
+Comparison:
+
+| Metric | Baseline fixed-truth | Per-view trust | Unit-aware trust |
+|---|---:|---:|---:|
+| volume NMSE | 3500.044 | 0.176 | 0.187 |
+| final residual | 642.872 | 0.648 | 0.791 |
+| `alpha_beta_rmse_rad` | 0.0322 | 0.0801 | 0.0846 |
+| `det_u_realized_rmse_px` | 9.35 | 1.05 | 2.14 |
+| `theta_realized_rmse_rad` | 0.10597 | 0.13715 | 0.12786 |
+| setup/pose criteria passed | no | no | no |
+
+The variants improved reconstruction/projection metrics but worsened alpha/beta
+recovery, so neither was promoted. The fixed-truth pose blocker is now more
+specific: projection-loss acceptance alone is choosing pose updates that are not
+truth-recovering for the 5-DOF extreme case. The next functional slice should
+focus on pose validation/regularisation or a staged pose solve, not just trust
+radius shape.
+
+### Validation
+
+- Per-view/unit-aware trust source changes were reverted after the CUDA
+  diagnostics.
+- Focused checks passed before the reverted variants were tested:
+  `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_joint_schur_lm.py::test_pose_only_schur_step_clips_pose_trust_per_view
+  tests/test_joint_schur_lm.py::test_pose_only_schur_step_uses_angular_pose_trust_scale
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_pose_only_update_without_setup_block
+  tests/test_joint_schur_lm.py::test_schur_step_pose_trust_does_not_clip_setup_step
+  -q`, `ruff`, `basedpyright`, and `just imports`.
+
 ## 2026-05-07 — Phase 8/9 Stopped-Reconstruction FISTA Step Scale
 
 ### Summary

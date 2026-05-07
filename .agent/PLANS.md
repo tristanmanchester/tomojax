@@ -11,26 +11,24 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 volume-gauge transfer probe
-- Goal: test whether transferring the coarse projection-centroid shift into
-  det_u and the volume frame prevents stopped reconstruction from preserving
-  absorbed setup geometry.
+- Phase: Phase 8/9 pose-only trust-radius diagnostic
+- Goal: test whether pose-only Schur failure in `synth128_pose_random_extreme`
+  is caused by global pose trust clipping or mixed angular/translation trust
+  scaling.
 
 ### Scope
 
 - In scope:
-  - Run an ad hoc 128^3 setup-global sequence on the existing sidecar.
-  - Coarse level: transfer projection-centroid det_u into geometry and roll the
-    volume frame by the matching amount.
-  - Finer levels: longer reconstruction and full setup-global Schur.
-  - Promote to solver policy only if full setup recovery improves.
+  - Probe pose-only Schur trust behavior on the fixed-truth
+    `synth128_pose_random_extreme` oracle.
+  - Test per-view and unit-aware pose trust variants locally.
+  - Keep no source change unless the fixed-truth pose oracle improves.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Committing policy code without benchmark improvement.
-  - Changing fixed-truth Schur policy.
-  - Adding new CLI knobs for this first policy test.
+  - Setup-global stopped-reconstruction policy changes.
+  - Report wording or criterion alias changes.
   - Adding report/provenance fields or benchmark wording cleanup.
 - Deep module owner: `tomojax.align` for the stopped-volume diagnostic.
 
@@ -43,11 +41,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run projection-centroid volume/geometry gauge-transfer probe.
-- [x] Compare full setup recovery against current anchor and support
-  diagnostics.
-- [x] Update `docs/implementation_log.md` and commit either policy or
-  diagnostic evidence.
+- [x] Run low-level fixed-truth pose-only Schur probe.
+- [x] Test per-view trust scaling and unit-aware trust scaling locally.
+- [x] Revert trust-scaling changes after the fixed-truth oracle worsened
+  alpha/beta recovery.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
