@@ -23,7 +23,7 @@ def test_alternating_setup_policy_freezes_theta_scale() -> None:
     assert active == ("theta_offset_rad", "det_u_px")
 
 
-def test_alternating_pose_policy_freezes_zero_tilt_pose_dofs() -> None:
+def test_alternating_pose_policy_keeps_requested_pose_dofs_outside_global_setup() -> None:
     geometry = GeometryState.zeros(4)
 
     active = _active_pose_dofs(
@@ -38,7 +38,13 @@ def test_alternating_pose_policy_freezes_zero_tilt_pose_dofs() -> None:
         active_setup_parameters=("theta_offset_rad", "det_u_px"),
     )
 
-    assert active == ("phi_residual_rad", "dx_px", "dz_px")
+    assert active == (
+        "alpha_rad",
+        "beta_rad",
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )
 
 
 def test_alternating_pose_policy_keeps_nonzero_tilt_pose_dofs() -> None:

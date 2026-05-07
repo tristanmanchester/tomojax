@@ -12,23 +12,22 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Phase: Phase 8/9 setup-global Schur staging policy
-- Goal: turn the existing weak-DOF observability evidence into the first
-  functional geometry-update staging rule needed by the realistic setup-global
-  benchmark: keep `theta_scale` frozen until an identifiable scale policy exists
-  and avoid activating zero-initialized per-view tilt pose DOFs that can absorb
-  global axis/roll recovery.
+- Goal: keep the functional setup-global staging rule from the previous commit,
+  but narrow it so only global setup recovery freezes a zero-initialized pose
+  block; non-global pose-solving cases must keep all requested per-view 5-DOF
+  pose parameters active.
 
 ### Scope
 
 - In scope:
   - Filter `theta_scale` out of alternating-loop Schur setup updates while
     preserving explicit low-level Schur solver support.
-  - Filter `alpha_rad`/`beta_rad` out of alternating-loop pose updates when the
-    current pose has no nonzero tilt signal to update.
-  - Add focused tests for the private align policy and preserve direct Schur
-    theta-scale coverage.
-  - Rerun a focused CUDA diagnostic that previously failed because requested
-    active DOFs over-parameterised the setup-global case.
+  - Remove over-broad zero-tilt filtering for `alpha_rad`/`beta_rad` outside the
+    global setup block.
+  - Preserve setup-global behavior where the full pose block freezes when the
+    global setup block is active and current pose is zero.
+  - Add focused tests that protect both setup-global staging and pose-case
+    activation.
   - Update docs/logs and commit the staging slice.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -48,12 +47,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Implement alternating-loop Schur active-DOF filtering.
-- [x] Add focused tests and preserve direct solver theta-scale coverage.
+- [x] Narrow alternating-loop pose filtering to the global setup block.
+- [x] Update focused policy tests.
 - [x] Run focused CPU validation and `just imports`.
-- [x] Rerun the CUDA setup-global fixed-truth diagnostic with the previously
-      requested active DOFs.
-- [x] Update `docs/implementation_log.md` and commit the staging slice.
+- [x] Update `docs/implementation_log.md` and commit the correction.
 
 ### Validation
 

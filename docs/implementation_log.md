@@ -8098,3 +8098,32 @@ this slice.
   tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
   0 warnings, and 0 notes.
 - `just imports` passed.
+
+## 2026-05-07 — Phase 8/9 Pose-Policy Narrowing
+
+### Summary
+
+- Narrowed the setup-global Schur staging policy after reviewing the next
+  benchmark target. The previous commit froze zero-initialized `alpha_rad` and
+  `beta_rad` outside setup-global recovery, which would block
+  `synth128_pose_random_extreme` because that case starts from a zero corrupted
+  pose and must recover all five per-view pose DOFs.
+- The alternating loop now freezes the full pose block only when the active
+  setup block contains detector roll plus both axis tilt parameters and the
+  current pose block has no nonzero signal. Non-global pose-solving runs keep
+  all requested pose DOFs active.
+- The `theta_scale` alternating-loop freeze remains unchanged; explicit
+  low-level Schur theta-scale support remains covered by the direct solver test.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  -q` passed: 5 tests in 9.26 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.

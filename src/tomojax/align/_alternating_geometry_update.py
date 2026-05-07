@@ -117,12 +117,7 @@ def _active_pose_dofs(
         raise ValueError(f"unsupported active pose DOFs {raw!r}")
     if _is_global_setup_block(active_setup_parameters) and not _any_pose_signal(geometry, raw):
         return ()
-    active = tuple(
-        name
-        for name in raw
-        if name not in {"alpha_rad", "beta_rad"} or _pose_dof_has_signal(geometry, name)
-    )
-    return cast("tuple[PoseSchurDof, ...]", active)
+    return cast("tuple[PoseSchurDof, ...]", tuple(raw))
 
 
 def _is_global_setup_block(active_setup_parameters: tuple[SetupSchurParameter, ...]) -> bool:
