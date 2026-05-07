@@ -73,6 +73,7 @@ def _write_artifacts(
     geometry_update_pose_prior_strength: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_theta_activate_at_level_factor: int | None,
     geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
     preview_volume_support: str,
@@ -137,6 +138,9 @@ def _write_artifacts(
         geometry_update_pose_frozen=geometry_update_pose_frozen,
         geometry_update_pose_activate_at_level_factor=(
             geometry_update_pose_activate_at_level_factor
+        ),
+        geometry_update_theta_activate_at_level_factor=(
+            geometry_update_theta_activate_at_level_factor
         ),
         geometry_update_active_setup_parameters=geometry_update_active_setup_parameters,
         geometry_update_active_pose_dofs=geometry_update_active_pose_dofs,
@@ -1712,6 +1716,7 @@ def _write_config_resolved(
     geometry_update_pose_prior_strength: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_theta_activate_at_level_factor: int | None,
     geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
     preview_volume_support: str,
@@ -1740,11 +1745,16 @@ def _write_config_resolved(
     if geometry_update_pose_prior_strength is not None:
         lines.append(f"geometry_update_pose_prior_strength = {geometry_update_pose_prior_strength}")
     lines.append(f"geometry_update_pose_frozen = {str(bool(geometry_update_pose_frozen)).lower()}")
-    if geometry_update_pose_activate_at_level_factor is not None:
-        lines.append(
-            "geometry_update_pose_activate_at_level_factor = "
-            f"{int(geometry_update_pose_activate_at_level_factor)}"
+    lines.extend(
+        _activation_config_lines(
+            geometry_update_pose_activate_at_level_factor=(
+                geometry_update_pose_activate_at_level_factor
+            ),
+            geometry_update_theta_activate_at_level_factor=(
+                geometry_update_theta_activate_at_level_factor
+            ),
         )
+    )
     lines.append(
         "geometry_update_active_setup_parameters = "
         f"{json.dumps(list(geometry_update_active_setup_parameters))}"
@@ -1824,6 +1834,25 @@ def _preview_config_lines(
         f"preview_center_l2_weight = {float(preview_center_l2_weight)}",
         f'stopped_preview_policy = "{stopped_preview_policy}"',
     ]
+
+
+def _activation_config_lines(
+    *,
+    geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_theta_activate_at_level_factor: int | None,
+) -> list[str]:
+    lines: list[str] = []
+    if geometry_update_pose_activate_at_level_factor is not None:
+        lines.append(
+            "geometry_update_pose_activate_at_level_factor = "
+            f"{int(geometry_update_pose_activate_at_level_factor)}"
+        )
+    if geometry_update_theta_activate_at_level_factor is not None:
+        lines.append(
+            "geometry_update_theta_activate_at_level_factor = "
+            f"{int(geometry_update_theta_activate_at_level_factor)}"
+        )
+    return lines
 
 
 def _write_final_volume(path: Path, volume: jax.Array) -> None:

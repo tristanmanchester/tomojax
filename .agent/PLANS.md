@@ -11,18 +11,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 preview gauge-penalty CUDA gate
-- Goal: evaluate whether a nonzero preview center-of-mass gauge penalty improves
-  realistic 128^3/256-view stopped setup-global recovery.
+- Phase: Phase 8/9 staged theta activation policy
+- Goal: add a theta-specific setup policy so stopped reconstruction can recover
+  detector shift at coarse levels before allowing `theta_offset_rad` updates.
 
 ### Scope
 
 - In scope:
-  - Rerun the existing 128^3/256-view supported-only sidecar with
-    `--preview-center-l2-weight` enabled.
-  - Record pass/fail, recovery, residual, NMSE, Schur acceptance, CUDA device,
-    runtime, and peak sampled memory.
-  - Update benchmark notes and implementation log.
+  - Add an optional `theta_offset_rad` activation level to alternating config.
+  - Wire it through `align-auto`, config artifacts, and focused tests.
+  - Validate with focused CPU tests and `just imports`.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -36,7 +34,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Marking baseline comparison as passing without a baseline artifact.
   - Adding report/provenance fields or benchmark wording cleanup.
   - Synthetic bad-view nuisance generation.
-- Deep module owner: `tomojax.align` runtime gate; docs summarize the result.
+- Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
@@ -47,10 +45,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run the center-penalty CUDA gate.
-- [x] Extract metrics and compare with the held-out Schur gate.
-- [x] Update benchmark notes and `docs/implementation_log.md`.
-- [x] Run `just imports` and commit the gate summary.
+- [x] Add staged theta activation to setup-parameter selection.
+- [x] Wire CLI/artifact payloads.
+- [x] Add focused tests.
+- [x] Run focused validation and `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 

@@ -599,6 +599,8 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
             "det_u_px",
             "--geometry-update-pose-activate-at-level-factor",
             "1",
+            "--geometry-update-theta-activate-at-level-factor",
+            "1",
             "--preview-volume-support",
             "cylindrical",
             "--preview-initialization",
@@ -628,6 +630,7 @@ def test_align_auto_generates_supported_only_pose_frozen_oracle(
     assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
     assert "geometry_update_pose_frozen = true" in config_text
     assert "geometry_update_pose_activate_at_level_factor = 1" in config_text
+    assert "geometry_update_theta_activate_at_level_factor = 1" in config_text
     assert 'geometry_update_active_setup_parameters = ["det_u_px"]' in config_text
     assert 'geometry_update_active_pose_dofs = ["dx_px", "dz_px"]' in config_text
     assert 'preview_volume_support = "cylindrical"' in config_text

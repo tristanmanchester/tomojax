@@ -167,6 +167,9 @@ def _verification_payload(
         "geometry_update_active_setup_parameters": list(
             cfg.geometry_update_active_setup_parameters
         ),
+        "geometry_update_theta_activate_at_level_factor": (
+            cfg.geometry_update_theta_activate_at_level_factor
+        ),
         "preview_volume_support": cfg.preview_volume_support,
         "preview_initialization": cfg.preview_initialization,
         "preview_tv_scale": cfg.preview_tv_scale,

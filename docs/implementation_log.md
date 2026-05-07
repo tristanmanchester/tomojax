@@ -3,6 +3,45 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Staged Theta Activation Policy Slice
+
+### Summary
+
+- Added `AlternatingSmokeConfig.geometry_update_theta_activate_at_level_factor`
+  to keep `theta_offset_rad` frozen on coarser stopped-reconstruction levels
+  and activate it only at the configured continuation level or finer.
+- Wired the policy through `align-auto
+  --geometry-update-theta-activate-at-level-factor`, verification payloads, and
+  `config_resolved.toml`.
+- Added focused tests showing theta is filtered out at coarse levels and
+  restored at the configured activation level.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_theta_activation_policy_freezes_theta_until_configured_level
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 2 tests in 34.09 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_verification.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Run the 128^3/256-view supported-only CUDA gate with theta activation staged
+  to the final level, combined with the best current preview center-gauge
+  evidence.
+
 ## 2026-05-07 — Phase 8 Preview Center-Gauge CUDA Gate
 
 ### Summary

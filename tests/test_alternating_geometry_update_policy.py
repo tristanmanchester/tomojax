@@ -240,6 +240,30 @@ def test_stopped_preview_policy_constrains_first_preview_only() -> None:
     assert _effective_preview_residual_filter_mode(config, fine) == "continuation"
 
 
+def test_theta_activation_policy_freezes_theta_until_configured_level() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _active_setup_parameters_for_level
+
+    config = AlternatingSmokeConfig(
+        geometry_update_active_setup_parameters=(
+            "theta_offset_rad",
+            "det_u_px",
+            "detector_roll_rad",
+        ),
+        geometry_update_theta_activate_at_level_factor=1,
+    )
+
+    assert _active_setup_parameters_for_level(config, 4) == (
+        "det_u_px",
+        "detector_roll_rad",
+    )
+    assert _active_setup_parameters_for_level(config, 1) == (
+        "theta_offset_rad",
+        "det_u_px",
+        "detector_roll_rad",
+    )
+
+
 def test_stopped_preview_policy_is_inactive_for_fixed_truth() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import (

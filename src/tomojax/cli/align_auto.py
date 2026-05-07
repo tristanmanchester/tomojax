@@ -163,6 +163,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
+        "--geometry-update-theta-activate-at-level-factor",
+        type=int,
+        help=(
+            "Keep theta_offset_rad frozen for coarser levels and activate it at "
+            "this continuation level factor or finer."
+        ),
+    )
+    _ = parser.add_argument(
         "--preview-volume-support",
         choices=_PREVIEW_VOLUME_SUPPORT_CHOICES,
         default="none",
@@ -270,6 +278,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             geometry_update_pose_frozen=bool(args.geometry_update_pose_frozen),
             geometry_update_pose_activate_at_level_factor=(
                 args.geometry_update_pose_activate_at_level_factor
+            ),
+            geometry_update_theta_activate_at_level_factor=(
+                args.geometry_update_theta_activate_at_level_factor
             ),
             geometry_update_active_setup_parameters=_parse_active_setup_parameters(
                 str(args.geometry_update_active_setup_parameters)
