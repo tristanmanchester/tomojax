@@ -24,6 +24,7 @@ class SyntheticDatasetSpec:
     theta_range_deg: tuple[float, float]
     true_setup: dict[str, float | str]
     true_pose: dict[str, float | str]
+    true_object_motion: dict[str, float | str]
     nuisance: dict[str, float | int | str | bool]
     pass_criteria: dict[str, float | int | str | bool]
     laminography_tilt_deg: float | None = None
@@ -70,6 +71,7 @@ def _parse_spec(name: str, item: dict[str, Any]) -> SyntheticDatasetSpec:
         theta_range_deg=theta_range,
         true_setup=_numberish_mapping(item["true_setup"]),
         true_pose=_numberish_mapping(item.get("true_pose", {})),
+        true_object_motion=_numberish_mapping(item.get("true_object_motion", {})),
         nuisance=_numberish_mapping(item.get("nuisance", {})),
         pass_criteria=_numberish_mapping(item.get("pass_criteria", {})),
         laminography_tilt_deg=(

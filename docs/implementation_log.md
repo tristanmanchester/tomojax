@@ -3,6 +3,41 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — Phase 8 Synthetic Unsupported-Term Classification Slice
+
+### Summary
+
+- Restored truthful unsupported-term classification in generated synthetic
+  sidecar manifests.
+- `SyntheticDatasetSpec` now parses `true_object_motion` from the benchmark
+  manifest so object-motion scenarios can be classified instead of silently
+  dropped.
+- Generated manifests now mark remaining unmodelled object motion, sparse pose
+  jumps, bad views, partial-FOV invalid edges, and currently unrealised nuisance
+  terms under `unsupported_dofs_not_evaluated`.
+- `supported_only` variants still report no unsupported terms after stripping
+  unsupported truth.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_synthetic_datasets.py::test_generate_object_motion_dataset_marks_unsupported_manifest_terms
+  tests/test_synthetic_datasets.py::test_generate_combined_nuisance_dataset_marks_unmodelled_terms
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  -q` passed: 3 tests in 2.80 seconds.
+- `uv run ruff check src/tomojax/datasets/_specs.py
+  src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py` passed.
+- `uv run basedpyright src/tomojax/datasets/_specs.py
+  src/tomojax/datasets/_writer.py tests/test_synthetic_datasets.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Object-frame thermal drift, sparse pose-jump handling, bad-view detection,
+  partial-FOV masks, and full nuisance simulation/fitting remain future
+  implementation slices before the combined benchmark can be fully evaluated.
+
 ## 2026-05-07 — just check Baseline Failure Note
 
 ### Summary

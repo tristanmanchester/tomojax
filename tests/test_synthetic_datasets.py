@@ -189,6 +189,48 @@ def test_generate_supported_only_setup_global_dataset_removes_unsupported_truth(
     assert true_state.setup.axis_rot_y_rad.value == 0.0
 
 
+def test_generate_object_motion_dataset_marks_unsupported_manifest_terms(
+    tmp_path: Path,
+) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_thermal_object_drift",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=8,
+    )
+
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    assert manifest["unsupported_dof_status"] == "unsupported_dof_not_evaluated"
+    unsupported = cast("list[str]", manifest["unsupported_dofs_not_evaluated"])
+    assert "object_motion" in unsupported
+
+
+def test_generate_combined_nuisance_dataset_marks_unmodelled_terms(
+    tmp_path: Path,
+) -> None:
+    paths = generate_synthetic_dataset(
+        "synth128_combined_nuisance_jumps",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=8,
+    )
+
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    assert manifest["unsupported_dof_status"] == "unsupported_dof_not_evaluated"
+    unsupported = set(cast("list[str]", manifest["unsupported_dofs_not_evaluated"]))
+    assert {
+        "pose.dx_px.sparse_jumps",
+        "pose.dz_px.sparse_jumps",
+        "nuisance.bad_views",
+        "nuisance.partial_fov_invalid_edge_fraction",
+        "nuisance.stripe_bias_columns",
+    } <= unsupported
+
+
 def test_load_synthetic_dataset_sidecars_reads_manifest_index(tmp_path: Path) -> None:
     paths = generate_synthetic_dataset(
         "synth128_lamino_axis_roll_pose",

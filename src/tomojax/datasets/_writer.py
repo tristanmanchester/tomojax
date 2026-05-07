@@ -103,7 +103,7 @@ def generate_synthetic_dataset(
         pixel_scale=pixel_scale,
         setup_override=setup_override,
     )
-    unsupported_dofs = _unsupported_dofs_not_evaluated(true_state, supported_only=supported_only)
+    unsupported_dofs = _unsupported_dofs_not_evaluated(spec, supported_only=supported_only)
     projected_true_state = _core_projectable_state(true_state)
     projections = _project_v2_smoke(volume, projected_true_state)
     core_geometry = core_projection_geometry_from_state(volume.shape, projected_true_state)
@@ -175,14 +175,56 @@ def _core_projectable_state(state: GeometryState) -> GeometryState:
 
 
 def _unsupported_dofs_not_evaluated(
-    state: GeometryState,
+    spec: SyntheticDatasetSpec,
     *,
     supported_only: bool,
 ) -> list[str]:
-    _ = state
     if supported_only:
         return []
     unsupported: list[str] = []
+    if spec.true_object_motion:
+        unsupported.append("object_motion")
+    unsupported.extend(_unsupported_pose_terms(spec.true_pose))
+    unsupported.extend(_unsupported_nuisance_terms(spec.nuisance))
+    return unsupported
+
+
+def _unsupported_pose_terms(pose: dict[str, float | str]) -> list[str]:
+    unsupported: list[str] = []
+    for name, value in pose.items():
+        text = str(value)
+        if "sparse_jumps" in text:
+            unsupported.append(f"pose.{name}.sparse_jumps")
+    return unsupported
+
+
+def _unsupported_nuisance_terms(
+    nuisance: dict[str, float | int | str | bool],
+) -> list[str]:
+    unsupported: list[str] = []
+    supported_keys = {
+        "background_drift",
+        "background_offset",
+        "gain_drift",
+        "gain_drift_fraction",
+        "noise",
+    }
+    for key, value in nuisance.items():
+        if key in supported_keys:
+            continue
+        if key in {
+            "bad_views",
+            "dead_pixels_fraction",
+            "gaussian_noise_fraction",
+            "hot_pixels_fraction",
+            "partial_fov",
+            "partial_fov_invalid_edge_fraction",
+            "stripe_bias_columns",
+        }:
+            unsupported.append(f"nuisance.{key}")
+            continue
+        if isinstance(value, str) and value not in {"standard", "hard"}:
+            unsupported.append(f"nuisance.{key}")
     return unsupported
 
 
