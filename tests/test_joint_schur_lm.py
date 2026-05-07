@@ -482,6 +482,40 @@ def test_joint_schur_lm_can_run_detector_roll_setup_update() -> None:
     np.testing.assert_allclose(result.geometry.setup.detector_roll_rad.value, 0.04, atol=0.02)
 
 
+def test_joint_schur_lm_can_run_axis_tilt_setup_update() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(3)
+    truth_setup = nominal.setup.replace_parameter(
+        "axis_rot_x_rad",
+        nominal.setup.axis_rot_x_rad.with_value(-0.20),
+    )
+    truth_setup = truth_setup.replace_parameter(
+        "axis_rot_y_rad",
+        nominal.setup.axis_rot_y_rad.with_value(-0.10),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=8,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1.0e-2,
+            active_setup_parameters=("axis_rot_x_rad", "axis_rot_y_rad"),
+            active_pose_dofs=(),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_setup_parameters == ("axis_rot_x_rad", "axis_rot_y_rad")
+    np.testing.assert_allclose(result.geometry.setup.axis_rot_x_rad.value, -0.20, atol=0.025)
+    np.testing.assert_allclose(result.geometry.setup.axis_rot_y_rad.value, -0.10, atol=0.025)
+
+
 def test_joint_schur_lm_can_freeze_phi_while_updating_detector_pose() -> None:
     volume = _theta_asymmetric_volume()
     nominal = GeometryState.zeros(2)

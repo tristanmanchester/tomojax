@@ -231,7 +231,7 @@ def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object]
     return payload
 
 
-def _geometry_recovery_payload(
+def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit for auditability.
     true_geometry: GeometryState,
     initial_geometry: GeometryState,
     final_geometry: GeometryState,
@@ -258,6 +258,14 @@ def _geometry_recovery_payload(
     true_roll = true_geometry.setup.detector_roll_rad.value
     initial_roll_error = abs(float(initial_geometry.setup.detector_roll_rad.value - true_roll))
     roll_error = abs(float(final_geometry.setup.detector_roll_rad.value - true_roll))
+    true_axis_x = true_geometry.setup.axis_rot_x_rad.value
+    true_axis_y = true_geometry.setup.axis_rot_y_rad.value
+    initial_axis_x_error = abs(float(initial_geometry.setup.axis_rot_x_rad.value - true_axis_x))
+    initial_axis_y_error = abs(float(initial_geometry.setup.axis_rot_y_rad.value - true_axis_y))
+    axis_x_error = abs(float(final_geometry.setup.axis_rot_x_rad.value - true_axis_x))
+    axis_y_error = abs(float(final_geometry.setup.axis_rot_y_rad.value - true_axis_y))
+    initial_axis_error = float(np.hypot(initial_axis_x_error, initial_axis_y_error))
+    axis_error = float(np.hypot(axis_x_error, axis_y_error))
     mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px)))
     mean_phi_abs = abs(float(np.mean(final_geometry.pose.phi_residual_rad)))
     mean_dz_abs = abs(float(np.mean(final_geometry.pose.dz_px)))
@@ -266,12 +274,14 @@ def _geometry_recovery_payload(
     det_u_limit = float(tolerances["det_u_realized_rmse_px_lt"])
     det_v_limit = float(tolerances["det_v_realized_rmse_px_lt"])
     roll_limit = float(tolerances["detector_roll_error_rad_lt"])
+    axis_limit = float(tolerances["axis_error_rad_lt"])
     gauge_limit = float(tolerances["mean_gauge_abs_lt"])
     passed = (
         theta_rmse <= theta_limit
         and det_u_rmse <= det_u_limit
         and det_v_rmse <= det_v_limit
         and roll_error <= roll_limit
+        and axis_error <= axis_limit
         and mean_dx_abs <= gauge_limit
         and mean_phi_abs <= gauge_limit
         and (not det_v_gauge_active or mean_dz_abs <= gauge_limit)
@@ -280,6 +290,7 @@ def _geometry_recovery_payload(
     det_u_improved = bool(det_u_rmse < initial_det_u_rmse)
     det_v_improved = bool(det_v_rmse < initial_det_v_rmse)
     roll_improved = bool(roll_error < initial_roll_error)
+    axis_improved = bool(axis_error < initial_axis_error)
     theta_supported = _supported_dof_acceptable_or_improved(
         initial_error=initial_theta_rmse,
         final_error=theta_rmse,
@@ -299,6 +310,11 @@ def _geometry_recovery_payload(
         initial_error=initial_roll_error,
         final_error=roll_error,
         limit=roll_limit,
+    )
+    axis_supported = _supported_dof_acceptable_or_improved(
+        initial_error=initial_axis_error,
+        final_error=axis_error,
+        limit=axis_limit,
     )
     return {
         "initial_theta_realized_rmse_rad": initial_theta_rmse,
@@ -321,6 +337,13 @@ def _geometry_recovery_payload(
         "detector_roll_error_rad_improved": roll_improved,
         "detector_roll_error_rad_passed": roll_error <= roll_limit,
         "detector_roll_error_rad_limit": roll_limit,
+        "initial_axis_error_rad": initial_axis_error,
+        "axis_error_rad": axis_error,
+        "axis_error_rad_improved": axis_improved,
+        "axis_error_rad_passed": axis_error <= axis_limit,
+        "axis_error_rad_limit": axis_limit,
+        "axis_rot_x_error_rad": axis_x_error,
+        "axis_rot_y_error_rad": axis_y_error,
         "mean_dx_abs_px": mean_dx_abs,
         "mean_dx_abs_px_passed": mean_dx_abs <= gauge_limit,
         "mean_dx_abs_px_limit": gauge_limit,
@@ -331,7 +354,11 @@ def _geometry_recovery_payload(
         "mean_dz_abs_px_passed": (not det_v_gauge_active or mean_dz_abs <= gauge_limit),
         "mean_dz_abs_px_limit": gauge_limit,
         "supported_dofs_improved": (
-            theta_supported and det_u_supported and det_v_supported and roll_supported
+            theta_supported
+            and det_u_supported
+            and det_v_supported
+            and roll_supported
+            and axis_supported
         ),
         "passed": passed,
     }
@@ -573,6 +600,7 @@ def _recovery_tolerances_payload() -> dict[str, object]:
             "det_u_realized_rmse_px_lt": 2.0e-1,
             "det_v_realized_rmse_px_lt": 2.0e-1,
             "detector_roll_error_rad_lt": float(np.deg2rad(0.05)),
+            "axis_error_rad_lt": float(np.deg2rad(0.1)),
             "mean_gauge_abs_lt": 1.0e-10,
         },
         "volume": {

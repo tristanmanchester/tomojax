@@ -162,8 +162,6 @@ def _project_v2_smoke(
 
 def _core_projectable_state(state: GeometryState) -> GeometryState:
     setup = state.setup
-    setup = setup.replace_parameter("axis_rot_x_rad", setup.axis_rot_x_rad.with_value(0.0))
-    setup = setup.replace_parameter("axis_rot_y_rad", setup.axis_rot_y_rad.with_value(0.0))
     pose = PoseParameters(
         alpha_rad=np.zeros_like(state.pose.alpha_rad),
         beta_rad=np.zeros_like(state.pose.beta_rad),
@@ -183,10 +181,6 @@ def _unsupported_dofs_not_evaluated(
     if supported_only:
         return []
     unsupported: list[str] = []
-    if abs(float(state.setup.axis_rot_x_rad.value)) > 0.0:
-        unsupported.append("axis_rot_x_rad")
-    if abs(float(state.setup.axis_rot_y_rad.value)) > 0.0:
-        unsupported.append("axis_rot_y_rad")
     if np.any(state.pose.alpha_rad != 0.0):
         unsupported.append("alpha_rad")
     if np.any(state.pose.beta_rad != 0.0):

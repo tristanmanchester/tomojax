@@ -65,7 +65,11 @@ def test_setup_only_lm_keeps_inactive_detector_v_frozen() -> None:
     )
 
     assert result.final_loss < result.initial_loss
-    assert result.active_parameters == ("theta_offset_rad", "det_u_px", "detector_roll_rad")
+    assert result.active_parameters == (
+        "theta_offset_rad",
+        "det_u_px",
+        "detector_roll_rad",
+    )
     assert result.geometry.setup.det_v_px.active is False
     assert result.geometry.setup.det_v_px.value == 0.0
     assert "det_v_px" in result.frozen_parameters
@@ -98,6 +102,39 @@ def test_setup_only_lm_recovers_detector_roll() -> None:
     assert "detector_roll_rad" in result.active_parameters
     assert "detector_roll_rad" not in result.frozen_parameters
     np.testing.assert_allclose(result.geometry.setup.detector_roll_rad.value, 0.05, atol=0.02)
+
+
+def test_setup_only_lm_recovers_axis_tilt() -> None:
+    volume = _roll_asymmetric_volume()
+    nominal = GeometryState.zeros(3)
+    truth_setup = nominal.setup.replace_parameter(
+        "axis_rot_x_rad",
+        nominal.setup.axis_rot_x_rad.with_value(-0.20),
+    )
+    truth_setup = truth_setup.replace_parameter(
+        "axis_rot_y_rad",
+        nominal.setup.axis_rot_y_rad.with_value(-0.10),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_setup_only_lm(
+        volume,
+        observed,
+        nominal,
+        config=SetupOnlyLMConfig(
+            max_iterations=10,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1.0e-2,
+            active_parameters=("axis_rot_x_rad", "axis_rot_y_rad"),
+        ),
+    )
+
+    assert result.final_loss < result.initial_loss
+    assert result.active_parameters == ("axis_rot_x_rad", "axis_rot_y_rad")
+    np.testing.assert_allclose(result.geometry.setup.axis_rot_x_rad.value, -0.20, atol=0.025)
+    np.testing.assert_allclose(result.geometry.setup.axis_rot_y_rad.value, -0.10, atol=0.025)
 
 
 def test_setup_only_lm_recovers_theta_offset() -> None:

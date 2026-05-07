@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import jax
 import jax.numpy as jnp
 
+from tomojax.calibration.axis_geometry import axis_pose_stack, axis_unit_from_rotations
 from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
@@ -38,6 +39,8 @@ class CoreProjectionGeometry:
     checkpoint_projector: bool = True
     projector_unroll: int = 1
     detector_roll_rad: object = 0.0
+    axis_rot_x_rad: object = 0.0
+    axis_rot_y_rad: object = 0.0
 
     def provenance(self) -> dict[str, object]:
         """Return serialisable operator metadata for run artifacts."""
@@ -51,6 +54,8 @@ class CoreProjectionGeometry:
             "checkpoint_projector": self.checkpoint_projector,
             "projector_unroll": self.projector_unroll,
             "detector_roll_rad": _serialisable_scalar(self.detector_roll_rad),
+            "axis_rot_x_rad": _serialisable_scalar(self.axis_rot_x_rad),
+            "axis_rot_y_rad": _serialisable_scalar(self.axis_rot_y_rad),
         }
 
 
@@ -69,12 +74,16 @@ def project_parallel_reference(volume: jax.Array, geometry: GeometryState) -> ja
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
+    axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
+    axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
     return project_parallel_reference_arrays(
         vol,
         theta_rad=theta,
         dx_px=dx,
         dz_px=dz,
         detector_roll_rad=detector_roll,
+        axis_rot_x_rad=axis_rot_x,
+        axis_rot_y_rad=axis_rot_y,
     )
 
 
@@ -85,6 +94,8 @@ def project_parallel_reference_arrays(
     dx_px: jax.Array,
     dz_px: jax.Array,
     detector_roll_rad: jax.Array | float = 0.0,
+    axis_rot_x_rad: jax.Array | float = 0.0,
+    axis_rot_y_rad: jax.Array | float = 0.0,
 ) -> jax.Array:
     """Project a volume from supported v2 pose arrays using core trilinear rays."""
     vol = jnp.asarray(volume, dtype=jnp.float32)
@@ -101,6 +112,8 @@ def project_parallel_reference_arrays(
         dx_px=dx,
         dz_px=dz,
         detector_roll_rad=detector_roll_rad,
+        axis_rot_x_rad=axis_rot_x_rad,
+        axis_rot_y_rad=axis_rot_y_rad,
     )
 
     def project_one(t_view: jax.Array) -> jax.Array:
@@ -138,12 +151,16 @@ def core_projection_geometry_from_state(
     dz_setup = geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0
     dz = jnp.asarray(dz_setup + geometry.pose.dz_px, dtype=jnp.float32)
     detector_roll = jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32)
+    axis_rot_x = jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32)
+    axis_rot_y = jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32)
     return core_projection_geometry_from_arrays(
         volume_shape,
         theta_rad=theta,
         dx_px=dx,
         dz_px=dz,
         detector_roll_rad=detector_roll,
+        axis_rot_x_rad=axis_rot_x,
+        axis_rot_y_rad=axis_rot_y,
         detector_shape=detector_shape,
         gather_dtype=gather_dtype,
         checkpoint_projector=checkpoint_projector,
@@ -160,6 +177,8 @@ def core_projection_geometry_from_arrays(
     dx_px: jax.Array,
     dz_px: jax.Array,
     detector_roll_rad: jax.Array | float = 0.0,
+    axis_rot_x_rad: jax.Array | float = 0.0,
+    axis_rot_y_rad: jax.Array | float = 0.0,
     detector_shape: tuple[int, int] | None = None,
     gather_dtype: str = "fp32",
     checkpoint_projector: bool = True,
@@ -181,10 +200,18 @@ def core_projection_geometry_from_arrays(
     detector = Detector(nu=int(cols), nv=int(rows), du=1.0, dv=1.0)
     roll = jnp.asarray(detector_roll_rad, dtype=jnp.float32)
     det_grid = _detector_grid_for_roll(detector, detector_roll_rad=roll)
+    axis_x = jnp.asarray(axis_rot_x_rad, dtype=jnp.float32)
+    axis_y = jnp.asarray(axis_rot_y_rad, dtype=jnp.float32)
     return CoreProjectionGeometry(
         grid=grid,
         detector=detector,
-        t_all=_stack_core_poses(theta, dx, dz),
+        t_all=_stack_core_poses(
+            theta,
+            dx,
+            dz,
+            axis_rot_x_rad=axis_x,
+            axis_rot_y_rad=axis_y,
+        ),
         det_grid=det_grid,
         gather_dtype=gather_dtype,
         checkpoint_projector=bool(checkpoint_projector),
@@ -192,22 +219,28 @@ def core_projection_geometry_from_arrays(
         step_size=step_size,
         n_steps=n_steps,
         detector_roll_rad=roll,
+        axis_rot_x_rad=axis_x,
+        axis_rot_y_rad=axis_y,
     )
 
 
-def _stack_core_poses(theta_rad: jax.Array, dx_px: jax.Array, dz_px: jax.Array) -> jax.Array:
-    cos_t = jnp.cos(theta_rad)
-    sin_t = jnp.sin(theta_rad)
-    zeros = jnp.zeros_like(theta_rad)
-    ones = jnp.ones_like(theta_rad)
-    row0 = jnp.stack((cos_t, -sin_t, zeros, -dx_px), axis=1)
-    row1 = jnp.stack((sin_t, cos_t, zeros, zeros), axis=1)
-    row2 = jnp.stack((zeros, zeros, ones, -dz_px), axis=1)
-    row3 = jnp.broadcast_to(
-        jnp.asarray((0.0, 0.0, 0.0, 1.0), dtype=jnp.float32),
-        row0.shape,
+def _stack_core_poses(
+    theta_rad: jax.Array,
+    dx_px: jax.Array,
+    dz_px: jax.Array,
+    *,
+    axis_rot_x_rad: jax.Array,
+    axis_rot_y_rad: jax.Array,
+) -> jax.Array:
+    axis = axis_unit_from_rotations(
+        (0.0, 0.0, 1.0),
+        axis_rot_x_deg=axis_rot_x_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
+        axis_rot_y_deg=axis_rot_y_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32),
     )
-    return jnp.stack((row0, row1, row2, row3), axis=1).astype(jnp.float32)
+    t_all = axis_pose_stack(theta_rad * jnp.asarray(180.0 / math.pi, dtype=jnp.float32), axis)
+    t_all = t_all.at[:, 0, 3].set(-dx_px)
+    t_all = t_all.at[:, 2, 3].set(-dz_px)
+    return t_all.astype(jnp.float32)
 
 
 def _volume_shape(shape: tuple[int, ...]) -> tuple[int, int, int]:
@@ -236,13 +269,6 @@ def _serialisable_scalar(value: object) -> object:
 
 
 def _raise_for_unsupported_dofs(geometry: GeometryState) -> None:
-    unsupported = {
-        "axis_rot_x_rad": geometry.setup.axis_rot_x_rad,
-        "axis_rot_y_rad": geometry.setup.axis_rot_y_rad,
-    }
-    for name, parameter in unsupported.items():
-        if parameter.active and abs(float(parameter.value)) > 0.0:
-            raise ValueError(f"{name} is not supported by the v2 core_trilinear_ray adapter yet")
     if jnp.any(jnp.asarray(geometry.pose.alpha_rad) != 0.0) or jnp.any(
         jnp.asarray(geometry.pose.beta_rad) != 0.0
     ):

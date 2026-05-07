@@ -128,6 +128,30 @@ def test_project_parallel_reference_applies_detector_roll() -> None:
     )
 
 
+def test_project_parallel_reference_applies_axis_tilt() -> None:
+    volume = jnp.zeros((7, 7, 7), dtype=jnp.float32)
+    volume = volume.at[2, :, 4].set(1.0)
+    volume = volume.at[5, :, 1].set(0.5)
+    geometry = GeometryState.zeros(2)
+    tilted_setup = geometry.setup.replace_parameter(
+        "axis_rot_x_rad",
+        geometry.setup.axis_rot_x_rad.with_value(0.18),
+    )
+    tilted_setup = tilted_setup.replace_parameter(
+        "axis_rot_y_rad",
+        geometry.setup.axis_rot_y_rad.with_value(-0.12),
+    )
+    tilted_geometry = GeometryState(setup=tilted_setup, pose=geometry.pose)
+
+    base = project_parallel_reference(volume, geometry)
+    tilted = project_parallel_reference(volume, tilted_geometry)
+
+    assert float(jnp.linalg.norm(tilted - base)) > 0.0
+    assert tilted.shape == base.shape
+    core = core_projection_geometry_from_state((7, 7, 7), tilted_geometry)
+    assert float(jnp.linalg.norm(core.t_all[:, :3, :3] - jnp.eye(3))) > 0.0
+
+
 def test_project_parallel_reference_changes_smoothly_with_theta() -> None:
     volume = jnp.zeros((5, 5, 5), dtype=jnp.float32)
     volume = volume.at[1, 2, 1].set(1.0)

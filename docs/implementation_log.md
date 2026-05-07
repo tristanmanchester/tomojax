@@ -3,6 +3,122 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-07 — GPU Memory Diagnostic Pause Addendum
+
+### Summary
+
+- Pausing again at a clean diagnostic boundary after the core-projector
+  rebaseline, detector-roll support, and axis-tilt support slices.
+- No new Phase 8 benchmark-ingestion, report-shape, observability, or refactor
+  slice is started here.
+- The 32^3/4-view smoke benchmark remains CI and wiring coverage only. It is
+  not evidence for realistic alignment quality.
+
+### Current Best Diagnosis
+
+- The five-case benchmark failures are still expected until unsupported
+  geometry terms are handled by scoped implementation slices or reported as
+  `unsupported_dof_not_evaluated`. They should not be interpreted as a Schur
+  failure by themselves.
+- The fixed-synthetic-truth versus stopped-reconstruction evidence still points
+  to reconstruction/volume gauge handling as the production-like blocker once
+  the setup-global oracle is reduced to supported geometry and pose freezing.
+  Fixed-truth full-oracle Schur recovers the supported setup DOFs on the
+  realistic 64^3/64-view GPU case; stopped reconstruction can carry enough
+  signal for detector-centre correction, but trust scheduling and the preview
+  reconstruction hand-off still limit broader recovery.
+- The GPU memory regression isolated so far was the finite-difference Schur
+  Jacobian/reconstruction reference path materialising too much all-view
+  projector state, not a reason to shrink the benchmark. The current 64^3/
+  64-view diagnostics complete on JAX GPU with `selected_jax_device="cuda:0"`
+  after sequential finite-difference accumulation and the core-adjoint
+  reconstruction-gradient rebaseline.
+
+### Commands Run
+
+- Focused component probes over 1/4/16/64 views for projector, backprojector,
+  one FISTA iteration, fixed-truth Schur, stopped-volume Schur, and
+  fixed-truth Schur with nuisance.
+- Realistic 64^3/64-view `synth128_setup_global_tomo` runs through existing
+  sidecar ingestion for `fixed_synthetic_truth` and `stopped_reconstruction`
+  modes.
+- Supported-only oracle and stopped det_u-only refreshes through
+  `tomojax-align-auto-smoke` on JAX GPU.
+- Focused validation for the current committed slices:
+  `uv run ruff check ...`, `uv run basedpyright ...`, focused CPU `pytest`,
+  and `just imports`.
+
+### Artifacts Produced
+
+- `.artifacts/phase8_setup_global_gpu_ladder/`
+- `.artifacts/phase8_supported_only_oracle/`
+- `.artifacts/phase8_core_projector/`
+- `docs/benchmark_runs/2026-05-06-phase8-multi-case-32.md`
+- `docs/benchmark_runs/2026-05-06-phase8-setup-global-gpu-ladder.md`
+- `docs/benchmark_runs/2026-05-07-phase8-supported-only-oracle.md`
+
+### Remaining Open Questions
+
+- Whether broader supported parameter blocks still need chunked Schur
+  accumulation beyond sequential finite-difference columns.
+- Whether preview reconstruction needs stronger gauge constraints,
+  non-periodic detector boundary semantics, or a different initialization
+  before stopped-reconstruction alignment can recover setup and pose together.
+- How to classify each unsupported five-case scenario criterion after the
+  detector roll and axis-tilt support slices without relaxing tolerances.
+
+## 2026-05-07 — Phase 2/5 Axis Tilt Core Geometry Slice
+
+### Summary
+
+- Promoted `axis_rot_x_rad` and `axis_rot_y_rad` from unsupported to supported
+  `core_trilinear_ray` v2 setup DOFs for parallel tomography.
+- The v2-to-core adapter now derives a lab-frame rotation-axis unit through
+  `tomojax.calibration.axis_geometry.axis_unit_from_rotations` and builds
+  per-view core `T_all` with `axis_pose_stack`.
+- Setup-only LM and joint Schur LM can pack, update, freeze, trace, and report
+  axis x/y rotations as explicit active setup parameters. They remain
+  opt-in active blocks until observability policy turns them on automatically.
+- Synthetic sidecar generation no longer projects axis rotations away and no
+  longer classifies them as `unsupported_dof_not_evaluated`; alpha/beta remain
+  explicitly unsupported in this slice.
+- Verification and benchmark-manifest evaluation now emit `axis_error_rad` and
+  evaluate `axis_error_deg_lt` as a real metric.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_forward_reference.py
+  tests/test_setup_lm.py
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_recovers_realized_supported_geometry
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_freeze_pose_dofs_for_setup_oracle
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_det_u_only_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_detector_roll_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_axis_tilt_setup_update
+  tests/test_joint_schur_lm.py::test_joint_schur_writes_normal_eq_summary_artifact
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
+  tests/test_synthetic_datasets.py::test_generate_synthetic_dataset_writes_deterministic_smoke_artifacts
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  -q` passed: 27 tests in 261.43 seconds.
+- `uv run ruff check src/tomojax/forward/_projector.py
+  src/tomojax/align/_setup_lm.py src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/datasets/_writer.py
+  tests/test_forward_reference.py tests/test_setup_lm.py
+  tests/test_joint_schur_lm.py tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright` on the same focused source/test set passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
+### Remaining Work
+
+- Laminography, alpha/beta pose, theta-scale observability, object drift,
+  automatic weak-axis activation policy, and full five-case benchmark recovery
+  remain future vertical slices.
+- The named 4-view CLI synthetic smoke now evaluates both `axis_error_deg_lt`
+  and `roll_error_deg_lt`; failures in that wiring diagnostic are real
+  criteria, not unsupported placeholders.
+
 ## 2026-05-07 — Phase 2/5 Detector Roll Core Geometry Slice
 
 ### Summary

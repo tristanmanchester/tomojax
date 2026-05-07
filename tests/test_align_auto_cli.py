@@ -275,8 +275,11 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
         float(cast("float", evaluation["theta_offset_error_deg_lt"]["threshold"])),
         math.radians(0.1),
     )
-    assert evaluation["axis_error_deg_lt"]["status"] == "not_evaluated"
-    assert evaluation["axis_error_deg_lt"]["reason"] == "unsupported_dof_not_evaluated"
+    assert evaluation["axis_error_deg_lt"]["status"] == "failed"
+    np.testing.assert_allclose(
+        float(cast("float", evaluation["axis_error_deg_lt"]["threshold"])),
+        math.radians(0.1),
+    )
     assert evaluation["roll_error_deg_lt"]["status"] == "failed"
     np.testing.assert_allclose(
         float(cast("float", evaluation["roll_error_deg_lt"]["threshold"])),
@@ -287,8 +290,8 @@ def test_align_auto_smoke_command_generates_named_synthetic_dataset(
         benchmark_result["benchmark_manifest_evaluation_summary"],
     )
     assert evaluation_summary == {
-        "failed": 3,
-        "not_evaluated": 1,
+        "failed": 4,
+        "not_evaluated": 0,
         "passed": 0,
         "status": "failed",
         "total": 4,

@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 _POSE_DIM = 3
 PoseSchurDof = Literal["phi_residual_rad", "dx_px", "dz_px"]
 SetupSchurParameter = Literal[
+    "axis_rot_x_rad",
+    "axis_rot_y_rad",
     "det_u_px",
     "det_v_px",
     "detector_roll_rad",
@@ -40,6 +42,8 @@ _SETUP_PARAMETER_ORDER: tuple[SetupSchurParameter, ...] = (
     "det_u_px",
     "det_v_px",
     "detector_roll_rad",
+    "axis_rot_x_rad",
+    "axis_rot_y_rad",
 )
 
 
@@ -785,8 +789,17 @@ def _active_setup_parameters(
         _validate_active_setup_parameters(config.active_setup_parameters, geometry=geometry)
         return config.active_setup_parameters
     if geometry.setup.det_v_px.active:
-        return ("theta_offset_rad", "det_u_px", "det_v_px", "detector_roll_rad")
-    return ("theta_offset_rad", "det_u_px", "detector_roll_rad")
+        return (
+            "theta_offset_rad",
+            "det_u_px",
+            "det_v_px",
+            "detector_roll_rad",
+        )
+    return (
+        "theta_offset_rad",
+        "det_u_px",
+        "detector_roll_rad",
+    )
 
 
 def _frozen_parameters(
@@ -796,8 +809,6 @@ def _frozen_parameters(
     frozen = [
         "alpha_rad",
         "beta_rad",
-        "axis_rot_x_rad",
-        "axis_rot_y_rad",
         "theta_scale",
     ]
     if not geometry.setup.det_v_px.active:
@@ -874,6 +885,8 @@ def _setup_parameter_values(geometry: GeometryState) -> dict[SetupSchurParameter
         "det_u_px": geometry.setup.det_u_px.value,
         "det_v_px": geometry.setup.det_v_px.value if geometry.setup.det_v_px.active else 0.0,
         "detector_roll_rad": geometry.setup.detector_roll_rad.value,
+        "axis_rot_x_rad": geometry.setup.axis_rot_x_rad.value,
+        "axis_rot_y_rad": geometry.setup.axis_rot_y_rad.value,
     }
 
 
@@ -917,6 +930,14 @@ def _geometry_with_params(
         "detector_roll_rad",
         geometry.setup.detector_roll_rad.with_value(setup_values["detector_roll_rad"]),
     )
+    setup = setup.replace_parameter(
+        "axis_rot_x_rad",
+        geometry.setup.axis_rot_x_rad.with_value(setup_values["axis_rot_x_rad"]),
+    )
+    setup = setup.replace_parameter(
+        "axis_rot_y_rad",
+        geometry.setup.axis_rot_y_rad.with_value(setup_values["axis_rot_y_rad"]),
+    )
     active_pose_dofs = config.active_pose_dofs if config is not None else _POSE_DOF_ORDER
     if not active_pose_dofs:
         return GeometryState(setup=setup, pose=geometry.pose)
@@ -939,7 +960,17 @@ def _split_joint(
     geometry: GeometryState,
     params: jax.Array,
     config: JointSchurLMConfig | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+) -> tuple[
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+]:
     active_setup = _active_setup_parameters(geometry, config)
     n_setup = len(active_setup)
     setup_values = {
@@ -951,6 +982,8 @@ def _split_joint(
             else jnp.asarray(0.0, dtype=jnp.float32)
         ),
         "detector_roll_rad": jnp.asarray(geometry.setup.detector_roll_rad.value, dtype=jnp.float32),
+        "axis_rot_x_rad": jnp.asarray(geometry.setup.axis_rot_x_rad.value, dtype=jnp.float32),
+        "axis_rot_y_rad": jnp.asarray(geometry.setup.axis_rot_y_rad.value, dtype=jnp.float32),
     }
     for index, parameter in enumerate(active_setup):
         setup_values[parameter] = params[index]
@@ -969,6 +1002,8 @@ def _split_joint(
         setup_values["det_u_px"],
         setup_values["det_v_px"],
         setup_values["detector_roll_rad"],
+        setup_values["axis_rot_x_rad"],
+        setup_values["axis_rot_y_rad"],
         pose_values["phi_residual_rad"],
         pose_values["dx_px"],
         pose_values["dz_px"],
@@ -1067,7 +1102,17 @@ def _predicted_for_params(
     *,
     config: JointSchurLMConfig | None = None,
 ) -> jax.Array:
-    theta_offset, det_u, det_v, detector_roll, phi_pose, dx_pose, dz_pose = _split_joint(
+    (
+        theta_offset,
+        det_u,
+        det_v,
+        detector_roll,
+        axis_x,
+        axis_y,
+        phi_pose,
+        dx_pose,
+        dz_pose,
+    ) = _split_joint(
         geometry,
         params,
         config,
@@ -1083,6 +1128,8 @@ def _predicted_for_params(
         dx_px=det_u + dx_pose,
         dz_px=det_v + dz_pose,
         detector_roll_rad=detector_roll,
+        axis_rot_x_rad=axis_x,
+        axis_rot_y_rad=axis_y,
     )
 
 
