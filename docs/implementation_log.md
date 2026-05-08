@@ -324,6 +324,71 @@ Interpretation:
   is still `failed` under the stretch `det_u_error_px_lt=0.2` verifier even
   though it satisfies the goal file's initial `<1 px` production threshold.
 
+## 2026-05-08 — Production Stopped det_u 128^3 Scale Gate
+
+### Summary
+
+- Ran the current minimal geometry-first stopped det_u path at `128^3` on the
+  supported-only `synth128_setup_global_tomo` sidecar.
+- This used the same production constraints as the `64^3` gate: stopped
+  reconstruction, pose frozen, theta frozen as a volume-orientation gauge,
+  det_u active only, det_v/roll/axis frozen, no nuisance, no weak-view
+  exclusion, and candidate-refresh bypassed for the production det_u gate.
+
+Command:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_production_stopped_alignment/runs/128_stopped_detu_geometry_first_bootstrap_no_candidate_refresh_cuda \
+  --profile balanced --size 128 --views 256 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_supported128_scale_gate/datasets/synth128_setup_global_tomo_128_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_production_stopped_alignment/runs/128_stopped_detu_geometry_first_bootstrap_no_candidate_refresh_cuda/`
+
+Result:
+
+| Metric | Value |
+|---|---:|
+| Benchmark status | failed |
+| Selected JAX device | `cuda:0` |
+| JAX backend | `gpu` |
+| Initial det_u RMSE | 14.5 px |
+| Final det_u RMSE | 2.25510 px |
+| Schur accepted | true |
+| Final residual | 2.00435 |
+| Volume NMSE | 0.341795 |
+| final volume / true geometry loss | 2.02421 |
+| final volume / final geometry loss | 2.00435 |
+| true volume / final geometry loss | 0.336540 |
+| true volume / true geometry loss | 0.0 |
+| `/usr/bin/time` wall time | 2:06.84 |
+| Host max RSS | 2609936 KB |
+
+Interpretation:
+
+- The geometry-first path scales in the weak sense that det_u improves
+  materially from `14.5 px` to `2.25510 px`, but it does not scale to the
+  `64^3` quality and remains far above both the `<1 px` initial target and the
+  `<0.2 px` stretch target.
+- The run remains classified as `reconstruction_absorbed_geometry`.
+- This supports focusing next on either improving the `64^3` refinement below
+  `<0.2 px` or implementing the real det_u-only multiresolution pyramid. The
+  current single-scale bootstrap is not enough at `128^3`.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary

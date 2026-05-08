@@ -12,24 +12,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Goal file: `docs/agent_goal_production_stopped_alignment.md`
-- Phase: Phase 7/8 production stopped-alignment consolidation
-- Goal: consolidate around one honest supported-only stopped det_u production
-  gate, make it pass or produce decisive evidence for why the current
-  algorithm cannot make it pass.
+- Phase: Phase 7/8 production stopped det_u refinement
+- Goal: prove or falsify the geometry-first stopped det_u production path,
+  first by scaling the current minimal path to `128^3`, then by improving the
+  `64^3` path toward the `<0.2 px` stretch target or implementing real
+  multiresolution if the plateau remains.
 
 ### Scope
 
 - In scope:
-  - Add a consolidation note that labels fixed-truth gates as oracle-only and
-    stopped supported-only det_u recovery as the production blocker.
-  - Run the canonical `64^3`/64-view supported-only stopped det_u absorption
-    diagnostic over preview FISTA iterations `0, 1, 2, 4, 8, 16`.
-  - Add focused finite-difference coverage for the reference FISTA gradient
-    against the exact filtered/masked loss before adding more orchestration.
-  - Implement or falsify a minimal geometry-first det_u bootstrap if the
-    absorption curve says it is still plausible.
-  - Consider real multiresolution only if the absorption curve indicates a
-    capture-range or scale issue.
+  - Run the current geometry-first/no-candidate-refresh stopped det_u path at
+    `128^3` and record whether it scales.
+  - Improve the same minimal `64^3` supported-only stopped det_u gate toward
+    the `<0.2 px` stretch target without adding nuisance, weak-view exclusions,
+    candidate-refresh variants, or new geometry DOFs.
+  - If the `64^3` path stalls above `<0.2 px`, implement or prototype a real
+    det_u-only multiresolution pyramid with downsampled projections/volumes and
+    scaled detector shifts.
+  - End with a go/no-go classification for geometry-first stopped det_u:
+    production-viable, needs real multiresolution, or blocked by the current
+    algorithm.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -57,6 +59,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Based on those diagnostics, implement or falsify the geometry-first det_u
       bootstrap.
 - [x] Complete the goal audit and final report.
+- [x] Run and record the current minimal geometry-first stopped det_u path at
+      `128^3`.
+- [ ] Try the smallest evidence-driven `64^3` refinement toward `<0.2 px`.
+- [ ] If needed, implement/prototype real det_u multiresolution pyramid.
+- [ ] Complete the go/no-go audit and final report.
 
 ### Validation
 
