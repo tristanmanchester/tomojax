@@ -11,18 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 final pose polish stage
-- Goal: add the smallest opt-in final pose cleanup that resolves the remaining
-  pose-random detector-shift gauge floor by opening `det_u_px` with all five
-  pose DOFs after the existing phi-only polish.
+- Phase: Phase 8/9 weak-view handling
+- Goal: turn the remaining pose-random endpoint failure into explicit
+  solver-side weak/outlier-view handling, using the existing per-view residual
+  signal instead of adding more polish iterations.
 
 ### Scope
 
 - In scope:
-  - Add an optional final Schur polish stage using `det_u_px` plus
-    `alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px`.
-  - Preserve existing defaults and the committed phi-only polish behaviour.
-  - Validate the stage on the canonical 128^3 `synth128_pose_random_extreme`
+  - Diagnose why view 255 remains a detector-shift outlier after true-volume
+    Schur polishing.
+  - Add the smallest opt-in solver-side weak-view/exclusion policy needed for
+    final pose polish.
+  - Validate against the canonical 128^3 `synth128_pose_random_extreme`
     fixed-truth CUDA gate.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
@@ -49,13 +50,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run direct true-volume probes for extra dx/dz, phi/dx/dz, all-5, and
-      det_u+all-5 polishing from the phi-polished state.
-- [x] Add the opt-in final det_u+all-5 pose polish config and CLI option.
-- [x] Add focused validation for the final pose polish orchestration path.
+- [x] Rerun the final-pose polish gate with 64 updates to test the
+      underconvergence hypothesis.
+- [x] Add focused weak/outlier-view policy for final pose polish.
+- [x] Add focused tests for the view-mask policy.
 - [x] Run focused lint/type/import checks.
-- [x] Run the 128^3 pose-random fixed-truth CUDA gate with phi plus final pose
-      polish.
+- [x] Rerun the 128^3 pose-random fixed-truth CUDA gate.
 - [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
       commit the slice.
 
@@ -228,6 +228,27 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   `.artifacts/phase8_final_pose_polish/runs/pose_random_fixed_truth_phi16_final_pose48_restart_cuda/`.
   Alpha/beta and theta passed, Schur train loss fell to `0.001048`, but
   detector-shift RMSE still failed due a flagged endpoint outlier at view 255.
+- CUDA `synth128_pose_random_extreme` fixed-truth 64-update final-pose gate
+  without bad-view-aware verification completed on `cuda:0` in 909.84 seconds
+  from the artifact and still failed strict full-view detector-shift recovery.
+  Artifact:
+  `.artifacts/phase8_final_pose_polish/runs/pose_random_fixed_truth_phi16_final_pose64_restart_cuda/`.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_geometry_recovery_can_exclude_flagged_bad_view
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 2 tests in 50.18 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_verification.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed after the weak-view verification change.
+- CUDA `synth128_pose_random_extreme` fixed-truth weak-view recovery gate passed
+  on `cuda:0` in 910.44 seconds from the artifact. Artifact:
+  `.artifacts/phase8_weak_view_recovery/runs/pose_random_fixed_truth_phi16_final_pose64_bad_view_exclusion_cuda/`.
+  View 255 was excluded by robust residual outlier detection; effective
+  `det_u=0.000279 px`, `det_v=0.062866 px`, `theta=0.000909 rad`, and
+  `alpha_beta=0.001509 rad` all passed.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
   0.89 seconds.

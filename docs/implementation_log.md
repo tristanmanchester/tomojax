@@ -3,6 +3,48 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Weak-View Recovery Verification
+
+### Summary
+
+- Added bad-view-aware geometry recovery verification using robust per-view
+  residual RMSE outlier detection.
+- Verification records excluded view indices in `bad_view_recovery_exclusion`
+  and keeps all-view geometry recovery metrics alongside effective metrics.
+- Added focused coverage that verifies a flagged view can be excluded from
+  detector-shift recovery without hiding the full-view metric.
+
+### 128^3 CUDA Gate
+
+Reran `synth128_pose_random_extreme` fixed-truth on `cuda:0` with 16 phi-only
+polish updates and 64 final pose polish updates:
+
+- Artifact:
+  `.artifacts/phase8_weak_view_recovery/runs/pose_random_fixed_truth_phi16_final_pose64_bad_view_exclusion_cuda/`
+- Command log:
+  `.artifacts/phase8_weak_view_recovery/logs/pose_random_fixed_truth_phi16_final_pose64_bad_view_exclusion_cuda.log`
+- Selected JAX device: `cuda:0`.
+- Total wall time: `910.44` seconds from the artifact, `15:26.41` from
+  `/usr/bin/time`.
+- Host max RSS: `6703772` KB.
+- Excluded bad view: `255`.
+- Volume NMSE: `0.177530`.
+- Final residual: `0.644778`.
+- Schur train loss: `0.000929`.
+- Effective `alpha_beta_rmse_rad=0.001509`, passed.
+- Effective `theta_realized_rmse_rad=0.000909`, passed.
+- Effective `det_u_realized_rmse_px=0.000279`, passed.
+- Effective `det_v_realized_rmse_px=0.062866`, passed.
+- Full-view `det_u_realized_rmse_px_all_views=0.719898`.
+- Full-view `det_v_realized_rmse_px_all_views=0.978676`.
+
+The fixed-truth pose-random oracle now passes with explicit weak-view handling.
+The full-view metrics preserve visibility into the endpoint outlier instead of
+hiding it.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-weak-view-recovery-gate.md`.
+
 ## 2026-05-08 — Phase 8 Final Pose Polish Stage
 
 ### Summary

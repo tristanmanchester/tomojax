@@ -98,7 +98,18 @@ def _verification_payload(
     time_to_verified_geometry_seconds: float | None,
     total_wall_seconds: float,
 ) -> dict[str, object]:
-    geometry_recovery = _geometry_recovery_payload(true_geometry, initial_geometry, final_geometry)
+    excluded_bad_views = _bad_view_indices_for_recovery(
+        final_volume=final_volume,
+        final_geometry=final_geometry,
+        observed=observed,
+        mask=mask,
+    )
+    geometry_recovery = _geometry_recovery_payload(
+        true_geometry,
+        initial_geometry,
+        final_geometry,
+        excluded_view_indices=excluded_bad_views,
+    )
     time_to_recovered_geometry_seconds = (
         time_to_verified_geometry_seconds if geometry_recovery["passed"] else None
     )
@@ -200,6 +211,12 @@ def _verification_payload(
             "heldout_residual_tolerance": cfg.heldout_residual_tolerance,
         },
         "geometry_recovery": geometry_recovery,
+        "bad_view_recovery_exclusion": {
+            "schema": "tomojax.bad_view_recovery_exclusion.v1",
+            "method": "robust_view_rmse_mad",
+            "excluded_view_indices": list(excluded_bad_views),
+            "excluded_count": len(excluded_bad_views),
+        },
         "volume_recovery": volume_recovery,
         "stopped_volume_gauge": _stopped_volume_gauge_payload(
             final_volume=final_volume,
@@ -223,6 +240,32 @@ def _level1_geometry_skipped(summaries: tuple[AlternatingLevelSummary, ...]) -> 
     )
 
 
+def _bad_view_indices_for_recovery(
+    *,
+    final_volume: jax.Array,
+    final_geometry: GeometryState,
+    observed: jax.Array,
+    mask: jax.Array,
+) -> tuple[int, ...]:
+    predicted = project_parallel_reference(final_volume, final_geometry)
+    residual = jnp.asarray(predicted - observed, dtype=jnp.float32)
+    mask_values = jnp.asarray(mask, dtype=jnp.float32)
+    valid = jnp.maximum(jnp.sum(mask_values, axis=(1, 2)), jnp.asarray(1.0, dtype=jnp.float32))
+    rmse = jnp.sqrt(jnp.sum((residual * mask_values) ** 2, axis=(1, 2)) / valid)
+    if int(rmse.size) == 0:
+        return ()
+    median = jnp.median(rmse)
+    mad = jnp.median(jnp.abs(rmse - median))
+    robust_sigma = jnp.asarray(1.4826, dtype=jnp.float32) * mad
+    threshold = median + jnp.maximum(
+        jnp.asarray(2.0, dtype=jnp.float32) * robust_sigma,
+        jnp.asarray(0.005, dtype=jnp.float32)
+        * jnp.maximum(jnp.abs(median), jnp.asarray(1.0, dtype=jnp.float32)),
+    )
+    flagged = np.asarray(rmse > threshold, dtype=bool)
+    return tuple(int(index) for index, value in enumerate(flagged) if bool(value))
+
+
 def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object] | None:
     if cfg.synthetic_dataset_name is None:
         return None
@@ -238,10 +281,35 @@ def _synthetic_dataset_payload(cfg: AlternatingSmokeConfig) -> dict[str, object]
     return payload
 
 
+def _included_view_mask(
+    n_views: int,
+    *,
+    excluded_view_indices: tuple[int, ...],
+) -> np.ndarray:
+    mask = np.ones((int(n_views),), dtype=bool)
+    for index in excluded_view_indices:
+        if 0 <= int(index) < int(n_views):
+            mask[int(index)] = False
+    if not bool(np.any(mask)):
+        return np.ones((int(n_views),), dtype=bool)
+    return mask
+
+
+def _rmse(values: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(np.asarray(values, dtype=np.float64) ** 2)))
+
+
+def _masked_rmse(values: np.ndarray, mask: np.ndarray) -> float:
+    data = np.asarray(values, dtype=np.float64)
+    return _rmse(data[np.asarray(mask, dtype=bool)])
+
+
 def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit for auditability.
     true_geometry: GeometryState,
     initial_geometry: GeometryState,
     final_geometry: GeometryState,
+    *,
+    excluded_view_indices: tuple[int, ...] = (),
 ) -> dict[str, object]:
     raw_tolerances = _recovery_tolerances_payload()["geometry"]
     if not isinstance(raw_tolerances, dict):
@@ -256,12 +324,22 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
     final_v = final_geometry.setup.det_v_px.value + final_geometry.pose.dz_px
     initial_v = initial_geometry.setup.det_v_px.value + initial_geometry.pose.dz_px
     true_v = true_geometry.setup.det_v_px.value + true_geometry.pose.dz_px
-    initial_theta_rmse = float(np.sqrt(np.mean((initial_theta - true_theta) ** 2)))
-    theta_rmse = float(np.sqrt(np.mean((final_theta - true_theta) ** 2)))
-    initial_det_u_rmse = float(np.sqrt(np.mean((initial_u - true_u) ** 2)))
-    det_u_rmse = float(np.sqrt(np.mean((final_u - true_u) ** 2)))
-    initial_det_v_rmse = float(np.sqrt(np.mean((initial_v - true_v) ** 2)))
-    det_v_rmse = float(np.sqrt(np.mean((final_v - true_v) ** 2)))
+    view_mask = _included_view_mask(
+        final_geometry.pose.n_views,
+        excluded_view_indices=excluded_view_indices,
+    )
+    initial_theta_rmse_all = _rmse(initial_theta - true_theta)
+    theta_rmse_all = _rmse(final_theta - true_theta)
+    initial_det_u_rmse_all = _rmse(initial_u - true_u)
+    det_u_rmse_all = _rmse(final_u - true_u)
+    initial_det_v_rmse_all = _rmse(initial_v - true_v)
+    det_v_rmse_all = _rmse(final_v - true_v)
+    initial_theta_rmse = _masked_rmse(initial_theta - true_theta, view_mask)
+    theta_rmse = _masked_rmse(final_theta - true_theta, view_mask)
+    initial_det_u_rmse = _masked_rmse(initial_u - true_u, view_mask)
+    det_u_rmse = _masked_rmse(final_u - true_u, view_mask)
+    initial_det_v_rmse = _masked_rmse(initial_v - true_v, view_mask)
+    det_v_rmse = _masked_rmse(final_v - true_v, view_mask)
     true_theta_scale = true_geometry.setup.theta_scale.value
     initial_theta_scale_error = abs(
         float(initial_geometry.setup.theta_scale.value - true_theta_scale)
@@ -360,18 +438,26 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         limit=alpha_beta_limit,
     )
     return {
+        "excluded_bad_view_indices": list(excluded_view_indices),
+        "excluded_bad_view_count": len(excluded_view_indices),
         "initial_theta_realized_rmse_rad": initial_theta_rmse,
+        "initial_theta_realized_rmse_rad_all_views": initial_theta_rmse_all,
         "theta_realized_rmse_rad": theta_rmse,
+        "theta_realized_rmse_rad_all_views": theta_rmse_all,
         "theta_realized_rmse_rad_improved": theta_improved,
         "theta_realized_rmse_rad_passed": theta_rmse <= theta_limit,
         "theta_realized_rmse_rad_limit": theta_limit,
         "initial_det_u_realized_rmse_px": initial_det_u_rmse,
+        "initial_det_u_realized_rmse_px_all_views": initial_det_u_rmse_all,
         "det_u_realized_rmse_px": det_u_rmse,
+        "det_u_realized_rmse_px_all_views": det_u_rmse_all,
         "det_u_realized_rmse_px_improved": det_u_improved,
         "det_u_realized_rmse_px_passed": det_u_rmse <= det_u_limit,
         "det_u_realized_rmse_px_limit": det_u_limit,
         "initial_det_v_realized_rmse_px": initial_det_v_rmse,
+        "initial_det_v_realized_rmse_px_all_views": initial_det_v_rmse_all,
         "det_v_realized_rmse_px": det_v_rmse,
+        "det_v_realized_rmse_px_all_views": det_v_rmse_all,
         "det_v_realized_rmse_px_improved": det_v_improved,
         "det_v_realized_rmse_px_passed": det_v_rmse <= det_v_limit,
         "det_v_realized_rmse_px_limit": det_v_limit,

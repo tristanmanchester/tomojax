@@ -21,6 +21,9 @@ from tomojax.align._alternating_geometry_update import (
 
 # check-public-imports: allow-private
 from tomojax.align._alternating_orchestration import _run_phi_polish, _run_polish_stage
+
+# check-public-imports: allow-private
+from tomojax.align._alternating_verification import _geometry_recovery_payload
 from tomojax.align.api import (
     AlternatingSmokeConfig,
     JointSchurLMConfig,
@@ -308,6 +311,39 @@ def test_final_pose_polish_can_open_det_u_with_all_pose_dofs() -> None:
         "dz_px",
     )
     assert result.final_loss <= result.initial_loss
+
+
+def test_geometry_recovery_can_exclude_flagged_bad_view() -> None:
+    true_geometry = GeometryState.zeros(3)
+    true_geometry = GeometryState(
+        setup=true_geometry.setup,
+        pose=true_geometry.pose.with_updates(
+            dx_px=np.asarray([0.0, 0.1, 20.0], dtype=np.float64),
+            dz_px=np.asarray([0.0, -0.1, -20.0], dtype=np.float64),
+        ),
+        acquisition=true_geometry.acquisition,
+    )
+    final_geometry = GeometryState(
+        setup=true_geometry.setup,
+        pose=true_geometry.pose.with_updates(
+            dx_px=np.asarray([0.0, 0.1, 0.0], dtype=np.float64),
+            dz_px=np.asarray([0.0, -0.1, 0.0], dtype=np.float64),
+        ),
+        acquisition=true_geometry.acquisition,
+    )
+
+    full = _geometry_recovery_payload(true_geometry, GeometryState.zeros(3), final_geometry)
+    excluded = _geometry_recovery_payload(
+        true_geometry,
+        GeometryState.zeros(3),
+        final_geometry,
+        excluded_view_indices=(2,),
+    )
+
+    assert full["det_u_realized_rmse_px_passed"] is False
+    assert excluded["det_u_realized_rmse_px_passed"] is True
+    assert excluded["det_u_realized_rmse_px_all_views"] == full["det_u_realized_rmse_px"]
+    assert excluded["excluded_bad_view_indices"] == [2]
 
 
 def test_stopped_preview_policy_constrains_first_preview_only() -> None:
