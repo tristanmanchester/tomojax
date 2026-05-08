@@ -11,70 +11,52 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 stopped-reconstruction volume-axis semantics
-- Goal: fix the core volume-axis/gauge semantics that make stopped
-  reconstruction absorb setup geometry before adding any more orchestration
-  knobs.
+- Goal file: `docs/agent_goal_production_stopped_alignment.md`
+- Phase: Phase 7/8 production stopped-alignment consolidation
+- Goal: consolidate around one honest supported-only stopped det_u production
+  gate, make it pass or produce decisive evidence for why the current
+  algorithm cannot make it pass.
 
 ### Scope
 
 - In scope:
-  - Add explicit core volume-axis constants and focused projector semantics
-    tests.
-  - Fix volume support, center penalty, and stopped-volume anchoring to use
-    core axes: x/u axis 0, y/beam axis 1, z/v axis 2.
-  - Remove periodic `jnp.roll` recentering from stopped geometry update
-    volumes.
-  - Run the minimal stopped det_u-only setup diagnostic before returning to
-    broader setup gates.
-  - Add candidate-refresh acceptance now that the corrected stopped det_u-only
-    gate still fails while materially improving det_u.
-  - Record the next `128^3`/256-view stopped setup scale gate as evidence
-    before moving to broader Phase 8/9 functionality.
-  - Record the hard stopped-preview x-gauge projection diagnostic and do not
-    keep it unless the gate improves.
-  - Fix candidate-refresh acceptance so the before/candidate refresh comparison
-    starts from a neutral shared volume instead of the old-gauge stopped
-    reconstruction volume.
+  - Add a consolidation note that labels fixed-truth gates as oracle-only and
+    stopped supported-only det_u recovery as the production blocker.
+  - Run the canonical `64^3`/64-view supported-only stopped det_u absorption
+    diagnostic over preview FISTA iterations `0, 1, 2, 4, 8, 16`.
+  - Add focused finite-difference coverage for the reference FISTA gradient
+    against the exact filtered/masked loss before adding more orchestration.
+  - Implement or falsify a minimal geometry-first det_u bootstrap if the
+    absorption curve says it is still plausible.
+  - Consider real multiresolution only if the absorption curve indicates a
+    capture-range or scale issue.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
   - Reintroducing rotate-and-sum or projector selectors.
-  - Full five-case benchmark reruns before the minimal det_u stopped setup
-    gate gives evidence.
+  - Full five-case benchmark reruns before the single stopped det_u gate is
+    understood.
+  - Nuisance, laminography, Pallas/fast paths, more geometry DOFs, and
+    candidate-refresh/polish/weak-view policy variants unless explicitly named
+    as diagnostics.
 - Deep module owner: `tomojax.align`.
 
 ### Design Sources
 
-- `docs/tomojax-v2/01_high_level_architecture.md`
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
-- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
+- `docs/agent_goal_production_stopped_alignment.md`
+- `docs/implementation_log.md`
+- Recent oracle/session evidence recorded in this file and the implementation
+  log.
 
 ### Tasks
 
-- [x] Add core axis constants and export them from `tomojax.geometry`.
-- [x] Add focused projector/axis semantics tests.
-- [x] Fix support masks, center penalty, and stopped-volume anchoring axes.
-- [x] Run focused CPU tests, ruff, basedpyright, and `just imports`.
-- [x] Run the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
-- [x] Add candidate-refresh acceptance for stopped geometry updates.
-- [x] Rerun focused CPU tests, ruff, basedpyright, and `just imports`.
-- [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
-- [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
-      commit the slice.
-- [x] Run 128^3/256-view stopped det_u-only CUDA setup scale gate.
-- [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
-      commit the scale-gate evidence.
-- [x] Test hard stopped-preview det_u-axis gauge projection as a diagnostic.
-- [x] Rerun focused CPU tests, ruff, basedpyright, and `just imports`.
-- [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
-- [x] Revert the no-benefit hard-gauge code path, update logs, and commit the
-      diagnostic evidence.
-- [x] Switch candidate-refresh to a neutral shared refresh initializer.
-- [x] Rerun focused CPU tests, ruff, basedpyright, and `just imports`.
-- [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
-- [x] Commit the neutral-refresh slice.
+- [x] Add and commit the production stopped-alignment consolidation note.
+- [ ] Run and record the FISTA absorption curve for the canonical 64^3 gate.
+- [ ] Add and validate FISTA gradient finite-difference coverage.
+- [ ] Based on those diagnostics, implement or falsify the geometry-first det_u
+      bootstrap.
+- [ ] Complete the goal audit and final report.
 
 ### Validation
 

@@ -3,6 +3,45 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Production Stopped-Alignment Consolidation
+
+### Summary
+
+- Consolidated the active Phase 7/8 work around one production gate:
+  supported-only `synth128_setup_global_tomo`, clean data, stopped
+  reconstruction volume, pose frozen, theta frozen, det_u active only, no
+  nuisance, no bad-view exclusion, and no truth-volume assistance.
+- Fixed-truth and true-volume gates remain oracle diagnostics. They show that
+  the Schur/core-trilinear geometry path can recover supported setup geometry
+  when the volume is already in the correct gauge; they are not production
+  alignment passes.
+- Weak-view exclusion remains diagnostic and must not be reported as a plain
+  production pass.
+- Candidate refresh, including the neutral-refresh variant, has not solved the
+  production stopped-loop blocker. It can change carried volume residuals, but
+  the stopped det_u Schur proposal remains stuck near the same absorbed basin.
+- The current production blocker is the stopped reconstruction absorbing setup
+  detector shift before geometry update, not missing nuisance, laminography,
+  Pallas acceleration, or the full five-case benchmark suite.
+
+### Current Evidence
+
+| Gate | Artifact | Result |
+|---|---|---|
+| 64^3 stopped det_u axis/gauge fix | `.artifacts/phase8_axis_gauge/runs/64_stopped_detu_only_axis_fix_cuda/` | failed; det_u `7.25 -> 2.87216 px`; Schur accepted |
+| 64^3 stopped det_u candidate refresh | `.artifacts/phase8_candidate_refresh/runs/64_stopped_detu_only_candidate_refresh_cuda/` | failed; det_u `7.25 -> 2.87217 px`; final residual improved to `0.484702` |
+| 64^3 stopped det_u neutral refresh | `.artifacts/phase8_candidate_refresh/runs/64_stopped_detu_only_neutral_normalized_candidate_refresh_cuda/` | failed; det_u `7.25 -> 2.87227 px`; neutral seed removed old-gauge initializer bias |
+| 128^3 stopped det_u neutral refresh | `.artifacts/phase8_candidate_refresh/runs/128_supported_only_256views_stopped_detu_only_neutral_refresh_cuda/` | failed; det_u `14.5 -> 6.58608 px`; Schur accepted |
+
+### Next Diagnostic
+
+The next required diagnostic is the FISTA absorption curve on the canonical
+`64^3`/64-view supported-only stopped det_u gate. The hypothesis is explicit:
+if det_u recovery is best at zero or one FISTA iteration and worsens as preview
+reconstruction residual improves, stopped reconstruction is absorbing setup
+geometry. If Schur cannot recover from a zero/neutral preview, the current
+stopped objective may not provide a useful detector-shift gradient.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary
