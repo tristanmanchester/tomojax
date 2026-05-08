@@ -3,6 +3,66 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Pose Trust-Radius Option
+
+### Summary
+
+- Added `geometry_update_pose_trust_radius` to the alternating configuration
+  and `align-auto`.
+- Defaults remain unchanged: unset uses the continuation level
+  `trust_radius_px`.
+- A negative CLI value records `geometry_update_pose_trust_radius = -1.0` and
+  disables pose trust clipping in `JointSchurLMConfig`.
+- Wired the resolved config artifact and added focused tests for default,
+  disabled, and override pose-trust behavior.
+
+### 128^3 CUDA Gate
+
+Reran the fixed-truth `synth128_pose_random_extreme` 128^3/256-view CUDA oracle
+on `cuda:0` with `phi_residual_rad,dx_px,dz_px` active and pose trust disabled:
+
+- Artifact:
+  `.artifacts/phase8_pose_trust_option/runs/pose_random_fixed_truth_phi_dxdz_no_trust_cuda/`
+- Command log:
+  `.artifacts/phase8_pose_trust_option/logs/pose_random_fixed_truth_phi_dxdz_no_trust_cuda.log`
+- Wall time: `213.10` seconds.
+- Host max RSS: `2803516` KB.
+- Volume NMSE: `0.177530`.
+- Final residual: `0.644243`.
+- `det_u_realized_rmse_px=0.907141`.
+- `det_v_realized_rmse_px=1.005214`.
+- `theta_realized_rmse_rad=0.125635`.
+- `alpha_beta_rmse_rad=0.020097`.
+
+The opt-in no-trust pose mode substantially improves translation recovery but
+does not solve angular pose recovery. It should remain diagnostic/opt-in until
+a staged or angular-validated pose policy is implemented.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-pose-trust-option-gate.md`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_pose_trust_radius_uses_level_default_when_unset
+  tests/test_alternating_geometry_update_policy.py::test_pose_trust_radius_negative_sentinel_disables_clipping
+  tests/test_alternating_geometry_update_policy.py::test_pose_trust_radius_can_override_level_radius
+  tests/test_align_auto_cli.py::test_align_auto_accepts_geometry_update_volume_source
+  -q` passed: 4 tests in 38.80 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-08 — Phase 8 Pose-Only Trust Diagnostic
 
 ### Summary

@@ -179,6 +179,7 @@ def _run_alternating_solver_smoke_impl(
                 sigma=residual_sigma_effective,
                 setup_prior_strength=config.geometry_update_setup_prior_strength,
                 pose_prior_strength=config.geometry_update_pose_prior_strength,
+                pose_trust_radius=config.geometry_update_pose_trust_radius,
                 active_setup_parameters=_active_setup_parameters_for_level(
                     config,
                     level.level_factor,
@@ -300,6 +301,7 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_solver=config.geometry_update_solver,
         geometry_update_setup_prior_strength=config.geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=config.geometry_update_pose_prior_strength,
+        geometry_update_pose_trust_radius=config.geometry_update_pose_trust_radius,
         geometry_update_pose_frozen=config.geometry_update_pose_frozen,
         geometry_update_pose_activate_at_level_factor=(
             config.geometry_update_pose_activate_at_level_factor

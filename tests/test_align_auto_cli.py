@@ -563,6 +563,8 @@ def test_align_auto_accepts_geometry_update_volume_source(
             "0.002",
             "--geometry-update-pose-prior-strength",
             "10.0",
+            "--geometry-update-pose-trust-radius",
+            "-1",
         ]
     )
 
@@ -576,6 +578,7 @@ def test_align_auto_accepts_geometry_update_volume_source(
     assert 'geometry_update_volume_source = "fixed_synthetic_truth"' in config_text
     assert "geometry_update_setup_prior_strength = 0.002" in config_text
     assert "geometry_update_pose_prior_strength = 10.0" in config_text
+    assert "geometry_update_pose_trust_radius = -1.0" in config_text
 
 
 def test_align_auto_generates_supported_only_pose_frozen_oracle(

@@ -11,19 +11,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 pose-only trust diagnostic
-- Goal: isolate whether the fixed-truth `synth128_pose_random_extreme` failure
-  is dominated by global pose trust clipping, too few iterations, or angular
-  pose observability.
+- Phase: Phase 8/9 pose trust-radius CLI option
+- Goal: expose the existing Schur pose trust radius as an explicit alternating
+  option so pose-heavy diagnostics can disable or override the global all-view
+  trust cap without changing defaults.
 
 ### Scope
 
 - In scope:
-  - Run direct true-volume pose-only Schur probes on the existing
-    `synth128_pose_random_extreme` sidecar.
-  - Compare global/no trust and active pose DOF subsets without changing source.
-  - Record evidence before deciding whether to promote a trust or staged-pose
-    policy.
+  - Add `geometry_update_pose_trust_radius` to alternating config and CLI.
+  - Preserve the default continuation-level trust radius when unset.
+  - Allow a negative CLI value to mean "no pose trust radius".
+  - Wire resolved config/artifacts and focused tests.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -49,9 +48,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run all-5 pose trust-radius probe.
-- [x] Run phi/dx/dz-only no-trust iteration probe.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Add pose trust-radius config and CLI option.
+- [x] Wire resolved config/artifacts.
+- [x] Add focused tests.
+- [x] Run focused validation and `just imports`.
+- [x] Run a fixed-truth pose-random CUDA diagnostic with phi/dx/dz and no trust.
+- [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
 
@@ -132,6 +134,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Direct true-volume phi/dx/dz-only no-trust iteration probe completed on
   `cuda:0`. At 12 iterations it recovered dx/dz to sub-pixel but left phi near
   `0.105` rad and alpha/beta at the initial zero-pose error.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_pose_trust_radius_uses_level_default_when_unset
+  tests/test_alternating_geometry_update_policy.py::test_pose_trust_radius_negative_sentinel_disables_clipping
+  tests/test_alternating_geometry_update_policy.py::test_pose_trust_radius_can_override_level_radius
+  tests/test_align_auto_cli.py::test_align_auto_accepts_geometry_update_volume_source
+  -q` passed: 4 tests in 38.80 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed after the pose trust-radius option.
+- Fixed-truth `synth128_pose_random_extreme` phi/dx/dz no-trust CUDA
+  diagnostic completed on `cuda:0` in 213.10 seconds. Artifact:
+  `.artifacts/phase8_pose_trust_option/runs/pose_random_fixed_truth_phi_dxdz_no_trust_cuda/`.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in

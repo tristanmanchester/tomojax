@@ -15,6 +15,7 @@ from tomojax.align._alternating_geometry_update import (
     _active_setup_parameters,
     _anchored_geometry_update_volume,
     _det_u_recentering_shift_px,
+    _pose_trust_radius,
     _run_geometry_updates,
 )
 from tomojax.align.api import (
@@ -330,6 +331,18 @@ def test_fixed_truth_geometry_updates_use_level_residual_sigma() -> None:
     )
 
 
+def test_pose_trust_radius_uses_level_default_when_unset() -> None:
+    assert _pose_trust_radius(2.0, configured=None) == 2.0
+
+
+def test_pose_trust_radius_negative_sentinel_disables_clipping() -> None:
+    assert _pose_trust_radius(2.0, configured=-1.0) is None
+
+
+def test_pose_trust_radius_can_override_level_radius() -> None:
+    assert _pose_trust_radius(2.0, configured=10.0) == 10.0
+
+
 def test_stopped_geometry_updates_keep_estimated_residual_sigma_floor() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import _effective_residual_sigma
@@ -413,6 +426,7 @@ def test_setup_only_geometry_update_solver_recovers_setup_without_pose() -> None
         sigma=1.0,
         setup_prior_strength=None,
         pose_prior_strength=None,
+        pose_trust_radius=None,
         active_setup_parameters=("det_u_px",),
         solver="setup_only_lm",
         pose_frozen=True,
@@ -448,6 +462,7 @@ def test_setup_only_geometry_update_solver_requires_frozen_pose() -> None:
             sigma=1.0,
             setup_prior_strength=None,
             pose_prior_strength=None,
+            pose_trust_radius=None,
             active_setup_parameters=("det_u_px",),
             solver="setup_only_lm",
             pose_frozen=False,

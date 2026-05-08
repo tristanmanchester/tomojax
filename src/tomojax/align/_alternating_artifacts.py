@@ -72,6 +72,7 @@ def _write_artifacts(
     geometry_update_solver: str,
     geometry_update_setup_prior_strength: float | None,
     geometry_update_pose_prior_strength: float | None,
+    geometry_update_pose_trust_radius: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
@@ -138,6 +139,7 @@ def _write_artifacts(
         geometry_update_solver=geometry_update_solver,
         geometry_update_setup_prior_strength=geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=geometry_update_pose_prior_strength,
+        geometry_update_pose_trust_radius=geometry_update_pose_trust_radius,
         geometry_update_pose_frozen=geometry_update_pose_frozen,
         geometry_update_pose_activate_at_level_factor=(
             geometry_update_pose_activate_at_level_factor
@@ -1727,6 +1729,7 @@ def _write_config_resolved(
     geometry_update_solver: str,
     geometry_update_setup_prior_strength: float | None,
     geometry_update_pose_prior_strength: float | None,
+    geometry_update_pose_trust_radius: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
@@ -1759,6 +1762,8 @@ def _write_config_resolved(
         )
     if geometry_update_pose_prior_strength is not None:
         lines.append(f"geometry_update_pose_prior_strength = {geometry_update_pose_prior_strength}")
+    if geometry_update_pose_trust_radius is not None:
+        lines.append(f"geometry_update_pose_trust_radius = {geometry_update_pose_trust_radius}")
     lines.append(f"geometry_update_pose_frozen = {str(bool(geometry_update_pose_frozen)).lower()}")
     lines.extend(
         _activation_config_lines(

@@ -42,6 +42,7 @@ def _run_geometry_updates(
     sigma: float,
     setup_prior_strength: float | None,
     pose_prior_strength: float | None,
+    pose_trust_radius: float | None,
     active_setup_parameters: tuple[str, ...],
     solver: str,
     pose_frozen: bool,
@@ -96,7 +97,10 @@ def _run_geometry_updates(
                 pose_frozen=pose_frozen,
                 active_setup_parameters=setup_parameters,
             ),
-            pose_trust_radius=level.trust_radius_px,
+            pose_trust_radius=_pose_trust_radius(
+                level.trust_radius_px,
+                configured=pose_trust_radius,
+            ),
             residual_filters=level.residual_filters
             if residual_filters is None
             else residual_filters,
@@ -145,6 +149,14 @@ def _setup_only_result_as_schur_result(result: SetupOnlyLMResult) -> JointSchurL
         diagnostics=diagnostics,
         iteration_diagnostics=(diagnostics,),
     )
+
+
+def _pose_trust_radius(level_radius: float, *, configured: float | None) -> float | None:
+    if configured is None:
+        return float(level_radius)
+    if float(configured) < 0.0:
+        return None
+    return float(configured)
 
 
 def _active_setup_parameters(raw: tuple[str, ...]) -> tuple[SetupSchurParameter, ...]:

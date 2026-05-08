@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, SupportsFloat, SupportsIndex, cast
 
 import numpy as np
 
@@ -103,6 +103,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--geometry-update-pose-prior-strength",
         type=float,
         help="Optional per-view pose prior strength for Schur geometry updates.",
+    )
+    _ = parser.add_argument(
+        "--geometry-update-pose-trust-radius",
+        type=float,
+        help=(
+            "Optional pose trust radius for Schur geometry updates. "
+            "Negative values disable pose trust clipping."
+        ),
     )
     _ = parser.add_argument(
         "--synthetic-dataset",
@@ -308,6 +316,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             geometry_update_solver=geometry_update_solver,
             geometry_update_setup_prior_strength=args.geometry_update_setup_prior_strength,
             geometry_update_pose_prior_strength=args.geometry_update_pose_prior_strength,
+            geometry_update_pose_trust_radius=_pose_trust_radius_option(
+                args.geometry_update_pose_trust_radius
+            ),
             geometry_update_pose_frozen=bool(args.geometry_update_pose_frozen),
             geometry_update_pose_activate_at_level_factor=(
                 args.geometry_update_pose_activate_at_level_factor
@@ -370,6 +381,15 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
     if isinstance(detector_grid, str):
         payload["detector_grid"] = detector_grid
     return payload
+
+
+def _pose_trust_radius_option(raw: str | SupportsFloat | SupportsIndex | None) -> float | None:
+    if raw is None:
+        return None
+    value = float(raw)
+    if value < 0.0:
+        return -1.0
+    return value
 
 
 def _sidecar_object_motion_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, object]:

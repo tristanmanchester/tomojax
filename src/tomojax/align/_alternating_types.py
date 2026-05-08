@@ -46,6 +46,7 @@ class AlternatingSmokeConfig:
     geometry_update_solver: GeometryUpdateSolver = "joint_schur"
     geometry_update_setup_prior_strength: float | None = None
     geometry_update_pose_prior_strength: float | None = None
+    geometry_update_pose_trust_radius: float | None = None
     geometry_update_pose_frozen: bool = False
     geometry_update_pose_activate_at_level_factor: int | None = None
     geometry_update_theta_activate_at_level_factor: int | None = None
