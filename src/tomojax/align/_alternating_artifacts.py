@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tomojax.align._alternating_types import (
+        AlternatingBootstrapSummary,
         AlternatingLevelSummary,
         GeometryUpdateVolumeSource,
     )
@@ -67,6 +68,7 @@ def _write_artifacts(
     gauge_report: GaugeReport,
     fista_result: ReferenceFISTAResult,
     summaries: tuple[AlternatingLevelSummary, ...],
+    bootstrap_summary: AlternatingBootstrapSummary | None,
     schur_result: JointSchurLMResult | None,
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     geometry_update_solver: str,
@@ -98,6 +100,7 @@ def _write_artifacts(
         "benchmark_report_md": output_dir / "benchmark_report.md",
         "backend_report_json": output_dir / "backend_report.json",
         "benchmark_result_json": output_dir / "benchmark_result.json",
+        "bootstrap_stage_json": output_dir / "bootstrap_stage.json",
         "config_resolved_toml": output_dir / "config_resolved.toml",
         "final_volume_npy": output_dir / "final_volume.npy",
         "failure_report_json": output_dir / "failure_report.json",
@@ -185,9 +188,17 @@ def _write_artifacts(
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
             fit_background_nuisance=fit_background_nuisance,
+            bootstrap_summary=bootstrap_summary,
             synthetic_dataset=verification.get("synthetic_dataset"),
         ),
     )
+    if bootstrap_summary is None:
+        _ = artifacts.pop("bootstrap_stage_json")
+    else:
+        _write_json(
+            artifacts["bootstrap_stage_json"],
+            _bootstrap_summary_payload(bootstrap_summary),
+        )
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
     _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
     _write_json(artifacts["mask_summary_json"], _mask_summary_payload(mask))
@@ -222,6 +233,7 @@ def _write_artifacts(
             verification=verification,
             synthetic_dataset=synthetic_dataset_payload,
             summaries=summaries,
+            bootstrap_summary=bootstrap_summary,
             failure_report=failure_report,
             schur_result=schur_result,
             true_geometry=true_geometry,
@@ -427,6 +439,59 @@ def _optional_schur_value(diagnostics: JointSchurDiagnostics | None, field_name:
         return ""
     value = getattr(diagnostics, field_name)
     return "" if value is None else value
+
+
+def _bootstrap_summary_payload(summary: AlternatingBootstrapSummary) -> dict[str, object]:
+    return {
+        "schema": "tomojax.geometry_first_bootstrap_stage.v1",
+        "level_factor": summary.level_factor,
+        "role": summary.role,
+        "schur_updates_per_pass": summary.schur_updates_per_pass,
+        "schur_passes": summary.schur_passes,
+        "executed_geometry_updates": summary.executed_geometry_updates,
+        "fista_refresh_iterations": summary.fista_refresh_iterations,
+        "residual_filter_kinds": "|".join(summary.residual_filter_kinds),
+        "losses": {
+            "before_first_schur": summary.loss_before_first_schur,
+            "after_first_schur": summary.loss_after_first_schur,
+            "before_fista_refresh": summary.loss_before_fista_refresh,
+            "after_fista_refresh": summary.loss_after_fista_refresh,
+            "before_final_schur": summary.loss_before_final_schur,
+            "after_final_schur": summary.loss_after_final_schur,
+        },
+        "accepted": summary.accepted,
+        "final_geometry": {
+            "det_u_px": summary.final_det_u_px,
+        },
+        "diagnostics": {
+            "parameter_update_norm": summary.parameter_update_norm,
+            "first_schur": _schur_stage_diagnostics_payload(
+                summary.first_schur_diagnostics
+            ),
+            "final_schur": _schur_stage_diagnostics_payload(
+                summary.final_schur_diagnostics
+            ),
+        },
+    }
+
+
+def _schur_stage_diagnostics_payload(
+    diagnostics: JointSchurDiagnostics | None,
+) -> dict[str, object] | None:
+    if diagnostics is None:
+        return None
+    return {
+        "accepted": diagnostics.accepted,
+        "current_loss": diagnostics.current_loss,
+        "candidate_loss": diagnostics.candidate_loss,
+        "predicted_reduction": diagnostics.predicted_reduction,
+        "actual_reduction": diagnostics.actual_reduction,
+        "reduction_ratio": diagnostics.reduction_ratio,
+        "schur_condition": diagnostics.schur_condition,
+        "setup_update_norm": diagnostics.setup_update_norm,
+        "pose_update_norm": diagnostics.pose_update_norm,
+        "dense_step_difference_norm": diagnostics.dense_step_difference_norm,
+    }
 
 
 def _plots_summary_payload(
@@ -722,6 +787,7 @@ def _artifact_description(name: str) -> str:
         "benchmark_report_md": "Synthetic benchmark markdown report",
         "backend_report_json": "Backend provenance for the smoke run",
         "benchmark_result_json": "Synthetic benchmark case result",
+        "bootstrap_stage_json": "Geometry-first bootstrap stage provenance",
         "config_resolved_toml": "Resolved deterministic smoke configuration",
         "final_volume_npy": "Final reconstructed 32^3 volume",
         "failure_report_json": "Failure status for the smoke run",
@@ -776,6 +842,14 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
     geometry = cast("dict[object, object]", benchmark_result.get("geometry_recovery", {}))
     backend = cast("dict[object, object]", benchmark_result.get("backend", {}))
     runtime = cast("dict[object, object]", benchmark_result.get("runtime", {}))
+    bootstrap = cast("dict[object, object] | None", runtime.get("bootstrap_stage"))
+    bootstrap_losses = (
+        {}
+        if bootstrap is None
+        else cast("dict[object, object]", bootstrap.get("losses", {}))
+    )
+    bootstrap_updates = None if bootstrap is None else bootstrap.get("executed_geometry_updates")
+    bootstrap_fista = None if bootstrap is None else bootstrap.get("fista_refresh_iterations")
     failure_labels = benchmark_result.get("failure_labels")
     labels = (
         ", ".join(str(label) for label in cast("list[object]", failure_labels))
@@ -807,6 +881,20 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
                 ]
             )
             + " |",
+            "",
+            "## Bootstrap Runtime",
+            "",
+            f"- Role: {_markdown_cell(None if bootstrap is None else bootstrap.get('role'))}",
+            "- Schur passes: "
+            f"{_markdown_cell(None if bootstrap is None else bootstrap.get('schur_passes'))}",
+            "- Executed geometry updates: "
+            f"{_markdown_cell(bootstrap_updates)}",
+            "- FISTA refresh iterations: "
+            f"{_markdown_cell(bootstrap_fista)}",
+            "- Final Schur accepted: "
+            f"{_markdown_cell(None if bootstrap is None else bootstrap.get('accepted'))}",
+            "- Final Schur loss: "
+            f"{_markdown_cell(bootstrap_losses.get('after_final_schur'))}",
             "",
             "## Dataset",
             "",
@@ -910,6 +998,7 @@ def _benchmark_result_payload(
     verification: Mapping[str, object],
     synthetic_dataset: dict[object, object],
     summaries: tuple[AlternatingLevelSummary, ...],
+    bootstrap_summary: AlternatingBootstrapSummary | None,
     failure_report: Mapping[str, object],
     schur_result: JointSchurLMResult | None,
     true_geometry: GeometryState,
@@ -1004,6 +1093,11 @@ def _benchmark_result_payload(
             "geometry_updates_requested": sum(summary.geometry_updates for summary in summaries),
             "geometry_updates_executed": sum(
                 summary.executed_geometry_updates for summary in summaries
+            ),
+            "bootstrap_stage": (
+                None
+                if bootstrap_summary is None
+                else _bootstrap_summary_payload(bootstrap_summary)
             ),
             "projector_calls": None,
         },
@@ -1944,6 +2038,7 @@ def _run_manifest_payload(
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
+    bootstrap_summary: AlternatingBootstrapSummary | None,
     synthetic_dataset: object,
 ) -> dict[str, object]:
     dataset: dict[str, object] = {
@@ -1977,6 +2072,9 @@ def _run_manifest_payload(
         "stopped_preview_policy": stopped_preview_policy,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,
+        "bootstrap_stage": (
+            None if bootstrap_summary is None else _bootstrap_summary_payload(bootstrap_summary)
+        ),
         "continuation": {
             "name": schedule.name,
             "level_factors": list(schedule.level_factors),

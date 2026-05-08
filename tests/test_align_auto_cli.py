@@ -148,6 +148,66 @@ def test_align_auto_smoke_command_writes_core_artifacts(
     assert "verification:" in captured.out
 
 
+def test_align_auto_records_geometry_first_bootstrap_stage(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "auto-bootstrap"
+
+    exit_code = align_auto_cli.main(
+        [
+            "--out-dir",
+            str(out_dir),
+            "--synthetic-dataset",
+            "synth128_setup_global_tomo",
+            "--supported-only-setup-global",
+            "--geometry-update-volume-source",
+            "stopped_reconstruction",
+            "--geometry-update-pose-frozen",
+            "--geometry-update-active-setup-parameters",
+            "det_u_px",
+            "--views",
+            "4",
+        ]
+    )
+
+    assert exit_code == 0
+    bootstrap = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "bootstrap_stage.json").read_text(encoding="utf-8")),
+    )
+    assert bootstrap["role"] == "geometry_first_bootstrap"
+    assert bootstrap["level_factor"] == 4
+    assert bootstrap["schur_passes"] == 2
+    assert int(cast("int", bootstrap["executed_geometry_updates"])) > 0
+    assert int(cast("int", bootstrap["fista_refresh_iterations"])) > 0
+    assert isinstance(cast("dict[str, object]", bootstrap["losses"])["after_final_schur"], float)
+    assert isinstance(
+        cast("dict[str, object]", bootstrap["final_geometry"])["det_u_px"],
+        float,
+    )
+    diagnostics = cast("dict[str, object]", bootstrap["diagnostics"])
+    assert cast("dict[str, object]", diagnostics["final_schur"])["accepted"] in {
+        True,
+        False,
+    }
+
+    with (out_dir / "alignment_summary.csv").open("r", newline="", encoding="utf-8") as fh:
+        summary_rows = list(csv.DictReader(fh))
+    assert [row["role"] for row in summary_rows] == ["preview", "preview", "final"]
+
+    benchmark_result = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "benchmark_result.json").read_text(encoding="utf-8")),
+    )
+    runtime = cast("dict[str, object]", benchmark_result["runtime"])
+    assert cast("dict[str, object]", runtime["bootstrap_stage"])["role"] == (
+        "geometry_first_bootstrap"
+    )
+    report_text = (out_dir / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Bootstrap Runtime" in report_text
+    assert "geometry_first_bootstrap" in report_text
+
+
 def test_align_auto_smoke_command_can_enable_gain_offset_nuisance(tmp_path: Path) -> None:
     out_dir = tmp_path / "auto-nuisance"
 

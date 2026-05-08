@@ -33,6 +33,7 @@ from tomojax.align._alternating_level_helpers import (
     _skipped_level_summary,
 )
 from tomojax.align._alternating_types import (
+    AlternatingBootstrapSummary,
     AlternatingLevelSummary,
     AlternatingSmokeConfig,
     AlternatingSmokeResult,
@@ -68,6 +69,7 @@ class _GeometryFirstBootstrapResult:
     gauge_report: GaugeReport
     volume: jax.Array
     schur_result: JointSchurLMResult
+    summary: AlternatingBootstrapSummary
 
 
 def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level state
@@ -87,6 +89,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
     geometry, gauge_report = initial_geometry, GaugeReport(())
     volume: jax.Array | None = None
     summaries: list[AlternatingLevelSummary] = []
+    bootstrap_summary: AlternatingBootstrapSummary | None = None
     fista_result: ReferenceFISTAResult | None = None
     last_schur_result: JointSchurLMResult | None = None
     constrained_first_preview_volume: jax.Array | None = None
@@ -101,7 +104,13 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         schedule.levels[0],
         sigma=schedule.levels[0].residual_sigma,
     )
-    geometry, gauge_report, volume, last_schur_result = _apply_initial_geometry_first_bootstrap(
+    (
+        geometry,
+        gauge_report,
+        volume,
+        last_schur_result,
+        bootstrap_summary,
+    ) = _apply_initial_geometry_first_bootstrap(
         config,
         observed,
         geometry,
@@ -329,6 +338,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         gauge_report=gauge_report,
         fista_result=fista_result,
         summaries=tuple(summaries),
+        bootstrap_summary=bootstrap_summary,
         schur_result=last_schur_result,
         geometry_update_volume_source=config.geometry_update_volume_source,
         geometry_update_solver=config.geometry_update_solver,
@@ -847,7 +857,13 @@ def _apply_initial_geometry_first_bootstrap(
     gauge_report: GaugeReport,
     volume: jax.Array | None,
     last_schur_result: JointSchurLMResult | None,
-) -> tuple[GeometryState, GaugeReport, jax.Array | None, JointSchurLMResult | None]:
+) -> tuple[
+    GeometryState,
+    GaugeReport,
+    jax.Array | None,
+    JointSchurLMResult | None,
+    AlternatingBootstrapSummary | None,
+]:
     bootstrap = _maybe_run_geometry_first_det_u_bootstrap(
         config,
         observed,
@@ -856,12 +872,13 @@ def _apply_initial_geometry_first_bootstrap(
         level=level,
     )
     if bootstrap is None:
-        return geometry, gauge_report, volume, last_schur_result
+        return geometry, gauge_report, volume, last_schur_result, None
     return (
         bootstrap.geometry,
         bootstrap.gauge_report,
         jax.lax.stop_gradient(bootstrap.volume),
         bootstrap.schur_result,
+        bootstrap.summary,
     )
 
 
@@ -884,6 +901,14 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         current_volume=current_volume,
         level=level,
     )
+    loss_before_first_schur = _projection_loss(
+        neutral,
+        observed,
+        geometry,
+        mask,
+        level,
+        sigma=level.residual_sigma,
+    )
     first_geometry, _first_report, _first_schur = _run_geometry_updates(
         neutral,
         observed,
@@ -904,6 +929,14 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         residual_filters=_geometry_residual_filters(config, level.residual_filters),
         parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
     )
+    loss_after_first_schur = _projection_loss(
+        neutral,
+        observed,
+        first_geometry,
+        mask,
+        level,
+        sigma=level.residual_sigma,
+    )
     refreshed = fista_reconstruct_reference(
         observed,
         first_geometry,
@@ -919,6 +952,14 @@ def _maybe_run_geometry_first_det_u_bootstrap(
             residual_filters=_preview_residual_filters(config, level, level.residual_filters),
             center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
         ),
+    )
+    loss_after_fista_refresh = _projection_loss(
+        refreshed.volume,
+        observed,
+        first_geometry,
+        mask,
+        level,
+        sigma=level.residual_sigma,
     )
     final_geometry, final_report, final_schur = _run_geometry_updates(
         refreshed.volume,
@@ -940,11 +981,35 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         residual_filters=_geometry_residual_filters(config, level.residual_filters),
         parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
     )
+    final_loss_before, final_loss_after = _schur_loss_pair(final_schur)
     return _GeometryFirstBootstrapResult(
         geometry=final_geometry,
         gauge_report=final_report,
         volume=jax.lax.stop_gradient(refreshed.volume),
         schur_result=final_schur,
+        summary=AlternatingBootstrapSummary(
+            level_factor=level.level_factor,
+            role="geometry_first_bootstrap",
+            schur_updates_per_pass=level.geometry_updates,
+            schur_passes=2,
+            executed_geometry_updates=2 * level.geometry_updates,
+            fista_refresh_iterations=_preview_reconstruction_iterations(config, level),
+            residual_filter_kinds=_residual_filter_kinds(level),
+            loss_before_first_schur=loss_before_first_schur,
+            loss_after_first_schur=loss_after_first_schur,
+            loss_before_fista_refresh=loss_after_first_schur,
+            loss_after_fista_refresh=loss_after_fista_refresh,
+            loss_before_final_schur=final_loss_before,
+            loss_after_final_schur=final_loss_after,
+            accepted=bool(final_schur.diagnostics.accepted),
+            final_det_u_px=float(final_geometry.setup.det_u_px.value),
+            parameter_update_norm=max(
+                float(final_schur.diagnostics.setup_update_norm),
+                float(final_schur.diagnostics.pose_update_norm),
+            ),
+            first_schur_diagnostics=_first_schur.diagnostics,
+            final_schur_diagnostics=final_schur.diagnostics,
+        ),
     )
 
 

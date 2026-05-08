@@ -3,6 +3,41 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Geometry-First Bootstrap Artifact Stage
+
+### Summary
+
+- Recorded the existing production det_u geometry-first bootstrap as an
+  explicit provenance stage without changing the algorithm.
+- Runs that trigger the production stopped det_u gate now write
+  `bootstrap_stage.json` and include the same payload under
+  `benchmark_result.json.runtime.bootstrap_stage`, `benchmark_report.md`, and
+  `run_manifest.json`.
+- The payload records both bootstrap Schur passes, the intervening FISTA
+  refresh iteration count, pre/post losses for the first Schur, refresh, and
+  final Schur, final acceptance, final det_u, and compact Schur diagnostics.
+- Ordinary continuation `alignment_summary.csv` rows remain the actual
+  continuation levels; the bootstrap is separate pre-level provenance rather
+  than a hidden extra level.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_records_geometry_first_bootstrap_stage
+  -q` passed: 1 test in 83.33 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-08 — Final Stopped det_u Production-Gate Summary
 
 ### Summary

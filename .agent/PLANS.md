@@ -29,6 +29,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   - Review align-auto/alternating policy surface and safely demote or document
     stale diagnostics without adding algorithmic features.
   - Run focused validation for changed files and end with a clean-tree status.
+  - Record geometry-first bootstrap as explicit artifact provenance without
+    changing the algorithm.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -65,10 +67,27 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add `docs/tomojax-v2/` project-status document.
 - [x] Review/demote stale production policy surface.
 - [x] Run focused validation and complete cleanup audit.
+- [x] Add explicit geometry-first bootstrap artifact stage.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_records_geometry_first_bootstrap_stage
+  -q` passed: 1 test in 83.33 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs

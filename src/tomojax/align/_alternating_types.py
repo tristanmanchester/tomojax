@@ -105,6 +105,30 @@ class AlternatingLevelSummary:
 
 
 @dataclass(frozen=True)
+class AlternatingBootstrapSummary:
+    """Pre-continuation geometry-first bootstrap provenance."""
+
+    level_factor: int
+    role: str
+    schur_updates_per_pass: int
+    schur_passes: int
+    executed_geometry_updates: int
+    fista_refresh_iterations: int
+    residual_filter_kinds: tuple[str, ...]
+    loss_before_first_schur: float
+    loss_after_first_schur: float
+    loss_before_fista_refresh: float
+    loss_after_fista_refresh: float
+    loss_before_final_schur: float
+    loss_after_final_schur: float
+    accepted: bool
+    final_det_u_px: float
+    parameter_update_norm: float
+    first_schur_diagnostics: JointSchurDiagnostics | None = None
+    final_schur_diagnostics: JointSchurDiagnostics | None = None
+
+
+@dataclass(frozen=True)
 class _LevelVerificationChecks:
     loss_nonincreasing: bool
     finite_loss: bool
