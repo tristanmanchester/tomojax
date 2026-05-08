@@ -63,12 +63,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Complete the go/no-go audit and final report.
 - [x] Add final stopped det_u investigation summary.
 - [x] Add `docs/tomojax-v2/` project-status document.
-- [ ] Review/demote stale production policy surface.
-- [ ] Run focused validation and complete cleanup audit.
+- [x] Review/demote stale production policy surface.
+- [x] Run focused validation and complete cleanup audit.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  -q` passed: 1 test in 0.59 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/cli/align_auto.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/align_auto.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- Attempted stale focused target
+  `tests/test_align_auto_cli.py::test_align_auto_smoke_help_includes_geometry_update_options`;
+  pytest reported no matching test, so validation was rerun with the current
+  CLI help test listed above.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_forward_reference.py::test_core_volume_axis_constants_match_projector_convention

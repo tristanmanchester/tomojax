@@ -82,7 +82,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default="stopped_reconstruction",
         help=(
             "Volume source for Schur geometry updates. "
-            "Use fixed_synthetic_truth only for synthetic oracle diagnostics."
+            "Use fixed_synthetic_truth only for synthetic oracle diagnostics; "
+            "it is not production stopped-alignment evidence."
         ),
     )
     _ = parser.add_argument(
@@ -200,20 +201,28 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         help=(
             "Keep theta_offset_rad frozen for coarser levels and activate it at "
-            "this continuation level factor or finer."
+            "this continuation level factor or finer. In stopped reconstruction, "
+            "theta is a volume-orientation gauge unless calibration mode supplies "
+            "an orientation anchor."
         ),
     )
     _ = parser.add_argument(
         "--geometry-update-phi-polish-updates",
         type=int,
         default=0,
-        help="Optional final phi_residual_rad-only Schur polish update count.",
+        help=(
+            "Diagnostic final phi_residual_rad-only Schur polish update count "
+            "(default 0; not part of the production stopped det_u gate)."
+        ),
     )
     _ = parser.add_argument(
         "--geometry-update-final-pose-polish-updates",
         type=int,
         default=0,
-        help="Optional final det_u plus all-5 pose Schur polish update count.",
+        help=(
+            "Diagnostic final det_u plus all-5 pose Schur polish update count "
+            "(default 0; not part of the production stopped det_u gate)."
+        ),
     )
     _ = parser.add_argument(
         "--preview-volume-support",
@@ -259,7 +268,8 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=_STOPPED_PREVIEW_POLICY_CHOICES,
         default="standard",
         help=(
-            "Optional first stopped-reconstruction preview constraint. "
+            "Diagnostic first stopped-reconstruction preview constraint. "
+            "Production stopped det_u uses standard. "
             "constant_cylindrical_first_level uses a constant initial volume, "
             "cylindrical support, and raw residuals for the coarsest preview only; "
             "the no_fista variant also skips the coarsest reconstruction iterations."

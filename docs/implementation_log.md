@@ -41,6 +41,39 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   only be evaluated in calibration/oracle modes with an explicit orientation
   anchor.
 
+### Policy Surface Cleanup
+
+- Reviewed the align-auto and alternating stopped det_u policy surface after
+  the production investigation. The production stopped det_u path remains the
+  narrow geometry-first gate with stopped reconstruction, joint Schur, frozen
+  pose, det_u-only setup, and nuisance disabled.
+- Candidate-refresh acceptance is still bypassed for that production gate.
+  Candidate refresh, neutral-refresh behavior, hard x-gauge diagnostics,
+  no-FISTA-first preview, final polish stages, and weak-view exclusion remain
+  diagnostics only unless a future milestone explicitly revalidates one of
+  them against a named production gate.
+- Tightened `tomojax-align-auto-smoke` help text so
+  `fixed_synthetic_truth` is labeled as oracle-only, stopped preview policy and
+  final polish knobs are labeled as diagnostics/default-off, and theta
+  activation warns that stopped reconstruction needs an explicit orientation
+  anchor before theta is production evidence.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  -q` passed: 1 test in 0.59 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/cli/align_auto.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/align_auto.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- A stale focused pytest target,
+  `tests/test_align_auto_cli.py::test_align_auto_smoke_help_includes_geometry_update_options`,
+  was attempted first and reported no matching test; the current CLI help test
+  above is the covering validation.
+
 ## 2026-05-08 — Production Stopped-Alignment Consolidation
 
 ### Summary
