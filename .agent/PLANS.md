@@ -56,7 +56,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add and validate FISTA gradient finite-difference coverage.
 - [x] Based on those diagnostics, implement or falsify the geometry-first det_u
       bootstrap.
-- [ ] Complete the goal audit and final report.
+- [x] Complete the goal audit and final report.
 
 ### Validation
 
