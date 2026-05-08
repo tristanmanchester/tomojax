@@ -61,9 +61,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Complete the goal audit and final report.
 - [x] Run and record the current minimal geometry-first stopped det_u path at
       `128^3`.
-- [ ] Try the smallest evidence-driven `64^3` refinement toward `<0.2 px`.
-- [ ] If needed, implement/prototype real det_u multiresolution pyramid.
-- [ ] Complete the go/no-go audit and final report.
+- [x] Try the smallest evidence-driven `64^3` refinement toward `<0.2 px`.
+- [x] If needed, implement/prototype real det_u multiresolution pyramid.
+- [x] Complete the go/no-go audit and final report.
 
 ### Validation
 

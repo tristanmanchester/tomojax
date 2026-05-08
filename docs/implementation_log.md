@@ -389,6 +389,102 @@ Interpretation:
   `<0.2 px` or implementing the real det_u-only multiresolution pyramid. The
   current single-scale bootstrap is not enough at `128^3`.
 
+## 2026-05-08 — Production Stopped det_u Stretch Probes
+
+### Summary
+
+- Tried the smallest `64^3` refinement first: more det_u-only Schur iterations
+  around the same geometry-first neutral/refresh sequence.
+- Because that stalled well above `<0.2 px`, ran a real multiresolution det_u
+  prototype with actual detector/volume downsampling at levels 4, 2, and 1 and
+  scaled detector shifts. This was a direct prototype, not a residual-filter
+  relabeling.
+
+### Schur/Refresh Refinement Probe
+
+Artifact:
+
+- `.artifacts/phase8_production_stopped_alignment/bootstrap_refinement_probe_64_detu_cuda/`
+
+Probe grid:
+
+- Schur iterations: `2, 3, 4, 6, 8`
+- Refresh FISTA iterations: `2, 4, 8`
+- Same clean `64^3` supported-only stopped det_u case, theta/pose frozen,
+  det_u active only, no nuisance, no candidate refresh.
+
+Best result:
+
+| Metric | Value |
+|---|---:|
+| Best final det_u RMSE | 0.875705 px |
+| Schur iterations | 8 |
+| Refresh iterations | 4 |
+| Volume NMSE | 0.408500 |
+| final volume / final geometry loss | 1.01530 |
+| true volume / final geometry loss | 0.0666482 |
+| `/usr/bin/time` wall time | 10:30.36 |
+| Host max RSS | 8252664 KB |
+
+Interpretation:
+
+- More single-scale Schur iterations do not move the path toward `<0.2 px`.
+  The best result remains near the integrated gate's `0.886 px` plateau and
+  has worse volume metrics.
+- This falsifies simple "just run more Schur" as the stretch-gate fix.
+
+### Real Multiresolution Prototype
+
+Artifact:
+
+- `.artifacts/phase8_production_stopped_alignment/multires_pyramid_probe_64_detu_cuda/`
+
+Prototype:
+
+- Level 4: detector projections and volume downsampled to `16^3`, det_u scaled
+  by `1/4`.
+- Level 2: detector projections and volume downsampled to `32^3`, det_u scaled
+  by `1/2`.
+- Level 1: full `64^3` verification/refinement.
+- Each level used neutral normalized average-projection support initialization,
+  det_u-only Schur, refresh, and a second det_u-only Schur.
+
+Result by level:
+
+| Level factor | Size | Full-scale det_u RMSE |
+|---:|---:|---:|
+| 4 | 16^3 | 0.810621 px |
+| 2 | 32^3 | 0.750395 px |
+| 1 | 64^3 | 0.715680 px |
+| final full refresh/Schur | 64^3 | 0.692153 px |
+
+Final metrics:
+
+| Metric | Value |
+|---|---:|
+| Final det_u RMSE | 0.692153 px |
+| Final Schur accepted | false |
+| Volume NMSE | 0.407307 |
+| final volume / true geometry loss | 1.01828 |
+| final volume / final geometry loss | 1.01453 |
+| true volume / final geometry loss | 0.0447077 |
+| `/usr/bin/time` wall time | 2:17.18 |
+| Host max RSS | 3750820 KB |
+
+Interpretation:
+
+- Real multiresolution improves det_u beyond the single-scale bootstrap
+  (`0.886 -> 0.692 px`) but still does not approach the `<0.2 px` stretch gate.
+- The prototype confirms scale/capture range is part of the problem, but not
+  the whole problem. The final volume metrics are worse than the integrated
+  single-scale production gate (`0.222` NMSE), so this prototype should not be
+  promoted as production behavior.
+- Current go/no-go: geometry-first stopped det_u is production-viable for the
+  initial `<1 px` milestone at `64^3`; the `<0.2 px` stretch and 128-scale
+  gates remain blocked by the current stopped reconstruction/geometry coupling.
+  A better multiresolution reconstruction/geometry handoff may be needed, but
+  the simple real pyramid prototype is not sufficient.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary
