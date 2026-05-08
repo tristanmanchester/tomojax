@@ -12,26 +12,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Goal file: `docs/agent_goal_production_stopped_alignment.md`
-- Phase: Phase 7/8 production stopped det_u refinement
-- Goal: prove or falsify the geometry-first stopped det_u production path,
-  first by scaling the current minimal path to `128^3`, then by improving the
-  `64^3` path toward the `<0.2 px` stretch target or implementing real
-  multiresolution if the plateau remains.
+- Phase: Phase 7/8 production stopped det_u consolidation
+- Goal: clean up and document the branch after the stopped det_u production
+  gate investigation so the repo is production-readable and benchmark-honest.
 
 ### Scope
 
 - In scope:
-  - Run the current geometry-first/no-candidate-refresh stopped det_u path at
-    `128^3` and record whether it scales.
-  - Improve the same minimal `64^3` supported-only stopped det_u gate toward
-    the `<0.2 px` stretch target without adding nuisance, weak-view exclusions,
-    candidate-refresh variants, or new geometry DOFs.
-  - If the `64^3` path stalls above `<0.2 px`, implement or prototype a real
-    det_u-only multiresolution pyramid with downsampled projections/volumes and
-    scaled detector shifts.
-  - End with a go/no-go classification for geometry-first stopped det_u:
-    production-viable, needs real multiresolution, or blocked by the current
-    algorithm.
+  - Add a concise final stopped det_u investigation summary to
+    `docs/implementation_log.md`.
+  - Add a short `docs/tomojax-v2/` project-status document covering production,
+    oracle-only, blocked, and next architecture choices.
+  - Tighten benchmark/status wording so fixed-truth is oracle-level,
+    weak-view exclusion is not a plain production pass, and stopped det_u is a
+    failed/partial production gate despite improvement.
+  - Review align-auto/alternating policy surface and safely demote or document
+    stale diagnostics without adding algorithmic features.
+  - Run focused validation for changed files and end with a clean-tree status.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -64,6 +61,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Try the smallest evidence-driven `64^3` refinement toward `<0.2 px`.
 - [x] If needed, implement/prototype real det_u multiresolution pyramid.
 - [x] Complete the go/no-go audit and final report.
+- [x] Add final stopped det_u investigation summary.
+- [x] Add `docs/tomojax-v2/` project-status document.
+- [ ] Review/demote stale production policy surface.
+- [ ] Run focused validation and complete cleanup audit.
 
 ### Validation
 

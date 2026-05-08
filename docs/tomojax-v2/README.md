@@ -49,6 +49,9 @@ geometry graph
 7. [`benchmark_manifest.yaml`](benchmark_manifest.yaml)  
    Machine-readable summary of the five synthetic datasets and benchmark expectations.
 
+8. [`08_project_status.md`](08_project_status.md)  
+   Current production/oracle/blocked status after the stopped det_u gate investigation.
+
 ## Non-goals
 
 The default system should not expose a public menu of alignment tricks. These are not the product identity:

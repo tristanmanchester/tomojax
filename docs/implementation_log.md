@@ -3,6 +3,44 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Final Stopped det_u Production-Gate Summary
+
+### Summary
+
+- The supported-only stopped det_u production investigation is consolidated
+  around one honest gate: clean `synth128_setup_global_tomo`, stopped
+  reconstruction, pose frozen, theta frozen as a volume-orientation gauge,
+  det_u active only, no nuisance, no weak-view exclusion, no fixed/true-volume
+  assistance, and candidate-refresh bypassed for the production det_u path.
+- `64^3` initial milestone is achieved: geometry-first bootstrap improves det_u
+  from `7.25 px` to `0.886244 px`.
+- The `<0.2 px` stretch gate is not achieved. Extra single-scale Schur/refresh
+  iterations stall near `0.876 px`.
+- `128^3` scale gate is not achieved. The same minimal path improves det_u from
+  `14.5 px` to `2.25510 px`, but remains far above the initial and stretch
+  targets.
+- A real multiresolution prototype with actual downsampled
+  projections/volumes and scaled det_u helps but is insufficient: final `64^3`
+  det_u reaches `0.692153 px` and volume NMSE worsens to `0.407307`.
+- Current blocker: stopped reconstruction still couples to geometry strongly
+  enough that the geometry/reconstruction handoff cannot reach stretch
+  accuracy. The next architecture work should improve that handoff, not add
+  nuisance, weak-view criteria, new geometry DOFs, or benchmark/report knobs.
+
+### Benchmark Honesty
+
+- Fixed-truth and true-volume results are oracle-level diagnostics only. They
+  prove the Schur/core geometry path can recover supported setup when the
+  volume is in the right gauge; they do not prove production stopped alignment.
+- Weak-view exclusion is diagnostic and must not be reported as a plain
+  production pass.
+- The stopped det_u gate is a partial production success only for the `64^3`
+  `<1 px` milestone. It remains a failed production gate for the `<0.2 px`
+  stretch target and for `128^3` scale.
+- Theta remains frozen in stopped production mode. Stopped theta recovery should
+  only be evaluated in calibration/oracle modes with an explicit orientation
+  anchor.
+
 ## 2026-05-08 — Production Stopped-Alignment Consolidation
 
 ### Summary
