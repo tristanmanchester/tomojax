@@ -3,6 +3,44 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Phi Polish Diagnostic
+
+### Summary
+
+- Ran direct true-volume `solve_joint_schur_lm` probes from the staged
+  alpha/beta result for `synth128_pose_random_extreme`.
+- A phi-only polish improves the remaining theta/phi error while preserving
+  recovered dx/dz and alpha/beta.
+- A joint alpha/beta/phi polish lowers loss slightly more but worsens
+  alpha/beta recovery, so a dedicated phi-only polish is the better
+  implementation target.
+
+### Evidence
+
+Base staged alpha/beta run:
+
+- `alpha_beta_rmse_rad=0.012410`.
+- `theta_realized_rmse_rad=0.125796`.
+- `det_u_realized_rmse_px=0.901970`.
+- `det_v_realized_rmse_px=0.954342`.
+
+Direct phi-only polish from that state:
+
+| Iterations | Final loss | alpha/beta RMSE rad | phi RMSE rad | dx RMSE px | dz RMSE px |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 0.072537 | 0.017550 | 0.089799 | 0.901970 | 0.954342 |
+| 8 | 0.065535 | 0.017550 | 0.072270 | 0.901970 | 0.954342 |
+| 16 | 0.059268 | 0.017550 | 0.054667 | 0.901970 | 0.954342 |
+
+Recorded the diagnostic in
+`docs/benchmark_runs/2026-05-08-phase8-phi-polish-diagnostic.md`.
+
+### Interpretation
+
+The next source slice should add an opt-in final phi-only polish stage. It will
+not fully pass `synth128_pose_random_extreme` yet, but it directly attacks the
+remaining phi/theta blocker without sacrificing translation recovery.
+
 ## 2026-05-08 — Phase 8 Alpha/Beta Activation Policy
 
 ### Summary

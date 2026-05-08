@@ -11,18 +11,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 angular pose activation policy
-- Goal: let the alternating loop stage alpha/beta separately from
-  phi/dx/dz so translation-heavy pose recovery can run before weak angular
-  pose DOFs are activated.
+- Phase: Phase 8/9 phi polish diagnostic
+- Goal: determine whether the remaining pose-random phi/theta blocker can be
+  reduced by a dedicated phi-only polish after translation recovery.
 
 ### Scope
 
 - In scope:
-  - Add an optional alpha/beta activation level for geometry updates.
-  - Keep defaults unchanged.
-  - Wire CLI/config artifacts and focused policy tests.
-  - Run a fixed-truth pose-random CUDA diagnostic if focused validation passes.
+  - Run direct true-volume Schur probes from the staged alpha/beta result.
+  - Compare phi-only polish against alpha/beta/phi polish.
+  - Record evidence before adding a new staged-polish source path.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -48,12 +46,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add alpha/beta activation policy.
-- [x] Wire CLI/config artifacts.
-- [x] Add focused tests.
-- [x] Run focused validation and `just imports`.
-- [x] Run a fixed-truth pose-random CUDA diagnostic.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run phi-only polish probe.
+- [x] Run alpha/beta/phi polish comparison.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
@@ -172,6 +167,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Fixed-truth `synth128_pose_random_extreme` alpha/beta-final no-trust CUDA
   diagnostic completed on `cuda:0` in 215.97 seconds. Artifact:
   `.artifacts/phase8_alpha_beta_staging/runs/pose_random_fixed_truth_alpha_beta_final_no_trust_cuda/`.
+- Direct phi-only polish from the staged result completed on `cuda:0`; 16
+  iterations reduced phi RMSE from about `0.1258` to `0.0547` rad while
+  preserving dx/dz recovery.
+- Direct alpha/beta/phi polish reduced phi similarly but worsened alpha/beta,
+  so a dedicated phi-only polish is the better next implementation target.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
