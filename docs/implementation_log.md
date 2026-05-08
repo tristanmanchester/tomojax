@@ -191,6 +191,116 @@ Interpretation:
   past the plateau, the current stopped objective is not merely suffering from
   stale-volume acceptance.
 
+## 2026-05-08 — Production Stopped det_u Geometry-First Bootstrap
+
+### Summary
+
+- Implemented the narrow geometry-first bootstrap for the supported-only
+  stopped det_u production gate.
+- The bootstrap is deliberately limited to stopped reconstruction,
+  `geometry_update_solver="joint_schur"`, pose frozen, no nuisance, and
+  `geometry_update_active_setup_parameters=("det_u_px",)`.
+- It runs only at the first preview level:
+  1. build a neutral normalized average-projection volume with configured
+     support;
+  2. run det_u-only Schur before FISTA can absorb the setup shift;
+  3. refresh reconstruction under the updated det_u;
+  4. run one more det_u-only Schur;
+  5. continue the normal alternating artifact-producing loop from the
+     bootstrapped geometry/volume.
+
+### Direct Bootstrap Diagnostic
+
+Before wiring the path into the solver, ran the direct bootstrap probe:
+
+- Artifact:
+  `.artifacts/phase8_production_stopped_alignment/geometry_first_bootstrap_64_detu_cuda/`
+- Device: `cuda:0`
+- Initial det_u RMSE: `7.25 px`
+- First neutral Schur det_u RMSE: `1.49102 px`
+- Refresh iterations: `4`
+- Second Schur det_u RMSE: `0.876182 px`
+- Refresh volume NMSE: `0.409619`
+- `true_volume/final_geometry` loss: `0.0667086`
+- `/usr/bin/time` wall time: `0:29.15`
+- Host max RSS: `1992108 KB`
+
+### Canonical 64^3 Gate
+
+Reran the canonical clean supported-only stopped det_u gate through
+`tomojax-align-auto-smoke` with the integrated bootstrap:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_production_stopped_alignment/runs/64_stopped_detu_geometry_first_bootstrap_cuda \
+  --profile balanced --size 64 --views 64 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_production_stopped_alignment/runs/64_stopped_detu_geometry_first_bootstrap_cuda/`
+
+Result:
+
+| Metric | Value |
+|---|---:|
+| Benchmark status | failed |
+| Selected JAX device | `cuda:0` |
+| JAX backend | `gpu` |
+| Initial det_u RMSE | 7.25 px |
+| Final det_u RMSE | 0.886680 px |
+| Schur accepted | true |
+| Final residual | 0.708585 |
+| Volume NMSE | 0.290317 |
+| final volume / true geometry loss | 0.716562 |
+| final volume / final geometry loss | 0.708585 |
+| true volume / final geometry loss | 0.0851936 |
+| true volume / true geometry loss | 1.17211e-06 |
+| `/usr/bin/time` wall time | 0:52.45 |
+| Host max RSS | 2406112 KB |
+
+Interpretation:
+
+- The geometry-first bootstrap meets the goal file's initial production target:
+  det_u improves materially and reaches `<1 px` at `64^3`.
+- The benchmark status remains `failed` because the current verifier still uses
+  the stretch-style `det_u_error_px_lt=0.2` tolerance. Do not report this as a
+  full green production pass.
+- Candidate refresh was not required to break the old `2.2-2.9 px` plateau;
+  moving geometry before serious FISTA absorption was the effective mechanism.
+- Remaining gaps are stretch accuracy and volume/geometry consistency:
+  `true_volume/final_geometry` is much better than before but still far from
+  `true_volume/true_geometry`.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_geometry_first_bootstrap_is_limited_to_stopped_detu_gate
+  tests/test_reference_fista.py -q` passed: 12 tests in 16.57 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/recon/_fista_reference.py
+  tests/test_alternating_geometry_update_policy.py tests/test_reference_fista.py`
+  passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run basedpyright
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/recon/_fista_reference.py
+  tests/test_alternating_geometry_update_policy.py tests/test_reference_fista.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary

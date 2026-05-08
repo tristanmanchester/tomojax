@@ -29,6 +29,7 @@ from tomojax.align._alternating_orchestration import (
     _candidate_refresh_initial_volume,
     _run_phi_polish,
     _run_polish_stage,
+    _uses_geometry_first_det_u_bootstrap,
 )
 
 # check-public-imports: allow-private
@@ -940,3 +941,35 @@ def test_candidate_refresh_initial_volume_is_neutral_shared_seed() -> None:
     assert not np.allclose(np.asarray(initial), np.asarray(absorbed_volume))
     assert np.isclose(float(initial[4, 4, 4]), 2.0)
     assert float(initial[0, 0, 4]) == 0.0
+
+
+def test_geometry_first_bootstrap_is_limited_to_stopped_detu_gate() -> None:
+    level = reference_continuation_schedule("balanced").levels[0]
+
+    assert _uses_geometry_first_det_u_bootstrap(
+        AlternatingSmokeConfig(
+            size=64,
+            geometry_update_volume_source="stopped_reconstruction",
+            geometry_update_pose_frozen=True,
+            geometry_update_active_setup_parameters=("det_u_px",),
+        ),
+        level,
+    )
+    assert not _uses_geometry_first_det_u_bootstrap(
+        AlternatingSmokeConfig(
+            size=64,
+            geometry_update_volume_source="fixed_synthetic_truth",
+            geometry_update_pose_frozen=True,
+            geometry_update_active_setup_parameters=("det_u_px",),
+        ),
+        level,
+    )
+    assert not _uses_geometry_first_det_u_bootstrap(
+        AlternatingSmokeConfig(
+            size=64,
+            geometry_update_volume_source="stopped_reconstruction",
+            geometry_update_pose_frozen=True,
+            geometry_update_active_setup_parameters=("det_u_px", "theta_offset_rad"),
+        ),
+        level,
+    )

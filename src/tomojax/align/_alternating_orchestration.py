@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import time
@@ -62,7 +62,15 @@ if TYPE_CHECKING:
     from tomojax.geometry import GeometryState
 
 
-def _run_alternating_solver_smoke_impl(
+@dataclass(frozen=True)
+class _GeometryFirstBootstrapResult:
+    geometry: GeometryState
+    gauge_report: GaugeReport
+    volume: jax.Array
+    schur_result: JointSchurLMResult
+
+
+def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level state
     output_dir: str | Path,
     *,
     config: AlternatingSmokeConfig,
@@ -79,11 +87,11 @@ def _run_alternating_solver_smoke_impl(
     geometry, gauge_report = initial_geometry, GaugeReport(())
     volume: jax.Array | None = None
     summaries: list[AlternatingLevelSummary] = []
-    fista_result: ReferenceFISTAResult | None
-    last_schur_result: JointSchurLMResult | None
+    fista_result: ReferenceFISTAResult | None = None
+    last_schur_result: JointSchurLMResult | None = None
     constrained_first_preview_volume: jax.Array | None = None
-    fista_result, coarse_verified = None, False
-    time_to_verified_geometry_seconds, last_schur_result = None, None
+    coarse_verified = False
+    time_to_verified_geometry_seconds = None
 
     initial_loss = previous_loss = _projection_loss(
         truth,
@@ -92,6 +100,16 @@ def _run_alternating_solver_smoke_impl(
         mask,
         schedule.levels[0],
         sigma=schedule.levels[0].residual_sigma,
+    )
+    geometry, gauge_report, volume, last_schur_result = _apply_initial_geometry_first_bootstrap(
+        config,
+        observed,
+        geometry,
+        mask=train_mask,
+        level=schedule.levels[0],
+        gauge_report=gauge_report,
+        volume=volume,
+        last_schur_result=last_schur_result,
     )
     for level in schedule.levels:
         if level.run_if_coarse_unverified and coarse_verified:
@@ -816,6 +834,133 @@ def _allows_coarse_early_exit(config: AlternatingSmokeConfig) -> bool:
     return (
         config.geometry_update_volume_source != "fixed_synthetic_truth"
         and config.preview_reconstruction_mask_source != "train_views"
+    )
+
+
+def _apply_initial_geometry_first_bootstrap(
+    config: AlternatingSmokeConfig,
+    observed: jax.Array,
+    geometry: GeometryState,
+    *,
+    mask: jax.Array,
+    level: ContinuationLevel,
+    gauge_report: GaugeReport,
+    volume: jax.Array | None,
+    last_schur_result: JointSchurLMResult | None,
+) -> tuple[GeometryState, GaugeReport, jax.Array | None, JointSchurLMResult | None]:
+    bootstrap = _maybe_run_geometry_first_det_u_bootstrap(
+        config,
+        observed,
+        geometry,
+        mask=mask,
+        level=level,
+    )
+    if bootstrap is None:
+        return geometry, gauge_report, volume, last_schur_result
+    return (
+        bootstrap.geometry,
+        bootstrap.gauge_report,
+        jax.lax.stop_gradient(bootstrap.volume),
+        bootstrap.schur_result,
+    )
+
+
+def _maybe_run_geometry_first_det_u_bootstrap(
+    config: AlternatingSmokeConfig,
+    observed: jax.Array,
+    geometry: GeometryState,
+    *,
+    mask: jax.Array,
+    level: ContinuationLevel,
+) -> _GeometryFirstBootstrapResult | None:
+    if not _uses_geometry_first_det_u_bootstrap(config, level):
+        return None
+    shape = (config.size, config.size, config.size)
+    support = _preview_volume_support(config, level=level, shape=shape)
+    current_volume = jnp.zeros(shape, dtype=jnp.float32)
+    neutral = _candidate_refresh_initial_volume(
+        config,
+        observed,
+        current_volume=current_volume,
+        level=level,
+    )
+    first_geometry, _first_report, _first_schur = _run_geometry_updates(
+        neutral,
+        observed,
+        geometry,
+        mask,
+        level,
+        level.geometry_updates,
+        sigma=level.residual_sigma,
+        setup_prior_strength=config.geometry_update_setup_prior_strength,
+        pose_prior_strength=config.geometry_update_pose_prior_strength,
+        pose_trust_radius=config.geometry_update_pose_trust_radius,
+        active_setup_parameters=("det_u_px",),
+        solver=config.geometry_update_solver,
+        pose_frozen=True,
+        active_pose_dofs=(),
+        fit_gain_offset_nuisance=False,
+        fit_background_nuisance=False,
+        residual_filters=_geometry_residual_filters(config, level.residual_filters),
+        parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+    )
+    refreshed = fista_reconstruct_reference(
+        observed,
+        first_geometry,
+        initial_volume=neutral,
+        volume_support=support,
+        mask=mask,
+        config=ReferenceFISTAConfig(
+            iterations=_preview_reconstruction_iterations(config, level),
+            step_size=_preview_fista_step_size(config),
+            tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
+            residual_sigma=level.residual_sigma,
+            residual_delta=level.residual_delta,
+            residual_filters=_preview_residual_filters(config, level, level.residual_filters),
+            center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
+        ),
+    )
+    final_geometry, final_report, final_schur = _run_geometry_updates(
+        refreshed.volume,
+        observed,
+        first_geometry,
+        mask,
+        level,
+        level.geometry_updates,
+        sigma=level.residual_sigma,
+        setup_prior_strength=config.geometry_update_setup_prior_strength,
+        pose_prior_strength=config.geometry_update_pose_prior_strength,
+        pose_trust_radius=config.geometry_update_pose_trust_radius,
+        active_setup_parameters=("det_u_px",),
+        solver=config.geometry_update_solver,
+        pose_frozen=True,
+        active_pose_dofs=(),
+        fit_gain_offset_nuisance=False,
+        fit_background_nuisance=False,
+        residual_filters=_geometry_residual_filters(config, level.residual_filters),
+        parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+    )
+    return _GeometryFirstBootstrapResult(
+        geometry=final_geometry,
+        gauge_report=final_report,
+        volume=jax.lax.stop_gradient(refreshed.volume),
+        schur_result=final_schur,
+    )
+
+
+def _uses_geometry_first_det_u_bootstrap(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+) -> bool:
+    return (
+        config.geometry_update_volume_source == "stopped_reconstruction"
+        and config.geometry_update_solver == "joint_schur"
+        and config.geometry_update_pose_frozen
+        and tuple(config.geometry_update_active_setup_parameters) == ("det_u_px",)
+        and not config.fit_gain_offset_nuisance
+        and not config.fit_background_nuisance
+        and level.role == "preview"
+        and int(level.level_factor) == 4
     )
 
 
