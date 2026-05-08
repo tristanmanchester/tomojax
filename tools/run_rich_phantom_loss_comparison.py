@@ -6,11 +6,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 from typing import Any
+
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 from tomojax.datasets import generate_synthetic_dataset
 
@@ -81,6 +84,7 @@ def main() -> int:
                     "0.02",
                 ],
                 check=False,
+                env=_jax_subprocess_env(),
             )
             elapsed = time.perf_counter() - start
             if completed.returncode != 0:
@@ -176,6 +180,12 @@ def _write_plots(root: Path, rows: list[dict[str, Any]]) -> None:
     axes[1].tick_params(axis="x", labelrotation=35)
     fig.savefig(root / "loss_comparison_metrics.png", dpi=160)
     plt.close(fig)
+
+
+def _jax_subprocess_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    return env
 
 
 if __name__ == "__main__":

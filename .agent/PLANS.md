@@ -12,30 +12,29 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Goal file: `docs/agent_goal_production_stopped_alignment.md`
-- Phase: Phase 8/9 rich phantom loss diagnostics
-- Goal: compare old-style Otsu/L2 foreground scoring against the current v2
-  pseudo-Huber projection loss on one deterministic rich PHANTOM94-style setup
-  benchmark before adding more alignment features.
+- Phase: Phase 8/9 v1-parity rich phantom setup/global gate
+- Goal: finish the narrow rich PHANTOM94 stopped det_u gate by first proving or
+  falsifying the fixed-truth Otsu L2 oracle with a non-lightning budget, then
+  only moving to stopped reconstruction if the oracle passes.
 
 ### Scope
 
 - In scope:
-  - Add `otsu_l2`, `pseudo_huber`, and `otsu_pseudo_huber` projection loss modes
-    through the existing sidecar ingestion, Schur/setup LM, FISTA, verification,
-    and artifact paths.
-  - Add a deterministic rich `PHANTOM94`-style `random_cubes_spheres` benchmark
-    dataset manifest entry.
-  - Run one `128^3`/128-view CUDA comparison for supported-only setup/global
-    stopped reconstruction and fixed-truth oracle modes.
-  - Record the top-level `runs/` comparison summary/artifacts and summarize the
-    result in `docs/implementation_log.md`.
-  - Keep validation focused on the changed files and import contract.
+  - Run `128^3`/128-view rich PHANTOM94 fixed-truth oracle with `otsu_l2` and a
+    non-lightning budget.
+  - If fixed-truth fails, diagnose the Otsu mask/L2/Schur path before any
+    stopped reconstruction run.
+  - If fixed-truth passes, run the matching stopped reconstruction gate with
+    det_u active only, pose/theta frozen, no nuisance, no weak-view exclusion,
+    and no candidate-refresh acceptance.
+  - Only after a 128-view production pass, run the matching 256-view gate.
+  - Commit either a passing gate or a decisive diagnosis with artifacts under
+    `runs/`.
 - Out of scope:
-  - Changing the alternating algorithm.
-  - Adding candidate-refresh, nuisance, bad-view/jump handling, object drift,
-    backend/Pallas work, or additional report fields beyond the selected loss
-    mode.
-  - Treating the 4-view smoke case as alignment-quality evidence.
+  - New DOFs, nuisance policies, weak-view exclusion, candidate-refresh
+    variants, five-case suite runs, or threshold changes.
+  - Moving to stopped reconstruction before fixed-truth oracle evidence is
+    clean.
 - Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.datasets`.
 
 ### Design Sources
@@ -43,7 +42,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
 - `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
 - `docs/implementation_log.md`
-- Recent `128^3` CUDA run evidence recorded under
+- Recent Otsu L2 comparison evidence under
   `runs/rich_phantom_loss_comparison_20260508_153150/`.
 
 ### Tasks
@@ -70,6 +69,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add focused coverage for residual L2 loss, CLI loss-mode discoverability,
       and rich phantom manifest generation.
 - [x] Record implementation-log interpretation and commit the coherent slice.
+- [x] Run fixed-truth Otsu L2 with non-lightning budget on 128 views.
+- [x] Diagnose fixed-truth if it does not reach the gate.
+- [x] Run stopped Otsu L2 128-view gate only after fixed-truth passes.
+- [x] Implement and run a first true downsampled sidecar multires carry after
+      stopped reconstruction failed.
+- [x] Defer 256-view gate because the 128-view stopped gate still fails.
+- [x] Disable JAX GPU preallocation in rich-phantom benchmark harnesses and
+      record sampled memory evidence.
+- [ ] Update implementation log, validate focused changes, and commit.
 
 ### Validation
 
@@ -91,6 +99,14 @@ Current slice:
   src/tomojax/align ...` and the analogous basedpyright whole-align sweep were
   attempted first and failed on unrelated legacy align/model/objective files.
   Validation above was rerun against this slice's changed files.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_rich_phantom_loss_comparison.py
+  tools/run_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_rich_phantom_loss_comparison.py
+  tools/run_rich_phantom_v1_parity_gate.py` passed with 0 errors,
+  0 warnings, and 0 notes.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_align_auto_cli.py::test_align_auto_records_geometry_first_bootstrap_stage

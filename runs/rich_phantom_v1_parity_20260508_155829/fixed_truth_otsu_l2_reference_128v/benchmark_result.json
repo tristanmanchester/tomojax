@@ -1,0 +1,147 @@
+{
+  "backend": {
+    "actual": "core_trilinear_ray",
+    "backprojector": "core_trilinear_ray_adjoint",
+    "fallbacks": [],
+    "jax_default_backend": "gpu",
+    "projection_operator": "core_trilinear_ray",
+    "requested": "core_trilinear_ray",
+    "selected_jax_device": "cuda:0"
+  },
+  "bad_view_detection": {
+    "flagged_count": 0,
+    "flagged_view_indices": [],
+    "mad_rmse": 0.36420488357543945,
+    "max_rmse": 10.23987102508545,
+    "median_rmse": 9.231718063354492,
+    "method": "robust_view_rmse_mad",
+    "schema": "tomojax.bad_view_detection.v1",
+    "threshold_rmse": 10.31165885925293
+  },
+  "benchmark": "rich_phantom94_setup_global_tomo",
+  "benchmark_manifest_criteria": {
+    "det_u_error_px_lt": 0.5,
+    "theta_offset_error_deg_lt": 0.1
+  },
+  "benchmark_manifest_evaluation": {
+    "det_u_error_px_lt": {
+      "reason": "evaluated against smoke geometry recovery metric",
+      "status": "passed",
+      "threshold": 0.5,
+      "value": 0.05786418914794922
+    },
+    "theta_offset_error_deg_lt": {
+      "reason": "evaluated against smoke geometry recovery metric",
+      "status": "failed",
+      "threshold": 0.0017453292519943296,
+      "value": 0.0218166156499291
+    }
+  },
+  "benchmark_manifest_evaluation_summary": {
+    "failed": 1,
+    "not_evaluated": 0,
+    "passed": 1,
+    "status": "failed",
+    "total": 2
+  },
+  "current_default_comparison": null,
+  "dataset": {
+    "artifact_dir": "runs/rich_phantom_v1_parity_20260508_155829/datasets/rich_phantom94_setup_global_tomo_128_supported_only",
+    "name": "rich_phantom94_setup_global_tomo",
+    "nuisance_applied_to_projections": false,
+    "projection_views": 128,
+    "source": "synthetic128_spec",
+    "volume_shape": [
+      128,
+      128,
+      128
+    ]
+  },
+  "failure_labels": [
+    "projection_residual_improvement"
+  ],
+  "geometry_recovery": {
+    "alpha_beta_rmse_rad": 0.0,
+    "axis_error_rad": 0.0,
+    "det_u_realized_rmse_px": 0.05786418914794922,
+    "det_v_realized_rmse_px": 0.0,
+    "detector_roll_error_rad": 0.0,
+    "passed": true,
+    "supported_dofs_improved": true,
+    "theta_realized_rmse_rad": 0.0218166156499291,
+    "theta_scale_error": 0.0
+  },
+  "geometry_update_solver": "joint_schur",
+  "geometry_update_volume_source": "fixed_synthetic_truth",
+  "implementation": "reimagined_align_auto_smoke",
+  "object_motion_recovery": {
+    "enabled": false,
+    "estimate_source": null,
+    "reason": "object-frame motion solver is not enabled",
+    "schema": "tomojax.object_motion_recovery.v1",
+    "truth": {
+      "has_nonzero_motion": false,
+      "n_views": 128,
+      "schema": "tomojax.object_motion_truth.v1",
+      "tx_span_px": 0.0,
+      "tx_zero_model_rmse_px": 0.0
+    },
+    "tx_rmse_px": 0.0
+  },
+  "object_motion_suspicion": {
+    "evidence_sources": [],
+    "schema": "tomojax.object_motion_suspicion.v1",
+    "smooth_pose_drift": {
+      "dx_span_px": 0.0,
+      "dz_span_px": 0.0,
+      "method": "canonical_pose_endpoint_smooth_span",
+      "phi_span_rad": 0.0,
+      "phi_span_threshold_rad": 0.002617993877991494,
+      "shift_span_threshold_px": 3.0,
+      "suspected": false
+    },
+    "suspected": false,
+    "unsupported_dofs_not_evaluated": []
+  },
+  "pose_jump_exclusion": {
+    "dx_dz_rmse_px_except_jumps": 0.0,
+    "evaluated_view_count": 128,
+    "excluded_count": 0,
+    "excluded_view_indices": [],
+    "method": "truth_pose_dx_dz_derivative_outlier_neighborhood",
+    "schema": "tomojax.pose_jump_exclusion.v1"
+  },
+  "preview_center_l2_weight": 0.02,
+  "preview_initialization": "backprojection",
+  "preview_reconstruction_mask_source": "all_views",
+  "preview_residual_filter_mode": "continuation",
+  "preview_tv_scale": 1.0,
+  "preview_volume_support": "cylindrical",
+  "profile": "reference",
+  "projection_loss_mode": "otsu_l2",
+  "reconstruction": {
+    "final_residual": 42.67476272583008,
+    "final_volume_final_geometry_loss_all_views": 42.67476272583008,
+    "final_volume_initial_geometry_loss_all_views": 148.15234375,
+    "final_volume_true_geometry_loss_all_views": 42.67902755737305,
+    "heldout_loss": 0.12504014372825623,
+    "projection_loss_classification": "independent_projection_losses_consistent",
+    "relative_improvement": -0.322683345322329,
+    "schur_train_loss": 0.15207035839557648,
+    "true_volume_final_geometry_loss_all_views": 0.3713209629058838,
+    "true_volume_true_geometry_loss_all_views": 0.0,
+    "volume_nmse": 0.6378624439239502
+  },
+  "runtime": {
+    "bootstrap_stage": null,
+    "geometry_updates_executed": 10,
+    "geometry_updates_requested": 10,
+    "projector_calls": null,
+    "reconstruction_calls": 3,
+    "time_to_verified_geometry_seconds": null,
+    "total_wall_seconds": 117.76949758792762
+  },
+  "schema": "tomojax.synthetic_benchmark_result.v1",
+  "status": "passed",
+  "stopped_preview_policy": "standard"
+}

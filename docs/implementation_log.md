@@ -3,6 +3,87 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Rich PHANTOM94 v1-Parity Gate and JAX Allocator Diagnosis
+
+### Summary
+
+- Ran the required fixed-truth-first rich PHANTOM94 Otsu L2 gate at
+  `128^3`/128 views with the non-lightning `reference` profile.
+- Fixed-truth oracle passed the det_u target with `det_u RMSE = 0.057864 px`,
+  proving the Otsu mask/L2/Schur objective path can recover the supported
+  detector shift when the volume is in the correct gauge.
+- The matching stopped reconstruction run failed: `det_u RMSE = 4.10057 px`,
+  `volume NMSE = 0.710293`, and projection-loss classification
+  `reconstruction_absorbed_geometry`.
+- Forcing same-resolution fine-level geometry updates reduced stopped det_u
+  only to `3.29328 px`; the existing continuation skip policy was not the
+  primary blocker.
+- The existing constrained no-FISTA-first diagnostic also failed
+  (`4.70255 px`), so simply avoiding the first FISTA step is insufficient.
+- Added `tools/run_rich_phantom_v1_parity_gate.py`, a narrow benchmark driver
+  that creates real downsampled sidecar levels (`32^3 -> 64^3 -> 128^3`),
+  carries geometry between levels, and scales detector/pose pixel DOFs between
+  levels while reusing the existing align-auto path.
+- The first true sidecar multires stopped attempt still failed at the final
+  level: `det_u RMSE = 2.36552 px`, `volume NMSE = 0.640676`, classification
+  `reconstruction_absorbed_geometry`. Because the 128-view gate did not pass,
+  the 256-view gate was not run.
+
+### GPU Memory Finding
+
+- The earlier CUDA allocator warnings were caused by JAX's default GPU memory
+  preallocation behavior in the benchmark harness, not by a necessary multi-GiB
+  working set for the fixed-truth gate.
+- Updated the rich-phantom benchmark scripts to set
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` before importing JAX and to propagate
+  the same setting to align-auto subprocesses.
+- With preallocation disabled, the fixed-truth `128^3`/128-view reference run
+  completed with no allocator warnings and `nvidia-smi` sampled peak memory of
+  about `1416 MiB`.
+- The stopped true-sidecar multires `128^3`/128-view run completed with no
+  allocator warnings and sampled peak memory of about `1936 MiB`.
+- This is consistent with the expected ~2 GiB class VRAM budget for 128-scale
+  gates. A separate 256^3 production memory gate is still needed because the
+  current synthetic sidecar CLI only exposes sizes up to 128.
+
+### Commands and Artifacts
+
+- Fixed-truth oracle:
+  `runs/rich_phantom_v1_parity_20260508_155829/fixed_truth_otsu_l2_reference_128v/`
+- Stopped reference gate:
+  `runs/rich_phantom_v1_parity_20260508_155829/stopped_otsu_l2_reference_128v/`
+- Same-resolution no-skip diagnostic:
+  `runs/rich_phantom_v1_parity_20260508_155829/stopped_otsu_l2_reference_128v_no_coarse_skip/`
+- Constrained no-FISTA-first diagnostic:
+  `runs/rich_phantom_v1_parity_20260508_155829/stopped_otsu_l2_reference_128v_no_fista_first/`
+- True sidecar multires run with allocator fix:
+  `runs/rich_phantom_v1_parity_20260508_155829/prealloc_false_multires_stopped_128v/`
+- Allocator-fixed fixed-truth rerun:
+  `runs/rich_phantom_v1_parity_20260508_155829/prealloc_false_fixed_truth_128v/`
+
+### Interpretation
+
+- Fixed-truth Otsu L2 passes with enough budget, so the Schur/L2/mask path is
+  not the blocker for supported det_u.
+- Stopped Otsu L2 does not reach `<0.2 px`; the best stopped result in this
+  slice remains far above the gate.
+- The remaining blocker is stopped reconstruction/gauge absorption plus a
+  mismatch with the v1 workflow that is not solved by the first real sidecar
+  multires carry. The next functional work should inspect the carried-volume
+  gauge and v1 coarse reconstruction/update ordering more deeply, not add DOFs,
+  nuisance, weak-view exclusion, or candidate-refresh variants.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_rich_phantom_loss_comparison.py
+  tools/run_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_rich_phantom_loss_comparison.py
+  tools/run_rich_phantom_v1_parity_gate.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+
 ## 2026-05-08 — Rich PHANTOM94 Loss-Mode Comparison
 
 ### Summary
