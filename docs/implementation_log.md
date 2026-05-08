@@ -42,6 +42,70 @@ reconstruction residual improves, stopped reconstruction is absorbing setup
 geometry. If Schur cannot recover from a zero/neutral preview, the current
 stopped objective may not provide a useful detector-shift gradient.
 
+## 2026-05-08 — Production Stopped det_u FISTA Absorption Curve
+
+### Summary
+
+- Ran the required direct absorption diagnostic on the canonical clean
+  supported-only `64^3`/64-view stopped det_u case.
+- Each row used the same neutral, cylindrical-support-projected initial volume:
+  normalized average projection, nonnegative, no truth-volume assistance.
+- Pose, theta, det_v, roll, and axis tilt were frozen; only `det_u_px` was
+  active. No nuisance fitting or bad-view exclusion was used.
+- After each preview FISTA run, a single det_u-only Schur solve with two LM
+  iterations was run from the same corrupted initial geometry.
+
+Command:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run python - <<'PY'
+  # Direct diagnostic script using load_synthetic_dataset_sidecars,
+  # fista_reconstruct_reference, project_parallel_reference, and
+  # solve_joint_schur_lm.
+PY
+```
+
+Artifact:
+
+- `.artifacts/phase8_production_stopped_alignment/absorption_curve_64_detu_cuda/`
+- Main payloads:
+  - `absorption_curve_result.json`
+  - `absorption_curve.csv`
+
+Runtime/device:
+
+- Selected JAX device: `cuda:0`
+- JAX backend: `gpu`
+- `/usr/bin/time` wall time: `1:19.30`
+- Host max RSS: `2693424 KB`
+
+Result:
+
+| FISTA iters | Schur accepted | det_u proposed step px | final det_u RMSE px | preview/initial loss | preview/true loss | true/final-geometry loss | final/true loss | final/final loss | volume NMSE |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | true | 1.31172 | 1.49093 | 1.54429 | 1.37286 | 0.155064 | 1.37286 | 1.37282 | 0.571268 |
+| 1 | true | 1.19715 | 1.66552 | 1.49247 | 1.31973 | 0.182903 | 1.31973 | 1.31873 | 0.544911 |
+| 2 | true | 1.16676 | 1.79040 | 1.44258 | 1.26887 | 0.203326 | 1.26887 | 1.26627 | 0.520710 |
+| 4 | true | 1.15320 | 2.17868 | 1.30910 | 1.13422 | 0.268900 | 1.13422 | 1.12595 | 0.462449 |
+| 8 | true | 1.03236 | 3.46339 | 0.956784 | 0.790969 | 0.498406 | 0.790969 | 0.756031 | 0.362923 |
+| 16 | true | 0.712516 | 5.35573 | 0.592906 | 0.624959 | 0.849096 | 0.624959 | 0.437481 | 0.472335 |
+
+Interpretation:
+
+- The absorption hypothesis is confirmed. As preview reconstruction reduces
+  projection loss and initially improves volume NMSE, det_u recovery gets
+  worse: best det_u is at zero FISTA iterations (`1.49093 px`), while 16
+  iterations reaches the best final/final projection loss but leaves det_u at
+  `5.35573 px`.
+- Schur can recover materially from a neutral/zero-iteration preview, so the
+  detector-shift gradient is not absent. The current production loop loses
+  recoverability as the volume step absorbs setup geometry.
+- The zero-iteration result still misses the `<1 px` initial target, so the next
+  narrow slice should be the named geometry-first bootstrap, not more
+  candidate-refresh or reporting variants.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary

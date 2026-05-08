@@ -52,7 +52,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Tasks
 
 - [x] Add and commit the production stopped-alignment consolidation note.
-- [ ] Run and record the FISTA absorption curve for the canonical 64^3 gate.
+- [x] Run and record the FISTA absorption curve for the canonical 64^3 gate.
 - [ ] Add and validate FISTA gradient finite-difference coverage.
 - [ ] Based on those diagnostics, implement or falsify the geometry-first det_u
       bootstrap.
