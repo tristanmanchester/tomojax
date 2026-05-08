@@ -2,12 +2,17 @@ from __future__ import annotations
 
 # pyright: reportAny=false, reportPrivateUsage=false, reportUnknownMemberType=false
 import csv
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
-from tomojax.forward import project_parallel_reference
+from tomojax.forward import (
+    ResidualFilterConfig,
+    core_projection_geometry_from_state,
+    project_parallel_reference,
+)
 from tomojax.geometry import GeometryState
 from tomojax.recon import (
     ReferenceFISTAConfig,
@@ -18,7 +23,7 @@ from tomojax.recon import (
 )
 
 # check-public-imports: allow-private
-from tomojax.recon._fista_reference import _center_l2
+from tomojax.recon._fista_reference import _center_l2, _loss_and_explicit_gradient
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -147,6 +152,107 @@ def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
     assert not bool(sphere[2, 3, 0])
     np.testing.assert_array_equal(np.asarray(cylinder[:, :, 0]), np.asarray(cylinder[:, :, 8]))
     assert int(jnp.sum(sphere)) < int(jnp.sum(cylinder))
+
+
+@pytest.mark.parametrize(
+    ("config", "mask"),
+    [
+        (
+            ReferenceFISTAConfig(
+                residual_filters=(ResidualFilterConfig(kind="raw"),),
+                non_negative=False,
+            ),
+            None,
+        ),
+        (
+            ReferenceFISTAConfig(
+                residual_filters=(ResidualFilterConfig(kind="raw"),),
+                non_negative=False,
+            ),
+            jnp.ones((2, 4, 4), dtype=jnp.float32).at[:, 0, :].set(0.0),
+        ),
+        (
+            ReferenceFISTAConfig(
+                residual_filters=(
+                    ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=0.8),
+                ),
+                non_negative=False,
+            ),
+            None,
+        ),
+        (
+            ReferenceFISTAConfig(
+                residual_filters=(
+                    ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=0.8),
+                ),
+                tv_weight=1.0e-3,
+                center_l2_weight=0.2,
+                non_negative=False,
+            ),
+            jnp.ones((2, 4, 4), dtype=jnp.float32).at[:, :, 0].set(0.0),
+        ),
+    ],
+)
+def test_reference_fista_explicit_gradient_matches_finite_difference(
+    config: ReferenceFISTAConfig,
+    mask: jnp.ndarray | None,
+) -> None:
+    geometry = GeometryState.zeros(2)
+    truth = _tiny_volume()
+    observed = project_parallel_reference(truth, geometry)
+    volume: jnp.ndarray = truth * 0.7 + jnp.linspace(
+        0.0, 0.2, truth.size, dtype=jnp.float32
+    ).reshape(
+        truth.shape
+    )
+    direction: jnp.ndarray = jnp.cos(jnp.arange(truth.size, dtype=jnp.float32)).reshape(
+        truth.shape
+    )
+    direction = cast("jnp.ndarray", direction / jnp.linalg.norm(direction))
+    volume_shape = (
+        int(volume.shape[0]),
+        int(volume.shape[1]),
+        int(volume.shape[2]),
+    )
+    core = core_projection_geometry_from_state(
+        volume_shape,
+        geometry,
+        detector_shape=(int(observed.shape[1]), int(observed.shape[2])),
+    )
+
+    loss, _data, _regulariser, explicit_gradient = _loss_and_explicit_gradient(
+        volume,
+        observed,
+        core=core,
+        mask=mask,
+        config=config,
+    )
+    epsilon = jnp.asarray(1.0e-2, dtype=jnp.float32)
+    plus, _plus_data, _plus_regulariser, _plus_grad = _loss_and_explicit_gradient(
+        volume + epsilon * direction,
+        observed,
+        core=core,
+        mask=mask,
+        config=config,
+    )
+    minus, _minus_data, _minus_regulariser, _minus_grad = _loss_and_explicit_gradient(
+        volume - epsilon * direction,
+        observed,
+        core=core,
+        mask=mask,
+        config=config,
+    )
+
+    finite_difference = (plus - minus) / (2.0 * epsilon)
+    directional_gradient = jnp.sum(explicit_gradient * direction)
+
+    assert float(loss) > 0.0
+    np.testing.assert_allclose(
+        float(directional_gradient),
+        float(finite_difference),
+        rtol=2.0e-2,
+        atol=2.0e-3,
+    )
 
 
 def _tiny_volume() -> jnp.ndarray:

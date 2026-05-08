@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import (
     ResidualFilterConfig,
+    apply_residual_filter,
     apply_residual_filter_schedule,
     core_projection_geometry_from_state,
     residual_loss,
@@ -187,12 +188,16 @@ def _loss_and_explicit_gradient(
         sigma=1.0,
         delta=config.residual_delta,
     )
-    data_grad_projection = (
+    data_grad_filtered = (
         filtered
         * data.weights
         / jnp.maximum(data.valid_count, jnp.asarray(1.0, dtype=jnp.float32))
-        / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
     )
+    data_grad_projection = _residual_filter_adjoint(
+        data_grad_filtered,
+        config.residual_filters,
+        mask=mask,
+    ) / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
     data_gradient = sum_backproject_views_chunked(
         core,
         data_grad_projection,
@@ -211,6 +216,22 @@ def _loss_and_explicit_gradient(
         + jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_gradient
     )
     return data.loss + scaled_regulariser, data.loss, scaled_regulariser, gradient
+
+
+def _residual_filter_adjoint(
+    filtered_gradient: jax.Array,
+    configs: tuple[ResidualFilterConfig, ...],
+    *,
+    mask: jax.Array | None,
+) -> jax.Array:
+    grad = jnp.asarray(filtered_gradient, dtype=jnp.float32)
+    if mask is not None:
+        mask_arr = jnp.asarray(mask, dtype=jnp.float32)
+        if mask_arr.shape != grad.shape:
+            raise ValueError("mask must match residual shape")
+        grad = grad * mask_arr
+    components = tuple(apply_residual_filter(grad, config, mask=None) for config in configs)
+    return jnp.sum(jnp.stack(components, axis=0), axis=0)
 
 
 def _project_stack(volume: jax.Array, *, core: CoreProjectionGeometry) -> jax.Array:

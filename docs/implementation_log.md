@@ -106,6 +106,43 @@ Interpretation:
   narrow slice should be the named geometry-first bootstrap, not more
   candidate-refresh or reporting variants.
 
+## 2026-05-08 — Reference FISTA Filtered-Gradient Adjoint Check
+
+### Summary
+
+- Added focused finite-difference coverage for the reference FISTA loss
+  gradient on a tiny volume.
+- Coverage includes raw residual, train/masked residual, lowpass residual, and
+  lowpass plus TV/center regularisation.
+- The lowpass case exposed that the explicit FISTA gradient was backprojecting
+  the filtered projection residual directly instead of applying the adjoint of
+  the residual-filter schedule first.
+- Fixed the explicit gradient by applying the residual-filter adjoint before
+  the projector adjoint/backprojection. For the current periodic symmetric
+  lowpass and difference-of-Gaussians filters, the filter adjoint uses the same
+  filter kernel with mask applied in the correct transpose order.
+
+Interpretation:
+
+- The FISTA gradient check now passes, so the stopped-loop diagnostics are not
+  blocked by a known mismatch between the filtered FISTA loss and its explicit
+  gradient.
+- The absorption curve recorded immediately before this fix used the old
+  filtered-gradient path and should be treated as stale evidence. The
+  absorption diagnostic must be rerun before implementing geometry-first
+  bootstrap logic.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py -q` passed: 11 tests in 16.06 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/recon/_fista_reference.py tests/test_reference_fista.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run basedpyright
+  src/tomojax/recon/_fista_reference.py tests/test_reference_fista.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary
