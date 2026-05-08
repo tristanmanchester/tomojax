@@ -3,6 +3,106 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
+
+### Summary
+
+- Added explicit public core volume-axis constants in `tomojax.geometry`:
+  object x / detector u is axis 0, object y / beam is axis 1, object z /
+  detector v is axis 2.
+- Corrected `centered_volume_support`: cylindrical support now constrains axes
+  0/1 and broadcasts over axis 2; spherical support now uses the full x/y/z
+  mesh.
+- Corrected the preview center-of-mass penalty to penalize axes 0/1 instead of
+  treating axis 2 as lateral x.
+- Replaced stopped-volume det_u recentering via periodic `jnp.roll` with a
+  zero-filled shift along detector-u volume axis 0.
+
+### Minimal CUDA Stopped det_u Gate
+
+Ran the requested minimal setup diagnostic on the existing clean supported-only
+`64^3`, 64-view `synth128_setup_global_tomo` sidecar:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_axis_gauge/runs/64_stopped_detu_only_axis_fix_cuda \
+  --profile balanced --size 64 --views 64 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_axis_gauge/runs/64_stopped_detu_only_axis_fix_cuda/`
+
+Result:
+
+| Metric | Value |
+|---|---:|
+| Status | failed |
+| Selected JAX device | `cuda:0` |
+| JAX backend | `gpu` |
+| Schur accepted | true |
+| Geometry updates executed/requested | 2 / 5 |
+| Initial det_u RMSE | 7.25 px |
+| Final det_u RMSE | 2.87216 px |
+| det_u improved | true |
+| Final residual | 0.768342 |
+| Schur train loss | 1.05838 |
+| Volume NMSE | 0.333778 |
+| Artifact runtime | 24.7699 s |
+| `/usr/bin/time` wall time | 31.09 s |
+| Host max RSS | 2107080 KB |
+
+Interpretation:
+
+- The axis/gauge fix materially improved stopped det_u recovery and Schur
+  accepted the update, but the run still fails the `det_u_error_px_lt=0.5`
+  criterion.
+- The artifact still classifies projection-loss provenance as
+  `reconstruction_absorbed_geometry`: final-volume/final-geometry loss
+  `0.768342`, final-volume/true-geometry loss `0.79843`, true-volume/final
+  geometry loss `0.419471`, true-volume/true-geometry loss `1.17211e-06`.
+- This supports moving next to candidate-refresh acceptance or a more explicit
+  orientation/gauge constraint for stopped reconstruction, not to more
+  artifact/report fields.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_forward_reference.py::test_core_volume_axis_constants_match_projector_convention
+  tests/test_forward_reference.py::test_core_volume_axis_translations_match_detector_axes
+  tests/test_reference_fista.py::test_reference_fista_center_l2_penalty_enters_regulariser
+  tests/test_reference_fista.py::test_reference_fista_center_l2_uses_core_x_y_axes
+  tests/test_reference_fista.py::test_centered_volume_support_generates_cylinder_and_sphere
+  tests/test_alternating_geometry_update_policy.py::test_coarse_setup_global_anchoring_recenters_stopped_volume
+  tests/test_alternating_geometry_update_policy.py::test_anchoring_releases_outside_coarse_setup_global`
+  passed: 7 tests in 6.24 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/geometry src/tomojax/recon/_fista_reference.py
+  src/tomojax/recon/_support.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_forward_reference.py tests/test_reference_fista.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_fista_reference.py src/tomojax/recon/_support.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_forward_reference.py tests/test_reference_fista.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-08 — Phase 8 Weak-View Recovery Verification
 
 ### Summary

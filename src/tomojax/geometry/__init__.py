@@ -1,9 +1,16 @@
 """Public geometry helpers for TomoJAX."""
 
 from tomojax.geometry.api import (
+    CORE_X_AXIS,
+    CORE_Y_AXIS,
+    CORE_Z_AXIS,
+    DET_U_VOLUME_AXIS,
+    DET_V_VOLUME_AXIS,
     DISK_VOLUME_AXES,
     GEOMETRY_STATE_SCHEMA_VERSION,
     INTERNAL_VOLUME_AXES,
+    TOMO_AXIS,
+    TOMO_ROTATION_PLANE_AXES,
     VOLUME_AXES_ATTR,
     AcquisitionParameters,
     CanonicalizedGeometry,
@@ -35,9 +42,16 @@ from tomojax.geometry.api import (
 )
 
 __all__ = [
+    "CORE_X_AXIS",
+    "CORE_Y_AXIS",
+    "CORE_Z_AXIS",
+    "DET_U_VOLUME_AXIS",
+    "DET_V_VOLUME_AXIS",
     "DISK_VOLUME_AXES",
     "GEOMETRY_STATE_SCHEMA_VERSION",
     "INTERNAL_VOLUME_AXES",
+    "TOMO_AXIS",
+    "TOMO_ROTATION_PLANE_AXES",
     "VOLUME_AXES_ATTR",
     "AcquisitionParameters",
     "CanonicalizedGeometry",

@@ -8,6 +8,8 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
+from tomojax.geometry import CORE_X_AXIS, CORE_Y_AXIS, CORE_Z_AXIS
+
 VolumeSupportKind = Literal["cylindrical", "spherical"]
 
 
@@ -24,18 +26,20 @@ def centered_volume_support(
         raise ValueError("shape dimensions must be positive")
     if not 0.0 < float(radius_fraction) <= 1.0:
         raise ValueError("radius_fraction must be in (0, 1]")
-    z_size, y_size, x_size = (int(dim) for dim in shape)
-    z = _centered_axis(z_size)
-    y = _centered_axis(y_size)
+    x_size = int(shape[CORE_X_AXIS])
+    y_size = int(shape[CORE_Y_AXIS])
+    z_size = int(shape[CORE_Z_AXIS])
     x = _centered_axis(x_size)
+    y = _centered_axis(y_size)
+    z = _centered_axis(z_size)
     radius = float(radius_fraction)
-    yy, xx = jnp.meshgrid(y, x, indexing="ij")
     if kind == "cylindrical":
+        xx, yy = jnp.meshgrid(x, y, indexing="ij")
         support_2d = (xx * xx + yy * yy) <= radius * radius
-        return jnp.broadcast_to(support_2d[None, :, :], (z_size, y_size, x_size))
+        return jnp.broadcast_to(support_2d[:, :, None], shape)
     if kind == "spherical":
-        zz, yy3, xx3 = jnp.meshgrid(z, y, x, indexing="ij")
-        return (xx3 * xx3 + yy3 * yy3 + zz * zz) <= radius * radius
+        xx3, yy3, zz3 = jnp.meshgrid(x, y, z, indexing="ij")
+        return (xx3 * xx3 + yy3 * yy3 + zz3 * zz3) <= radius * radius
     raise ValueError(f"unknown volume support kind {kind!r}")
 
 

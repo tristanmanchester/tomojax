@@ -1,8 +1,15 @@
 """Public API for geometry metadata, axes, and field-of-view helpers."""
 
 from tomojax.geometry._axes import (
+    CORE_X_AXIS,
+    CORE_Y_AXIS,
+    CORE_Z_AXIS,
+    DET_U_VOLUME_AXIS,
+    DET_V_VOLUME_AXIS,
     DISK_VOLUME_AXES,
     INTERNAL_VOLUME_AXES,
+    TOMO_AXIS,
+    TOMO_ROTATION_PLANE_AXES,
     VOLUME_AXES_ATTR,
     axes_to_perm,
     infer_disk_axes,
@@ -43,9 +50,16 @@ from tomojax.geometry._state import (
 )
 
 __all__ = [
+    "CORE_X_AXIS",
+    "CORE_Y_AXIS",
+    "CORE_Z_AXIS",
+    "DET_U_VOLUME_AXIS",
+    "DET_V_VOLUME_AXIS",
     "DISK_VOLUME_AXES",
     "GEOMETRY_STATE_SCHEMA_VERSION",
     "INTERNAL_VOLUME_AXES",
+    "TOMO_AXIS",
+    "TOMO_ROTATION_PLANE_AXES",
     "VOLUME_AXES_ATTR",
     "AcquisitionParameters",
     "CanonicalizedGeometry",

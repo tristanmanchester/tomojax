@@ -23,6 +23,7 @@ from tomojax.align._setup_lm import (
     SetupOnlyLMResult,
     solve_setup_only_lm,
 )
+from tomojax.geometry import DET_U_VOLUME_AXIS
 
 if TYPE_CHECKING:
     from tomojax.align._alternating_types import GeometryUpdateVolumeSource
@@ -276,7 +277,30 @@ def _anchored_geometry_update_volume(
     if "det_u_px" not in active_setup or not _is_global_setup_block(active_setup):
         return stopped_volume
     shift_px = _det_u_recentering_shift_px(observed, mask)
-    return jnp.roll(stopped_volume, shift=shift_px, axis=1)
+    return _shift_volume_axis_zero_fill(
+        stopped_volume,
+        shift=shift_px,
+        axis=DET_U_VOLUME_AXIS,
+    )
+
+
+def _shift_volume_axis_zero_fill(volume: jax.Array, *, shift: int, axis: int) -> jax.Array:
+    shift_px = int(shift)
+    if shift_px == 0:
+        return volume
+    axis_index = int(axis)
+    size = int(volume.shape[axis_index])
+    if abs(shift_px) >= size:
+        return jnp.zeros_like(volume)
+    source = [slice(None)] * volume.ndim
+    target = [slice(None)] * volume.ndim
+    if shift_px > 0:
+        source[axis_index] = slice(0, size - shift_px)
+        target[axis_index] = slice(shift_px, size)
+    else:
+        source[axis_index] = slice(-shift_px, size)
+        target[axis_index] = slice(0, size + shift_px)
+    return jnp.zeros_like(volume).at[tuple(target)].set(volume[tuple(source)])
 
 
 def _det_u_recentering_shift_px(observed: jax.Array, mask: jax.Array) -> int:

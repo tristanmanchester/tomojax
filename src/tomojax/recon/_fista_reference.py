@@ -19,6 +19,7 @@ from tomojax.forward import (
     core_projection_geometry_from_state,
     residual_loss,
 )
+from tomojax.geometry import CORE_X_AXIS, CORE_Y_AXIS
 from tomojax.recon._backprojection_accumulation import sum_backproject_views_chunked
 
 if TYPE_CHECKING:
@@ -283,10 +284,10 @@ def _center_l2_value_and_grad(volume: jax.Array) -> tuple[jax.Array, jax.Array]:
 def _center_l2(volume: jax.Array) -> jax.Array:
     vol = jnp.maximum(jnp.asarray(volume, dtype=jnp.float32), 0.0)
     mass = jnp.maximum(jnp.sum(vol), jnp.asarray(1.0e-6, dtype=jnp.float32))
-    y_axis = _centered_axis(int(vol.shape[1]))
-    x_axis = _centered_axis(int(vol.shape[2]))
+    x_axis = _centered_axis(int(vol.shape[CORE_X_AXIS]))
+    y_axis = _centered_axis(int(vol.shape[CORE_Y_AXIS]))
+    x_com = jnp.sum(vol * x_axis[:, None, None]) / mass
     y_com = jnp.sum(vol * y_axis[None, :, None]) / mass
-    x_com = jnp.sum(vol * x_axis[None, None, :]) / mass
     return y_com * y_com + x_com * x_com
 
 

@@ -11,34 +11,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 weak-view handling
-- Goal: turn the remaining pose-random endpoint failure into explicit
-  solver-side weak/outlier-view handling, using the existing per-view residual
-  signal instead of adding more polish iterations.
+- Phase: Phase 8/9 stopped-reconstruction volume-axis semantics
+- Goal: fix the core volume-axis/gauge semantics that make stopped
+  reconstruction absorb setup geometry before adding any more orchestration
+  knobs.
 
 ### Scope
 
 - In scope:
-  - Diagnose why view 255 remains a detector-shift outlier after true-volume
-    Schur polishing.
-  - Add the smallest opt-in solver-side weak-view/exclusion policy needed for
-    final pose polish.
-  - Validate against the canonical 128^3 `synth128_pose_random_extreme`
-    fixed-truth CUDA gate.
+  - Add explicit core volume-axis constants and focused projector semantics
+    tests.
+  - Fix volume support, center penalty, and stopped-volume anchoring to use
+    core axes: x/u axis 0, y/beam axis 1, z/v axis 2.
+  - Remove periodic `jnp.roll` recentering from stopped geometry update
+    volumes.
+  - Run the minimal stopped det_u-only setup diagnostic before returning to
+    broader setup gates.
 - Out of scope:
-  - Report wording, criterion aliasing, or observability-field cleanup.
-  - Shrinking the benchmark as a substitute for fixing memory behaviour.
-  - Reworking report semantics or benchmark criteria.
-  - Adding new benchmark/report fields beyond resolved config provenance.
-  - Pose-only solver changes.
-  - Setup-only solver changes.
-  - Running old/current TomoJAX automatically.
-  - Parsing non-JSON current artifacts.
-  - Object-motion solver or correction model.
-  - Changing generated projection physics.
-  - Marking baseline comparison as passing without a baseline artifact.
-  - Adding report/provenance fields or benchmark wording cleanup.
-  - Synthetic bad-view nuisance generation.
+  - Adding more alignment orchestration knobs.
+  - Chasing theta endpoint=180 sampling.
+  - Reintroducing rotate-and-sum or projector selectors.
+  - Full five-case benchmark reruns before the minimal det_u stopped setup
+    gate gives evidence.
 - Deep module owner: `tomojax.align`.
 
 ### Design Sources
@@ -50,16 +44,47 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Rerun the final-pose polish gate with 64 updates to test the
-      underconvergence hypothesis.
-- [x] Add focused weak/outlier-view policy for final pose polish.
-- [x] Add focused tests for the view-mask policy.
-- [x] Run focused lint/type/import checks.
-- [x] Rerun the 128^3 pose-random fixed-truth CUDA gate.
+- [x] Add core axis constants and export them from `tomojax.geometry`.
+- [x] Add focused projector/axis semantics tests.
+- [x] Fix support masks, center penalty, and stopped-volume anchoring axes.
+- [x] Run focused CPU tests, ruff, basedpyright, and `just imports`.
+- [x] Run the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
 - [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
       commit the slice.
 
 ### Validation
+
+Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_forward_reference.py::test_core_volume_axis_constants_match_projector_convention
+  tests/test_forward_reference.py::test_core_volume_axis_translations_match_detector_axes
+  tests/test_reference_fista.py::test_reference_fista_center_l2_penalty_enters_regulariser
+  tests/test_reference_fista.py::test_reference_fista_center_l2_uses_core_x_y_axes
+  tests/test_reference_fista.py::test_centered_volume_support_generates_cylinder_and_sphere
+  tests/test_alternating_geometry_update_policy.py::test_coarse_setup_global_anchoring_recenters_stopped_volume
+  tests/test_alternating_geometry_update_policy.py::test_anchoring_releases_outside_coarse_setup_global`
+  passed: 7 tests in 6.24 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/geometry src/tomojax/recon/_fista_reference.py
+  src/tomojax/recon/_support.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_forward_reference.py tests/test_reference_fista.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_fista_reference.py src/tomojax/recon/_support.py
+  src/tomojax/align/_alternating_geometry_update.py
+  tests/test_forward_reference.py tests/test_reference_fista.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- CUDA minimal stopped det_u-only gate completed on `cuda:0`. Artifact:
+  `.artifacts/phase8_axis_gauge/runs/64_stopped_detu_only_axis_fix_cuda/`.
+  Status failed, but det_u improved from 7.25 px to 2.87216 px and Schur
+  accepted the update.
+
+Historical validation below remains as prior execution log context.
 
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py::test_setup_only_geometry_update_solver_recovers_setup_without_pose

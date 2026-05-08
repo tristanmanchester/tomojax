@@ -27,6 +27,13 @@ _JAX_ARRAY_TYPES = _jax_array_types
 INTERNAL_VOLUME_AXES = "xyz"
 DISK_VOLUME_AXES = "zyx"
 VOLUME_AXES_ATTR = "volume_axes_order"
+CORE_X_AXIS = 0
+CORE_Y_AXIS = 1
+CORE_Z_AXIS = 2
+DET_U_VOLUME_AXIS = CORE_X_AXIS
+DET_V_VOLUME_AXIS = CORE_Z_AXIS
+TOMO_ROTATION_PLANE_AXES = (CORE_X_AXIS, CORE_Y_AXIS)
+TOMO_AXIS = CORE_Z_AXIS
 GridLike = Grid | GridDict
 
 
@@ -132,8 +139,15 @@ def infer_disk_axes(vol_shape: Sequence[int], grid: GridLike | None) -> str | No
 
 
 __all__ = [
+    "CORE_X_AXIS",
+    "CORE_Y_AXIS",
+    "CORE_Z_AXIS",
+    "DET_U_VOLUME_AXIS",
+    "DET_V_VOLUME_AXIS",
     "DISK_VOLUME_AXES",
     "INTERNAL_VOLUME_AXES",
+    "TOMO_AXIS",
+    "TOMO_ROTATION_PLANE_AXES",
     "VOLUME_AXES_ATTR",
     "axes_to_perm",
     "infer_disk_axes",

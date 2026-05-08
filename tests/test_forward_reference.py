@@ -21,7 +21,17 @@ from tomojax.forward import (
     residual_loss,
     robust_residual_scale,
 )
-from tomojax.geometry import AcquisitionParameters, GeometryState
+from tomojax.geometry import (
+    CORE_X_AXIS,
+    CORE_Y_AXIS,
+    CORE_Z_AXIS,
+    DET_U_VOLUME_AXIS,
+    DET_V_VOLUME_AXIS,
+    TOMO_AXIS,
+    TOMO_ROTATION_PLANE_AXES,
+    AcquisitionParameters,
+    GeometryState,
+)
 
 
 def test_project_parallel_reference_shape_and_zero_pose_values() -> None:
@@ -46,6 +56,42 @@ def test_project_parallel_reference_applies_detector_shift() -> None:
 
     assert float(shifted[0, 2, 1]) == float(base[0, 2, 2])
     assert float(shifted[0, 2, 2]) == 0.0
+
+
+def test_core_volume_axis_constants_match_projector_convention() -> None:
+    assert CORE_X_AXIS == 0
+    assert CORE_Y_AXIS == 1
+    assert CORE_Z_AXIS == 2
+    assert DET_U_VOLUME_AXIS == CORE_X_AXIS
+    assert DET_V_VOLUME_AXIS == CORE_Z_AXIS
+    assert TOMO_ROTATION_PLANE_AXES == (CORE_X_AXIS, CORE_Y_AXIS)
+    assert TOMO_AXIS == CORE_Z_AXIS
+
+
+def test_core_volume_axis_translations_match_detector_axes() -> None:
+    base_volume = jnp.zeros((5, 5, 5), dtype=jnp.float32).at[2, :, 2].set(1.0)
+    geometry = GeometryState.zeros(1)
+    det_u_minus = GeometryState(
+        setup=geometry.setup,
+        pose=geometry.pose.with_updates(dx_px=np.array([-1.0], dtype=np.float64)),
+    )
+
+    axis0_shifted = jnp.zeros((5, 5, 5), dtype=jnp.float32).at[3, :, 2].set(1.0)
+    axis1_shifted = jnp.zeros((5, 5, 5), dtype=jnp.float32).at[2, 3, 2].set(1.0)
+    axis2_shifted = jnp.zeros((5, 5, 5), dtype=jnp.float32).at[2, :, 3].set(1.0)
+
+    base = project_parallel_reference(base_volume, geometry)
+    det_u = project_parallel_reference(base_volume, det_u_minus)
+    shifted0 = project_parallel_reference(axis0_shifted, geometry)
+    shifted1 = project_parallel_reference(axis1_shifted, geometry)
+    shifted2 = project_parallel_reference(axis2_shifted, geometry)
+
+    assert _projection_centroid(base[0]) == (2.0, 2.0)
+    assert _projection_centroid(det_u[0]) == (2.0, 3.0)
+    assert _projection_centroid(shifted0[0]) == (2.0, 3.0)
+    assert _projection_centroid(shifted1[0]) == (2.0, 2.0)
+    assert _projection_centroid(shifted2[0]) == (3.0, 2.0)
+    np.testing.assert_allclose(np.asarray(shifted0), np.asarray(det_u), atol=1e-6)
 
 
 def test_project_parallel_reference_applies_fractional_detector_shift() -> None:
@@ -317,3 +363,13 @@ def test_robust_residual_scale_uses_masked_mad() -> None:
     scale = robust_residual_scale(residual, mask=mask)
 
     np.testing.assert_allclose(float(scale), 1.4826, rtol=1e-6)
+
+
+def _projection_centroid(projection: jax.Array) -> tuple[float, float]:
+    image = jnp.asarray(projection, dtype=jnp.float32)
+    mass = jnp.sum(image)
+    rows = jnp.arange(image.shape[0], dtype=jnp.float32)
+    cols = jnp.arange(image.shape[1], dtype=jnp.float32)
+    row_center = jnp.sum(image * rows[:, None]) / mass
+    col_center = jnp.sum(image * cols[None, :]) / mass
+    return (float(row_center), float(col_center))

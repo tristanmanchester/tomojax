@@ -193,7 +193,9 @@ def test_coarse_setup_global_anchoring_recenters_stopped_volume() -> None:
         ),
     )
 
-    np.testing.assert_array_equal(np.asarray(anchored), np.roll(stopped, -2, axis=1))
+    expected = np.zeros_like(stopped)
+    expected[:1, :, :] = stopped[2:, :, :]
+    np.testing.assert_array_equal(np.asarray(anchored), expected)
 
 
 def test_anchoring_releases_outside_coarse_setup_global() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportAny=false, reportUnknownMemberType=false
+# pyright: reportAny=false, reportPrivateUsage=false, reportUnknownMemberType=false
 import csv
 from typing import TYPE_CHECKING
 
@@ -16,6 +16,9 @@ from tomojax.recon import (
     reconstruct_backprojection_reference,
     write_fista_trace_csv,
 )
+
+# check-public-imports: allow-private
+from tomojax.recon._fista_reference import _center_l2
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,7 +105,7 @@ def test_reference_fista_projects_candidate_and_momentum_into_support() -> None:
 def test_reference_fista_center_l2_penalty_enters_regulariser() -> None:
     geometry = GeometryState.zeros(1)
     observed = jnp.zeros((1, 4, 4), dtype=jnp.float32)
-    warm_start = jnp.zeros((4, 4, 4), dtype=jnp.float32).at[:, :, 3].set(1.0)
+    warm_start = jnp.zeros((4, 4, 4), dtype=jnp.float32).at[3, :, :].set(1.0)
 
     result = fista_reconstruct_reference(
         observed,
@@ -120,16 +123,29 @@ def test_reference_fista_center_l2_penalty_enters_regulariser() -> None:
     assert result.config.center_l2_weight == 2.0
 
 
-def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
-    cylinder = centered_volume_support((7, 7, 7), kind="cylindrical", radius_fraction=0.5)
-    sphere = centered_volume_support((7, 7, 7), kind="spherical", radius_fraction=0.5)
+def test_reference_fista_center_l2_uses_core_x_y_axes() -> None:
+    axis0_offset = jnp.zeros((4, 4, 4), dtype=jnp.float32).at[3, :, :].set(1.0)
+    axis2_offset = jnp.zeros((4, 4, 4), dtype=jnp.float32).at[:, :, 3].set(1.0)
 
-    assert cylinder.shape == (7, 7, 7)
-    assert sphere.shape == (7, 7, 7)
+    assert float(_center_l2(axis0_offset)) > 0.0
+    assert float(_center_l2(axis2_offset)) == 0.0
+
+
+def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
+    cylinder = centered_volume_support((5, 7, 9), kind="cylindrical", radius_fraction=0.5)
+    sphere = centered_volume_support((5, 7, 9), kind="spherical", radius_fraction=0.5)
+
+    assert cylinder.shape == (5, 7, 9)
+    assert sphere.shape == (5, 7, 9)
     assert cylinder.dtype == jnp.bool_
     assert sphere.dtype == jnp.bool_
-    assert bool(cylinder[3, 3, 3])
-    assert bool(sphere[3, 3, 3])
+    assert bool(cylinder[2, 3, 4])
+    assert bool(sphere[2, 3, 4])
+    assert bool(cylinder[2, 3, 0])
+    assert bool(cylinder[2, 3, 8])
+    assert not bool(cylinder[0, 0, 4])
+    assert not bool(sphere[2, 3, 0])
+    np.testing.assert_array_equal(np.asarray(cylinder[:, :, 0]), np.asarray(cylinder[:, :, 8]))
     assert int(jnp.sum(sphere)) < int(jnp.sum(cylinder))
 
 
