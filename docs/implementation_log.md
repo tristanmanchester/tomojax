@@ -200,6 +200,9 @@ Interpretation:
 - The bootstrap is deliberately limited to stopped reconstruction,
   `geometry_update_solver="joint_schur"`, pose frozen, no nuisance, and
   `geometry_update_active_setup_parameters=("det_u_px",)`.
+- Candidate-refresh acceptance is bypassed for this production det_u gate. It
+  remains available as a diagnostic for other stopped paths, but is not part of
+  the production mechanism that breaks the old plateau.
 - It runs only at the first preview level:
   1. build a neutral normalized average-projection volume with configured
      support;
@@ -234,7 +237,7 @@ Reran the canonical clean supported-only stopped det_u gate through
 env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
   LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
   /usr/bin/time -v uv run tomojax-align-auto-smoke \
-  --out-dir .artifacts/phase8_production_stopped_alignment/runs/64_stopped_detu_geometry_first_bootstrap_cuda \
+  --out-dir .artifacts/phase8_production_stopped_alignment/runs/64_stopped_detu_geometry_first_bootstrap_no_candidate_refresh_cuda \
   --profile balanced --size 64 --views 64 \
   --synthetic-dataset synth128_setup_global_tomo \
   --synthetic-dataset-dir .artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only \
@@ -250,7 +253,7 @@ env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
 
 Artifact:
 
-- `.artifacts/phase8_production_stopped_alignment/runs/64_stopped_detu_geometry_first_bootstrap_cuda/`
+- `.artifacts/phase8_production_stopped_alignment/runs/64_stopped_detu_geometry_first_bootstrap_no_candidate_refresh_cuda/`
 
 Result:
 
@@ -260,16 +263,16 @@ Result:
 | Selected JAX device | `cuda:0` |
 | JAX backend | `gpu` |
 | Initial det_u RMSE | 7.25 px |
-| Final det_u RMSE | 0.886680 px |
+| Final det_u RMSE | 0.886244 px |
 | Schur accepted | true |
-| Final residual | 0.708585 |
-| Volume NMSE | 0.290317 |
-| final volume / true geometry loss | 0.716562 |
-| final volume / final geometry loss | 0.708585 |
-| true volume / final geometry loss | 0.0851936 |
+| Final residual | 0.434227 |
+| Volume NMSE | 0.222324 |
+| final volume / true geometry loss | 0.450070 |
+| final volume / final geometry loss | 0.434227 |
+| true volume / final geometry loss | 0.0851305 |
 | true volume / true geometry loss | 1.17211e-06 |
-| `/usr/bin/time` wall time | 0:52.45 |
-| Host max RSS | 2406112 KB |
+| `/usr/bin/time` wall time | 0:47.86 |
+| Host max RSS | 2338684 KB |
 
 Interpretation:
 

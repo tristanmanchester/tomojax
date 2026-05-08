@@ -953,14 +953,20 @@ def _uses_geometry_first_det_u_bootstrap(
     level: ContinuationLevel,
 ) -> bool:
     return (
+        _uses_production_stopped_det_u_gate(config)
+        and level.role == "preview"
+        and int(level.level_factor) == 4
+    )
+
+
+def _uses_production_stopped_det_u_gate(config: AlternatingSmokeConfig) -> bool:
+    return (
         config.geometry_update_volume_source == "stopped_reconstruction"
         and config.geometry_update_solver == "joint_schur"
         and config.geometry_update_pose_frozen
         and tuple(config.geometry_update_active_setup_parameters) == ("det_u_px",)
         and not config.fit_gain_offset_nuisance
         and not config.fit_background_nuisance
-        and level.role == "preview"
-        and int(level.level_factor) == 4
     )
 
 
@@ -1114,6 +1120,18 @@ def _apply_geometry_acceptance(
             schur_result=schur_result,
         )
         return geometry, report, result, current_volume
+    if _uses_production_stopped_det_u_gate(config):
+        canonicalized = canonicalize_geometry_gauges(candidate_geometry)
+        return (
+            canonicalized.state,
+            update_report,
+            replace(
+                schur_result,
+                geometry=canonicalized.state,
+                canonicalized_geometry=canonicalized,
+            ),
+            current_volume,
+        )
     return _apply_candidate_refresh_acceptance(
         config,
         current_volume,
