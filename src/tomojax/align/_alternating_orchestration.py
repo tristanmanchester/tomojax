@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.align._alternating_artifacts import _write_artifacts
 from tomojax.align._alternating_geometry_update import (
@@ -192,12 +193,14 @@ def _run_alternating_solver_smoke_impl(
                 residual_filters=_geometry_residual_filters(config, level.residual_filters),
                 parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
             )
-            geometry, update_report, schur_result = _apply_heldout_geometry_acceptance(
+            geometry, update_report, schur_result, volume = _apply_geometry_acceptance(
                 config,
+                volume,
                 geometry_update_volume,
                 observed,
                 before_geometry=geometry_before_update,
                 candidate_geometry=geometry,
+                train_mask=train_mask,
                 heldout_mask=heldout_mask,
                 level=level,
                 sigma=residual_sigma_effective,
@@ -935,6 +938,181 @@ def _stopped_geometry_update_volume(
     ):
         return constrained_first_preview_volume
     return current_volume
+
+
+def _apply_geometry_acceptance(
+    config: AlternatingSmokeConfig,
+    current_volume: jax.Array,
+    geometry_update_volume: jax.Array,
+    observed: jax.Array,
+    *,
+    before_geometry: GeometryState,
+    candidate_geometry: GeometryState,
+    train_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    level: ContinuationLevel,
+    sigma: float,
+    update_report: GaugeReport,
+    schur_result: JointSchurLMResult,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult, jax.Array]:
+    if config.geometry_update_volume_source != "stopped_reconstruction":
+        geometry, report, result = _apply_heldout_geometry_acceptance(
+            config,
+            geometry_update_volume,
+            observed,
+            before_geometry=before_geometry,
+            candidate_geometry=candidate_geometry,
+            heldout_mask=heldout_mask,
+            level=level,
+            sigma=sigma,
+            update_report=update_report,
+            schur_result=schur_result,
+        )
+        return geometry, report, result, current_volume
+    return _apply_candidate_refresh_acceptance(
+        config,
+        current_volume,
+        observed,
+        before_geometry=before_geometry,
+        candidate_geometry=candidate_geometry,
+        train_mask=train_mask,
+        heldout_mask=heldout_mask,
+        level=level,
+        sigma=sigma,
+        update_report=update_report,
+        schur_result=schur_result,
+    )
+
+
+def _apply_candidate_refresh_acceptance(
+    config: AlternatingSmokeConfig,
+    initial_volume: jax.Array,
+    observed: jax.Array,
+    *,
+    before_geometry: GeometryState,
+    candidate_geometry: GeometryState,
+    train_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    level: ContinuationLevel,
+    sigma: float,
+    update_report: GaugeReport,
+    schur_result: JointSchurLMResult,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult, jax.Array]:
+    before_refresh = _candidate_refresh_volume(
+        config,
+        observed,
+        before_geometry,
+        initial_volume=initial_volume,
+        train_mask=train_mask,
+        level=level,
+    )
+    candidate_refresh = _candidate_refresh_volume(
+        config,
+        observed,
+        candidate_geometry,
+        initial_volume=initial_volume,
+        train_mask=train_mask,
+        level=level,
+    )
+    validation_mask = heldout_mask if heldout_mask is not None else train_mask
+    before_loss = _projection_loss(
+        before_refresh,
+        observed,
+        before_geometry,
+        validation_mask,
+        level,
+        sigma=sigma,
+    )
+    candidate_loss = _projection_loss(
+        candidate_refresh,
+        observed,
+        candidate_geometry,
+        validation_mask,
+        level,
+        sigma=sigma,
+    )
+    accepted = bool(candidate_loss <= before_loss + config.heldout_residual_tolerance)
+    selected_geometry = candidate_geometry if accepted else before_geometry
+    selected_volume = candidate_refresh if accepted else before_refresh
+    canonicalized = canonicalize_geometry_gauges(selected_geometry)
+    actual_reduction = float(before_loss - candidate_loss)
+    refreshed_diagnostics = (
+        replace(schur_result.diagnostics, accepted=True)
+        if accepted
+        else replace(
+            schur_result.diagnostics,
+            accepted=False,
+            actual_reduction=actual_reduction,
+            reduction_ratio=_candidate_refresh_reduction_ratio(
+                actual_reduction=actual_reduction,
+                predicted_reduction=schur_result.diagnostics.predicted_reduction,
+            ),
+        )
+    )
+    refreshed_result = replace(
+        schur_result,
+        geometry=canonicalized.state,
+        canonicalized_geometry=canonicalized,
+        final_loss=(schur_result.final_loss if accepted else schur_result.initial_loss),
+        diagnostics=refreshed_diagnostics,
+    )
+    return (
+        canonicalized.state,
+        canonicalized.report if not accepted else update_report,
+        refreshed_result,
+        jax.lax.stop_gradient(selected_volume),
+    )
+
+
+def _candidate_refresh_volume(
+    config: AlternatingSmokeConfig,
+    observed: jax.Array,
+    geometry: GeometryState,
+    *,
+    initial_volume: jax.Array,
+    train_mask: jax.Array,
+    level: ContinuationLevel,
+) -> jax.Array:
+    result = fista_reconstruct_reference(
+        observed,
+        geometry,
+        initial_volume=initial_volume,
+        volume_support=_preview_volume_support(
+            config,
+            level=level,
+            shape=(config.size, config.size, config.size),
+        ),
+        mask=train_mask,
+        config=ReferenceFISTAConfig(
+            iterations=_candidate_refresh_iterations(level),
+            step_size=_preview_fista_step_size(config),
+            tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
+            residual_sigma=level.residual_sigma,
+            residual_delta=level.residual_delta,
+            residual_filters=_preview_residual_filters(
+                config,
+                level,
+                level.residual_filters,
+            ),
+            center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
+        ),
+    )
+    return jax.lax.stop_gradient(result.volume)
+
+
+def _candidate_refresh_iterations(level: ContinuationLevel) -> int:
+    return max(1, min(4, int(level.reconstruction_iterations)))
+
+
+def _candidate_refresh_reduction_ratio(
+    *,
+    actual_reduction: float,
+    predicted_reduction: float,
+) -> float | None:
+    predicted = float(predicted_reduction)
+    if not np.isfinite(predicted) or abs(predicted) <= 1.0e-12:
+        return None
+    return float(actual_reduction / predicted)
 
 
 def _apply_heldout_geometry_acceptance(

@@ -27,6 +27,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
     volumes.
   - Run the minimal stopped det_u-only setup diagnostic before returning to
     broader setup gates.
+  - Add candidate-refresh acceptance now that the corrected stopped det_u-only
+    gate still fails while materially improving det_u.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -49,6 +51,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Fix support masks, center penalty, and stopped-volume anchoring axes.
 - [x] Run focused CPU tests, ruff, basedpyright, and `just imports`.
 - [x] Run the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
+- [x] Add candidate-refresh acceptance for stopped geometry updates.
+- [x] Rerun focused CPU tests, ruff, basedpyright, and `just imports`.
+- [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
 - [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
       commit the slice.
 

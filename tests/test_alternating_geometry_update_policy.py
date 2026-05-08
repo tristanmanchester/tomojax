@@ -20,7 +20,11 @@ from tomojax.align._alternating_geometry_update import (
 )
 
 # check-public-imports: allow-private
-from tomojax.align._alternating_orchestration import _run_phi_polish, _run_polish_stage
+from tomojax.align._alternating_orchestration import (
+    _apply_candidate_refresh_acceptance,
+    _run_phi_polish,
+    _run_polish_stage,
+)
 
 # check-public-imports: allow-private
 from tomojax.align._alternating_verification import _geometry_recovery_payload
@@ -31,7 +35,7 @@ from tomojax.align.api import (
     solve_joint_schur_lm,
 )
 from tomojax.forward import project_parallel_reference
-from tomojax.geometry import AcquisitionParameters, GeometryState
+from tomojax.geometry import AcquisitionParameters, GaugeReport, GeometryState
 
 
 def _jax_array(value: object) -> jax.Array:
@@ -751,3 +755,97 @@ def test_heldout_acceptance_does_not_gate_fixed_truth_oracle() -> None:
     )
 
     assert geometry.setup.det_u_px.value == candidate.setup.det_u_px.value
+
+
+def test_candidate_refresh_acceptance_carries_candidate_volume() -> None:
+    level = reference_continuation_schedule("reference").levels[0]
+    true_geometry = GeometryState.zeros(4)
+    before = GeometryState(
+        setup=true_geometry.setup.replace_parameter(
+            "det_u_px",
+            true_geometry.setup.det_u_px.with_value(2.0),
+        ),
+        pose=true_geometry.pose,
+    )
+    volume = _tiny_asymmetric_volume()
+    observed = project_parallel_reference(volume, true_geometry)
+    full_mask = jnp.ones_like(observed, dtype=jnp.float32)
+    train_mask = full_mask.at[-1, :, :].set(0.0)
+    heldout_mask = jnp.zeros_like(full_mask).at[-1, :, :].set(full_mask[-1])
+    schur_result = solve_joint_schur_lm(
+        volume,
+        observed,
+        before,
+        mask=train_mask,
+        config=JointSchurLMConfig(
+            max_iterations=1,
+            active_setup_parameters=("det_u_px",),
+            active_pose_dofs=(),
+            parameter_prior_strength=0.0,
+        ),
+    )
+
+    geometry, _report, accepted, refreshed = _apply_candidate_refresh_acceptance(
+        AlternatingSmokeConfig(size=8, geometry_update_volume_source="stopped_reconstruction"),
+        volume,
+        observed,
+        before_geometry=before,
+        candidate_geometry=true_geometry,
+        train_mask=train_mask,
+        heldout_mask=heldout_mask,
+        level=level,
+        sigma=1.0,
+        update_report=GaugeReport(()),
+        schur_result=schur_result,
+    )
+
+    assert accepted.diagnostics.accepted is True
+    assert geometry.setup.det_u_px.value == true_geometry.setup.det_u_px.value
+    assert refreshed.shape == volume.shape
+
+
+def test_candidate_refresh_acceptance_rejects_worse_refresh() -> None:
+    level = reference_continuation_schedule("reference").levels[0]
+    true_geometry = GeometryState.zeros(4)
+    candidate = GeometryState(
+        setup=true_geometry.setup.replace_parameter(
+            "det_u_px",
+            true_geometry.setup.det_u_px.with_value(2.0),
+        ),
+        pose=true_geometry.pose,
+    )
+    volume = _tiny_asymmetric_volume()
+    observed = project_parallel_reference(volume, true_geometry)
+    full_mask = jnp.ones_like(observed, dtype=jnp.float32)
+    train_mask = full_mask.at[-1, :, :].set(0.0)
+    heldout_mask = jnp.zeros_like(full_mask).at[-1, :, :].set(full_mask[-1])
+    schur_result = solve_joint_schur_lm(
+        volume,
+        observed,
+        true_geometry,
+        mask=train_mask,
+        config=JointSchurLMConfig(
+            max_iterations=1,
+            active_setup_parameters=("det_u_px",),
+            active_pose_dofs=(),
+            parameter_prior_strength=0.0,
+        ),
+    )
+
+    geometry, _report, accepted, refreshed = _apply_candidate_refresh_acceptance(
+        AlternatingSmokeConfig(size=8, geometry_update_volume_source="stopped_reconstruction"),
+        volume,
+        observed,
+        before_geometry=true_geometry,
+        candidate_geometry=candidate,
+        train_mask=train_mask,
+        heldout_mask=heldout_mask,
+        level=level,
+        sigma=1.0,
+        update_report=GaugeReport(()),
+        schur_result=schur_result,
+    )
+
+    assert accepted.diagnostics.accepted is False
+    assert geometry.setup.det_u_px.value == true_geometry.setup.det_u_px.value
+    assert refreshed.shape == volume.shape

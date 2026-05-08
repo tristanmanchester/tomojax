@@ -103,6 +103,104 @@ Interpretation:
   0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+## 2026-05-08 — Phase 8 Candidate-Refresh Acceptance
+
+### Summary
+
+- Added stopped-reconstruction candidate-refresh acceptance for geometry
+  updates. After Schur proposes a candidate from the current stopped volume,
+  the loop now runs short FISTA refreshes under both the before geometry and
+  candidate geometry from the same initializer, scores the refreshed volumes on
+  the held-out mask when present, and accepts the candidate only when the
+  candidate-refresh loss improves within tolerance.
+- When accepted, the candidate geometry and candidate-refresh volume are
+  carried forward. Schur train-loss diagnostics remain the solver losses;
+  refresh validation controls acceptance without relabeling Schur losses.
+
+### Minimal CUDA Stopped det_u Gate
+
+Reran the same clean supported-only `64^3`, 64-view
+`synth128_setup_global_tomo` det_u-only stopped diagnostic:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_candidate_refresh/runs/64_stopped_detu_only_candidate_refresh_cuda \
+  --profile balanced --size 64 --views 64 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_candidate_refresh/runs/64_stopped_detu_only_candidate_refresh_cuda/`
+
+Result:
+
+| Metric | Axis/gauge gate | Candidate-refresh gate |
+|---|---:|---:|
+| Status | failed | failed |
+| Selected JAX device | `cuda:0` | `cuda:0` |
+| Schur accepted | true | true |
+| Initial det_u RMSE | 7.25 px | 7.25 px |
+| Final det_u RMSE | 2.87216 px | 2.87217 px |
+| Final residual | 0.768342 | 0.484702 |
+| Schur train loss | 1.05838 | 1.05838 |
+| Volume NMSE | 0.333778 | 0.269351 |
+| Artifact runtime | 24.7699 s | 30.0065 s |
+| `/usr/bin/time` wall time | 31.09 s | 36.51 s |
+| Host max RSS | 2107080 KB | 2162304 KB |
+
+Interpretation:
+
+- Candidate-refresh acceptance improves the carried stopped volume and final
+  projection residual but does not improve det_u beyond the axis/gauge result.
+- The remaining failure is still classified as
+  `reconstruction_absorbed_geometry`: final-volume/final-geometry loss
+  `0.484702`, final-volume/true-geometry loss `0.532947`,
+  true-volume/final-geometry loss `0.419472`, true-volume/true-geometry loss
+  `1.17211e-06`.
+- The next functional blocker is not acceptance bookkeeping; the stopped
+  reconstruction is still entering a geometry-compatible gauge before Schur can
+  finish setup recovery.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_forward_reference.py::test_core_volume_axis_constants_match_projector_convention
+  tests/test_forward_reference.py::test_core_volume_axis_translations_match_detector_axes
+  tests/test_reference_fista.py::test_reference_fista_center_l2_penalty_enters_regulariser
+  tests/test_reference_fista.py::test_reference_fista_center_l2_uses_core_x_y_axes
+  tests/test_reference_fista.py::test_centered_volume_support_generates_cylinder_and_sphere
+  tests/test_alternating_geometry_update_policy.py::test_coarse_setup_global_anchoring_recenters_stopped_volume
+  tests/test_alternating_geometry_update_policy.py::test_anchoring_releases_outside_coarse_setup_global
+  tests/test_alternating_geometry_update_policy.py::test_heldout_acceptance_rejects_stopped_geometry_that_worsens_validation
+  tests/test_alternating_geometry_update_policy.py::test_heldout_acceptance_does_not_gate_fixed_truth_oracle
+  tests/test_alternating_geometry_update_policy.py::test_candidate_refresh_acceptance_carries_candidate_volume
+  tests/test_alternating_geometry_update_policy.py::test_candidate_refresh_acceptance_rejects_worse_refresh -q`
+  passed: 11 tests in 21.61 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_geometry_update.py
+  src/tomojax/recon/_fista_reference.py src/tomojax/recon/_support.py
+  tests/test_forward_reference.py tests/test_reference_fista.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-08 — Phase 8 Weak-View Recovery Verification
 
 ### Summary
