@@ -314,6 +314,38 @@ def test_train_view_reconstruction_disables_coarse_early_exit() -> None:
     )
 
 
+def test_fixed_truth_geometry_updates_use_level_residual_sigma() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _effective_residual_sigma
+
+    level = reference_continuation_schedule("reference").levels[0]
+
+    assert (
+        _effective_residual_sigma(
+            AlternatingSmokeConfig(geometry_update_volume_source="fixed_synthetic_truth"),
+            level=level,
+            estimated=500.0,
+        )
+        == level.residual_sigma
+    )
+
+
+def test_stopped_geometry_updates_keep_estimated_residual_sigma_floor() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _effective_residual_sigma
+
+    level = reference_continuation_schedule("reference").levels[0]
+
+    assert (
+        _effective_residual_sigma(
+            AlternatingSmokeConfig(geometry_update_volume_source="stopped_reconstruction"),
+            level=level,
+            estimated=500.0,
+        )
+        == 500.0
+    )
+
+
 def test_theta_activation_policy_freezes_theta_until_configured_level() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import _active_setup_parameters_for_level

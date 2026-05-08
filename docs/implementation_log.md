@@ -3,6 +3,56 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Fixed-Truth Schur Sigma Policy
+
+### Summary
+
+- Changed fixed-truth oracle geometry updates to use the continuation-level
+  residual sigma instead of the robust residual sigma estimated from the current
+  corrupted-geometry projection residual.
+- Left stopped-reconstruction behavior unchanged; it still uses
+  `max(level_sigma, estimated_sigma)`.
+- Added focused tests for fixed-truth and stopped-reconstruction sigma policy.
+
+### 128^3 CUDA Gate
+
+Reran the fixed-truth `synth128_pose_random_extreme` 128^3/256-view CUDA oracle
+on `cuda:0` without nuisance fitting:
+
+- Artifact:
+  `.artifacts/phase8_fixed_truth_sigma/runs/synth128_pose_random_extreme_fixed_truth_no_nuisance_fit_cuda/`
+- Command log:
+  `.artifacts/phase8_fixed_truth_sigma/logs/synth128_pose_random_extreme_fixed_truth_no_nuisance_fit_cuda.log`
+- Wall time: `217.02` seconds.
+- Host max RSS: `2800764` KB.
+- Coarse effective sigma changed from `578.393372` to `1.0`.
+- Volume NMSE improved from `3500.044434` to `0.275307`.
+- Final residual improved from `642.871948` to `2.162959`.
+- Pose recovery still failed:
+  `alpha_beta_rmse_rad=0.036027`,
+  `theta_realized_rmse_rad=0.106481`,
+  `det_u_realized_rmse_px=9.349360`.
+
+This fixes a residual-scaling pathology in fixed-truth oracle diagnostics, but
+it does not solve the all-5 pose recovery blocker. The next pose slice should
+target pose parameterization or acceptance/regularisation, not sigma scaling.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-fixed-truth-sigma-gate.md`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_fixed_truth_geometry_updates_use_level_residual_sigma
+  tests/test_alternating_geometry_update_policy.py::test_stopped_geometry_updates_keep_estimated_residual_sigma_floor
+  -q` passed: 2 tests in 0.69 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-08 — Phase 8 Train-View Reconstruction Policy
 
 ### Summary

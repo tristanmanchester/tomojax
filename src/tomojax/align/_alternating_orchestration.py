@@ -137,7 +137,11 @@ def _run_alternating_solver_smoke_impl(
         if _captures_constrained_first_preview_volume(config, level):
             constrained_first_preview_volume = volume
         residual_sigma_estimated = _level_residual_sigma(volume, observed, geometry, mask, level)
-        residual_sigma_effective = max(level.residual_sigma, residual_sigma_estimated)
+        residual_sigma_effective = _effective_residual_sigma(
+            config,
+            level=level,
+            estimated=residual_sigma_estimated,
+        )
         loss_before = _projection_loss(
             volume,
             observed,
@@ -418,6 +422,17 @@ def _preview_reconstruction_mask(
         "unknown preview reconstruction mask source "
         f"{config.preview_reconstruction_mask_source!r}"
     )
+
+
+def _effective_residual_sigma(
+    config: AlternatingSmokeConfig,
+    *,
+    level: ContinuationLevel,
+    estimated: float,
+) -> float:
+    if config.geometry_update_volume_source == "fixed_synthetic_truth":
+        return float(level.residual_sigma)
+    return max(float(level.residual_sigma), float(estimated))
 
 
 def _allows_coarse_early_exit(config: AlternatingSmokeConfig) -> bool:

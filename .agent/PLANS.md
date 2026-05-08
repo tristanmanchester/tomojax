@@ -11,20 +11,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 held-out reconstruction diagnostic
-- Goal: make stopped-reconstruction geometry updates less self-fulfilling by
-  allowing preview reconstruction to exclude the held-out validation view.
+- Phase: Phase 8/9 fixed-truth Schur sigma policy
+- Goal: prevent fixed-truth oracle geometry updates from being suppressed by a
+  robust sigma estimate computed from the current corrupted geometry residual.
 
 ### Scope
 
 - In scope:
-  - Add an opt-in reconstruction mask policy for preview FISTA:
-    `all_views` vs `train_views`.
-  - Use the existing held-out mask split; do not add another validation
-    mechanism or report-only criterion.
-  - Wire the option through `align-auto` and resolved config/provenance.
-  - Add focused tests and run a realistic setup-global CUDA gate if validation
-    passes.
+  - Use continuation-level sigma for `fixed_synthetic_truth` geometry updates.
+  - Keep stopped-reconstruction behavior unchanged.
+  - Add focused policy tests and run the fixed-truth
+    `synth128_pose_random_extreme` CUDA oracle gate.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -50,11 +47,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add preview reconstruction mask policy.
-- [x] Wire CLI/config/artifact provenance.
+- [x] Add fixed-truth effective sigma policy.
 - [x] Add focused tests.
 - [x] Run focused validation and `just imports`.
-- [x] Run the 128^3 supported-only CUDA gate if validation passes.
+- [x] Run the fixed-truth pose-random 128^3 CUDA oracle gate.
 - [x] Update `docs/implementation_log.md` and commit the slice.
 
 ### Validation
@@ -118,6 +114,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   on `cuda:0` in 218.47 seconds after disabling coarse early exit. Artifact:
   `.artifacts/phase8_train_view_reconstruction/runs/128_supported_only_256views_train_views_no_skip_gpu/`.
 - `just imports` passed after the train-view reconstruction policy.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_fixed_truth_geometry_updates_use_level_residual_sigma
+  tests/test_alternating_geometry_update_policy.py::test_stopped_geometry_updates_keep_estimated_residual_sigma_floor
+  -q` passed: 2 tests in 0.69 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `just imports` passed after the fixed-truth sigma policy.
+- Fixed-truth `synth128_pose_random_extreme` CUDA oracle completed on `cuda:0`
+  in 217.02 seconds. Artifact:
+  `.artifacts/phase8_fixed_truth_sigma/runs/synth128_pose_random_extreme_fixed_truth_no_nuisance_fit_cuda/`.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
