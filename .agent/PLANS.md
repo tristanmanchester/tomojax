@@ -29,6 +29,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
     broader setup gates.
   - Add candidate-refresh acceptance now that the corrected stopped det_u-only
     gate still fails while materially improving det_u.
+  - Record the next `128^3`/256-view stopped setup scale gate as evidence
+    before moving to broader Phase 8/9 functionality.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -56,6 +58,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
 - [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
       commit the slice.
+- [x] Run 128^3/256-view stopped det_u-only CUDA setup scale gate.
+- [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
+      commit the scale-gate evidence.
 
 ### Validation
 

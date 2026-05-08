@@ -201,6 +201,71 @@ Interpretation:
   0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+## 2026-05-08 — Phase 8 Candidate-Refresh 128^3 Setup Scale Gate
+
+### Summary
+
+- Ran the requested next realistic setup scale gate after the candidate-refresh
+  slice: clean supported-only `synth128_setup_global_tomo`, `128^3`, 256 views,
+  stopped reconstruction, pose frozen, det_u active only, cylindrical support,
+  center penalty enabled, and candidate-refresh acceptance active.
+- This is an evidence gate only; because the 64^3 det_u-only gate still failed,
+  theta/roll/axis were not re-enabled.
+
+Command:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_candidate_refresh/runs/128_supported_only_256views_stopped_detu_only_candidate_refresh_cuda \
+  --profile balanced --size 128 --views 256 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_supported128_scale_gate/datasets/synth128_setup_global_tomo_128_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_candidate_refresh/runs/128_supported_only_256views_stopped_detu_only_candidate_refresh_cuda/`
+
+Result:
+
+| Metric | Value |
+|---|---:|
+| Status | failed |
+| Selected JAX device | `cuda:0` |
+| JAX backend | `gpu` |
+| Schur accepted | true |
+| Initial det_u RMSE | 14.5 px |
+| Final det_u RMSE | 6.58607 px |
+| theta RMSE | 0.0218166 rad |
+| Final residual | 2.07190 |
+| Schur train loss | 2.75075 |
+| Volume NMSE | 0.361283 |
+| Artifact runtime | 107.956 s |
+| `/usr/bin/time` wall time | 1:59.66 |
+| Host max RSS | 2440012 KB |
+
+Interpretation:
+
+- Schur accepts and materially improves det_u at 128^3/256 views, but the
+  recovery remains far outside the 0.5 px criterion.
+- The failure remains `reconstruction_absorbed_geometry`: final-volume/final
+  geometry loss `2.07190`, final-volume/true-geometry loss `2.10478`,
+  true-volume/final-geometry loss `1.19704`, true-volume/true-geometry loss
+  `0.0`.
+- The next slice should address stopped reconstruction gauge directly, for
+  example by preventing lateral x/det_u absorption in the x-step or adding an
+  explicit geometry-consistent volume gauge, before enabling theta/roll/axis.
+
 ## 2026-05-08 — Phase 8 Weak-View Recovery Verification
 
 ### Summary
