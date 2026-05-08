@@ -383,6 +383,35 @@ def test_theta_activation_policy_freezes_theta_until_configured_level() -> None:
     )
 
 
+def test_alpha_beta_activation_policy_freezes_angular_pose_until_configured_level() -> None:
+    # check-public-imports: allow-private
+    from tomojax.align._alternating_orchestration import _active_pose_dofs_for_level
+
+    config = AlternatingSmokeConfig(
+        geometry_update_active_pose_dofs=(
+            "alpha_rad",
+            "beta_rad",
+            "phi_residual_rad",
+            "dx_px",
+            "dz_px",
+        ),
+        geometry_update_alpha_beta_activate_at_level_factor=1,
+    )
+
+    assert _active_pose_dofs_for_level(config, 4) == (
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )
+    assert _active_pose_dofs_for_level(config, 1) == (
+        "alpha_rad",
+        "beta_rad",
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )
+
+
 def test_stopped_preview_policy_is_inactive_for_fixed_truth() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import (

@@ -186,7 +186,7 @@ def _run_alternating_solver_smoke_impl(
                 ),
                 solver=config.geometry_update_solver,
                 pose_frozen=_pose_frozen_for_level(config, level.level_factor),
-                active_pose_dofs=config.geometry_update_active_pose_dofs,
+                active_pose_dofs=_active_pose_dofs_for_level(config, level.level_factor),
                 fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
                 fit_background_nuisance=config.fit_background_nuisance,
                 residual_filters=_geometry_residual_filters(config, level.residual_filters),
@@ -306,6 +306,9 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_pose_activate_at_level_factor=(
             config.geometry_update_pose_activate_at_level_factor
         ),
+        geometry_update_alpha_beta_activate_at_level_factor=(
+            config.geometry_update_alpha_beta_activate_at_level_factor
+        ),
         geometry_update_theta_activate_at_level_factor=(
             config.geometry_update_theta_activate_at_level_factor
         ),
@@ -380,6 +383,20 @@ def _active_setup_parameters_for_level(
         name
         for name in config.geometry_update_active_setup_parameters
         if name != "theta_offset_rad"
+    )
+
+
+def _active_pose_dofs_for_level(
+    config: AlternatingSmokeConfig,
+    level_factor: int,
+) -> tuple[str, ...]:
+    activate_at = config.geometry_update_alpha_beta_activate_at_level_factor
+    if activate_at is None or int(level_factor) <= int(activate_at):
+        return config.geometry_update_active_pose_dofs
+    return tuple(
+        name
+        for name in config.geometry_update_active_pose_dofs
+        if name not in {"alpha_rad", "beta_rad"}
     )
 
 

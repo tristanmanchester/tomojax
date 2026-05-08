@@ -3,6 +3,60 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Alpha/Beta Activation Policy
+
+### Summary
+
+- Added `geometry_update_alpha_beta_activate_at_level_factor` to stage
+  `alpha_rad`/`beta_rad` separately from `phi_residual_rad,dx_px,dz_px`.
+- Defaults remain unchanged. When unset, all configured pose DOFs are active
+  whenever the pose block is active.
+- Wired the option through `align-auto` and `config_resolved.toml`.
+- Added focused policy and CLI config tests.
+
+### 128^3 CUDA Gate
+
+Reran the fixed-truth `synth128_pose_random_extreme` 128^3/256-view CUDA oracle
+on `cuda:0` with alpha/beta activated only at level factor 1 and pose trust
+disabled:
+
+- Artifact:
+  `.artifacts/phase8_alpha_beta_staging/runs/pose_random_fixed_truth_alpha_beta_final_no_trust_cuda/`
+- Command log:
+  `.artifacts/phase8_alpha_beta_staging/logs/pose_random_fixed_truth_alpha_beta_final_no_trust_cuda.log`
+- Wall time: `215.97` seconds.
+- Host max RSS: `2875040` KB.
+- Volume NMSE: `0.177530`.
+- Final residual: `0.642810`.
+- `alpha_beta_rmse_rad=0.012410`, improved from `0.020097` in the
+  phi/dx/dz-only no-trust run.
+- `det_u_realized_rmse_px=0.901970`.
+- `det_v_realized_rmse_px=0.954342`.
+- `theta_realized_rmse_rad=0.125796`.
+
+The staged alpha/beta policy improves alpha/beta recovery and slightly improves
+detector-shift realized errors, but phi/theta-realized recovery remains the
+pose-random blocker.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-alpha-beta-staging-gate.md`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_alpha_beta_activation_policy_freezes_angular_pose_until_configured_level
+  tests/test_align_auto_cli.py::test_align_auto_generates_supported_only_pose_frozen_oracle
+  -q` passed: 2 tests in 34.18 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/align/_alternating_types.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/align/_alternating_types.py
+  src/tomojax/cli/align_auto.py tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-08 — Phase 8 Pose Trust-Radius Option
 
 ### Summary

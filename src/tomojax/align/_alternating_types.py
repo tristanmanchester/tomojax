@@ -49,6 +49,7 @@ class AlternatingSmokeConfig:
     geometry_update_pose_trust_radius: float | None = None
     geometry_update_pose_frozen: bool = False
     geometry_update_pose_activate_at_level_factor: int | None = None
+    geometry_update_alpha_beta_activate_at_level_factor: int | None = None
     geometry_update_theta_activate_at_level_factor: int | None = None
     geometry_update_active_setup_parameters: tuple[str, ...] = ("theta_offset_rad", "det_u_px")
     geometry_update_active_pose_dofs: tuple[str, ...] = (

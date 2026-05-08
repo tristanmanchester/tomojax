@@ -75,6 +75,7 @@ def _write_artifacts(
     geometry_update_pose_trust_radius: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_alpha_beta_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
     geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
@@ -143,6 +144,9 @@ def _write_artifacts(
         geometry_update_pose_frozen=geometry_update_pose_frozen,
         geometry_update_pose_activate_at_level_factor=(
             geometry_update_pose_activate_at_level_factor
+        ),
+        geometry_update_alpha_beta_activate_at_level_factor=(
+            geometry_update_alpha_beta_activate_at_level_factor
         ),
         geometry_update_theta_activate_at_level_factor=(
             geometry_update_theta_activate_at_level_factor
@@ -1732,6 +1736,7 @@ def _write_config_resolved(
     geometry_update_pose_trust_radius: float | None,
     geometry_update_pose_frozen: bool,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_alpha_beta_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
     geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
@@ -1766,11 +1771,14 @@ def _write_config_resolved(
         lines.append(f"geometry_update_pose_trust_radius = {geometry_update_pose_trust_radius}")
     lines.append(f"geometry_update_pose_frozen = {str(bool(geometry_update_pose_frozen)).lower()}")
     lines.extend(
-        _activation_config_lines(
-            geometry_update_pose_activate_at_level_factor=(
-                geometry_update_pose_activate_at_level_factor
-            ),
-            geometry_update_theta_activate_at_level_factor=(
+            _activation_config_lines(
+                geometry_update_pose_activate_at_level_factor=(
+                    geometry_update_pose_activate_at_level_factor
+                ),
+                geometry_update_alpha_beta_activate_at_level_factor=(
+                    geometry_update_alpha_beta_activate_at_level_factor
+                ),
+                geometry_update_theta_activate_at_level_factor=(
                 geometry_update_theta_activate_at_level_factor
             ),
         )
@@ -1862,6 +1870,7 @@ def _preview_config_lines(
 def _activation_config_lines(
     *,
     geometry_update_pose_activate_at_level_factor: int | None,
+    geometry_update_alpha_beta_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
 ) -> list[str]:
     lines: list[str] = []
@@ -1869,6 +1878,11 @@ def _activation_config_lines(
         lines.append(
             "geometry_update_pose_activate_at_level_factor = "
             f"{int(geometry_update_pose_activate_at_level_factor)}"
+        )
+    if geometry_update_alpha_beta_activate_at_level_factor is not None:
+        lines.append(
+            "geometry_update_alpha_beta_activate_at_level_factor = "
+            f"{int(geometry_update_alpha_beta_activate_at_level_factor)}"
         )
     if geometry_update_theta_activate_at_level_factor is not None:
         lines.append(
