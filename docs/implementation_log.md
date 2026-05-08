@@ -266,6 +266,63 @@ Interpretation:
   example by preventing lateral x/det_u absorption in the x-step or adding an
   explicit geometry-consistent volume gauge, before enabling theta/roll/axis.
 
+## 2026-05-08 — Phase 8 Hard x-Gauge Projection Diagnostic
+
+### Summary
+
+- Tested a hard stopped-preview x-gauge projection that recenters the
+  nonnegative stopped volume along the detector-u/core-x axis using a
+  zero-filled physical shift whenever the existing center penalty is enabled.
+- The diagnostic did not improve the minimal stopped det_u recovery, so the code
+  path was reverted rather than retained as another stale stopped-loop policy.
+
+Command:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_volume_gauge_projection/runs/64_stopped_detu_only_hard_x_gauge_cuda \
+  --profile balanced --size 64 --views 64 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_volume_gauge_projection/runs/64_stopped_detu_only_hard_x_gauge_cuda/`
+
+Result:
+
+| Metric | Candidate-refresh gate | Hard x-gauge diagnostic |
+|---|---:|---:|
+| Status | failed | failed |
+| Selected JAX device | `cuda:0` | `cuda:0` |
+| Schur accepted | true | true |
+| Final det_u RMSE | 2.87217 px | 2.87242 px |
+| Final residual | 0.484702 | 0.484713 |
+| Volume NMSE | 0.269351 | 0.269356 |
+| Artifact runtime | 30.0065 s | 30.1096 s |
+| `/usr/bin/time` wall time | 36.51 s | 36.40 s |
+| Host max RSS | 2162304 KB | 2175352 KB |
+
+Interpretation:
+
+- Hard recentering of the stopped volume x COM is not the missing gauge fix for
+  this case; it leaves det_u recovery and residual effectively unchanged.
+- The reverted diagnostic supports looking next at the reconstruction objective
+  itself, such as using geometry-invariant train/validation splits, true-geometry
+  refresh probes, or a non-translational object gauge, rather than adding more
+  coarse preview policies.
+
 ## 2026-05-08 — Phase 8 Weak-View Recovery Verification
 
 ### Summary

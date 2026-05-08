@@ -31,6 +31,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
     gate still fails while materially improving det_u.
   - Record the next `128^3`/256-view stopped setup scale gate as evidence
     before moving to broader Phase 8/9 functionality.
+  - Record the hard stopped-preview x-gauge projection diagnostic and do not
+    keep it unless the gate improves.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -61,6 +63,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run 128^3/256-view stopped det_u-only CUDA setup scale gate.
 - [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
       commit the scale-gate evidence.
+- [x] Test hard stopped-preview det_u-axis gauge projection as a diagnostic.
+- [x] Rerun focused CPU tests, ruff, basedpyright, and `just imports`.
+- [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
+- [x] Revert the no-benefit hard-gauge code path, update logs, and commit the
+      diagnostic evidence.
 
 ### Validation
 
