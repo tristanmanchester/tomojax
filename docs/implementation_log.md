@@ -143,6 +143,54 @@ Interpretation:
   with 0 errors, 0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+## 2026-05-08 — Production Stopped det_u Absorption Curve After FISTA Adjoint Fix
+
+### Summary
+
+- Reran the canonical `64^3`/64-view supported-only stopped det_u absorption
+  curve after fixing the filtered FISTA gradient adjoint.
+- The setup remained unchanged: same neutral normalized average-projection
+  cylindrical-support seed for all runs, clean data, pose/theta/det_v/roll/axis
+  frozen, det_u active only, no nuisance, no exclusions, and one det_u-only
+  Schur solve after each preview.
+
+Artifact:
+
+- `.artifacts/phase8_production_stopped_alignment/absorption_curve_64_detu_filtered_adjoint_cuda/`
+- Main payloads:
+  - `absorption_curve_result.json`
+  - `absorption_curve.csv`
+
+Runtime/device:
+
+- Selected JAX device: `cuda:0`
+- JAX backend: `gpu`
+- `/usr/bin/time` wall time: `1:21.38`
+- Host max RSS: `2698340 KB`
+
+Result:
+
+| FISTA iters | Schur accepted | det_u proposed step px | final det_u RMSE px | preview/initial loss | preview/true loss | true/final-geometry loss | final/true loss | final/final loss | volume NMSE |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | true | 1.31172 | 1.49093 | 1.54429 | 1.37286 | 0.155064 | 1.37286 | 1.37282 | 0.571268 |
+| 1 | true | 1.20256 | 1.65807 | 1.49307 | 1.31995 | 0.181696 | 1.31995 | 1.31896 | 0.544977 |
+| 2 | true | 1.17957 | 1.77087 | 1.44374 | 1.26923 | 0.200108 | 1.26923 | 1.26664 | 0.520798 |
+| 4 | true | 1.15373 | 2.15219 | 1.31162 | 1.13471 | 0.264342 | 1.13471 | 1.12666 | 0.462397 |
+| 8 | true | 1.01219 | 3.43922 | 0.961318 | 0.790969 | 0.493996 | 0.790969 | 0.757315 | 0.361355 |
+| 16 | true | 0.714349 | 5.34931 | 0.594084 | 0.624977 | 0.847902 | 0.624977 | 0.438278 | 0.469161 |
+
+Interpretation:
+
+- The corrected-gradient curve preserves the absorption diagnosis. More FISTA
+  iterations reduce preview/initial and final/final projection loss, but det_u
+  recovery degrades monotonically after the neutral zero-iteration preview.
+- The best current-code result remains zero FISTA iterations: det_u improves
+  from `7.25 px` to `1.49093 px`, still short of the `<1 px` production target.
+- Since Schur can move det_u materially from the neutral preview, the next
+  named diagnostic remains geometry-first bootstrap. If that cannot push det_u
+  past the plateau, the current stopped objective is not merely suffering from
+  stale-volume acceptance.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary
