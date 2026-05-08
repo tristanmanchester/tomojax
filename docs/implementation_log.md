@@ -304,6 +304,26 @@ Interpretation:
   passed with 0 errors, 0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+### Theta and Policy Demotion
+
+- Production stopped det_u mode freezes theta. In stopped reconstruction,
+  theta remains a volume-orientation gauge unless an explicit orientation
+  anchor exists. The supported-only production gate therefore evaluates det_u
+  recovery while reporting theta metrics separately; theta is not counted as a
+  production blocker for this gate.
+- Calibration/oracle mode may activate theta only with an anchor such as fixed
+  truth, fiducials, known asymmetric support, or a documented calibration
+  convention. Fixed-truth theta recovery remains oracle evidence, not stopped
+  production evidence.
+- Candidate-refresh acceptance is demoted out of the production det_u gate by
+  code. It may remain as a named diagnostic for other stopped paths.
+- Hard x-gauge projection, neutral-refresh variants, no-FISTA-first preview,
+  and weak-view exclusion are diagnostic evidence only. None should be reported
+  as a plain production pass.
+- Existing benchmark status remains honest: the integrated bootstrap artifact
+  is still `failed` under the stretch `det_u_error_px_lt=0.2` verifier even
+  though it satisfies the goal file's initial `<1 px` production threshold.
+
 ## 2026-05-08 — Phase 8 Stopped Volume Axis/Gauge Semantics
 
 ### Summary
