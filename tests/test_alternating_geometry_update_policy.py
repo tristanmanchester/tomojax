@@ -18,6 +18,9 @@ from tomojax.align._alternating_geometry_update import (
     _pose_trust_radius,
     _run_geometry_updates,
 )
+
+# check-public-imports: allow-private
+from tomojax.align._alternating_orchestration import _run_phi_polish
 from tomojax.align.api import (
     AlternatingSmokeConfig,
     JointSchurLMConfig,
@@ -213,6 +216,41 @@ def test_anchoring_releases_outside_coarse_setup_global() -> None:
     )
 
     np.testing.assert_array_equal(np.asarray(anchored), np.asarray(stopped))
+
+
+def test_phi_polish_runs_phi_only_geometry_update() -> None:
+    volume = _tiny_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    true_geometry = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            phi_residual_rad=np.asarray([0.04, -0.05], dtype=np.float64),
+        ),
+        acquisition=nominal.acquisition,
+    )
+    observed = project_parallel_reference(volume, true_geometry)
+
+    summary, geometry, _report, result = _run_phi_polish(
+        AlternatingSmokeConfig(
+            geometry_update_volume_source="fixed_synthetic_truth",
+            geometry_update_phi_polish_updates=2,
+        ),
+        reference_continuation_schedule("reference").levels[-1],
+        truth_volume=volume,
+        stopped_volume=volume,
+        observed=observed,
+        train_mask=jnp.ones_like(observed),
+        full_mask=jnp.ones_like(observed),
+        heldout_mask=None,
+        geometry=nominal,
+    )
+
+    assert summary.role == "polish"
+    assert summary.executed_geometry_updates == 2
+    assert result.active_setup_parameters == ()
+    assert result.active_pose_dofs == ("phi_residual_rad",)
+    assert result.final_loss <= result.initial_loss
+    assert float(jnp.max(jnp.abs(jnp.asarray(geometry.pose.phi_residual_rad)))) > 0.0
 
 
 def test_stopped_preview_policy_constrains_first_preview_only() -> None:

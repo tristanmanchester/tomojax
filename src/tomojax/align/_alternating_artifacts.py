@@ -77,6 +77,7 @@ def _write_artifacts(
     geometry_update_pose_activate_at_level_factor: int | None,
     geometry_update_alpha_beta_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
+    geometry_update_phi_polish_updates: int,
     geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
     preview_volume_support: str,
@@ -151,6 +152,7 @@ def _write_artifacts(
         geometry_update_theta_activate_at_level_factor=(
             geometry_update_theta_activate_at_level_factor
         ),
+        geometry_update_phi_polish_updates=geometry_update_phi_polish_updates,
         geometry_update_active_setup_parameters=geometry_update_active_setup_parameters,
         geometry_update_active_pose_dofs=geometry_update_active_pose_dofs,
         preview_volume_support=preview_volume_support,
@@ -1738,6 +1740,7 @@ def _write_config_resolved(
     geometry_update_pose_activate_at_level_factor: int | None,
     geometry_update_alpha_beta_activate_at_level_factor: int | None,
     geometry_update_theta_activate_at_level_factor: int | None,
+    geometry_update_phi_polish_updates: int,
     geometry_update_active_setup_parameters: tuple[str, ...],
     geometry_update_active_pose_dofs: tuple[str, ...],
     preview_volume_support: str,
@@ -1790,6 +1793,7 @@ def _write_config_resolved(
     lines.append(
         f"geometry_update_active_pose_dofs = {json.dumps(list(geometry_update_active_pose_dofs))}"
     )
+    lines.extend(_phi_polish_config_lines(geometry_update_phi_polish_updates))
     lines.extend(
         _preview_config_lines(
             preview_volume_support=preview_volume_support,
@@ -1890,6 +1894,12 @@ def _activation_config_lines(
             f"{int(geometry_update_theta_activate_at_level_factor)}"
         )
     return lines
+
+
+def _phi_polish_config_lines(updates: int) -> list[str]:
+    if int(updates) <= 0:
+        return []
+    return [f"geometry_update_phi_polish_updates = {int(updates)}"]
 
 
 def _write_final_volume(path: Path, volume: jax.Array) -> None:

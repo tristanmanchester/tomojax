@@ -204,6 +204,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _ = parser.add_argument(
+        "--geometry-update-phi-polish-updates",
+        type=int,
+        default=0,
+        help="Optional final phi_residual_rad-only Schur polish update count.",
+    )
+    _ = parser.add_argument(
         "--preview-volume-support",
         choices=_PREVIEW_VOLUME_SUPPORT_CHOICES,
         default="none",
@@ -336,6 +342,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             geometry_update_theta_activate_at_level_factor=(
                 args.geometry_update_theta_activate_at_level_factor
+            ),
+            geometry_update_phi_polish_updates=max(
+                int(args.geometry_update_phi_polish_updates),
+                0,
             ),
             geometry_update_active_setup_parameters=_parse_active_setup_parameters(
                 str(args.geometry_update_active_setup_parameters)

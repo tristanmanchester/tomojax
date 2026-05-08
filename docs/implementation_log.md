@@ -3,6 +3,50 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Final Phi-Only Polish Stage
+
+### Summary
+
+- Added an opt-in final `phi_residual_rad`-only Schur polish stage after the
+  normal alternating continuation schedule.
+- Exposed it through `geometry_update_phi_polish_updates` and
+  `--geometry-update-phi-polish-updates`; defaults remain unchanged.
+- Recorded the option in `config_resolved.toml` without adding new benchmark
+  result fields.
+- Added a focused white-box test that verifies the polish solve activates only
+  `phi_residual_rad` and no setup parameters.
+
+### 128^3 CUDA Gate
+
+Reran `synth128_pose_random_extreme` fixed-truth on `cuda:0` with 16 final
+phi-only polish updates:
+
+- Artifact:
+  `.artifacts/phase8_phi_polish_stage/runs/pose_random_fixed_truth_phi_polish16_cuda/`
+- Command log:
+  `.artifacts/phase8_phi_polish_stage/logs/pose_random_fixed_truth_phi_polish16_cuda.log`
+- Selected JAX device: `cuda:0`.
+- Total wall time: `327.57` seconds from the artifact, `5:40.07` from
+  `/usr/bin/time`.
+- Host max RSS: `3655620` KB.
+- Volume NMSE: `0.177530`.
+- Final residual: `0.647845`.
+- Schur train loss: `0.065966`.
+- Final polish Schur accepted: `true`.
+- `alpha_beta_rmse_rad=0.012410`.
+- `theta_realized_rmse_rad=0.045132`.
+- `det_u_realized_rmse_px=0.901970`.
+- `det_v_realized_rmse_px=0.954342`.
+
+The polish stage reduced the staged baseline theta-realized error from
+`0.125796` rad to `0.045132` rad and lowered Schur train loss from `0.100273`
+to `0.065966`, but the benchmark still fails alpha/beta and detector shift
+tolerances. The remaining blocker is functional pose/translation recovery, not
+artifact/report shape.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-phi-polish-stage-gate.md`.
+
 ## 2026-05-08 — Phase 8 Phi Polish Diagnostic
 
 ### Summary

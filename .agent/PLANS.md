@@ -11,21 +11,25 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 phi polish diagnostic
-- Goal: determine whether the remaining pose-random phi/theta blocker can be
-  reduced by a dedicated phi-only polish after translation recovery.
+- Phase: Phase 8/9 final phi-only polish stage
+- Goal: promote the successful direct phi-only polish diagnostic into a scoped,
+  opt-in alternating-solver stage and validate it on the canonical 128^3
+  pose-random fixed-truth CUDA gate.
 
 ### Scope
 
 - In scope:
-  - Run direct true-volume Schur probes from the staged alpha/beta result.
-  - Compare phi-only polish against alpha/beta/phi polish.
-  - Record evidence before adding a new staged-polish source path.
+  - Add an optional final `phi_residual_rad`-only Schur polish stage after the
+    normal continuation schedule.
+  - Preserve the public alternating solver API while exposing a narrow CLI
+    option for the stage.
+  - Record the resulting CUDA gate evidence against
+    `synth128_pose_random_extreme`.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
   - Reworking report semantics or benchmark criteria.
-  - Adding new benchmark/report fields.
+  - Adding new benchmark/report fields beyond resolved config provenance.
   - Pose-only solver changes.
   - Setup-only solver changes.
   - Running old/current TomoJAX automatically.
@@ -46,9 +50,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Run phi-only polish probe.
-- [x] Run alpha/beta/phi polish comparison.
-- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
+- [x] Add the opt-in final phi-only polish config and CLI option.
+- [x] Add focused validation for the polish config/orchestration path.
+- [x] Run focused lint/type/import checks.
+- [x] Run the 128^3 pose-random fixed-truth CUDA gate with phi polish.
+- [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
+      commit the slice.
 
 ### Validation
 
@@ -173,6 +180,28 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Direct alpha/beta/phi polish reduced phi similarly but worsened alpha/beta,
   so a dedicated phi-only polish is the better next implementation target.
 - `just imports` passed after the diagnostic log update.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_phi_polish_runs_phi_only_geometry_update
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_align_auto_accepts_geometry_update_volume_source
+  -q` passed: 3 tests in 44.80 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed after the phi-only polish stage.
+- CUDA `synth128_pose_random_extreme` fixed-truth phi-polish gate completed on
+  `cuda:0` in 327.57 seconds from the artifact. Artifact:
+  `.artifacts/phase8_phi_polish_stage/runs/pose_random_fixed_truth_phi_polish16_cuda/`.
+  The stage reduced theta-realized RMSE to `0.045132` rad and accepted the
+  final Schur update, but the benchmark still fails detector-shift and
+  alpha/beta tolerances.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
   0.89 seconds.

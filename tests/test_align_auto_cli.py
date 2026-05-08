@@ -37,6 +37,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "--supported-only-setup-global" in captured.out
     assert "--geometry-update-pose-frozen" in captured.out
     assert "--geometry-update-active-pose-dofs" in captured.out
+    assert "--geometry-update-phi-polish-updates" in captured.out
     assert "alpha_rad, beta_rad" in captured.out
     assert "--geometry-update-pose-activate-at-level-factor" in captured.out
     assert "detector_roll_rad" in captured.out

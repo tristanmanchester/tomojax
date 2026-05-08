@@ -280,9 +280,21 @@ def _run_alternating_solver_smoke_impl(
     if volume is None or fista_result is None:
         raise RuntimeError("continuation schedule produced no reconstruction")
 
-    final_loss = (
-        last_schur_result.final_loss if last_schur_result is not None else summaries[-1].loss_after
+    geometry, gauge_report, last_schur_result = _maybe_run_phi_polish(
+        config,
+        schedule.levels[-1],
+        summaries=summaries,
+        truth_volume=truth,
+        stopped_volume=volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        gauge_report=gauge_report,
+        last_schur_result=last_schur_result,
     )
+
     artifacts = _write_artifacts(
         out_dir,
         true_geometry=true_geometry,
@@ -312,6 +324,7 @@ def _run_alternating_solver_smoke_impl(
         geometry_update_theta_activate_at_level_factor=(
             config.geometry_update_theta_activate_at_level_factor
         ),
+        geometry_update_phi_polish_updates=config.geometry_update_phi_polish_updates,
         geometry_update_active_setup_parameters=config.geometry_update_active_setup_parameters,
         geometry_update_active_pose_dofs=config.geometry_update_active_pose_dofs,
         preview_volume_support=config.preview_volume_support,
@@ -327,7 +340,7 @@ def _run_alternating_solver_smoke_impl(
             cfg=config,
             schedule=schedule,
             initial_loss=initial_loss,
-            final_loss=final_loss,
+            final_loss=_final_loss(last_schur_result, summaries),
             coarse_verified=coarse_verified,
             true_geometry=true_geometry,
             initial_geometry=initial_geometry,
@@ -363,6 +376,161 @@ def _prepare_output_dir(output_dir: str | Path) -> Path:
 
 def _schur_loss_pair(result: JointSchurLMResult) -> tuple[float, float]:
     return result.initial_loss, result.final_loss
+
+
+def _final_loss(
+    last_schur_result: JointSchurLMResult | None,
+    summaries: list[AlternatingLevelSummary],
+) -> float:
+    if last_schur_result is not None:
+        return last_schur_result.final_loss
+    return summaries[-1].loss_after
+
+
+def _maybe_run_phi_polish(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    summaries: list[AlternatingLevelSummary],
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    train_mask: jax.Array,
+    full_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    geometry: GeometryState,
+    gauge_report: GaugeReport,
+    last_schur_result: JointSchurLMResult | None,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult | None]:
+    if int(config.geometry_update_phi_polish_updates) <= 0:
+        return geometry, gauge_report, last_schur_result
+    summary, geometry, gauge_report, result = _run_phi_polish(
+        config,
+        level,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+    )
+    summaries.append(summary)
+    return geometry, gauge_report, result
+
+
+def _run_phi_polish(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    train_mask: jax.Array,
+    full_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    geometry: GeometryState,
+) -> tuple[AlternatingLevelSummary, GeometryState, GaugeReport, JointSchurLMResult]:
+    updates = int(config.geometry_update_phi_polish_updates)
+    volume = _geometry_update_volume_for_level(
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        mask=train_mask,
+        level=level,
+        source=config.geometry_update_volume_source,
+        active_setup_parameters=(),
+    )
+    residual_sigma_estimated = _level_residual_sigma(volume, observed, geometry, full_mask, level)
+    residual_sigma_effective = _effective_residual_sigma(
+        config,
+        level=level,
+        estimated=residual_sigma_estimated,
+    )
+    before_geometry = geometry
+    geometry, report, result = _run_geometry_updates(
+        volume,
+        observed,
+        geometry,
+        train_mask,
+        level,
+        updates,
+        sigma=residual_sigma_effective,
+        setup_prior_strength=config.geometry_update_setup_prior_strength,
+        pose_prior_strength=config.geometry_update_pose_prior_strength,
+        pose_trust_radius=config.geometry_update_pose_trust_radius,
+        active_setup_parameters=(),
+        solver=config.geometry_update_solver,
+        pose_frozen=False,
+        active_pose_dofs=("phi_residual_rad",),
+        fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
+        fit_background_nuisance=config.fit_background_nuisance,
+        residual_filters=_geometry_residual_filters(config, level.residual_filters),
+        parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+    )
+    geometry, report, result = _apply_heldout_geometry_acceptance(
+        config,
+        volume,
+        observed,
+        before_geometry=before_geometry,
+        candidate_geometry=geometry,
+        heldout_mask=heldout_mask,
+        level=level,
+        sigma=residual_sigma_effective,
+        update_report=report,
+        schur_result=result,
+    )
+    loss_before, loss_after = _schur_loss_pair(result)
+    heldout_before, heldout_after, heldout_passed = _heldout_residual_check(
+        volume,
+        observed,
+        before_geometry=before_geometry,
+        after_geometry=geometry,
+        heldout_mask=heldout_mask,
+        level=level,
+        sigma=residual_sigma_effective,
+        tolerance=config.heldout_residual_tolerance,
+    )
+    checks = _level_verification_checks(
+        cfg=config,
+        geometry=geometry,
+        update_report=report,
+        loss_before=loss_before,
+        loss_after=loss_after,
+        heldout_residual_passed=heldout_passed,
+        geometry_update_accepted=result.diagnostics.accepted,
+    )
+    return (
+        AlternatingLevelSummary(
+            level_factor=level.level_factor,
+            role="polish",
+            reconstruction_iterations=0,
+            geometry_updates=updates,
+            executed_geometry_updates=updates,
+            residual_filter_kinds=_residual_filter_kinds(level),
+            loss_before=loss_before,
+            loss_after=loss_after,
+            loss_nonincreasing=checks.loss_nonincreasing,
+            finite_loss=checks.finite_loss,
+            residual_sigma_estimated=residual_sigma_estimated,
+            residual_sigma_effective=residual_sigma_effective,
+            prior_strength=level.prior_strength,
+            heldout_residual_before=heldout_before,
+            heldout_residual_after=heldout_after,
+            heldout_residual_passed=heldout_passed,
+            gauge_stable=checks.gauge_stable,
+            parameter_update_norm=checks.parameter_update_norm,
+            parameter_update_small=checks.parameter_update_small,
+            verified=checks.verified,
+            skipped_geometry=False,
+            skipped_level=False,
+            early_exit_reason=None,
+            schur_diagnostics=result.diagnostics,
+        ),
+        geometry,
+        report,
+        result,
+    )
 
 
 def _pose_frozen_for_level(config: AlternatingSmokeConfig, level_factor: int) -> bool:
