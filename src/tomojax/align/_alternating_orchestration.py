@@ -280,7 +280,7 @@ def _run_alternating_solver_smoke_impl(
     if volume is None or fista_result is None:
         raise RuntimeError("continuation schedule produced no reconstruction")
 
-    geometry, gauge_report, last_schur_result = _maybe_run_phi_polish(
+    geometry, gauge_report, last_schur_result = _run_final_polishes(
         config,
         schedule.levels[-1],
         summaries=summaries,
@@ -325,6 +325,9 @@ def _run_alternating_solver_smoke_impl(
             config.geometry_update_theta_activate_at_level_factor
         ),
         geometry_update_phi_polish_updates=config.geometry_update_phi_polish_updates,
+        geometry_update_final_pose_polish_updates=(
+            config.geometry_update_final_pose_polish_updates
+        ),
         geometry_update_active_setup_parameters=config.geometry_update_active_setup_parameters,
         geometry_update_active_pose_dofs=config.geometry_update_active_pose_dofs,
         preview_volume_support=config.preview_volume_support,
@@ -387,7 +390,7 @@ def _final_loss(
     return summaries[-1].loss_after
 
 
-def _maybe_run_phi_polish(
+def _run_final_polishes(
     config: AlternatingSmokeConfig,
     level: ContinuationLevel,
     *,
@@ -402,9 +405,156 @@ def _maybe_run_phi_polish(
     gauge_report: GaugeReport,
     last_schur_result: JointSchurLMResult | None,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult | None]:
-    if int(config.geometry_update_phi_polish_updates) <= 0:
+    geometry, gauge_report, last_schur_result = _maybe_run_polish_stage(
+        config,
+        level,
+        summaries=summaries,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        gauge_report=gauge_report,
+        last_schur_result=last_schur_result,
+        role="polish",
+        updates=config.geometry_update_phi_polish_updates,
+        active_setup_parameters=(),
+        active_pose_dofs=("phi_residual_rad",),
+    )
+    return _run_final_pose_polishes(
+        config,
+        level,
+        summaries=summaries,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        gauge_report=gauge_report,
+        last_schur_result=last_schur_result,
+    )
+
+
+def _run_final_pose_polishes(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    summaries: list[AlternatingLevelSummary],
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    train_mask: jax.Array,
+    full_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    geometry: GeometryState,
+    gauge_report: GaugeReport,
+    last_schur_result: JointSchurLMResult | None,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult | None]:
+    updates = int(config.geometry_update_final_pose_polish_updates)
+    first_updates = min(updates, 32)
+    geometry, gauge_report, last_schur_result = _maybe_run_final_pose_polish(
+        config,
+        level,
+        summaries=summaries,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        gauge_report=gauge_report,
+        last_schur_result=last_schur_result,
+        role="final_pose_polish",
+        updates=first_updates,
+    )
+    return _maybe_run_final_pose_polish(
+        config,
+        level,
+        summaries=summaries,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        gauge_report=gauge_report,
+        last_schur_result=last_schur_result,
+        role="final_pose_repolish",
+        updates=updates - first_updates,
+    )
+
+
+def _maybe_run_final_pose_polish(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    summaries: list[AlternatingLevelSummary],
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    train_mask: jax.Array,
+    full_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    geometry: GeometryState,
+    gauge_report: GaugeReport,
+    last_schur_result: JointSchurLMResult | None,
+    role: str,
+    updates: int,
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult | None]:
+    return _maybe_run_polish_stage(
+        config,
+        level,
+        summaries=summaries,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        gauge_report=gauge_report,
+        last_schur_result=last_schur_result,
+        role=role,
+        updates=updates,
+        active_setup_parameters=("det_u_px",),
+        active_pose_dofs=(
+            "alpha_rad",
+            "beta_rad",
+            "phi_residual_rad",
+            "dx_px",
+            "dz_px",
+        ),
+    )
+
+
+def _maybe_run_polish_stage(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    summaries: list[AlternatingLevelSummary],
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    train_mask: jax.Array,
+    full_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    geometry: GeometryState,
+    gauge_report: GaugeReport,
+    last_schur_result: JointSchurLMResult | None,
+    role: str,
+    updates: int,
+    active_setup_parameters: tuple[str, ...],
+    active_pose_dofs: tuple[str, ...],
+) -> tuple[GeometryState, GaugeReport, JointSchurLMResult | None]:
+    if int(updates) <= 0:
         return geometry, gauge_report, last_schur_result
-    summary, geometry, gauge_report, result = _run_phi_polish(
+    summary, geometry, gauge_report, result = _run_polish_stage(
         config,
         level,
         truth_volume=truth_volume,
@@ -414,6 +564,10 @@ def _maybe_run_phi_polish(
         full_mask=full_mask,
         heldout_mask=heldout_mask,
         geometry=geometry,
+        role=role,
+        updates=updates,
+        active_setup_parameters=active_setup_parameters,
+        active_pose_dofs=active_pose_dofs,
     )
     summaries.append(summary)
     return geometry, gauge_report, result
@@ -431,7 +585,40 @@ def _run_phi_polish(
     heldout_mask: jax.Array | None,
     geometry: GeometryState,
 ) -> tuple[AlternatingLevelSummary, GeometryState, GaugeReport, JointSchurLMResult]:
-    updates = int(config.geometry_update_phi_polish_updates)
+    return _run_polish_stage(
+        config,
+        level,
+        truth_volume=truth_volume,
+        stopped_volume=stopped_volume,
+        observed=observed,
+        train_mask=train_mask,
+        full_mask=full_mask,
+        heldout_mask=heldout_mask,
+        geometry=geometry,
+        role="polish",
+        updates=config.geometry_update_phi_polish_updates,
+        active_setup_parameters=(),
+        active_pose_dofs=("phi_residual_rad",),
+    )
+
+
+def _run_polish_stage(
+    config: AlternatingSmokeConfig,
+    level: ContinuationLevel,
+    *,
+    truth_volume: jax.Array,
+    stopped_volume: jax.Array,
+    observed: jax.Array,
+    train_mask: jax.Array,
+    full_mask: jax.Array,
+    heldout_mask: jax.Array | None,
+    geometry: GeometryState,
+    role: str,
+    updates: int,
+    active_setup_parameters: tuple[str, ...],
+    active_pose_dofs: tuple[str, ...],
+) -> tuple[AlternatingLevelSummary, GeometryState, GaugeReport, JointSchurLMResult]:
+    update_count = int(updates)
     volume = _geometry_update_volume_for_level(
         truth_volume=truth_volume,
         stopped_volume=stopped_volume,
@@ -439,7 +626,7 @@ def _run_phi_polish(
         mask=train_mask,
         level=level,
         source=config.geometry_update_volume_source,
-        active_setup_parameters=(),
+        active_setup_parameters=active_setup_parameters,
     )
     residual_sigma_estimated = _level_residual_sigma(volume, observed, geometry, full_mask, level)
     residual_sigma_effective = _effective_residual_sigma(
@@ -454,15 +641,15 @@ def _run_phi_polish(
         geometry,
         train_mask,
         level,
-        updates,
+        update_count,
         sigma=residual_sigma_effective,
         setup_prior_strength=config.geometry_update_setup_prior_strength,
         pose_prior_strength=config.geometry_update_pose_prior_strength,
         pose_trust_radius=config.geometry_update_pose_trust_radius,
-        active_setup_parameters=(),
+        active_setup_parameters=active_setup_parameters,
         solver=config.geometry_update_solver,
         pose_frozen=False,
-        active_pose_dofs=("phi_residual_rad",),
+        active_pose_dofs=active_pose_dofs,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,
         residual_filters=_geometry_residual_filters(config, level.residual_filters),
@@ -503,10 +690,10 @@ def _run_phi_polish(
     return (
         AlternatingLevelSummary(
             level_factor=level.level_factor,
-            role="polish",
+            role=role,
             reconstruction_iterations=0,
-            geometry_updates=updates,
-            executed_geometry_updates=updates,
+            geometry_updates=update_count,
+            executed_geometry_updates=update_count,
             residual_filter_kinds=_residual_filter_kinds(level),
             loss_before=loss_before,
             loss_after=loss_after,

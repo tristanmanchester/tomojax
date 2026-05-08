@@ -3,6 +3,64 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Final Pose Polish Stage
+
+### Summary
+
+- Added an opt-in `geometry_update_final_pose_polish_updates` config and
+  `--geometry-update-final-pose-polish-updates` CLI option.
+- The final pose polish opens `det_u_px` plus all five per-view pose DOFs after
+  the phi-only polish. For requested updates above 32, it runs a separate
+  restarted `final_pose_repolish` stage for the remaining updates.
+- Added focused coverage that verifies the final polish can activate `det_u_px`
+  and all five pose DOFs.
+
+### Diagnostics
+
+Direct true-volume Schur probes from the phi-polished fixed-truth
+`synth128_pose_random_extreme` state showed:
+
+- dx/dz-only 8 iterations: `det_u=0.4437 px`, `det_v=0.1630 px`.
+- phi/dx/dz 8 iterations: `det_u=0.4171 px`, `det_v=0.1601 px`,
+  `theta=0.0337 rad`.
+- all-5 32 iterations without `det_u_px`: `det_u=0.4109 px`,
+  `det_v=0.0031 px`, showing a global det_u gauge floor.
+- `det_u_px` plus all-5 32 iterations: `det_u=0.00044 px`,
+  `det_v=0.1237 px`, `alpha_beta=0.00027 rad`, `theta=0.00122 rad`.
+- A fresh 16-step solve from the written failed full-gate artifact repaired the
+  single outlier view to `det_u=0.0170 px`, `det_v=0.1240 px`.
+
+### 128^3 CUDA Gate
+
+Reran `synth128_pose_random_extreme` fixed-truth on `cuda:0` with 16 phi-only
+polish updates and 48 final pose polish updates:
+
+- Artifact:
+  `.artifacts/phase8_final_pose_polish/runs/pose_random_fixed_truth_phi16_final_pose48_restart_cuda/`
+- Command log:
+  `.artifacts/phase8_final_pose_polish/logs/pose_random_fixed_truth_phi16_final_pose48_restart_cuda.log`
+- Selected JAX device: `cuda:0`.
+- Total wall time: `764.26` seconds from the artifact, `12:59.04` from
+  `/usr/bin/time`.
+- Host max RSS: `5963764` KB.
+- Volume NMSE: `0.177530`.
+- Final residual: `0.643207`.
+- Schur train loss: `0.001048`.
+- `alpha_beta_rmse_rad=0.001411`, passed.
+- `theta_realized_rmse_rad=0.004287`, passed.
+- `det_u_realized_rmse_px=0.558123`, failed.
+- `det_v_realized_rmse_px=0.914853`, failed.
+- Bad-view detection flagged view `255`.
+
+This confirms that more true-volume Schur iterations improve geometry, but the
+full alternating artifact still leaves a single endpoint outlier that dominates
+detector-shift RMSE. The next slice should address robust per-view
+outlier/weak-view handling or the deterministic state difference between
+in-process polish stages and fresh restarted probes.
+
+Recorded the gate summary in
+`docs/benchmark_runs/2026-05-08-phase8-final-pose-polish-gate.md`.
+
 ## 2026-05-08 — Phase 8 Final Phi-Only Polish Stage
 
 ### Summary

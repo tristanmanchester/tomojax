@@ -11,20 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 final phi-only polish stage
-- Goal: promote the successful direct phi-only polish diagnostic into a scoped,
-  opt-in alternating-solver stage and validate it on the canonical 128^3
-  pose-random fixed-truth CUDA gate.
+- Phase: Phase 8/9 final pose polish stage
+- Goal: add the smallest opt-in final pose cleanup that resolves the remaining
+  pose-random detector-shift gauge floor by opening `det_u_px` with all five
+  pose DOFs after the existing phi-only polish.
 
 ### Scope
 
 - In scope:
-  - Add an optional final `phi_residual_rad`-only Schur polish stage after the
-    normal continuation schedule.
-  - Preserve the public alternating solver API while exposing a narrow CLI
-    option for the stage.
-  - Record the resulting CUDA gate evidence against
-    `synth128_pose_random_extreme`.
+  - Add an optional final Schur polish stage using `det_u_px` plus
+    `alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px`.
+  - Preserve existing defaults and the committed phi-only polish behaviour.
+  - Validate the stage on the canonical 128^3 `synth128_pose_random_extreme`
+    fixed-truth CUDA gate.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -50,10 +49,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add the opt-in final phi-only polish config and CLI option.
-- [x] Add focused validation for the polish config/orchestration path.
+- [x] Run direct true-volume probes for extra dx/dz, phi/dx/dz, all-5, and
+      det_u+all-5 polishing from the phi-polished state.
+- [x] Add the opt-in final det_u+all-5 pose polish config and CLI option.
+- [x] Add focused validation for the final pose polish orchestration path.
 - [x] Run focused lint/type/import checks.
-- [x] Run the 128^3 pose-random fixed-truth CUDA gate with phi polish.
+- [x] Run the 128^3 pose-random fixed-truth CUDA gate with phi plus final pose
+      polish.
 - [x] Update `docs/implementation_log.md`, add a concise benchmark note, and
       commit the slice.
 
@@ -202,6 +204,30 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
   The stage reduced theta-realized RMSE to `0.045132` rad and accepted the
   final Schur update, but the benchmark still fails detector-shift and
   alpha/beta tolerances.
+- Direct true-volume final pose polish probes completed on `cuda:0`. Opening
+  `det_u_px` plus all five pose DOFs removed the global det_u gauge floor in
+  isolated solves, and fresh restarted solves repaired the single endpoint
+  outlier from a written full-gate artifact.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_final_pose_polish_can_open_det_u_with_all_pose_dofs
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  -q` passed: 2 tests in 8.31 seconds.
+- `uv run ruff check src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed.
+- `uv run basedpyright src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_types.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `just imports` passed after the final pose polish stage.
+- CUDA `synth128_pose_random_extreme` fixed-truth phi+final-pose-polish gate
+  completed on `cuda:0` in 764.26 seconds from the artifact. Artifact:
+  `.artifacts/phase8_final_pose_polish/runs/pose_random_fixed_truth_phi16_final_pose48_restart_cuda/`.
+  Alpha/beta and theta passed, Schur train loss fell to `0.001048`, but
+  detector-shift RMSE still failed due a flagged endpoint outlier at view 255.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
   0.89 seconds.

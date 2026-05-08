@@ -20,7 +20,7 @@ from tomojax.align._alternating_geometry_update import (
 )
 
 # check-public-imports: allow-private
-from tomojax.align._alternating_orchestration import _run_phi_polish
+from tomojax.align._alternating_orchestration import _run_phi_polish, _run_polish_stage
 from tomojax.align.api import (
     AlternatingSmokeConfig,
     JointSchurLMConfig,
@@ -251,6 +251,63 @@ def test_phi_polish_runs_phi_only_geometry_update() -> None:
     assert result.active_pose_dofs == ("phi_residual_rad",)
     assert result.final_loss <= result.initial_loss
     assert float(jnp.max(jnp.abs(jnp.asarray(geometry.pose.phi_residual_rad)))) > 0.0
+
+
+def test_final_pose_polish_can_open_det_u_with_all_pose_dofs() -> None:
+    volume = _tiny_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    true_setup = nominal.setup.replace_parameter(
+        "det_u_px",
+        nominal.setup.det_u_px.with_value(0.25),
+    )
+    true_geometry = GeometryState(
+        setup=true_setup,
+        pose=nominal.pose.with_updates(
+            alpha_rad=np.asarray([0.01, -0.015], dtype=np.float64),
+            beta_rad=np.asarray([-0.02, 0.01], dtype=np.float64),
+            phi_residual_rad=np.asarray([0.04, -0.05], dtype=np.float64),
+            dx_px=np.asarray([0.3, -0.2], dtype=np.float64),
+            dz_px=np.asarray([-0.1, 0.15], dtype=np.float64),
+        ),
+        acquisition=nominal.acquisition,
+    )
+    observed = project_parallel_reference(volume, true_geometry)
+
+    summary, _geometry, _report, result = _run_polish_stage(
+        AlternatingSmokeConfig(
+            geometry_update_volume_source="fixed_synthetic_truth",
+            geometry_update_final_pose_polish_updates=2,
+        ),
+        reference_continuation_schedule("reference").levels[-1],
+        truth_volume=volume,
+        stopped_volume=volume,
+        observed=observed,
+        train_mask=jnp.ones_like(observed),
+        full_mask=jnp.ones_like(observed),
+        heldout_mask=None,
+        geometry=nominal,
+        role="final_pose_polish",
+        updates=2,
+        active_setup_parameters=("det_u_px",),
+        active_pose_dofs=(
+            "alpha_rad",
+            "beta_rad",
+            "phi_residual_rad",
+            "dx_px",
+            "dz_px",
+        ),
+    )
+
+    assert summary.role == "final_pose_polish"
+    assert result.active_setup_parameters == ("det_u_px",)
+    assert result.active_pose_dofs == (
+        "alpha_rad",
+        "beta_rad",
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )
+    assert result.final_loss <= result.initial_loss
 
 
 def test_stopped_preview_policy_constrains_first_preview_only() -> None:

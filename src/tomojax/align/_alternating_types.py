@@ -52,6 +52,7 @@ class AlternatingSmokeConfig:
     geometry_update_alpha_beta_activate_at_level_factor: int | None = None
     geometry_update_theta_activate_at_level_factor: int | None = None
     geometry_update_phi_polish_updates: int = 0
+    geometry_update_final_pose_polish_updates: int = 0
     geometry_update_active_setup_parameters: tuple[str, ...] = ("theta_offset_rad", "det_u_px")
     geometry_update_active_pose_dofs: tuple[str, ...] = (
         "phi_residual_rad",
