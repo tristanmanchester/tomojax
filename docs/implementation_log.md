@@ -3,6 +3,41 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Phase 8 Pose-Only Trust Diagnostic
+
+### Summary
+
+- Ran direct true-volume `solve_joint_schur_lm` probes on
+  `synth128_pose_random_extreme` to isolate the fixed-truth all-5 pose failure.
+- All-5 pose with relaxed/no trust recovers dx/dz better but worsens
+  alpha/beta and phi; a blanket no-trust all-5 policy should not be promoted.
+- Phi/dx/dz-only with no trust and 12 iterations recovers dx/dz to sub-pixel
+  (`dx=0.435 px`, `dz=0.136 px`) but leaves phi near `0.105 rad` and
+  alpha/beta at the initial zero-pose error.
+
+### Evidence
+
+- All-5, 4 iterations, no trust:
+  `alpha_beta_rmse_rad=0.127884`, `phi_rmse_rad=0.138258`,
+  `dx_rmse_px=4.791669`, `dz_rmse_px=4.891444`.
+- All-5, 4 iterations, trust radius 2:
+  `alpha_beta_rmse_rad=0.040044`, `phi_rmse_rad=0.103513`,
+  `dx_rmse_px=10.068182`, `dz_rmse_px=10.300804`.
+- Phi/dx/dz-only, no trust, 12 iterations:
+  `alpha_beta_rmse_rad=0.028422`, `phi_rmse_rad=0.104954`,
+  `dx_rmse_px=0.435001`, `dz_rmse_px=0.135811`.
+
+Recorded the diagnostic in
+`docs/benchmark_runs/2026-05-08-phase8-pose-only-trust-diagnostic.md`.
+
+### Interpretation
+
+The pose-random blocker is not just more iterations or a larger global trust
+radius. Translations can be recovered when alpha/beta are frozen and trust is
+disabled, but angular pose DOFs remain weak. The next source change should
+target angular pose observability/acceptance or a staged pose solve with
+separate angular validation.
+
 ## 2026-05-08 — Phase 8 Fixed-Truth Schur Sigma Policy
 
 ### Summary

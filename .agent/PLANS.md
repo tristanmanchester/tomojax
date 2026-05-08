@@ -11,17 +11,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Phase: Phase 8/9 fixed-truth Schur sigma policy
-- Goal: prevent fixed-truth oracle geometry updates from being suppressed by a
-  robust sigma estimate computed from the current corrupted geometry residual.
+- Phase: Phase 8/9 pose-only trust diagnostic
+- Goal: isolate whether the fixed-truth `synth128_pose_random_extreme` failure
+  is dominated by global pose trust clipping, too few iterations, or angular
+  pose observability.
 
 ### Scope
 
 - In scope:
-  - Use continuation-level sigma for `fixed_synthetic_truth` geometry updates.
-  - Keep stopped-reconstruction behavior unchanged.
-  - Add focused policy tests and run the fixed-truth
-    `synth128_pose_random_extreme` CUDA oracle gate.
+  - Run direct true-volume pose-only Schur probes on the existing
+    `synth128_pose_random_extreme` sidecar.
+  - Compare global/no trust and active pose DOF subsets without changing source.
+  - Record evidence before deciding whether to promote a trust or staged-pose
+    policy.
 - Out of scope:
   - Report wording, criterion aliasing, or observability-field cleanup.
   - Shrinking the benchmark as a substitute for fixing memory behaviour.
@@ -47,11 +49,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
-- [x] Add fixed-truth effective sigma policy.
-- [x] Add focused tests.
-- [x] Run focused validation and `just imports`.
-- [x] Run the fixed-truth pose-random 128^3 CUDA oracle gate.
-- [x] Update `docs/implementation_log.md` and commit the slice.
+- [x] Run all-5 pose trust-radius probe.
+- [x] Run phi/dx/dz-only no-trust iteration probe.
+- [x] Update `docs/implementation_log.md` and commit the diagnostic slice.
 
 ### Validation
 
@@ -127,6 +127,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Fixed-truth `synth128_pose_random_extreme` CUDA oracle completed on `cuda:0`
   in 217.02 seconds. Artifact:
   `.artifacts/phase8_fixed_truth_sigma/runs/synth128_pose_random_extreme_fixed_truth_no_nuisance_fit_cuda/`.
+- Direct true-volume all-5 pose trust probe completed on `cuda:0`. Disabling
+  pose trust improved dx/dz but worsened alpha/beta and phi.
+- Direct true-volume phi/dx/dz-only no-trust iteration probe completed on
+  `cuda:0`. At 12 iterations it recovered dx/dz to sub-pixel but left phi near
+  `0.105` rad and alpha/beta at the initial zero-pose error.
 - `just imports` passed after the diagnostic log update.
 - `JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_geometry_update_policy.py -q` passed: 8 tests in
