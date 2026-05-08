@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.datasets._phantoms import make_benchmark_phantom
 from tomojax.datasets._specs import SyntheticDatasetSpec, synthetic128_spec
 from tomojax.forward import (
@@ -83,7 +84,7 @@ def generate_synthetic_dataset(
         dtype=np.float32,
     )
 
-    volume = make_benchmark_phantom(size, spec.phantom_seed)
+    volume = _make_spec_phantom(spec, size)
     pixel_scale = float(size) / 128.0
     true_pose = _make_pose_table(spec, theta, pixel_scale=pixel_scale)
     setup_override = _supported_only_setup(spec.true_setup) if supported_only else None
@@ -152,6 +153,21 @@ def generate_synthetic_dataset(
 def _detector_shape_for_size(spec: SyntheticDatasetSpec, size: int) -> tuple[int, int]:
     _ = spec
     return (int(size), int(size))
+
+
+def _make_spec_phantom(spec: SyntheticDatasetSpec, size: int) -> NDArray[np.float32]:
+    if spec.phantom_kind == "phantom94_random_cubes_spheres":
+        return random_cubes_spheres(
+            size,
+            size,
+            size,
+            n_cubes=22,
+            n_spheres=22,
+            placement="center_biased_sphere",
+            radial_exponent=0.75,
+            seed=spec.phantom_seed,
+        ).astype(np.float32)
+    return make_benchmark_phantom(size, spec.phantom_seed)
 
 
 def _project_v2_smoke(
@@ -555,6 +571,7 @@ def _dataset_manifest(
         "volume_shape": [size, size, size],
         "detector_shape": list(detector_shape),
         "views": views,
+        "phantom_kind": spec.phantom_kind,
         "phantom_seed": spec.phantom_seed,
         "pose_seed": spec.pose_seed,
         "artifact_contract": "tomojax-v2.synthetic-dataset.v1",

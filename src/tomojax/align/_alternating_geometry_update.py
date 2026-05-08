@@ -52,6 +52,7 @@ def _run_geometry_updates(
     fit_background_nuisance: bool,
     residual_filters: tuple[ResidualFilterConfig, ...] | None = None,
     parameter_prior_strength: float | None = None,
+    loss_mode: str = "pseudo_huber",
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult]:
     setup_parameters = _active_setup_parameters(active_setup_parameters)
     pose_dofs = (
@@ -76,6 +77,7 @@ def _run_geometry_updates(
                 damping=1.0e-3,
                 delta=level.residual_delta,
                 sigma=sigma,
+                loss_mode="l2" if loss_mode == "l2" else "pseudo_huber",
                 active_parameters=setup_parameters,
             ),
         )
@@ -93,6 +95,7 @@ def _run_geometry_updates(
             damping=1.0e-3,
             delta=level.residual_delta,
             sigma=sigma,
+            loss_mode="l2" if loss_mode == "l2" else "pseudo_huber",
             setup_trust_radius=_setup_trust_radius(
                 level.trust_radius_px,
                 pose_frozen=pose_frozen,

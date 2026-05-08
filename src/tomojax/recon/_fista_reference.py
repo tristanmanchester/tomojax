@@ -38,6 +38,7 @@ class ReferenceFISTAConfig:
     tv_delta: float = 1e-3
     residual_sigma: float = 1.0
     residual_delta: float = 1.0
+    residual_loss_mode: str = "pseudo_huber"
     residual_filters: tuple[ResidualFilterConfig, ...] = (ResidualFilterConfig(),)
     non_negative: bool = True
     center_l2_weight: float = 0.0
@@ -187,6 +188,7 @@ def _loss_and_explicit_gradient(
         mask=None,
         sigma=1.0,
         delta=config.residual_delta,
+        mode="l2" if config.residual_loss_mode == "l2" else "pseudo_huber",
     )
     data_grad_filtered = (
         filtered

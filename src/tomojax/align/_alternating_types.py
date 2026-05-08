@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 GeometryUpdateVolumeSource = Literal["fixed_synthetic_truth", "stopped_reconstruction"]
 GeometryUpdateSolver = Literal["joint_schur", "setup_only_lm"]
+ProjectionLossMode = Literal["otsu_l2", "otsu_pseudo_huber", "pseudo_huber"]
 PreviewInitialization = Literal["average_projection", "backprojection", "constant", "zero"]
 PreviewReconstructionMaskSource = Literal["all_views", "train_views"]
 PreviewResidualFilterMode = Literal["continuation", "raw"]
@@ -42,6 +43,7 @@ class AlternatingSmokeConfig:
     parameter_update_tolerance: float = 2.0
     heldout_residual_tolerance: float = 1.0e-5
     heldout_view_index: int | None = -1
+    projection_loss_mode: ProjectionLossMode = "pseudo_huber"
     geometry_update_volume_source: GeometryUpdateVolumeSource = "stopped_reconstruction"
     geometry_update_solver: GeometryUpdateSolver = "joint_schur"
     geometry_update_setup_prior_strength: float | None = None

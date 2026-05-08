@@ -31,6 +31,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "--synthetic-dataset" in captured.out
     assert "--synthetic-dataset-dir" in captured.out
     assert "--current-default-baseline-json" in captured.out
+    assert "--projection-loss-mode" in captured.out
     assert "--apply-synthetic-nuisance" in captured.out
     assert "--fit-gain-offset-nuisance" in captured.out
     assert "--fit-background-nuisance" in captured.out

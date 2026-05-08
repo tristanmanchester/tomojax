@@ -14,7 +14,12 @@ import numpy as np
 from tomojax.align._alternating_types import (
     _LevelVerificationChecks,
 )
-from tomojax.forward import PROJECTION_OPERATOR, project_parallel_reference, residual_loss
+from tomojax.forward import (
+    PROJECTION_OPERATOR,
+    ResidualLossMode,
+    project_parallel_reference,
+    residual_loss,
+)
 from tomojax.verify import failure_report_from_gates, residual_structure_summary
 
 if TYPE_CHECKING:
@@ -127,6 +132,7 @@ def _verification_payload(
         final_geometry=final_geometry,
         true_geometry=true_geometry,
         summaries=summaries,
+        loss_mode=_residual_loss_kind(cfg),
     )
     independent_residual_after = cast(
         "float", loss_provenance["final_volume_final_geometry_loss_all_views"]
@@ -176,6 +182,7 @@ def _verification_payload(
         "schedule": schedule.name,
         "geometry_update_volume_source": geometry_update_volume_source,
         "geometry_update_solver": cfg.geometry_update_solver,
+        "projection_loss_mode": cfg.projection_loss_mode,
         "geometry_update_active_setup_parameters": list(
             cfg.geometry_update_active_setup_parameters
         ),
@@ -225,6 +232,7 @@ def _verification_payload(
             initial_geometry=initial_geometry,
             final_geometry=final_geometry,
             true_geometry=true_geometry,
+            loss_mode=_residual_loss_kind(cfg),
         ),
         "levels": [_summary_payload(summary) for summary in summaries],
     }
@@ -563,10 +571,17 @@ def _stopped_volume_gauge_payload(
     initial_geometry: GeometryState,
     final_geometry: GeometryState,
     true_geometry: GeometryState,
+    loss_mode: str,
 ) -> dict[str, object]:
-    initial_loss = _projection_loss_for_geometry(final_volume, observed, mask, initial_geometry)
-    final_loss = _projection_loss_for_geometry(final_volume, observed, mask, final_geometry)
-    true_loss = _projection_loss_for_geometry(final_volume, observed, mask, true_geometry)
+    initial_loss = _projection_loss_for_geometry(
+        final_volume, observed, mask, initial_geometry, loss_mode=loss_mode
+    )
+    final_loss = _projection_loss_for_geometry(
+        final_volume, observed, mask, final_geometry, loss_mode=loss_mode
+    )
+    true_loss = _projection_loss_for_geometry(
+        final_volume, observed, mask, true_geometry, loss_mode=loss_mode
+    )
     nearest = min(
         (
             ("initial_geometry", initial_loss),
@@ -597,21 +612,22 @@ def _projection_loss_provenance_payload(
     final_geometry: GeometryState,
     true_geometry: GeometryState,
     summaries: tuple[AlternatingLevelSummary, ...],
+    loss_mode: str,
 ) -> dict[str, object]:
     final_volume_initial_geometry = _projection_loss_for_geometry(
-        final_volume, observed, mask, initial_geometry
+        final_volume, observed, mask, initial_geometry, loss_mode=loss_mode
     )
     final_volume_final_geometry = _projection_loss_for_geometry(
-        final_volume, observed, mask, final_geometry
+        final_volume, observed, mask, final_geometry, loss_mode=loss_mode
     )
     final_volume_true_geometry = _projection_loss_for_geometry(
-        final_volume, observed, mask, true_geometry
+        final_volume, observed, mask, true_geometry, loss_mode=loss_mode
     )
     true_volume_final_geometry = _projection_loss_for_geometry(
-        truth_volume, observed, mask, final_geometry
+        truth_volume, observed, mask, final_geometry, loss_mode=loss_mode
     )
     true_volume_true_geometry = _projection_loss_for_geometry(
-        truth_volume, observed, mask, true_geometry
+        truth_volume, observed, mask, true_geometry, loss_mode=loss_mode
     )
     heldout_loss = _last_heldout_residual_after(summaries)
     classification = _projection_loss_classification(
@@ -681,9 +697,21 @@ def _projection_loss_for_geometry(
     observed: jax.Array,
     mask: jax.Array,
     geometry: GeometryState,
+    loss_mode: str = "pseudo_huber",
 ) -> float:
     predicted = project_parallel_reference(volume, geometry)
-    return float(residual_loss(predicted, observed, mask=mask).loss)
+    return float(
+        residual_loss(
+            predicted,
+            observed,
+            mask=mask,
+            mode=cast("ResidualLossMode", loss_mode),
+        ).loss
+    )
+
+
+def _residual_loss_kind(cfg: AlternatingSmokeConfig) -> str:
+    return "l2" if cfg.projection_loss_mode == "otsu_l2" else "pseudo_huber"
 
 
 def _summary_payload(summary: AlternatingLevelSummary) -> dict[str, object]:

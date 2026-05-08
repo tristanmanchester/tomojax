@@ -12,43 +12,39 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Goal file: `docs/agent_goal_production_stopped_alignment.md`
-- Phase: Phase 7/8 production stopped det_u consolidation
-- Goal: clean up and document the branch after the stopped det_u production
-  gate investigation so the repo is production-readable and benchmark-honest.
+- Phase: Phase 8/9 rich phantom loss diagnostics
+- Goal: compare old-style Otsu/L2 foreground scoring against the current v2
+  pseudo-Huber projection loss on one deterministic rich PHANTOM94-style setup
+  benchmark before adding more alignment features.
 
 ### Scope
 
 - In scope:
-  - Add a concise final stopped det_u investigation summary to
-    `docs/implementation_log.md`.
-  - Add a short `docs/tomojax-v2/` project-status document covering production,
-    oracle-only, blocked, and next architecture choices.
-  - Tighten benchmark/status wording so fixed-truth is oracle-level,
-    weak-view exclusion is not a plain production pass, and stopped det_u is a
-    failed/partial production gate despite improvement.
-  - Review align-auto/alternating policy surface and safely demote or document
-    stale diagnostics without adding algorithmic features.
-  - Run focused validation for changed files and end with a clean-tree status.
-  - Record geometry-first bootstrap as explicit artifact provenance without
-    changing the algorithm.
+  - Add `otsu_l2`, `pseudo_huber`, and `otsu_pseudo_huber` projection loss modes
+    through the existing sidecar ingestion, Schur/setup LM, FISTA, verification,
+    and artifact paths.
+  - Add a deterministic rich `PHANTOM94`-style `random_cubes_spheres` benchmark
+    dataset manifest entry.
+  - Run one `128^3`/128-view CUDA comparison for supported-only setup/global
+    stopped reconstruction and fixed-truth oracle modes.
+  - Record the top-level `runs/` comparison summary/artifacts and summarize the
+    result in `docs/implementation_log.md`.
+  - Keep validation focused on the changed files and import contract.
 - Out of scope:
-  - Adding more alignment orchestration knobs.
-  - Chasing theta endpoint=180 sampling.
-  - Reintroducing rotate-and-sum or projector selectors.
-  - Full five-case benchmark reruns before the single stopped det_u gate is
-    understood.
-  - Nuisance, laminography, Pallas/fast paths, more geometry DOFs, and
-    candidate-refresh/polish/weak-view policy variants unless explicitly named
-    as diagnostics.
-- Deep module owner: `tomojax.align`.
+  - Changing the alternating algorithm.
+  - Adding candidate-refresh, nuisance, bad-view/jump handling, object drift,
+    backend/Pallas work, or additional report fields beyond the selected loss
+    mode.
+  - Treating the 4-view smoke case as alignment-quality evidence.
+- Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.datasets`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/agent_goal_production_stopped_alignment.md`
+- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
 - `docs/implementation_log.md`
-- Recent oracle/session evidence recorded in this file and the implementation
-  log.
+- Recent `128^3` CUDA run evidence recorded under
+  `runs/rich_phantom_loss_comparison_20260508_153150/`.
 
 ### Tasks
 
@@ -68,10 +64,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Review/demote stale production policy surface.
 - [x] Run focused validation and complete cleanup audit.
 - [x] Add explicit geometry-first bootstrap artifact stage.
+- [x] Add loss-mode plumbing and PHANTOM94 rich phantom sidecar generation.
+- [x] Run `128^3`/128-view CUDA fixed-truth and stopped-reconstruction
+      comparisons for the three loss modes.
+- [x] Add focused coverage for residual L2 loss, CLI loss-mode discoverability,
+      and rich phantom manifest generation.
+- [x] Record implementation-log interpretation and commit the coherent slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_forward_reference.py::test_residual_loss_l2_mode_uses_plain_squared_residual
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  tests/test_synthetic_datasets.py::test_generate_rich_phantom94_dataset_records_phantom_kind
+  -q` passed: 4 tests in 4.57 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  <changed Python files>` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  <changed Python files>` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align ...` and the analogous basedpyright whole-align sweep were
+  attempted first and failed on unrelated legacy align/model/objective files.
+  Validation above was rerun against this slice's changed files.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_align_auto_cli.py::test_align_auto_records_geometry_first_bootstrap_stage

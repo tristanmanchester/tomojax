@@ -189,6 +189,26 @@ def test_generate_supported_only_setup_global_dataset_removes_unsupported_truth(
     assert true_state.setup.axis_rot_y_rad.value == 0.0
 
 
+def test_generate_rich_phantom94_dataset_records_phantom_kind(tmp_path: Path) -> None:
+    paths = generate_synthetic_dataset(
+        "rich_phantom94_setup_global_tomo",
+        tmp_path,
+        size=32,
+        clean=True,
+        views=4,
+        supported_only=True,
+    )
+
+    manifest = cast("dict[str, Any]", json.loads(paths.manifest.read_text(encoding="utf-8")))
+    assert manifest["phantom_kind"] == "phantom94_random_cubes_spheres"
+    assert manifest["phantom_seed"] == 20260893
+    assert manifest["variant"] == "supported_only"
+
+    volume = np.load(paths.volume)
+    assert volume.shape == (32, 32, 32)
+    assert np.count_nonzero(volume) > 1000
+
+
 def test_load_synthetic_dataset_sidecars_reads_zero_object_motion(tmp_path: Path) -> None:
     paths = generate_synthetic_dataset(
         "synth128_setup_global_tomo",

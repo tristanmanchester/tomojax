@@ -45,6 +45,7 @@ def _projection_loss(
     level: ContinuationLevel,
     *,
     sigma: float,
+    loss_mode: str = "pseudo_huber",
 ) -> float:
     predicted = project_parallel_reference(volume, geometry)
     filtered = apply_residual_filter_schedule(
@@ -56,6 +57,7 @@ def _projection_loss(
         mask=None,
         sigma=sigma,
         delta=level.residual_delta,
+        mode="l2" if loss_mode == "l2" else "pseudo_huber",
     )
     return float(result.loss)
 
@@ -84,10 +86,19 @@ def _heldout_projection_loss(
     level: ContinuationLevel,
     *,
     sigma: float,
+    loss_mode: str = "pseudo_huber",
 ) -> float | None:
     if heldout_mask is None:
         return None
-    return _projection_loss(volume, observed, geometry, heldout_mask, level, sigma=sigma)
+    return _projection_loss(
+        volume,
+        observed,
+        geometry,
+        heldout_mask,
+        level,
+        sigma=sigma,
+        loss_mode=loss_mode,
+    )
 
 
 def _heldout_residual_check(
@@ -100,6 +111,7 @@ def _heldout_residual_check(
     level: ContinuationLevel,
     sigma: float,
     tolerance: float,
+    loss_mode: str = "pseudo_huber",
 ) -> tuple[float | None, float | None, bool | None]:
     before = _heldout_projection_loss(
         volume,
@@ -108,6 +120,7 @@ def _heldout_residual_check(
         heldout_mask,
         level,
         sigma=sigma,
+        loss_mode=loss_mode,
     )
     after = _heldout_projection_loss(
         volume,
@@ -116,6 +129,7 @@ def _heldout_residual_check(
         heldout_mask,
         level,
         sigma=sigma,
+        loss_mode=loss_mode,
     )
     passed = _heldout_residual_passed(before=before, after=after, tolerance=tolerance)
     return before, after, passed

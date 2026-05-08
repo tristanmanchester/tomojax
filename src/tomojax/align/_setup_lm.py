@@ -36,6 +36,7 @@ class SetupOnlyLMConfig:
     damping: float = 1e-2
     sigma: float = 1.0
     delta: float = 1.0
+    loss_mode: str = "pseudo_huber"
     finite_difference_step: float = 1e-3
     active_parameters: tuple[SetupLMParameter, ...] | None = None
 
@@ -86,7 +87,7 @@ def solve_setup_only_lm(
             sigma=cfg.sigma,
             config=cfg,
         )
-        weights = jnp.sqrt(pseudo_huber_weights(residual, delta=cfg.delta)).reshape(-1)
+        weights = jnp.sqrt(_residual_weights(residual, cfg=cfg)).reshape(-1)
 
         def weighted_residual(
             candidate: jax.Array,
@@ -347,4 +348,17 @@ def _loss_for_params(
         axis_rot_y_rad=axis_y,
         nominal_axis_unit=nominal_axis_unit_from_geometry(geometry),
     )
-    return residual_loss(predicted, observed, mask=mask, sigma=cfg.sigma, delta=cfg.delta).loss
+    return residual_loss(
+        predicted,
+        observed,
+        mask=mask,
+        sigma=cfg.sigma,
+        delta=cfg.delta,
+        mode="l2" if cfg.loss_mode == "l2" else "pseudo_huber",
+    ).loss
+
+
+def _residual_weights(residual: jax.Array, *, cfg: SetupOnlyLMConfig) -> jax.Array:
+    if cfg.loss_mode == "l2":
+        return jnp.ones_like(residual, dtype=jnp.float32)
+    return pseudo_huber_weights(residual, delta=cfg.delta)

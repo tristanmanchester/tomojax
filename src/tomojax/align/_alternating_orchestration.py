@@ -103,6 +103,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         mask,
         schedule.levels[0],
         sigma=schedule.levels[0].residual_sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     (
         geometry,
@@ -153,6 +154,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
                 residual_sigma=level.residual_sigma,
                 residual_delta=level.residual_delta,
+                residual_loss_mode=_residual_loss_kind(config),
                 residual_filters=_preview_residual_filters(
                     config,
                     level,
@@ -177,6 +179,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             mask,
             level,
             sigma=residual_sigma_effective,
+            loss_mode=_residual_loss_kind(config),
         )
         geometry_updates, early_exit_reason = _geometry_updates_for_level(level, coarse_verified)
         skipped_geometry = geometry_updates == 0
@@ -219,6 +222,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 fit_background_nuisance=config.fit_background_nuisance,
                 residual_filters=_geometry_residual_filters(config, level.residual_filters),
                 parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+                loss_mode=_residual_loss_kind(config),
             )
             geometry, update_report, schur_result, volume = _apply_geometry_acceptance(
                 config,
@@ -246,6 +250,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 mask,
                 level,
                 sigma=residual_sigma_effective,
+                loss_mode=_residual_loss_kind(config),
             )
         heldout_before, heldout_after, heldout_passed = _heldout_residual_check(
             volume,
@@ -256,6 +261,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             level=level,
             sigma=residual_sigma_effective,
             tolerance=config.heldout_residual_tolerance,
+            loss_mode=_residual_loss_kind(config),
         )
         verification_checks = _level_verification_checks(
             cfg=config,
@@ -342,6 +348,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         schur_result=last_schur_result,
         geometry_update_volume_source=config.geometry_update_volume_source,
         geometry_update_solver=config.geometry_update_solver,
+        projection_loss_mode=config.projection_loss_mode,
         geometry_update_setup_prior_strength=config.geometry_update_setup_prior_strength,
         geometry_update_pose_prior_strength=config.geometry_update_pose_prior_strength,
         geometry_update_pose_trust_radius=config.geometry_update_pose_trust_radius,
@@ -685,6 +692,7 @@ def _run_polish_stage(
         fit_background_nuisance=config.fit_background_nuisance,
         residual_filters=_geometry_residual_filters(config, level.residual_filters),
         parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+        loss_mode=_residual_loss_kind(config),
     )
     geometry, report, result = _apply_heldout_geometry_acceptance(
         config,
@@ -708,6 +716,7 @@ def _run_polish_stage(
         level=level,
         sigma=residual_sigma_effective,
         tolerance=config.heldout_residual_tolerance,
+        loss_mode=_residual_loss_kind(config),
     )
     checks = _level_verification_checks(
         cfg=config,
@@ -840,6 +849,10 @@ def _effective_residual_sigma(
     return max(float(level.residual_sigma), float(estimated))
 
 
+def _residual_loss_kind(config: AlternatingSmokeConfig) -> str:
+    return "l2" if config.projection_loss_mode == "otsu_l2" else "pseudo_huber"
+
+
 def _allows_coarse_early_exit(config: AlternatingSmokeConfig) -> bool:
     return (
         config.geometry_update_volume_source != "fixed_synthetic_truth"
@@ -908,6 +921,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         mask,
         level,
         sigma=level.residual_sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     first_geometry, _first_report, _first_schur = _run_geometry_updates(
         neutral,
@@ -928,6 +942,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         fit_background_nuisance=False,
         residual_filters=_geometry_residual_filters(config, level.residual_filters),
         parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+        loss_mode=_residual_loss_kind(config),
     )
     loss_after_first_schur = _projection_loss(
         neutral,
@@ -936,6 +951,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         mask,
         level,
         sigma=level.residual_sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     refreshed = fista_reconstruct_reference(
         observed,
@@ -949,6 +965,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
             tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
             residual_sigma=level.residual_sigma,
             residual_delta=level.residual_delta,
+            residual_loss_mode=_residual_loss_kind(config),
             residual_filters=_preview_residual_filters(config, level, level.residual_filters),
             center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
         ),
@@ -960,6 +977,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         mask,
         level,
         sigma=level.residual_sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     final_geometry, final_report, final_schur = _run_geometry_updates(
         refreshed.volume,
@@ -980,6 +998,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         fit_background_nuisance=False,
         residual_filters=_geometry_residual_filters(config, level.residual_filters),
         parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
+        loss_mode=_residual_loss_kind(config),
     )
     final_loss_before, final_loss_after = _schur_loss_pair(final_schur)
     return _GeometryFirstBootstrapResult(
@@ -1256,6 +1275,7 @@ def _apply_candidate_refresh_acceptance(
         validation_mask,
         level,
         sigma=sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     candidate_loss = _projection_loss(
         candidate_refresh,
@@ -1264,6 +1284,7 @@ def _apply_candidate_refresh_acceptance(
         validation_mask,
         level,
         sigma=sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     accepted = bool(candidate_loss <= before_loss + config.heldout_residual_tolerance)
     selected_geometry = candidate_geometry if accepted else before_geometry
@@ -1346,6 +1367,7 @@ def _candidate_refresh_volume(
             tv_weight=level.reconstruction_tv_weight * max(config.preview_tv_scale, 0.0),
             residual_sigma=level.residual_sigma,
             residual_delta=level.residual_delta,
+            residual_loss_mode=_residual_loss_kind(config),
             residual_filters=_preview_residual_filters(
                 config,
                 level,
@@ -1394,6 +1416,7 @@ def _apply_heldout_geometry_acceptance(
         heldout_mask,
         level,
         sigma=sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     after = _projection_loss_or_none(
         volume,
@@ -1402,6 +1425,7 @@ def _apply_heldout_geometry_acceptance(
         heldout_mask,
         level,
         sigma=sigma,
+        loss_mode=_residual_loss_kind(config),
     )
     if before is None or after is None or after <= before + config.heldout_residual_tolerance:
         return candidate_geometry, update_report, schur_result
@@ -1430,10 +1454,19 @@ def _projection_loss_or_none(
     level: ContinuationLevel,
     *,
     sigma: float,
+    loss_mode: str = "pseudo_huber",
 ) -> float | None:
     if mask is None:
         return None
-    return _projection_loss(volume, observed, geometry, mask, level, sigma=sigma)
+    return _projection_loss(
+        volume,
+        observed,
+        geometry,
+        mask,
+        level,
+        sigma=sigma,
+        loss_mode=loss_mode,
+    )
 
 
 def _geometry_residual_filters(

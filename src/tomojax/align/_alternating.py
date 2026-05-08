@@ -17,6 +17,7 @@ from tomojax.align._alternating_types import (
     PreviewReconstructionMaskSource,
     PreviewResidualFilterMode,
     PreviewVolumeSupport,
+    ProjectionLossMode,
     StoppedPreviewPolicy,
 )
 
@@ -57,6 +58,7 @@ __all__ = [
     "PreviewReconstructionMaskSource",
     "PreviewResidualFilterMode",
     "PreviewVolumeSupport",
+    "ProjectionLossMode",
     "StoppedPreviewPolicy",
     "run_alternating_solver_smoke",
 ]

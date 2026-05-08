@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -15,6 +16,9 @@ class ResidualResult:
     loss: jax.Array
     weights: jax.Array
     valid_count: jax.Array
+
+
+ResidualLossMode = Literal["l2", "pseudo_huber"]
 
 
 def masked_whitened_residual(
@@ -74,10 +78,17 @@ def residual_loss(
     mask: jax.Array | None = None,
     sigma: float | jax.Array = 1.0,
     delta: float = 1.0,
+    mode: ResidualLossMode = "pseudo_huber",
 ) -> ResidualResult:
     residual = masked_whitened_residual(predicted, observed, mask=mask, sigma=sigma)
-    loss_map = pseudo_huber_loss(residual, delta=delta)
-    weights = pseudo_huber_weights(residual, delta=delta)
+    if mode == "pseudo_huber":
+        loss_map = pseudo_huber_loss(residual, delta=delta)
+        weights = pseudo_huber_weights(residual, delta=delta)
+    elif mode == "l2":
+        loss_map = jnp.asarray(0.5, dtype=jnp.float32) * residual * residual
+        weights = jnp.ones_like(residual, dtype=jnp.float32)
+    else:
+        raise ValueError(f"unknown residual loss mode {mode!r}")
     if mask is None:
         valid_count = jnp.asarray(residual.size, dtype=jnp.float32)
     else:

@@ -20,6 +20,7 @@ from tomojax.align.api import (
     PreviewReconstructionMaskSource,
     PreviewResidualFilterMode,
     PreviewVolumeSupport,
+    ProjectionLossMode,
     StoppedPreviewPolicy,
     reference_continuation_schedule,
 )
@@ -37,6 +38,7 @@ _PROFILE_CHOICES = ("smoke32", "lightning", "balanced", "reference")
 _SYNTHETIC_SIZE_CHOICES = (32, 64, 128)
 _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synthetic_truth")
 _GEOMETRY_UPDATE_SOLVER_CHOICES = ("joint_schur", "setup_only_lm")
+_PROJECTION_LOSS_MODE_CHOICES = ("pseudo_huber", "otsu_l2", "otsu_pseudo_huber")
 _PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "spherical")
 _PREVIEW_INITIALIZATION_CHOICES = ("backprojection", "zero", "constant", "average_projection")
 _PREVIEW_RECONSTRUCTION_MASK_SOURCE_CHOICES = ("all_views", "train_views")
@@ -76,6 +78,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Synthetic cubic volume size.",
     )
     _ = parser.add_argument("--views", type=int, default=4, help="Number of synthetic views.")
+    _ = parser.add_argument(
+        "--projection-loss-mode",
+        choices=_PROJECTION_LOSS_MODE_CHOICES,
+        default="pseudo_huber",
+        help=(
+            "Projection objective for geometry/reconstruction losses. "
+            "otsu_l2 is the v1-style Otsu foreground mask plus L2 residual."
+        ),
+    )
     _ = parser.add_argument(
         "--geometry-update-volume-source",
         choices=_GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES,
@@ -288,6 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.geometry_update_volume_source,
     )
     geometry_update_solver = cast("GeometryUpdateSolver", args.geometry_update_solver)
+    projection_loss_mode = cast("ProjectionLossMode", args.projection_loss_mode)
     preview_volume_support = cast("PreviewVolumeSupport", args.preview_volume_support)
     preview_initialization = cast("PreviewInitialization", args.preview_initialization)
     preview_reconstruction_mask_source = cast(
@@ -342,6 +354,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             size=size,
             n_views=views,
             schedule=reference_continuation_schedule(profile),
+            projection_loss_mode=projection_loss_mode,
             geometry_update_volume_source=geometry_update_volume_source,
             geometry_update_solver=geometry_update_solver,
             geometry_update_setup_prior_strength=args.geometry_update_setup_prior_strength,
@@ -407,6 +420,7 @@ def _sidecar_readback_payload(sidecars: SyntheticDatasetSidecars) -> dict[str, o
         "nominal_det_u_px": sidecars.nominal_geometry.setup.det_u_px.value,
         "corrupted_det_u_px": sidecars.corrupted_geometry.setup.det_u_px.value,
         "volume": sidecars.volume.to_dict(),
+        "phantom_kind": sidecars.manifest.get("phantom_kind"),
         "projections": sidecars.projections.to_dict(),
         "mask": sidecars.mask.to_dict(),
         "consistency": sidecars.consistency.to_dict(),

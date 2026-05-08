@@ -20,6 +20,7 @@ from tomojax.forward._projector import (
     project_parallel_reference_arrays,
 )
 from tomojax.forward._residuals import (
+    ResidualLossMode,
     ResidualResult,
     masked_whitened_residual,
     pseudo_huber_loss,
@@ -34,6 +35,7 @@ __all__ = [
     "ResidualFilterConfig",
     "ResidualFilterKind",
     "ResidualFilterResult",
+    "ResidualLossMode",
     "ResidualResult",
     "V2ProjectionOperatorName",
     "apply_residual_filter",

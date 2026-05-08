@@ -53,6 +53,37 @@ synthetic128_suite:
         axis_error_deg_lt: 0.1
         theta_offset_error_deg_lt: 0.1
 
+    rich_phantom94_setup_global_tomo:
+      purpose: PHANTOM94 rich old-style phantom with global setup errors
+      mode: parallel_tomography
+      phantom_kind: phantom94_random_cubes_spheres
+      phantom_seed: 20260893
+      detector_shape: [160, 160]
+      views: 256
+      theta_range_deg: [0, 180]
+      true_setup:
+        det_u_px: 14.5
+        det_v_px: 0.0
+        detector_roll_deg: 0.65
+        axis_rot_x_deg: 0.45
+        axis_rot_y_deg: -0.30
+        theta_offset_deg: 1.25
+        theta_scale: 1.0
+      true_pose:
+        alpha_deg: zero
+        beta_deg: zero
+        phi_residual_deg: zero
+        dx_px: zero
+        dz_px: zero
+      nuisance:
+        noise: standard
+        hot_pixels_fraction: 0.0005
+      pass_criteria:
+        det_u_error_px_lt: 0.5
+        roll_error_deg_lt: 0.05
+        axis_error_deg_lt: 0.1
+        theta_offset_error_deg_lt: 0.1
+
     synth128_pose_random_extreme:
       purpose: all-5 per-view pose stress test
       mode: parallel_tomography

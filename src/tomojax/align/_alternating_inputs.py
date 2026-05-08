@@ -32,8 +32,8 @@ class SmokeInputs:
 def build_smoke_inputs(config: AlternatingSmokeConfig) -> SmokeInputs:
     """Resolve in-memory or sidecar-backed deterministic smoke inputs."""
     if config.synthetic_dataset_artifact_dir is not None:
-        return _sidecar_smoke_inputs(config)
-    return _default_smoke_inputs(config)
+        return _with_projection_loss_mask(_sidecar_smoke_inputs(config), config=config)
+    return _with_projection_loss_mask(_default_smoke_inputs(config), config=config)
 
 
 def _default_smoke_inputs(config: AlternatingSmokeConfig) -> SmokeInputs:
@@ -73,6 +73,48 @@ def _sidecar_smoke_inputs(config: AlternatingSmokeConfig) -> SmokeInputs:
         true_geometry=sidecars.true_geometry,
         initial_geometry=sidecars.corrupted_geometry,
     )
+
+
+def _with_projection_loss_mask(
+    inputs: SmokeInputs,
+    *,
+    config: AlternatingSmokeConfig,
+) -> SmokeInputs:
+    if not config.projection_loss_mode.startswith("otsu_"):
+        return inputs
+    otsu = _otsu_projection_mask(np.asarray(inputs.observed_projections))
+    combined = np.asarray(inputs.mask, dtype=bool) & otsu
+    return SmokeInputs(
+        truth_volume=inputs.truth_volume,
+        observed_projections=inputs.observed_projections,
+        mask=jnp.asarray(combined, dtype=jnp.float32),
+        true_geometry=inputs.true_geometry,
+        initial_geometry=inputs.initial_geometry,
+    )
+
+
+def _otsu_projection_mask(projections: np.ndarray) -> np.ndarray:
+    views = np.asarray(projections, dtype=np.float32)
+    masks: list[np.ndarray] = []
+    for view in views:
+        threshold = _otsu_threshold(view)
+        masks.append(view >= threshold)
+    return np.stack(masks)
+
+
+def _otsu_threshold(values: np.ndarray) -> float:
+    hist, edges = np.histogram(np.asarray(values, dtype=np.float32).reshape(-1), bins=256)
+    total = float(hist.sum())
+    if total <= 0.0:
+        return 0.0
+    centers = (edges[:-1] + edges[1:]) * 0.5
+    weighted = hist.astype(np.float64) * centers.astype(np.float64)
+    weight_bg = np.cumsum(hist, dtype=np.float64)
+    weight_fg = total - weight_bg
+    mean_bg = np.cumsum(weighted, dtype=np.float64) / np.maximum(weight_bg, 1.0)
+    mean_fg = np.cumsum(weighted[::-1], dtype=np.float64)[::-1] / np.maximum(weight_fg, 1.0)
+    between = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
+    return float(centers[int(np.argmax(between))])
 
 
 def _validate_sidecar_shapes(

@@ -73,6 +73,7 @@ class JointSchurLMConfig:
     max_trust_radius: float = 1e6
     sigma: float = 1.0
     delta: float = 1.0
+    loss_mode: str = "pseudo_huber"
     finite_difference_step: float = 1e-3
     setup_trust_radius: float | None = None
     pose_trust_radius: float | None = None
@@ -244,7 +245,7 @@ def solve_joint_schur_lm(
             fit_gain_offset=cfg.fit_gain_offset,
             fit_background_offset=cfg.fit_background_offset,
         )
-        weights = jnp.sqrt(pseudo_huber_weights(residual, delta=cfg.delta)).reshape(-1)
+        weights = jnp.sqrt(_residual_weights(residual, cfg=cfg)).reshape(-1)
 
         equations = _stream_joint_normal_equations_for_geometry(
             vol,
@@ -1026,6 +1027,12 @@ def _weighted_residual_dynamic_view_for_params(
     return filtered * weight_view
 
 
+def _residual_weights(residual: jax.Array, *, cfg: JointSchurLMConfig) -> jax.Array:
+    if cfg.loss_mode == "l2":
+        return jnp.ones_like(residual, dtype=jnp.float32)
+    return pseudo_huber_weights(residual, delta=cfg.delta)
+
+
 def _per_view_normal_block_diagnostics(
     jacobian: jax.Array,
     residual: jax.Array,
@@ -1662,6 +1669,7 @@ def _loss_for_params(
         mask=None,
         sigma=1.0,
         delta=cfg.delta,
+        mode="l2" if cfg.loss_mode == "l2" else "pseudo_huber",
     ).loss
     if prior_reference is None:
         return data_loss
@@ -1704,6 +1712,7 @@ def _loss_by_view_for_params(
             mask=None,
             sigma=1.0,
             delta=cfg.delta,
+            mode="l2" if cfg.loss_mode == "l2" else "pseudo_huber",
         ).loss
         losses.append(float(loss))
     return tuple(losses)

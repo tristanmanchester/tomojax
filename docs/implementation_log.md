@@ -3,6 +3,87 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-08 — Rich PHANTOM94 Loss-Mode Comparison
+
+### Summary
+
+- Added explicit projection loss modes for the Phase 8/9 rich phantom diagnostic:
+  `otsu_l2`, `pseudo_huber`, and `otsu_pseudo_huber`.
+- The loss mode is now threaded through the existing sidecar ingestion,
+  alternating FISTA refreshes, setup/joint Schur geometry updates, held-out and
+  verification projection losses, CLI config, and benchmark artifacts. This
+  does not change the alternating algorithm.
+- Added `rich_phantom94_setup_global_tomo` to
+  `docs/tomojax-v2/benchmark_manifest.yaml`, backed by the old-style
+  `random_cubes_spheres` phantom from `tomojax.data.phantoms` with seed
+  `20260893`.
+- Added `tools/run_rich_phantom_loss_comparison.py`, which generates one
+  deterministic sidecar dataset and runs the same 128-view, supported-only
+  setup/global corruption through fixed-truth oracle and stopped-reconstruction
+  modes for all three loss modes.
+
+### CUDA Benchmark
+
+- Command:
+  `env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda LD_LIBRARY_PATH=<venv nvidia libs>
+  uv run python tools/run_rich_phantom_loss_comparison.py --out-dir
+  runs/rich_phantom_loss_comparison_20260508_153150 --size 128 --views 128
+  --profile lightning`.
+- Artifacts:
+  `runs/rich_phantom_loss_comparison_20260508_153150/summary.csv`,
+  `summary.json`, `summary.md`, `loss_comparison_metrics.png`, and per-case
+  `benchmark_result.json` files under each case/loss subdirectory.
+- JAX selected CUDA via `JAX_PLATFORMS=cuda`. During the run it emitted
+  allocator warnings for attempted multi-GiB allocations, including a failed
+  `5.72 GiB` allocation, but all six cases completed. Peak memory is still not
+  captured programmatically in the summary.
+
+### Results
+
+| Case | Loss mode | Status | det_u RMSE px | Volume NMSE | Schur accepted | Runtime s |
+| --- | --- | --- | ---: | ---: | --- | ---: |
+| fixed-truth oracle | `otsu_l2` | failed | 5.7880 | 0.6814 | true | 46.20 |
+| fixed-truth oracle | `pseudo_huber` | failed | 10.7549 | 0.7144 | true | 48.04 |
+| fixed-truth oracle | `otsu_pseudo_huber` | failed | 11.0099 | 0.7146 | true | 48.34 |
+| stopped reconstruction | `otsu_l2` | failed | 0.8308 | 0.5306 | true | 69.76 |
+| stopped reconstruction | `pseudo_huber` | failed | 9.6451 | 0.7318 | true | 48.60 |
+| stopped reconstruction | `otsu_pseudo_huber` | failed | 4.1431 | 0.7237 | true | 66.18 |
+
+### Interpretation
+
+- The absolute projection losses are not comparable across objective families;
+  det_u recovery and volume NMSE are the comparison signals.
+- On this clean rich phantom, Otsu foreground masking plus plain L2 is the only
+  stopped-reconstruction mode that gets close to the supported det_u gate, but
+  it still fails the `0.5 px` tolerance (`0.8308 px`) and leaves high volume
+  NMSE (`0.5306`).
+- Fixed-truth oracle also fails under the same short `lightning` budget, so this
+  result does not prove that the remaining blocker is only stopped-volume gauge
+  absorption. The evidence points to objective choice improving the signal, with
+  remaining setup/pose/theta coupling or solver-budget/conditioning still open.
+- The 4-view `32^3` smoke comparison remains wiring coverage only. It is not
+  alignment-quality evidence.
+- The optional pose-random 5-DOF oracle was not run in this slice because it was
+  not cheap relative to the requested comparison.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_forward_reference.py::test_residual_loss_l2_mode_uses_plain_squared_residual
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_synthetic_datasets.py::test_generate_supported_only_setup_global_dataset_removes_unsupported_truth
+  tests/test_synthetic_datasets.py::test_generate_rich_phantom94_dataset_records_phantom_kind
+  -q` passed: 4 tests in 4.57 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  <changed Python files>` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  <changed Python files>` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- Broader whole-align Ruff/basedpyright sweeps were attempted and still fail on
+  unrelated legacy align/model/objective files, so they were not used as the
+  validation gate for this focused slice.
+
 ## 2026-05-08 — Geometry-First Bootstrap Artifact Stage
 
 ### Summary

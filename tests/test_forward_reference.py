@@ -356,6 +356,18 @@ def test_residual_loss_reports_valid_count_and_downweights_outliers() -> None:
     assert float(pseudo_huber_weights(jnp.asarray([0.0]), delta=1.0)[0]) == 1.0
 
 
+def test_residual_loss_l2_mode_uses_plain_squared_residual() -> None:
+    predicted = jnp.array([2.0, 10.0, 4.0], dtype=jnp.float32)
+    observed = jnp.zeros((3,), dtype=jnp.float32)
+    mask = jnp.array([1.0, 0.0, 1.0], dtype=jnp.float32)
+
+    result = residual_loss(predicted, observed, mask=mask, mode="l2")
+
+    assert float(result.valid_count) == 2.0
+    np.testing.assert_allclose(float(result.loss), 5.0)
+    np.testing.assert_allclose(np.asarray(result.weights), np.ones((3,), dtype=np.float32))
+
+
 def test_robust_residual_scale_uses_masked_mad() -> None:
     residual = jnp.array([0.0, 1.0, 2.0, 100.0], dtype=jnp.float32)
     mask = jnp.array([1.0, 1.0, 1.0, 0.0], dtype=jnp.float32)
