@@ -201,6 +201,139 @@ Interpretation:
   0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+## 2026-05-08 — Phase 8 Neutral Candidate-Refresh Initializer
+
+### Summary
+
+- Corrected stopped candidate-refresh acceptance so the before/candidate
+  refresh comparison no longer starts from the current stopped reconstruction
+  volume, which can already carry the old absorbed geometry gauge.
+- The refresh seed is now a shared, geometry-independent average-projection
+  volume with path-length normalization and the configured preview support
+  mask applied. The current stopped volume is used only to preserve the target
+  shape.
+- This directly answers the candidate-refresh audit: the previous slice tested
+  the Schur candidate from a shared initializer, but that initializer was the
+  old-gauge stopped volume. This slice removes that bias.
+
+### Minimal CUDA Stopped det_u Gate
+
+Reran the same clean supported-only `64^3`, 64-view
+`synth128_setup_global_tomo` det_u-only stopped diagnostic:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_candidate_refresh/runs/64_stopped_detu_only_neutral_normalized_candidate_refresh_cuda \
+  --profile balanced --size 64 --views 64 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_core_projector/datasets/synth128_setup_global_tomo_64_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_candidate_refresh/runs/64_stopped_detu_only_neutral_normalized_candidate_refresh_cuda/`
+
+Result:
+
+| Metric | Old-gauge refresh | Neutral normalized refresh |
+|---|---:|---:|
+| Status | failed | failed |
+| Selected JAX device | `cuda:0` | `cuda:0` |
+| Schur accepted | true | true |
+| Initial det_u RMSE | 7.25 px | 7.25 px |
+| Final det_u RMSE | 2.87217 px | 2.87227 px |
+| Final residual | 0.484702 | 0.769345 |
+| Schur train loss | 1.05838 | 1.05838 |
+| Volume NMSE | 0.269351 | 0.312471 |
+| `/usr/bin/time` wall time | 36.51 s | 36.47 s |
+| Host max RSS | 2162304 KB | 2181296 KB |
+
+Interpretation:
+
+- The neutral initializer confirms candidate-refresh acceptance itself is not
+  the missing recovery mechanism. It removes old-gauge volume initialization
+  bias, but the Schur proposal from the stopped reconstruction still lands in
+  the same absorbed setup basin.
+- The final-volume residual is worse than the old-gauge refresh because the
+  carried volume is now a short refresh from a neutral seed rather than the
+  already-optimized stopped volume. It no longer hides absorption by reusing
+  the old-gauge volume.
+- The remaining blocker is upstream of acceptance: stopped reconstruction is
+  producing a geometry-compatible volume gauge before Schur proposes the setup
+  update.
+
+### 128^3/256-View Scale Gate
+
+Reran the supported-only stopped det_u-only 128 scale gate under the current
+neutral-refresh code:
+
+```bash
+env UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/cusolver/lib:... \
+  /usr/bin/time -v uv run tomojax-align-auto-smoke \
+  --out-dir .artifacts/phase8_candidate_refresh/runs/128_supported_only_256views_stopped_detu_only_neutral_refresh_cuda \
+  --profile balanced --size 128 --views 256 \
+  --synthetic-dataset synth128_setup_global_tomo \
+  --synthetic-dataset-dir .artifacts/phase8_supported128_scale_gate/datasets/synth128_setup_global_tomo_128_supported_only \
+  --geometry-update-volume-source stopped_reconstruction \
+  --geometry-update-pose-frozen \
+  --geometry-update-active-setup-parameters det_u_px \
+  --preview-volume-support cylindrical \
+  --preview-initialization backprojection \
+  --preview-tv-scale 1.0 \
+  --preview-residual-filter-mode continuation \
+  --preview-center-l2-weight 0.02
+```
+
+Artifact:
+
+- `.artifacts/phase8_candidate_refresh/runs/128_supported_only_256views_stopped_detu_only_neutral_refresh_cuda/`
+
+Result:
+
+| Metric | Neutral refresh 128 gate |
+|---|---:|
+| Status | failed |
+| Selected JAX device | `cuda:0` |
+| Schur accepted | true |
+| Initial det_u RMSE | 14.5 px |
+| Final det_u RMSE | 6.58608 px |
+| Theta RMSE | 0.0218166 rad |
+| Final residual | 2.47284 |
+| Schur train loss | 2.75075 |
+| Volume NMSE | 0.416590 |
+| `/usr/bin/time` wall time | 2:00.12 |
+| Host max RSS | 2443856 KB |
+
+The 128 gate matches the 64 gate conclusion: neutral refresh removes the
+old-gauge initializer bias, but it does not improve the Schur proposal. The
+stopped reconstruction still absorbs setup geometry before the candidate is
+formed.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py -q` passed: 33 tests in
+  21.19 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run basedpyright
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-08 — Phase 8 Candidate-Refresh 128^3 Setup Scale Gate
 
 ### Summary

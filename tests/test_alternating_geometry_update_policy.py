@@ -8,6 +8,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     import jax
+    import pytest
 
 # check-public-imports: allow-private
 from tomojax.align._alternating_geometry_update import (
@@ -20,8 +21,12 @@ from tomojax.align._alternating_geometry_update import (
 )
 
 # check-public-imports: allow-private
+import tomojax.align._alternating_orchestration as alternating_orchestration
+
+# check-public-imports: allow-private
 from tomojax.align._alternating_orchestration import (
     _apply_candidate_refresh_acceptance,
+    _candidate_refresh_initial_volume,
     _run_phi_polish,
     _run_polish_stage,
 )
@@ -757,7 +762,9 @@ def test_heldout_acceptance_does_not_gate_fixed_truth_oracle() -> None:
     assert geometry.setup.det_u_px.value == candidate.setup.det_u_px.value
 
 
-def test_candidate_refresh_acceptance_carries_candidate_volume() -> None:
+def test_candidate_refresh_acceptance_carries_candidate_volume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     level = reference_continuation_schedule("reference").levels[0]
     true_geometry = GeometryState.zeros(4)
     before = GeometryState(
@@ -784,6 +791,35 @@ def test_candidate_refresh_acceptance_carries_candidate_volume() -> None:
             parameter_prior_strength=0.0,
         ),
     )
+    initial_seeds: list[jax.Array] = []
+
+    def fake_refresh(
+        config: AlternatingSmokeConfig,
+        observed: jax.Array,
+        geometry: GeometryState,
+        *,
+        initial_volume: jax.Array,
+        train_mask: jax.Array,
+        level: object,
+    ) -> jax.Array:
+        del config, observed, train_mask, level
+        initial_seeds.append(initial_volume)
+        return jnp.full_like(initial_volume, geometry.setup.det_u_px.value)
+
+    def fake_loss(
+        volume: jax.Array,
+        observed: jax.Array,
+        geometry: GeometryState,
+        mask: jax.Array,
+        level: object,
+        *,
+        sigma: float,
+    ) -> float:
+        del observed, geometry, mask, level, sigma
+        return float(jnp.mean(volume))
+
+    monkeypatch.setattr(alternating_orchestration, "_candidate_refresh_volume", fake_refresh)
+    monkeypatch.setattr(alternating_orchestration, "_projection_loss", fake_loss)
 
     geometry, _report, accepted, refreshed = _apply_candidate_refresh_acceptance(
         AlternatingSmokeConfig(size=8, geometry_update_volume_source="stopped_reconstruction"),
@@ -802,9 +838,14 @@ def test_candidate_refresh_acceptance_carries_candidate_volume() -> None:
     assert accepted.diagnostics.accepted is True
     assert geometry.setup.det_u_px.value == true_geometry.setup.det_u_px.value
     assert refreshed.shape == volume.shape
+    assert len(initial_seeds) == 2
+    assert np.allclose(np.asarray(initial_seeds[0]), np.asarray(initial_seeds[1]))
+    assert not np.allclose(np.asarray(initial_seeds[0]), np.asarray(volume))
 
 
-def test_candidate_refresh_acceptance_rejects_worse_refresh() -> None:
+def test_candidate_refresh_acceptance_rejects_worse_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     level = reference_continuation_schedule("reference").levels[0]
     true_geometry = GeometryState.zeros(4)
     candidate = GeometryState(
@@ -832,6 +873,33 @@ def test_candidate_refresh_acceptance_rejects_worse_refresh() -> None:
         ),
     )
 
+    def fake_refresh(
+        config: AlternatingSmokeConfig,
+        observed: jax.Array,
+        geometry: GeometryState,
+        *,
+        initial_volume: jax.Array,
+        train_mask: jax.Array,
+        level: object,
+    ) -> jax.Array:
+        del config, observed, train_mask, level
+        return jnp.full_like(initial_volume, geometry.setup.det_u_px.value)
+
+    def fake_loss(
+        volume: jax.Array,
+        observed: jax.Array,
+        geometry: GeometryState,
+        mask: jax.Array,
+        level: object,
+        *,
+        sigma: float,
+    ) -> float:
+        del observed, geometry, mask, level, sigma
+        return float(jnp.mean(volume))
+
+    monkeypatch.setattr(alternating_orchestration, "_candidate_refresh_volume", fake_refresh)
+    monkeypatch.setattr(alternating_orchestration, "_projection_loss", fake_loss)
+
     geometry, _report, accepted, refreshed = _apply_candidate_refresh_acceptance(
         AlternatingSmokeConfig(size=8, geometry_update_volume_source="stopped_reconstruction"),
         volume,
@@ -849,3 +917,26 @@ def test_candidate_refresh_acceptance_rejects_worse_refresh() -> None:
     assert accepted.diagnostics.accepted is False
     assert geometry.setup.det_u_px.value == true_geometry.setup.det_u_px.value
     assert refreshed.shape == volume.shape
+
+
+def test_candidate_refresh_initial_volume_is_neutral_shared_seed() -> None:
+    level = reference_continuation_schedule("reference").levels[0]
+    absorbed_volume = jnp.arange(8 * 8 * 8, dtype=jnp.float32).reshape((8, 8, 8))
+    observed = jnp.full((4, 8, 8), 16.0, dtype=jnp.float32)
+    config = AlternatingSmokeConfig(
+        size=8,
+        preview_volume_support="cylindrical",
+        geometry_update_volume_source="stopped_reconstruction",
+    )
+
+    initial = _candidate_refresh_initial_volume(
+        config,
+        observed,
+        current_volume=absorbed_volume,
+        level=level,
+    )
+
+    assert initial.shape == absorbed_volume.shape
+    assert not np.allclose(np.asarray(initial), np.asarray(absorbed_volume))
+    assert np.isclose(float(initial[4, 4, 4]), 2.0)
+    assert float(initial[0, 0, 4]) == 0.0

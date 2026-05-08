@@ -33,6 +33,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
     before moving to broader Phase 8/9 functionality.
   - Record the hard stopped-preview x-gauge projection diagnostic and do not
     keep it unless the gate improves.
+  - Fix candidate-refresh acceptance so the before/candidate refresh comparison
+    starts from a neutral shared volume instead of the old-gauge stopped
+    reconstruction volume.
 - Out of scope:
   - Adding more alignment orchestration knobs.
   - Chasing theta endpoint=180 sampling.
@@ -68,6 +71,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
 - [x] Revert the no-benefit hard-gauge code path, update logs, and commit the
       diagnostic evidence.
+- [x] Switch candidate-refresh to a neutral shared refresh initializer.
+- [x] Rerun focused CPU tests, ruff, basedpyright, and `just imports`.
+- [x] Rerun the minimal 64^3/64-view stopped det_u-only CUDA diagnostic.
+- [x] Commit the neutral-refresh slice.
 
 ### Validation
 

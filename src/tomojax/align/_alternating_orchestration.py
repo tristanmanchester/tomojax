@@ -986,7 +986,7 @@ def _apply_geometry_acceptance(
 
 def _apply_candidate_refresh_acceptance(
     config: AlternatingSmokeConfig,
-    initial_volume: jax.Array,
+    current_volume: jax.Array,
     observed: jax.Array,
     *,
     before_geometry: GeometryState,
@@ -998,6 +998,12 @@ def _apply_candidate_refresh_acceptance(
     update_report: GaugeReport,
     schur_result: JointSchurLMResult,
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult, jax.Array]:
+    initial_volume = _candidate_refresh_initial_volume(
+        config,
+        observed,
+        current_volume=current_volume,
+        level=level,
+    )
     before_refresh = _candidate_refresh_volume(
         config,
         observed,
@@ -1062,6 +1068,29 @@ def _apply_candidate_refresh_acceptance(
         refreshed_result,
         jax.lax.stop_gradient(selected_volume),
     )
+
+
+def _candidate_refresh_initial_volume(
+    config: AlternatingSmokeConfig,
+    observed: jax.Array,
+    *,
+    current_volume: jax.Array,
+    level: ContinuationLevel,
+) -> jax.Array:
+    if len(current_volume.shape) != 3:
+        raise ValueError("candidate refresh volume must be 3-D")
+    shape = (
+        int(current_volume.shape[0]),
+        int(current_volume.shape[1]),
+        int(current_volume.shape[2]),
+    )
+    initial = reconstruct_average_reference(observed, depth=shape[1]) / jnp.asarray(
+        max(shape[1], 1), dtype=jnp.float32
+    )
+    support = _preview_volume_support(config, level=level, shape=shape)
+    if support is None:
+        return initial
+    return initial * support
 
 
 def _candidate_refresh_volume(
