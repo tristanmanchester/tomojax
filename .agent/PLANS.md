@@ -11,73 +11,48 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Goal file: `docs/agent_goal_production_stopped_alignment.md`
-- Phase: Phase 8/9 v1-parity rich phantom setup/global gate
-- Goal: finish the narrow rich PHANTOM94 stopped det_u gate by first proving or
-  falsifying the fixed-truth Otsu L2 oracle with a non-lightning budget, then
-  only moving to stopped reconstruction if the oracle passes.
+- Goal file: `docs/agent_goal_differentiable_stopped_detu_diagnosis.md`
+- Phase: Phase 8/9 differentiable stopped det_u diagnosis
+- Goal: diagnose the stopped-volume det_u failure through the differentiable
+  optimization path, starting with explicit mask provenance before scalar
+  landscapes or reduced-objective changes.
 
 ### Scope
 
 - In scope:
-  - Run `128^3`/128-view rich PHANTOM94 fixed-truth oracle with `otsu_l2` and a
-    non-lightning budget.
-  - If fixed-truth fails, diagnose the Otsu mask/L2/Schur path before any
-    stopped reconstruction run.
-  - If fixed-truth passes, run the matching stopped reconstruction gate with
-    det_u active only, pose/theta frozen, no nuisance, no weak-view exclusion,
-    and no candidate-refresh acceptance.
-  - Only after a 128-view production pass, run the matching 256-view gate.
-  - Commit either a passing gate or a decisive diagnosis with artifacts under
-    `runs/`.
+  - Prove every FISTA reconstruction path uses `projection_valid_mask`.
+  - Keep Schur/eval paths explicitly labelled with alignment/eval masks.
+  - Emit `mask_provenance.json` for reconstruction, Schur, and evaluation mask
+    consumers.
+  - Add focused coverage that the canonical stopped det_u gate records bootstrap
+    FISTA separately and does not feed Otsu/train masks into reconstruction.
+  - Continue next to FISTA scalar/gradient contract checks only after this
+    provenance slice is committed.
 - Out of scope:
-  - New DOFs, nuisance policies, weak-view exclusion, candidate-refresh
-    variants, five-case suite runs, or threshold changes.
-  - Moving to stopped reconstruction before fixed-truth oracle evidence is
-    clean.
-- Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.datasets`.
+  - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
+    freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
+    work.
+  - Treating a green benchmark JSON as success without the required diagnostic
+    artifacts.
+- Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.recon`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
 - `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
+- `docs/agent_goal_differentiable_stopped_detu_diagnosis.md`
 - `docs/implementation_log.md`
-- Recent Otsu L2 comparison evidence under
-  `runs/rich_phantom_loss_comparison_20260508_153150/`.
 
 ### Tasks
 
-- [x] Add and commit the production stopped-alignment consolidation note.
-- [x] Run and record the FISTA absorption curve for the canonical 64^3 gate.
-- [x] Add and validate FISTA gradient finite-difference coverage.
-- [x] Based on those diagnostics, implement or falsify the geometry-first det_u
-      bootstrap.
-- [x] Complete the goal audit and final report.
-- [x] Run and record the current minimal geometry-first stopped det_u path at
-      `128^3`.
-- [x] Try the smallest evidence-driven `64^3` refinement toward `<0.2 px`.
-- [x] If needed, implement/prototype real det_u multiresolution pyramid.
-- [x] Complete the go/no-go audit and final report.
-- [x] Add final stopped det_u investigation summary.
-- [x] Add `docs/tomojax-v2/` project-status document.
-- [x] Review/demote stale production policy surface.
-- [x] Run focused validation and complete cleanup audit.
-- [x] Add explicit geometry-first bootstrap artifact stage.
-- [x] Add loss-mode plumbing and PHANTOM94 rich phantom sidecar generation.
-- [x] Run `128^3`/128-view CUDA fixed-truth and stopped-reconstruction
-      comparisons for the three loss modes.
-- [x] Add focused coverage for residual L2 loss, CLI loss-mode discoverability,
-      and rich phantom manifest generation.
-- [x] Record implementation-log interpretation and commit the coherent slice.
-- [x] Run fixed-truth Otsu L2 with non-lightning budget on 128 views.
-- [x] Diagnose fixed-truth if it does not reach the gate.
-- [x] Run stopped Otsu L2 128-view gate only after fixed-truth passes.
-- [x] Implement and run a first true downsampled sidecar multires carry after
-      stopped reconstruction failed.
-- [x] Defer 256-view gate because the 128-view stopped gate still fails.
-- [x] Disable JAX GPU preallocation in rich-phantom benchmark harnesses and
-      record sampled memory evidence.
-- [ ] Update implementation log, validate focused changes, and commit.
+- [x] Read the diagnostic goal and current execution context.
+- [x] Split reconstruction-mask and alignment/eval-mask provenance at call
+      sites, starting with bootstrap and candidate-refresh FISTA paths.
+- [x] Write `mask_provenance.json` and include it in artifact indexing.
+- [x] Add focused coverage for the production det_u gate provenance contract.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the mask-provenance slice.
+- [ ] Next slice after commit: reconstruction scalar/gradient contract checks.
 
 ### Validation
 

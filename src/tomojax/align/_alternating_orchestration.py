@@ -32,6 +32,10 @@ from tomojax.align._alternating_level_helpers import (
     _residual_filter_kinds,
     _skipped_level_summary,
 )
+from tomojax.align._alternating_mask_provenance import (
+    MaskProvenanceEntry,
+    record_mask_provenance,
+)
 from tomojax.align._alternating_types import (
     AlternatingBootstrapSummary,
     AlternatingLevelSummary,
@@ -98,7 +102,18 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
     constrained_first_preview_volume: jax.Array | None = None
     coarse_verified = False
     time_to_verified_geometry_seconds = None
+    mask_provenance: list[MaskProvenanceEntry] = []
 
+    _record_projection_loss_mask(
+        mask_provenance,
+        caller="_run_alternating_solver_smoke_impl",
+        stage="initial_alignment_loss",
+        level=schedule.levels[0],
+        mask_role="alignment_loss_mask",
+        mask=alignment_loss_mask,
+        includes_otsu=config.projection_loss_mode.startswith("otsu"),
+        includes_train_gating=False,
+    )
     initial_loss = previous_loss = _projection_loss(
         truth,
         observed,
@@ -118,11 +133,14 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         config,
         observed,
         geometry,
-        mask=train_mask,
+        reconstruction_mask=projection_valid_mask,
+        alignment_mask=train_mask,
+        alignment_mask_includes_otsu=config.projection_loss_mode.startswith("otsu"),
         level=schedule.levels[0],
         gauge_report=gauge_report,
         volume=volume,
         last_schur_result=last_schur_result,
+        mask_provenance=mask_provenance,
     )
     for level in schedule.levels:
         if level.run_if_coarse_unverified and coarse_verified:
@@ -135,6 +153,31 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             )
             continue
 
+        preview_mask = _preview_reconstruction_mask(
+            config,
+            mask=projection_valid_mask,
+            train_mask=train_mask,
+        )
+        record_mask_provenance(
+            mask_provenance,
+            caller="_run_alternating_solver_smoke_impl",
+            stage=f"{level.role}_fista",
+            level_factor=level.level_factor,
+            operation="fista_reconstruct_reference",
+            mask_role="projection_valid_mask",
+            mask=preview_mask,
+            includes_otsu=False,
+            includes_train_gating=False,
+            normalizer="full_projection_array_size",
+            residual_filters=(
+                filter_config.kind
+                for filter_config in _preview_residual_filters(
+                    config,
+                    level,
+                    level.residual_filters,
+                )
+            ),
+        )
         fista_result = fista_reconstruct_reference(
             observed,
             geometry,
@@ -150,11 +193,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 level=level,
                 shape=(config.size, config.size, config.size),
             ),
-            mask=_preview_reconstruction_mask(
-                config,
-                mask=projection_valid_mask,
-                train_mask=train_mask,
-            ),
+            mask=preview_mask,
             config=ReferenceFISTAConfig(
                 iterations=_preview_reconstruction_iterations(config, level),
                 step_size=_preview_fista_step_size(config),
@@ -200,6 +239,17 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         update_report = GaugeReport(())
         geometry_before_update = geometry
         if geometry_updates > 0:
+            _record_schur_mask(
+                mask_provenance,
+                caller="_run_alternating_solver_smoke_impl",
+                stage=f"{level.role}_geometry_update",
+                level=level,
+                mask_role="alignment_train_mask",
+                mask=train_mask,
+                includes_otsu=config.projection_loss_mode.startswith("otsu"),
+                includes_train_gating=config.heldout_view_index is not None,
+                config=config,
+            )
             geometry_update_volume = _geometry_update_volume_for_level(
                 truth_volume=truth,
                 stopped_volume=_stopped_geometry_update_volume(
@@ -245,18 +295,30 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 observed,
                 before_geometry=geometry_before_update,
                 candidate_geometry=geometry,
+                reconstruction_mask=projection_valid_mask,
                 train_mask=train_mask,
                 heldout_mask=heldout_mask,
                 level=level,
                 sigma=residual_sigma_effective,
                 update_report=update_report,
                 schur_result=schur_result,
+                mask_provenance=mask_provenance,
             )
             gauge_report = update_report
             last_schur_result = schur_result
             loss_before, loss_after = _schur_loss_pair(schur_result)
         else:
             schur_result = None
+            _record_projection_loss_mask(
+                mask_provenance,
+                caller="_run_alternating_solver_smoke_impl",
+                stage=f"{level.role}_loss_after_no_geometry",
+                level=level,
+                mask_role="alignment_loss_mask",
+                mask=alignment_loss_mask,
+                includes_otsu=config.projection_loss_mode.startswith("otsu"),
+                includes_train_gating=False,
+            )
             loss_after = _projection_loss(
                 volume,
                 observed,
@@ -393,6 +455,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         stopped_preview_policy=config.stopped_preview_policy,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,
+        mask_provenance=tuple(mask_provenance),
         verification=_verification_payload(
             cfg=config,
             schedule=schedule,
@@ -845,10 +908,9 @@ def _preview_reconstruction_mask(
     mask: jax.Array,
     train_mask: jax.Array,
 ) -> jax.Array:
-    if config.preview_reconstruction_mask_source == "all_views":
+    _ = train_mask
+    if config.preview_reconstruction_mask_source in {"all_views", "train_views"}:
         return mask
-    if config.preview_reconstruction_mask_source == "train_views":
-        return train_mask
     raise ValueError(
         "unknown preview reconstruction mask source "
         f"{config.preview_reconstruction_mask_source!r}"
@@ -870,11 +932,64 @@ def _residual_loss_kind(config: AlternatingSmokeConfig) -> str:
     return "l2" if config.projection_loss_mode == "otsu_l2" else "pseudo_huber"
 
 
-def _allows_coarse_early_exit(config: AlternatingSmokeConfig) -> bool:
-    return (
-        config.geometry_update_volume_source != "fixed_synthetic_truth"
-        and config.preview_reconstruction_mask_source != "train_views"
+def _record_projection_loss_mask(
+    entries: list[MaskProvenanceEntry],
+    *,
+    caller: str,
+    stage: str,
+    level: ContinuationLevel,
+    mask_role: str,
+    mask: jax.Array,
+    includes_otsu: bool,
+    includes_train_gating: bool,
+) -> None:
+    record_mask_provenance(
+        entries,
+        caller=caller,
+        stage=stage,
+        level_factor=level.level_factor,
+        operation="projection_loss",
+        mask_role=mask_role,
+        mask=mask,
+        includes_otsu=includes_otsu,
+        includes_train_gating=includes_train_gating,
+        normalizer="projection_loss_contract",
+        residual_filters=(filter_config.kind for filter_config in level.residual_filters),
     )
+
+
+def _record_schur_mask(
+    entries: list[MaskProvenanceEntry],
+    *,
+    caller: str,
+    stage: str,
+    level: ContinuationLevel,
+    mask_role: str,
+    mask: jax.Array,
+    includes_otsu: bool,
+    includes_train_gating: bool,
+    config: AlternatingSmokeConfig,
+) -> None:
+    record_mask_provenance(
+        entries,
+        caller=caller,
+        stage=stage,
+        level_factor=level.level_factor,
+        operation="joint_schur_geometry_update",
+        mask_role=mask_role,
+        mask=mask,
+        includes_otsu=includes_otsu,
+        includes_train_gating=includes_train_gating,
+        normalizer="joint_schur_loss_contract",
+        residual_filters=(
+            filter_config.kind
+            for filter_config in _geometry_residual_filters(config, level.residual_filters)
+        ),
+    )
+
+
+def _allows_coarse_early_exit(config: AlternatingSmokeConfig) -> bool:
+    return config.geometry_update_volume_source != "fixed_synthetic_truth"
 
 
 def _apply_initial_geometry_first_bootstrap(
@@ -882,11 +997,14 @@ def _apply_initial_geometry_first_bootstrap(
     observed: jax.Array,
     geometry: GeometryState,
     *,
-    mask: jax.Array,
+    reconstruction_mask: jax.Array,
+    alignment_mask: jax.Array,
+    alignment_mask_includes_otsu: bool,
     level: ContinuationLevel,
     gauge_report: GaugeReport,
     volume: jax.Array | None,
     last_schur_result: JointSchurLMResult | None,
+    mask_provenance: list[MaskProvenanceEntry],
 ) -> tuple[
     GeometryState,
     GaugeReport,
@@ -898,8 +1016,11 @@ def _apply_initial_geometry_first_bootstrap(
         config,
         observed,
         geometry,
-        mask=mask,
+        reconstruction_mask=reconstruction_mask,
+        alignment_mask=alignment_mask,
+        alignment_mask_includes_otsu=alignment_mask_includes_otsu,
         level=level,
+        mask_provenance=mask_provenance,
     )
     if bootstrap is None:
         return geometry, gauge_report, volume, last_schur_result, None
@@ -917,8 +1038,11 @@ def _maybe_run_geometry_first_det_u_bootstrap(
     observed: jax.Array,
     geometry: GeometryState,
     *,
-    mask: jax.Array,
+    reconstruction_mask: jax.Array,
+    alignment_mask: jax.Array,
+    alignment_mask_includes_otsu: bool,
     level: ContinuationLevel,
+    mask_provenance: list[MaskProvenanceEntry],
 ) -> _GeometryFirstBootstrapResult | None:
     if not _uses_geometry_first_det_u_bootstrap(config, level):
         return None
@@ -931,20 +1055,41 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         current_volume=current_volume,
         level=level,
     )
+    _record_projection_loss_mask(
+        mask_provenance,
+        caller="_maybe_run_geometry_first_det_u_bootstrap",
+        stage="bootstrap_loss_before_first_schur",
+        level=level,
+        mask_role="alignment_train_mask",
+        mask=alignment_mask,
+        includes_otsu=alignment_mask_includes_otsu,
+        includes_train_gating=True,
+    )
     loss_before_first_schur = _projection_loss(
         neutral,
         observed,
         geometry,
-        mask,
+        alignment_mask,
         level,
         sigma=level.residual_sigma,
         loss_mode=_residual_loss_kind(config),
+    )
+    _record_schur_mask(
+        mask_provenance,
+        caller="_maybe_run_geometry_first_det_u_bootstrap",
+        stage="bootstrap_first_schur",
+        level=level,
+        mask_role="alignment_train_mask",
+        mask=alignment_mask,
+        includes_otsu=alignment_mask_includes_otsu,
+        includes_train_gating=True,
+        config=config,
     )
     first_geometry, _first_report, _first_schur = _run_geometry_updates(
         neutral,
         observed,
         geometry,
-        mask,
+        alignment_mask,
         level,
         level.geometry_updates,
         sigma=level.residual_sigma,
@@ -961,21 +1106,47 @@ def _maybe_run_geometry_first_det_u_bootstrap(
         parameter_prior_strength=_geometry_parameter_prior_strength(config, level),
         loss_mode=_residual_loss_kind(config),
     )
+    _record_projection_loss_mask(
+        mask_provenance,
+        caller="_maybe_run_geometry_first_det_u_bootstrap",
+        stage="bootstrap_loss_after_first_schur",
+        level=level,
+        mask_role="alignment_train_mask",
+        mask=alignment_mask,
+        includes_otsu=alignment_mask_includes_otsu,
+        includes_train_gating=True,
+    )
     loss_after_first_schur = _projection_loss(
         neutral,
         observed,
         first_geometry,
-        mask,
+        alignment_mask,
         level,
         sigma=level.residual_sigma,
         loss_mode=_residual_loss_kind(config),
+    )
+    record_mask_provenance(
+        mask_provenance,
+        caller="_maybe_run_geometry_first_det_u_bootstrap",
+        stage="bootstrap_fista_refresh",
+        level_factor=level.level_factor,
+        operation="fista_reconstruct_reference",
+        mask_role="projection_valid_mask",
+        mask=reconstruction_mask,
+        includes_otsu=False,
+        includes_train_gating=False,
+        normalizer="full_projection_array_size",
+        residual_filters=(
+            filter_config.kind
+            for filter_config in _preview_residual_filters(config, level, level.residual_filters)
+        ),
     )
     refreshed = fista_reconstruct_reference(
         observed,
         first_geometry,
         initial_volume=neutral,
         volume_support=support,
-        mask=mask,
+        mask=reconstruction_mask,
         config=ReferenceFISTAConfig(
             iterations=_preview_reconstruction_iterations(config, level),
             step_size=_preview_fista_step_size(config),
@@ -988,20 +1159,41 @@ def _maybe_run_geometry_first_det_u_bootstrap(
             views_per_batch=int(config.preview_views_per_batch),
         ),
     )
+    _record_projection_loss_mask(
+        mask_provenance,
+        caller="_maybe_run_geometry_first_det_u_bootstrap",
+        stage="bootstrap_loss_after_fista_refresh",
+        level=level,
+        mask_role="alignment_train_mask",
+        mask=alignment_mask,
+        includes_otsu=alignment_mask_includes_otsu,
+        includes_train_gating=True,
+    )
     loss_after_fista_refresh = _projection_loss(
         refreshed.volume,
         observed,
         first_geometry,
-        mask,
+        alignment_mask,
         level,
         sigma=level.residual_sigma,
         loss_mode=_residual_loss_kind(config),
+    )
+    _record_schur_mask(
+        mask_provenance,
+        caller="_maybe_run_geometry_first_det_u_bootstrap",
+        stage="bootstrap_final_schur",
+        level=level,
+        mask_role="alignment_train_mask",
+        mask=alignment_mask,
+        includes_otsu=alignment_mask_includes_otsu,
+        includes_train_gating=True,
+        config=config,
     )
     final_geometry, final_report, final_schur = _run_geometry_updates(
         refreshed.volume,
         observed,
         first_geometry,
-        mask,
+        alignment_mask,
         level,
         level.geometry_updates,
         sigma=level.residual_sigma,
@@ -1210,12 +1402,14 @@ def _apply_geometry_acceptance(
     *,
     before_geometry: GeometryState,
     candidate_geometry: GeometryState,
+    reconstruction_mask: jax.Array,
     train_mask: jax.Array,
     heldout_mask: jax.Array | None,
     level: ContinuationLevel,
     sigma: float,
     update_report: GaugeReport,
     schur_result: JointSchurLMResult,
+    mask_provenance: list[MaskProvenanceEntry],
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult, jax.Array]:
     if config.geometry_update_volume_source != "stopped_reconstruction":
         geometry, report, result = _apply_heldout_geometry_acceptance(
@@ -1249,12 +1443,14 @@ def _apply_geometry_acceptance(
         observed,
         before_geometry=before_geometry,
         candidate_geometry=candidate_geometry,
+        reconstruction_mask=reconstruction_mask,
         train_mask=train_mask,
         heldout_mask=heldout_mask,
         level=level,
         sigma=sigma,
         update_report=update_report,
         schur_result=schur_result,
+        mask_provenance=mask_provenance,
     )
 
 
@@ -1265,12 +1461,14 @@ def _apply_candidate_refresh_acceptance(
     *,
     before_geometry: GeometryState,
     candidate_geometry: GeometryState,
+    reconstruction_mask: jax.Array,
     train_mask: jax.Array,
     heldout_mask: jax.Array | None,
     level: ContinuationLevel,
     sigma: float,
     update_report: GaugeReport,
     schur_result: JointSchurLMResult,
+    mask_provenance: list[MaskProvenanceEntry],
 ) -> tuple[GeometryState, GaugeReport, JointSchurLMResult, jax.Array]:
     initial_volume = _candidate_refresh_initial_volume(
         config,
@@ -1283,7 +1481,9 @@ def _apply_candidate_refresh_acceptance(
         observed,
         before_geometry,
         initial_volume=initial_volume,
-        train_mask=train_mask,
+        reconstruction_mask=reconstruction_mask,
+        stage="candidate_refresh_before",
+        mask_provenance=mask_provenance,
         level=level,
     )
     candidate_refresh = _candidate_refresh_volume(
@@ -1291,7 +1491,9 @@ def _apply_candidate_refresh_acceptance(
         observed,
         candidate_geometry,
         initial_volume=initial_volume,
-        train_mask=train_mask,
+        reconstruction_mask=reconstruction_mask,
+        stage="candidate_refresh_candidate",
+        mask_provenance=mask_provenance,
         level=level,
     )
     validation_mask = heldout_mask if heldout_mask is not None else train_mask
@@ -1375,9 +1577,27 @@ def _candidate_refresh_volume(
     geometry: GeometryState,
     *,
     initial_volume: jax.Array,
-    train_mask: jax.Array,
+    reconstruction_mask: jax.Array,
+    stage: str,
+    mask_provenance: list[MaskProvenanceEntry],
     level: ContinuationLevel,
 ) -> jax.Array:
+    record_mask_provenance(
+        mask_provenance,
+        caller="_candidate_refresh_volume",
+        stage=stage,
+        level_factor=level.level_factor,
+        operation="fista_reconstruct_reference",
+        mask_role="projection_valid_mask",
+        mask=reconstruction_mask,
+        includes_otsu=False,
+        includes_train_gating=False,
+        normalizer="full_projection_array_size",
+        residual_filters=(
+            filter_config.kind
+            for filter_config in _preview_residual_filters(config, level, level.residual_filters)
+        ),
+    )
     result = fista_reconstruct_reference(
         observed,
         geometry,
@@ -1387,7 +1607,7 @@ def _candidate_refresh_volume(
             level=level,
             shape=(config.size, config.size, config.size),
         ),
-        mask=train_mask,
+        mask=reconstruction_mask,
         config=ReferenceFISTAConfig(
             iterations=_candidate_refresh_iterations(level),
             step_size=_preview_fista_step_size(config),

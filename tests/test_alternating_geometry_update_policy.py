@@ -413,7 +413,7 @@ def test_stopped_preview_no_fista_policy_skips_first_preview_reconstruction_only
     assert _preview_reconstruction_iterations(config, fine) == fine.reconstruction_iterations
 
 
-def test_preview_reconstruction_mask_source_can_exclude_heldout_view() -> None:
+def test_preview_reconstruction_uses_valid_mask_even_when_train_views_requested() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import _preview_reconstruction_mask
 
@@ -426,7 +426,7 @@ def test_preview_reconstruction_mask_source_can_exclude_heldout_view() -> None:
         train_mask=train_mask,
     )
 
-    np.testing.assert_array_equal(np.asarray(selected), np.asarray(train_mask))
+    np.testing.assert_array_equal(np.asarray(selected), np.asarray(mask))
 
 
 def test_preview_reconstruction_mask_source_defaults_to_all_views() -> None:
@@ -445,7 +445,7 @@ def test_preview_reconstruction_mask_source_defaults_to_all_views() -> None:
     np.testing.assert_array_equal(np.asarray(selected), np.asarray(mask))
 
 
-def test_train_view_reconstruction_disables_coarse_early_exit() -> None:
+def test_train_view_reconstruction_option_no_longer_disables_coarse_early_exit() -> None:
     # check-public-imports: allow-private
     from tomojax.align._alternating_orchestration import _allows_coarse_early_exit
 
@@ -454,7 +454,7 @@ def test_train_view_reconstruction_disables_coarse_early_exit() -> None:
         _allows_coarse_early_exit(
             AlternatingSmokeConfig(preview_reconstruction_mask_source="train_views")
         )
-        is False
+        is True
     )
 
 
@@ -800,10 +800,12 @@ def test_candidate_refresh_acceptance_carries_candidate_volume(
         geometry: GeometryState,
         *,
         initial_volume: jax.Array,
-        train_mask: jax.Array,
+        reconstruction_mask: jax.Array,
+        stage: str,
+        mask_provenance: list[object],
         level: object,
     ) -> jax.Array:
-        del config, observed, train_mask, level
+        del config, observed, reconstruction_mask, stage, mask_provenance, level
         initial_seeds.append(initial_volume)
         return jnp.full_like(initial_volume, geometry.setup.det_u_px.value)
 
@@ -815,8 +817,9 @@ def test_candidate_refresh_acceptance_carries_candidate_volume(
         level: object,
         *,
         sigma: float,
+        loss_mode: str,
     ) -> float:
-        del observed, geometry, mask, level, sigma
+        del observed, geometry, mask, level, sigma, loss_mode
         return float(jnp.mean(volume))
 
     monkeypatch.setattr(alternating_orchestration, "_candidate_refresh_volume", fake_refresh)
@@ -828,12 +831,14 @@ def test_candidate_refresh_acceptance_carries_candidate_volume(
         observed,
         before_geometry=before,
         candidate_geometry=true_geometry,
+        reconstruction_mask=full_mask,
         train_mask=train_mask,
         heldout_mask=heldout_mask,
         level=level,
         sigma=1.0,
         update_report=GaugeReport(()),
         schur_result=schur_result,
+        mask_provenance=[],
     )
 
     assert accepted.diagnostics.accepted is True
@@ -880,10 +885,12 @@ def test_candidate_refresh_acceptance_rejects_worse_refresh(
         geometry: GeometryState,
         *,
         initial_volume: jax.Array,
-        train_mask: jax.Array,
+        reconstruction_mask: jax.Array,
+        stage: str,
+        mask_provenance: list[object],
         level: object,
     ) -> jax.Array:
-        del config, observed, train_mask, level
+        del config, observed, reconstruction_mask, stage, mask_provenance, level
         return jnp.full_like(initial_volume, geometry.setup.det_u_px.value)
 
     def fake_loss(
@@ -894,8 +901,9 @@ def test_candidate_refresh_acceptance_rejects_worse_refresh(
         level: object,
         *,
         sigma: float,
+        loss_mode: str,
     ) -> float:
-        del observed, geometry, mask, level, sigma
+        del observed, geometry, mask, level, sigma, loss_mode
         return float(jnp.mean(volume))
 
     monkeypatch.setattr(alternating_orchestration, "_candidate_refresh_volume", fake_refresh)
@@ -907,12 +915,14 @@ def test_candidate_refresh_acceptance_rejects_worse_refresh(
         observed,
         before_geometry=true_geometry,
         candidate_geometry=candidate,
+        reconstruction_mask=full_mask,
         train_mask=train_mask,
         heldout_mask=heldout_mask,
         level=level,
         sigma=1.0,
         update_report=GaugeReport(()),
         schur_result=schur_result,
+        mask_provenance=[],
     )
 
     assert accepted.diagnostics.accepted is False

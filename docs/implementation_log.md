@@ -11343,3 +11343,79 @@ Interpretation:
 - `uv run basedpyright ...` passed with 0 errors, 0 warnings, and 0 notes for
   the edited align, recon, tool, and test files.
 - `just imports` passed.
+
+## 2026-05-09 - Differentiable stopped det-u mask provenance
+
+### Scope
+
+Started the diagnostic milestone in
+`docs/agent_goal_differentiable_stopped_detu_diagnosis.md`. This slice only
+addresses the first required gate: prove and enforce which masks are consumed by
+FISTA reconstruction versus Schur/evaluation paths.
+
+Changes:
+
+- Updated `.agent/PLANS.md` to make the differentiable stopped det-u diagnosis
+  the active execution plan.
+- Added `mask_provenance.json` to alternating run artifacts with deterministic
+  records for mask-consuming reconstruction, Schur, and projection-loss calls.
+- Changed preview reconstruction mask selection so FISTA always receives
+  `projection_valid_mask`, even if the legacy
+  `preview_reconstruction_mask_source = "train_views"` option is present.
+- Split the geometry-first bootstrap and candidate-refresh call sites so their
+  FISTA refreshes receive `projection_valid_mask`, while their Schur and
+  validation losses continue to use labelled alignment/train/eval masks.
+- Added focused coverage that the production geometry-first det-u bootstrap
+  records `bootstrap_fista_refresh` separately and labels it as
+  `projection_valid_mask`, with no Otsu or train gating.
+
+### Diagnosis
+
+The concrete mask-leakage risk was real: bootstrap FISTA refresh and
+candidate-refresh FISTA were previously wired through the train/alignment mask.
+That could hide detector residuals from reconstruction while Schur/eval were
+using alignment masks, making stopped-volume diagnosis ambiguous. The current
+contract is now explicit:
+
+- FISTA reconstruction mask role: `projection_valid_mask`.
+- Schur geometry-update mask role: `alignment_train_mask`.
+- Projection/evaluation loss mask role: `alignment_loss_mask` or
+  `alignment_train_mask`.
+
+This does not solve the 256^3 VRAM target by itself. It removes a provenance
+ambiguity before the next diagnostics quantify where v2 is still materialising
+too much work. The remaining likely memory blocker is still in the differentiable
+geometry/reconstruction hot path: all-view or all-parameter residual/Jacobian
+materialisation must stay chunked/streamed for 256^3 scale instead of relying on
+JAX preallocation settings or smaller benchmarks.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_preview_reconstruction_uses_valid_mask_even_when_train_views_requested
+  tests/test_alternating_geometry_update_policy.py::test_candidate_refresh_acceptance_carries_candidate_volume
+  tests/test_alternating_geometry_update_policy.py::test_candidate_refresh_acceptance_rejects_worse_refresh
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 4 tests in 75.82 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_records_geometry_first_bootstrap_stage
+  -q` passed: 1 test in 122.26 seconds.
+- The same five tests were first attempted in a single pytest process; that run
+  hit a JAX/XLA CPU segmentation fault during compilation of the bootstrap
+  Schur path. The bootstrap test passed when rerun alone.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_mask_provenance.py
+  tests/test_alternating_solver_smoke.py
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py
+  src/tomojax/align/_alternating_mask_provenance.py
+  tests/test_alternating_solver_smoke.py
+  tests/test_alternating_geometry_update_policy.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.

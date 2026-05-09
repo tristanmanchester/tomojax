@@ -191,6 +191,27 @@ def test_align_auto_records_geometry_first_bootstrap_stage(
         True,
         False,
     }
+    provenance = cast(
+        "dict[str, object]",
+        json.loads((out_dir / "mask_provenance.json").read_text(encoding="utf-8")),
+    )
+    provenance_entries = cast("list[dict[str, object]]", provenance["entries"])
+    bootstrap_fista = [
+        entry
+        for entry in provenance_entries
+        if entry["stage"] == "bootstrap_fista_refresh"
+        and entry["operation"] == "fista_reconstruct_reference"
+    ]
+    assert len(bootstrap_fista) == 1
+    assert bootstrap_fista[0]["mask_role"] == "projection_valid_mask"
+    assert bootstrap_fista[0]["includes_otsu"] is False
+    assert bootstrap_fista[0]["includes_train_gating"] is False
+    assert any(
+        entry["stage"] == "bootstrap_first_schur"
+        and entry["operation"] == "joint_schur_geometry_update"
+        and entry["mask_role"] == "alignment_train_mask"
+        for entry in provenance_entries
+    )
 
     with (out_dir / "alignment_summary.csv").open("r", newline="", encoding="utf-8") as fh:
         summary_rows = list(csv.DictReader(fh))

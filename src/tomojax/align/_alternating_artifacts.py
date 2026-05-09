@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.align._alternating_mask_provenance import mask_provenance_payload
 from tomojax.align._alternating_verification import (
     _backend_report_payload,
     _failure_report_payload,
@@ -45,6 +46,7 @@ from tomojax.verify import validate_run_artifacts
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tomojax.align._alternating_mask_provenance import MaskProvenanceEntry
     from tomojax.align._alternating_types import (
         AlternatingBootstrapSummary,
         AlternatingLevelSummary,
@@ -95,6 +97,7 @@ def _write_artifacts(
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
+    mask_provenance: tuple[MaskProvenanceEntry, ...],
     verification: Mapping[str, object],
 ) -> dict[str, Path]:
     artifacts = {
@@ -118,6 +121,7 @@ def _write_artifacts(
         "ground_truth_volume_npy": output_dir / "ground_truth_volume.npy",
         "input_summary_json": output_dir / "input_summary.json",
         "mask_summary_json": output_dir / "mask_summary.json",
+        "mask_provenance_json": output_dir / "mask_provenance.json",
         "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
         "pose_params_csv": output_dir / "pose_params.csv",
         "plots_summary_json": output_dir / "plots" / "summary.json",
@@ -215,6 +219,7 @@ def _write_artifacts(
             "projection_valid_mask": _mask_summary_payload(projection_valid_mask),
         },
     )
+    _write_json(artifacts["mask_provenance_json"], mask_provenance_payload(mask_provenance))
     _write_array(artifacts["observed_projections_npy"], observed)
     _write_mask_array(artifacts["projection_mask_npy"], mask)
     _write_json(artifacts["recovery_tolerances_json"], _recovery_tolerances_payload())
@@ -817,6 +822,7 @@ def _artifact_description(name: str) -> str:
         "ground_truth_volume_npy": "Ground-truth synthetic smoke volume",
         "input_summary_json": "Synthetic input shape and dtype summary",
         "mask_summary_json": "Projection mask coverage summary",
+        "mask_provenance_json": "Mask consumer provenance for reconstruction and alignment",
         "observability_report_json": "Schur observability and weak-DOF report",
         "observed_projections_npy": "Observed synthetic smoke projections",
         "plots_summary_json": "Plot-ready convergence summary",
