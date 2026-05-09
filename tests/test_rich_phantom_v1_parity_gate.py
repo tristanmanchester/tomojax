@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import sys
 from typing import cast
 
 import jax.numpy as jnp
@@ -20,6 +21,21 @@ def _load_gate_module():
     if spec is None or spec.loader is None:
         raise AssertionError("could not load rich phantom parity gate module")
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_variable_projection_module():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "tools"
+        / "run_detu_variable_projection_diagnostic.py"
+    )
+    spec = importlib.util.spec_from_file_location("run_detu_variable_projection_diagnostic", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load variable projection diagnostic module")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -117,3 +133,20 @@ def test_multires_summary_collates_carried_detu_curves(tmp_path: Path) -> None:
     )
     assert "multires_carried_f4_final_volume" in csv_rows
     assert (tmp_path / "multires_carried_detu_summary.md").exists()
+
+
+def test_variable_projection_candidate_grid_covers_markers() -> None:
+    diagnostic = _load_variable_projection_module()
+
+    values = diagnostic._candidate_det_u_values(
+        true_det_u=7.25,
+        initial_det_u=0.0,
+        final_det_u=5.75,
+        radius=1.0,
+        step=0.5,
+    )
+
+    assert 7.25 in values
+    assert 0.0 in values
+    assert 5.75 in values
+    assert list(values) == sorted(values)

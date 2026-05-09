@@ -11,20 +11,23 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Goal file: `docs/agent_goal_differentiable_stopped_detu_diagnosis.md`
-- Phase: Phase 8/9 differentiable stopped det_u diagnosis
-- Goal: diagnose the stopped-volume det_u failure through the differentiable
-  optimization path, starting with explicit mask provenance before scalar
-  landscapes or reduced-objective changes.
+- Goal file: thread objective, 2026-05-09 variable-projection/gauge diagnosis
+- Phase: Phase 8/9 stopped det_u variable-projection diagnosis
+- Goal: explain why the true-volume fixed objective preserves the correct det_u
+  minimum while stopped/reconstructed-volume and reduced objectives move,
+  flatten, or absorb it.
 
 ### Scope
 
 - In scope:
-  - Record multires-carried fixed-volume `det_u` landscapes in the rich
-    PHANTOM94 multires diagnostic driver.
-  - Collate each level's final stopped/carried volume curve into a root-level
-    CSV/JSON/Markdown artifact with factor/shape/run provenance.
-  - Keep this as benchmark diagnostic evidence, not production centre search.
+  - Run one focused rich PHANTOM94 supported-only det_u case at `64^3` first.
+  - Compare true-volume fixed, wrong-geometry reconstructed fixed, final stopped
+    fixed, honest reduced, and constrained reduced objective families on the
+    same dataset, masks, loss, and geometry convention.
+  - Ensure reduced-objective candidates reconstruct from a neutral initializer
+    independently, with no candidate-to-candidate volume carry.
+  - Record per-family curves, summaries, mask provenance, reconstruction config,
+    markers, Schur sign comparison, and volume NMSE where applicable.
   - Keep the diagnostic read-only: no solver acceptance or policy changes.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
@@ -37,7 +40,7 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
 - `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
-- `docs/agent_goal_differentiable_stopped_detu_diagnosis.md`
+- Thread objective: stopped det_u variable-projection/gauge diagnosis
 - `docs/implementation_log.md`
 
 ### Tasks
@@ -116,10 +119,38 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Update `docs/implementation_log.md` with the benchmark evidence.
 - [x] Add `schur_scalar_diagnostics.csv` companion artifact and backfill it for
       the diagnostic benchmark run directories.
+- [x] Add a focused variable-projection det_u diagnostic runner for one existing
+      rich PHANTOM94 supported-only run.
+- [x] Add focused helper coverage/static validation.
+- [x] Run the diagnostic on the `64^3` stopped multires case and record
+      objective-family artifacts.
+- [x] Write a concise benchmark-run Markdown report and update
+      `docs/implementation_log.md`.
+- [x] Commit the coherent diagnostic slice.
 
 ### Validation
 
 Current slice:
+
+- `LD_LIBRARY_PATH=$(find .venv/lib/python3.12/site-packages/nvidia -path
+  '*/lib' -type d | paste -sd: -) env UV_CACHE_DIR=.uv-cache
+  JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python
+  tools/run_detu_variable_projection_diagnostic.py --run-dir
+  runs/rich_phantom_v1_parity_20260509_detu_diagnostics/stopped_otsu_l2_multires_f2_64_128v
+  --out-dir runs/detu_variable_projection_20260509_64 --profile lightning
+  --candidate-radius 1 --candidate-step 1 --fista-iterations 2` completed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_rich_phantom_v1_parity_gate.py::test_variable_projection_candidate_grid_covers_markers
+  -q` passed: 1 test in 0.74 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_detu_variable_projection_diagnostic.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_detu_variable_projection_diagnostic.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `LD_LIBRARY_PATH=$(find .venv/lib/python3.12/site-packages/nvidia -path
   '*/lib' -type d | paste -sd: -) env UV_CACHE_DIR=.uv-cache

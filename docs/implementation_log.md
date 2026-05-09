@@ -3,6 +3,76 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 - Variable-projection det-u diagnostic at 64^3
+
+### Scope
+
+Added a focused read-only diagnostic for one existing rich PHANTOM94
+supported-only stopped run. The diagnostic compares fixed-volume and
+neutral-initializer reduced objectives over the same det_u candidate grid, loss,
+masks, and geometry convention. It records per-family curves, summaries, mask
+provenance, reconstruction config, Schur sign comparison, and volume NMSE where
+applicable.
+
+Artifacts:
+
+- `runs/detu_variable_projection_20260509_64/objective_summary.json`
+- `runs/detu_variable_projection_20260509_64/summary.md`
+- `docs/benchmark_runs/2026-05-09-variable-projection-detu-64.md`
+
+### Diagnosis
+
+The diagnostic decision was
+`constraint_restores_geometry_information:reduced_known_phantom_support`.
+
+| Objective family | Argmin det_u px | Error from truth px | Interpretation |
+|---|---:|---:|---|
+| true_volume_fixed_objective | 7.250000 | 0.000000 | `geometry_information_present` |
+| wrong_geometry_recon_fixed_objective | 9.464933 | 2.214933 | `geometry_information_flat_or_ambiguous` |
+| final_stopped_volume_fixed_objective | 5.574625 | -1.675375 | `geometry_information_moved_or_absorbed` |
+| honest_reduced_objective | 6.250000 | -1.000000 | `geometry_information_moved_or_absorbed` |
+| reduced_nonnegative_only | 6.250000 | -1.000000 | `geometry_information_moved_or_absorbed` |
+| reduced_support_only | 6.250000 | -1.000000 | `geometry_information_moved_or_absorbed` |
+| reduced_support_nonnegative | 6.250000 | -1.000000 | `geometry_information_moved_or_absorbed` |
+| reduced_support_tv | 6.250000 | -1.000000 | `geometry_information_moved_or_absorbed` |
+| reduced_support_tv_center | 6.250000 | -1.000000 | `geometry_information_moved_or_absorbed` |
+| reduced_known_phantom_support | 7.250000 | 0.000000 | `geometry_information_present` |
+
+This rules out "just more preview iterations" as the only diagnosis for the
+64^3 stopped det_u failure: the true-volume fixed objective still has the right
+minimum, while stopped and unconstrained/reasonably constrained reduced
+objectives move the minimum away from truth. Only true phantom support restores
+the correct det_u in this diagnostic, so the functional blocker is
+reconstruction/volume gauge constraint rather than report semantics or scalar
+geometry convention.
+
+The 256^3 VRAM target remains a real requirement. This slice did not add new
+memory materialisation; it used the existing chunked reference FISTA and
+preallocation-disabled CUDA path. The remaining memory work should continue to
+look for accidental all-view/all-parameter/all-sample materialisation rather
+than shrinking benchmark size.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_rich_phantom_v1_parity_gate.py::test_variable_projection_candidate_grid_covers_markers
+  -q` passed: 1 test in 0.69 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_detu_variable_projection_diagnostic.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_detu_variable_projection_diagnostic.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `LD_LIBRARY_PATH=$(find .venv/lib/python3.12/site-packages/nvidia -path
+  '*/lib' -type d | paste -sd: -) env UV_CACHE_DIR=.uv-cache
+  JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python
+  tools/run_detu_variable_projection_diagnostic.py --run-dir
+  runs/rich_phantom_v1_parity_20260509_detu_diagnostics/stopped_otsu_l2_multires_f2_64_128v
+  --out-dir runs/detu_variable_projection_20260509_64 --profile lightning
+  --candidate-radius 1 --candidate-step 1 --fista-iterations 2` completed.
+
 ## 2026-05-09 — Stopped det_u Diagnostic Benchmark Classification
 
 ### Summary
