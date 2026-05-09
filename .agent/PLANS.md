@@ -65,6 +65,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add focused artifact coverage.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the first landscape slice.
+- [x] Run a `128^3`/128-view rich PHANTOM94 fixed-truth CUDA landscape gate and
+      commit a concise benchmark summary.
 - [ ] Next slice after commit: add missing landscape volume sources and run the
       realistic rich PHANTOM94 det_u landscape gate.
 

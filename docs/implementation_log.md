@@ -213,6 +213,58 @@ gate.
   0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+### CUDA rich PHANTOM94 fixed-truth landscape run
+
+After committing the artifact writer, ran the smallest realistic GPU landscape
+gate:
+
+```text
+LD_LIBRARY_PATH=.venv/lib/python3.12/site-packages/nvidia/*/lib paths \
+JAX_PLATFORMS=cuda \
+XLA_PYTHON_CLIENT_PREALLOCATE=false \
+env UV_CACHE_DIR=.uv-cache \
+uv run python tools/run_rich_phantom_v1_parity_gate.py \
+  --out-dir runs/detu_landscape_rich_phantom_20260509 \
+  --views 128 \
+  --profile lightning \
+  --mode fixed_truth
+```
+
+Artifacts are ignored under
+`runs/detu_landscape_rich_phantom_20260509/fixed_truth_otsu_l2_lightning_128v/`.
+The concise committed summary is
+`docs/benchmark_runs/2026-05-09-detu-landscape-rich-phantom-fixed-truth.md`.
+
+Result:
+
+- JAX device check before run: `CudaDevice(id=0)`.
+- Runtime: `235.99 s`.
+- Status: failed.
+- Geometry source: `fixed_synthetic_truth`.
+- det_u RMSE: `5.842426 px`.
+- Volume NMSE: `0.672174`.
+- Schur accepted: `true`.
+
+Curve argmins:
+
+| Volume source | Argmin det_u px | Interpretation |
+|---|---:|---|
+| true_volume | 14.1875 | Correct basin near true synthetic offset. |
+| final_stopped_volume | 8.40625 | Biased toward absorbed/final geometry. |
+| true_geometry_reconstructed_volume | 13.03125 | Nearly flat/high-loss at lightning budget. |
+| zero_initial_volume | -2.0 | Flat/no geometry information. |
+
+Interpretation:
+
+- The true-volume curve confirms the detector-u convention and fixed-volume
+  objective have the right basin.
+- The stopped/final volume curve remains biased, consistent with volume gauge
+  absorption.
+- The fixed-truth run itself still failed under the short lightning budget even
+  though the true-volume curve is correct. Next diagnostics should compare
+  Schur scalar `JTr/JTJ` against the recorded scalar landscape before changing
+  the algorithm.
+
 ## 2026-05-09 - Reference FISTA scalar-gradient contract artifacts
 
 ### Scope
