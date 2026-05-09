@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -42,6 +43,34 @@ def _heuristic_projection_lipschitz(
     projection_l = 1.2 * float(n_views) * max(max_extent / min_voxel, 1.0)
     regulariser_l = float(lambda_tv) * 12.0 / max(float(huber_delta), 1e-6)
     return max(projection_l + regulariser_l, 1e-6)
+
+
+def _resolve_auto_views_per_batch(
+    *,
+    requested: int | None,
+    n_views: int,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    gather_dtype: str,
+    checkpoint_projector: bool,
+    algo: str = "fista",
+) -> int:
+    requested_i = 0 if requested is None else int(requested)
+    if requested_i > 0:
+        return max(1, min(int(requested_i), int(n_views)))
+    estimate = estimate_views_per_batch_info(
+        n_views=int(n_views),
+        grid_nxyz=(int(grid.nx), int(grid.ny), int(grid.nz)),
+        det_nuv=(int(detector.nv), int(detector.nu)),
+        gather_dtype=str(gather_dtype),
+        projection_dtype="fp32",
+        volume_dtype=str(volume.dtype),
+        checkpoint_projector=bool(checkpoint_projector),
+        algo=algo,
+        fallback_batch=1,
+    )
+    return max(1, min(int(estimate.views_per_batch), int(n_views)))
 
 
 def _resolve_reconstruction_projector_backend(
@@ -278,7 +307,16 @@ def _run_reconstruction_step(
             checkpoint_projector=bool(cfg.checkpoint_projector),
             projector_unroll=int(cfg.projector_unroll),
             gather_dtype=str(cfg.gather_dtype),
-            views_per_batch=int(cfg.views_per_batch),
+            views_per_batch=_resolve_auto_views_per_batch(
+                requested=int(cfg.views_per_batch),
+                n_views=n_views,
+                grid=grid,
+                detector=detector,
+                volume=x,
+                gather_dtype=str(cfg.gather_dtype),
+                checkpoint_projector=bool(cfg.checkpoint_projector),
+                algo="fista",
+            ),
             forward_projector=actual_backend,
             backprojector=actual_backend,
             compute_iteration_loss=bool(quality_policy.compute_iteration_loss),
@@ -315,7 +353,16 @@ def _run_reconstruction_step(
         }
         return x_core, info
 
-    vpb0 = cfg.views_per_batch if cfg.views_per_batch > 0 else None
+    vpb0 = _resolve_auto_views_per_batch(
+        requested=int(cfg.views_per_batch),
+        n_views=int(projections.shape[0]),
+        grid=grid,
+        detector=detector,
+        volume=x,
+        gather_dtype=str(cfg.gather_dtype),
+        checkpoint_projector=bool(cfg.checkpoint_projector),
+        algo="fista",
+    )
     recon_retry = False
     recon_start = time.perf_counter()
     if recon_algo == "fista":

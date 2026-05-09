@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
+from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import (
     CoreProjectionGeometry,
@@ -212,7 +213,7 @@ def _projection_loss_and_explicit_gradient_chunked(
     n_views = int(obs.shape[0])
     if n_views == 0:
         return jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume)
-    b = _chunk_size(n_views, config.views_per_batch)
+    b = _resolve_view_chunk_size(volume, obs, core=core, config=config)
     num_chunks = (n_views + b - 1) // b
     normalizer = jnp.asarray(obs.size, dtype=jnp.float32)
 
@@ -353,6 +354,31 @@ def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
         else int(n_views)
     )
     return max(1, min(int(b), int(n_views)))
+
+
+def _resolve_view_chunk_size(
+    volume: jax.Array,
+    observed: jax.Array,
+    *,
+    core: CoreProjectionGeometry,
+    config: ReferenceFISTAConfig,
+) -> int:
+    n_views = int(observed.shape[0])
+    requested = int(config.views_per_batch)
+    if requested > 0:
+        return _chunk_size(n_views, requested)
+    estimate = estimate_views_per_batch_info(
+        n_views=n_views,
+        grid_nxyz=(int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2])),
+        det_nuv=(int(core.detector.nv), int(core.detector.nu)),
+        gather_dtype=str(core.gather_dtype),
+        projection_dtype="fp32",
+        volume_dtype=str(volume.dtype),
+        checkpoint_projector=bool(core.checkpoint_projector),
+        algo="fista",
+        fallback_batch=1,
+    )
+    return _chunk_size(n_views, estimate.views_per_batch)
 
 
 def _chunk_schedule(

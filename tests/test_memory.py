@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false, reportUnknownMemberType=false
+# pyright: reportUnknownArgumentType=false, reportAny=false
+
 import sys
 from types import SimpleNamespace
 
+import jax.numpy as jnp
+
+# check-public-imports: allow-private
+from tomojax.align._reconstruction_stage import _resolve_auto_views_per_batch
+
 # check-public-imports: allow-private
 import tomojax.backends._memory as memory_utils
+from tomojax.core.geometry import Detector, Grid
 
 
 def test_memory_helpers_cover_batch_estimation_and_backend_defaults(monkeypatch):
@@ -52,6 +61,34 @@ def test_safety_fraction_reduces_batch_estimate(monkeypatch):
 
     assert full_budget > 1
     assert 1 <= half_budget < full_budget
+
+
+def test_alignment_reconstruction_auto_batch_uses_memory_estimator(monkeypatch):
+    calls = []
+
+    def fake_estimate_views_per_batch_info(**kwargs):
+        calls.append(dict(kwargs))
+        return SimpleNamespace(views_per_batch=2)
+
+    monkeypatch.setattr(
+        "tomojax.align._reconstruction_stage.estimate_views_per_batch_info",
+        fake_estimate_views_per_batch_info,
+    )
+
+    resolved = _resolve_auto_views_per_batch(
+        requested=0,
+        n_views=128,
+        grid=Grid(256, 256, 256, 1.0, 1.0, 1.0),
+        detector=Detector(256, 256, 1.0, 1.0),
+        volume=jnp.zeros((256, 256, 256), dtype=jnp.float32),
+        gather_dtype="bf16",
+        checkpoint_projector=True,
+    )
+
+    assert resolved == 2
+    assert calls[0]["grid_nxyz"] == (256, 256, 256)
+    assert calls[0]["det_nuv"] == (256, 256)
+    assert calls[0]["fallback_batch"] == 1
 
 
 def test_host_available_memory_bytes_uses_sysconf(monkeypatch):

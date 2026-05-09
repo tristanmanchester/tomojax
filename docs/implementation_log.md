@@ -3,6 +3,49 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — 256^3 Preview Auto-Batching Memory Regression
+
+### Summary
+
+- Treated the inability to target historical `256^3` low-GB VRAM alignment as
+  a v2 memory-regression issue rather than a reason to shrink benchmarks.
+- Found that the alignment preview reconstruction paths still allowed
+  `views_per_batch=0` to resolve to "all views" in FISTA-style projector/
+  adjoint loops. That can recreate all-view materialisation at realistic scale
+  even after earlier Schur finite-difference and JAX preallocation fixes.
+- Updated reference FISTA preview reconstruction and the align reconstruction
+  stage to resolve automatic batching through the existing backend memory
+  estimator. Explicit positive `views_per_batch` values are still respected;
+  automatic mode now chooses bounded chunks with a conservative fallback of one
+  view when free memory cannot be queried.
+- A CUDA probe with `XLA_PYTHON_CLIENT_PREALLOCATE=false` selected `cuda:0` and
+  resolved a `256^3`/128-view FISTA preview to `views_per_batch=2`, confirming
+  that auto mode no longer means materialise all 128 views for the 256-scale
+  target.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_fista_auto_batch_uses_memory_estimator
+  tests/test_memory.py::test_alignment_reconstruction_auto_batch_uses_memory_estimator
+  -q` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_reconstruction_stage.py tests/test_reference_fista.py
+  tests/test_memory.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_fista_reference.py tests/test_reference_fista.py`
+  passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tests/test_memory.py` passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- Full basedpyright on `src/tomojax/align/_reconstruction_stage.py` was not a
+  clean focused gate because the file still has broad pre-existing unknown-type
+  noise from the `cfg: object` reconstruction plumbing. The behavior added in
+  this slice is covered by focused tests and import-contract validation.
+
 ## 2026-05-08 — Rich PHANTOM94 v1-Parity Gate and JAX Allocator Diagnosis
 
 ### Summary

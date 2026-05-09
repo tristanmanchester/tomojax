@@ -20,21 +20,20 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Add fixed-volume scalar `det_u` landscape artifacts to the alternating run.
-  - Evaluate the same projection objective for true and stopped/final volumes
-    without using the scalar argmin as production calibration.
-  - Emit `detu_loss_curves.csv`, `detu_loss_curves.png`,
-    `detu_gradient_curves.png`, `detu_curve_summary.json`, and
-    `detu_curve_inputs.json`.
-  - Record unavailable future sources explicitly so later slices can add
-    preview-iteration, refreshed, multires-carried, and true-geometry
-    reconstructed volume curves.
+  - Treat inability to align `256^3` around the historical low-GB VRAM envelope
+    as a v2 memory-regression bug.
+  - Stop alignment preview reconstruction from resolving automatic batching to
+    all views on large GPU cases.
+  - Reuse the existing backend memory estimator so `views_per_batch=0` means
+    bounded automatic chunking for FISTA previews instead of full-stack
+    materialisation.
+  - Add focused coverage for the auto-batch resolution contract.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
     work.
-  - Treating a green benchmark JSON as success without the required diagnostic
-    artifacts.
+  - Artifact/report polishing or interpreting a smaller benchmark as sufficient
+    evidence for the `256^3` memory target.
 - Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.recon`.
 
 ### Design Sources
@@ -67,12 +66,40 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Update `docs/implementation_log.md` and commit the first landscape slice.
 - [x] Run a `128^3`/128-view rich PHANTOM94 fixed-truth CUDA landscape gate and
       commit a concise benchmark summary.
-- [ ] Next slice after commit: add missing landscape volume sources and run the
-      realistic rich PHANTOM94 det_u landscape gate.
+- [x] Resolve automatic preview view batching through the memory estimator.
+- [x] Add focused tests proving auto batching does not mean all views for
+      256^3-style FISTA previews.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the memory-regression
+      slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_fista_auto_batch_uses_memory_estimator
+  tests/test_memory.py::test_alignment_reconstruction_auto_batch_uses_memory_estimator
+  -q` passed: 2 tests in 1.97 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_reconstruction_stage.py tests/test_reference_fista.py
+  tests/test_memory.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_fista_reference.py tests/test_reference_fista.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tests/test_memory.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- CUDA probe with `JAX_PLATFORMS=cuda` and
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` selected `[CudaDevice(id=0)]` and
+  resolved `256^3`/128-view auto FISTA preview batching to
+  `views_per_batch=2`.
+- Full basedpyright on `src/tomojax/align/_reconstruction_stage.py` remains
+  blocked by pre-existing unknown-type noise around `cfg: object`; this slice's
+  helper behavior is covered by focused tests.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_forward_reference.py::test_residual_loss_l2_mode_uses_plain_squared_residual

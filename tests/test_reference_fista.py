@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pyright: reportAny=false, reportPrivateUsage=false, reportUnknownMemberType=false
 import csv
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
@@ -25,7 +26,11 @@ from tomojax.recon import (
 )
 
 # check-public-imports: allow-private
-from tomojax.recon._fista_reference import _center_l2, _loss_and_explicit_gradient
+from tomojax.recon._fista_reference import (
+    _center_l2,
+    _loss_and_explicit_gradient,
+    _resolve_view_chunk_size,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,6 +141,37 @@ def test_reference_fista_center_l2_uses_core_x_y_axes() -> None:
 
     assert float(_center_l2(axis0_offset)) > 0.0
     assert float(_center_l2(axis2_offset)) == 0.0
+
+
+def test_reference_fista_auto_batch_uses_memory_estimator(monkeypatch: pytest.MonkeyPatch) -> None:
+    geometry = GeometryState.zeros(128)
+    observed = jnp.zeros((128, 256, 256), dtype=jnp.float32)
+    volume = jnp.zeros((256, 256, 256), dtype=jnp.float32)
+    volume_shape = (int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2]))
+    core = core_projection_geometry_from_state(volume_shape, geometry, detector_shape=(256, 256))
+    calls: list[dict[str, object]] = []
+
+    def fake_estimate_views_per_batch_info(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        return SimpleNamespace(views_per_batch=2)
+
+    monkeypatch.setattr(
+        "tomojax.recon._fista_reference.estimate_views_per_batch_info",
+        fake_estimate_views_per_batch_info,
+    )
+
+    resolved = _resolve_view_chunk_size(
+        volume,
+        observed,
+        core=core,
+        config=ReferenceFISTAConfig(views_per_batch=0),
+    )
+
+    assert resolved == 2
+    assert calls[0]["n_views"] == 128
+    assert calls[0]["grid_nxyz"] == (256, 256, 256)
+    assert calls[0]["det_nuv"] == (256, 256)
+    assert calls[0]["fallback_batch"] == 1
 
 
 def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
