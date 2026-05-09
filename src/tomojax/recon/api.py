@@ -6,6 +6,7 @@ from tomojax.recon import (
     FBPConfig,
     FistaConfig,
     ReferenceFISTAConfig,
+    ReferenceFISTADiagnosticArtifacts,
     ReferenceFISTAResult,
     ReferenceFISTASchedule,
     ReferenceFISTAScheduleEntry,
@@ -18,9 +19,11 @@ from tomojax.recon import (
     fbp,
     fista_reconstruct_reference,
     fista_tv,
+    reference_fista_diagnostic_artifacts,
     reference_fista_schedule,
     spdhg_tv,
     write_fista_trace_csv,
+    write_fista_trace_recomputed_csv,
 )
 from tomojax.recon._reference import (
     reconstruct_average_reference,
@@ -31,6 +34,7 @@ __all__ = [
     "FBPConfig",
     "FistaConfig",
     "ReferenceFISTAConfig",
+    "ReferenceFISTADiagnosticArtifacts",
     "ReferenceFISTAResult",
     "ReferenceFISTASchedule",
     "ReferenceFISTAScheduleEntry",
@@ -45,7 +49,9 @@ __all__ = [
     "fista_tv",
     "reconstruct_average_reference",
     "reconstruct_backprojection_reference",
+    "reference_fista_diagnostic_artifacts",
     "reference_fista_schedule",
     "spdhg_tv",
     "write_fista_trace_csv",
+    "write_fista_trace_recomputed_csv",
 ]

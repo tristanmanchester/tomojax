@@ -161,6 +161,63 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
   <changed Python files>` passed with 0 errors, 0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
+## 2026-05-09 - Reference FISTA scalar-gradient contract artifacts
+
+### Scope
+
+Implemented the second ordered diagnostic slice from
+`docs/agent_goal_differentiable_stopped_detu_diagnosis.md`: lock the reference
+FISTA scalar/gradient contract with deterministic checks and emit run artifacts.
+
+Changes:
+
+- Added public `tomojax.recon.reference_fista_diagnostic_artifacts()` returning
+  typed JSON/CSV-ready diagnostics for the reference FISTA path.
+- Added `fista_gradient_checks.json` with finite-difference checks covering raw
+  valid masks, detector-boundary masks, lowpass filtering, DoG filtering, TV,
+  centre regularisation, and support projection.
+- Added `adjoint_checks.json` comparing `<A x, r>` against
+  `<x, A^T r>` for the core projector/backprojector path.
+- Added `geometry_jvp_vjp_checks.json` comparing detector-u JVPs to finite
+  differences and checking the VJP/scalar derivative identity.
+- Added `loss_normalisation_report.json`. The current reference FISTA contract
+  is recorded as `full_projection_array_size`; valid-residual normalisation is
+  reported but not enabled in this slice.
+- Added `fista_trace_recomputed.csv`, explicitly labelling existing trace losses
+  as momentum-point losses and recomputing the scalar at the returned final
+  volume.
+- Wired all five artifacts into alternating smoke artifact bundles and updated
+  `tomojax.recon` public exports plus README.
+
+### Diagnosis
+
+The new diagnostics make the current reconstruction objective contract explicit
+without changing the alignment algorithm. The important recorded deviation from
+the v2 spec is loss normalisation: masked reference FISTA still divides by the
+full projection array size after masking, not by the number of valid residuals.
+The artifact reports both values so later scalar landscape and reduced-objective
+diagnostics can distinguish objective bias from a normalisation transition.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_fista_diagnostics_lock_scalar_gradient_contract
+  -q` passed: 1 test in 11.92 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 78.61 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/recon/_fista_diagnostics.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py src/tomojax/align/_alternating_artifacts.py
+  tests/test_reference_fista.py tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_fista_diagnostics.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py src/tomojax/align/_alternating_artifacts.py
+  tests/test_reference_fista.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 - Broader whole-align Ruff/basedpyright sweeps were attempted and still fail on
   unrelated legacy align/model/objective files, so they were not used as the
   validation gate for this focused slice.

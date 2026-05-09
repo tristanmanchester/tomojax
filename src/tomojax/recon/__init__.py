@@ -7,6 +7,11 @@ from types import ModuleType
 from typing import Any
 
 from . import fbp as _fbp_module, fista_tv as _fista_tv_module, spdhg_tv as _spdhg_tv_module
+from ._fista_diagnostics import (
+    ReferenceFISTADiagnosticArtifacts,
+    reference_fista_diagnostic_artifacts,
+    write_fista_trace_recomputed_csv,
+)
 from ._fista_reference import (
     ReferenceFISTAConfig,
     ReferenceFISTAResult,
@@ -48,6 +53,7 @@ __all__ = [
     "FBPConfig",
     "FistaConfig",
     "ReferenceFISTAConfig",
+    "ReferenceFISTADiagnosticArtifacts",
     "ReferenceFISTAResult",
     "ReferenceFISTASchedule",
     "ReferenceFISTAScheduleEntry",
@@ -62,7 +68,9 @@ __all__ = [
     "fista_tv",
     "reconstruct_average_reference",
     "reconstruct_backprojection_reference",
+    "reference_fista_diagnostic_artifacts",
     "reference_fista_schedule",
     "spdhg_tv",
     "write_fista_trace_csv",
+    "write_fista_trace_recomputed_csv",
 ]

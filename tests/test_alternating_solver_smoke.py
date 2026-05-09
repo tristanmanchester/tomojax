@@ -57,6 +57,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_gauge_reports(result)
     _assert_audit_reports(result)
     _assert_mask_provenance(result)
+    _assert_fista_diagnostic_artifacts(result)
     _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
@@ -185,13 +186,17 @@ def _assert_level_exit_contract(result: AlternatingSmokeResult) -> None:
 def _expected_artifacts() -> set[str]:
     return {
         "alignment_summary_csv",
+        "adjoint_checks_json",
         "artifact_index_json",
         "backend_report_json",
         "config_resolved_toml",
         "failure_report_json",
+        "fista_gradient_checks_json",
         "final_volume_npy",
         "fista_trace_csv",
+        "fista_trace_recomputed_csv",
         "geometry_corrupted_json",
+        "geometry_jvp_vjp_checks_json",
         "gauge_policy_json",
         "gauge_report_json",
         "geometry_final_json",
@@ -200,6 +205,7 @@ def _expected_artifacts() -> set[str]:
         "geometry_true_json",
         "ground_truth_volume_npy",
         "input_summary_json",
+        "loss_normalisation_report_json",
         "mask_summary_json",
         "mask_provenance_json",
         "observability_report_json",
@@ -264,6 +270,40 @@ def _assert_mask_provenance(result: AlternatingSmokeResult) -> None:
     ]
     assert alignment_entries
     assert any(str(entry["mask_role"]).startswith("alignment") for entry in alignment_entries)
+
+
+def _assert_fista_diagnostic_artifacts(result: AlternatingSmokeResult) -> None:
+    gradient = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["fista_gradient_checks_json"].read_text(encoding="utf-8")),
+    )
+    assert gradient["schema"] == "tomojax.fista_gradient_checks.v1"
+    assert gradient["status"] == "passed"
+    adjoint = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["adjoint_checks_json"].read_text(encoding="utf-8")),
+    )
+    assert adjoint["status"] == "passed"
+    jvp_vjp = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["geometry_jvp_vjp_checks_json"].read_text(encoding="utf-8")),
+    )
+    assert jvp_vjp["status"] == "passed"
+    normalisation = cast(
+        "dict[str, object]",
+        json.loads(
+            result.artifacts["loss_normalisation_report_json"].read_text(encoding="utf-8")
+        ),
+    )
+    assert normalisation["current_contract"] == "full_projection_array_size"
+    with result.artifacts["fista_trace_recomputed_csv"].open(
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows
+    assert {row["recomputed_loss_point"] for row in rows} == {"returned_final_volume"}
 
 
 def _assert_summary_rows(result: AlternatingSmokeResult) -> None:

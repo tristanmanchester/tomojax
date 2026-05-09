@@ -20,14 +20,16 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Prove every FISTA reconstruction path uses `projection_valid_mask`.
-  - Keep Schur/eval paths explicitly labelled with alignment/eval masks.
-  - Emit `mask_provenance.json` for reconstruction, Schur, and evaluation mask
-    consumers.
-  - Add focused coverage that the canonical stopped det_u gate records bootstrap
-    FISTA separately and does not feed Otsu/train masks into reconstruction.
-  - Continue next to FISTA scalar/gradient contract checks only after this
-    provenance slice is committed.
+  - Add deterministic reconstruction scalar/gradient diagnostics for the
+    reference FISTA path.
+  - Cover projector/backprojector adjoint, detector-centre JVP/VJP,
+    explicit-gradient finite differences, boundary masks, residual filters,
+    support, TV, centre regularisation, and loss normalisation.
+  - Emit `fista_gradient_checks.json`, `adjoint_checks.json`,
+    `geometry_jvp_vjp_checks.json`, `loss_normalisation_report.json`, and
+    `fista_trace_recomputed.csv` from the alternating artifact path.
+  - Keep the diagnostics small and CPU-focused; do not change the alignment
+    algorithm.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
@@ -52,7 +54,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add focused coverage for the production det_u gate provenance contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the mask-provenance slice.
-- [ ] Next slice after commit: reconstruction scalar/gradient contract checks.
+- [x] Add public recon diagnostic payloads for scalar/gradient contract checks.
+- [x] Wire the diagnostic payloads into alternating run artifacts.
+- [x] Add focused tests for the diagnostic payloads and artifact presence.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the scalar/gradient
+      contract slice.
+- [ ] Next slice after commit: fixed-volume scalar det_u landscapes.
 
 ### Validation
 

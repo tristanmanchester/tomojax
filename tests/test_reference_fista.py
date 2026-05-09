@@ -19,7 +19,9 @@ from tomojax.recon import (
     centered_volume_support,
     fista_reconstruct_reference,
     reconstruct_backprojection_reference,
+    reference_fista_diagnostic_artifacts,
     write_fista_trace_csv,
+    write_fista_trace_recomputed_csv,
 )
 
 # check-public-imports: allow-private
@@ -253,6 +255,48 @@ def test_reference_fista_explicit_gradient_matches_finite_difference(
         rtol=2.0e-2,
         atol=2.0e-3,
     )
+
+
+def test_reference_fista_diagnostics_lock_scalar_gradient_contract(tmp_path: Path) -> None:
+    diagnostics = reference_fista_diagnostic_artifacts()
+
+    assert diagnostics.fista_gradient_checks["schema"] == "tomojax.fista_gradient_checks.v1"
+    assert diagnostics.fista_gradient_checks["status"] == "passed"
+    gradient_cases = cast("list[dict[str, object]]", diagnostics.fista_gradient_checks["cases"])
+    assert {case["name"] for case in gradient_cases} == {
+        "raw_valid_mask",
+        "lowpass_boundary_mask",
+        "dog_tv_center",
+    }
+    assert all(case["passed"] is True for case in gradient_cases)
+    assert cast("dict[str, object]", diagnostics.fista_gradient_checks["support_check"])[
+        "passed"
+    ] is True
+
+    assert diagnostics.adjoint_checks["schema"] == "tomojax.adjoint_checks.v1"
+    assert diagnostics.adjoint_checks["status"] == "passed"
+    assert diagnostics.geometry_jvp_vjp_checks["schema"] == (
+        "tomojax.geometry_jvp_vjp_checks.v1"
+    )
+    assert diagnostics.geometry_jvp_vjp_checks["status"] == "passed"
+    assert diagnostics.loss_normalisation_report["schema"] == (
+        "tomojax.loss_normalisation_report.v1"
+    )
+    assert diagnostics.loss_normalisation_report["current_contract"] == (
+        "full_projection_array_size"
+    )
+    assert diagnostics.loss_normalisation_report[
+        "reference_matches_array_pixel_normalisation"
+    ] is True
+
+    trace_path = write_fista_trace_recomputed_csv(
+        diagnostics.fista_trace_recomputed_rows,
+        tmp_path / "fista_trace_recomputed.csv",
+    )
+    with trace_path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["trace_loss_point"] for row in rows] == ["momentum_point", "momentum_point"]
+    assert all(row["recomputed_loss_point"] == "returned_final_volume" for row in rows)
 
 
 def _tiny_volume() -> jnp.ndarray:

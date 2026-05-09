@@ -40,7 +40,12 @@ from tomojax.geometry import (
     write_pose_decomposition_csv,
     write_pose_params_csv,
 )
-from tomojax.recon import ReferenceFISTAResult, write_fista_trace_csv
+from tomojax.recon import (
+    ReferenceFISTAResult,
+    reference_fista_diagnostic_artifacts,
+    write_fista_trace_csv,
+    write_fista_trace_recomputed_csv,
+)
 from tomojax.verify import validate_run_artifacts
 
 if TYPE_CHECKING:
@@ -103,6 +108,7 @@ def _write_artifacts(
     artifacts = {
         "alignment_summary_csv": output_dir / "alignment_summary.csv",
         "artifact_index_json": output_dir / "artifact_index.json",
+        "adjoint_checks_json": output_dir / "adjoint_checks.json",
         "benchmark_report_md": output_dir / "benchmark_report.md",
         "backend_report_json": output_dir / "backend_report.json",
         "benchmark_result_json": output_dir / "benchmark_result.json",
@@ -110,7 +116,9 @@ def _write_artifacts(
         "config_resolved_toml": output_dir / "config_resolved.toml",
         "final_volume_npy": output_dir / "final_volume.npy",
         "failure_report_json": output_dir / "failure_report.json",
+        "fista_gradient_checks_json": output_dir / "fista_gradient_checks.json",
         "fista_trace_csv": output_dir / "fista_trace.csv",
+        "fista_trace_recomputed_csv": output_dir / "fista_trace_recomputed.csv",
         "geometry_corrupted_json": output_dir / "geometry_corrupted.json",
         "gauge_policy_json": output_dir / "gauge_policy.json",
         "gauge_report_json": output_dir / "gauge_report.json",
@@ -119,7 +127,9 @@ def _write_artifacts(
         "geometry_trace_csv": output_dir / "geometry_trace.csv",
         "geometry_true_json": output_dir / "geometry_true.json",
         "ground_truth_volume_npy": output_dir / "ground_truth_volume.npy",
+        "geometry_jvp_vjp_checks_json": output_dir / "geometry_jvp_vjp_checks.json",
         "input_summary_json": output_dir / "input_summary.json",
+        "loss_normalisation_report_json": output_dir / "loss_normalisation_report.json",
         "mask_summary_json": output_dir / "mask_summary.json",
         "mask_provenance_json": output_dir / "mask_provenance.json",
         "pose_decomposition_csv": output_dir / "pose_decomposition.csv",
@@ -231,6 +241,7 @@ def _write_artifacts(
         _observability_report_payload(schur_result),
     )
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
+    _write_fista_diagnostic_artifacts(artifacts)
     failure_report = _failure_report_payload(
         final_volume=final_volume,
         final_geometry=final_geometry,
@@ -325,6 +336,27 @@ def _write_artifacts(
     _write_json(artifacts["artifact_index_json"], _artifact_index_payload(output_dir, artifacts))
     _ = validate_run_artifacts(output_dir)
     return artifacts
+
+
+def _write_fista_diagnostic_artifacts(artifacts: Mapping[str, Path]) -> None:
+    fista_diagnostics = reference_fista_diagnostic_artifacts()
+    _write_json(
+        artifacts["fista_gradient_checks_json"],
+        fista_diagnostics.fista_gradient_checks,
+    )
+    _write_json(artifacts["adjoint_checks_json"], fista_diagnostics.adjoint_checks)
+    _write_json(
+        artifacts["geometry_jvp_vjp_checks_json"],
+        fista_diagnostics.geometry_jvp_vjp_checks,
+    )
+    _write_json(
+        artifacts["loss_normalisation_report_json"],
+        fista_diagnostics.loss_normalisation_report,
+    )
+    _ = write_fista_trace_recomputed_csv(
+        fista_diagnostics.fista_trace_recomputed_rows,
+        artifacts["fista_trace_recomputed_csv"],
+    )
 
 
 def _write_alignment_summary(
@@ -804,6 +836,7 @@ def _media_type(path: Path) -> str:
 def _artifact_description(name: str) -> str:
     descriptions = {
         "alignment_summary_csv": "Per-continuation-level alignment summary",
+        "adjoint_checks_json": "Reference projector/backprojector adjoint checks",
         "benchmark_report_md": "Synthetic benchmark markdown report",
         "backend_report_json": "Backend provenance for the smoke run",
         "benchmark_result_json": "Synthetic benchmark case result",
@@ -811,7 +844,9 @@ def _artifact_description(name: str) -> str:
         "config_resolved_toml": "Resolved deterministic smoke configuration",
         "final_volume_npy": "Final reconstructed 32^3 volume",
         "failure_report_json": "Failure status for the smoke run",
+        "fista_gradient_checks_json": "Reference FISTA scalar-gradient finite-difference checks",
         "fista_trace_csv": "Reference FISTA iteration trace",
+        "fista_trace_recomputed_csv": "Reference FISTA trace losses recomputed at returned volume",
         "gauge_policy_json": "Gauge canonicalisation policy",
         "gauge_report_json": "Gauge canonicalisation transfer report",
         "geometry_corrupted_json": "Corrupted synthetic input geometry state",
@@ -820,7 +855,9 @@ def _artifact_description(name: str) -> str:
         "geometry_trace_csv": "Per-level geometry update trace",
         "geometry_true_json": "True uncorrupted synthetic geometry state",
         "ground_truth_volume_npy": "Ground-truth synthetic smoke volume",
+        "geometry_jvp_vjp_checks_json": "Detector-centre geometry JVP/VJP checks",
         "input_summary_json": "Synthetic input shape and dtype summary",
+        "loss_normalisation_report_json": "Reference FISTA loss normalisation report",
         "mask_summary_json": "Projection mask coverage summary",
         "mask_provenance_json": "Mask consumer provenance for reconstruction and alignment",
         "observability_report_json": "Schur observability and weak-DOF report",
