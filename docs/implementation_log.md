@@ -3,6 +3,38 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — Expanded det_u Landscape Volume Sources
+
+### Summary
+
+- Expanded `detu_loss_curves.csv`/PNG/summary with additional diagnostic
+  fixed-volume sources:
+  `preview_iteration_1_volume`, `preview_budget_reconstructed_volume`,
+  `bootstrap_refreshed_volume`, and
+  `reduced_objective_refreshed_final_volume`.
+- These diagnostic reconstructions use `projection_valid_mask`; the fixed
+  det_u landscape scoring still uses the alignment loss mask.
+- Kept the change read-only. It does not alter Schur acceptance, FISTA preview
+  policy, geometry tolerances, or benchmark criteria.
+- `multires_carried_volumes` remains listed as unavailable in this single-run
+  artifact context because the current alternating artifact writer does not
+  carry actual per-resolution volumes. That still needs real multires artifact
+  plumbing if the goal requires every carried-volume curve in the same run.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 115.70 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_detu_landscape.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_detu_landscape.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-09 — Gauge-Transfer det_u Absorbability Diagnostic
 
 ### Summary

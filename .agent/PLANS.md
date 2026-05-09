@@ -20,13 +20,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Add the gauge-transfer/reduced-curvature diagnostic for det_u absorbability
-    by volume updates.
-  - Use finite-difference det_u projection tangents and a regularized
-    volume-update normal equation solved by CG.
-  - Report fixed curvature, transferred curvature, reduced curvature estimate,
-    transfer ratio, CG residual, regularisation, mask role, and filter
-    provenance.
+  - Expand fixed-volume `detu_loss_curves` with the missing diagnostic volume
+    families that can be produced inside the artifact writer.
+  - Add preview-iteration, bootstrap/initial-geometry refreshed, and
+    reduced-objective-style refreshed volume sources using the
+    `projection_valid_mask` for reconstruction and the alignment mask for
+    landscape scoring.
+  - Keep unavailable entries only for true multires-carried volumes when the
+    current single-run artifact context does not carry those volumes.
   - Keep the diagnostic read-only: no solver acceptance or policy changes.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
@@ -100,10 +101,29 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the gauge-transfer
       diagnostic slice.
+- [x] Add additional fixed-volume det_u landscape sources for preview/refreshed
+      diagnostic volumes.
+- [x] Add focused artifact/source coverage.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the landscape-source
+      diagnostic slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 115.70 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_detu_landscape.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_detu_landscape.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts

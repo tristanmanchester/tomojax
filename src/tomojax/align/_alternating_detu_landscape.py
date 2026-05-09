@@ -58,21 +58,34 @@ def write_detu_landscape_artifacts(
 ) -> None:
     """Write fixed-volume det_u loss/gradient landscape diagnostics."""
     det_u_values = _candidate_det_u_values(true_geometry, initial_geometry, final_geometry)
+    base_config = _reconstruction_config(level, sigma=sigma, loss_mode=loss_mode)
     true_geometry_reconstructed = fista_reconstruct_reference(
         observed,
         true_geometry,
         initial_volume=None,
         mask=projection_valid_mask,
-        config=ReferenceFISTAConfig(
-            iterations=max(1, min(int(level.reconstruction_iterations), 4)),
-            step_size=2.0e-3,
-            tv_weight=level.reconstruction_tv_weight,
-            residual_sigma=sigma,
-            residual_delta=level.residual_delta,
-            residual_loss_mode=loss_mode,
-            residual_filters=level.residual_filters,
-            non_negative=True,
-        ),
+        config=base_config,
+    ).volume
+    preview_iteration_volume = fista_reconstruct_reference(
+        observed,
+        final_geometry,
+        initial_volume=None,
+        mask=projection_valid_mask,
+        config=_reconstruction_config(level, sigma=sigma, loss_mode=loss_mode, iterations=1),
+    ).volume
+    preview_budget_volume = fista_reconstruct_reference(
+        observed,
+        final_geometry,
+        initial_volume=None,
+        mask=projection_valid_mask,
+        config=base_config,
+    ).volume
+    bootstrap_refreshed_volume = fista_reconstruct_reference(
+        observed,
+        initial_geometry,
+        initial_volume=None,
+        mask=projection_valid_mask,
+        config=base_config,
     ).volume
     sources = (
         _VolumeSource("true_volume", truth_volume, "alignment_loss_mask"),
@@ -80,6 +93,26 @@ def write_detu_landscape_artifacts(
         _VolumeSource(
             "true_geometry_reconstructed_volume",
             true_geometry_reconstructed,
+            "alignment_loss_mask",
+        ),
+        _VolumeSource(
+            "preview_iteration_1_volume",
+            preview_iteration_volume,
+            "alignment_loss_mask",
+        ),
+        _VolumeSource(
+            "preview_budget_reconstructed_volume",
+            preview_budget_volume,
+            "alignment_loss_mask",
+        ),
+        _VolumeSource(
+            "bootstrap_refreshed_volume",
+            bootstrap_refreshed_volume,
+            "alignment_loss_mask",
+        ),
+        _VolumeSource(
+            "reduced_objective_refreshed_final_volume",
+            preview_budget_volume,
             "alignment_loss_mask",
         ),
         _VolumeSource("final_stopped_volume", final_volume, "alignment_loss_mask"),
@@ -217,12 +250,7 @@ def _landscape_summary(
         "schema": "tomojax.detu_curve_summary.v1",
         "status": "recorded",
         "curves": curves,
-        "unavailable_volume_sources": [
-            "preview_iteration_volumes",
-            "bootstrap_refreshed_volume",
-            "multires_carried_volumes",
-            "reduced_objective_refreshed_volumes",
-        ],
+        "unavailable_volume_sources": ["multires_carried_volumes"],
     }
 
 
@@ -257,6 +285,27 @@ def _with_det_u(geometry: GeometryState, det_u_px: float) -> GeometryState:
         geometry.setup.det_u_px.with_value(float(det_u_px)),
     )
     return GeometryState(setup=setup, pose=geometry.pose, acquisition=geometry.acquisition)
+
+
+def _reconstruction_config(
+    level: ContinuationLevel,
+    *,
+    sigma: float,
+    loss_mode: str,
+    iterations: int | None = None,
+) -> ReferenceFISTAConfig:
+    return ReferenceFISTAConfig(
+        iterations=max(1, min(int(level.reconstruction_iterations), 4))
+        if iterations is None
+        else max(1, int(iterations)),
+        step_size=2.0e-3,
+        tv_weight=level.reconstruction_tv_weight,
+        residual_sigma=sigma,
+        residual_delta=level.residual_delta,
+        residual_loss_mode=loss_mode,
+        residual_filters=level.residual_filters,
+        non_negative=True,
+    )
 
 
 def _nearest_loss(rows: Sequence[dict[str, object]], det_u_px: float) -> float:

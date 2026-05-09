@@ -395,11 +395,16 @@ def _assert_detu_landscape_artifacts(result: AlternatingSmokeResult) -> None:
     assert summary["schema"] == "tomojax.detu_curve_summary.v1"
     curves = cast("list[dict[str, object]]", summary["curves"])
     assert {curve["volume_source"] for curve in curves} == {
+        "bootstrap_refreshed_volume",
         "final_stopped_volume",
+        "preview_budget_reconstructed_volume",
+        "preview_iteration_1_volume",
+        "reduced_objective_refreshed_final_volume",
         "true_volume",
         "true_geometry_reconstructed_volume",
         "zero_initial_volume",
     }
+    assert summary["unavailable_volume_sources"] == ["multires_carried_volumes"]
     inputs = cast(
         "dict[str, object]",
         json.loads(result.artifacts["detu_curve_inputs_json"].read_text(encoding="utf-8")),
@@ -413,7 +418,11 @@ def _assert_detu_landscape_artifacts(result: AlternatingSmokeResult) -> None:
         rows = list(csv.DictReader(handle))
     assert rows
     assert {row["volume_source"] for row in rows} == {
+        "bootstrap_refreshed_volume",
         "final_stopped_volume",
+        "preview_budget_reconstructed_volume",
+        "preview_iteration_1_volume",
+        "reduced_objective_refreshed_final_volume",
         "true_geometry_reconstructed_volume",
         "true_volume",
         "zero_initial_volume",
