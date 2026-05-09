@@ -20,6 +20,7 @@ from tomojax.align._alternating_detu_landscape import (
     write_detu_landscape_artifacts,
 )
 from tomojax.align._alternating_mask_provenance import mask_provenance_payload
+from tomojax.align._alternating_schur_scalar import write_schur_scalar_diagnostics
 from tomojax.align._alternating_verification import (
     _backend_report_payload,
     _failure_report_payload,
@@ -65,7 +66,7 @@ if TYPE_CHECKING:
     from tomojax.align._joint_schur_lm import JointSchurDiagnostics, JointSchurLMResult
 
 
-def _write_artifacts(
+def _write_artifacts(  # noqa: PLR0915
     output_dir: Path,
     *,
     true_geometry: GeometryState,
@@ -158,6 +159,7 @@ def _write_artifacts(
         "residual_metrics_csv": output_dir / "residual_metrics.csv",
         "run_manifest_json": output_dir / "run_manifest.json",
         "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
+        "schur_scalar_diagnostics_json": output_dir / "schur_scalar_diagnostics.json",
         "verification_json": output_dir / "verification.json",
     }
     synthetic_dataset = verification.get("synthetic_dataset")
@@ -270,6 +272,11 @@ def _write_artifacts(
         level=schedule.levels[-1],
         sigma=float(schedule.levels[-1].residual_sigma),
         loss_mode="l2" if projection_loss_mode == "otsu_l2" else "pseudo_huber",
+    )
+    write_schur_scalar_diagnostics(
+        artifacts["schur_scalar_diagnostics_json"],
+        schur_result=schur_result,
+        detu_curve_csv=artifacts["detu_loss_curves_csv"],
     )
     failure_report = _failure_report_payload(
         final_volume=final_volume,
@@ -911,6 +918,7 @@ def _artifact_description(name: str) -> str:
         "residual_metrics_csv": "Per-level residual metrics",
         "run_manifest_json": "Resolved smoke run manifest",
         "schur_diagnostics_json": "Joint Schur LM diagnostics summary",
+        "schur_scalar_diagnostics_json": "Scalar det_u Schur-vs-landscape diagnostics",
         "verification_json": "Smoke verification report",
     }
     return descriptions[name]

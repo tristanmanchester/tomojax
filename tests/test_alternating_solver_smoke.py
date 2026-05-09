@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
@@ -16,6 +17,9 @@ from tomojax.align._alternating_artifacts import (
 
 # check-public-imports: allow-private
 from tomojax.align._alternating_inputs import build_smoke_inputs
+
+# check-public-imports: allow-private
+from tomojax.align._alternating_schur_scalar import schur_scalar_diagnostics_payload
 from tomojax.align.api import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
@@ -34,6 +38,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    # check-public-imports: allow-private
+    from tomojax.align._joint_schur_lm import JointSchurLMResult
     from tomojax.align.api import AlternatingSmokeResult
 
 
@@ -59,6 +65,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_mask_provenance(result)
     _assert_fista_diagnostic_artifacts(result)
     _assert_detu_landscape_artifacts(result)
+    _assert_schur_scalar_diagnostics(result)
     _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
@@ -93,6 +100,65 @@ def test_otsu_loss_splits_valid_and_alignment_masks(tmp_path: Path) -> None:
     assert np.all(valid)
     assert np.all(alignment <= valid)
     assert int(np.count_nonzero(alignment)) < int(np.count_nonzero(valid))
+
+
+def test_schur_scalar_diagnostic_compares_detu_normal_equation_to_curve(
+    tmp_path: Path,
+) -> None:
+    curve_path = tmp_path / "detu_loss_curves.csv"
+    with curve_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "volume_source",
+                "det_u_px",
+                "loss",
+                "finite_difference_gradient",
+            ],
+        )
+        writer.writeheader()
+        for source in ("true_volume", "final_stopped_volume"):
+            for det_u, loss, gradient in ((0.0, 2.0, -2.0), (1.0, 1.0, 0.0), (2.0, 2.0, 2.0)):
+                writer.writerow(
+                    {
+                        "volume_source": source,
+                        "det_u_px": det_u,
+                        "loss": loss,
+                        "finite_difference_gradient": gradient,
+                    }
+                )
+    diagnostics = SimpleNamespace(
+        setup_gradient_by_view=((1.0,), (3.0,)),
+        setup_hessian_diag_by_view=((2.0,), (2.0,)),
+        damping=1.0,
+        setup_update_by_parameter=(-0.8,),
+        accepted=True,
+        trust_scale=1.0,
+        setup_trust_scale=1.0,
+        predicted_reduction=1.6,
+        actual_reduction=1.5,
+        reduction_ratio=0.9375,
+    )
+    schur_result = SimpleNamespace(
+        active_setup_parameters=("det_u_px",),
+        active_pose_dofs=(),
+        diagnostics=diagnostics,
+        geometry=GeometryState.zeros(3),
+    )
+
+    payload = schur_scalar_diagnostics_payload(
+        schur_result=cast("JointSchurLMResult", schur_result),
+        detu_curve_csv=curve_path,
+    )
+
+    assert payload["status"] == "recorded"
+    schur = cast("dict[str, object]", payload["schur"])
+    assert schur["data_JTr"] == 4.0
+    assert schur["data_JTJ"] == 4.0
+    assert schur["damped_lm_step"] == -0.8
+    curves = cast("dict[str, object]", payload["finite_difference_curves"])
+    stopped = cast("dict[str, object]", curves["final_stopped_volume"])
+    assert float(cast("float", stopped["curvature_at_nearest_final"])) > 0.0
 
 
 def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:
@@ -231,6 +297,7 @@ def _expected_artifacts() -> set[str]:
         "residual_metrics_csv",
         "run_manifest_json",
         "schur_diagnostics_json",
+        "schur_scalar_diagnostics_json",
         "verification_json",
     }
 
@@ -345,6 +412,25 @@ def _assert_detu_landscape_artifacts(result: AlternatingSmokeResult) -> None:
     }
     assert result.artifacts["detu_loss_curves_png"].stat().st_size > 0
     assert result.artifacts["detu_gradient_curves_png"].stat().st_size > 0
+
+
+def _assert_schur_scalar_diagnostics(result: AlternatingSmokeResult) -> None:
+    payload = cast(
+        "dict[str, object]",
+        json.loads(
+            result.artifacts["schur_scalar_diagnostics_json"].read_text(encoding="utf-8")
+        ),
+    )
+    assert payload["schema"] == "tomojax.schur_scalar_diagnostics.v1"
+    assert payload["status"] in {"recorded", "not_applicable"}
+    if payload["status"] == "recorded":
+        schur = cast("dict[str, object]", payload["schur"])
+        assert "data_JTr" in schur
+        assert "data_JTJ" in schur
+        curves = cast("dict[str, object]", payload["finite_difference_curves"])
+        assert "final_stopped_volume" in curves
+        comparison = cast("dict[str, object]", payload["comparison"])
+        assert "final_stopped_gradient_sign_agrees_with_JTr" in comparison
 
 
 def _assert_summary_rows(result: AlternatingSmokeResult) -> None:

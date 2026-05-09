@@ -3,6 +3,39 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — Schur Scalar det_u Diagnostics
+
+### Summary
+
+- Added `schur_scalar_diagnostics.json` to alternating run artifacts.
+- The artifact records the det_u-only Schur scalar normal-equation evidence:
+  accumulated data `JTr`, accumulated data `JTJ`, damping, damped `JTJ`, raw
+  Newton step, damped LM step, selected/trust-scaled step, acceptance, trust
+  scale, and predicted/actual reduction.
+- The artifact reads the existing `detu_loss_curves.csv` and compares Schur
+  scalar evidence against finite-difference gradient/curvature at the sampled
+  point nearest the final geometry for each recorded fixed-volume curve.
+- Non det_u-only Schur runs are explicitly recorded as `not_applicable`; this
+  keeps the diagnostic scoped to the production stopped det_u gate without
+  changing the algorithm or adding a policy knob.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_schur_scalar_diagnostic_compares_detu_normal_equation_to_curve
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 2 tests in 89.79 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_schur_scalar.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_schur_scalar.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-09 — 256^3 Preview Auto-Batching Memory Regression
 
 ### Summary

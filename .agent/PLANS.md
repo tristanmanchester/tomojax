@@ -20,20 +20,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Treat inability to align `256^3` around the historical low-GB VRAM envelope
-    as a v2 memory-regression bug.
-  - Stop alignment preview reconstruction from resolving automatic batching to
-    all views on large GPU cases.
-  - Reuse the existing backend memory estimator so `views_per_batch=0` means
-    bounded automatic chunking for FISTA previews instead of full-stack
-    materialisation.
-  - Add focused coverage for the auto-batch resolution contract.
+  - Add a Schur scalar diagnostic artifact for the det_u-only production gate.
+  - Compare the Schur one-DOF accumulated `JTr`/`JTJ` evidence against the
+    sampled fixed-volume det_u finite-difference landscape.
+  - Record signs, curvature, damping, accepted step, and trust scaling without
+    changing the alignment algorithm.
+  - Add focused artifact coverage for `schur_scalar_diagnostics.json`.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
     work.
-  - Artifact/report polishing or interpreting a smaller benchmark as sufficient
-    evidence for the `256^3` memory target.
+  - Reduced-objective refresh probes, local acceptance changes, or additional
+    placeholder report fields.
 - Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.recon`.
 
 ### Design Sources
@@ -72,10 +70,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the memory-regression
       slice.
+- [x] Add `schur_scalar_diagnostics.json` artifact for det_u-only Schur runs.
+- [x] Compare Schur `JTr`/`JTJ` to detu curve finite-difference gradient and
+      curvature at the nearest final geometry sample.
+- [x] Add focused artifact coverage.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the Schur scalar
+      diagnostic slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_schur_scalar_diagnostic_compares_detu_normal_equation_to_curve
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 2 tests in 89.79 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_schur_scalar.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_schur_scalar.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_reference_fista.py::test_reference_fista_auto_batch_uses_memory_estimator
