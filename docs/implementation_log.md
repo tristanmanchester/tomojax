@@ -3,6 +3,39 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — Multires-Carried det_u Landscape Collation
+
+### Summary
+
+- Updated `tools/run_rich_phantom_v1_parity_gate.py` so stopped multires runs
+  collate each level's `final_stopped_volume` det_u curve into root-level
+  carried-volume artifacts:
+  `multires_carried_detu_loss_curves.csv`,
+  `multires_carried_detu_summary.json`, and
+  `multires_carried_detu_summary.md`.
+- The collated rows relabel per-level final stopped volumes as
+  `multires_carried_f{factor}_final_volume` and preserve run name, factor,
+  shape, artifact directory, mask role, and loss-mode provenance.
+- This is benchmark diagnostic evidence only. It does not feed a scalar argmin
+  into production alignment and does not change solver policy.
+- Existing older multires run directories from before the detu-landscape
+  artifact do not contain `detu_loss_curves.csv`; rerunning the parity driver
+  after this slice will produce the root-level carried landscape artifacts.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_rich_phantom_v1_parity_gate.py::test_multires_summary_collates_carried_detu_curves
+  -q` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_rich_phantom_v1_parity_gate.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_rich_phantom_v1_parity_gate.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-09 — Expanded det_u Landscape Volume Sources
 
 ### Summary

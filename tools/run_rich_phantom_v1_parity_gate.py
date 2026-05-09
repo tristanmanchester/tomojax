@@ -360,6 +360,7 @@ def _summary_row(run_name: str, run_dir: Path, elapsed: float) -> dict[str, Any]
 def _write_summary(root: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
+    _write_multires_carried_detu_landscape(root, rows)
     with (root / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -380,6 +381,100 @@ def _write_summary(root: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows
     )
     (root / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_multires_carried_detu_landscape(root: Path, rows: list[dict[str, Any]]) -> None:
+    curve_rows = _multires_carried_detu_rows(root, rows)
+    if not curve_rows:
+        return
+    csv_path = root / "multires_carried_detu_loss_curves.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(curve_rows[0]))
+        writer.writeheader()
+        writer.writerows(curve_rows)
+    summary = _multires_carried_detu_summary(curve_rows)
+    (root / "multires_carried_detu_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_multires_carried_detu_markdown(root / "multires_carried_detu_summary.md", summary)
+
+
+def _multires_carried_detu_rows(root: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    carried_rows: list[dict[str, Any]] = []
+    for row in rows:
+        run_name = str(row["run_name"])
+        curve_path = root / run_name / "detu_loss_curves.csv"
+        if not curve_path.exists():
+            continue
+        factor = _factor_from_run_name(run_name)
+        with curve_path.open("r", newline="", encoding="utf-8") as handle:
+            for curve_row in csv.DictReader(handle):
+                if curve_row.get("volume_source") != "final_stopped_volume":
+                    continue
+                carried = dict(curve_row)
+                carried["volume_source"] = f"multires_carried_f{factor}_final_volume"
+                carried["source_run_name"] = run_name
+                carried["multires_factor"] = factor
+                carried["volume_shape"] = row.get("volume_shape")
+                carried["artifact_dir"] = row.get("artifact_dir")
+                carried_rows.append(carried)
+    return carried_rows
+
+
+def _multires_carried_detu_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_source.setdefault(str(row["volume_source"]), []).append(row)
+    curves: list[dict[str, Any]] = []
+    for source, source_rows in sorted(by_source.items()):
+        argmin = min(source_rows, key=lambda item: float(item["loss"]))
+        curves.append(
+            {
+                "volume_source": source,
+                "source_run_name": argmin["source_run_name"],
+                "multires_factor": int(argmin["multires_factor"]),
+                "volume_shape": argmin["volume_shape"],
+                "argmin_det_u_px": float(argmin["det_u_px"]),
+                "argmin_loss": float(argmin["loss"]),
+                "mask_role": argmin.get("mask_role"),
+                "loss_mode": argmin.get("loss_mode"),
+            }
+        )
+    return {
+        "schema": "tomojax.multires_carried_detu_landscape.v1",
+        "status": "recorded",
+        "purpose": (
+            "diagnostic_multires_carried_fixed_volume_landscape_not_production_center_search"
+        ),
+        "curve_count": len(curves),
+        "curves": curves,
+    }
+
+
+def _write_multires_carried_detu_markdown(path: Path, summary: dict[str, Any]) -> None:
+    curves = cast("list[dict[str, Any]]", summary["curves"])
+    lines = [
+        "# Multires-Carried det_u Landscapes",
+        "",
+        "| Source | Run | Shape | Argmin det_u px | Argmin loss |",
+        "|---|---|---:|---:|---:|",
+    ]
+    lines.extend(
+        (
+            "| {volume_source} | {source_run_name} | {volume_shape} | "
+            "{argmin_det_u_px} | {argmin_loss} |".format(**curve)
+        )
+        for curve in curves
+    )
+    _ = path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _factor_from_run_name(run_name: str) -> int:
+    for part in run_name.split("_"):
+        if part.startswith("f") and part[1:].isdigit():
+            return int(part[1:])
+    return 1
 
 
 if __name__ == "__main__":

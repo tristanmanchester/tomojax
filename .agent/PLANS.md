@@ -20,14 +20,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Expand fixed-volume `detu_loss_curves` with the missing diagnostic volume
-    families that can be produced inside the artifact writer.
-  - Add preview-iteration, bootstrap/initial-geometry refreshed, and
-    reduced-objective-style refreshed volume sources using the
-    `projection_valid_mask` for reconstruction and the alignment mask for
-    landscape scoring.
-  - Keep unavailable entries only for true multires-carried volumes when the
-    current single-run artifact context does not carry those volumes.
+  - Record multires-carried fixed-volume `det_u` landscapes in the rich
+    PHANTOM94 multires diagnostic driver.
+  - Collate each level's final stopped/carried volume curve into a root-level
+    CSV/JSON/Markdown artifact with factor/shape/run provenance.
+  - Keep this as benchmark diagnostic evidence, not production centre search.
   - Keep the diagnostic read-only: no solver acceptance or policy changes.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
@@ -107,10 +104,29 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the landscape-source
       diagnostic slice.
+- [x] Add root-level multires-carried detu landscape collation to the rich
+      PHANTOM94 parity driver.
+- [x] Add focused helper coverage.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the multires landscape
+      artifact slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_rich_phantom_v1_parity_gate.py::test_multires_summary_collates_carried_detu_curves
+  -q` passed: 1 test in 0.70 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_rich_phantom_v1_parity_gate.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_rich_phantom_v1_parity_gate.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts

@@ -81,3 +81,39 @@ def test_forward_consistent_coarse_sidecar_projects_level_volume(tmp_path: Path)
     expected = project_parallel_reference(jnp.asarray(volume), true_geometry)
 
     np.testing.assert_allclose(np.asarray(expected), projections, rtol=1.0e-5, atol=1.0e-5)
+
+
+def test_multires_summary_collates_carried_detu_curves(tmp_path: Path) -> None:
+    gate = _load_gate_module()
+    run_dir = tmp_path / "stopped_otsu_l2_multires_f4_32_128v"
+    run_dir.mkdir(parents=True)
+    with (run_dir / "detu_loss_curves.csv").open("w", encoding="utf-8") as handle:
+        _ = handle.write(
+            "volume_source,det_u_px,loss,finite_difference_gradient,mask_role,loss_mode,"
+            "residual_sigma,residual_filters\n"
+            "true_volume,1.0,4.0,0.0,alignment_loss_mask,l2,1.0,raw\n"
+            "final_stopped_volume,1.0,3.0,0.0,alignment_loss_mask,l2,1.0,raw\n"
+            "final_stopped_volume,2.0,2.0,0.0,alignment_loss_mask,l2,1.0,raw\n"
+        )
+    rows = [
+        {
+            "run_name": "stopped_otsu_l2_multires_f4_32_128v",
+            "volume_shape": "32x32x32",
+            "artifact_dir": str(run_dir),
+        }
+    ]
+
+    gate._write_multires_carried_detu_landscape(tmp_path, rows)
+
+    summary = json.loads(
+        (tmp_path / "multires_carried_detu_summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["schema"] == "tomojax.multires_carried_detu_landscape.v1"
+    curve = summary["curves"][0]
+    assert curve["volume_source"] == "multires_carried_f4_final_volume"
+    assert curve["argmin_det_u_px"] == 2.0
+    csv_rows = (tmp_path / "multires_carried_detu_loss_curves.csv").read_text(
+        encoding="utf-8"
+    )
+    assert "multires_carried_f4_final_volume" in csv_rows
+    assert (tmp_path / "multires_carried_detu_summary.md").exists()
