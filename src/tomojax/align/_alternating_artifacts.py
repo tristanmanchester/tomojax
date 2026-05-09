@@ -64,6 +64,7 @@ def _write_artifacts(
     final_volume: jax.Array,
     observed: jax.Array,
     mask: jax.Array,
+    projection_valid_mask: jax.Array,
     schedule: ContinuationSchedule,
     gauge_report: GaugeReport,
     fista_result: ReferenceFISTAResult,
@@ -90,6 +91,7 @@ def _write_artifacts(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_views_per_batch: int,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
@@ -168,6 +170,7 @@ def _write_artifacts(
         preview_tv_scale=preview_tv_scale,
         preview_residual_filter_mode=preview_residual_filter_mode,
         preview_center_l2_weight=preview_center_l2_weight,
+        preview_views_per_batch=preview_views_per_batch,
         stopped_preview_policy=stopped_preview_policy,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
         fit_background_nuisance=fit_background_nuisance,
@@ -188,6 +191,7 @@ def _write_artifacts(
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=preview_center_l2_weight,
+            preview_views_per_batch=preview_views_per_batch,
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
             fit_background_nuisance=fit_background_nuisance,
@@ -204,7 +208,13 @@ def _write_artifacts(
         )
     _write_json(artifacts["input_summary_json"], _input_summary_payload(final_volume, observed))
     _write_json(artifacts["projection_stats_json"], _projection_stats_payload(observed))
-    _write_json(artifacts["mask_summary_json"], _mask_summary_payload(mask))
+    _write_json(
+        artifacts["mask_summary_json"],
+        {
+            "alignment_loss_mask": _mask_summary_payload(mask),
+            "projection_valid_mask": _mask_summary_payload(projection_valid_mask),
+        },
+    )
     _write_array(artifacts["observed_projections_npy"], observed)
     _write_mask_array(artifacts["projection_mask_npy"], mask)
     _write_json(artifacts["recovery_tolerances_json"], _recovery_tolerances_payload())
@@ -253,6 +263,7 @@ def _write_artifacts(
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=preview_center_l2_weight,
+            preview_views_per_batch=preview_views_per_batch,
             stopped_preview_policy=stopped_preview_policy,
         )
         _write_json(artifacts["benchmark_result_json"], benchmark_result)
@@ -869,15 +880,16 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             "",
             "## Summary",
             "",
-            "| Impl | Profile | Status | Time to verified | Total time | "
+            "| Impl | Profile | Status | Evidence | Time to verified | Total time | "
             "Volume NMSE | Final residual |",
-            "|---|---|---|---:|---:|---:|---:|",
+            "|---|---|---|---|---:|---:|---:|---:|",
             "| "
             + " | ".join(
                 [
                     _markdown_cell(benchmark_result.get("implementation")),
                     _markdown_cell(benchmark_result.get("profile")),
                     _markdown_cell(benchmark_result.get("status")),
+                    _markdown_cell(benchmark_result.get("evidence_status")),
                     _markdown_cell(runtime.get("time_to_verified_geometry_seconds")),
                     _markdown_cell(runtime.get("total_wall_seconds")),
                     _markdown_cell(reconstruction.get("volume_nmse")),
@@ -1019,6 +1031,7 @@ def _benchmark_result_payload(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_views_per_batch: int,
     stopped_preview_policy: str,
 ) -> dict[str, object]:
     metrics = cast("dict[object, object]", verification.get("metrics", {}))
@@ -1079,6 +1092,10 @@ def _benchmark_result_payload(
         "implementation": "reimagined_align_auto_smoke",
         "profile": schedule.name,
         "status": verification.get("status"),
+        "evidence_status": _benchmark_evidence_status(
+            status=verification.get("status"),
+            geometry_update_volume_source=geometry_update_volume_source,
+        ),
         "dataset": {
             "name": synthetic_dataset.get("name"),
             "source": synthetic_dataset.get("source"),
@@ -1161,8 +1178,21 @@ def _benchmark_result_payload(
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
         "preview_center_l2_weight": preview_center_l2_weight,
+        "preview_views_per_batch": preview_views_per_batch,
         "stopped_preview_policy": stopped_preview_policy,
     }
+
+
+def _benchmark_evidence_status(
+    *,
+    status: object,
+    geometry_update_volume_source: GeometryUpdateVolumeSource,
+) -> str:
+    if status != "passed":
+        return "failed"
+    if geometry_update_volume_source == "fixed_synthetic_truth":
+        return "oracle_pass"
+    return "production_pass"
 
 
 def _bad_view_detection_payload(
@@ -1853,6 +1883,7 @@ def _write_config_resolved(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_views_per_batch: int,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
@@ -1908,6 +1939,7 @@ def _write_config_resolved(
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=preview_center_l2_weight,
+            preview_views_per_batch=preview_views_per_batch,
             stopped_preview_policy=stopped_preview_policy,
         )
     )
@@ -1964,6 +1996,7 @@ def _preview_config_lines(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_views_per_batch: int,
     stopped_preview_policy: str,
 ) -> list[str]:
     return [
@@ -1973,6 +2006,7 @@ def _preview_config_lines(
         f"preview_tv_scale = {float(preview_tv_scale)}",
         f'preview_residual_filter_mode = "{preview_residual_filter_mode}"',
         f"preview_center_l2_weight = {float(preview_center_l2_weight)}",
+        f"preview_views_per_batch = {int(preview_views_per_batch)}",
         f'stopped_preview_policy = "{stopped_preview_policy}"',
     ]
 
@@ -2044,6 +2078,7 @@ def _run_manifest_payload(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_views_per_batch: int,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
     fit_background_nuisance: bool,
@@ -2079,6 +2114,7 @@ def _run_manifest_payload(
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
         "preview_center_l2_weight": preview_center_l2_weight,
+        "preview_views_per_batch": preview_views_per_batch,
         "stopped_preview_policy": stopped_preview_policy,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,
         "fit_background_nuisance": fit_background_nuisance,

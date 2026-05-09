@@ -464,6 +464,12 @@ and proposed next fix before stopping.
   stack, and joint Schur now scans finite-difference parameter directions
   instead of vmapping all perturbation projections for a view. Focused tests,
   static checks, `just imports`, and bounded CUDA probes passed.
+- [x] Rich PHANTOM94 det-u v1-parity gate implemented and run on CUDA:
+  mask split, det-u-only/theta-zero manifest case, in-process volume+geometry
+  carry pyramid, forward-consistent coarse sidecars, focused tests, `just
+  imports`, and `runs/rich_phantom_v1_parity_20260509/` artifacts. The gate
+  still fails at 128^3 with det_u RMSE `3.016660 px` and classification
+  `reconstruction_absorbed_geometry`.
 - [x] Detector roll supported and committed: `2be6a99`.
 - [x] Axis tilt supported and committed with GPU diagnostic pause:
   `ac347d2`.

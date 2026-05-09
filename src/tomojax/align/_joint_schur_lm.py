@@ -45,6 +45,7 @@ _POSE_DOF_ORDER: tuple[PoseSchurDof, ...] = (
     "dx_px",
     "dz_px",
 )
+_FULL_STACK_LOSS_MAX_ELEMENTS = 4_000_000
 _SETUP_PARAMETER_ORDER: tuple[SetupSchurParameter, ...] = (
     "theta_offset_rad",
     "det_u_px",
@@ -852,6 +853,21 @@ def _stream_joint_normal_equations_for_geometry(
     n_views = int(geometry.pose.n_views)
     n_params = n_setup + n_views * pose_dim
     step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
+    if pose_dim == 0 and int(observed.size) <= _FULL_STACK_LOSS_MAX_ELEMENTS:
+        return _small_stack_setup_normal_equations_for_geometry(
+            volume,
+            observed,
+            geometry,
+            params,
+            mask=mask,
+            cfg=cfg,
+            weights=weights,
+            n_setup=n_setup,
+            damping=damping,
+            setup_prior_strength=setup_prior_strength,
+            pose_prior_strength=pose_prior_strength,
+            prior_reference=prior_reference,
+        )
 
     def view_contribution(view: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
         view_i = jnp.asarray(view, dtype=jnp.int32)
@@ -986,6 +1002,86 @@ def _stream_joint_normal_equations_for_geometry(
             setup_pose_coupling_norm_by_view=tuple(
                 float(value) for value in setup_pose_coupling_norm_by_view_arr
             ),
+        ),
+    )
+
+
+def _small_stack_setup_normal_equations_for_geometry(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+    weights: jax.Array,
+    n_setup: int,
+    damping: float,
+    setup_prior_strength: float,
+    pose_prior_strength: float,
+    prior_reference: jax.Array,
+) -> _NormalEquations:
+    n_params = n_setup
+    step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
+    directions = jnp.eye(n_params, dtype=jnp.float32)
+    residual = (
+        _residual_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            mask=mask,
+            cfg=cfg,
+            sigma=cfg.sigma,
+            fit_gain_offset=cfg.fit_gain_offset,
+            fit_background_offset=cfg.fit_background_offset,
+        )
+        * weights
+    ).reshape(-1)
+
+    def residual_for_direction(direction: jax.Array, sign: jax.Array) -> jax.Array:
+        filtered = _residual_for_params(
+            volume,
+            observed,
+            geometry,
+            params + sign * step * direction,
+            mask=mask,
+            cfg=cfg,
+            sigma=cfg.sigma,
+            fit_gain_offset=cfg.fit_gain_offset,
+            fit_background_offset=cfg.fit_background_offset,
+        )
+        return (filtered * weights).reshape(-1)
+
+    def plus_residual(direction: jax.Array) -> jax.Array:
+        return residual_for_direction(direction, jnp.float32(1.0))
+
+    def minus_residual(direction: jax.Array) -> jax.Array:
+        return residual_for_direction(direction, jnp.float32(-1.0))
+
+    plus = jax.vmap(plus_residual)(directions)
+    minus = jax.vmap(minus_residual)(directions)
+    jac = ((plus - minus) / (jnp.float32(2.0) * step)).T
+    prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
+    prior_diag = jnp.concatenate(
+        [
+            jnp.full((n_setup,), float(setup_prior_strength), dtype=jnp.float32),
+            jnp.full((n_params - n_setup,), float(pose_prior_strength), dtype=jnp.float32),
+        ],
+        axis=0,
+    )
+    hessian = jac.T @ jac + jnp.diag(prior_diag + jnp.asarray(damping, dtype=jnp.float32))
+    gradient = jac.T @ residual + prior_diag * prior_delta
+    return _NormalEquations(
+        hessian=hessian,
+        gradient=gradient,
+        data_rows=int(observed.size),
+        per_view_blocks=_per_view_normal_block_diagnostics(
+            jac,
+            residual,
+            n_setup=n_setup,
+            n_views=geometry.pose.n_views,
+            pose_dim=0,
         ),
     )
 
@@ -1712,7 +1808,11 @@ def _loss_for_params(
     cfg: JointSchurLMConfig,
     prior_reference: jax.Array | None = None,
 ) -> jax.Array:
-    if cfg.fit_gain_offset or cfg.fit_background_offset:
+    if (
+        cfg.fit_gain_offset
+        or cfg.fit_background_offset
+        or int(observed.size) <= _FULL_STACK_LOSS_MAX_ELEMENTS
+    ):
         predicted = _predicted_for_params(volume, geometry, params, config=cfg)
         predicted = _with_fitted_nuisance(
             predicted,

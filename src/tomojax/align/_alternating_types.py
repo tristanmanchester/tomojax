@@ -67,6 +67,8 @@ class AlternatingSmokeConfig:
     preview_tv_scale: float = 1.0
     preview_residual_filter_mode: PreviewResidualFilterMode = "continuation"
     preview_center_l2_weight: float = 0.0
+    preview_initial_volume_path: Path | None = None
+    preview_views_per_batch: int = 1
     stopped_preview_policy: StoppedPreviewPolicy = "standard"
     fit_gain_offset_nuisance: bool = False
     fit_background_nuisance: bool = False

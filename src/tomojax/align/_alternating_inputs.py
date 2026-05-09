@@ -24,7 +24,8 @@ class SmokeInputs:
 
     truth_volume: jax.Array
     observed_projections: jax.Array
-    mask: jax.Array
+    projection_valid_mask: jax.Array
+    alignment_loss_mask: jax.Array
     true_geometry: GeometryState
     initial_geometry: GeometryState
 
@@ -44,7 +45,8 @@ def _default_smoke_inputs(config: AlternatingSmokeConfig) -> SmokeInputs:
     return SmokeInputs(
         truth_volume=truth,
         observed_projections=observed,
-        mask=jnp.ones_like(observed, dtype=jnp.float32),
+        projection_valid_mask=jnp.ones_like(observed, dtype=jnp.float32),
+        alignment_loss_mask=jnp.ones_like(observed, dtype=jnp.float32),
         true_geometry=true_geometry,
         initial_geometry=initial_geometry,
     )
@@ -69,7 +71,8 @@ def _sidecar_smoke_inputs(config: AlternatingSmokeConfig) -> SmokeInputs:
     return SmokeInputs(
         truth_volume=truth,
         observed_projections=observed,
-        mask=mask,
+        projection_valid_mask=mask,
+        alignment_loss_mask=mask,
         true_geometry=sidecars.true_geometry,
         initial_geometry=sidecars.corrupted_geometry,
     )
@@ -83,11 +86,12 @@ def _with_projection_loss_mask(
     if not config.projection_loss_mode.startswith("otsu_"):
         return inputs
     otsu = _otsu_projection_mask(np.asarray(inputs.observed_projections))
-    combined = np.asarray(inputs.mask, dtype=bool) & otsu
+    combined = np.asarray(inputs.projection_valid_mask, dtype=bool) & otsu
     return SmokeInputs(
         truth_volume=inputs.truth_volume,
         observed_projections=inputs.observed_projections,
-        mask=jnp.asarray(combined, dtype=jnp.float32),
+        projection_valid_mask=inputs.projection_valid_mask,
+        alignment_loss_mask=jnp.asarray(combined, dtype=jnp.float32),
         true_geometry=inputs.true_geometry,
         initial_geometry=inputs.initial_geometry,
     )

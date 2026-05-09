@@ -347,7 +347,11 @@ def _core_with_views(core: CoreProjectionGeometry, t_all: jax.Array) -> CoreProj
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else 1
+    b = (
+        int(views_per_batch)
+        if views_per_batch is not None and int(views_per_batch) > 0
+        else int(n_views)
+    )
     return max(1, min(int(b), int(n_views)))
 
 

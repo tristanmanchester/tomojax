@@ -82,9 +82,12 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
     out_dir = _prepare_output_dir(output_dir)
 
     inputs = build_smoke_inputs(config)
-    truth, observed, mask = inputs.truth_volume, inputs.observed_projections, inputs.mask
+    truth = inputs.truth_volume
+    observed = inputs.observed_projections
+    projection_valid_mask = inputs.projection_valid_mask
+    alignment_loss_mask = inputs.alignment_loss_mask
     true_geometry, initial_geometry = inputs.true_geometry, inputs.initial_geometry
-    train_mask, heldout_mask = _heldout_masks(mask, config.heldout_view_index)
+    train_mask, heldout_mask = _heldout_masks(alignment_loss_mask, config.heldout_view_index)
 
     geometry, gauge_report = initial_geometry, GaugeReport(())
     volume: jax.Array | None = None
@@ -100,7 +103,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         truth,
         observed,
         geometry,
-        mask,
+        alignment_loss_mask,
         schedule.levels[0],
         sigma=schedule.levels[0].residual_sigma,
         loss_mode=_residual_loss_kind(config),
@@ -147,7 +150,11 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 level=level,
                 shape=(config.size, config.size, config.size),
             ),
-            mask=_preview_reconstruction_mask(config, mask=mask, train_mask=train_mask),
+            mask=_preview_reconstruction_mask(
+                config,
+                mask=projection_valid_mask,
+                train_mask=train_mask,
+            ),
             config=ReferenceFISTAConfig(
                 iterations=_preview_reconstruction_iterations(config, level),
                 step_size=_preview_fista_step_size(config),
@@ -161,12 +168,19 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                     level.residual_filters,
                 ),
                 center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
+                views_per_batch=int(config.preview_views_per_batch),
             ),
         )
         volume = jax.lax.stop_gradient(fista_result.volume)
         if _captures_constrained_first_preview_volume(config, level):
             constrained_first_preview_volume = volume
-        residual_sigma_estimated = _level_residual_sigma(volume, observed, geometry, mask, level)
+        residual_sigma_estimated = _level_residual_sigma(
+            volume,
+            observed,
+            geometry,
+            alignment_loss_mask,
+            level,
+        )
         residual_sigma_effective = _effective_residual_sigma(
             config,
             level=level,
@@ -176,7 +190,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             volume,
             observed,
             geometry,
-            mask,
+            alignment_loss_mask,
             level,
             sigma=residual_sigma_effective,
             loss_mode=_residual_loss_kind(config),
@@ -247,7 +261,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                 volume,
                 observed,
                 geometry,
-                mask,
+                alignment_loss_mask,
                 level,
                 sigma=residual_sigma_effective,
                 loss_mode=_residual_loss_kind(config),
@@ -324,7 +338,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         stopped_volume=volume,
         observed=observed,
         train_mask=train_mask,
-        full_mask=mask,
+        full_mask=alignment_loss_mask,
         heldout_mask=heldout_mask,
         geometry=geometry,
         gauge_report=gauge_report,
@@ -339,7 +353,8 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         truth_volume=truth,
         final_volume=volume,
         observed=observed,
-        mask=mask,
+        mask=alignment_loss_mask,
+        projection_valid_mask=projection_valid_mask,
         schedule=schedule,
         gauge_report=gauge_report,
         fista_result=fista_result,
@@ -374,6 +389,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         preview_tv_scale=config.preview_tv_scale,
         preview_residual_filter_mode=config.preview_residual_filter_mode,
         preview_center_l2_weight=config.preview_center_l2_weight,
+        preview_views_per_batch=config.preview_views_per_batch,
         stopped_preview_policy=config.stopped_preview_policy,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
         fit_background_nuisance=config.fit_background_nuisance,
@@ -389,7 +405,8 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             truth_volume=truth,
             final_volume=volume,
             observed=observed,
-            mask=mask,
+            mask=alignment_loss_mask,
+            projection_valid_mask=projection_valid_mask,
             summaries=tuple(summaries),
             geometry_update_volume_source=config.geometry_update_volume_source,
             fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
@@ -968,6 +985,7 @@ def _maybe_run_geometry_first_det_u_bootstrap(
             residual_loss_mode=_residual_loss_kind(config),
             residual_filters=_preview_residual_filters(config, level, level.residual_filters),
             center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
+            views_per_batch=int(config.preview_views_per_batch),
         ),
     )
     loss_after_fista_refresh = _projection_loss(
@@ -1054,7 +1072,7 @@ def _uses_production_stopped_det_u_gate(config: AlternatingSmokeConfig) -> bool:
     )
 
 
-def _preview_initial_volume(
+def _preview_initial_volume(  # noqa: PLR0911 - explicit initialization modes stay readable.
     config: AlternatingSmokeConfig,
     observed: jax.Array,
     geometry: GeometryState,
@@ -1064,6 +1082,15 @@ def _preview_initial_volume(
 ) -> jax.Array:
     if previous_volume is not None:
         return previous_volume
+    if config.preview_initial_volume_path is not None:
+        carried = jnp.asarray(np.load(config.preview_initial_volume_path), dtype=jnp.float32)
+        expected_shape = (config.size, config.size, config.size)
+        if tuple(int(dim) for dim in carried.shape) != expected_shape:
+            raise ValueError(
+                "preview_initial_volume_path volume shape must match configured size "
+                f"{expected_shape}, got {tuple(int(dim) for dim in carried.shape)}"
+            )
+        return carried
     initialization = _effective_preview_initialization(config, level)
     if initialization == "backprojection":
         if int(config.size) < 64:
@@ -1374,6 +1401,7 @@ def _candidate_refresh_volume(
                 level.residual_filters,
             ),
             center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
+            views_per_batch=int(config.preview_views_per_batch),
         ),
     )
     return jax.lax.stop_gradient(result.volume)

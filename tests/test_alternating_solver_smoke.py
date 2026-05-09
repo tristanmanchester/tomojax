@@ -13,6 +13,8 @@ from tomojax.align._alternating_artifacts import (
     _bad_view_detection_payload,
     _bad_views_flagged_evaluation,
 )
+# check-public-imports: allow-private
+from tomojax.align._alternating_inputs import build_smoke_inputs
 from tomojax.align.api import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
@@ -59,6 +61,34 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_recovery_tolerances(result)
     assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
     assert abs(float(np.mean(result.final_geometry.pose.phi_residual_rad))) < 1.0e-12
+
+
+def test_otsu_loss_splits_valid_and_alignment_masks(tmp_path: Path) -> None:
+    dataset_paths = generate_synthetic_dataset(
+        "rich_phantom94_det_u_only_v1_parity",
+        tmp_path / "datasets",
+        size=32,
+        clean=True,
+        views=4,
+        supported_only=True,
+    )
+
+    inputs = build_smoke_inputs(
+        AlternatingSmokeConfig(
+            size=32,
+            n_views=4,
+            projection_loss_mode="otsu_l2",
+            synthetic_dataset_name="rich_phantom94_det_u_only_v1_parity",
+            synthetic_dataset_artifact_dir=dataset_paths.dataset_dir,
+        )
+    )
+
+    valid = np.asarray(inputs.projection_valid_mask, dtype=bool)
+    alignment = np.asarray(inputs.alignment_loss_mask, dtype=bool)
+    assert valid.shape == alignment.shape
+    assert np.all(valid)
+    assert np.all(alignment <= valid)
+    assert int(np.count_nonzero(alignment)) < int(np.count_nonzero(valid))
 
 
 def _assert_smoke_result_shape_and_exit(result: AlternatingSmokeResult) -> None:

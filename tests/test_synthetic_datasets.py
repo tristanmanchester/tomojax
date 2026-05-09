@@ -26,6 +26,8 @@ def test_synthetic128_specs_load_all_manifest_datasets() -> None:
     specs = load_synthetic128_specs()
 
     assert sorted(specs) == [
+        "rich_phantom94_det_u_only_v1_parity",
+        "rich_phantom94_setup_global_tomo",
         "synth128_combined_nuisance_jumps",
         "synth128_lamino_axis_roll_pose",
         "synth128_pose_random_extreme",

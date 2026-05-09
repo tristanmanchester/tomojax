@@ -9,18 +9,22 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
-import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.multires import bin_projections, bin_volume
+from tomojax.align.api import (
+    AlternatingAlignmentSolver,
+    AlternatingSmokeConfig,
+    reference_continuation_schedule,
+)
+from tomojax.core.multires import bin_volume, upsample_volume
 from tomojax.datasets import generate_synthetic_dataset, load_synthetic_dataset_sidecars
+from tomojax.forward import project_parallel_reference
 from tomojax.geometry import (
     GeometryState,
     PoseParameters,
@@ -30,6 +34,7 @@ from tomojax.geometry import (
     write_pose_params_csv,
 )
 
+DATASET_NAME = "rich_phantom94_det_u_only_v1_parity"
 FACTORS = (4, 2, 1)
 
 
@@ -49,7 +54,7 @@ def main() -> int:
     root = args.out_dir
     root.mkdir(parents=True, exist_ok=True)
     full = generate_synthetic_dataset(
-        "rich_phantom94_setup_global_tomo",
+        DATASET_NAME,
         root / "datasets_source",
         size=128,
         clean=True,
@@ -58,7 +63,7 @@ def main() -> int:
     )
     if args.mode == "fixed_truth":
         rows = [
-            _run_align_auto(
+            _run_solver_inprocess(
                 root=root,
                 run_name=f"fixed_truth_otsu_l2_{args.profile}_{args.views}v",
                 dataset_dir=full.dataset_dir,
@@ -89,18 +94,33 @@ def _run_stopped_multires(
     rows: list[dict[str, Any]] = []
     carried_geometry: GeometryState | None = None
     carried_factor: int | None = None
+    carried_volume_path: Path | None = None
+    carried_volume_factor: int | None = None
     for factor in FACTORS:
-        level_dir = root / "datasets" / f"rich_phantom94_setup_global_tomo_f{factor}_{views}v"
+        level_dir = root / "datasets" / f"{DATASET_NAME}_f{factor}_{views}v"
+        level_geometry = (
+            None
+            if carried_geometry is None or carried_factor is None
+            else _rescale_geometry(carried_geometry, from_factor=carried_factor, to_factor=factor)
+        )
         _write_downsampled_sidecar(
             source_dir=full_dataset_dir,
             output_dir=level_dir,
             factor=factor,
-            carried_geometry=None
-            if carried_geometry is None or carried_factor is None
-            else _rescale_geometry(carried_geometry, from_factor=carried_factor, to_factor=factor),
+            carried_geometry=level_geometry,
         )
         size = 128 // factor
-        row = _run_align_auto(
+        initial_volume_path = None
+        if carried_volume_path is not None and carried_volume_factor is not None:
+            initial_volume_path = root / f"carried_initial_f{factor}_{size}_{views}v.npy"
+            previous = np.load(carried_volume_path)
+            upsampled = upsample_volume(
+                jnp.asarray(previous, dtype=jnp.float32),
+                factor=carried_volume_factor // factor,
+                target_shape=(size, size, size),
+            )
+            np.save(initial_volume_path, np.asarray(upsampled, dtype=np.float32))
+        row = _run_solver_inprocess(
             root=root,
             run_name=f"stopped_otsu_l2_multires_f{factor}_{size}_{views}v",
             dataset_dir=level_dir,
@@ -108,20 +128,21 @@ def _run_stopped_multires(
             views=views,
             profile=profile,
             volume_source="stopped_reconstruction",
+            initial_volume_path=initial_volume_path,
         )
         rows.append(row)
-        sidecars = load_synthetic_dataset_sidecars(level_dir)
         final_pose = read_pose_params_csv(root / row["run_name"] / "pose_params.csv")
         carried_geometry = read_geometry_json(
             root / row["run_name"] / "geometry_final.json",
             final_pose,
         )
         carried_factor = factor
-        _ = sidecars
+        carried_volume_path = root / row["run_name"] / "final_volume.npy"
+        carried_volume_factor = factor
     return rows
 
 
-def _run_align_auto(
+def _run_solver_inprocess(
     *,
     root: Path,
     run_name: str,
@@ -130,50 +151,46 @@ def _run_align_auto(
     views: int,
     profile: str,
     volume_source: str,
+    initial_volume_path: Path | None = None,
 ) -> dict[str, Any]:
     run_dir = root / run_name
     start = time.perf_counter()
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "tomojax.cli.align_auto",
-            "--out-dir",
-            str(run_dir),
-            "--profile",
-            profile,
-            "--size",
-            str(size),
-            "--views",
-            str(views),
-            "--synthetic-dataset",
-            "rich_phantom94_setup_global_tomo",
-            "--synthetic-dataset-dir",
-            str(dataset_dir),
-            "--projection-loss-mode",
-            "otsu_l2",
-            "--geometry-update-volume-source",
-            volume_source,
-            "--geometry-update-pose-frozen",
-            "--geometry-update-active-setup-parameters",
-            "det_u_px",
-            "--preview-volume-support",
-            "cylindrical",
-            "--preview-initialization",
-            "backprojection",
-            "--preview-tv-scale",
-            "1.0",
-            "--preview-residual-filter-mode",
-            "continuation",
-            "--preview-center-l2-weight",
-            "0.02",
-        ],
-        check=False,
-        env=_jax_subprocess_env(),
+    schedule = reference_continuation_schedule(cast("Any", profile))
+    sidecars = load_synthetic_dataset_sidecars(dataset_dir)
+    recovery_tolerances = sidecars.manifest.get("recovery_tolerances", {})
+    unsupported_dofs = sidecars.manifest.get("unsupported_dofs_not_evaluated", [])
+    config = AlternatingSmokeConfig(
+        seed=17,
+        size=size,
+        n_views=views,
+        schedule=schedule,
+        projection_loss_mode="otsu_l2",
+        geometry_update_volume_source=cast("Any", volume_source),
+        geometry_update_solver="joint_schur",
+        geometry_update_pose_frozen=True,
+        geometry_update_active_setup_parameters=("det_u_px",),
+        geometry_update_active_pose_dofs=(),
+        preview_volume_support="cylindrical",
+        preview_initialization="backprojection",
+        preview_initial_volume_path=initial_volume_path,
+        preview_tv_scale=1.0,
+        preview_residual_filter_mode="continuation",
+        preview_center_l2_weight=0.02,
+        preview_views_per_batch=0,
+        synthetic_dataset_name=DATASET_NAME,
+        synthetic_dataset_artifact_dir=dataset_dir,
+        synthetic_dataset_nuisance_applied=False,
+        synthetic_dataset_sidecar_readback={
+            "validated": True,
+            "source": "tomojax.datasets.load_synthetic_dataset_sidecars",
+            "n_views": sidecars.true_geometry.pose.n_views,
+            "consistency": sidecars.consistency.to_dict(),
+            "recovery_tolerances": recovery_tolerances,
+            "unsupported_dofs_not_evaluated": unsupported_dofs,
+        },
     )
+    _ = AlternatingAlignmentSolver(config).run_smoke(run_dir)
     elapsed = time.perf_counter() - start
-    if completed.returncode != 0:
-        raise RuntimeError(f"align-auto failed for {run_name}")
     return _summary_row(run_name, run_dir, elapsed)
 
 
@@ -191,30 +208,33 @@ def _write_downsampled_sidecar(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     volume = np.load(output_dir / "ground_truth_volume.npy")
-    projections = np.load(output_dir / "projections.npy")
-    mask = np.load(output_dir / "mask.npy")
     if factor != 1:
         volume = np.asarray(bin_volume(jnp.asarray(volume), factor), dtype=np.float32)
-        projections = np.asarray(
-            bin_projections(jnp.asarray(projections), factor),
-            dtype=np.float32,
-        )
-        mask = np.asarray(bin_projections(jnp.asarray(mask.astype(np.float32)), factor) > 0.5)
     np.save(output_dir / "ground_truth_volume.npy", volume.astype(np.float32))
-    np.save(output_dir / "projections.npy", projections.astype(np.float32))
-    np.save(output_dir / "mask.npy", mask.astype(bool))
 
     _scale_geometry_artifacts(
         output_dir=output_dir,
         factor=factor,
         carried_geometry=carried_geometry,
     )
+    true_pose = read_pose_params_csv(output_dir / "v2_true_pose_params.csv")
+    true_geometry = read_geometry_json(output_dir / "v2_true_geometry.json", true_pose)
+    projections = _project_level_projections(volume, true_geometry)
+    mask = np.ones(projections.shape, dtype=bool)
+    np.save(output_dir / "projections.npy", projections.astype(np.float32))
+    np.save(output_dir / "mask.npy", mask)
     manifest["volume_shape"] = [int(dim) for dim in volume.shape]
     manifest["detector_shape"] = [int(projections.shape[1]), int(projections.shape[2])]
     manifest["views"] = int(projections.shape[0])
     manifest["multires_factor"] = int(factor)
     manifest["multires_source_dataset"] = str(source_dir)
-    manifest["artifact_contract"] = "tomojax-v2.synthetic-dataset.multires-sidecar.v1"
+    manifest["artifact_contract"] = (
+        "tomojax-v2.synthetic-dataset.multires-forward-consistent.v1"
+    )
+    manifest["coarse_projection_policy"] = (
+        "project_binned_volume_with_level_true_geometry; do not use binned full-resolution "
+        "projections as oracle evidence"
+    )
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -271,6 +291,33 @@ def _rescale_geometry(
     return GeometryState(setup=setup, pose=scaled_pose, acquisition=state.acquisition)
 
 
+def _project_level_projections(
+    volume: np.ndarray,
+    geometry: GeometryState,
+    *,
+    views_per_chunk: int = 16,
+) -> np.ndarray:
+    chunks: list[np.ndarray] = []
+    for start in range(0, geometry.pose.n_views, int(views_per_chunk)):
+        stop = min(geometry.pose.n_views, start + int(views_per_chunk))
+        pose = PoseParameters(
+            alpha_rad=geometry.pose.alpha_rad[start:stop],
+            beta_rad=geometry.pose.beta_rad[start:stop],
+            theta_nominal_rad=geometry.pose.theta_nominal_rad[start:stop],
+            phi_residual_rad=geometry.pose.phi_residual_rad[start:stop],
+            dx_px=geometry.pose.dx_px[start:stop],
+            dz_px=geometry.pose.dz_px[start:stop],
+        )
+        state = GeometryState(setup=geometry.setup, pose=pose, acquisition=geometry.acquisition)
+        chunks.append(
+            np.asarray(
+                project_parallel_reference(jnp.asarray(volume, dtype=jnp.float32), state),
+                dtype=np.float32,
+            )
+        )
+    return np.concatenate(chunks, axis=0)
+
+
 def _summary_row(run_name: str, run_dir: Path, elapsed: float) -> dict[str, Any]:
     result = json.loads((run_dir / "benchmark_result.json").read_text(encoding="utf-8"))
     geometry = result["geometry_recovery"]
@@ -308,12 +355,6 @@ def _summary_row(run_name: str, run_dir: Path, elapsed: float) -> dict[str, Any]
         "runtime_seconds": runtime.get("total_wall_seconds", elapsed),
         "peak_memory": None,
     }
-
-
-def _jax_subprocess_env() -> dict[str, str]:
-    env = dict(os.environ)
-    env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-    return env
 
 
 def _write_summary(root: Path, rows: list[dict[str, Any]]) -> None:

@@ -96,6 +96,7 @@ def _verification_payload(
     final_volume: jax.Array,
     observed: jax.Array,
     mask: jax.Array,
+    projection_valid_mask: jax.Array,
     summaries: tuple[AlternatingLevelSummary, ...],
     geometry_update_volume_source: GeometryUpdateVolumeSource,
     fit_gain_offset_nuisance: bool,
@@ -134,6 +135,18 @@ def _verification_payload(
         summaries=summaries,
         loss_mode=_residual_loss_kind(cfg),
     )
+    valid_mask_loss_provenance = _projection_loss_provenance_payload(
+        schur_train_loss=final_loss,
+        truth_volume=truth_volume,
+        final_volume=final_volume,
+        observed=observed,
+        mask=projection_valid_mask,
+        initial_geometry=initial_geometry,
+        final_geometry=final_geometry,
+        true_geometry=true_geometry,
+        summaries=summaries,
+        loss_mode=_residual_loss_kind(cfg),
+    )
     independent_residual_after = cast(
         "float", loss_provenance["final_volume_final_geometry_loss_all_views"]
     )
@@ -164,6 +177,8 @@ def _verification_payload(
             "relative_improvement": relative_improvement,
             "final_loss": independent_residual_after,
             **loss_provenance,
+            "alignment_mask_projection_losses": loss_provenance,
+            "valid_mask_projection_losses": valid_mask_loss_provenance,
             "volume_nmse": volume_recovery["nmse"],
         },
         "runtime": {
