@@ -20,16 +20,15 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Add deterministic reconstruction scalar/gradient diagnostics for the
-    reference FISTA path.
-  - Cover projector/backprojector adjoint, detector-centre JVP/VJP,
-    explicit-gradient finite differences, boundary masks, residual filters,
-    support, TV, centre regularisation, and loss normalisation.
-  - Emit `fista_gradient_checks.json`, `adjoint_checks.json`,
-    `geometry_jvp_vjp_checks.json`, `loss_normalisation_report.json`, and
-    `fista_trace_recomputed.csv` from the alternating artifact path.
-  - Keep the diagnostics small and CPU-focused; do not change the alignment
-    algorithm.
+  - Add fixed-volume scalar `det_u` landscape artifacts to the alternating run.
+  - Evaluate the same projection objective for true and stopped/final volumes
+    without using the scalar argmin as production calibration.
+  - Emit `detu_loss_curves.csv`, `detu_loss_curves.png`,
+    `detu_gradient_curves.png`, `detu_curve_summary.json`, and
+    `detu_curve_inputs.json`.
+  - Record unavailable future sources explicitly so later slices can add
+    preview-iteration, refreshed, multires-carried, and true-geometry
+    reconstructed volume curves.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
@@ -60,7 +59,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the scalar/gradient
       contract slice.
-- [ ] Next slice after commit: fixed-volume scalar det_u landscapes.
+- [x] Add fixed-volume scalar det_u landscape writer for true and final stopped
+      volumes.
+- [x] Wire det_u curve CSV/PNG/summary artifacts into alternating runs.
+- [x] Add focused artifact coverage.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the first landscape slice.
+- [ ] Next slice after commit: add missing landscape volume sources and run the
+      realistic rich PHANTOM94 det_u landscape gate.
 
 ### Validation
 

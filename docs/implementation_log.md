@@ -162,6 +162,57 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
   <changed Python files>` passed with 0 errors, 0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
+## 2026-05-09 - First fixed-volume det-u landscape artifacts
+
+### Scope
+
+Started the third ordered diagnostic slice from
+`docs/agent_goal_differentiable_stopped_detu_diagnosis.md`: fixed-volume scalar
+`det_u` landscapes. This first slice wires real landscape artifacts into the
+alternating run without changing the alignment algorithm.
+
+Changes:
+
+- Added `tomojax.align._alternating_detu_landscape`, a private align diagnostic
+  writer for fixed-volume detector-u loss curves.
+- Added `detu_loss_curves.csv`, `detu_loss_curves.png`,
+  `detu_gradient_curves.png`, `detu_curve_summary.json`, and
+  `detu_curve_inputs.json` to alternating artifact bundles.
+- The current curves evaluate the existing projection objective on the true
+  volume, a neutral zero volume, a true-geometry FISTA reconstruction, and the
+  final stopped volume over a deterministic local detector-u candidate range
+  spanning initial, true, and final `det_u`.
+- The summary explicitly records unavailable future sources:
+  preview-iteration volumes, bootstrap-refreshed volume, multires-carried
+  volumes, and reduced-objective refreshed volumes.
+
+### Diagnosis
+
+This is diagnostic landscape instrumentation only. The scalar curve argmin is
+not used as production calibration and does not alter geometry updates. The
+artifact now makes the fixed-volume objective visible for four volume sources
+available or cheaply reproducible in a normal smoke run; later slices still
+need to add preview-iteration, bootstrap-refreshed, multires-carried, and
+reduced-objective refreshed volume sources and run the realistic rich PHANTOM94
+gate.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 89.77 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_detu_landscape.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_detu_landscape.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors, 0 warnings, and
+  0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-09 - Reference FISTA scalar-gradient contract artifacts
 
 ### Scope

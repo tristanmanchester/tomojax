@@ -15,6 +15,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.align._alternating_detu_landscape import (
+    DetULandscapeArtifacts,
+    write_detu_landscape_artifacts,
+)
 from tomojax.align._alternating_mask_provenance import mask_provenance_payload
 from tomojax.align._alternating_verification import (
     _backend_report_payload,
@@ -114,6 +118,11 @@ def _write_artifacts(
         "benchmark_result_json": output_dir / "benchmark_result.json",
         "bootstrap_stage_json": output_dir / "bootstrap_stage.json",
         "config_resolved_toml": output_dir / "config_resolved.toml",
+        "detu_curve_inputs_json": output_dir / "detu_curve_inputs.json",
+        "detu_curve_summary_json": output_dir / "detu_curve_summary.json",
+        "detu_gradient_curves_png": output_dir / "detu_gradient_curves.png",
+        "detu_loss_curves_csv": output_dir / "detu_loss_curves.csv",
+        "detu_loss_curves_png": output_dir / "detu_loss_curves.png",
         "final_volume_npy": output_dir / "final_volume.npy",
         "failure_report_json": output_dir / "failure_report.json",
         "fista_gradient_checks_json": output_dir / "fista_gradient_checks.json",
@@ -242,6 +251,26 @@ def _write_artifacts(
     )
     _write_json(artifacts["backend_report_json"], _backend_report_payload())
     _write_fista_diagnostic_artifacts(artifacts)
+    write_detu_landscape_artifacts(
+        DetULandscapeArtifacts(
+            csv_path=artifacts["detu_loss_curves_csv"],
+            loss_png_path=artifacts["detu_loss_curves_png"],
+            gradient_png_path=artifacts["detu_gradient_curves_png"],
+            summary_path=artifacts["detu_curve_summary_json"],
+            inputs_path=artifacts["detu_curve_inputs_json"],
+        ),
+        true_geometry=true_geometry,
+        initial_geometry=initial_geometry,
+        final_geometry=final_geometry,
+        truth_volume=truth_volume,
+        final_volume=final_volume,
+        observed=observed,
+        mask=mask,
+        projection_valid_mask=projection_valid_mask,
+        level=schedule.levels[-1],
+        sigma=float(schedule.levels[-1].residual_sigma),
+        loss_mode="l2" if projection_loss_mode == "otsu_l2" else "pseudo_huber",
+    )
     failure_report = _failure_report_payload(
         final_volume=final_volume,
         final_geometry=final_geometry,
@@ -842,6 +871,11 @@ def _artifact_description(name: str) -> str:
         "benchmark_result_json": "Synthetic benchmark case result",
         "bootstrap_stage_json": "Geometry-first bootstrap stage provenance",
         "config_resolved_toml": "Resolved deterministic smoke configuration",
+        "detu_curve_inputs_json": "Fixed-volume det_u curve inputs",
+        "detu_curve_summary_json": "Fixed-volume det_u curve summary",
+        "detu_gradient_curves_png": "Fixed-volume det_u finite-difference gradient plot",
+        "detu_loss_curves_csv": "Fixed-volume det_u loss curve samples",
+        "detu_loss_curves_png": "Fixed-volume det_u loss curve plot",
         "final_volume_npy": "Final reconstructed 32^3 volume",
         "failure_report_json": "Failure status for the smoke run",
         "fista_gradient_checks_json": "Reference FISTA scalar-gradient finite-difference checks",

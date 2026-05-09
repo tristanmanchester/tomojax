@@ -58,6 +58,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_audit_reports(result)
     _assert_mask_provenance(result)
     _assert_fista_diagnostic_artifacts(result)
+    _assert_detu_landscape_artifacts(result)
     _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
@@ -190,6 +191,11 @@ def _expected_artifacts() -> set[str]:
         "artifact_index_json",
         "backend_report_json",
         "config_resolved_toml",
+        "detu_curve_inputs_json",
+        "detu_curve_summary_json",
+        "detu_gradient_curves_png",
+        "detu_loss_curves_csv",
+        "detu_loss_curves_png",
         "failure_report_json",
         "fista_gradient_checks_json",
         "final_volume_npy",
@@ -304,6 +310,41 @@ def _assert_fista_diagnostic_artifacts(result: AlternatingSmokeResult) -> None:
         rows = list(csv.DictReader(handle))
     assert rows
     assert {row["recomputed_loss_point"] for row in rows} == {"returned_final_volume"}
+
+
+def _assert_detu_landscape_artifacts(result: AlternatingSmokeResult) -> None:
+    summary = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["detu_curve_summary_json"].read_text(encoding="utf-8")),
+    )
+    assert summary["schema"] == "tomojax.detu_curve_summary.v1"
+    curves = cast("list[dict[str, object]]", summary["curves"])
+    assert {curve["volume_source"] for curve in curves} == {
+        "final_stopped_volume",
+        "true_volume",
+        "true_geometry_reconstructed_volume",
+        "zero_initial_volume",
+    }
+    inputs = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["detu_curve_inputs_json"].read_text(encoding="utf-8")),
+    )
+    assert inputs["purpose"] == "diagnostic_fixed_volume_landscape_not_production_center_search"
+    with result.artifacts["detu_loss_curves_csv"].open(
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows
+    assert {row["volume_source"] for row in rows} == {
+        "final_stopped_volume",
+        "true_geometry_reconstructed_volume",
+        "true_volume",
+        "zero_initial_volume",
+    }
+    assert result.artifacts["detu_loss_curves_png"].stat().st_size > 0
+    assert result.artifacts["detu_gradient_curves_png"].stat().st_size > 0
 
 
 def _assert_summary_rows(result: AlternatingSmokeResult) -> None:
