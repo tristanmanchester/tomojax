@@ -305,6 +305,7 @@ def _expected_artifacts() -> set[str]:
         "reduced_objective_volume_sources_json",
         "run_manifest_json",
         "schur_diagnostics_json",
+        "schur_scalar_diagnostics_csv",
         "schur_scalar_diagnostics_json",
         "verification_json",
     }
@@ -448,6 +449,14 @@ def _assert_schur_scalar_diagnostics(result: AlternatingSmokeResult) -> None:
         assert "final_stopped_volume" in curves
         comparison = cast("dict[str, object]", payload["comparison"])
         assert "final_stopped_gradient_sign_agrees_with_JTr" in comparison
+    with result.artifacts["schur_scalar_diagnostics_csv"].open(
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows
+    assert "data_JTr" in rows[0]
 
 
 def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:

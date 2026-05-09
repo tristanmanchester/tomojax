@@ -110,10 +110,39 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the multires landscape
       artifact slice.
+- [x] Rerun stopped rich PHANTOM94 multires diagnostic with the new artifacts
+      on CUDA.
+- [x] Add benchmark-run Markdown report with the decisive classification.
+- [x] Update `docs/implementation_log.md` with the benchmark evidence.
+- [x] Add `schur_scalar_diagnostics.csv` companion artifact and backfill it for
+      the diagnostic benchmark run directories.
 
 ### Validation
 
 Current slice:
+
+- `LD_LIBRARY_PATH=$(find .venv/lib/python3.12/site-packages/nvidia -path
+  '*/lib' -type d | paste -sd: -) env UV_CACHE_DIR=.uv-cache
+  JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python
+  tools/run_rich_phantom_v1_parity_gate.py --out-dir
+  runs/rich_phantom_v1_parity_20260509_detu_diagnostics --views 128
+  --profile lightning --mode stopped_multires` completed.
+- `python - <<'PY' ...` artifact checklist confirmed no missing required
+  per-level artifacts and confirmed root multires-carried detu artifacts exist.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed after adding `schur_scalar_diagnostics_csv`: 1 test in
+  117.54 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_schur_scalar.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_schur_scalar.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_rich_phantom_v1_parity_gate.py::test_multires_summary_collates_carried_detu_curves

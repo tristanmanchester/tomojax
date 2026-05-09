@@ -3,6 +3,64 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — Stopped det_u Diagnostic Benchmark Classification
+
+### Summary
+
+- Ran the stopped rich PHANTOM94 det_u-only multires diagnostic on `cuda:0`
+  with JAX preallocation disabled and the venv NVIDIA library path exported.
+- New artifact root:
+  `runs/rich_phantom_v1_parity_20260509_detu_diagnostics/`.
+- Each level now includes the required diagnostic artifacts:
+  `mask_provenance.json`, `fista_gradient_checks.json`, `adjoint_checks.json`,
+  `geometry_jvp_vjp_checks.json`, `detu_loss_curves.csv/png`,
+  `schur_scalar_diagnostics.json/csv`, `reduced_objective_probe.csv/png`,
+  `gauge_transfer_diagnostics.json`, and `benchmark_report.md`.
+- The root also includes `multires_carried_detu_loss_curves.csv`,
+  `multires_carried_detu_summary.json`, and
+  `multires_carried_detu_summary.md`.
+- Added benchmark report:
+  `docs/benchmark_runs/2026-05-09-differentiable-stopped-detu-diagnosis.md`.
+
+### Evidence
+
+- `32^3`: det_u RMSE `1.6074667 px`, volume NMSE `0.7407774`,
+  classification `training_loss_not_independent`.
+- `64^3`: det_u RMSE `1.6753750 px`, volume NMSE `0.5128121`,
+  classification `reconstruction_absorbed_geometry`.
+- `128^3`: det_u RMSE `2.9541664 px`, volume NMSE `0.5029598`,
+  classification `reconstruction_absorbed_geometry`.
+- At `128^3`, the true-volume fixed landscape minimum is `14.6623125 px`
+  while the final stopped/carried landscape minimum is `11.9057813 px`.
+- At `128^3`, the gauge-transfer diagnostic reports `absorbed_like` with
+  transfer ratio `0.8672362` and reduced/fixed ratio `0.1327638`.
+- Schur scalar diagnostics agree with scalar finite-difference signs at
+  `128^3`/`64^3`, so this evidence does not identify Schur `JTr`/`JTJ`
+  scaling as the primary blocker.
+- Reduced-objective probes at `128^3` remain in the wrong basin:
+  best alignment candidate `schur_backtrack_1` at `11.763933 px`; best valid
+  candidate `current_final` at `11.545834 px`.
+
+### Classification
+
+Decisive classification:
+`biased_fixed_stopped_volume_objective` with
+`reconstruction_absorbed_geometry`.
+
+The current evidence points to stopped reconstruction/volume gauge absorption,
+not theta contamination, nuisance/pose freedom, a COR heuristic gap, or Schur
+scalar mismatch. The next functional work should target the reconstruction/gauge
+handoff or inner reconstruction model before considering local reduced-objective
+acceptance.
+
+### Validation
+
+- `python - <<'PY' ...` artifact checklist confirmed no missing required
+  per-level artifacts and confirmed root multires-carried detu artifacts exist.
+- After adding the Schur scalar CSV companion, generated
+  `schur_scalar_diagnostics.csv` for the three diagnostic run directories from
+  their recorded JSON payloads.
+
 ## 2026-05-09 — Multires-Carried det_u Landscape Collation
 
 ### Summary

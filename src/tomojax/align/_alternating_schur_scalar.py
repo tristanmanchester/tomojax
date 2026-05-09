@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 def write_schur_scalar_diagnostics(
     path: Path,
     *,
+    csv_path: Path | None = None,
     schur_result: JointSchurLMResult | None,
     detu_curve_csv: Path,
 ) -> None:
@@ -29,6 +30,8 @@ def write_schur_scalar_diagnostics(
         detu_curve_csv=detu_curve_csv,
     )
     _ = path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    if csv_path is not None:
+        _write_schur_scalar_csv(csv_path, payload)
 
 
 def schur_scalar_diagnostics_payload(
@@ -191,3 +194,63 @@ def _curve_curvature_positive(curve: dict[str, object] | None) -> bool | None:
     if curve is None:
         return None
     return bool(float(cast("float", curve["curvature_at_nearest_final"])) > 0.0)
+
+
+def _write_schur_scalar_csv(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "volume_source",
+        "status",
+        "data_JTr",
+        "data_JTJ",
+        "damping",
+        "damped_JTJ",
+        "raw_newton_step",
+        "damped_lm_step",
+        "selected_step",
+        "accepted",
+        "nearest_final_det_u_px",
+        "finite_difference_gradient",
+        "finite_difference_curvature",
+        "argmin_det_u_px",
+        "argmin_loss",
+    ]
+    status = str(payload.get("status", "unknown"))
+    rows: list[dict[str, object]] = []
+    schur = cast("dict[str, object]", payload.get("schur", {}))
+    curves = cast("dict[str, dict[str, object]]", payload.get("finite_difference_curves", {}))
+    if curves:
+        for source, curve in sorted(curves.items()):
+            rows.append(_csv_row(source, status=status, schur=schur, curve=curve))
+    else:
+        rows.append(_csv_row("", status=status, schur=schur, curve={}))
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _csv_row(
+    source: str,
+    *,
+    status: str,
+    schur: dict[str, object],
+    curve: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "volume_source": source,
+        "status": status,
+        "data_JTr": schur.get("data_JTr", ""),
+        "data_JTJ": schur.get("data_JTJ", ""),
+        "damping": schur.get("damping", ""),
+        "damped_JTJ": schur.get("damped_JTJ", ""),
+        "raw_newton_step": schur.get("raw_newton_step", ""),
+        "damped_lm_step": schur.get("damped_lm_step", ""),
+        "selected_step": schur.get("selected_step", ""),
+        "accepted": schur.get("accepted", ""),
+        "nearest_final_det_u_px": curve.get("nearest_final_det_u_px", ""),
+        "finite_difference_gradient": curve.get("gradient_at_nearest_final", ""),
+        "finite_difference_curvature": curve.get("curvature_at_nearest_final", ""),
+        "argmin_det_u_px": curve.get("argmin_det_u_px", ""),
+        "argmin_loss": curve.get("argmin_loss", ""),
+    }

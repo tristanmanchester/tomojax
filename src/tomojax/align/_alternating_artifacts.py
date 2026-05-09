@@ -175,6 +175,7 @@ def _write_artifacts(  # noqa: PLR0915
         ),
         "run_manifest_json": output_dir / "run_manifest.json",
         "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
+        "schur_scalar_diagnostics_csv": output_dir / "schur_scalar_diagnostics.csv",
         "schur_scalar_diagnostics_json": output_dir / "schur_scalar_diagnostics.json",
         "verification_json": output_dir / "verification.json",
     }
@@ -291,6 +292,7 @@ def _write_artifacts(  # noqa: PLR0915
     )
     write_schur_scalar_diagnostics(
         artifacts["schur_scalar_diagnostics_json"],
+        csv_path=artifacts["schur_scalar_diagnostics_csv"],
         schur_result=schur_result,
         detu_curve_csv=artifacts["detu_loss_curves_csv"],
     )
@@ -972,6 +974,7 @@ def _artifact_description(name: str) -> str:
         "reduced_objective_volume_sources_json": "Reduced-objective refreshed-volume provenance",
         "run_manifest_json": "Resolved smoke run manifest",
         "schur_diagnostics_json": "Joint Schur LM diagnostics summary",
+        "schur_scalar_diagnostics_csv": "Scalar det_u Schur-vs-landscape diagnostic rows",
         "schur_scalar_diagnostics_json": "Scalar det_u Schur-vs-landscape diagnostics",
         "verification_json": "Smoke verification report",
     }
