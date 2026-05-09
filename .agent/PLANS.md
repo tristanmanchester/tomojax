@@ -459,6 +459,11 @@ and proposed next fix before stopping.
 
 ### Completed Previous Slices
 
+- [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
+  scans projection/adjoint batches instead of building an all-view predicted
+  stack, and joint Schur now scans finite-difference parameter directions
+  instead of vmapping all perturbation projections for a view. Focused tests,
+  static checks, `just imports`, and bounded CUDA probes passed.
 - [x] Detector roll supported and committed: `2be6a99`.
 - [x] Axis tilt supported and committed with GPU diagnostic pause:
   `ac347d2`.

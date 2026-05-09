@@ -14,10 +14,12 @@ import jax.numpy as jnp
 
 from tomojax.core.projector import forward_project_view_T
 from tomojax.forward import (
+    CoreProjectionGeometry,
     ResidualFilterConfig,
     apply_residual_filter,
     apply_residual_filter_schedule,
     core_projection_geometry_from_state,
+    pseudo_huber_loss,
     residual_loss,
 )
 from tomojax.geometry import CORE_X_AXIS, CORE_Y_AXIS
@@ -26,7 +28,6 @@ from tomojax.recon._backprojection_accumulation import sum_backproject_views_chu
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tomojax.forward import CoreProjectionGeometry
     from tomojax.geometry import GeometryState
 
 
@@ -42,6 +43,7 @@ class ReferenceFISTAConfig:
     residual_filters: tuple[ResidualFilterConfig, ...] = (ResidualFilterConfig(),)
     non_negative: bool = True
     center_l2_weight: float = 0.0
+    views_per_batch: int = 1
 
 
 @dataclass(frozen=True)
@@ -175,34 +177,12 @@ def _loss_and_explicit_gradient(
     mask: jax.Array | None,
     config: ReferenceFISTAConfig,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    predicted = _project_stack(volume, core=core)
-    whitened = (predicted - observed) / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
-    filtered = apply_residual_filter_schedule(
-        whitened,
-        config.residual_filters,
+    data_loss, data_gradient = _projection_loss_and_explicit_gradient_chunked(
+        volume,
+        observed,
+        core=core,
         mask=mask,
-    ).residual
-    data = residual_loss(
-        filtered,
-        jnp.zeros_like(filtered),
-        mask=None,
-        sigma=1.0,
-        delta=config.residual_delta,
-        mode="l2" if config.residual_loss_mode == "l2" else "pseudo_huber",
-    )
-    data_grad_filtered = (
-        filtered
-        * data.weights
-        / jnp.maximum(data.valid_count, jnp.asarray(1.0, dtype=jnp.float32))
-    )
-    data_grad_projection = _residual_filter_adjoint(
-        data_grad_filtered,
-        config.residual_filters,
-        mask=mask,
-    ) / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
-    data_gradient = sum_backproject_views_chunked(
-        core,
-        data_grad_projection,
+        config=config,
     )
     tv_value, tv_gradient = _smoothed_tv_value_and_grad(
         volume,
@@ -217,7 +197,91 @@ def _loss_and_explicit_gradient(
         + jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_gradient
         + jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_gradient
     )
-    return data.loss + scaled_regulariser, data.loss, scaled_regulariser, gradient
+    return data_loss + scaled_regulariser, data_loss, scaled_regulariser, gradient
+
+
+def _projection_loss_and_explicit_gradient_chunked(
+    volume: jax.Array,
+    observed: jax.Array,
+    *,
+    core: CoreProjectionGeometry,
+    mask: jax.Array | None,
+    config: ReferenceFISTAConfig,
+) -> tuple[jax.Array, jax.Array]:
+    obs = jnp.asarray(observed, dtype=jnp.float32)
+    n_views = int(obs.shape[0])
+    if n_views == 0:
+        return jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume)
+    b = _chunk_size(n_views, config.views_per_batch)
+    num_chunks = (n_views + b - 1) // b
+    normalizer = jnp.asarray(obs.size, dtype=jnp.float32)
+
+    def body(
+        carry: tuple[jax.Array, jax.Array],
+        chunk_index: jax.Array,
+    ) -> tuple[tuple[jax.Array, jax.Array], None]:
+        loss_acc, grad_acc = carry
+        start, valid, _view_idx = _chunk_schedule(chunk_index, n_views=n_views, chunk_size=b)
+        t_chunk = jax.lax.dynamic_slice(core.t_all, (start, 0, 0), (b, 4, 4))
+        obs_chunk = jax.lax.dynamic_slice(
+            obs,
+            (start, 0, 0),
+            (b, core.detector.nv, core.detector.nu),
+        )
+        mask_chunk = (
+            None
+            if mask is None
+            else jax.lax.dynamic_slice(
+                jnp.asarray(mask, dtype=jnp.float32),
+                (start, 0, 0),
+                (b, core.detector.nv, core.detector.nu),
+            )
+        )
+        predicted = _project_views(volume, core=core, t_all=t_chunk)
+        whitened = (predicted - obs_chunk) / jnp.asarray(
+            config.residual_sigma,
+            dtype=jnp.float32,
+        )
+        filtered = apply_residual_filter_schedule(
+            whitened,
+            config.residual_filters,
+            mask=mask_chunk,
+        ).residual
+        filtered = filtered * valid[:, None, None]
+        data = residual_loss(
+            filtered,
+            jnp.zeros_like(filtered),
+            mask=None,
+            sigma=1.0,
+            delta=config.residual_delta,
+            mode="l2" if config.residual_loss_mode == "l2" else "pseudo_huber",
+        )
+        loss_map = (
+            pseudo_huber_loss(filtered, delta=config.residual_delta)
+            if config.residual_loss_mode != "l2"
+            else jnp.asarray(0.5, dtype=jnp.float32) * filtered * filtered
+        )
+        loss_chunk = jnp.sum(loss_map) / jnp.maximum(normalizer, 1.0)
+        data_grad_filtered = filtered * data.weights / jnp.maximum(normalizer, 1.0)
+        data_grad_projection = _residual_filter_adjoint(
+            data_grad_filtered,
+            config.residual_filters,
+            mask=mask_chunk,
+        ) / jnp.asarray(config.residual_sigma, dtype=jnp.float32)
+        data_grad_projection = data_grad_projection * valid[:, None, None]
+        grad_chunk = sum_backproject_views_chunked(
+            _core_with_views(core, t_chunk),
+            data_grad_projection,
+        )
+        return (loss_acc + loss_chunk, grad_acc + grad_chunk), None
+
+    init = (jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume))
+    (loss, gradient), _ = jax.lax.scan(
+        body,
+        init,
+        jnp.arange(num_chunks, dtype=jnp.int32),
+    )
+    return loss, gradient
 
 
 def _residual_filter_adjoint(
@@ -236,7 +300,12 @@ def _residual_filter_adjoint(
     return jnp.sum(jnp.stack(components, axis=0), axis=0)
 
 
-def _project_stack(volume: jax.Array, *, core: CoreProjectionGeometry) -> jax.Array:
+def _project_views(
+    volume: jax.Array,
+    *,
+    core: CoreProjectionGeometry,
+    t_all: jax.Array,
+) -> jax.Array:
     def project_one(t_view: jax.Array) -> jax.Array:
         return forward_project_view_T(
             t_view,
@@ -251,7 +320,52 @@ def _project_stack(volume: jax.Array, *, core: CoreProjectionGeometry) -> jax.Ar
             det_grid=core.det_grid,
         )
 
-    return jax.vmap(project_one)(core.t_all).astype(jnp.float32)
+    return jax.vmap(project_one)(t_all).astype(jnp.float32)
+
+
+def _core_with_views(core: CoreProjectionGeometry, t_all: jax.Array) -> CoreProjectionGeometry:
+    return CoreProjectionGeometry(
+        grid=core.grid,
+        detector=core.detector,
+        t_all=t_all,
+        det_grid=core.det_grid,
+        operator=core.operator,
+        step_size=core.step_size,
+        n_steps=core.n_steps,
+        gather_dtype=core.gather_dtype,
+        checkpoint_projector=core.checkpoint_projector,
+        projector_unroll=core.projector_unroll,
+        detector_roll_rad=core.detector_roll_rad,
+        axis_rot_x_rad=core.axis_rot_x_rad,
+        axis_rot_y_rad=core.axis_rot_y_rad,
+        alpha_rad_max_abs=core.alpha_rad_max_abs,
+        beta_rad_max_abs=core.beta_rad_max_abs,
+        acquisition_model=core.acquisition_model,
+        laminography_tilt_rad=core.laminography_tilt_rad,
+        laminography_tilt_about=core.laminography_tilt_about,
+    )
+
+
+def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
+    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else 1
+    return max(1, min(int(b), int(n_views)))
+
+
+def _chunk_schedule(
+    chunk_index: jax.Array,
+    *,
+    n_views: int,
+    chunk_size: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    b = jnp.asarray(chunk_size, dtype=jnp.int32)
+    start = jnp.asarray(chunk_index, dtype=jnp.int32) * b
+    remaining = jnp.maximum(0, jnp.asarray(n_views, dtype=jnp.int32) - start)
+    valid = jnp.minimum(b, remaining)
+    shift = b - valid
+    start_shifted = jnp.maximum(0, start - shift)
+    idx = jnp.arange(chunk_size, dtype=jnp.int32)
+    valid_mask = (idx >= (b - valid)).astype(jnp.float32)
+    return start_shifted, valid_mask, start_shifted + idx
 
 
 def _support_or_none(

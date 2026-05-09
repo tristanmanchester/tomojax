@@ -11192,3 +11192,62 @@ geometry-update volume policy rather than more FISTA step scaling.
   tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
   0 warnings, and 0 notes.
 - `just imports` passed.
+
+## 2026-05-09 — 256^3 GPU Memory Materialisation Cleanup
+
+### Summary
+
+- Treated the 256^3 target as a memory-regression gate rather than a benchmark
+  shrink request.
+- Removed the remaining all-view projection materialisation from the reference
+  FISTA preview path. `_loss_and_explicit_gradient` now scans projection chunks,
+  accumulates the normalized data loss, applies the residual-filter adjoint per
+  chunk, and accumulates the explicit backprojection gradient without building
+  a full predicted projection stack.
+- Removed Schur's remaining per-view perturbation preallocation. The streamed
+  normal-equation path already scanned views, but still vmapped all local
+  finite-difference directions for a view; it now scans parameter directions so
+  setup plus 5-DOF pose perturbation projections are not staged concurrently.
+- Kept nuisance fitting on the conservative full-stack fallback for now because
+  gain/background estimation is a separate model term and was not enabled in
+  this memory gate.
+
+### GPU Evidence
+
+CUDA required the venv NVIDIA wheel library paths in `LD_LIBRARY_PATH`. All
+probes below used `JAX_PLATFORMS=cuda` and
+`XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+
+| Probe | Result | Peak sampled GPU memory |
+|---|---:|---:|
+| JAX CUDA device check | `cuda:0` | n/a |
+| 256^3, 16-view reference FISTA, 1 iteration, `views_per_batch=1` | passed | 2223 MiB |
+| 256^3, 16-view joint Schur, setup + all 5 pose DOFs, 1 iteration | passed | 727 MiB |
+
+Interpretation:
+
+- The geometry-update path no longer needs high VRAM at 256^3 scale for the
+  local Schur solve; it is streaming both views and parameter perturbations.
+- The preview reconstruction path is now chunked, but its 256^3 one-iteration
+  probe still sits slightly above the historical "around 2 GB" target. That is
+  close enough to continue the full 256^3 alignment gate, but remaining FISTA
+  memory work should focus on projector traversal temporaries, gather dtype, and
+  avoiding duplicate volume/gradient residency during line-search-style preview
+  updates, not on shrinking the benchmark.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest tests/test_reference_fista.py
+  tests/test_joint_schur_lm.py::test_schur_step_matches_dense_normal_solve
+  tests/test_joint_schur_lm.py::test_joint_schur_streamed_normals_put_pure_setup_error_in_setup_gauge
+  -q` passed: 13 tests in 39.67 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_joint_schur_lm.py::test_schur_step_matches_dense_normal_solve
+  tests/test_joint_schur_lm.py::test_joint_schur_streamed_normals_put_pure_setup_error_in_setup_gauge
+  -q` passed after the parameter-direction scan: 2 tests in 24.93 seconds.
+- `uv run ruff check src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_joint_schur_lm.py` passed.
+- `uv run basedpyright src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_joint_schur_lm.py` passed with 0 errors, 0 warnings, and
+  0 notes.
+- `just imports` passed.

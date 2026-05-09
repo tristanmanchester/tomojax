@@ -17,6 +17,7 @@ from tomojax.forward import (
     apply_residual_filter_schedule,
     nominal_axis_unit_from_geometry,
     project_parallel_reference_arrays,
+    pseudo_huber_loss,
     pseudo_huber_weights,
     residual_loss,
 )
@@ -884,9 +885,30 @@ def _stream_joint_normal_equations_for_geometry(
         def minus_residual(direction: jax.Array) -> jax.Array:
             return residual_for_direction(direction, jnp.float32(-1.0))
 
-        plus = jax.vmap(plus_residual)(directions)
-        minus = jax.vmap(minus_residual)(directions)
-        jac_local = ((plus - minus) / (jnp.float32(2.0) * step)).T
+        def direction_body(
+            jac_rows: jax.Array,
+            direction_index: jax.Array,
+        ) -> tuple[jax.Array, None]:
+            direction = jax.lax.dynamic_slice(
+                directions,
+                (direction_index, 0),
+                (1, n_params),
+            )[0]
+            column = (plus_residual(direction) - minus_residual(direction)) / (
+                jnp.float32(2.0) * step
+            )
+            return jac_rows.at[direction_index].set(column), None
+
+        jac_rows_init = jnp.zeros(
+            (int(directions.shape[0]), int(observed.shape[1]) * int(observed.shape[2])),
+            dtype=jnp.float32,
+        )
+        jac_rows, _ = jax.lax.scan(
+            direction_body,
+            jac_rows_init,
+            jnp.arange(int(directions.shape[0]), dtype=jnp.int32),
+        )
+        jac_local = jac_rows.T
         residual_view = _weighted_residual_dynamic_view_for_params(
             volume,
             observed,
@@ -1443,20 +1465,60 @@ def _residual_for_params(
     fit_gain_offset: bool,
     fit_background_offset: bool,
 ) -> jax.Array:
-    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
-    predicted = _with_fitted_nuisance(
-        predicted,
-        observed,
-        mask=mask,
-        fit_gain_offset=fit_gain_offset,
-        fit_background_offset=fit_background_offset,
-    )
-    residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
-    return apply_residual_filter_schedule(
-        residual,
-        cfg.residual_filters,
-        mask=mask,
-    ).residual
+    if fit_gain_offset or fit_background_offset:
+        predicted = _predicted_for_params(volume, geometry, params, config=cfg)
+        predicted = _with_fitted_nuisance(
+            predicted,
+            observed,
+            mask=mask,
+            fit_gain_offset=fit_gain_offset,
+            fit_background_offset=fit_background_offset,
+        )
+        residual = (predicted - observed) / jnp.asarray(sigma, dtype=jnp.float32)
+        return apply_residual_filter_schedule(
+            residual,
+            cfg.residual_filters,
+            mask=mask,
+        ).residual
+
+    n_views = int(geometry.pose.n_views)
+    obs = jnp.asarray(observed, dtype=jnp.float32)
+
+    def body(out: jax.Array, view: jax.Array) -> tuple[jax.Array, None]:
+        view_i = jnp.asarray(view, dtype=jnp.int32)
+        predicted = _predicted_dynamic_view_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            view_i,
+            config=cfg,
+        )
+        obs_view = jax.lax.dynamic_slice(
+            obs,
+            (view_i, 0, 0),
+            (1, int(observed.shape[1]), int(observed.shape[2])),
+        )
+        mask_view = (
+            None
+            if mask is None
+            else jax.lax.dynamic_slice(
+                mask,
+                (view_i, 0, 0),
+                (1, int(observed.shape[1]), int(observed.shape[2])),
+            )
+        )
+        residual = (predicted - obs_view) / jnp.asarray(sigma, dtype=jnp.float32)
+        filtered = apply_residual_filter_schedule(
+            residual,
+            cfg.residual_filters,
+            mask=mask_view,
+        ).residual
+        return out.at[view_i].set(filtered[0]), None
+
+    init = jnp.zeros_like(obs, dtype=jnp.float32)
+    residual, _ = jax.lax.scan(body, init, jnp.arange(n_views, dtype=jnp.int32))
+    return residual
 
 
 def _prior_strengths(cfg: JointSchurLMConfig) -> tuple[float, float]:
@@ -1650,27 +1712,37 @@ def _loss_for_params(
     cfg: JointSchurLMConfig,
     prior_reference: jax.Array | None = None,
 ) -> jax.Array:
-    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
-    predicted = _with_fitted_nuisance(
-        predicted,
-        observed,
-        mask=mask,
-        fit_gain_offset=cfg.fit_gain_offset,
-        fit_background_offset=cfg.fit_background_offset,
-    )
-    residual = apply_residual_filter_schedule(
-        (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
-        cfg.residual_filters,
-        mask=mask,
-    ).residual
-    data_loss = residual_loss(
-        residual,
-        jnp.zeros_like(residual),
-        mask=None,
-        sigma=1.0,
-        delta=cfg.delta,
-        mode="l2" if cfg.loss_mode == "l2" else "pseudo_huber",
-    ).loss
+    if cfg.fit_gain_offset or cfg.fit_background_offset:
+        predicted = _predicted_for_params(volume, geometry, params, config=cfg)
+        predicted = _with_fitted_nuisance(
+            predicted,
+            observed,
+            mask=mask,
+            fit_gain_offset=cfg.fit_gain_offset,
+            fit_background_offset=cfg.fit_background_offset,
+        )
+        residual = apply_residual_filter_schedule(
+            (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+            cfg.residual_filters,
+            mask=mask,
+        ).residual
+        data_loss = residual_loss(
+            residual,
+            jnp.zeros_like(residual),
+            mask=None,
+            sigma=1.0,
+            delta=cfg.delta,
+            mode="l2" if cfg.loss_mode == "l2" else "pseudo_huber",
+        ).loss
+    else:
+        data_loss = _loss_for_params_streamed(
+            volume,
+            observed,
+            geometry,
+            params,
+            mask=mask,
+            cfg=cfg,
+        )
     if prior_reference is None:
         return data_loss
     prior_loss = _parameter_prior_loss(
@@ -1682,6 +1754,63 @@ def _loss_for_params(
     return data_loss + prior_loss
 
 
+def _loss_for_params_streamed(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+) -> jax.Array:
+    n_views = int(geometry.pose.n_views)
+    obs = jnp.asarray(observed, dtype=jnp.float32)
+    normalizer = jnp.asarray(obs.size, dtype=jnp.float32)
+
+    def body(loss_acc: jax.Array, view: jax.Array) -> tuple[jax.Array, None]:
+        view_i = jnp.asarray(view, dtype=jnp.int32)
+        predicted = _predicted_dynamic_view_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            view_i,
+            config=cfg,
+        )
+        obs_view = jax.lax.dynamic_slice(
+            obs,
+            (view_i, 0, 0),
+            (1, int(observed.shape[1]), int(observed.shape[2])),
+        )
+        mask_view = (
+            None
+            if mask is None
+            else jax.lax.dynamic_slice(
+                mask,
+                (view_i, 0, 0),
+                (1, int(observed.shape[1]), int(observed.shape[2])),
+            )
+        )
+        filtered = apply_residual_filter_schedule(
+            (predicted - obs_view) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+            cfg.residual_filters,
+            mask=mask_view,
+        ).residual
+        loss_map = (
+            jnp.asarray(0.5, dtype=jnp.float32) * filtered * filtered
+            if cfg.loss_mode == "l2"
+            else pseudo_huber_loss(filtered, delta=cfg.delta)
+        )
+        return loss_acc + jnp.sum(loss_map) / jnp.maximum(normalizer, 1.0), None
+
+    loss, _ = jax.lax.scan(
+        body,
+        jnp.asarray(0.0, dtype=jnp.float32),
+        jnp.arange(n_views, dtype=jnp.int32),
+    )
+    return loss
+
+
 def _loss_by_view_for_params(
     volume: jax.Array,
     observed: jax.Array,
@@ -1691,24 +1820,55 @@ def _loss_by_view_for_params(
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
 ) -> tuple[float, ...]:
-    predicted = _predicted_for_params(volume, geometry, params, config=cfg)
-    predicted = _with_fitted_nuisance(
-        predicted,
-        observed,
-        mask=mask,
-        fit_gain_offset=cfg.fit_gain_offset,
-        fit_background_offset=cfg.fit_background_offset,
-    )
-    filtered = apply_residual_filter_schedule(
-        (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
-        cfg.residual_filters,
-        mask=mask,
-    ).residual
     losses: list[float] = []
     for view in range(geometry.pose.n_views):
+        if cfg.fit_gain_offset or cfg.fit_background_offset:
+            predicted = _predicted_for_params(volume, geometry, params, config=cfg)
+            predicted = _with_fitted_nuisance(
+                predicted,
+                observed,
+                mask=mask,
+                fit_gain_offset=cfg.fit_gain_offset,
+                fit_background_offset=cfg.fit_background_offset,
+            )
+            filtered = apply_residual_filter_schedule(
+                (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+                cfg.residual_filters,
+                mask=mask,
+            ).residual
+            filtered_view = filtered[view]
+        else:
+            view_i = jnp.asarray(view, dtype=jnp.int32)
+            predicted_view = _predicted_dynamic_view_for_params(
+                volume,
+                observed,
+                geometry,
+                params,
+                view_i,
+                config=cfg,
+            )
+            obs_view = jax.lax.dynamic_slice(
+                jnp.asarray(observed, dtype=jnp.float32),
+                (view_i, 0, 0),
+                (1, int(observed.shape[1]), int(observed.shape[2])),
+            )
+            mask_view = (
+                None
+                if mask is None
+                else jax.lax.dynamic_slice(
+                    mask,
+                    (view_i, 0, 0),
+                    (1, int(observed.shape[1]), int(observed.shape[2])),
+                )
+            )
+            filtered_view = apply_residual_filter_schedule(
+                (predicted_view - obs_view) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+                cfg.residual_filters,
+                mask=mask_view,
+            ).residual[0]
         loss = residual_loss(
-            filtered[view],
-            jnp.zeros_like(filtered[view]),
+            filtered_view,
+            jnp.zeros_like(filtered_view),
             mask=None,
             sigma=1.0,
             delta=cfg.delta,
