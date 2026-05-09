@@ -19,6 +19,10 @@ from tomojax.align._alternating_detu_landscape import (
     DetULandscapeArtifacts,
     write_detu_landscape_artifacts,
 )
+from tomojax.align._alternating_gauge_transfer import (
+    GaugeTransferArtifacts,
+    write_gauge_transfer_diagnostics,
+)
 from tomojax.align._alternating_mask_provenance import mask_provenance_payload
 from tomojax.align._alternating_reduced_objective import (
     ReducedObjectiveArtifacts,
@@ -134,6 +138,8 @@ def _write_artifacts(  # noqa: PLR0915
         "fista_trace_csv": output_dir / "fista_trace.csv",
         "fista_trace_recomputed_csv": output_dir / "fista_trace_recomputed.csv",
         "geometry_corrupted_json": output_dir / "geometry_corrupted.json",
+        "gauge_transfer_diagnostics_csv": output_dir / "gauge_transfer_diagnostics.csv",
+        "gauge_transfer_diagnostics_json": output_dir / "gauge_transfer_diagnostics.json",
         "gauge_policy_json": output_dir / "gauge_policy.json",
         "gauge_report_json": output_dir / "gauge_report.json",
         "geometry_final_json": output_dir / "geometry_final.json",
@@ -307,6 +313,18 @@ def _write_artifacts(  # noqa: PLR0915
         schur_result=schur_result,
         preview_volume_support=preview_volume_support,
         preview_views_per_batch=preview_views_per_batch,
+    )
+    write_gauge_transfer_diagnostics(
+        GaugeTransferArtifacts(
+            json_path=artifacts["gauge_transfer_diagnostics_json"],
+            csv_path=artifacts["gauge_transfer_diagnostics_csv"],
+        ),
+        true_geometry=true_geometry,
+        initial_geometry=initial_geometry,
+        final_geometry=final_geometry,
+        volume=final_volume,
+        projection_valid_mask=projection_valid_mask,
+        level=schedule.levels[-1],
     )
     failure_report = _failure_report_payload(
         final_volume=final_volume,
@@ -918,6 +936,8 @@ def _artifact_description(name: str) -> str:
         "fista_gradient_checks_json": "Reference FISTA scalar-gradient finite-difference checks",
         "fista_trace_csv": "Reference FISTA iteration trace",
         "fista_trace_recomputed_csv": "Reference FISTA trace losses recomputed at returned volume",
+        "gauge_transfer_diagnostics_csv": "det_u volume-absorbability curvature rows",
+        "gauge_transfer_diagnostics_json": "det_u volume-absorbability diagnostic summary",
         "gauge_policy_json": "Gauge canonicalisation policy",
         "gauge_report_json": "Gauge canonicalisation transfer report",
         "geometry_corrupted_json": "Corrupted synthetic input geometry state",

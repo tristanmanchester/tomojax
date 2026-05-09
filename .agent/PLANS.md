@@ -20,12 +20,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Treat 256^3-class OOM as a memory-regression bug, not a benchmark-size
-    issue.
-  - Remove avoidable JAX GPU whole-device preallocation from CLI entry paths
-    before TomoJAX/JAX imports can initialise the backend.
-  - Keep existing algorithmic chunking work intact and identify remaining
-    scale-sensitive materialisation paths.
+  - Add the gauge-transfer/reduced-curvature diagnostic for det_u absorbability
+    by volume updates.
+  - Use finite-difference det_u projection tangents and a regularized
+    volume-update normal equation solved by CG.
+  - Report fixed curvature, transferred curvature, reduced curvature estimate,
+    transfer ratio, CG residual, regularisation, mask role, and filter
+    provenance.
+  - Keep the diagnostic read-only: no solver acceptance or policy changes.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
@@ -92,10 +94,32 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the allocator diagnostic
       slice.
+- [x] Add gauge-transfer/reduced-curvature artifact for det_u volume
+      absorbability.
+- [x] Add focused artifact/schema coverage.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the gauge-transfer
+      diagnostic slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 102.82 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_gauge_transfer.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_gauge_transfer.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py tests/test_alternating_solver_smoke.py` passed with
+  0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed after
+  re-exporting the chunked adjoint accumulator through the public recon API.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_align_auto_cli.py::test_align_auto_cli_sets_jax_no_preallocate_before_tomojax_import

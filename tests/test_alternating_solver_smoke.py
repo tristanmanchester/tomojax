@@ -67,6 +67,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_detu_landscape_artifacts(result)
     _assert_schur_scalar_diagnostics(result)
     _assert_reduced_objective_artifacts(result)
+    _assert_gauge_transfer_diagnostics(result)
     _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
@@ -268,6 +269,8 @@ def _expected_artifacts() -> set[str]:
         "final_volume_npy",
         "fista_trace_csv",
         "fista_trace_recomputed_csv",
+        "gauge_transfer_diagnostics_csv",
+        "gauge_transfer_diagnostics_json",
         "geometry_corrupted_json",
         "geometry_jvp_vjp_checks_json",
         "gauge_policy_json",
@@ -466,6 +469,49 @@ def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
     assert {row["fista_mask_role"] for row in rows} == {"projection_valid_mask"}
     assert {row["alignment_loss_mask_role"] for row in rows} == {"alignment_loss_mask"}
     assert result.artifacts["reduced_objective_curves_png"].stat().st_size > 0
+
+
+def _assert_gauge_transfer_diagnostics(result: AlternatingSmokeResult) -> None:
+    payload = cast(
+        "dict[str, object]",
+        json.loads(
+            result.artifacts["gauge_transfer_diagnostics_json"].read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    assert payload["schema"] == "tomojax.gauge_transfer_diagnostics.v1"
+    assert payload["status"] == "recorded"
+    assert payload["production_effect"] == "none_diagnostic_only"
+    assert payload["mask_role"] == "projection_valid_mask"
+    rows = cast("list[dict[str, object]]", payload["rows"])
+    assert {row["geometry_source"] for row in rows} == {
+        "final",
+        "initial_corrupted",
+        "true_synthetic_diagnostic",
+    }
+    for row in rows:
+        assert row["mask_role"] == "projection_valid_mask"
+        assert row["filter_application"] == "raw_projection_tangent_valid_mask"
+        assert row["interpretation"] in {
+            "absorbed_like",
+            "identifiable_like",
+            "mixed",
+        }
+        assert np.isfinite(float(cast("float", row["fixed_curvature"])))
+        assert np.isfinite(float(cast("float", row["reduced_curvature_estimate"])))
+        assert int(cast("int", row["cg_iterations"])) >= 1
+    with result.artifacts["gauge_transfer_diagnostics_csv"].open(
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert {row["geometry_source"] for row in csv_rows} == {
+        "final",
+        "initial_corrupted",
+        "true_synthetic_diagnostic",
+    }
 
 
 def _assert_summary_rows(result: AlternatingSmokeResult) -> None:

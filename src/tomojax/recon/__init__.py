@@ -7,6 +7,7 @@ from types import ModuleType
 from typing import Any
 
 from . import fbp as _fbp_module, fista_tv as _fista_tv_module, spdhg_tv as _spdhg_tv_module
+from ._backprojection_accumulation import sum_backproject_views_chunked
 from ._fista_diagnostics import (
     ReferenceFISTADiagnosticArtifacts,
     reference_fista_diagnostic_artifacts,
@@ -71,6 +72,7 @@ __all__ = [
     "reference_fista_diagnostic_artifacts",
     "reference_fista_schedule",
     "spdhg_tv",
+    "sum_backproject_views_chunked",
     "write_fista_trace_csv",
     "write_fista_trace_recomputed_csv",
 ]

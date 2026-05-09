@@ -22,6 +22,7 @@ from tomojax.recon import (
     reference_fista_diagnostic_artifacts,
     reference_fista_schedule,
     spdhg_tv,
+    sum_backproject_views_chunked,
     write_fista_trace_csv,
     write_fista_trace_recomputed_csv,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "reference_fista_diagnostic_artifacts",
     "reference_fista_schedule",
     "spdhg_tv",
+    "sum_backproject_views_chunked",
     "write_fista_trace_csv",
     "write_fista_trace_recomputed_csv",
 ]

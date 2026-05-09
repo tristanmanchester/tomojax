@@ -3,6 +3,45 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — Gauge-Transfer det_u Absorbability Diagnostic
+
+### Summary
+
+- Added `gauge_transfer_diagnostics.json` and
+  `gauge_transfer_diagnostics.csv` to alternating run artifacts.
+- The diagnostic is read-only and does not change Schur acceptance, trust
+  radii, geometry tolerances, or solver policy.
+- For final, initial-corrupted, and synthetic-true geometries, it computes a
+  finite-difference `det_u` projection tangent under the `projection_valid_mask`,
+  then solves a small regularised volume normal equation by CG to estimate how
+  much of that geometry tangent can be represented by a volume update.
+- The artifact records fixed curvature, transferred curvature, reduced
+  curvature estimate, transfer ratio, reduced/fixed ratio, CG iterations,
+  residual norm, regularisation, mask role, and residual-filter provenance.
+- Exposed the existing chunked adjoint accumulator through the public
+  `tomojax.recon` API so the align diagnostic does not cross private recon
+  boundaries.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 102.82 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_gauge_transfer.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_gauge_transfer.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py tests/test_alternating_solver_smoke.py` passed
+  with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- The first `just imports` attempt correctly failed because align imported a
+  private recon helper; the helper is now re-exported through the public recon
+  API and the import contract passes.
+
 ## 2026-05-09 — CLI JAX Preallocation Guard
 
 ### Summary
