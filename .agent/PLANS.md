@@ -20,13 +20,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Add reduced-objective probe artifacts for selected local det_u candidate
-    geometries.
-  - Refresh/reconstruct each candidate volume with the projection-valid mask
-    and identical FISTA budget/initialisation.
-  - Score each refreshed volume with alignment and valid projection masks.
-  - Record candidate provenance, FISTA trace losses, stationarity proxy, and
-    diagnostic-only interpretation fields without changing acceptance logic.
+  - Treat 256^3-class OOM as a memory-regression bug, not a benchmark-size
+    issue.
+  - Remove avoidable JAX GPU whole-device preallocation from CLI entry paths
+    before TomoJAX/JAX imports can initialise the backend.
+  - Keep existing algorithmic chunking work intact and identify remaining
+    scale-sensitive materialisation paths.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
@@ -86,10 +85,36 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the reduced-objective
       diagnostic slice.
+- [x] Add CLI allocator default so `tomojax-align-auto-smoke`, `tomojax-align`,
+      and `tomojax-recon` set `XLA_PYTHON_CLIENT_PREALLOCATE=false` before JAX
+      imports.
+- [x] Add focused coverage for the align-auto startup allocator contract.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the allocator diagnostic
+      slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_cli_sets_jax_no_preallocate_before_tomojax_import
+  -q` passed: 1 test in 1.47 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/cli/_jax_allocator.py src/tomojax/cli/align_auto.py
+  tests/test_align_auto_cli.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/_jax_allocator.py src/tomojax/cli/align_auto.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- A CUDA probe importing `tomojax.cli.align_auto` printed
+  `preallocate false`, then failed to initialise JAX CUDA because cuSPARSE was
+  not visible to the JAX CUDA plugin. This is not recorded as an OOM result.
+- A broader ruff sweep including legacy `src/tomojax/cli/align.py` and
+  `src/tomojax/cli/recon.py` was attempted first and failed on pre-existing
+  module lint debt plus import-order warnings from the required early allocator
+  setup.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts

@@ -3,6 +3,48 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — CLI JAX Preallocation Guard
+
+### Summary
+
+- Treated 256^3-class OOM reports as a memory-regression issue, not evidence
+  that the realistic alignment benchmark should be shrunk.
+- Added a small CLI allocator default helper so `tomojax-align-auto-smoke`,
+  `tomojax-align`, and `tomojax-recon` set
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` before importing JAX-backed TomoJAX
+  modules.
+- This removes an avoidable whole-device JAX memory reservation from the
+  command path. It does not change solver policy, geometry tolerances,
+  artifact/report fields, or benchmark criteria.
+- Existing algorithmic chunking still matters: FISTA preview accumulation is
+  chunked through the memory estimator, Schur normal-equation accumulation is
+  streamed per view for large residual stacks, and the remaining intentional
+  full-stack allocations are projection outputs/observations or bounded small
+  diagnostics.
+- A CUDA import probe printed `preallocate false` after importing
+  `tomojax.cli.align_auto`, but this shell could not initialise JAX CUDA
+  because the JAX CUDA plugin could not find cuSPARSE. That is recorded as a
+  local CUDA runtime visibility issue, not an OOM/working-set result.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_cli_sets_jax_no_preallocate_before_tomojax_import
+  -q` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/cli/_jax_allocator.py src/tomojax/cli/align_auto.py
+  tests/test_align_auto_cli.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/_jax_allocator.py src/tomojax/cli/align_auto.py
+  tests/test_align_auto_cli.py` passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- A broader ruff sweep including legacy `src/tomojax/cli/align.py` and
+  `src/tomojax/cli/recon.py` was attempted and failed on pre-existing module
+  lint debt plus import-order warnings caused by the required early allocator
+  setup. Focused lint was rerun on the new allocator helper, align-auto entry,
+  and startup test.
+
 ## 2026-05-09 — Reduced-Objective det_u Probe Artifacts
 
 ### Summary

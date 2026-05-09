@@ -8,6 +8,10 @@ import os
 import sys
 from typing import Any
 
+from ._jax_allocator import configure_jax_allocator_defaults
+
+configure_jax_allocator_defaults()
+
 import jax.numpy as jnp
 import numpy as np
 

@@ -3,6 +3,9 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
+import subprocess
+import sys
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -46,6 +49,28 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "axis_rot_x_rad" in captured.out
     assert "axis_rot_y_rad" in captured.out
     assert "theta_scale" in captured.out
+
+
+def test_align_auto_cli_sets_jax_no_preallocate_before_tomojax_import() -> None:
+    env = dict(os.environ)
+    _ = env.pop("XLA_PYTHON_CLIENT_PREALLOCATE", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; "
+                "os.environ.pop('XLA_PYTHON_CLIENT_PREALLOCATE', None); "
+                "import tomojax.cli.align_auto; "
+                "print(os.environ.get('XLA_PYTHON_CLIENT_PREALLOCATE'))"
+            ),
+        ],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.strip() == "false"
 
 
 def test_current_default_baseline_payload_reads_direct_and_nested_nmse(tmp_path: Path) -> None:

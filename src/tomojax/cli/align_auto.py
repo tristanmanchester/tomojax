@@ -1,4 +1,5 @@
 """CLI for the Phase 7 deterministic auto-alignment smoke pipeline."""
+# ruff: noqa: E402
 # pyright: reportAny=false
 
 from __future__ import annotations
@@ -9,6 +10,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, SupportsFloat, SupportsIndex, cast
 
 import numpy as np
+
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
+
+configure_jax_allocator_defaults()
 
 from tomojax.align.api import (
     AlternatingAlignmentSolver,
