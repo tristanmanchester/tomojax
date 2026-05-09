@@ -66,6 +66,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_fista_diagnostic_artifacts(result)
     _assert_detu_landscape_artifacts(result)
     _assert_schur_scalar_diagnostics(result)
+    _assert_reduced_objective_artifacts(result)
     _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
@@ -295,6 +296,10 @@ def _expected_artifacts() -> set[str]:
         "residual_map_raw_npy",
         "residual_map_summary_json",
         "residual_metrics_csv",
+        "reduced_objective_curves_png",
+        "reduced_objective_probe_csv",
+        "reduced_objective_summary_json",
+        "reduced_objective_volume_sources_json",
         "run_manifest_json",
         "schur_diagnostics_json",
         "schur_scalar_diagnostics_json",
@@ -431,6 +436,36 @@ def _assert_schur_scalar_diagnostics(result: AlternatingSmokeResult) -> None:
         assert "final_stopped_volume" in curves
         comparison = cast("dict[str, object]", payload["comparison"])
         assert "final_stopped_gradient_sign_agrees_with_JTr" in comparison
+
+
+def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
+    summary = cast(
+        "dict[str, object]",
+        json.loads(
+            result.artifacts["reduced_objective_summary_json"].read_text(encoding="utf-8")
+        ),
+    )
+    assert summary["schema"] == "tomojax.reduced_objective_summary.v1"
+    assert summary["status"] == "recorded"
+    sources = cast(
+        "dict[str, object]",
+        json.loads(
+            result.artifacts["reduced_objective_volume_sources_json"].read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    assert sources["fista_mask_role"] == "projection_valid_mask"
+    with result.artifacts["reduced_objective_probe_csv"].open(
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows
+    assert {row["fista_mask_role"] for row in rows} == {"projection_valid_mask"}
+    assert {row["alignment_loss_mask_role"] for row in rows} == {"alignment_loss_mask"}
+    assert result.artifacts["reduced_objective_curves_png"].stat().st_size > 0
 
 
 def _assert_summary_rows(result: AlternatingSmokeResult) -> None:

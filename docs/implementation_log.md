@@ -3,6 +3,43 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-09 — Reduced-Objective det_u Probe Artifacts
+
+### Summary
+
+- Added reduced-objective probe artifacts to alternating runs:
+  `reduced_objective_probe.csv`, `reduced_objective_summary.json`,
+  `reduced_objective_curves.png`, and
+  `reduced_objective_volume_sources.json`.
+- Each probe refreshes/reconstructs a short-budget volume under selected local
+  det_u candidate geometries using the `projection_valid_mask` as the FISTA
+  reconstruction mask.
+- Candidate volumes are then scored with both the alignment mask and the valid
+  detector mask, so the artifact can distinguish a fixed stopped-volume bias
+  from a reduced/refreshed objective basin without changing solver acceptance.
+- Candidate provenance includes current/final, initial-corrupted,
+  synthetic-true diagnostic, and Schur backtracking det_u candidates when a
+  Schur scalar step is available.
+- This is diagnostic-only variable projection evidence. It does not introduce
+  a production centre search, local reduced-objective acceptance, or a new
+  policy knob.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 94.48 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_reduced_objective.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_reduced_objective.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-09 — Schur Scalar det_u Diagnostics
 
 ### Summary

@@ -20,18 +20,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Scope
 
 - In scope:
-  - Add a Schur scalar diagnostic artifact for the det_u-only production gate.
-  - Compare the Schur one-DOF accumulated `JTr`/`JTJ` evidence against the
-    sampled fixed-volume det_u finite-difference landscape.
-  - Record signs, curvature, damping, accepted step, and trust scaling without
-    changing the alignment algorithm.
-  - Add focused artifact coverage for `schur_scalar_diagnostics.json`.
+  - Add reduced-objective probe artifacts for selected local det_u candidate
+    geometries.
+  - Refresh/reconstruct each candidate volume with the projection-valid mask
+    and identical FISTA budget/initialisation.
+  - Score each refreshed volume with alignment and valid projection masks.
+  - Record candidate provenance, FISTA trace losses, stationarity proxy, and
+    diagnostic-only interpretation fields without changing acceptance logic.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
     freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
     work.
-  - Reduced-objective refresh probes, local acceptance changes, or additional
-    placeholder report fields.
+  - Local reduced-objective trust-region acceptance or new policy knobs.
 - Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.recon`.
 
 ### Design Sources
@@ -77,10 +77,34 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md` and commit the Schur scalar
       diagnostic slice.
+- [x] Add `reduced_objective_probe.csv`, `reduced_objective_summary.json`,
+      `reduced_objective_curves.png`, and
+      `reduced_objective_volume_sources.json` artifacts.
+- [x] Ensure reduced-objective FISTA refreshes use `projection_valid_mask` and
+      score both alignment and valid masks.
+- [x] Add focused reduced-objective artifact coverage.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md` and commit the reduced-objective
+      diagnostic slice.
 
 ### Validation
 
 Current slice:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 94.48 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_alternating_reduced_objective.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_reduced_objective.py
+  src/tomojax/align/_alternating_artifacts.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_alternating_solver_smoke.py::test_schur_scalar_diagnostic_compares_detu_normal_equation_to_curve

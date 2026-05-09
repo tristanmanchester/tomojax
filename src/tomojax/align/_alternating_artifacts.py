@@ -20,6 +20,10 @@ from tomojax.align._alternating_detu_landscape import (
     write_detu_landscape_artifacts,
 )
 from tomojax.align._alternating_mask_provenance import mask_provenance_payload
+from tomojax.align._alternating_reduced_objective import (
+    ReducedObjectiveArtifacts,
+    write_reduced_objective_artifacts,
+)
 from tomojax.align._alternating_schur_scalar import write_schur_scalar_diagnostics
 from tomojax.align._alternating_verification import (
     _backend_report_payload,
@@ -157,6 +161,12 @@ def _write_artifacts(  # noqa: PLR0915
         "residual_map_raw_npy": output_dir / "residual_maps" / "final_raw_residual.npy",
         "residual_map_summary_json": output_dir / "residual_maps" / "summary.json",
         "residual_metrics_csv": output_dir / "residual_metrics.csv",
+        "reduced_objective_curves_png": output_dir / "reduced_objective_curves.png",
+        "reduced_objective_probe_csv": output_dir / "reduced_objective_probe.csv",
+        "reduced_objective_summary_json": output_dir / "reduced_objective_summary.json",
+        "reduced_objective_volume_sources_json": (
+            output_dir / "reduced_objective_volume_sources.json"
+        ),
         "run_manifest_json": output_dir / "run_manifest.json",
         "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
         "schur_scalar_diagnostics_json": output_dir / "schur_scalar_diagnostics.json",
@@ -277,6 +287,26 @@ def _write_artifacts(  # noqa: PLR0915
         artifacts["schur_scalar_diagnostics_json"],
         schur_result=schur_result,
         detu_curve_csv=artifacts["detu_loss_curves_csv"],
+    )
+    write_reduced_objective_artifacts(
+        ReducedObjectiveArtifacts(
+            csv_path=artifacts["reduced_objective_probe_csv"],
+            summary_path=artifacts["reduced_objective_summary_json"],
+            curves_png_path=artifacts["reduced_objective_curves_png"],
+            volume_sources_path=artifacts["reduced_objective_volume_sources_json"],
+        ),
+        true_geometry=true_geometry,
+        initial_geometry=initial_geometry,
+        final_geometry=final_geometry,
+        observed=observed,
+        alignment_mask=mask,
+        projection_valid_mask=projection_valid_mask,
+        level=schedule.levels[-1],
+        sigma=float(schedule.levels[-1].residual_sigma),
+        loss_mode="l2" if projection_loss_mode == "otsu_l2" else "pseudo_huber",
+        schur_result=schur_result,
+        preview_volume_support=preview_volume_support,
+        preview_views_per_batch=preview_views_per_batch,
     )
     failure_report = _failure_report_payload(
         final_volume=final_volume,
@@ -916,6 +946,10 @@ def _artifact_description(name: str) -> str:
         "residual_map_raw_npy": "Final raw projection residual map",
         "residual_map_summary_json": "Final raw residual-map summary",
         "residual_metrics_csv": "Per-level residual metrics",
+        "reduced_objective_curves_png": "Reduced-objective candidate loss plot",
+        "reduced_objective_probe_csv": "Reduced-objective candidate refresh losses",
+        "reduced_objective_summary_json": "Reduced-objective probe summary",
+        "reduced_objective_volume_sources_json": "Reduced-objective refreshed-volume provenance",
         "run_manifest_json": "Resolved smoke run manifest",
         "schur_diagnostics_json": "Joint Schur LM diagnostics summary",
         "schur_scalar_diagnostics_json": "Scalar det_u Schur-vs-landscape diagnostics",
