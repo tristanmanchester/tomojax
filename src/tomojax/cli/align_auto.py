@@ -292,6 +292,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Opt-in scout low-frequency anchor penalty for preview FISTA.",
     )
     _ = parser.add_argument(
+        "--preview-det-u-gauge-mode-weight",
+        type=float,
+        default=0.0,
+        help="Opt-in detector-u tangent-space volume gauge penalty for preview FISTA.",
+    )
+    _ = parser.add_argument(
         "--stopped-preview-policy",
         choices=_STOPPED_PREVIEW_POLICY_CHOICES,
         default="standard",
@@ -413,6 +419,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             preview_low_frequency_anchor_weight=float(
                 args.preview_low_frequency_anchor_weight
             ),
+            preview_det_u_gauge_mode_weight=float(args.preview_det_u_gauge_mode_weight),
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),

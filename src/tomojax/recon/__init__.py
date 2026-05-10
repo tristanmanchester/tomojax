@@ -22,6 +22,7 @@ from ._fista_reference import (
     reference_fista_returned_quality,
     write_fista_trace_csv,
 )
+from ._gauge_modes import DetUGaugeMode, build_det_u_gauge_mode
 from ._reference import reconstruct_average_reference, reconstruct_backprojection_reference
 from ._schedule_reference import (
     ReferenceFISTASchedule,
@@ -54,6 +55,7 @@ FistaConfig = _fista_tv_module.FistaConfig
 SPDHGConfig = _spdhg_tv_module.SPDHGConfig
 
 __all__ = [
+    "DetUGaugeMode",
     "FBPConfig",
     "FistaConfig",
     "ReferenceFISTAConfig",
@@ -68,6 +70,7 @@ __all__ = [
     "SPDHGConfig",
     "ScoutSupportResult",
     "VolumeSupportKind",
+    "build_det_u_gauge_mode",
     "build_scout_support",
     "centered_volume_support",
     "fbp",

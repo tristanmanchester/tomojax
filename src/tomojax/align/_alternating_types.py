@@ -69,6 +69,7 @@ class AlternatingSmokeConfig:
     preview_center_l2_weight: float = 0.0
     preview_support_outside_weight: float = 0.0
     preview_low_frequency_anchor_weight: float = 0.0
+    preview_det_u_gauge_mode_weight: float = 0.0
     preview_initial_volume_path: Path | None = None
     preview_views_per_batch: int = 1
     stopped_preview_policy: StoppedPreviewPolicy = "standard"

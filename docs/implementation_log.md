@@ -3,6 +3,66 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-10 - Detector-u tangent-space volume gauge
+
+### Scope
+
+Implemented the first Slice 3 vertical path: build a truth-free detector-u
+volume gauge mode and expose it as an optional FISTA alignment-volume penalty.
+This is still a penalty implementation, not the stronger post-step projection
+variant.
+
+Changes:
+
+- Added `build_det_u_gauge_mode(...)` and `DetUGaugeMode` to the public recon
+  API.
+- Added `gauge_mode`, `gauge_reference`, and `gauge_mode_weight` to
+  `ReferenceFISTAConfig`.
+- Added `preview_det_u_gauge_mode_weight` to alternating config and
+  `align-auto`.
+- Added the diagnostic family `reduced_scout_support_tangent_gauge`.
+
+### Diagnostic evidence
+
+The 64^3 variable-projection diagnostic completed at
+`runs/detu_variable_projection_20260510_64_tangent_gauge/`.
+
+The gauge-mode provenance records `uses_truth: false`; the transfer ratio before
+the penalty was `0.9085224261205981`. With tangent gauge weight `0.2`,
+`reduced_scout_support_tangent_gauge` moved its argmin from `10.464933` to
+`9.464933`, but still missed true `7.25` by `2.214933 px`.
+
+Interpretation: the first tangent-gauge penalty has a measurable effect but is
+not sufficient. The next step is either stronger weighting/projection, or a
+proper before/after transfer-ratio artifact for the penalised metric before
+running stopped production gates.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_det_u_gauge_mode_builder_and_penalty_are_truth_free
+  -q` passed: 1 test in 5.60 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/recon/_gauge_modes.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/recon/__init__.py src/tomojax/recon/api.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tools/run_detu_variable_projection_diagnostic.py tests/test_reference_fista.py`
+  passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_gauge_modes.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/recon/__init__.py src/tomojax/recon/api.py
+  src/tomojax/align/_alternating_types.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tools/run_detu_variable_projection_diagnostic.py tests/test_reference_fista.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- CUDA variable-projection diagnostic command from
+  `docs/benchmark_runs/2026-05-10-tangent-gauge-detu-64.md` completed.
+
 ## 2026-05-10 - Frozen scout soft support and low-frequency anchor
 
 ### Scope

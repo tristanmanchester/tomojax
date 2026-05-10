@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tomojax.recon import (
+    DetUGaugeMode,
     FBPConfig,
     FistaConfig,
     ReferenceFISTAConfig,
@@ -17,6 +18,7 @@ from tomojax.recon import (
     ScoutSupportResult,
     SPDHGConfig,
     VolumeSupportKind,
+    build_det_u_gauge_mode,
     build_scout_support,
     centered_volume_support,
     fbp,
@@ -36,6 +38,7 @@ from tomojax.recon._reference import (
 )
 
 __all__ = [
+    "DetUGaugeMode",
     "FBPConfig",
     "FistaConfig",
     "ReferenceFISTAConfig",
@@ -50,6 +53,7 @@ __all__ = [
     "SPDHGConfig",
     "ScoutSupportResult",
     "VolumeSupportKind",
+    "build_det_u_gauge_mode",
     "build_scout_support",
     "centered_volume_support",
     "fbp",

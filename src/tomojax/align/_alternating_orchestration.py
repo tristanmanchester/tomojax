@@ -56,6 +56,7 @@ from tomojax.recon import (
     ReferenceFISTAConfig,
     ReferenceFISTAResult,
     ScoutSupportResult,
+    build_det_u_gauge_mode,
     build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
@@ -169,6 +170,15 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             projection_valid_mask=projection_valid_mask,
             cache=scout_supports,
         )
+        det_u_gauge_mode = (
+            None
+            if scout_support is None or float(config.preview_det_u_gauge_mode_weight) <= 0.0
+            else build_det_u_gauge_mode(
+                scout_support.low_frequency_anchor,
+                initial_geometry,
+                projection_valid_mask=projection_valid_mask,
+            )
+        )
         record_mask_provenance(
             mask_provenance,
             caller="_run_alternating_solver_smoke_impl",
@@ -232,6 +242,11 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                     float(config.preview_low_frequency_anchor_weight),
                     0.0,
                 ),
+                gauge_mode=None if det_u_gauge_mode is None else det_u_gauge_mode.mode,
+                gauge_reference=(
+                    None if scout_support is None else scout_support.low_frequency_anchor
+                ),
+                gauge_mode_weight=max(float(config.preview_det_u_gauge_mode_weight), 0.0),
                 views_per_batch=int(config.preview_views_per_batch),
             ),
         )
@@ -478,6 +493,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         preview_center_l2_weight=config.preview_center_l2_weight,
         preview_support_outside_weight=config.preview_support_outside_weight,
         preview_low_frequency_anchor_weight=config.preview_low_frequency_anchor_weight,
+        preview_det_u_gauge_mode_weight=config.preview_det_u_gauge_mode_weight,
         preview_views_per_batch=config.preview_views_per_batch,
         stopped_preview_policy=config.stopped_preview_policy,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,

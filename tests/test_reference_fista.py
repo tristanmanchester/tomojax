@@ -17,6 +17,7 @@ from tomojax.forward import (
 from tomojax.geometry import GeometryState
 from tomojax.recon import (
     ReferenceFISTAConfig,
+    build_det_u_gauge_mode,
     build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
@@ -448,6 +449,46 @@ def test_scout_support_builder_records_truth_free_provenance() -> None:
     assert scout.provenance["geometry_source"] == "initial_metadata"
     assert float(jnp.min(scout.support_probability)) >= 0.0
     assert float(jnp.max(scout.support_probability)) <= 1.0
+
+
+def test_det_u_gauge_mode_builder_and_penalty_are_truth_free() -> None:
+    geometry = GeometryState.zeros(2)
+    truth = _tiny_volume()
+    observed = project_parallel_reference(truth, geometry)
+    mode = build_det_u_gauge_mode(
+        truth,
+        geometry,
+        projection_valid_mask=jnp.ones_like(observed),
+        cg_max_iterations=2,
+    )
+    config = ReferenceFISTAConfig(
+        iterations=1,
+        step_size=2e-3,
+        residual_filters=(ResidualFilterConfig(kind="raw"),),
+        gauge_mode=mode.mode,
+        gauge_reference=jnp.zeros_like(truth),
+        gauge_mode_weight=0.4,
+        non_negative=False,
+    )
+    core = core_projection_geometry_from_state(
+        cast("tuple[int, int, int]", tuple(int(dim) for dim in truth.shape)),
+        geometry,
+        detector_shape=(int(observed.shape[1]), int(observed.shape[2])),
+    )
+    loss, _data, regularizer, gradient = _loss_and_explicit_gradient(
+        truth,
+        observed,
+        core=core,
+        mask=jnp.ones_like(observed),
+        config=config,
+    )
+
+    assert mode.provenance["uses_truth"] is False
+    assert mode.mode.shape == truth.shape
+    assert mode.mode_norm >= 0.0
+    assert float(loss) >= 0.0
+    assert float(regularizer) >= 0.0
+    assert float(jnp.sqrt(jnp.mean(gradient * gradient))) >= 0.0
 
 
 def _tiny_volume() -> jnp.ndarray:

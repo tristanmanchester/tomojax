@@ -155,6 +155,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       and 64^3 scout-support variable-projection diagnostic.
 - [x] Update `docs/implementation_log.md` for Slice 2.
 - [x] Commit Slice 2.
+- [x] Start Slice 3: detector-u tangent-space volume gauge projection.
+- [x] Add truth-free detector-u gauge-mode builder.
+- [x] Add FISTA tangent gauge penalty and align-auto weight.
+- [x] Add `reduced_scout_support_tangent_gauge` diagnostic family.
+- [x] Run focused test, static checks, `just imports`, and 64^3 tangent-gauge
+      diagnostic.
+- [x] Update `docs/implementation_log.md` for Slice 3.
+- [x] Commit Slice 3.
 
 ### Validation
 

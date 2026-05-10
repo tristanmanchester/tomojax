@@ -26,6 +26,7 @@ from tomojax.align.api import reference_continuation_schedule
 from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
 from tomojax.recon import (
     ReferenceFISTAConfig,
+    build_det_u_gauge_mode,
     build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
@@ -51,6 +52,7 @@ class ObjectiveFamily:
     known_phantom_support: bool = False
     scout_soft_support: bool = False
     scout_low_frequency_anchor: bool = False
+    tangent_gauge: bool = False
 
 
 def main() -> int:
@@ -124,6 +126,11 @@ def _load_context(run_dir: Path, *, profile: str) -> dict[str, Any]:
         projection_valid_mask=valid_mask,
         volume_shape=cast("tuple[int, int, int]", tuple(int(dim) for dim in truth_volume.shape)),
     )
+    gauge_mode = build_det_u_gauge_mode(
+        scout.low_frequency_anchor,
+        initial_geometry,
+        projection_valid_mask=valid_mask,
+    )
     return {
         "run_dir": run_dir,
         "true_geometry": true_geometry,
@@ -145,6 +152,9 @@ def _load_context(run_dir: Path, *, profile: str) -> dict[str, Any]:
         "scout_support": scout.support_probability,
         "scout_low_frequency_anchor": scout.low_frequency_anchor,
         "scout_provenance": scout.provenance,
+        "det_u_gauge_mode": gauge_mode.mode,
+        "det_u_gauge_mode_provenance": gauge_mode.provenance,
+        "det_u_gauge_transfer_ratio_before": gauge_mode.transfer_ratio_before,
     }
 
 
@@ -255,6 +265,18 @@ def _objective_families(level_tv_weight: float) -> tuple[ObjectiveFamily, ...]:
             0.0,
             scout_soft_support=True,
             scout_low_frequency_anchor=True,
+        ),
+        ObjectiveFamily(
+            "reduced_scout_support_tangent_gauge",
+            "reduced",
+            "candidate",
+            True,
+            "scout_soft",
+            float(level_tv_weight),
+            0.0,
+            scout_soft_support=True,
+            scout_low_frequency_anchor=True,
+            tangent_gauge=True,
         ),
     )
 
@@ -466,6 +488,13 @@ def _fista_config(
             else None
         ),
         low_frequency_anchor_weight=0.05 if family.scout_low_frequency_anchor else 0.0,
+        gauge_mode=cast("jax.Array", context["det_u_gauge_mode"]) if family.tangent_gauge else None,
+        gauge_reference=(
+            cast("jax.Array", context["scout_low_frequency_anchor"])
+            if family.tangent_gauge
+            else None
+        ),
+        gauge_mode_weight=0.2 if family.tangent_gauge else 0.0,
         views_per_batch=0,
     )
 
@@ -593,6 +622,12 @@ def _reconstruction_config_payload(
         "center_l2_weight": family.center_l2_weight,
         "soft_support_outside_weight": 0.1 if family.scout_soft_support else 0.0,
         "low_frequency_anchor_weight": 0.05 if family.scout_low_frequency_anchor else 0.0,
+        "tangent_gauge_weight": 0.2 if family.tangent_gauge else 0.0,
+        "det_u_gauge_transfer_ratio_before": context.get(
+            "det_u_gauge_transfer_ratio_before",
+            "",
+        ),
+        "det_u_gauge_mode_provenance": context.get("det_u_gauge_mode_provenance", {}),
         "anchored_low_frequency_component": "not_available",
     }
 

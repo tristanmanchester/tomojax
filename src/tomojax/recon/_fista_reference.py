@@ -49,6 +49,9 @@ class ReferenceFISTAConfig:
     low_frequency_anchor: jax.Array | None = None
     low_frequency_anchor_weight: float = 0.0
     low_frequency_anchor_radius: int = 2
+    gauge_mode: jax.Array | None = None
+    gauge_reference: jax.Array | None = None
+    gauge_mode_weight: float = 0.0
     views_per_batch: int = 1
 
 
@@ -266,6 +269,11 @@ def _loss_and_explicit_gradient(
         anchor=config.low_frequency_anchor,
         radius=config.low_frequency_anchor_radius,
     )
+    gauge_value, gauge_gradient = _gauge_mode_value_and_grad(
+        volume,
+        mode=config.gauge_mode,
+        reference=config.gauge_reference,
+    )
     scaled_tv = jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_value
     scaled_center = jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_value
     scaled_soft_support = (
@@ -275,7 +283,10 @@ def _loss_and_explicit_gradient(
     scaled_anchor = (
         jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32) * anchor_value
     )
-    scaled_regulariser = scaled_tv + scaled_center + scaled_soft_support + scaled_anchor
+    scaled_gauge = jnp.asarray(config.gauge_mode_weight, dtype=jnp.float32) * gauge_value
+    scaled_regulariser = (
+        scaled_tv + scaled_center + scaled_soft_support + scaled_anchor + scaled_gauge
+    )
     gradient = (
         data_gradient
         + jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_gradient
@@ -284,6 +295,7 @@ def _loss_and_explicit_gradient(
         * soft_support_gradient
         + jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32)
         * anchor_gradient
+        + jnp.asarray(config.gauge_mode_weight, dtype=jnp.float32) * gauge_gradient
     )
     return data_loss + scaled_regulariser, data_loss, scaled_regulariser, gradient
 
@@ -611,6 +623,39 @@ def _box_blur3d(volume: jax.Array, *, radius: int) -> jax.Array:
                 ]
                 count += 1
     return acc / jnp.asarray(count, dtype=jnp.float32)
+
+
+def _gauge_mode_value_and_grad(
+    volume: jax.Array,
+    *,
+    mode: jax.Array | None,
+    reference: jax.Array | None,
+) -> tuple[jax.Array, jax.Array]:
+    return jax.value_and_grad(_gauge_mode_l2)(volume, mode=mode, reference=reference)
+
+
+def _gauge_mode_l2(
+    volume: jax.Array,
+    *,
+    mode: jax.Array | None,
+    reference: jax.Array | None,
+) -> jax.Array:
+    if mode is None:
+        return jnp.asarray(0.0, dtype=jnp.float32)
+    vol = jnp.asarray(volume, dtype=jnp.float32)
+    mode_arr = jnp.asarray(mode, dtype=jnp.float32)
+    if mode_arr.shape != vol.shape:
+        raise ValueError("gauge_mode must match volume shape")
+    reference_arr = (
+        jnp.zeros_like(vol)
+        if reference is None
+        else jnp.asarray(reference, dtype=jnp.float32)
+    )
+    if reference_arr.shape != vol.shape:
+        raise ValueError("gauge_reference must match volume shape")
+    denom = jnp.maximum(jnp.vdot(mode_arr, mode_arr).real, jnp.asarray(1.0e-12))
+    coeff = jnp.vdot(vol - reference_arr, mode_arr).real / denom
+    return 0.5 * coeff * coeff
 
 
 def _centered_axis(size: int) -> jax.Array:
