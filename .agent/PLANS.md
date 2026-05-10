@@ -158,6 +158,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Start Slice 3: detector-u tangent-space volume gauge projection.
 - [x] Add truth-free detector-u gauge-mode builder.
 - [x] Add FISTA tangent gauge penalty and align-auto weight.
+- [x] Add detector-u gauge component projection and before/after transfer
+      reporting.
 - [x] Add `reduced_scout_support_tangent_gauge` diagnostic family.
 - [x] Run focused test, static checks, `just imports`, and 64^3 tangent-gauge
       diagnostic.

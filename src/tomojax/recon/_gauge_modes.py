@@ -31,6 +31,18 @@ class DetUGaugeMode:
     provenance: dict[str, object]
 
 
+@dataclass(frozen=True)
+class DetUGaugeProjectionReport:
+    """Before/after report for removing the detector-u volume gauge component."""
+
+    coefficient_before: float
+    coefficient_after: float
+    mode_norm: float
+    transfer_ratio_before: float
+    transfer_ratio_after: float
+    provenance: dict[str, object]
+
+
 def build_det_u_gauge_mode(
     volume: jax.Array,
     geometry: GeometryState,
@@ -81,6 +93,42 @@ def build_det_u_gauge_mode(
             "finite_difference_step": float(finite_difference_step),
         },
     )
+
+
+def project_det_u_gauge_component(
+    volume: jax.Array,
+    gauge_mode: DetUGaugeMode,
+    *,
+    reference: jax.Array | None = None,
+) -> tuple[jax.Array, DetUGaugeProjectionReport]:
+    """Remove the component of a volume update along the detector-u gauge mode."""
+    vol = jnp.asarray(volume, dtype=jnp.float32)
+    mode = jnp.asarray(gauge_mode.mode, dtype=jnp.float32)
+    if mode.shape != vol.shape:
+        raise ValueError("gauge mode must match volume shape")
+    ref = jnp.zeros_like(vol) if reference is None else jnp.asarray(reference, dtype=jnp.float32)
+    if ref.shape != vol.shape:
+        raise ValueError("gauge reference must match volume shape")
+    denom = jnp.maximum(jnp.vdot(mode, mode).real, jnp.asarray(1.0e-12, dtype=jnp.float32))
+    coeff = jnp.vdot(vol - ref, mode).real / denom
+    projected = vol - coeff * mode
+    coeff_after = jnp.vdot(projected - ref, mode).real / denom
+    before_ratio = float(gauge_mode.transfer_ratio_before)
+    after_ratio = abs(float(coeff_after)) / max(abs(float(coeff)), 1.0e-12) * before_ratio
+    report = DetUGaugeProjectionReport(
+        coefficient_before=float(coeff),
+        coefficient_after=float(coeff_after),
+        mode_norm=float(gauge_mode.mode_norm),
+        transfer_ratio_before=before_ratio,
+        transfer_ratio_after=float(after_ratio),
+        provenance={
+            "schema": "tomojax.det_u_gauge_projection.v1",
+            "operation": "remove_volume_component_along_det_u_mode",
+            "uses_truth": False,
+            "mode_schema": gauge_mode.provenance.get("schema", ""),
+        },
+    )
+    return projected.astype(jnp.float32), report
 
 
 def _detu_projection_tangent(

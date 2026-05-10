@@ -30,6 +30,7 @@ from tomojax.recon import (
     build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
+    project_det_u_gauge_component,
     reconstruct_average_reference,
     reconstruct_backprojection_reference,
     reference_fista_returned_quality,
@@ -153,6 +154,7 @@ def _load_context(run_dir: Path, *, profile: str) -> dict[str, Any]:
         "scout_low_frequency_anchor": scout.low_frequency_anchor,
         "scout_provenance": scout.provenance,
         "det_u_gauge_mode": gauge_mode.mode,
+        "det_u_gauge_mode_object": gauge_mode,
         "det_u_gauge_mode_provenance": gauge_mode.provenance,
         "det_u_gauge_transfer_ratio_before": gauge_mode.transfer_ratio_before,
     }
@@ -314,6 +316,7 @@ def _evaluate_family(
     for det_u in det_u_values:
         geometry = _with_det_u(context["final_geometry"], float(det_u))
         quality = None
+        gauge_projection_report = None
         if family.mode == "fixed":
             if fixed_volume is None:
                 raise AssertionError("fixed objective did not prepare a fixed volume")
@@ -343,6 +346,12 @@ def _evaluate_family(
                 mask=context["valid_mask"],
             )
             volume = result.volume
+            if family.tangent_gauge:
+                volume, gauge_projection_report = project_det_u_gauge_component(
+                    volume,
+                    cast("Any", context["det_u_gauge_mode_object"]),
+                    reference=cast("jax.Array", context["scout_low_frequency_anchor"]),
+                )
             reconstruction_nmse = _volume_nmse(volume, context["truth_volume"])
         loss = _projection_loss(
             volume,
@@ -376,6 +385,26 @@ def _evaluate_family(
                 "returned_regularizer": "" if quality is None else quality.returned_regularizer,
                 "prox_gradient_norm": "" if quality is None else quality.projected_gradient_norm,
                 "volume_rms": "" if quality is None else quality.volume_rms,
+                "gauge_projection_transfer_ratio_before": (
+                    ""
+                    if gauge_projection_report is None
+                    else gauge_projection_report.transfer_ratio_before
+                ),
+                "gauge_projection_transfer_ratio_after": (
+                    ""
+                    if gauge_projection_report is None
+                    else gauge_projection_report.transfer_ratio_after
+                ),
+                "gauge_projection_coefficient_before": (
+                    ""
+                    if gauge_projection_report is None
+                    else gauge_projection_report.coefficient_before
+                ),
+                "gauge_projection_coefficient_after": (
+                    ""
+                    if gauge_projection_report is None
+                    else gauge_projection_report.coefficient_after
+                ),
                 "support_mass_fraction": (
                     ""
                     if quality is None or quality.support_mass_fraction is None
@@ -653,6 +682,18 @@ def _inner_solve_quality_payload(rows: list[dict[str, object]]) -> dict[str, obj
                 "returned_regularizer": row["returned_regularizer"],
                 "prox_gradient_norm": row["prox_gradient_norm"],
                 "volume_rms": row["volume_rms"],
+                "gauge_projection_transfer_ratio_before": row[
+                    "gauge_projection_transfer_ratio_before"
+                ],
+                "gauge_projection_transfer_ratio_after": row[
+                    "gauge_projection_transfer_ratio_after"
+                ],
+                "gauge_projection_coefficient_before": row[
+                    "gauge_projection_coefficient_before"
+                ],
+                "gauge_projection_coefficient_after": row[
+                    "gauge_projection_coefficient_after"
+                ],
                 "support_mass_fraction": row["support_mass_fraction"],
                 "reduced_initialization": row["reduced_initialization"],
             }

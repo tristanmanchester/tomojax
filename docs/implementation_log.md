@@ -8,9 +8,9 @@ decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 ### Scope
 
 Implemented the first Slice 3 vertical path: build a truth-free detector-u
-volume gauge mode and expose it as an optional FISTA alignment-volume penalty.
-This is still a penalty implementation, not the stronger post-step projection
-variant.
+volume gauge mode, expose it as an optional FISTA alignment-volume penalty, and
+add an explicit post-refresh projection/report for removing the detector-u
+volume component.
 
 Changes:
 
@@ -21,27 +21,31 @@ Changes:
 - Added `preview_det_u_gauge_mode_weight` to alternating config and
   `align-auto`.
 - Added the diagnostic family `reduced_scout_support_tangent_gauge`.
+- Added `project_det_u_gauge_component(...)` and before/after projection
+  transfer-ratio reporting for the tangent diagnostic family.
 
 ### Diagnostic evidence
 
-The 64^3 variable-projection diagnostic completed at
-`runs/detu_variable_projection_20260510_64_tangent_gauge/`.
+The latest 64^3 variable-projection diagnostic completed at
+`runs/detu_variable_projection_20260510_64_tangent_projection/`.
 
 The gauge-mode provenance records `uses_truth: false`; the transfer ratio before
-the penalty was `0.9085224261205981`. With tangent gauge weight `0.2`,
-`reduced_scout_support_tangent_gauge` moved its argmin from `10.464933` to
-`9.464933`, but still missed true `7.25` by `2.214933 px`.
+projection was `0.9085223081268876`. The projection report records near-zero
+after-projection transfer ratios for sampled candidates, for example
+`6.154042893016667e-08`.
 
-Interpretation: the first tangent-gauge penalty has a measurable effect but is
-not sufficient. The next step is either stronger weighting/projection, or a
-proper before/after transfer-ratio artifact for the penalised metric before
-running stopped production gates.
+`reduced_scout_support_tangent_gauge` moved its argmin from `10.464933` to
+`8.25`, but still missed true `7.25` by `1.0 px`. Interpretation: the projection
+removes the measured detector-u gauge component and improves the reduced basin,
+but the reduced objective still does not satisfy the `<= 0.5 px` first threshold
+and stopped production gates still need to be run.
 
 ### Validation
 
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
   tests/test_reference_fista.py::test_det_u_gauge_mode_builder_and_penalty_are_truth_free
-  -q` passed: 1 test in 5.60 seconds.
+  tests/test_reference_fista.py::test_det_u_gauge_projection_removes_volume_component
+  -q` passed: 2 tests in 7.06 seconds.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
   src/tomojax/recon/_gauge_modes.py src/tomojax/recon/_fista_reference.py
   src/tomojax/recon/__init__.py src/tomojax/recon/api.py

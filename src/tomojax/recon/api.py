@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tomojax.recon import (
     DetUGaugeMode,
+    DetUGaugeProjectionReport,
     FBPConfig,
     FistaConfig,
     ReferenceFISTAConfig,
@@ -24,6 +25,7 @@ from tomojax.recon import (
     fbp,
     fista_reconstruct_reference,
     fista_tv,
+    project_det_u_gauge_component,
     reference_fista_diagnostic_artifacts,
     reference_fista_returned_quality,
     reference_fista_schedule,
@@ -39,6 +41,7 @@ from tomojax.recon._reference import (
 
 __all__ = [
     "DetUGaugeMode",
+    "DetUGaugeProjectionReport",
     "FBPConfig",
     "FistaConfig",
     "ReferenceFISTAConfig",
@@ -59,6 +62,7 @@ __all__ = [
     "fbp",
     "fista_reconstruct_reference",
     "fista_tv",
+    "project_det_u_gauge_component",
     "reconstruct_average_reference",
     "reconstruct_backprojection_reference",
     "reference_fista_diagnostic_artifacts",

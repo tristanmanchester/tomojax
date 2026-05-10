@@ -21,6 +21,7 @@ from tomojax.recon import (
     build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
+    project_det_u_gauge_component,
     reconstruct_backprojection_reference,
     reference_fista_diagnostic_artifacts,
     reference_fista_returned_quality,
@@ -489,6 +490,34 @@ def test_det_u_gauge_mode_builder_and_penalty_are_truth_free() -> None:
     assert float(loss) >= 0.0
     assert float(regularizer) >= 0.0
     assert float(jnp.sqrt(jnp.mean(gradient * gradient))) >= 0.0
+
+
+def test_det_u_gauge_projection_removes_volume_component() -> None:
+    geometry = GeometryState.zeros(2)
+    truth = _tiny_volume()
+    observed = project_parallel_reference(truth, geometry)
+    mode = build_det_u_gauge_mode(
+        truth,
+        geometry,
+        projection_valid_mask=jnp.ones_like(observed),
+        cg_max_iterations=2,
+    )
+    contaminated = truth + 0.5 * mode.mode
+
+    projected, report = project_det_u_gauge_component(
+        contaminated,
+        mode,
+        reference=truth,
+    )
+
+    coeff_after = jnp.vdot(projected - truth, mode.mode).real / jnp.maximum(
+        jnp.vdot(mode.mode, mode.mode).real,
+        jnp.asarray(1.0e-12, dtype=jnp.float32),
+    )
+    assert abs(float(coeff_after)) <= 1.0e-5
+    assert abs(report.coefficient_after) <= 1.0e-5
+    assert report.transfer_ratio_after <= report.transfer_ratio_before
+    assert report.provenance["uses_truth"] is False
 
 
 def _tiny_volume() -> jnp.ndarray:
