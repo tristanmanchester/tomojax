@@ -49,6 +49,14 @@ def main() -> int:
         choices=("fixed_truth", "stopped_multires"),
         default="stopped_multires",
     )
+    parser.add_argument(
+        "--preview-volume-support",
+        choices=("cylindrical", "none", "scout_soft", "spherical"),
+        default="cylindrical",
+    )
+    parser.add_argument("--preview-support-outside-weight", type=float, default=0.0)
+    parser.add_argument("--preview-low-frequency-anchor-weight", type=float, default=0.0)
+    parser.add_argument("--preview-det-u-gauge-mode-weight", type=float, default=0.0)
     args = parser.parse_args()
 
     root = args.out_dir
@@ -71,6 +79,10 @@ def main() -> int:
                 views=args.views,
                 profile=args.profile,
                 volume_source="fixed_synthetic_truth",
+                preview_volume_support=args.preview_volume_support,
+                preview_support_outside_weight=args.preview_support_outside_weight,
+                preview_low_frequency_anchor_weight=args.preview_low_frequency_anchor_weight,
+                preview_det_u_gauge_mode_weight=args.preview_det_u_gauge_mode_weight,
             )
         ]
     else:
@@ -79,6 +91,10 @@ def main() -> int:
             full_dataset_dir=full.dataset_dir,
             views=args.views,
             profile=args.profile,
+            preview_volume_support=args.preview_volume_support,
+            preview_support_outside_weight=args.preview_support_outside_weight,
+            preview_low_frequency_anchor_weight=args.preview_low_frequency_anchor_weight,
+            preview_det_u_gauge_mode_weight=args.preview_det_u_gauge_mode_weight,
         )
     _write_summary(root, rows)
     return 0
@@ -90,6 +106,10 @@ def _run_stopped_multires(
     full_dataset_dir: Path,
     views: int,
     profile: str,
+    preview_volume_support: str,
+    preview_support_outside_weight: float,
+    preview_low_frequency_anchor_weight: float,
+    preview_det_u_gauge_mode_weight: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     carried_geometry: GeometryState | None = None
@@ -129,6 +149,10 @@ def _run_stopped_multires(
             profile=profile,
             volume_source="stopped_reconstruction",
             initial_volume_path=initial_volume_path,
+            preview_volume_support=preview_volume_support,
+            preview_support_outside_weight=preview_support_outside_weight,
+            preview_low_frequency_anchor_weight=preview_low_frequency_anchor_weight,
+            preview_det_u_gauge_mode_weight=preview_det_u_gauge_mode_weight,
         )
         rows.append(row)
         final_pose = read_pose_params_csv(root / row["run_name"] / "pose_params.csv")
@@ -152,6 +176,10 @@ def _run_solver_inprocess(
     profile: str,
     volume_source: str,
     initial_volume_path: Path | None = None,
+    preview_volume_support: str = "cylindrical",
+    preview_support_outside_weight: float = 0.0,
+    preview_low_frequency_anchor_weight: float = 0.0,
+    preview_det_u_gauge_mode_weight: float = 0.0,
 ) -> dict[str, Any]:
     run_dir = root / run_name
     start = time.perf_counter()
@@ -170,12 +198,15 @@ def _run_solver_inprocess(
         geometry_update_pose_frozen=True,
         geometry_update_active_setup_parameters=("det_u_px",),
         geometry_update_active_pose_dofs=(),
-        preview_volume_support="cylindrical",
+        preview_volume_support=cast("Any", preview_volume_support),
         preview_initialization="backprojection",
         preview_initial_volume_path=initial_volume_path,
         preview_tv_scale=1.0,
         preview_residual_filter_mode="continuation",
         preview_center_l2_weight=0.02,
+        preview_support_outside_weight=max(float(preview_support_outside_weight), 0.0),
+        preview_low_frequency_anchor_weight=max(float(preview_low_frequency_anchor_weight), 0.0),
+        preview_det_u_gauge_mode_weight=max(float(preview_det_u_gauge_mode_weight), 0.0),
         preview_views_per_batch=0,
         synthetic_dataset_name=DATASET_NAME,
         synthetic_dataset_artifact_dir=dataset_dir,

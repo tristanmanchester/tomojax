@@ -5,14 +5,15 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.datasets import generate_synthetic_dataset
 from tomojax.forward import project_parallel_reference
-from tomojax.geometry import read_geometry_json, read_pose_params_csv
+from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
 
 
 def _load_gate_module():
@@ -133,6 +134,57 @@ def test_multires_summary_collates_carried_detu_curves(tmp_path: Path) -> None:
     )
     assert "multires_carried_f4_final_volume" in csv_rows
     assert (tmp_path / "multires_carried_detu_summary.md").exists()
+
+
+def test_rich_phantom_gate_passes_preview_gauge_config(monkeypatch, tmp_path: Path) -> None:
+    gate = _load_gate_module()
+    captured: dict[str, object] = {}
+
+    class EmptyConsistency:
+        def to_dict(self) -> dict[str, object]:
+            return {}
+
+    class FakeSolver:
+        def __init__(self, config: object) -> None:
+            captured["config"] = config
+
+        def run_smoke(self, run_dir: Path) -> None:
+            run_dir.mkdir(parents=True, exist_ok=True)
+
+    def summary_row(run_name: str, run_dir: Path, _elapsed: float) -> dict[str, str]:
+        return {"run_name": run_name, "artifact_dir": str(run_dir)}
+
+    monkeypatch.setattr(gate, "AlternatingAlignmentSolver", FakeSolver)
+    monkeypatch.setattr(
+        gate,
+        "load_synthetic_dataset_sidecars",
+        lambda _path: SimpleNamespace(
+            manifest={"recovery_tolerances": {}, "unsupported_dofs_not_evaluated": []},
+            true_geometry=GeometryState.zeros(7),
+            consistency=EmptyConsistency(),
+        ),
+    )
+    monkeypatch.setattr(gate, "_summary_row", summary_row)
+
+    _ = gate._run_solver_inprocess(
+        root=tmp_path,
+        run_name="stopped",
+        dataset_dir=tmp_path / "dataset",
+        size=64,
+        views=7,
+        profile="lightning",
+        volume_source="stopped_reconstruction",
+        preview_volume_support="scout_soft",
+        preview_support_outside_weight=0.1,
+        preview_low_frequency_anchor_weight=0.05,
+        preview_det_u_gauge_mode_weight=0.2,
+    )
+
+    config = cast("Any", captured["config"])
+    assert config.preview_volume_support == "scout_soft"
+    assert config.preview_support_outside_weight == 0.1
+    assert config.preview_low_frequency_anchor_weight == 0.05
+    assert config.preview_det_u_gauge_mode_weight == 0.2
 
 
 def test_variable_projection_candidate_grid_covers_markers() -> None:

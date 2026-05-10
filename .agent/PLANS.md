@@ -167,6 +167,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       diagnostic.
 - [x] Update `docs/implementation_log.md` for Slice 3.
 - [x] Commit Slice 3.
+- [x] Run the stopped det-u production gate with scout support plus tangent gauge
+      enabled and record whether production recovery improves without truth
+      support.
 
 ### Validation
 

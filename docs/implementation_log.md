@@ -67,6 +67,50 @@ and stopped production gates still need to be run.
 - CUDA variable-projection diagnostic command from
   `docs/benchmark_runs/2026-05-10-tangent-gauge-detu-64.md` completed.
 
+### Stopped production gate
+
+Added pass-through options to `tools/run_rich_phantom_v1_parity_gate.py` so the
+existing rich PHANTOM94 stopped multires gate can run the production preview
+path with `preview_volume_support="scout_soft"`,
+`preview_support_outside_weight=0.1`,
+`preview_low_frequency_anchor_weight=0.05`, and
+`preview_det_u_gauge_mode_weight=0.2`.
+
+The CUDA stopped multires run completed at
+`runs/rich_phantom_v1_parity_20260510_tangent_gauge_stopped/`; concise report:
+`docs/benchmark_runs/2026-05-10-stopped-scout-tangent-gauge-gate.md`.
+
+Results:
+
+| Level | Status | Classification | Initial det_u RMSE px | Final det_u RMSE px | Volume NMSE | Final gauge transfer |
+|---|---|---|---:|---:|---:|---:|
+| `32^3` | failed | `independent_projection_losses_consistent` | 3.625000 | 0.297959 | 0.769341 | 0.719554 |
+| `64^3` | failed | `reconstruction_absorbed_geometry` | 0.595917 | 0.904070 | 0.203639 | 0.891959 |
+| `128^3` | failed | `reconstruction_absorbed_geometry` | 1.808140 | 1.924456 | 0.218229 | 0.894676 |
+
+Compared with the previous rich PHANTOM94 stopped baseline, the scout/tangent
+preview improves `64^3` and `128^3` det_u error and sharply improves volume
+NMSE, but it still fails strict det_u recovery and leaves realistic-level gauge
+transfer in the `absorbed_like` regime. This completes the requested stopped
+gate evidence for the current slice without using truth support in production
+paths; the next functional blocker remains strengthening the alignment-volume
+gauge.
+
+Additional validation:
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_rich_phantom_v1_parity_gate.py::test_rich_phantom_gate_passes_preview_gauge_config
+  -q` passed: 1 test in 0.72 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_rich_phantom_v1_parity_gate.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_rich_phantom_v1_parity_gate.py
+  tests/test_rich_phantom_v1_parity_gate.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-10 - Frozen scout soft support and low-frequency anchor
 
 ### Scope
