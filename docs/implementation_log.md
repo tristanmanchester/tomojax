@@ -3,6 +3,87 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-10 - Reduced-objective honesty diagnostics
+
+### Scope
+
+Started the support/gauge way-forward brief from
+`docs/oracle_support_gauge_way_forward_20260510.md` with Slice 1 only:
+make reduced-objective diagnostics honest before judging scout support or
+tangent-space gauge constraints.
+
+Changes:
+
+- Added public `ReferenceFISTAQuality` and
+  `reference_fista_returned_quality(...)` for returned-volume loss, data loss,
+  regulariser, projected-gradient stationarity, volume RMS, support mass, and
+  loss-normalisation reporting.
+- Updated alternating reduced-objective artifacts to use the production preview
+  step-size policy, full level reconstruction iteration count, preview TV scale,
+  preview center penalty, preview initialisation, support source, mask source,
+  and returned-volume quality metrics.
+- Added `reduced_objective_inner_solve_quality.json` to alternating run
+  artifacts.
+- Updated the standalone variable-projection diagnostic to record the same
+  reconstruction honesty fields and per-family `inner_solve_quality.json`.
+- Added underfit labelling so near-zero or non-progressing reduced candidates
+  are marked as `inner_solve_underfit` instead of being interpreted as a
+  production-significant argmin.
+
+### Diagnostic rerun
+
+Re-ran the 64^3 PHANTOM94 variable-projection diagnostic with the honesty fields:
+
+- Artifact root: `runs/detu_variable_projection_20260510_64_honesty/`
+- Benchmark note:
+  `docs/benchmark_runs/2026-05-10-reduced-objective-honesty-64.md`
+- JAX device path: CUDA with `XLA_PYTHON_CLIENT_PREALLOCATE=false` and venv
+  NVIDIA library path exported.
+- Reduced families used `fista_step_size = 50.0`, matching the production
+  preview step-size policy for 64^3 instead of the old `2.0e-3` diagnostic
+  step.
+
+The decision remains
+`constraint_restores_geometry_information:reduced_known_phantom_support`.
+The evidence is now cleaner: true-volume fixed geometry remains correct,
+final-stopped fixed geometry remains absorbed, and ordinary reduced objectives
+remain wrong or ambiguous under production-step-size diagnostics without using
+truth support in production paths.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_fista_returned_quality_reports_candidate_loss
+  tests/test_alternating_solver_smoke.py::test_reduced_objective_summary_marks_near_zero_underfit
+  tests/test_rich_phantom_v1_parity_gate.py::test_variable_projection_candidate_grid_covers_markers
+  -q` passed: 3 tests in 5.30 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 117.12 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/recon/_fista_reference.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py src/tomojax/align/_alternating_reduced_objective.py
+  src/tomojax/align/_alternating_artifacts.py
+  tools/run_detu_variable_projection_diagnostic.py tests/test_reference_fista.py
+  tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/recon/_fista_reference.py src/tomojax/recon/__init__.py
+  src/tomojax/recon/api.py src/tomojax/align/_alternating_reduced_objective.py
+  src/tomojax/align/_alternating_artifacts.py
+  tools/run_detu_variable_projection_diagnostic.py tests/test_reference_fista.py
+  tests/test_alternating_solver_smoke.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- `LD_LIBRARY_PATH=$(find .venv/lib/python3.12/site-packages/nvidia -path
+  '*/lib' -type d | paste -sd: -) env UV_CACHE_DIR=.uv-cache
+  JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python
+  tools/run_detu_variable_projection_diagnostic.py --run-dir
+  runs/rich_phantom_v1_parity_20260509_detu_diagnostics/stopped_otsu_l2_multires_f2_64_128v
+  --out-dir runs/detu_variable_projection_20260510_64_honesty --profile
+  lightning --candidate-radius 1 --candidate-step 1 --fista-iterations 2
+  --reduced-init zero` completed.
+
 ## 2026-05-09 - Variable-projection det-u diagnostic at 64^3
 
 ### Scope

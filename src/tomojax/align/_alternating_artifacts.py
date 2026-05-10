@@ -170,6 +170,9 @@ def _write_artifacts(  # noqa: PLR0915
         "reduced_objective_curves_png": output_dir / "reduced_objective_curves.png",
         "reduced_objective_probe_csv": output_dir / "reduced_objective_probe.csv",
         "reduced_objective_summary_json": output_dir / "reduced_objective_summary.json",
+        "reduced_objective_inner_solve_quality_json": (
+            output_dir / "reduced_objective_inner_solve_quality.json"
+        ),
         "reduced_objective_volume_sources_json": (
             output_dir / "reduced_objective_volume_sources.json"
         ),
@@ -302,6 +305,7 @@ def _write_artifacts(  # noqa: PLR0915
             summary_path=artifacts["reduced_objective_summary_json"],
             curves_png_path=artifacts["reduced_objective_curves_png"],
             volume_sources_path=artifacts["reduced_objective_volume_sources_json"],
+            inner_solve_quality_path=artifacts["reduced_objective_inner_solve_quality_json"],
         ),
         true_geometry=true_geometry,
         initial_geometry=initial_geometry,
@@ -314,6 +318,9 @@ def _write_artifacts(  # noqa: PLR0915
         loss_mode="l2" if projection_loss_mode == "otsu_l2" else "pseudo_huber",
         schur_result=schur_result,
         preview_volume_support=preview_volume_support,
+        preview_initialization=preview_initialization,
+        preview_tv_scale=preview_tv_scale,
+        preview_center_l2_weight=preview_center_l2_weight,
         preview_views_per_batch=preview_views_per_batch,
     )
     write_gauge_transfer_diagnostics(
@@ -969,6 +976,9 @@ def _artifact_description(name: str) -> str:
         "residual_map_summary_json": "Final raw residual-map summary",
         "residual_metrics_csv": "Per-level residual metrics",
         "reduced_objective_curves_png": "Reduced-objective candidate loss plot",
+        "reduced_objective_inner_solve_quality_json": (
+            "Reduced-objective returned-volume and stationarity diagnostics"
+        ),
         "reduced_objective_probe_csv": "Reduced-objective candidate refresh losses",
         "reduced_objective_summary_json": "Reduced-objective probe summary",
         "reduced_objective_volume_sources_json": "Reduced-objective refreshed-volume provenance",

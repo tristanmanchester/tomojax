@@ -11,36 +11,41 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Goal file: thread objective, 2026-05-09 variable-projection/gauge diagnosis
-- Phase: Phase 8/9 stopped det_u variable-projection diagnosis
-- Goal: explain why the true-volume fixed objective preserves the correct det_u
-  minimum while stopped/reconstructed-volume and reduced objectives move,
-  flatten, or absorb it.
+- Goal file: `docs/oracle_support_gauge_way_forward_20260510.md`
+- Phase: Phase 8/9 support/gauge alignment-volume implementation
+- Goal: implement the support/gauge way forward in order: first make
+  reduced-objective diagnostics honest, then add frozen scout soft support plus
+  low-frequency anchor, then add detector-u tangent-space volume gauge
+  projection if still needed.
 
 ### Scope
 
 - In scope:
-  - Run one focused rich PHANTOM94 supported-only det_u case at `64^3` first.
-  - Compare true-volume fixed, wrong-geometry reconstructed fixed, final stopped
-    fixed, honest reduced, and constrained reduced objective families on the
-    same dataset, masks, loss, and geometry convention.
-  - Ensure reduced-objective candidates reconstruct from a neutral initializer
-    independently, with no candidate-to-candidate volume carry.
-  - Record per-family curves, summaries, mask provenance, reconstruction config,
-    markers, Schur sign comparison, and volume NMSE where applicable.
-  - Keep the diagnostic read-only: no solver acceptance or policy changes.
+  - Slice 1: make reduced-objective diagnostics use production-comparable
+    reconstruction settings or record deviations loudly.
+  - Record returned-volume FISTA loss, data loss, regulariser, projected
+    gradient stationarity, volume norm, support mass, step size, iteration
+    count, initializer, support source, mask source, and loss normalisation.
+  - Mark reduced-objective families as `inner_solve_underfit` when a curve is
+    too flat or candidate volumes are effectively absent.
+  - Keep truth volume, truth support, and true det_u strictly diagnostic-only.
+  - After Slice 1 is committed, continue to frozen scout soft support and
+    low-frequency anchor without adding COR/sinogram/correlation/sharpness/grid
+    search paths.
 - Out of scope:
   - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
-    freedom, threshold changes, COR/sinogram/correlation methods, and Pallas
-    work.
-  - Local reduced-objective trust-region acceptance or new policy knobs.
+    freedom, Pallas work, candidate-refresh variants, and benchmark reframing.
+  - COR finders, sinograms, cross-correlation, phase correlation, sharpness,
+    entropy, autofocus, or grid-search alignment under any name.
+  - Known phantom support, true COM, true support IoU, true det_u markers, or
+    phantom labels in production paths.
 - Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.recon`.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
 - `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
-- Thread objective: stopped det_u variable-projection/gauge diagnosis
+- `docs/oracle_support_gauge_way_forward_20260510.md`
 - `docs/implementation_log.md`
 
 ### Tasks
@@ -127,6 +132,18 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Write a concise benchmark-run Markdown report and update
       `docs/implementation_log.md`.
 - [x] Commit the coherent diagnostic slice.
+- [x] Read `docs/oracle_support_gauge_way_forward_20260510.md`.
+- [x] Start Slice 1: reduced-objective honesty.
+- [x] Add returned-volume FISTA quality diagnostics to the recon public API.
+- [x] Wire reduced-objective artifacts to record production-comparable x-step
+      settings and inner-solve quality.
+- [x] Update the standalone variable-projection diagnostic to record the same
+      honesty fields and use production step-size policy by default.
+- [x] Add focused tests for returned quality, reduced-objective artifact schema,
+      and underfit labelling.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [x] Commit Slice 1.
 
 ### Validation
 

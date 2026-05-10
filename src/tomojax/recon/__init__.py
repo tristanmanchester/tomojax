@@ -15,9 +15,11 @@ from ._fista_diagnostics import (
 )
 from ._fista_reference import (
     ReferenceFISTAConfig,
+    ReferenceFISTAQuality,
     ReferenceFISTAResult,
     ReferenceFISTATraceRow,
     fista_reconstruct_reference,
+    reference_fista_returned_quality,
     write_fista_trace_csv,
 )
 from ._reference import reconstruct_average_reference, reconstruct_backprojection_reference
@@ -55,6 +57,7 @@ __all__ = [
     "FistaConfig",
     "ReferenceFISTAConfig",
     "ReferenceFISTADiagnosticArtifacts",
+    "ReferenceFISTAQuality",
     "ReferenceFISTAResult",
     "ReferenceFISTASchedule",
     "ReferenceFISTAScheduleEntry",
@@ -70,6 +73,7 @@ __all__ = [
     "reconstruct_average_reference",
     "reconstruct_backprojection_reference",
     "reference_fista_diagnostic_artifacts",
+    "reference_fista_returned_quality",
     "reference_fista_schedule",
     "spdhg_tv",
     "sum_backproject_views_chunked",

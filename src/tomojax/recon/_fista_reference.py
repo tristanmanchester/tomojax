@@ -65,6 +65,19 @@ class ReferenceFISTAResult:
     config: ReferenceFISTAConfig
 
 
+@dataclass(frozen=True)
+class ReferenceFISTAQuality:
+    """Returned-volume scalar and stationarity diagnostics for reference FISTA."""
+
+    returned_candidate_loss: float
+    returned_data_loss: float
+    returned_regularizer: float
+    projected_gradient_norm: float
+    volume_rms: float
+    support_mass_fraction: float | None
+    loss_normalisation: str = "full_projection_array_size"
+
+
 def fista_reconstruct_reference(
     projections: jax.Array,
     geometry: GeometryState,
@@ -133,6 +146,55 @@ def fista_reconstruct_reference(
             )
         )
     return ReferenceFISTAResult(volume=volume.astype(jnp.float32), trace=tuple(trace), config=cfg)
+
+
+def reference_fista_returned_quality(
+    result: ReferenceFISTAResult,
+    projections: jax.Array,
+    geometry: GeometryState,
+    *,
+    volume_support: jax.Array | None = None,
+    mask: jax.Array | None = None,
+) -> ReferenceFISTAQuality:
+    """Evaluate loss and projected-gradient stationarity at the returned volume."""
+    volume = jnp.asarray(result.volume, dtype=jnp.float32)
+    observed = jnp.asarray(projections, dtype=jnp.float32)
+    core = core_projection_geometry_from_state(
+        (int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2])),
+        geometry,
+        detector_shape=(int(observed.shape[1]), int(observed.shape[2])),
+    )
+    support = _support_or_none(
+        volume_support,
+        shape=(int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2])),
+    )
+    loss, data_loss, regularizer, gradient = _loss_and_explicit_gradient(
+        volume,
+        observed,
+        core=core,
+        mask=mask,
+        config=result.config,
+    )
+    step = jnp.asarray(result.config.step_size, dtype=jnp.float32)
+    projected = _project_constraints(
+        volume - step * gradient,
+        support=support,
+        config=result.config,
+    )
+    projected_gradient = (volume - projected) / jnp.maximum(step, jnp.asarray(1.0e-12))
+    support_mass_fraction = (
+        None
+        if support is None
+        else float(jnp.mean((jnp.asarray(support, dtype=jnp.float32) > 0.0).astype(jnp.float32)))
+    )
+    return ReferenceFISTAQuality(
+        returned_candidate_loss=float(loss),
+        returned_data_loss=float(data_loss),
+        returned_regularizer=float(regularizer),
+        projected_gradient_norm=float(jnp.sqrt(jnp.mean(projected_gradient * projected_gradient))),
+        volume_rms=float(jnp.sqrt(jnp.mean(volume * volume))),
+        support_mass_fraction=support_mass_fraction,
+    )
 
 
 def write_fista_trace_csv(result: ReferenceFISTAResult, path: str | Path) -> Path:

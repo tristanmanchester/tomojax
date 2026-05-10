@@ -21,6 +21,7 @@ from tomojax.recon import (
     fista_reconstruct_reference,
     reconstruct_backprojection_reference,
     reference_fista_diagnostic_artifacts,
+    reference_fista_returned_quality,
     write_fista_trace_csv,
     write_fista_trace_recomputed_csv,
 )
@@ -333,6 +334,40 @@ def test_reference_fista_diagnostics_lock_scalar_gradient_contract(tmp_path: Pat
         rows = list(csv.DictReader(handle))
     assert [row["trace_loss_point"] for row in rows] == ["momentum_point", "momentum_point"]
     assert all(row["recomputed_loss_point"] == "returned_final_volume" for row in rows)
+
+
+def test_reference_fista_returned_quality_reports_candidate_loss() -> None:
+    geometry = GeometryState.zeros(2)
+    truth = _tiny_volume()
+    observed = project_parallel_reference(truth, geometry)
+    support = centered_volume_support(
+        cast("tuple[int, int, int]", tuple(int(dim) for dim in truth.shape)),
+        kind="cylindrical",
+    )
+    result = fista_reconstruct_reference(
+        observed,
+        geometry,
+        initial_volume=None,
+        volume_support=support,
+        mask=jnp.ones_like(observed),
+        config=ReferenceFISTAConfig(iterations=2, step_size=2e-3),
+    )
+
+    quality = reference_fista_returned_quality(
+        result,
+        observed,
+        geometry,
+        volume_support=support,
+        mask=jnp.ones_like(observed),
+    )
+
+    assert quality.returned_candidate_loss >= 0.0
+    assert quality.returned_data_loss >= 0.0
+    assert quality.returned_regularizer >= 0.0
+    assert quality.projected_gradient_norm >= 0.0
+    assert quality.volume_rms >= 0.0
+    assert quality.support_mass_fraction is not None
+    assert quality.loss_normalisation == "full_projection_array_size"
 
 
 def _tiny_volume() -> jnp.ndarray:

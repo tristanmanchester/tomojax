@@ -19,6 +19,9 @@ from tomojax.align._alternating_artifacts import (
 from tomojax.align._alternating_inputs import build_smoke_inputs
 
 # check-public-imports: allow-private
+from tomojax.align._alternating_reduced_objective import _summary_payload
+
+# check-public-imports: allow-private
 from tomojax.align._alternating_schur_scalar import schur_scalar_diagnostics_payload
 from tomojax.align.api import (
     AlternatingAlignmentSolver,
@@ -74,6 +77,34 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_recovery_tolerances(result)
     assert abs(float(np.mean(result.final_geometry.pose.dx_px))) < 1.0e-12
     assert abs(float(np.mean(result.final_geometry.pose.phi_residual_rad))) < 1.0e-12
+
+
+def test_reduced_objective_summary_marks_near_zero_underfit() -> None:
+    summary = _summary_payload(
+        [
+            {
+                "candidate": "a",
+                "det_u_px": 0.0,
+                "alignment_projection_loss": 1.0,
+                "valid_projection_loss": 1.0,
+                "volume_rms": 0.0,
+                "prox_gradient_norm": 1.0,
+                "stationarity_proxy_trace_delta": 0.0,
+            },
+            {
+                "candidate": "b",
+                "det_u_px": 1.0,
+                "alignment_projection_loss": 1.0,
+                "valid_projection_loss": 1.0,
+                "volume_rms": 0.0,
+                "prox_gradient_norm": 1.0,
+                "stationarity_proxy_trace_delta": 0.0,
+            },
+        ]
+    )
+
+    assert summary["status"] == "inner_solve_underfit"
+    assert summary["inner_solve_classification"] == "inner_solve_underfit"
 
 
 def test_otsu_loss_splits_valid_and_alignment_masks(tmp_path: Path) -> None:
@@ -300,6 +331,7 @@ def _expected_artifacts() -> set[str]:
         "residual_map_summary_json",
         "residual_metrics_csv",
         "reduced_objective_curves_png",
+        "reduced_objective_inner_solve_quality_json",
         "reduced_objective_probe_csv",
         "reduced_objective_summary_json",
         "reduced_objective_volume_sources_json",
@@ -467,7 +499,21 @@ def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
         ),
     )
     assert summary["schema"] == "tomojax.reduced_objective_summary.v1"
-    assert summary["status"] == "recorded"
+    assert summary["status"] in {"recorded", "inner_solve_underfit"}
+    assert summary["inner_solve_classification"] in {
+        "inner_solve_informative",
+        "inner_solve_underfit",
+    }
+    quality = cast(
+        "dict[str, object]",
+        json.loads(
+            result.artifacts["reduced_objective_inner_solve_quality_json"].read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    assert quality["schema"] == "tomojax.reduced_objective_inner_solve_quality.v1"
+    assert quality["status"] in {"recorded", "inner_solve_underfit"}
     sources = cast(
         "dict[str, object]",
         json.loads(
@@ -486,6 +532,13 @@ def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
     assert rows
     assert {row["fista_mask_role"] for row in rows} == {"projection_valid_mask"}
     assert {row["alignment_loss_mask_role"] for row in rows} == {"alignment_loss_mask"}
+    assert all(float(row["fista_step_size"]) > 0.0 for row in rows)
+    assert all(int(row["fista_iterations"]) >= 1 for row in rows)
+    assert all(row["fista_initialization"] for row in rows)
+    assert all(row["support_source"] for row in rows)
+    assert all(row["loss_normalisation"] == "full_projection_array_size" for row in rows)
+    assert all(float(row["returned_candidate_loss"]) >= 0.0 for row in rows)
+    assert all(float(row["prox_gradient_norm"]) >= 0.0 for row in rows)
     assert result.artifacts["reduced_objective_curves_png"].stat().st_size > 0
 
 

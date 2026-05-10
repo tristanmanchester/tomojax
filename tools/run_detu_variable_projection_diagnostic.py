@@ -24,7 +24,14 @@ import numpy as np
 from tomojax.align._alternating_heldout import _projection_loss
 from tomojax.align.api import reference_continuation_schedule
 from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
-from tomojax.recon import ReferenceFISTAConfig, centered_volume_support, fista_reconstruct_reference
+from tomojax.recon import (
+    ReferenceFISTAConfig,
+    centered_volume_support,
+    fista_reconstruct_reference,
+    reconstruct_average_reference,
+    reconstruct_backprojection_reference,
+    reference_fista_returned_quality,
+)
 
 ObjectiveMode = Literal["fixed", "reduced"]
 
@@ -52,6 +59,11 @@ def main() -> int:
     _ = parser.add_argument("--candidate-radius", type=float, default=2.0)
     _ = parser.add_argument("--candidate-step", type=float, default=1.0)
     _ = parser.add_argument("--fista-iterations", type=int, default=2)
+    _ = parser.add_argument(
+        "--reduced-init",
+        choices=("zero", "backprojection", "average_projection"),
+        default="zero",
+    )
     args = parser.parse_args()
     run_dir = args.run_dir
     out_dir = args.out_dir
@@ -75,6 +87,7 @@ def main() -> int:
             det_u_values=det_u_values,
             context=context,
             fista_iterations=max(1, int(args.fista_iterations)),
+            reduced_init=str(args.reduced_init),
         )
         _write_family_artifacts(family_dir, family=family, rows=rows, context=context)
         family_summaries.append(_family_summary(family, rows, context=context))
@@ -225,6 +238,7 @@ def _evaluate_family(
     det_u_values: np.ndarray,
     context: dict[str, Any],
     fista_iterations: int,
+    reduced_init: str,
 ) -> list[dict[str, object]]:
     fixed_volume = (
         _fixed_volume_for_family(family, context, fista_iterations=fista_iterations)
@@ -234,19 +248,34 @@ def _evaluate_family(
     rows: list[dict[str, object]] = []
     for det_u in det_u_values:
         geometry = _with_det_u(context["final_geometry"], float(det_u))
+        quality = None
         if family.mode == "fixed":
             if fixed_volume is None:
                 raise AssertionError("fixed objective did not prepare a fixed volume")
             volume = fixed_volume
             reconstruction_nmse = None
         else:
+            support = _support_for_family(family, context)
+            config = _fista_config(family, context, iterations=fista_iterations)
             result = fista_reconstruct_reference(
                 context["observed"],
                 geometry,
-                initial_volume=None,
-                volume_support=_support_for_family(family, context),
+                initial_volume=_initial_volume(
+                    reduced_init,
+                    context["observed"],
+                    geometry,
+                    support=support,
+                ),
+                volume_support=support,
                 mask=context["valid_mask"],
-                config=_fista_config(family, context, iterations=fista_iterations),
+                config=config,
+            )
+            quality = reference_fista_returned_quality(
+                result,
+                context["observed"],
+                geometry,
+                volume_support=support,
+                mask=context["valid_mask"],
             )
             volume = result.volume
             reconstruction_nmse = _volume_nmse(volume, context["truth_volume"])
@@ -264,12 +293,38 @@ def _evaluate_family(
                 "objective_family": family.name,
                 "det_u_px": float(det_u),
                 "loss": float(loss),
+                "fista_iterations": (
+                    "not_applicable_fixed_volume"
+                    if family.mode == "fixed"
+                    else fista_iterations
+                ),
+                "fista_step_size": (
+                    "not_applicable_fixed_volume"
+                    if family.mode == "fixed"
+                    else _fista_step_size(context["observed"])
+                ),
                 "volume_nmse": "" if reconstruction_nmse is None else reconstruction_nmse,
+                "returned_candidate_loss": (
+                    "" if quality is None else quality.returned_candidate_loss
+                ),
+                "returned_data_loss": "" if quality is None else quality.returned_data_loss,
+                "returned_regularizer": "" if quality is None else quality.returned_regularizer,
+                "prox_gradient_norm": "" if quality is None else quality.projected_gradient_norm,
+                "volume_rms": "" if quality is None else quality.volume_rms,
+                "support_mass_fraction": (
+                    ""
+                    if quality is None or quality.support_mass_fraction is None
+                    else quality.support_mass_fraction
+                ),
                 "mask_role": "alignment_loss_mask",
                 "reconstruction_mask_role": (
                     "not_applicable_fixed_volume"
                     if family.mode == "fixed"
                     else "projection_valid_mask"
+                ),
+                "loss_normalisation": "full_projection_array_size",
+                "reduced_initialization": (
+                    "not_applicable_fixed_volume" if family.mode == "fixed" else reduced_init
                 ),
                 "support": family.support,
                 "nonnegative": family.nonnegative,
@@ -279,6 +334,29 @@ def _evaluate_family(
         )
     _add_curve_derivatives(rows)
     return rows
+
+
+def _initial_volume(
+    init: str,
+    observed: jax.Array,
+    geometry: GeometryState,
+    *,
+    support: jax.Array | None,
+) -> jax.Array | None:
+    size = int(observed.shape[1])
+    if init == "backprojection":
+        volume = (
+            reconstruct_average_reference(observed, depth=size)
+            if size < 64
+            else reconstruct_backprojection_reference(observed, geometry, depth=size)
+        )
+    elif init == "average_projection":
+        volume = reconstruct_average_reference(observed, depth=size)
+    else:
+        return None
+    if support is None:
+        return volume
+    return jnp.asarray(volume, dtype=jnp.float32) * jnp.asarray(support, dtype=jnp.float32)
 
 
 def _fixed_volume_for_family(
@@ -325,7 +403,7 @@ def _fista_config(
     level = context["level"]
     return ReferenceFISTAConfig(
         iterations=int(iterations),
-        step_size=2.0e-3,
+        step_size=_fista_step_size(context["observed"]),
         tv_weight=float(family.tv_weight),
         residual_sigma=float(context["sigma"]),
         residual_delta=level.residual_delta,
@@ -335,6 +413,13 @@ def _fista_config(
         center_l2_weight=float(family.center_l2_weight),
         views_per_batch=0,
     )
+
+
+def _fista_step_size(observed: jax.Array) -> float:
+    size = int(observed.shape[1])
+    if size < 64:
+        return 2.0e-3
+    return 100.0 * max(float(size), 1.0) / 128.0
 
 
 def _add_curve_derivatives(rows: list[dict[str, object]]) -> None:
@@ -358,8 +443,12 @@ def _write_family_artifacts(
     _write_plot(family_dir / "detu_loss_curves.png", rows)
     summary = _family_summary(family, rows, context=context)
     _write_json(family_dir / "objective_summary.json", summary)
-    _write_json(family_dir / "reconstruction_config.json", _reconstruction_config_payload(family))
+    _write_json(
+        family_dir / "reconstruction_config.json",
+        _reconstruction_config_payload(family, rows),
+    )
     _write_json(family_dir / "mask_provenance.json", _mask_provenance_payload(family))
+    _write_json(family_dir / "inner_solve_quality.json", _inner_solve_quality_payload(rows))
     _write_text(family_dir / "summary.md", _family_markdown(summary))
 
 
@@ -397,6 +486,8 @@ def _family_summary(
         "schur_data_JTJ": float(context["schur_data_jtj"]),
         "candidate_count": len(rows),
         "volume_nmse_at_argmin": argmin["volume_nmse"],
+        "inner_solve_status": _inner_solve_status(rows, mode=family.mode),
+        "underfit_reasons": _underfit_reasons(rows, mode=family.mode),
         "interpretation": _interpretation(float(argmin["det_u_px"]), truth, final),
     }
 
@@ -422,19 +513,81 @@ def _interpretation(argmin: float, truth: float, final: float) -> str:
     return "geometry_information_flat_or_ambiguous"
 
 
-def _reconstruction_config_payload(family: ObjectiveFamily) -> dict[str, object]:
+def _reconstruction_config_payload(
+    family: ObjectiveFamily,
+    rows: list[dict[str, object]],
+) -> dict[str, object]:
+    first = rows[0] if rows else {}
     return {
         "schema": "tomojax.variable_projection_reconstruction_config.v1",
         "objective_family": family.name,
         "mode": family.mode,
         "neutral_initializer": True,
         "state_carry_between_candidates": False,
+        "fista_iterations": first.get("fista_iterations", ""),
+        "fista_step_size": first.get("fista_step_size", ""),
+        "initialization": first.get("reduced_initialization", ""),
+        "mask_source": first.get("reconstruction_mask_role", ""),
+        "loss_normalisation": "full_projection_array_size",
         "nonnegative": family.nonnegative,
         "support": family.support,
         "tv_weight": family.tv_weight,
         "center_l2_weight": family.center_l2_weight,
         "anchored_low_frequency_component": "not_available",
     }
+
+
+def _inner_solve_quality_payload(rows: list[dict[str, object]]) -> dict[str, object]:
+    mode = str(rows[0]["objective_family"]) if rows else ""
+    family_mode = (
+        "fixed"
+        if rows and rows[0]["reduced_initialization"] == "not_applicable_fixed_volume"
+        else "reduced"
+    )
+    return {
+        "schema": "tomojax.variable_projection_inner_solve_quality.v1",
+        "objective_family": mode,
+        "status": _inner_solve_status(rows, mode=family_mode),
+        "underfit_reasons": _underfit_reasons(rows, mode=family_mode),
+        "loss_normalisation": "full_projection_array_size",
+        "rows": [
+            {
+                "det_u_px": row["det_u_px"],
+                "returned_candidate_loss": row["returned_candidate_loss"],
+                "returned_data_loss": row["returned_data_loss"],
+                "returned_regularizer": row["returned_regularizer"],
+                "prox_gradient_norm": row["prox_gradient_norm"],
+                "volume_rms": row["volume_rms"],
+                "support_mass_fraction": row["support_mass_fraction"],
+                "reduced_initialization": row["reduced_initialization"],
+            }
+            for row in rows
+        ],
+    }
+
+
+def _inner_solve_status(rows: list[dict[str, object]], *, mode: str) -> str:
+    if mode == "fixed":
+        return "not_applicable_fixed_volume"
+    return "inner_solve_underfit" if _underfit_reasons(rows, mode=mode) else "recorded"
+
+
+def _underfit_reasons(rows: list[dict[str, object]], *, mode: str) -> list[str]:
+    if mode == "fixed":
+        return []
+    if not rows:
+        return ["no_candidates"]
+    reduced_rows = [row for row in rows if row["volume_rms"] != ""]
+    if not reduced_rows:
+        return ["no_reduced_candidates"]
+    reasons: list[str] = []
+    max_volume_rms = max(float(row["volume_rms"]) for row in reduced_rows)
+    loss_values = np.asarray([float(row["loss"]) for row in reduced_rows], dtype=np.float64)
+    if max_volume_rms <= 1.0e-6:
+        reasons.append("candidate_volumes_near_zero")
+    if float(np.ptp(loss_values)) <= max(float(np.min(loss_values)), 1.0) * 1.0e-8:
+        reasons.append("flat_candidate_loss_curve")
+    return reasons
 
 
 def _mask_provenance_payload(family: ObjectiveFamily) -> dict[str, object]:
