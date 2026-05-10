@@ -50,6 +50,8 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ### Tasks
 
+- [x] Remove avoidable full-stack residual/loss preallocation from the no-nuisance
+      joint Schur path so 256^3-style geometry updates remain view-streamed.
 - [x] Read the diagnostic goal and current execution context.
 - [x] Split reconstruction-mask and alignment/eval-mask provenance at call
       sites, starting with bootstrap and candidate-refresh FISTA paths.

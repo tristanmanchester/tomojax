@@ -12128,6 +12128,66 @@ Interpretation:
   the edited align, recon, tool, and test files.
 - `just imports` passed.
 
+## 2026-05-10 - No-nuisance Schur memory preallocation cleanup
+
+### Scope
+
+Addressed the current 256^3 VRAM-regression concern in the supported
+joint-Schur geometry update path. This slice does not shrink the benchmark or
+relax alignment criteria; it removes avoidable full-stack allocations from the
+no-nuisance Schur path.
+
+Changes:
+
+- Removed the up-front full residual stack used only to compute pseudo-Huber
+  weights before streamed Schur normal-equation accumulation.
+- Compute pseudo-Huber weights per view inside the existing streamed
+  finite-difference contribution instead.
+- Made no-nuisance Schur loss evaluation stream by view unconditionally instead
+  of using the old `observed.size <= 4_000_000` full-stack shortcut.
+- Fixed nuisance diagnostics to return immediately when nuisance fitting is
+  disabled; it was otherwise projecting the full stack even for no-nuisance
+  runs.
+- Added focused coverage that no-nuisance Schur does not call the full-stack
+  prediction helper.
+
+### Evidence
+
+Current diagnosis: the 256^3 memory target is plausible for the v2 reference
+path when view/parameter accumulation is kept streamed. The problematic pattern
+was not JAX GPU preallocation alone; it was production code materialising full
+residual/prediction stacks around an otherwise streamed Schur update.
+
+Bounded CUDA probe:
+
+- Command: ad-hoc `uv run python` probe with `JAX_PLATFORMS=cuda` and
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+- Device: `cuda:0`.
+- Case: `256^3` volume, 1 view, active setup parameters
+  `theta_offset_rad`, `det_u_px`, `detector_roll_rad`, and all five pose DOFs.
+- Result: one Schur iteration completed without OOM.
+- Peak sampled process GPU memory: `1214 MiB`.
+- Runtime: `11.968 s`.
+
+This is a regression probe, not a full multi-view 256^3 benchmark. The next
+scale gate should run the realistic multi-view case, but the specific
+preallocation source identified here is fixed.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_no_nuisance_avoids_full_stack_projection_path
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_can_run_theta_scale_setup_update
+  -q` passed: 2 tests in 17.47 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_joint_schur_lm.py tests/test_joint_schur_lm.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
 ## 2026-05-09 - Differentiable stopped det-u mask provenance
 
 ### Scope

@@ -236,19 +236,6 @@ def solve_joint_schur_lm(
     pose_trust_radius = cfg.pose_trust_radius
 
     for _ in range(max(0, int(cfg.max_iterations))):
-        residual = _residual_for_params(
-            vol,
-            obs,
-            geometry,
-            params,
-            mask=mask,
-            cfg=cfg,
-            sigma=cfg.sigma,
-            fit_gain_offset=cfg.fit_gain_offset,
-            fit_background_offset=cfg.fit_background_offset,
-        )
-        weights = jnp.sqrt(_residual_weights(residual, cfg=cfg)).reshape(-1)
-
         equations = _stream_joint_normal_equations_for_geometry(
             vol,
             obs,
@@ -256,7 +243,6 @@ def solve_joint_schur_lm(
             params,
             mask=mask,
             cfg=cfg,
-            weights=weights.reshape(obs.shape),
             n_setup=n_setup,
             pose_dim=pose_dim,
             damping=damping,
@@ -842,7 +828,6 @@ def _stream_joint_normal_equations_for_geometry(
     *,
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
-    weights: jax.Array,
     n_setup: int,
     pose_dim: int,
     damping: float,
@@ -853,7 +838,23 @@ def _stream_joint_normal_equations_for_geometry(
     n_views = int(geometry.pose.n_views)
     n_params = n_setup + n_views * pose_dim
     step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
-    if pose_dim == 0 and int(observed.size) <= _FULL_STACK_LOSS_MAX_ELEMENTS:
+    if (
+        (cfg.fit_gain_offset or cfg.fit_background_offset)
+        and pose_dim == 0
+        and int(observed.size) <= _FULL_STACK_LOSS_MAX_ELEMENTS
+    ):
+        residual = _residual_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            mask=mask,
+            cfg=cfg,
+            sigma=cfg.sigma,
+            fit_gain_offset=cfg.fit_gain_offset,
+            fit_background_offset=cfg.fit_background_offset,
+        )
+        weights = jnp.sqrt(_residual_weights(residual, cfg=cfg))
         return _small_stack_setup_normal_equations_for_geometry(
             volume,
             observed,
@@ -882,6 +883,15 @@ def _stream_joint_normal_equations_for_geometry(
         )
         local_indices = jnp.concatenate([setup_indices, pose_indices], axis=0)
         directions = jax.nn.one_hot(local_indices, n_params, dtype=jnp.float32)
+        weight_view = _dynamic_view_weights_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            view_i,
+            mask=mask,
+            cfg=cfg,
+        )
 
         def residual_for_direction(direction: jax.Array, sign: jax.Array) -> jax.Array:
             return _weighted_residual_dynamic_view_for_params(
@@ -892,7 +902,7 @@ def _stream_joint_normal_equations_for_geometry(
                 view_i,
                 mask=mask,
                 cfg=cfg,
-                weights=weights,
+                weights=weight_view,
             ).reshape(-1)
 
         def plus_residual(direction: jax.Array) -> jax.Array:
@@ -933,7 +943,7 @@ def _stream_joint_normal_equations_for_geometry(
             view_i,
             mask=mask,
             cfg=cfg,
-            weights=weights,
+            weights=weight_view,
         ).reshape(-1)
         local_gradient = jac_local.T @ residual_view
         local_hessian = jac_local.T @ jac_local
@@ -1088,6 +1098,32 @@ def _small_stack_setup_normal_equations_for_geometry(
 
 def _rows_to_tuple(values: jax.Array) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(float(item) for item in row) for row in values)
+
+
+def _dynamic_view_weights_for_params(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    view: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+) -> jax.Array:
+    residual = _weighted_residual_dynamic_view_for_params(
+        volume,
+        observed,
+        geometry,
+        params,
+        view,
+        mask=mask,
+        cfg=cfg,
+        weights=jnp.ones(
+            (1, int(observed.shape[1]), int(observed.shape[2])),
+            dtype=jnp.float32,
+        ),
+    )
+    return jnp.sqrt(_residual_weights(residual, cfg=cfg))
 
 
 def _weighted_residual_dynamic_view_for_params(
@@ -1781,6 +1817,11 @@ def _nuisance_diagnostics_for_params(
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
 ) -> dict[str, dict[str, object] | None]:
+    if not cfg.fit_gain_offset and not cfg.fit_background_offset:
+        return {
+            "gain_offset_model": None,
+            "background_offset_model": None,
+        }
     predicted = _predicted_for_params(volume, geometry, params, config=cfg)
     gain_offset_model = None
     background_offset_model = None
@@ -1808,11 +1849,7 @@ def _loss_for_params(
     cfg: JointSchurLMConfig,
     prior_reference: jax.Array | None = None,
 ) -> jax.Array:
-    if (
-        cfg.fit_gain_offset
-        or cfg.fit_background_offset
-        or int(observed.size) <= _FULL_STACK_LOSS_MAX_ELEMENTS
-    ):
+    if cfg.fit_gain_offset or cfg.fit_background_offset:
         predicted = _predicted_for_params(volume, geometry, params, config=cfg)
         predicted = _with_fitted_nuisance(
             predicted,

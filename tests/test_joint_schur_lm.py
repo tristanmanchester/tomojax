@@ -19,6 +19,9 @@ from tomojax.align import (
 )
 
 # check-public-imports: allow-private
+import tomojax.align._joint_schur_lm as schur_mod
+
+# check-public-imports: allow-private
 from tomojax.align._joint_schur_lm import (
     _per_view_normal_block_diagnostics,
     schur_step_from_normal_equations,
@@ -638,6 +641,43 @@ def test_joint_schur_lm_can_run_theta_scale_setup_update() -> None:
     assert result.active_setup_parameters == ("theta_scale",)
     assert "theta_scale" not in result.frozen_parameters
     np.testing.assert_allclose(result.geometry.setup.theta_scale.value, 1.04, atol=0.01)
+
+
+def test_joint_schur_lm_no_nuisance_avoids_full_stack_projection_path() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(3)
+    truth_setup = nominal.setup.replace_parameter(
+        "det_u_px",
+        nominal.setup.det_u_px.with_value(0.12),
+    )
+    truth = GeometryState(setup=truth_setup, pose=nominal.pose)
+    observed = project_parallel_reference(volume, truth)
+
+    original = schur_mod._predicted_for_params
+
+    def fail_full_stack(*_args: object, **_kwargs: object) -> jnp.ndarray:
+        raise AssertionError("no-nuisance Schur must not materialise full prediction stacks")
+
+    schur_mod._predicted_for_params = fail_full_stack
+    try:
+        result = solve_joint_schur_lm(
+            volume,
+            observed,
+            nominal,
+            config=JointSchurLMConfig(
+                max_iterations=1,
+                damping=1e-3,
+                delta=1.0,
+                active_setup_parameters=("det_u_px",),
+                active_pose_dofs=(),
+            ),
+        )
+    finally:
+        schur_mod._predicted_for_params = original
+
+    assert result.iterations == 1
+    assert result.active_setup_parameters == ("det_u_px",)
+    assert result.active_pose_dofs == ()
 
 
 def test_joint_schur_lm_can_run_alpha_beta_pose_update() -> None:
