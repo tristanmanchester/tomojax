@@ -29,6 +29,7 @@ from ._schedule_reference import (
     ReferenceReconstructionScheduleName,
     reference_fista_schedule,
 )
+from ._scout_support import ScoutSupportResult, build_scout_support
 from ._support import VolumeSupportKind, centered_volume_support
 from .types import Regulariser
 
@@ -65,7 +66,9 @@ __all__ = [
     "ReferenceReconstructionScheduleName",
     "Regulariser",
     "SPDHGConfig",
+    "ScoutSupportResult",
     "VolumeSupportKind",
+    "build_scout_support",
     "centered_volume_support",
     "fbp",
     "fista_reconstruct_reference",

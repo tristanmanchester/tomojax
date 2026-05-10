@@ -44,7 +44,7 @@ _SYNTHETIC_SIZE_CHOICES = (32, 64, 128)
 _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synthetic_truth")
 _GEOMETRY_UPDATE_SOLVER_CHOICES = ("joint_schur", "setup_only_lm")
 _PROJECTION_LOSS_MODE_CHOICES = ("pseudo_huber", "otsu_l2", "otsu_pseudo_huber")
-_PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "spherical")
+_PREVIEW_VOLUME_SUPPORT_CHOICES = ("none", "cylindrical", "scout_soft", "spherical")
 _PREVIEW_INITIALIZATION_CHOICES = ("backprojection", "zero", "constant", "average_projection")
 _PREVIEW_RECONSTRUCTION_MASK_SOURCE_CHOICES = ("all_views", "train_views")
 _PREVIEW_RESIDUAL_FILTER_MODE_CHOICES = ("continuation", "raw")
@@ -280,6 +280,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Opt-in lateral center-of-mass gauge penalty for preview FISTA.",
     )
     _ = parser.add_argument(
+        "--preview-support-outside-weight",
+        type=float,
+        default=0.0,
+        help="Opt-in scout soft-support outside-mass penalty for preview FISTA.",
+    )
+    _ = parser.add_argument(
+        "--preview-low-frequency-anchor-weight",
+        type=float,
+        default=0.0,
+        help="Opt-in scout low-frequency anchor penalty for preview FISTA.",
+    )
+    _ = parser.add_argument(
         "--stopped-preview-policy",
         choices=_STOPPED_PREVIEW_POLICY_CHOICES,
         default="standard",
@@ -397,6 +409,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             preview_tv_scale=float(args.preview_tv_scale),
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=float(args.preview_center_l2_weight),
+            preview_support_outside_weight=float(args.preview_support_outside_weight),
+            preview_low_frequency_anchor_weight=float(
+                args.preview_low_frequency_anchor_weight
+            ),
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),
             fit_background_nuisance=bool(args.fit_background_nuisance),

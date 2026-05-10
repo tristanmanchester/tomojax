@@ -71,6 +71,7 @@ def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:
     _assert_schur_scalar_diagnostics(result)
     _assert_reduced_objective_artifacts(result)
     _assert_gauge_transfer_diagnostics(result)
+    _assert_scout_support_artifacts(result)
     _assert_preview_slice_artifacts(result)
     _assert_residual_map_artifacts(result)
     _assert_residual_metrics(result)
@@ -339,6 +340,9 @@ def _expected_artifacts() -> set[str]:
         "schur_diagnostics_json",
         "schur_scalar_diagnostics_csv",
         "schur_scalar_diagnostics_json",
+        "scout_low_frequency_anchor_npy",
+        "scout_support_npy",
+        "scout_support_provenance_json",
         "verification_json",
     }
 
@@ -540,6 +544,21 @@ def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
     assert all(float(row["returned_candidate_loss"]) >= 0.0 for row in rows)
     assert all(float(row["prox_gradient_norm"]) >= 0.0 for row in rows)
     assert result.artifacts["reduced_objective_curves_png"].stat().st_size > 0
+
+
+def _assert_scout_support_artifacts(result: AlternatingSmokeResult) -> None:
+    payload = cast(
+        "dict[str, object]",
+        json.loads(result.artifacts["scout_support_provenance_json"].read_text()),
+    )
+    assert payload["schema"] == "tomojax.scout_support_provenance.v1"
+    assert payload["uses_truth"] is False
+    support = cast("NDArray[np.float32]", np.load(result.artifacts["scout_support_npy"]))
+    anchor = cast(
+        "NDArray[np.float32]",
+        np.load(result.artifacts["scout_low_frequency_anchor_npy"]),
+    )
+    assert support.shape == anchor.shape == result.final_volume.shape
 
 
 def _assert_gauge_transfer_diagnostics(result: AlternatingSmokeResult) -> None:

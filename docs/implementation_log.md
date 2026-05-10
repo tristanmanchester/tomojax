@@ -3,6 +3,98 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-10 - Frozen scout soft support and low-frequency anchor
+
+### Scope
+
+Implemented Slice 2 from `docs/oracle_support_gauge_way_forward_20260510.md`
+as an opt-in alignment-volume gauge, without using true volume, true support,
+true COM, true det_u, sinograms, COR search, cross-correlation, sharpness, or
+grid-search alignment.
+
+Changes:
+
+- Added `build_scout_support(...)` and `ScoutSupportResult` to the public recon
+  API. The builder derives a frozen soft support probability and low-frequency
+  anchor from observed projections, initial metadata geometry, and the
+  projection-valid mask.
+- Added differentiable FISTA regularisers:
+  `soft_support_outside_weight * mean(((1 - p) * x)^2)` and
+  `low_frequency_anchor_weight * mean((LP(x) - x_scout_low)^2)`.
+- Added `preview_volume_support = "scout_soft"`,
+  `preview_support_outside_weight`, and
+  `preview_low_frequency_anchor_weight` to the alternating preview path and
+  `align-auto`.
+- Added scout artifacts to alternating runs:
+  `scout_support.npy`, `scout_low_frequency_anchor.npy`, and
+  `scout_support_provenance.json`.
+- Added standalone variable-projection objective families:
+  `reduced_scout_soft_support`, `reduced_scout_lowfreq_anchor`, and
+  `reduced_scout_support_anchor`.
+
+### Diagnostic evidence
+
+Enabled scout-soft smoke completed and wrote
+`runs/scout_soft_smoke_20260510/scout_support_provenance.json` with:
+
+- `uses_truth: false`
+- `geometry_source: initial_metadata`
+- `mask_source: projection_valid_mask`
+- `support_mass_fraction: 0.14942364394664764`
+
+The 64^3 variable-projection diagnostic with scout families completed under
+CUDA at `runs/detu_variable_projection_20260510_64_scout_support/`. The scout
+support provenance in those families records `uses_truth: false` and support
+mass fraction `0.12610477209091187`.
+
+The first scout weights did not restore the reduced det_u basin:
+
+| Objective family | Argmin det_u px | Error from truth px | Interpretation |
+|---|---:|---:|---|
+| honest_reduced_objective | 10.464933 | 3.214933 | `geometry_information_flat_or_ambiguous` |
+| reduced_known_phantom_support | 7.250000 | 0.000000 | `geometry_information_present` |
+| reduced_scout_soft_support | 10.464933 | 3.214933 | `geometry_information_flat_or_ambiguous` |
+| reduced_scout_lowfreq_anchor | 10.464933 | 3.214933 | `geometry_information_flat_or_ambiguous` |
+| reduced_scout_support_anchor | 10.464933 | 3.214933 | `geometry_information_flat_or_ambiguous` |
+
+This keeps the support/gauge diagnosis intact: truth-derived support remains
+the only support diagnostic that restores the basin, while the first honest
+scout support/anchor is not yet strong enough. The next slice should therefore
+promote the detector-u gauge-transfer mode into a tangent-space volume gauge.
+
+### Validation
+
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_reference_fista.py::test_reference_fista_soft_support_anchor_gradient_matches_finite_difference
+  tests/test_reference_fista.py::test_scout_support_builder_records_truth_free_provenance
+  tests/test_alternating_solver_smoke.py::test_reduced_objective_summary_marks_near_zero_underfit
+  -q` passed: 3 tests in 6.75 seconds.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_solver_smoke_writes_artifacts
+  -q` passed: 1 test in 116.87 seconds.
+- Enabled scout-soft smoke command completed:
+  `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run python - <<'PY'
+  ... AlternatingSmokeConfig(preview_volume_support="scout_soft",
+  preview_support_outside_weight=0.1,
+  preview_low_frequency_anchor_weight=0.05) ... PY`.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu uv run ruff check
+  tools/run_detu_variable_projection_diagnostic.py
+  src/tomojax/recon/_scout_support.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tests/test_reference_fista.py tests/test_alternating_solver_smoke.py` passed.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tools/run_detu_variable_projection_diagnostic.py
+  src/tomojax/recon/_scout_support.py src/tomojax/recon/_fista_reference.py
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_alternating_artifacts.py src/tomojax/cli/align_auto.py
+  tests/test_reference_fista.py tests/test_alternating_solver_smoke.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+- CUDA variable-projection diagnostic command from
+  `docs/benchmark_runs/2026-05-10-scout-support-detu-64.md` completed.
+
 ## 2026-05-10 - Reduced-objective honesty diagnostics
 
 ### Scope

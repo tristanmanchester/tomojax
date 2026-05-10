@@ -44,6 +44,11 @@ class ReferenceFISTAConfig:
     residual_filters: tuple[ResidualFilterConfig, ...] = (ResidualFilterConfig(),)
     non_negative: bool = True
     center_l2_weight: float = 0.0
+    soft_support: jax.Array | None = None
+    soft_support_outside_weight: float = 0.0
+    low_frequency_anchor: jax.Array | None = None
+    low_frequency_anchor_weight: float = 0.0
+    low_frequency_anchor_radius: int = 2
     views_per_batch: int = 1
 
 
@@ -252,13 +257,33 @@ def _loss_and_explicit_gradient(
         delta=config.tv_delta,
     )
     center_value, center_gradient = _center_l2_value_and_grad(volume)
+    soft_support_value, soft_support_gradient = _soft_support_value_and_grad(
+        volume,
+        support=config.soft_support,
+    )
+    anchor_value, anchor_gradient = _low_frequency_anchor_value_and_grad(
+        volume,
+        anchor=config.low_frequency_anchor,
+        radius=config.low_frequency_anchor_radius,
+    )
     scaled_tv = jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_value
     scaled_center = jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_value
-    scaled_regulariser = scaled_tv + scaled_center
+    scaled_soft_support = (
+        jnp.asarray(config.soft_support_outside_weight, dtype=jnp.float32)
+        * soft_support_value
+    )
+    scaled_anchor = (
+        jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32) * anchor_value
+    )
+    scaled_regulariser = scaled_tv + scaled_center + scaled_soft_support + scaled_anchor
     gradient = (
         data_gradient
         + jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_gradient
         + jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_gradient
+        + jnp.asarray(config.soft_support_outside_weight, dtype=jnp.float32)
+        * soft_support_gradient
+        + jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32)
+        * anchor_gradient
     )
     return data_loss + scaled_regulariser, data_loss, scaled_regulariser, gradient
 
@@ -518,6 +543,74 @@ def _center_l2(volume: jax.Array) -> jax.Array:
     x_com = jnp.sum(vol * x_axis[:, None, None]) / mass
     y_com = jnp.sum(vol * y_axis[None, :, None]) / mass
     return y_com * y_com + x_com * x_com
+
+
+def _soft_support_value_and_grad(
+    volume: jax.Array,
+    *,
+    support: jax.Array | None,
+) -> tuple[jax.Array, jax.Array]:
+    return jax.value_and_grad(_soft_support_outside_l2)(volume, support=support)
+
+
+def _soft_support_outside_l2(volume: jax.Array, *, support: jax.Array | None) -> jax.Array:
+    if support is None:
+        return jnp.asarray(0.0, dtype=jnp.float32)
+    vol = jnp.asarray(volume, dtype=jnp.float32)
+    support_arr = jnp.asarray(support, dtype=jnp.float32)
+    if support_arr.shape != vol.shape:
+        raise ValueError("soft_support must match volume shape")
+    outside = (1.0 - jnp.clip(support_arr, 0.0, 1.0)) * vol
+    return jnp.mean(outside * outside)
+
+
+def _low_frequency_anchor_value_and_grad(
+    volume: jax.Array,
+    *,
+    anchor: jax.Array | None,
+    radius: int,
+) -> tuple[jax.Array, jax.Array]:
+    return jax.value_and_grad(_low_frequency_anchor_l2)(
+        volume,
+        anchor=anchor,
+        radius=radius,
+    )
+
+
+def _low_frequency_anchor_l2(
+    volume: jax.Array,
+    *,
+    anchor: jax.Array | None,
+    radius: int,
+) -> jax.Array:
+    if anchor is None:
+        return jnp.asarray(0.0, dtype=jnp.float32)
+    vol = jnp.asarray(volume, dtype=jnp.float32)
+    anchor_arr = jnp.asarray(anchor, dtype=jnp.float32)
+    if anchor_arr.shape != vol.shape:
+        raise ValueError("low_frequency_anchor must match volume shape")
+    low = _box_blur3d(vol, radius=max(1, int(radius)))
+    diff = low - anchor_arr
+    return jnp.mean(diff * diff)
+
+
+def _box_blur3d(volume: jax.Array, *, radius: int) -> jax.Array:
+    if int(radius) <= 0:
+        return jnp.asarray(volume, dtype=jnp.float32)
+    vol = jnp.asarray(volume, dtype=jnp.float32)
+    padded = jnp.pad(vol, ((radius, radius), (radius, radius), (radius, radius)), mode="edge")
+    acc = jnp.zeros_like(vol)
+    count = 0
+    for dx in range(2 * radius + 1):
+        for dy in range(2 * radius + 1):
+            for dz in range(2 * radius + 1):
+                acc = acc + padded[
+                    dx : dx + vol.shape[0],
+                    dy : dy + vol.shape[1],
+                    dz : dz + vol.shape[2],
+                ]
+                count += 1
+    return acc / jnp.asarray(count, dtype=jnp.float32)
 
 
 def _centered_axis(size: int) -> jax.Array:

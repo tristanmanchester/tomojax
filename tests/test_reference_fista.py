@@ -17,6 +17,7 @@ from tomojax.forward import (
 from tomojax.geometry import GeometryState
 from tomojax.recon import (
     ReferenceFISTAConfig,
+    build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
     reconstruct_backprojection_reference,
@@ -368,6 +369,85 @@ def test_reference_fista_returned_quality_reports_candidate_loss() -> None:
     assert quality.volume_rms >= 0.0
     assert quality.support_mass_fraction is not None
     assert quality.loss_normalisation == "full_projection_array_size"
+
+
+def test_reference_fista_soft_support_anchor_gradient_matches_finite_difference() -> None:
+    geometry = GeometryState.zeros(2)
+    truth = _tiny_volume()
+    observed = project_parallel_reference(truth, geometry)
+    support = jnp.ones_like(truth).at[0, :, :].set(0.0)
+    anchor = truth * 0.25
+    config = ReferenceFISTAConfig(
+        iterations=1,
+        step_size=2e-3,
+        residual_filters=(ResidualFilterConfig(kind="raw"),),
+        soft_support=support,
+        soft_support_outside_weight=0.3,
+        low_frequency_anchor=anchor,
+        low_frequency_anchor_weight=0.2,
+        low_frequency_anchor_radius=1,
+        non_negative=False,
+    )
+    volume = truth * 0.7 + 0.1
+    direction = jnp.sin(jnp.arange(truth.size, dtype=jnp.float32)).reshape(truth.shape)
+    direction = cast("jnp.ndarray", direction / jnp.linalg.norm(direction))
+    core = core_projection_geometry_from_state(
+        cast("tuple[int, int, int]", tuple(int(dim) for dim in truth.shape)),
+        geometry,
+        detector_shape=(int(observed.shape[1]), int(observed.shape[2])),
+    )
+
+    _loss, _data, _regularizer, gradient = _loss_and_explicit_gradient(
+        volume,
+        observed,
+        core=core,
+        mask=jnp.ones_like(observed),
+        config=config,
+    )
+    epsilon = jnp.asarray(1.0e-2, dtype=jnp.float32)
+    plus, _plus_data, _plus_regularizer, _plus_grad = _loss_and_explicit_gradient(
+        volume + epsilon * direction,
+        observed,
+        core=core,
+        mask=jnp.ones_like(observed),
+        config=config,
+    )
+    minus, _minus_data, _minus_regularizer, _minus_grad = _loss_and_explicit_gradient(
+        volume - epsilon * direction,
+        observed,
+        core=core,
+        mask=jnp.ones_like(observed),
+        config=config,
+    )
+
+    np.testing.assert_allclose(
+        float(jnp.sum(gradient * direction)),
+        float((plus - minus) / (2.0 * epsilon)),
+        rtol=2.0e-2,
+        atol=2.0e-3,
+    )
+
+
+def test_scout_support_builder_records_truth_free_provenance() -> None:
+    geometry = GeometryState.zeros(2)
+    truth = _tiny_volume()
+    observed = project_parallel_reference(truth, geometry)
+
+    scout = build_scout_support(
+        observed,
+        geometry,
+        projection_valid_mask=jnp.ones_like(observed),
+        volume_shape=cast("tuple[int, int, int]", tuple(int(dim) for dim in truth.shape)),
+        smoothing_radius=1,
+        dilation_radius=1,
+    )
+
+    assert scout.support_probability.shape == truth.shape
+    assert scout.low_frequency_anchor.shape == truth.shape
+    assert scout.provenance["uses_truth"] is False
+    assert scout.provenance["geometry_source"] == "initial_metadata"
+    assert float(jnp.min(scout.support_probability)) >= 0.0
+    assert float(jnp.max(scout.support_probability)) <= 1.0
 
 
 def _tiny_volume() -> jnp.ndarray:

@@ -22,7 +22,7 @@ ProjectionLossMode = Literal["otsu_l2", "otsu_pseudo_huber", "pseudo_huber"]
 PreviewInitialization = Literal["average_projection", "backprojection", "constant", "zero"]
 PreviewReconstructionMaskSource = Literal["all_views", "train_views"]
 PreviewResidualFilterMode = Literal["continuation", "raw"]
-PreviewVolumeSupport = Literal["cylindrical", "none", "spherical"]
+PreviewVolumeSupport = Literal["cylindrical", "none", "scout_soft", "spherical"]
 StoppedPreviewPolicy = Literal[
     "standard",
     "constant_cylindrical_first_level",
@@ -67,6 +67,8 @@ class AlternatingSmokeConfig:
     preview_tv_scale: float = 1.0
     preview_residual_filter_mode: PreviewResidualFilterMode = "continuation"
     preview_center_l2_weight: float = 0.0
+    preview_support_outside_weight: float = 0.0
+    preview_low_frequency_anchor_weight: float = 0.0
     preview_initial_volume_path: Path | None = None
     preview_views_per_batch: int = 1
     stopped_preview_policy: StoppedPreviewPolicy = "standard"

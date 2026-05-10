@@ -26,6 +26,7 @@ from tomojax.align.api import reference_continuation_schedule
 from tomojax.geometry import GeometryState, read_geometry_json, read_pose_params_csv
 from tomojax.recon import (
     ReferenceFISTAConfig,
+    build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
     reconstruct_average_reference,
@@ -48,6 +49,8 @@ class ObjectiveFamily:
     tv_weight: float
     center_l2_weight: float
     known_phantom_support: bool = False
+    scout_soft_support: bool = False
+    scout_low_frequency_anchor: bool = False
 
 
 def main() -> int:
@@ -115,6 +118,12 @@ def _load_context(run_dir: Path, *, profile: str) -> dict[str, Any]:
     final_volume = jnp.asarray(np.load(run_dir / "final_volume.npy"), dtype=jnp.float32)
     level = reference_continuation_schedule(cast("Any", profile)).levels[-1]
     schur = json.loads((run_dir / "schur_scalar_diagnostics.json").read_text(encoding="utf-8"))
+    scout = build_scout_support(
+        observed,
+        initial_geometry,
+        projection_valid_mask=valid_mask,
+        volume_shape=cast("tuple[int, int, int]", tuple(int(dim) for dim in truth_volume.shape)),
+    )
     return {
         "run_dir": run_dir,
         "true_geometry": true_geometry,
@@ -133,6 +142,9 @@ def _load_context(run_dir: Path, *, profile: str) -> dict[str, Any]:
         "final_det_u": float(final_geometry.setup.det_u_px.value),
         "schur_data_jtr": float(schur.get("schur", {}).get("data_JTr", float("nan"))),
         "schur_data_jtj": float(schur.get("schur", {}).get("data_JTJ", float("nan"))),
+        "scout_support": scout.support_probability,
+        "scout_low_frequency_anchor": scout.low_frequency_anchor,
+        "scout_provenance": scout.provenance,
     }
 
 
@@ -212,6 +224,37 @@ def _objective_families(level_tv_weight: float) -> tuple[ObjectiveFamily, ...]:
             float(level_tv_weight),
             0.02,
             known_phantom_support=True,
+        ),
+        ObjectiveFamily(
+            "reduced_scout_soft_support",
+            "reduced",
+            "candidate",
+            True,
+            "scout_soft",
+            float(level_tv_weight),
+            0.0,
+            scout_soft_support=True,
+        ),
+        ObjectiveFamily(
+            "reduced_scout_lowfreq_anchor",
+            "reduced",
+            "candidate",
+            True,
+            "none",
+            float(level_tv_weight),
+            0.0,
+            scout_low_frequency_anchor=True,
+        ),
+        ObjectiveFamily(
+            "reduced_scout_support_anchor",
+            "reduced",
+            "candidate",
+            True,
+            "scout_soft",
+            float(level_tv_weight),
+            0.0,
+            scout_soft_support=True,
+            scout_low_frequency_anchor=True,
         ),
     )
 
@@ -385,6 +428,8 @@ def _fixed_volume_for_family(
 def _support_for_family(family: ObjectiveFamily, context: dict[str, Any]) -> jax.Array | None:
     if family.known_phantom_support:
         return (jnp.asarray(context["truth_volume"]) > 1.0e-6).astype(jnp.float32)
+    if family.scout_soft_support:
+        return None
     if family.support == "cylindrical":
         shape = tuple(int(v) for v in context["truth_volume"].shape)
         return centered_volume_support(
@@ -411,6 +456,16 @@ def _fista_config(
         residual_filters=level.residual_filters,
         non_negative=bool(family.nonnegative),
         center_l2_weight=float(family.center_l2_weight),
+        soft_support=(
+            cast("jax.Array", context["scout_support"]) if family.scout_soft_support else None
+        ),
+        soft_support_outside_weight=0.1 if family.scout_soft_support else 0.0,
+        low_frequency_anchor=(
+            cast("jax.Array", context["scout_low_frequency_anchor"])
+            if family.scout_low_frequency_anchor
+            else None
+        ),
+        low_frequency_anchor_weight=0.05 if family.scout_low_frequency_anchor else 0.0,
         views_per_batch=0,
     )
 
@@ -445,7 +500,7 @@ def _write_family_artifacts(
     _write_json(family_dir / "objective_summary.json", summary)
     _write_json(
         family_dir / "reconstruction_config.json",
-        _reconstruction_config_payload(family, rows),
+        _reconstruction_config_payload(family, rows, context=context),
     )
     _write_json(family_dir / "mask_provenance.json", _mask_provenance_payload(family))
     _write_json(family_dir / "inner_solve_quality.json", _inner_solve_quality_payload(rows))
@@ -516,6 +571,8 @@ def _interpretation(argmin: float, truth: float, final: float) -> str:
 def _reconstruction_config_payload(
     family: ObjectiveFamily,
     rows: list[dict[str, object]],
+    *,
+    context: dict[str, Any],
 ) -> dict[str, object]:
     first = rows[0] if rows else {}
     return {
@@ -531,8 +588,11 @@ def _reconstruction_config_payload(
         "loss_normalisation": "full_projection_array_size",
         "nonnegative": family.nonnegative,
         "support": family.support,
+        "scout_support_provenance": context.get("scout_provenance", {}),
         "tv_weight": family.tv_weight,
         "center_l2_weight": family.center_l2_weight,
+        "soft_support_outside_weight": 0.1 if family.scout_soft_support else 0.0,
+        "low_frequency_anchor_weight": 0.05 if family.scout_low_frequency_anchor else 0.0,
         "anchored_low_frequency_component": "not_available",
     }
 

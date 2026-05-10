@@ -55,6 +55,7 @@ from tomojax.geometry import (
 )
 from tomojax.recon import (
     ReferenceFISTAResult,
+    build_scout_support,
     reference_fista_diagnostic_artifacts,
     write_fista_trace_csv,
     write_fista_trace_recomputed_csv,
@@ -111,6 +112,8 @@ def _write_artifacts(  # noqa: PLR0915
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_support_outside_weight: float,
+    preview_low_frequency_anchor_weight: float,
     preview_views_per_batch: int,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
@@ -180,6 +183,9 @@ def _write_artifacts(  # noqa: PLR0915
         "schur_diagnostics_json": output_dir / "schur_diagnostics.json",
         "schur_scalar_diagnostics_csv": output_dir / "schur_scalar_diagnostics.csv",
         "schur_scalar_diagnostics_json": output_dir / "schur_scalar_diagnostics.json",
+        "scout_support_npy": output_dir / "scout_support.npy",
+        "scout_low_frequency_anchor_npy": output_dir / "scout_low_frequency_anchor.npy",
+        "scout_support_provenance_json": output_dir / "scout_support_provenance.json",
         "verification_json": output_dir / "verification.json",
     }
     synthetic_dataset = verification.get("synthetic_dataset")
@@ -215,6 +221,8 @@ def _write_artifacts(  # noqa: PLR0915
         preview_tv_scale=preview_tv_scale,
         preview_residual_filter_mode=preview_residual_filter_mode,
         preview_center_l2_weight=preview_center_l2_weight,
+        preview_support_outside_weight=preview_support_outside_weight,
+        preview_low_frequency_anchor_weight=preview_low_frequency_anchor_weight,
         preview_views_per_batch=preview_views_per_batch,
         stopped_preview_policy=stopped_preview_policy,
         fit_gain_offset_nuisance=fit_gain_offset_nuisance,
@@ -236,6 +244,8 @@ def _write_artifacts(  # noqa: PLR0915
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=preview_center_l2_weight,
+            preview_support_outside_weight=preview_support_outside_weight,
+            preview_low_frequency_anchor_weight=preview_low_frequency_anchor_weight,
             preview_views_per_batch=preview_views_per_batch,
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=fit_gain_offset_nuisance,
@@ -263,6 +273,14 @@ def _write_artifacts(  # noqa: PLR0915
     _write_json(artifacts["mask_provenance_json"], mask_provenance_payload(mask_provenance))
     _write_array(artifacts["observed_projections_npy"], observed)
     _write_mask_array(artifacts["projection_mask_npy"], mask)
+    _write_scout_support_artifacts(
+        artifacts,
+        preview_volume_support=preview_volume_support,
+        observed=observed,
+        initial_geometry=initial_geometry,
+        projection_valid_mask=projection_valid_mask,
+        volume_shape=cast("tuple[int, int, int]", tuple(int(dim) for dim in final_volume.shape)),
+    )
     _write_json(artifacts["recovery_tolerances_json"], _recovery_tolerances_payload())
     _write_array(artifacts["ground_truth_volume_npy"], truth_volume)
     _write_json(artifacts["gauge_policy_json"], _gauge_policy_payload())
@@ -372,6 +390,8 @@ def _write_artifacts(  # noqa: PLR0915
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=preview_center_l2_weight,
+            preview_support_outside_weight=preview_support_outside_weight,
+            preview_low_frequency_anchor_weight=preview_low_frequency_anchor_weight,
             preview_views_per_batch=preview_views_per_batch,
             stopped_preview_policy=stopped_preview_policy,
         )
@@ -986,6 +1006,9 @@ def _artifact_description(name: str) -> str:
         "schur_diagnostics_json": "Joint Schur LM diagnostics summary",
         "schur_scalar_diagnostics_csv": "Scalar det_u Schur-vs-landscape diagnostic rows",
         "schur_scalar_diagnostics_json": "Scalar det_u Schur-vs-landscape diagnostics",
+        "scout_low_frequency_anchor_npy": "Frozen scout low-frequency anchor volume",
+        "scout_support_npy": "Frozen scout soft support probability",
+        "scout_support_provenance_json": "Frozen scout support provenance",
         "verification_json": "Smoke verification report",
     }
     return descriptions[name]
@@ -1183,6 +1206,8 @@ def _benchmark_result_payload(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_support_outside_weight: float,
+    preview_low_frequency_anchor_weight: float,
     preview_views_per_batch: int,
     stopped_preview_policy: str,
 ) -> dict[str, object]:
@@ -1330,6 +1355,8 @@ def _benchmark_result_payload(
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
         "preview_center_l2_weight": preview_center_l2_weight,
+        "preview_support_outside_weight": preview_support_outside_weight,
+        "preview_low_frequency_anchor_weight": preview_low_frequency_anchor_weight,
         "preview_views_per_batch": preview_views_per_batch,
         "stopped_preview_policy": stopped_preview_policy,
     }
@@ -2035,6 +2062,8 @@ def _write_config_resolved(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_support_outside_weight: float,
+    preview_low_frequency_anchor_weight: float,
     preview_views_per_batch: int,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
@@ -2091,6 +2120,8 @@ def _write_config_resolved(
             preview_tv_scale=preview_tv_scale,
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=preview_center_l2_weight,
+            preview_support_outside_weight=preview_support_outside_weight,
+            preview_low_frequency_anchor_weight=preview_low_frequency_anchor_weight,
             preview_views_per_batch=preview_views_per_batch,
             stopped_preview_policy=stopped_preview_policy,
         )
@@ -2148,6 +2179,8 @@ def _preview_config_lines(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_support_outside_weight: float,
+    preview_low_frequency_anchor_weight: float,
     preview_views_per_batch: int,
     stopped_preview_policy: str,
 ) -> list[str]:
@@ -2158,6 +2191,8 @@ def _preview_config_lines(
         f"preview_tv_scale = {float(preview_tv_scale)}",
         f'preview_residual_filter_mode = "{preview_residual_filter_mode}"',
         f"preview_center_l2_weight = {float(preview_center_l2_weight)}",
+        f"preview_support_outside_weight = {float(preview_support_outside_weight)}",
+        f"preview_low_frequency_anchor_weight = {float(preview_low_frequency_anchor_weight)}",
         f"preview_views_per_batch = {int(preview_views_per_batch)}",
         f'stopped_preview_policy = "{stopped_preview_policy}"',
     ]
@@ -2216,6 +2251,41 @@ def _write_mask_array(path: Path, mask: jax.Array) -> None:
         np.save(handle, np.asarray(jax.device_get(mask), dtype=bool), allow_pickle=False)
 
 
+def _write_scout_support_artifacts(
+    artifacts: Mapping[str, Path],
+    *,
+    preview_volume_support: str,
+    observed: jax.Array,
+    initial_geometry: GeometryState,
+    projection_valid_mask: jax.Array,
+    volume_shape: tuple[int, int, int],
+) -> None:
+    if preview_volume_support != "scout_soft":
+        _write_array(artifacts["scout_support_npy"], jnp.zeros(volume_shape, dtype=jnp.float32))
+        _write_array(
+            artifacts["scout_low_frequency_anchor_npy"],
+            jnp.zeros(volume_shape, dtype=jnp.float32),
+        )
+        _write_json(
+            artifacts["scout_support_provenance_json"],
+            {
+                "schema": "tomojax.scout_support_provenance.v1",
+                "status": "not_enabled",
+                "uses_truth": False,
+            },
+        )
+        return
+    scout = build_scout_support(
+        observed,
+        initial_geometry,
+        projection_valid_mask=projection_valid_mask,
+        volume_shape=volume_shape,
+    )
+    _write_array(artifacts["scout_support_npy"], scout.support_probability)
+    _write_array(artifacts["scout_low_frequency_anchor_npy"], scout.low_frequency_anchor)
+    _write_json(artifacts["scout_support_provenance_json"], scout.provenance)
+
+
 def _run_manifest_payload(
     volume: jax.Array,
     projections: jax.Array,
@@ -2230,6 +2300,8 @@ def _run_manifest_payload(
     preview_tv_scale: float,
     preview_residual_filter_mode: str,
     preview_center_l2_weight: float,
+    preview_support_outside_weight: float,
+    preview_low_frequency_anchor_weight: float,
     preview_views_per_batch: int,
     stopped_preview_policy: str,
     fit_gain_offset_nuisance: bool,
@@ -2266,6 +2338,8 @@ def _run_manifest_payload(
         "preview_tv_scale": preview_tv_scale,
         "preview_residual_filter_mode": preview_residual_filter_mode,
         "preview_center_l2_weight": preview_center_l2_weight,
+        "preview_support_outside_weight": preview_support_outside_weight,
+        "preview_low_frequency_anchor_weight": preview_low_frequency_anchor_weight,
         "preview_views_per_batch": preview_views_per_batch,
         "stopped_preview_policy": stopped_preview_policy,
         "fit_gain_offset_nuisance": fit_gain_offset_nuisance,

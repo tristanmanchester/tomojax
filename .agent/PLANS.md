@@ -144,6 +144,17 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit Slice 1.
+- [x] Start Slice 2: frozen scout soft support and low-frequency anchor.
+- [x] Add recon-owned scout support builder with truth-free provenance.
+- [x] Add differentiable FISTA soft-support and low-frequency-anchor penalties.
+- [x] Wire `preview_volume_support = "scout_soft"` and anchor/support weights
+      through align-auto and alternating preview FISTA.
+- [x] Emit scout support, low-frequency anchor, and provenance artifacts.
+- [x] Add reduced-objective scout-support diagnostic families.
+- [x] Run focused tests, default smoke artifact test, enabled scout-soft smoke,
+      and 64^3 scout-support variable-projection diagnostic.
+- [x] Update `docs/implementation_log.md` for Slice 2.
+- [x] Commit Slice 2.
 
 ### Validation
 

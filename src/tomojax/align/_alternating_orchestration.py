@@ -55,6 +55,8 @@ from tomojax.geometry import GaugeReport, canonicalize_geometry_gauges
 from tomojax.recon import (
     ReferenceFISTAConfig,
     ReferenceFISTAResult,
+    ScoutSupportResult,
+    build_scout_support,
     centered_volume_support,
     fista_reconstruct_reference,
     reconstruct_average_reference,
@@ -103,6 +105,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
     coarse_verified = False
     time_to_verified_geometry_seconds = None
     mask_provenance: list[MaskProvenanceEntry] = []
+    scout_supports: dict[int, ScoutSupportResult] = {}
 
     _record_projection_loss_mask(
         mask_provenance,
@@ -158,6 +161,14 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
             mask=projection_valid_mask,
             train_mask=train_mask,
         )
+        scout_support = _preview_scout_support(
+            config,
+            level=level,
+            observed=observed,
+            initial_geometry=initial_geometry,
+            projection_valid_mask=projection_valid_mask,
+            cache=scout_supports,
+        )
         record_mask_provenance(
             mask_provenance,
             caller="_run_alternating_solver_smoke_impl",
@@ -207,6 +218,20 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                     level.residual_filters,
                 ),
                 center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
+                soft_support=(
+                    None if scout_support is None else scout_support.support_probability
+                ),
+                soft_support_outside_weight=max(
+                    float(config.preview_support_outside_weight),
+                    0.0,
+                ),
+                low_frequency_anchor=(
+                    None if scout_support is None else scout_support.low_frequency_anchor
+                ),
+                low_frequency_anchor_weight=max(
+                    float(config.preview_low_frequency_anchor_weight),
+                    0.0,
+                ),
                 views_per_batch=int(config.preview_views_per_batch),
             ),
         )
@@ -451,6 +476,8 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         preview_tv_scale=config.preview_tv_scale,
         preview_residual_filter_mode=config.preview_residual_filter_mode,
         preview_center_l2_weight=config.preview_center_l2_weight,
+        preview_support_outside_weight=config.preview_support_outside_weight,
+        preview_low_frequency_anchor_weight=config.preview_low_frequency_anchor_weight,
         preview_views_per_batch=config.preview_views_per_batch,
         stopped_preview_policy=config.stopped_preview_policy,
         fit_gain_offset_nuisance=config.fit_gain_offset_nuisance,
@@ -882,9 +909,33 @@ def _preview_volume_support(
     shape: tuple[int, int, int],
 ) -> jax.Array | None:
     support = _effective_preview_volume_support(config, level)
+    if support == "scout_soft":
+        return None
     if support == "none":
         return None
     return centered_volume_support(shape, kind=support)
+
+
+def _preview_scout_support(
+    config: AlternatingSmokeConfig,
+    *,
+    level: ContinuationLevel,
+    observed: jax.Array,
+    initial_geometry: GeometryState,
+    projection_valid_mask: jax.Array,
+    cache: dict[int, ScoutSupportResult],
+) -> ScoutSupportResult | None:
+    if _effective_preview_volume_support(config, level) != "scout_soft":
+        return None
+    key = int(level.level_factor)
+    if key not in cache:
+        cache[key] = build_scout_support(
+            observed,
+            initial_geometry,
+            projection_valid_mask=projection_valid_mask,
+            volume_shape=(int(config.size), int(config.size), int(config.size)),
+        )
+    return cache[key]
 
 
 def _preview_fista_step_size(config: AlternatingSmokeConfig) -> float:
