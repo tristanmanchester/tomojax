@@ -3,6 +3,72 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - Real laminography MVP artifact contract
+
+### Scope
+
+Added a focused real-data MVP report runner for the staged 256^3 laminography
+reference run:
+`runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525`.
+
+The runner encodes the staged workflow as:
+
+baseline -> COR/det_u -> detector roll -> axis direction -> phi -> dx/dz ->
+5DOF polish -> final recon.
+
+It writes a machine-readable summary, Markdown summary, residual/loss trace,
+geometry trace, and before/COR-only/full publication image bundle under
+`real_mvp_report/`. The success contract is deliberately real-data oriented:
+the full staged final reconstruction must improve the COR-only FISTA loss at
+matching volume shape. Synthetic truth metrics are marked not applicable for
+this gate and remain synthetic-diagnostic-only.
+
+### Reference result
+
+- Report command:
+  `uv run python scripts/real_laminography/summarize_real_lamino_mvp.py
+  --run-dir
+  runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525
+  --out-dir
+  runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/real_mvp_report
+  --require-success`
+- Result: pass.
+- Full staged final FISTA loss: 6438.1611328125.
+- COR-only FISTA loss: 6804.66845703125.
+- Absolute improvement: 366.50732421875.
+- Relative improvement: 0.05386115819353972.
+- Matching volume shape: `[256, 256, 96]`.
+
+The final-stage manifest omitted `volume_shape`, while `run_manifest.json`
+records `final_volume_shape`. The report reader now uses that run-level final
+shape as the final-stage fallback and compares it to the COR-only manifest
+shape.
+
+### Notes
+
+- No COR grid search, sinogram/COR/correlation method, sharpness/autofocus
+  method, or benchmark-only knob promotion was added.
+- `tomojax.recon.multires` now re-exports the existing core multires binning
+  and scaling helpers expected by the real laminography runner.
+- A concise committed summary was added at
+  `docs/benchmark_runs/2026-05-11-real-lamino-mvp-reference.md`; the full local
+  generated report remains under the run directory.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 12 tests in 0.74
+  seconds.
+- `uv run ruff check
+  scripts/real_laminography/summarize_real_lamino_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run python
+  scripts/real_laminography/summarize_real_lamino_mvp.py --run-dir
+  runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525
+  --out-dir
+  runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/real_mvp_report
+  --require-success` passed.
+
 ## 2026-05-10 - Detector-u tangent-space volume gauge
 
 ### Scope

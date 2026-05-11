@@ -8,13 +8,24 @@ from tomojax.core import progress_iter
 
 from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.multires import (
+    bin_projections,
     create_resolution_pyramid,
+    scale_detector,
+    scale_grid,
     upsample_volume,
     validate_scale_factor,
 )
 from .fista_tv import FistaConfig, fista_tv
 
 _validated_scale_factor = validate_scale_factor
+
+__all__ = [
+    "bin_projections",
+    "fista_multires",
+    "scale_detector",
+    "scale_grid",
+    "upsample_volume",
+]
 
 
 def fista_multires(

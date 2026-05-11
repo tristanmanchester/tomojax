@@ -1,14 +1,14 @@
+# pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnusedCallResult=false
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
-import sys
 from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
-
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
@@ -19,11 +19,26 @@ _SCRIPT_PATH = (
     / "real_laminography"
     / "run_real_lamino_native_setup_pose_256.py"
 )
-_SPEC = importlib.util.spec_from_file_location("run_real_lamino_native_setup_pose_256", _SCRIPT_PATH)
+_MVP_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "real_laminography"
+    / "summarize_real_lamino_mvp.py"
+)
+_SPEC = importlib.util.spec_from_file_location(
+    "run_real_lamino_native_setup_pose_256",
+    _SCRIPT_PATH,
+)
 assert _SPEC is not None
 assert _SPEC.loader is not None
 runner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(runner)
+
+_MVP_SPEC = importlib.util.spec_from_file_location("summarize_real_lamino_mvp", _MVP_SCRIPT_PATH)
+assert _MVP_SPEC is not None
+assert _MVP_SPEC.loader is not None
+mvp_runner = importlib.util.module_from_spec(_MVP_SPEC)
+_MVP_SPEC.loader.exec_module(mvp_runner)
 
 
 def test_runner_input_argument_is_required(monkeypatch, tmp_path) -> None:
@@ -220,3 +235,141 @@ def test_validate_loaded_input_rejects_theta_count_mismatch() -> None:
             thetas,
             expected_projection_shape=None,
         )
+
+
+def test_real_mvp_summary_uses_final_vs_cor_only_quality_contract(tmp_path) -> None:
+    run_dir = _write_minimal_real_mvp_run(tmp_path)
+
+    summary = mvp_runner.build_real_mvp_report(run_dir, out_dir=tmp_path / "mvp")
+
+    assert summary["schema"] == "tomojax.real_lamino_mvp_report.v1"
+    assert summary["success"]["passed"] is True
+    assert summary["quality_basis"]["truth_metrics"] == "not_applicable_real_data"
+    assert summary["reconstruction_comparison"]["loss_improvement_abs"] == 20.0
+    assert (tmp_path / "mvp" / "real_mvp_summary.json").exists()
+    assert (tmp_path / "mvp" / "real_mvp_residual_trace.csv").exists()
+    assert (tmp_path / "mvp" / "real_mvp_geometry_trace.json").exists()
+    assert (tmp_path / "mvp" / "publication" / "before_orthos.png").exists()
+    assert (tmp_path / "mvp" / "publication" / "cor_only_orthos.png").exists()
+    assert (tmp_path / "mvp" / "publication" / "full_orthos.png").exists()
+
+
+def test_real_mvp_summary_can_require_quality_success(tmp_path) -> None:
+    run_dir = _write_minimal_real_mvp_run(tmp_path, final_last_loss=130.0)
+
+    with pytest.raises(RuntimeError, match="did not improve"):
+        mvp_runner.build_real_mvp_report(
+            run_dir,
+            out_dir=tmp_path / "mvp",
+            require_success=True,
+        )
+
+
+def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _write_json(
+        run_dir / "run_manifest.json",
+        {
+            "input": "real.nxs",
+            "backend": "gpu",
+            "devices": ["cuda:0"],
+            "final_volume_shape": [256, 256, 96],
+            "final_setup_estimates": {"detector": []},
+            "final_pose_summary": {"dx": {"std": 1.0}},
+        },
+    )
+    _write_json(run_dir / "status.json", {"completed_at": "2026-05-11T00:00:00"})
+    stages = [
+        ("00_baseline", [], {}),
+        ("01_setup_geometry/01_cor", ["det_u_px"], {}),
+        ("01_setup_geometry/02_detector_roll", ["detector_roll_deg"], {}),
+        ("01_setup_geometry/03_axis_direction", ["axis_rot_x_deg", "axis_rot_y_deg"], {}),
+        ("02_pose_phi", ["phi"], {"params_summary": {"phi": {"std": 0.1}}}),
+        ("03_pose_dx_dz", ["dx", "dz"], {"params_summary": {"dx": {"std": 1.0}}}),
+        ("04_pose_polish", ["alpha", "beta", "phi", "dx", "dz"], {}),
+    ]
+    for rel, dofs, extra in stages:
+        stage_dir = run_dir / rel
+        stage_dir.mkdir(parents=True)
+        _write_stage_images(stage_dir)
+        _write_json(
+            stage_dir / "stage_manifest.json",
+            {
+                "stage": rel,
+                "status": "completed",
+                "active_dofs": dofs,
+                "artifacts": {
+                    "orthos": "orthos.png",
+                    "aligned_xy": "aligned_xy_global_z209.png",
+                    "delta_xy": "delta_xy_global_z209.png",
+                    "z_stack": "z_stack_global_z198_220.png",
+                },
+                "geometry_calibration_state": {"stage": rel},
+                **extra,
+            },
+        )
+        (stage_dir / "stage_summary.csv").write_text(
+            "stage,level_factor,outer_iter,geometry_loss_before,geometry_loss_after,geometry_accepted\n"
+            f"{rel},1,1,2.0,1.0,True\n",
+            encoding="utf-8",
+        )
+    final_dir = run_dir / "05_final"
+    final_dir.mkdir()
+    _write_stage_images(final_dir)
+    _write_json(
+        final_dir / "stage_manifest.json",
+        {
+            "stage": "05_final",
+            "status": "completed",
+            "volume_shape": [256, 256, 96],
+            "artifacts": {
+                "orthos": "orthos.png",
+                "aligned_xy": "aligned_xy_global_z209.png",
+                "delta_xy": "delta_xy_global_z209.png",
+                "z_stack": "z_stack_global_z198_220.png",
+            },
+            "geometry_calibration_state": {"stage": "05_final"},
+            "params_summary": {"dx": {"std": 2.0}},
+            "recon_info": {
+                "loss": [120.0, final_last_loss],
+                "effective_iters": 2,
+                "regulariser": "tv",
+            },
+        },
+    )
+    cor_dir = run_dir / "06_cor_only_fista"
+    cor_dir.mkdir()
+    _write_stage_images(cor_dir)
+    _write_json(
+        cor_dir / "stage_manifest.json",
+        {
+            "stage": "06_cor_only_fista",
+            "status": "completed",
+            "volume_shape": [256, 256, 96],
+            "artifacts": {
+                "orthos": "orthos.png",
+                "aligned_xy": "aligned_xy_global_z209.png",
+                "delta_xy": "delta_xy_global_z209.png",
+                "z_stack": "z_stack_global_z198_220.png",
+            },
+            "setup_state": {"stage": "06_cor_only_fista"},
+            "fista_info": {"loss": [120.0, 100.0], "effective_iters": 2, "regulariser": "tv"},
+        },
+    )
+    return run_dir
+
+
+def _write_stage_images(stage_dir: Path) -> None:
+    for name in (
+        "orthos.png",
+        "aligned_xy_global_z209.png",
+        "delta_xy_global_z209.png",
+        "z_stack_global_z198_220.png",
+    ):
+        (stage_dir / name).write_bytes(b"png")
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")

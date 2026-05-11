@@ -11,44 +11,58 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
-- Goal file: `docs/oracle_support_gauge_way_forward_20260510.md`
-- Phase: Phase 8/9 support/gauge alignment-volume implementation
-- Goal: implement the support/gauge way forward in order: first make
-  reduced-objective diagnostics honest, then add frozen scout soft support plus
-  low-frequency anchor, then add detector-u tangent-space volume gauge
-  projection if still needed.
+- Reference run:
+  `runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525`
+- Phase: real laminography MVP pivot
+- Goal: make the real laminography workflow the MVP success target. Success is
+  automatic reconstruction-quality improvement on the real staged path, not
+  exact synthetic geometry truth.
 
 ### Scope
 
 - In scope:
-  - Slice 1: make reduced-objective diagnostics use production-comparable
-    reconstruction settings or record deviations loudly.
-  - Record returned-volume FISTA loss, data loss, regulariser, projected
-    gradient stationarity, volume norm, support mass, step size, iteration
-    count, initializer, support source, mask source, and loss normalisation.
-  - Mark reduced-objective families as `inner_solve_underfit` when a curve is
-    too flat or candidate volumes are effectively absent.
-  - Keep truth volume, truth support, and true det_u strictly diagnostic-only.
-  - After Slice 1 is committed, continue to frozen scout soft support and
-    low-frequency anchor without adding COR/sinogram/correlation/sharpness/grid
-    search paths.
+  - Read and encode the reference staged path:
+    baseline -> COR/det_u -> detector roll -> axis direction -> phi -> dx/dz
+    -> 5DOF polish -> final recon.
+  - Compare full staged final reconstruction against COR-only on real-run
+    reconstruction quality signals.
+  - Emit publication-ready before/COR-only/full preview artifacts plus
+    residual/loss and geometry traces.
+  - Keep truth metrics synthetic-diagnostic-only.
+  - Add tests for the real MVP runner artifact contract.
 - Out of scope:
-  - New DOFs, nuisance fitting, weak-view exclusion, theta relaxation, pose
-    freedom, Pallas work, candidate-refresh variants, and benchmark reframing.
-  - COR finders, sinograms, cross-correlation, phase correlation, sharpness,
-    entropy, autofocus, or grid-search alignment under any name.
-  - Known phantom support, true COM, true support IoU, true det_u markers, or
-    phantom labels in production paths.
-- Deep module owners: `tomojax.align`, `tomojax.forward`, `tomojax.recon`.
+  - New COR grid search, sinogram/COR/correlation/sharpness/autofocus methods,
+    synthetic truth gates as real-data success criteria, and benchmark-only knob
+    promotion.
+  - Long real reconstruction reruns unless a focused artifact-contract runner
+    cannot use the existing reference run.
+- Deep module owners: real-runner scripts under `scripts/real_laminography/`;
+  no new top-level deep module in this slice.
 
 ### Design Sources
 
 - `docs/tomojax-v2/04_phased_implementation_plan.md`
-- `docs/tomojax-v2/05_synthetic_128_benchmark_suite.md`
-- `docs/oracle_support_gauge_way_forward_20260510.md`
+- `docs/tomojax-v2/06_verification_and_artifact_contract.md`
 - `docs/implementation_log.md`
+- Reference run manifests and stage summaries under
+  `runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/`
 
 ### Tasks
+
+- [x] Inspect the reference real laminography manifests, stage summaries,
+      geometry states, baseline/COR-only/final artifacts, and recent
+      scout/tangent-gauge reports.
+- [x] Add a focused real MVP artifact/contract runner for an existing staged
+      real workflow run.
+- [x] Emit before/COR-only/full publication artifact bundle, residual/loss
+      trace, geometry trace, and machine-readable success report.
+- [x] Add focused tests for the runner contract and quality criterion.
+- [x] Run the runner on the reference success case.
+- [x] Update `docs/implementation_log.md`.
+- [x] Run focused validation plus `just imports`.
+- [x] Commit the coherent real-MVP slice.
+
+### Completed Previous Support/Gauge Work
 
 - [x] Remove avoidable full-stack residual/loss preallocation from the no-nuisance
       joint Schur path so 256^3-style geometry updates remain view-streamed.
