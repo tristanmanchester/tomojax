@@ -159,6 +159,53 @@ confirmation gate. During that partial run sampled VRAM stayed around
   tests/test_real_lamino_runner_contract.py` passed.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
 
+## 2026-05-11 - Real laminography final-candidate policy
+
+### Scope
+
+The binned and targeted full-resolution real-lamino gates now complete, but the
+full unbinned confirmation showed a practical production-readiness issue: the
+default final publication step scores every cumulative staged candidate by
+running final FISTA repeatedly. That exhaustive sweep is useful diagnostic
+behavior, but it made the full-resolution confirmation spend most of its wall
+time in final candidate scoring.
+
+Changes:
+
+- Added `--final-candidate-policy {all,last_valid,setup_only}` to
+  `scripts/real_laminography/run_real_lamino_v2_cor_mvp.py`.
+- Kept the default `all` policy unchanged for diagnostic/report comparability.
+- Added `last_valid` as the fast production confirmation path: score only the
+  latest valid staged state.
+- Added `setup_only` for a middle ground that scores only COR/roll/axis setup
+  candidates when pose stages are suspected to degrade quality.
+- Recorded the policy in the selected final candidate manifest.
+- Added focused coverage that proves `last_valid` runs only the final candidate
+  and preserves the existing `all` behavior.
+
+### Evidence
+
+The previous targeted unbinned full-resolution confirmation completed with:
+
+- Run:
+  `runs/real_lamino_v2_full_mvp_full256_targeted_confirm_20260511`.
+- Result: `phase_complete: True`, backend `gpu`, device `cuda:0`.
+- It scored all six final candidates and selected `03_pose_dx_dz`.
+- Peak sampled GPU memory: `2165 MiB`.
+
+This slice does not change solver numerics. It makes the final-scoring policy
+explicit so production confirmation runs can avoid the exhaustive debug sweep
+without deleting that diagnostic mode.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 27 tests in 0.92
+  seconds.
+- `uv run ruff check scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-11 - Real laminography fail-closed stage validation
 
 ### Scope

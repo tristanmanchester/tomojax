@@ -334,6 +334,26 @@ def test_v2_cor_mvp_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -
     assert args.smoke_shape == (16, 64, 64)
 
 
+def test_v2_cor_mvp_accepts_final_candidate_policy(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--final-candidate-policy",
+            "last_valid",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.final_candidate_policy == "last_valid"
+
+
 def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:
     args = SimpleNamespace(
         slab_nz=4,
@@ -623,6 +643,76 @@ def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None
     assert [item["label"] for item in manifest["selected_final_candidate"]["candidates"]] == [
         "worse",
         "better",
+    ]
+    assert manifest["selected_final_candidate"]["candidate_policy"] == "all"
+
+
+def test_v2_final_reconstruction_can_score_only_last_valid_candidate(tmp_path) -> None:
+    class FakeContext:
+        def __init__(self, root: Path) -> None:
+            self.run_root = root
+            self.args = SimpleNamespace(final_candidate_policy="last_valid")
+            self.stage_dir = lambda name: root / name
+
+    class FakeNative:
+        def __init__(self) -> None:
+            self.calls: list[float] = []
+
+        def _final_reconstruct(self, ctx, **kwargs):
+            stage_dir = ctx.stage_dir("05_final")
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            loss = float(np.asarray(kwargs["params5"])[0, 0])
+            self.calls.append(loss)
+            volume = np.full((2, 2, 1), loss, dtype=np.float32)
+            _write_json(
+                stage_dir / "stage_manifest.json",
+                {
+                    "stage": "05_final",
+                    "status": "completed",
+                    "recon_info": {"loss": [loss]},
+                },
+            )
+            return volume
+
+        def _write_json(self, path: Path, payload: dict[str, object]) -> None:
+            _write_json(path, payload)
+
+    ctx = FakeContext(tmp_path / "run")
+    ctx.run_root.mkdir()
+    native = FakeNative()
+    candidates = [
+        {
+            "label": "early",
+            "source_stage": "01_setup_geometry/01_cor",
+            "setup_state": object(),
+            "params5": np.asarray([[1.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        },
+        {
+            "label": "last",
+            "source_stage": "04_pose_polish",
+            "setup_state": object(),
+            "params5": np.asarray([[9.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        },
+    ]
+
+    volume, choice = v2_cor_mvp_runner.run_best_final_reconstruction(
+        ctx,
+        native=native,
+        geometry=None,
+        grid=None,
+        detector=None,
+        projections=np.zeros((1, 1, 1), dtype=np.float32),
+        full_nz=1,
+        candidates=candidates,
+    )
+
+    manifest = json.loads((ctx.run_root / "05_final" / "stage_manifest.json").read_text())
+    assert native.calls == [9.0]
+    assert choice["label"] == "last"
+    assert float(volume[0, 0, 0]) == 9.0
+    assert manifest["selected_final_candidate"]["candidate_policy"] == "last_valid"
+    assert [item["label"] for item in manifest["selected_final_candidate"]["candidates"]] == [
+        "last"
     ]
 
 

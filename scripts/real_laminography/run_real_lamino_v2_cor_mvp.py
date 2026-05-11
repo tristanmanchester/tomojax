@@ -214,6 +214,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "gather_dtype": str(args.gather_dtype),
                 "views_per_batch": int(args.views_per_batch),
                 "canonical_det_grid": bool(args.canonical_det_grid),
+                "final_candidate_policy": str(args.final_candidate_policy),
             },
             "backend": jax.default_backend(),
             "devices": [str(device) for device in jax.devices()],
@@ -607,6 +608,10 @@ def run_best_final_reconstruction(
     """Run final FISTA candidates and publish the lowest-loss final artifact."""
     if not candidates:
         raise ValueError("at least one final reconstruction candidate is required")
+    candidate_policy = str(
+        getattr(getattr(ctx, "args", object()), "final_candidate_policy", "all")
+    )
+    candidates_to_score = _select_final_candidates(candidates, policy=candidate_policy)
     root = Path(ctx.run_root)
     scratch_root = root / "05_final_candidates"
     if scratch_root.exists():
@@ -614,7 +619,7 @@ def run_best_final_reconstruction(
     scored: list[dict[str, Any]] = []
     original_stage_dir = ctx.stage_dir
     try:
-        for idx, candidate in enumerate(candidates):
+        for idx, candidate in enumerate(candidates_to_score):
             label = str(candidate["label"]).replace("/", "__")
             candidate_root = scratch_root / f"{idx:02d}_{label}"
             ctx.stage_dir = lambda name, candidate_root=candidate_root: candidate_root / name
@@ -672,6 +677,7 @@ def run_best_final_reconstruction(
         "label": best["label"],
         "source_stage": best["source_stage"],
         "loss_last": best["loss_last"],
+        "candidate_policy": candidate_policy,
         "candidates": [
             {
                 "label": item["label"],
@@ -684,6 +690,30 @@ def run_best_final_reconstruction(
     }
     native._write_json(final_dir / "stage_manifest.json", manifest)
     return np.asarray(best["volume"], dtype=np.float32), best
+
+
+def _select_final_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    policy: str,
+) -> list[dict[str, Any]]:
+    normalized = str(policy).strip().lower().replace("-", "_")
+    if normalized == "all":
+        return candidates
+    if normalized == "last_valid":
+        return [candidates[-1]]
+    if normalized == "setup_only":
+        setup_candidates = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("source_stage", "")).startswith("01_setup_geometry/")
+            or str(candidate.get("source_stage", "")) == "01_setup_geometry/01_cor"
+        ]
+        return setup_candidates or [candidates[-1]]
+    raise ValueError(
+        "final candidate policy must be one of 'all', 'last_valid', or 'setup_only'; "
+        f"got {policy!r}"
+    )
 
 
 def _validate_stage_output(
@@ -979,6 +1009,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument("--recon-positivity", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--views-per-batch", type=int, default=0)
     parser.add_argument("--gather-dtype", default="bf16")
+    parser.add_argument(
+        "--final-candidate-policy",
+        choices=["all", "last_valid", "setup_only"],
+        default="all",
+        help=(
+            "Which staged geometry candidates to score for the final reconstruction. "
+            "'all' preserves the exhaustive diagnostic sweep; 'last_valid' is the "
+            "fast production confirmation path."
+        ),
+    )
     parser.add_argument("--gn-damping", type=float, default=1e-3)
     parser.add_argument("--filter", dest="filter_name", default="ramp")
     parser.add_argument("--early-stop", action=argparse.BooleanOptionalAction, default=True)

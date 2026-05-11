@@ -100,6 +100,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       and binned-pixel bounds for detector/pose translations.
 - [x] Run the binned real-laminography path through phi as the primary
       regression harness before attempting another full 256^3 confirmation.
+- [x] Add a scoped final-candidate scoring policy so production real-lamino
+      runs can avoid the exhaustive debug sweep while preserving the existing
+      all-candidate default for diagnostics.
 - [x] Add or extend focused runner/report tests for the full staged contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.
