@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # pyright: reportAny=false, reportArgumentType=false, reportOptionalMemberAccess=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnusedCallResult=false
-"""Run the first v2 real-laminography COR MVP vertical slice."""
+"""Run the v2 real-laminography MVP workflow."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-PARTIAL_STAGED_PATH: tuple[dict[str, Any], ...] = (
+STAGED_PATH: tuple[dict[str, Any], ...] = (
     {"label": "baseline", "stage": "00_baseline", "active_dofs": [], "status": "required"},
     {
         "label": "cor_detu",
@@ -73,7 +73,7 @@ PARTIAL_STAGED_PATH: tuple[dict[str, Any], ...] = (
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the v2 COR-MVP workflow."""
+    """Run the v2 real-laminography MVP workflow."""
     args = _parse_args(argv)
     run_root = Path(args.out)
     if run_root.exists() and any(run_root.iterdir()) and not bool(args.overwrite):
@@ -93,15 +93,16 @@ def main(argv: list[str] | None = None) -> int:
         monitor.close()
 
 
-def run_v2_cor_mvp(
+def run_v2_cor_mvp(  # noqa: PLR0915
     args: argparse.Namespace,
     *,
     native: Any | None = None,
     started_at: str | None = None,
 ) -> dict[str, Any]:
-    """Execute baseline, det_u setup, COR-only FISTA, and write the partial report."""
+    """Execute the v2 real-laminography workflow and write the MVP report."""
     if native is None:
         native = _load_native_runner()
+    _normalize_runtime_args(args)
     run_root = Path(args.out)
     run_root.mkdir(parents=True, exist_ok=True)
     started = started_at or datetime.now().isoformat(timespec="seconds")
@@ -157,8 +158,25 @@ def run_v2_cor_mvp(
             tilt_deg=float(args.tilt_deg),
             tilt_about=str(args.tilt_about),
         )
+        full_staged = bool(args.full_staged)
+        implemented_stages = [
+            "00_baseline",
+            "01_setup_geometry/01_cor",
+            "06_cor_only_fista",
+        ]
+        planned_stages = [
+            "01_setup_geometry/02_detector_roll",
+            "01_setup_geometry/03_axis_direction",
+            "02_pose_phi",
+            "03_pose_dx_dz",
+            "04_pose_polish",
+            "05_final",
+        ]
+        if full_staged:
+            implemented_stages.extend(planned_stages)
+            planned_stages = []
         run_manifest = {
-            "schema": "tomojax.real_lamino_v2_cor_mvp_run.v1",
+            "schema": "tomojax.real_lamino_v2_mvp_run.v1",
             "status": "running",
             "started_at": started,
             "input": str(args.input),
@@ -181,20 +199,9 @@ def run_v2_cor_mvp(
                 "cor_and_fista_use": "background_corrected_projections",
             },
             "workflow": {
-                "implemented_stages": [
-                    "00_baseline",
-                    "01_setup_geometry/01_cor",
-                    "06_cor_only_fista",
-                ],
-                "planned_stages": [
-                    "01_setup_geometry/02_detector_roll",
-                    "01_setup_geometry/03_axis_direction",
-                    "02_pose_phi",
-                    "03_pose_dx_dz",
-                    "04_pose_polish",
-                    "05_final",
-                ],
-                "full_mvp_success_deferred": True,
+                "implemented_stages": implemented_stages,
+                "planned_stages": planned_stages,
+                "full_mvp_success_deferred": not full_staged,
             },
             "reconstruction": {
                 "algorithm": "fista_tv",
@@ -248,7 +255,7 @@ def run_v2_cor_mvp(
             levels=tuple(int(v) for v in args.levels_setup),
             bounds="det_u_px=-24:24",
         )
-        _write_planned_stage_manifests(run_root, native=native)
+        cor_setup_state = setup_state
         cor_only = run_cor_only_fista(
             ctx,
             native=native,
@@ -257,23 +264,55 @@ def run_v2_cor_mvp(
             detector=detector,
             projections=projections,
             full_nz=full_nz,
-            setup_state=setup_state,
+            setup_state=cor_setup_state,
         )
+        final_volume = None
+        stage_records = [
+            {"stage": "00_baseline", "volume_shape": list(baseline.shape)},
+            {
+                "stage": "01_setup_geometry/01_cor",
+                "stats_count": len(stats),
+                "geometry_calibration_state": cor_setup_state.to_calibration_state().to_dict(),
+            },
+            {"stage": "06_cor_only_fista", "volume_shape": list(cor_only.shape)},
+        ]
+        if full_staged:
+            setup_state, params5, staged_records = run_remaining_stages(
+                ctx,
+                native=native,
+                geometry=geometry,
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                full_nz=full_nz,
+                setup_state=setup_state,
+                params5=params5,
+            )
+            stage_records.extend(staged_records)
+            final_volume = native._final_reconstruct(
+                ctx,
+                geometry=geometry,
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                full_nz=full_nz,
+                setup_state=setup_state,
+                params5=params5,
+            )
+            native._write_params_csv(run_root / "05_final" / "params.csv", params5)
+            stage_records.append({"stage": "05_final", "volume_shape": list(final_volume.shape)})
+        else:
+            _write_planned_stage_manifests(run_root, native=native)
         completed = datetime.now().isoformat(timespec="seconds")
         final_payload = {
             "status": "completed",
             "completed_at": completed,
-            "stage_records": [
-                {"stage": "00_baseline", "volume_shape": list(baseline.shape)},
-                {
-                    "stage": "01_setup_geometry/01_cor",
-                    "stats_count": len(stats),
-                    "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
-                },
-                {"stage": "06_cor_only_fista", "volume_shape": list(cor_only.shape)},
-            ],
+            "stage_records": stage_records,
             "final_setup_estimates": setup_state.to_calibration_state().to_dict(),
-            "final_volume_shape": list(cor_only.shape),
+            "final_pose_summary": native._params_summary(params5),
+            "final_volume_shape": list(
+                final_volume.shape if final_volume is not None else cor_only.shape
+            ),
         }
         native._write_json(run_root / "run_manifest.json", {**run_manifest, **final_payload})
         native._status(ctx.status_path, state="completed", stage="complete", **final_payload)
@@ -371,6 +410,94 @@ def run_cor_only_fista(
     return vol_np
 
 
+def run_remaining_stages(
+    ctx: Any,
+    *,
+    native: Any,
+    geometry: Any,
+    grid: Any,
+    detector: Any,
+    projections: np.ndarray,
+    full_nz: int,
+    setup_state: Any,
+    params5: np.ndarray,
+) -> tuple[Any, np.ndarray, list[dict[str, Any]]]:
+    """Run detector roll, axis, and pose stages after the COR-only comparator."""
+    records: list[dict[str, Any]] = []
+    setup_plan = (
+        (
+            "01_setup_geometry/02_detector_roll",
+            ("detector_roll_deg",),
+            "detector_roll_deg=-10:10",
+        ),
+        (
+            "01_setup_geometry/03_axis_direction",
+            ("axis_rot_x_deg", "axis_rot_y_deg"),
+            "axis_rot_x_deg=-15:15,axis_rot_y_deg=-15:15",
+        ),
+    )
+    for stage_name, active_setup, bounds in setup_plan:
+        _, setup_state, stats = native.run_setup_stage(
+            ctx,
+            stage_dir=ctx.stage_dir(stage_name),
+            stage_name=stage_name,
+            active_setup=active_setup,
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            full_nz=full_nz,
+            setup_state=setup_state,
+            params5=params5,
+            levels=tuple(int(v) for v in ctx.args.levels_setup),
+            bounds=bounds,
+        )
+        records.append(
+            {
+                "stage": stage_name,
+                "stats_count": len(stats),
+                "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
+            }
+        )
+    pose_plan = (
+        ("02_pose_phi", ("phi",), tuple(ctx.args.levels_phi), "phi=-0.0872665:0.0872665"),
+        ("03_pose_dx_dz", ("dx", "dz"), tuple(ctx.args.levels_dx_dz), "dx=-16:16,dz=-16:16"),
+        (
+            "04_pose_polish",
+            ("alpha", "beta", "phi", "dx", "dz"),
+            tuple(ctx.args.levels_polish),
+            (
+                "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
+                "phi=-0.0872665:0.0872665,dx=-16:16,dz=-16:16"
+            ),
+        ),
+    )
+    for stage_name, active_pose, levels, bounds in pose_plan:
+        _, params5, stats = native.run_pose_stage(
+            ctx,
+            stage_dir=ctx.stage_dir(stage_name),
+            stage_name=stage_name,
+            active_pose=active_pose,
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=projections,
+            full_nz=full_nz,
+            setup_state=setup_state,
+            params5=params5,
+            levels=tuple(int(v) for v in levels),
+            bounds=bounds,
+        )
+        records.append(
+            {
+                "stage": stage_name,
+                "stats_count": len(stats),
+                "params_summary": native._params_summary(params5),
+            }
+        )
+    return setup_state, params5, records
+
+
 def build_v2_cor_mvp_report(
     run_dir: Path,
     *,
@@ -383,24 +510,28 @@ def build_v2_cor_mvp_report(
     out.mkdir(parents=True, exist_ok=True)
     run_manifest = _read_json(root / "run_manifest.json")
     status = _read_json(root / "status.json") if (root / "status.json").exists() else {}
-    records = [_stage_record(root, spec) for spec in PARTIAL_STAGED_PATH]
-    reconstruction = _partial_reconstruction_comparison(root)
-    success = _partial_success_payload(reconstruction, records)
-    publication = _copy_partial_publication_images(root, out)
+    records = [_stage_record(root, spec) for spec in STAGED_PATH]
+    reconstruction = _reconstruction_comparison(root)
+    success = _success_payload(reconstruction, records)
+    publication = _copy_publication_images(
+        root,
+        out,
+        full_completed=success["phase"] == "v2_full_mvp",
+    )
     residual_trace = _write_residual_trace(out / "real_mvp_residual_trace.csv", records)
     geometry_trace = _write_geometry_trace(out / "real_mvp_geometry_trace.json", records)
     summary: dict[str, Any] = {
-        "schema": "tomojax.real_lamino_v2_cor_mvp_report.v1",
+        "schema": "tomojax.real_lamino_v2_mvp_report.v1",
         "contract_compatible_with": "tomojax.real_lamino_mvp_report.v1",
         "run_dir": str(root),
         "reference_target_report": str(reference_report) if reference_report else None,
         "reference_case": root.name,
         "success": success,
         "quality_basis": {
-            "kind": "real_reconstruction_quality_partial_cor_mvp",
-            "primary_metric": "cor_only_fista_loss_recorded_after_v2_det_u_stage",
+            "kind": success["quality_kind"],
+            "primary_metric": success["primary_metric"],
             "full_mvp_primary_metric": "final_fista_last_loss_lt_cor_only_fista_last_loss",
-            "full_mvp_success_deferred": True,
+            "full_mvp_success_deferred": success["full_mvp_success_deferred"],
             "truth_metrics": "not_applicable_real_data",
             "synthetic_truth_metrics_allowed": False,
         },
@@ -429,7 +560,7 @@ def build_v2_cor_mvp_report(
     return summary
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: PLR0915
     parser = argparse.ArgumentParser(
         description="Run v2 baseline + COR/det_u + COR-only FISTA for real laminography."
     )
@@ -451,6 +582,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--slab-nz", type=int, default=96)
     parser.add_argument("--stack-z-range", default="198:220")
     parser.add_argument("--levels-setup", nargs="+", type=int, default=[8, 4, 2])
+    parser.add_argument("--levels-phi", nargs="+", type=int, default=[4, 2, 1])
+    parser.add_argument("--levels-dx-dz", nargs="+", type=int, default=[4, 2, 1])
+    parser.add_argument("--levels-polish", nargs="+", type=int, default=[2, 1])
     parser.add_argument("--outer-iters", type=int, default=8)
     parser.add_argument("--recon-iters", type=int, default=40)
     parser.add_argument("--tv-prox-iters", type=int, default=16)
@@ -481,17 +615,32 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--early-stop-patience", type=int, default=2)
     parser.add_argument("--snapshot-max-cols", type=int, default=6)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--full-staged",
+        action="store_true",
+        help="Run detector-roll, axis, pose, polish, and final reconstruction after COR-only.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
     if bool(args.smoke):
         args.slab_nz = min(int(args.slab_nz), 48)
         args.levels_setup = [8]
+        args.levels_phi = [8]
+        args.levels_dx_dz = [8]
+        args.levels_polish = [8]
         args.outer_iters = min(int(args.outer_iters), 1)
         args.recon_iters = min(int(args.recon_iters), 3)
         args.tv_prox_iters = min(int(args.tv_prox_iters), 2)
         args.snapshot_max_cols = min(int(args.snapshot_max_cols), 4)
-        if int(args.views_per_batch) == 0:
+        if int(args.views_per_batch) <= 0:
             args.views_per_batch = 16
+    return args
+
+
+def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Resolve memory-sensitive runtime defaults after CLI parsing."""
+    if int(args.views_per_batch) <= 0:
+        args.views_per_batch = 1
     return args
 
 
@@ -506,7 +655,7 @@ def _load_native_runner() -> Any:
 
 
 def _write_planned_stage_manifests(root: Path, *, native: Any) -> None:
-    for spec in PARTIAL_STAGED_PATH:
+    for spec in STAGED_PATH:
         if spec["status"] != "planned":
             continue
         stage_dir = root / str(spec["stage"])
@@ -555,10 +704,26 @@ def _stage_record(root: Path, spec: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _partial_reconstruction_comparison(root: Path) -> dict[str, Any]:
+def _reconstruction_comparison(root: Path) -> dict[str, Any]:
     baseline_manifest = _read_json(root / "00_baseline" / "stage_manifest.json")
     cor_manifest = _read_json(root / "06_cor_only_fista" / "stage_manifest.json")
     cor_loss = _loss_summary(cor_manifest.get("fista_info", {}))
+    final_path = root / "05_final" / "stage_manifest.json"
+    final_manifest = _read_json(final_path) if final_path.exists() else {"status": "missing"}
+    final_info = final_manifest.get("recon_info", {})
+    if not isinstance(final_info, Mapping):
+        final_info = {}
+    final_loss = _loss_summary(final_info)
+    final_shape = final_manifest.get(
+        "volume_shape",
+        _read_json(root / "run_manifest.json").get("final_volume_shape"),
+    )
+    final_completed = final_manifest.get("status") == "completed" and final_loss["last"] is not None
+    improvement = None
+    relative = None
+    if final_completed and cor_loss["last"] is not None:
+        improvement = float(cor_loss["last"]) - float(final_loss["last"])
+        relative = improvement / max(abs(float(cor_loss["last"])), 1.0e-12)
     return {
         "baseline": {
             "stage": "00_baseline",
@@ -574,18 +739,22 @@ def _partial_reconstruction_comparison(root: Path) -> dict[str, Any]:
         },
         "final": {
             "stage": "05_final",
-            "status": "planned",
-            "loss": {"first": None, "last": None, "iters": 0},
-            "volume_shape": None,
+            "status": final_manifest.get("status"),
+            "loss": final_loss,
+            "volume_shape": final_shape,
+            "regulariser": final_info.get("regulariser"),
         },
         "same_volume_shape": (
-            baseline_manifest.get("volume_shape") == cor_manifest.get("volume_shape")
+            (final_shape if final_completed else baseline_manifest.get("volume_shape"))
+            == cor_manifest.get("volume_shape")
         ),
-        "full_staged_vs_cor_only_deferred": True,
+        "loss_improvement_abs": improvement,
+        "loss_improvement_rel": relative,
+        "full_staged_vs_cor_only_deferred": not final_completed,
     }
 
 
-def _partial_success_payload(
+def _success_payload(
     reconstruction: Mapping[str, Any],
     records: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -599,35 +768,84 @@ def _partial_success_payload(
         for record in records
         if str(record.get("status")) == "planned"
     }
-    required = {"00_baseline", "01_setup_geometry/01_cor", "06_cor_only_fista"}
-    required_complete = required <= completed
+    partial_required = {"00_baseline", "01_setup_geometry/01_cor", "06_cor_only_fista"}
+    full_required = {
+        "00_baseline",
+        "01_setup_geometry/01_cor",
+        "01_setup_geometry/02_detector_roll",
+        "01_setup_geometry/03_axis_direction",
+        "02_pose_phi",
+        "03_pose_dx_dz",
+        "04_pose_polish",
+        "05_final",
+        "06_cor_only_fista",
+    }
+    final_loss = reconstruction["final"]["loss"]["last"]
     cor_loss = reconstruction["cor_only"]["loss"]["last"]
-    passed = bool(required_complete and cor_loss is not None)
+    full_complete = full_required <= completed
+    full_improved = (
+        full_complete
+        and final_loss is not None
+        and cor_loss is not None
+        and float(final_loss) < float(cor_loss)
+        and bool(reconstruction.get("same_volume_shape"))
+    )
+    phase = "v2_full_mvp" if full_complete else "v2_cor_mvp_partial"
+    partial_complete = partial_required <= completed and cor_loss is not None
+    passed = bool(full_improved if full_complete else partial_complete)
+    reason = (
+        "v2 full staged reconstruction improves COR-only FISTA loss"
+        if full_improved
+        else "v2 full staged reconstruction did not improve COR-only FISTA loss"
+        if full_complete
+        else "v2 COR-MVP partial path completed baseline, det_u setup, and COR-only FISTA"
+        if partial_complete
+        else "v2 path is missing required baseline/det_u/COR-only evidence"
+    )
     return {
         "passed": passed,
-        "reason": (
-            "v2 COR-MVP partial path completed baseline, det_u setup, and COR-only FISTA"
-            if passed
-            else "v2 COR-MVP partial path is missing required baseline/det_u/COR-only evidence"
+        "reason": reason,
+        "phase": phase,
+        "quality_kind": (
+            "real_reconstruction_quality"
+            if full_complete
+            else "real_reconstruction_quality_partial_cor_mvp"
         ),
-        "phase": "v2_cor_mvp_partial",
-        "required_stages_completed": sorted(required & completed),
+        "primary_metric": (
+            "final_fista_last_loss_lt_cor_only_fista_last_loss"
+            if full_complete
+            else "cor_only_fista_loss_recorded_after_v2_det_u_stage"
+        ),
+        "required_stages_completed": sorted(
+            (full_required if full_complete else partial_required) & completed
+        ),
         "planned_stages": sorted(planned),
+        "final_loss": final_loss,
         "cor_only_loss": cor_loss,
+        "loss_improvement_abs": reconstruction.get("loss_improvement_abs"),
+        "loss_improvement_rel": reconstruction.get("loss_improvement_rel"),
         "same_volume_shape": bool(reconstruction.get("same_volume_shape")),
-        "full_mvp_success_deferred": True,
+        "full_mvp_success_deferred": not full_complete,
     }
 
 
-def _copy_partial_publication_images(root: Path, out_dir: Path) -> dict[str, str]:
+def _copy_publication_images(root: Path, out_dir: Path, *, full_completed: bool) -> dict[str, str]:
     pub_dir = out_dir / "publication"
     pub_dir.mkdir(parents=True, exist_ok=True)
-    images = (
+    images = [
         ("before", "00_baseline", "orthos.png"),
         ("before_xy", "00_baseline", "aligned_xy_global_z209.png"),
         ("cor_only", "06_cor_only_fista", "orthos.png"),
         ("cor_only_xy", "06_cor_only_fista", "aligned_xy_global_z209.png"),
-    )
+    ]
+    if full_completed:
+        images.extend(
+            [
+                ("full", "05_final", "orthos.png"),
+                ("full_xy", "05_final", "aligned_xy_global_z209.png"),
+                ("full_delta_xy", "05_final", "delta_xy_global_z209.png"),
+            ]
+        )
     copied: dict[str, str] = {}
     for label, stage, filename in images:
         source = root / stage / filename
@@ -719,11 +937,12 @@ def _write_partial_markdown(path: Path, summary: Mapping[str, Any]) -> None:
     success = summary["success"]
     reconstruction = summary["reconstruction_comparison"]
     lines = [
-        "# Real Laminography v2 COR-MVP Report",
+        "# Real Laminography v2 MVP Report",
         "",
         f"- Reference target report: `{summary['reference_target_report']}`",
         f"- Phase complete: `{success['passed']}`",
         f"- Criterion: {success['reason']}",
+        f"- Final loss: `{success['final_loss']}`",
         f"- COR-only loss: `{success['cor_only_loss']}`",
         f"- Full staged success deferred: `{success['full_mvp_success_deferred']}`",
         "",
@@ -744,7 +963,9 @@ def _write_partial_markdown(path: Path, summary: Mapping[str, Any]) -> None:
             "| COR-only | {first} | {last} | {iters} |".format(
                 **reconstruction["cor_only"]["loss"]
             ),
-            "| Full staged final |  |  | 0 |",
+            "| Full staged final | {first} | {last} | {iters} |".format(
+                **reconstruction["final"]["loss"]
+            ),
             "",
             "## Artifacts",
             "",

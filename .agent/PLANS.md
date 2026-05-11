@@ -13,31 +13,35 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Reference run:
   `runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525`
-- Phase: real laminography MVP v2 COR slice
-- Goal: start replacing the committed reference-report target with a v2 runner
-  that attempts the real workflow on the reference case. This slice stops at
-  baseline -> COR/det_u -> COR-only final reconstruction comparison; detector
-  roll, axis direction, phi, dx/dz, and 5DOF polish remain planned stages until
-  the COR-only v2 path is working.
+- Phase: real laminography MVP v2 end-to-end reproduction
+- Goal: make v2 reproduce the real laminography MVP workflow against the
+  committed reference report target. Success is real reconstruction quality and
+  artifact comparability, not synthetic geometry truth.
 
 ### Scope
 
 - In scope:
-  - Add the smallest v2 real laminography COR-MVP runner using the committed
-    real MVP reference report as the production target.
-  - Reuse the native real-runner baseline, det_u setup, and FISTA building
-    blocks while writing a narrower staged artifact tree.
-  - Write baseline and COR-only publication artifacts, residual/loss trace,
-    geometry trace, and a machine-readable v2 COR-MVP summary that preserves
-    the real-MVP report shape where the partial path has honest data.
-  - Mark detector roll, axis direction, phi, dx/dz, 5DOF polish, and full staged
-    final reconstruction as planned, not silently skipped.
-  - Add focused tests for the v2 COR-MVP runner/report contract.
+  - Diagnose the apparent v2 COR-only gap against the v1 COR-only reference
+    before treating it as an algorithmic failure; check smoke-vs-full settings,
+    preprocessing, geometry convention, detector flips/transposes, tilt
+    convention, masks/loss, FISTA settings, support/TV/nonnegativity, volume
+    shape/cropping, and output scaling.
+  - Extend the v2 real-lamino runner from baseline -> COR/det_u -> COR-only
+    toward the full staged workflow:
+    baseline -> COR/det_u -> detector roll -> axis direction -> phi -> dx/dz
+    -> 5DOF polish -> final reconstruction.
+  - Use the existing differentiable setup/pose Schur/GN/LM machinery and
+    truth-free scout/tangent-gauge work where useful.
+  - Preserve the committed real-MVP report contract as the production
+    acceptance target: baseline/COR-only/full publication artifacts,
+    residual/loss trace, geometry trace, and final-vs-COR-only reconstruction
+    comparison.
+  - Add focused tests for staged runner/report contracts as stages become
+    working.
 - Out of scope:
-  - Detector roll, axis direction, phi, dx/dz, 5DOF polish implementation.
-  - New COR grid search, sinogram/COR/correlation/sharpness/autofocus methods,
-    synthetic truth gates as real-data success criteria, and benchmark-only knob
-    promotion.
+  - COR grid search, sinograms, cross-correlation, sharpness/entropy/autofocus
+    sweeps, truth support, weak-view exclusions, synthetic truth as the primary
+    success criterion, or benchmark laundering.
 - Deep module owners: real-runner scripts under `scripts/real_laminography/`;
   no new top-level deep module in this slice.
 
@@ -69,6 +73,19 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit the coherent v2 COR-MVP slice.
+- [x] Diagnose v2 COR-only smoke/full settings against v1 COR-only reference
+      and record concrete gap evidence.
+- [x] Extend v2 runner to optionally execute detector roll, axis direction,
+      phi, dx/dz, 5DOF polish, and final reconstruction after COR-only.
+- [x] Preserve a full report compatible with the committed MVP reference
+      contract, including baseline/COR-only/full artifacts.
+- [ ] Run focused real-reference smoke/full gates and compare final-vs-COR-only
+      reconstruction quality.
+- [x] Add or extend focused runner/report tests for the full staged contract.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [ ] Commit coherent working milestones; continue after each commit until the
+      full real-MVP gate is meaningfully comparable and improving.
 
 ### Completed Previous Support/Gauge Work
 

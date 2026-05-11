@@ -309,6 +309,27 @@ def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -
     assert args.views_per_batch == 16
 
 
+def test_v2_cor_mvp_runtime_default_streams_fista(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+    assert args.views_per_batch == 0
+
+    v2_cor_mvp_runner._normalize_runtime_args(args)
+
+    assert args.views_per_batch == 1
+
+
 def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:
     run_dir = _write_minimal_v2_cor_mvp_run(tmp_path)
 
@@ -318,7 +339,7 @@ def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:
         reference_report=Path("runs/reference/real_mvp_report/real_mvp_summary.json"),
     )
 
-    assert summary["schema"] == "tomojax.real_lamino_v2_cor_mvp_report.v1"
+    assert summary["schema"] == "tomojax.real_lamino_v2_mvp_report.v1"
     assert summary["contract_compatible_with"] == "tomojax.real_lamino_mvp_report.v1"
     assert summary["success"]["passed"] is True
     assert summary["success"]["full_mvp_success_deferred"] is True
@@ -338,6 +359,53 @@ def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:
     assert (tmp_path / "v2_report" / "real_mvp_geometry_trace.json").exists()
     assert (tmp_path / "v2_report" / "publication" / "before_orthos.png").exists()
     assert (tmp_path / "v2_report" / "publication" / "cor_only_orthos.png").exists()
+
+
+def test_v2_full_mvp_report_fails_when_final_is_worse_than_cor_only(tmp_path) -> None:
+    run_dir = _write_minimal_v2_cor_mvp_run(tmp_path)
+    final_dir = run_dir / "05_final"
+    _write_stage_images(final_dir)
+    _write_json(
+        final_dir / "stage_manifest.json",
+        {
+            "stage": "05_final",
+            "status": "completed",
+            "active_dofs": ["detector_roll", "axis_direction", "pose_5dof"],
+            "volume_shape": [256, 256, 96],
+            "artifacts": {
+                "orthos": "orthos.png",
+                "aligned_xy": "aligned_xy_global_z209.png",
+                "delta_xy": "delta_xy_global_z209.png",
+                "z_stack": "z_stack_global_z198_220.png",
+            },
+            "geometry_calibration_state": {"det_u_px": 1.25},
+            "recon_info": {"loss": [140.0, 120.0], "effective_iters": 2, "regulariser": "tv"},
+        },
+    )
+    for rel in [
+        "01_setup_geometry/02_detector_roll",
+        "01_setup_geometry/03_axis_direction",
+        "02_pose_phi",
+        "03_pose_dx_dz",
+        "04_pose_polish",
+    ]:
+        payload = json.loads((run_dir / rel / "stage_manifest.json").read_text())
+        payload["status"] = "completed"
+        payload["planned_after"] = None
+        _write_json(run_dir / rel / "stage_manifest.json", payload)
+
+    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+        run_dir,
+        out_dir=tmp_path / "v2_full_report",
+    )
+
+    assert summary["success"]["phase"] == "v2_full_mvp"
+    assert summary["success"]["passed"] is False
+    assert summary["success"]["final_loss"] == 120.0
+    assert summary["success"]["cor_only_loss"] == 80.0
+    assert summary["success"]["loss_improvement_abs"] == -40.0
+    assert "did not improve" in summary["success"]["reason"]
+    assert (tmp_path / "v2_full_report" / "publication" / "full_orthos.png").exists()
 
 
 def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:

@@ -3,6 +3,76 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - v2 real laminography full-stage orchestration and COR diagnosis
+
+### Scope
+
+Extended `scripts/real_laminography/run_real_lamino_v2_cor_mvp.py` so the v2
+real runner can execute the full staged workflow after the COR-only comparator:
+
+baseline -> COR/det_u -> detector roll -> axis direction -> phi -> dx/dz ->
+5DOF polish -> final reconstruction.
+
+The runner now keeps the COR-only FISTA comparator before later setup/pose
+updates, emits full-stage publication artifacts when `05_final` completes, and
+marks the full report as failed when final reconstruction does not improve over
+COR-only.
+
+### COR-only diagnosis
+
+The previous v2 COR-only smoke loss was not comparable to the v1 reference
+because it used a 48-slice slab and 3 FISTA iterations. A full-settings v2
+COR-only diagnostic on the real reference input initially OOMed in FISTA after
+det_u setup:
+
+- OOM allocation request: 4.84 GiB.
+- Cause: the runner translated `views_per_batch=0` to `None` for FISTA, which
+  means all views in one batched projector/adjoint chunk.
+- Setup memory before the OOM remained near the old target, peaking around
+  1955 MiB.
+
+The runner now normalizes the runtime default to `views_per_batch=1` so FISTA
+streams one view at a time unless batching is explicitly requested. Resuming the
+same run from the completed det_u calibration produced:
+
+- v2 COR-only full-settings loss: 6740.04248046875.
+- v1 COR-only reference loss: 6804.66845703125.
+- Resumed streaming FISTA peak sampled memory: 807 MiB.
+- Volume shape: `[256, 256, 96]`.
+
+This closes the large COR-only gap as a smoke/settings and memory-policy issue,
+not a preprocessing, detector flip/transpose, tilt convention, cropping, or
+scaling issue.
+
+### Full-stage smoke
+
+The full staged smoke run completed all stages on the real reference input:
+`runs/real_lamino_v2_full_mvp_smoke_20260511/`.
+
+It did not yet satisfy the production quality criterion:
+
+- COR-only smoke loss: 9383.8447265625.
+- Full staged smoke final loss: 10511.556640625.
+- Relative change: -0.12017589238985678.
+
+The runner/report now records this honestly as a full-stage failure rather than
+falling back to partial COR-MVP success.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 16 tests in 0.97
+  seconds.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-11 - v2 real laminography COR-MVP runner
 
 ### Scope
