@@ -3,6 +3,68 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - v2 real laminography COR-MVP runner
+
+### Scope
+
+Added the first v2 runner for the real laminography MVP target:
+`scripts/real_laminography/run_real_lamino_v2_cor_mvp.py`.
+
+This runner intentionally stops at the smallest useful vertical slice:
+
+baseline -> COR/det_u -> COR-only FISTA.
+
+Detector roll, axis direction, phi, dx/dz, 5DOF polish, and the full staged
+final reconstruction are written as explicit planned stages. The report keeps
+the MVP artifact shape where the partial path has honest data: machine-readable
+summary, Markdown summary, residual/loss trace, geometry trace, and
+before/COR-only publication images. The full MVP success criterion remains the
+committed reference report target; this slice only proves the v2 COR-only path
+can run on the real reference input.
+
+### Real reference smoke
+
+- Command:
+  `LD_LIBRARY_PATH=$(find .venv/lib/python3.12/site-packages/nvidia -path
+  '*/lib' -type d | paste -sd: -) env UV_CACHE_DIR=.uv-cache
+  JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py --input
+  /home/tristan/projects/tomojax/runs/real-lamo-256/k11-54014_corrected_log_256cube.nxs
+  --out runs/real_lamino_v2_cor_mvp_smoke_20260511 --reference-report
+  runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/real_mvp_report/real_mvp_summary.json
+  --smoke --overwrite`
+- Result: phase complete.
+- Completed stages: `00_baseline`, `01_setup_geometry/01_cor`,
+  `06_cor_only_fista`.
+- Planned stages: detector roll, axis direction, phi, dx/dz, 5DOF polish, and
+  full staged final reconstruction.
+- COR-only FISTA final loss: 9383.828125.
+- Baseline/COR-only volume shape match: true.
+- Peak sampled GPU memory: 1375 MiB.
+
+### Notes
+
+- No COR grid search, sinogram/COR/correlation method, sharpness/autofocus
+  method, or benchmark-only knob promotion was added.
+- Truth metrics remain not applicable for the real-data gate.
+- The concise run summary is recorded at
+  `docs/benchmark_runs/2026-05-11-real-lamino-v2-cor-mvp-smoke.md`.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 14 tests in 0.74
+  seconds.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-11 - Real laminography MVP artifact contract
 
 ### Scope

@@ -13,29 +13,31 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
 - Reference run:
   `runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525`
-- Phase: real laminography MVP pivot
-- Goal: make the real laminography workflow the MVP success target. Success is
-  automatic reconstruction-quality improvement on the real staged path, not
-  exact synthetic geometry truth.
+- Phase: real laminography MVP v2 COR slice
+- Goal: start replacing the committed reference-report target with a v2 runner
+  that attempts the real workflow on the reference case. This slice stops at
+  baseline -> COR/det_u -> COR-only final reconstruction comparison; detector
+  roll, axis direction, phi, dx/dz, and 5DOF polish remain planned stages until
+  the COR-only v2 path is working.
 
 ### Scope
 
 - In scope:
-  - Read and encode the reference staged path:
-    baseline -> COR/det_u -> detector roll -> axis direction -> phi -> dx/dz
-    -> 5DOF polish -> final recon.
-  - Compare full staged final reconstruction against COR-only on real-run
-    reconstruction quality signals.
-  - Emit publication-ready before/COR-only/full preview artifacts plus
-    residual/loss and geometry traces.
-  - Keep truth metrics synthetic-diagnostic-only.
-  - Add tests for the real MVP runner artifact contract.
+  - Add the smallest v2 real laminography COR-MVP runner using the committed
+    real MVP reference report as the production target.
+  - Reuse the native real-runner baseline, det_u setup, and FISTA building
+    blocks while writing a narrower staged artifact tree.
+  - Write baseline and COR-only publication artifacts, residual/loss trace,
+    geometry trace, and a machine-readable v2 COR-MVP summary that preserves
+    the real-MVP report shape where the partial path has honest data.
+  - Mark detector roll, axis direction, phi, dx/dz, 5DOF polish, and full staged
+    final reconstruction as planned, not silently skipped.
+  - Add focused tests for the v2 COR-MVP runner/report contract.
 - Out of scope:
+  - Detector roll, axis direction, phi, dx/dz, 5DOF polish implementation.
   - New COR grid search, sinogram/COR/correlation/sharpness/autofocus methods,
     synthetic truth gates as real-data success criteria, and benchmark-only knob
     promotion.
-  - Long real reconstruction reruns unless a focused artifact-contract runner
-    cannot use the existing reference run.
 - Deep module owners: real-runner scripts under `scripts/real_laminography/`;
   no new top-level deep module in this slice.
 
@@ -61,6 +63,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Update `docs/implementation_log.md`.
 - [x] Run focused validation plus `just imports`.
 - [x] Commit the coherent real-MVP slice.
+- [x] Add v2 COR-MVP runner for baseline -> det_u setup -> COR-only FISTA.
+- [x] Preserve MVP report/artifact contract shape for the partial v2 path.
+- [x] Add focused runner/report contract tests.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [x] Commit the coherent v2 COR-MVP slice.
 
 ### Completed Previous Support/Gauge Work
 
