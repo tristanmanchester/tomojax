@@ -110,10 +110,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       reference-scale reconstruction iterations, streamed views, and an
       explicit final-candidate policy so the current quality gap is measured
       against a meaningful gate rather than the 3-iteration targeted run.
-- [ ] Run a multiresolution full-resolution confirmation with one outer
+- [x] Run a multiresolution full-resolution confirmation with one outer
       iteration per level and reference-scale reconstruction iterations to
       separate underconverged geometry/setup scheduling from final FISTA
       throughput.
+- [ ] Diagnose why setup-only final publication nearly reaches the v1 real MVP
+      target while pose-stage candidates remain excluded/degrading; next
+      functional slice should focus on pose/volume coupling rather than report
+      wording.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

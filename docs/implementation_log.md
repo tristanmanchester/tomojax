@@ -66,6 +66,65 @@ Interpretation:
   40-iteration FISTA candidate took roughly `779` seconds, while memory stayed
   below `2 GiB`.
 
+## 2026-05-11 - Real laminography multires 40-iteration gate
+
+### Scope
+
+Ran the next full-resolution gate using the same 40-iteration reconstruction
+budget but with the multiresolution stage schedules enabled and only one outer
+iteration per level. This tests whether the remaining gap from the single-level
+gate was setup-schedule underconvergence rather than an irreducible v2
+reconstruction defect.
+
+Command shape:
+
+- Run:
+  `runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_setup_policy_20260511`.
+- Full `256 x 256 x 96` reconstruction volume, full detector input, streamed
+  views, `40` reconstruction iterations, `--final-candidate-policy setup_only`.
+- Setup levels: `8 4 2`.
+- Phi and dx/dz levels: `4 2 1`.
+- Polish levels: `2 1`.
+- Outer iterations: `1` per level.
+
+### Evidence
+
+Completed report:
+
+- `runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_setup_policy_20260511/v2_cor_mvp_report/real_mvp_summary.json`.
+- Backend/devices: `gpu`, `["cuda:0"]`.
+- Peak sampled GPU memory: `2055 MiB`.
+- Stage validation: `validation_failed: False`; all required stages completed.
+- COR-only comparator: first loss `10812.193359375`, final loss
+  `7411.93994140625`, `40` iterations.
+- Final selected candidate: `01_setup_geometry/03_axis_direction`, selected by
+  `setup_only`.
+- Final selected loss: first `10753.23046875`, final `6522.87890625`,
+  `40` iterations.
+- Improvement over this run's COR-only comparator: `889.06103515625`
+  absolute, `0.11994984338574802` relative.
+- Candidate losses:
+  - `01_cor`: `7411.9375`.
+  - `02_detector_roll`: `6771.828125`.
+  - `03_axis_direction`: `6522.87890625`.
+
+Interpretation:
+
+- Multiresolution setup scheduling closed most of the one-level quality gap:
+  the one-level 40-iteration gate selected `7309.33154296875`, while this
+  multires gate selected `6522.87890625`.
+- The result is close to, but not yet equal to, the committed v1 final loss
+  (`6438.1611328125`). The remaining gap is about `84.7177734375` loss units,
+  or roughly `1.3%` relative to the v1 final loss.
+- The selected publication state is still setup-only. Pose stages completed
+  without NaN promotion, but this gate deliberately did not score pose
+  candidates because prior gates showed pose-polish degradation. The next
+  functional slice should inspect pose/volume coupling and why pose updates are
+  not currently part of the best real-data publication path.
+- The memory target is effectively restored for this scale: the full staged
+  run stayed close to `2 GiB` peak sampled VRAM. Throughput remains poor:
+  production-scale 40-iteration FISTA candidates still take many minutes each.
+
 ## 2026-05-11 - Real laminography pose-stage NaN fail-closed recovery
 
 ### Scope
