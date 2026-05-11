@@ -108,12 +108,45 @@ def test_runner_defaults_to_explicit_lightning_policy(monkeypatch, tmp_path) -> 
     assert args.regulariser == "huber_tv"
     assert args.quality_tier == "fast"
     assert args.fallback_policy == "fallback"
+    assert args.pose_model == "spline"
+    assert args.knot_spacing == 8
+    assert args.pose_degree == 3
     assert args.views_per_batch == 0
     assert cfg.align_profile == "lightning"
     assert cfg.projector_backend == "pallas"
     assert cfg.regulariser == "huber_tv"
     assert cfg.quality_tier == "fast"
     assert cfg.fallback_policy == "fallback"
+    assert cfg.pose_model == "spline"
+    assert cfg.knot_spacing == 8
+    assert cfg.degree == 3
+
+
+def test_runner_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--pose-model",
+            "polynomial",
+            "--knot-spacing",
+            "5",
+            "--pose-degree",
+            "2",
+        ],
+    )
+
+    args = runner._parse_args()
+    cfg = runner._make_cfg(args, active_pose=("phi",))
+
+    assert cfg.pose_model == "polynomial"
+    assert cfg.knot_spacing == 5
+    assert cfg.degree == 2
 
 
 def test_runner_accepts_tortoise_policy(monkeypatch, tmp_path) -> None:
@@ -352,6 +385,32 @@ def test_v2_cor_mvp_accepts_final_candidate_policy(monkeypatch, tmp_path) -> Non
     args = v2_cor_mvp_runner._parse_args()
 
     assert args.final_candidate_policy == "last_valid"
+
+
+def test_v2_cor_mvp_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--pose-model",
+            "spline",
+            "--knot-spacing",
+            "6",
+            "--pose-degree",
+            "2",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.pose_model == "spline"
+    assert args.knot_spacing == 6
+    assert args.pose_degree == 2
 
 
 def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:

@@ -996,6 +996,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument("--quality-tier", choices=["fast", "reference"], default="fast")
     parser.add_argument("--fallback-policy", choices=["fallback", "strict"], default="fallback")
     parser.add_argument(
+        "--pose-model",
+        choices=["per_view", "polynomial", "spline"],
+        default="spline",
+    )
+    parser.add_argument("--knot-spacing", type=int, default=8)
+    parser.add_argument("--pose-degree", type=int, default=3)
+    parser.add_argument(
         "--canonical-det-grid",
         action=argparse.BooleanOptionalAction,
         default=False,

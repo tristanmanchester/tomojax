@@ -177,6 +177,75 @@ Interpretation:
   correct guardrail, but v1 feature parity requires pose stages to become useful
   rather than merely excluded.
 
+## 2026-05-12 - Real laminography smooth pose model wiring
+
+### Scope
+
+Fixed a concrete runner-level pose-model regression found during the real pose
+candidate diagnostic. The shared alignment profile defaults already support a
+smooth spline pose model, but the real-laminography native runner hardcoded
+`pose_model="per_view"` for every pose stage. That gave real pose stages one
+independent 5-DOF update per view and contributed to noisy, bound-hitting pose
+traces.
+
+Changes:
+
+- `scripts/real_laminography/run_real_lamino_native_setup_pose_256.py` now
+  passes `pose_model`, `knot_spacing`, and `pose_degree` into `AlignConfig`
+  instead of forcing per-view pose.
+- The native real runner exposes `--pose-model`, `--knot-spacing`, and
+  `--pose-degree`.
+- `scripts/real_laminography/run_real_lamino_v2_cor_mvp.py` exposes the same
+  options so the v2 real-MVP path can select spline, polynomial, or per-view
+  pose deliberately.
+- Focused runner-contract tests cover the new defaults and overrides.
+
+### Evidence
+
+Binned real-data smoke with default spline pose and `setup_only` final scoring:
+
+- Run: `runs/real_lamino_v2_binned_smoke_spline_pose_20260512`.
+- Result: `phase_complete: True`, `validation_failed: False`.
+- Peak sampled GPU memory: `763 MiB`.
+- COR-only loss: `613.2113647460938`.
+- Final selected loss: `613.2109375`.
+
+Binned all-candidate smoke with default spline pose:
+
+- Run:
+  `runs/real_lamino_v2_binned_smoke_spline_pose_all_candidates_20260512`.
+- Result: `phase_complete: True`, `validation_failed: False`.
+- Pose level metadata confirms `pose_model: spline` with basis shape
+  `[256, 33]`.
+- Candidate losses:
+  - `01_cor`: `613.210693359375`.
+  - `02_detector_roll`: `613.895263671875`.
+  - `03_axis_direction`: `633.0541381835938`.
+  - `02_pose_phi`: `633.3179931640625`.
+  - `03_pose_dx_dz`: `636.1864013671875`.
+  - `04_pose_polish`: `631.2848510742188`.
+
+Interpretation:
+
+- The real runner now uses the intended smooth pose-model capability instead of
+  silently forcing per-view pose.
+- The binned smoke still selects setup over pose, so this is not proof that pose
+  is production-ready. The next gate must rerun the full-resolution multires
+  40-iteration case with spline pose and all-candidate scoring to determine
+  whether the remaining real-pose gap is objective acceptance, bounds, or
+  volume/reconstruction gauge.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 29 tests in 0.96
+  seconds.
+- `uv run ruff check scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run ruff check --select F821
+  scripts/real_laminography/run_real_lamino_native_setup_pose_256.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-11 - Real laminography pose-stage NaN fail-closed recovery
 
 ### Scope

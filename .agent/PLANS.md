@@ -118,10 +118,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       target while pose-stage candidates remain excluded/degrading; next
       functional slice should focus on pose/volume coupling rather than report
       wording.
-- [ ] Implement the next pose/volume-coupling fix: constrain or validate real
-      pose updates against reconstruction-supported objective evidence so
-      finite pose stages do not optimize a fixed-volume surrogate that worsens
-      final real-data reconstruction.
+- [x] Implement the first pose/volume-coupling fix: stop forcing the real
+      laminography runner to use per-view pose and expose the existing smooth
+      pose-model controls so real pose updates can use spline/polynomial
+      parameterisations.
+- [ ] Run the full-resolution multires 40-iteration gate with smooth/spline
+      pose enabled and all candidate scoring, then decide whether the remaining
+      pose gap is objective acceptance, bounds, or volume/reconstruction gauge.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

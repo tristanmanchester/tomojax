@@ -550,7 +550,9 @@ def _make_cfg(
         optimise_dofs=active_pose or None,
         geometry_dofs=active_setup,
         bounds=cfg_bounds,
-        pose_model="per_view",
+        pose_model=str(getattr(args, "pose_model", "spline")),
+        knot_spacing=int(getattr(args, "knot_spacing", 8)),
+        degree=int(getattr(args, "pose_degree", 3)),
         gauge_fix="mean_translation" if {"dx", "dz"} & set(active_pose) else "none",
         mask_vol="cyl",
         recon_positivity=bool(args.recon_positivity),
@@ -1102,6 +1104,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--regulariser", choices=["huber_tv", "tv"], default="huber_tv")
     parser.add_argument("--quality-tier", choices=["fast", "reference"], default="fast")
     parser.add_argument("--fallback-policy", choices=["fallback", "strict"], default="fallback")
+    parser.add_argument(
+        "--pose-model",
+        choices=["per_view", "polynomial", "spline"],
+        default="spline",
+    )
+    parser.add_argument("--knot-spacing", type=int, default=8)
+    parser.add_argument("--pose-degree", type=int, default=3)
     parser.add_argument(
         "--canonical-det-grid",
         action=argparse.BooleanOptionalAction,
