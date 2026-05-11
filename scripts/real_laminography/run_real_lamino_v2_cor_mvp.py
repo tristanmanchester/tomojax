@@ -278,7 +278,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             {"stage": "06_cor_only_fista", "volume_shape": list(cor_only.shape)},
         ]
         if full_staged:
-            setup_state, params5, staged_records = run_remaining_stages(
+            setup_state, params5, staged_records, final_candidates = run_remaining_stages(
                 ctx,
                 native=native,
                 geometry=geometry,
@@ -290,18 +290,28 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 params5=params5,
             )
             stage_records.extend(staged_records)
-            final_volume = native._final_reconstruct(
+            final_volume, final_choice = run_best_final_reconstruction(
                 ctx,
+                native=native,
                 geometry=geometry,
                 grid=grid,
                 detector=detector,
                 projections=projections,
                 full_nz=full_nz,
-                setup_state=setup_state,
-                params5=params5,
+                candidates=final_candidates,
             )
+            setup_state = final_choice["setup_state"]
+            params5 = final_choice["params5"]
             native._write_params_csv(run_root / "05_final" / "params.csv", params5)
-            stage_records.append({"stage": "05_final", "volume_shape": list(final_volume.shape)})
+            stage_records.append(
+                {
+                    "stage": "05_final",
+                    "volume_shape": list(final_volume.shape),
+                    "selected_candidate": final_choice["label"],
+                    "selected_candidate_source_stage": final_choice["source_stage"],
+                    "selected_candidate_loss": final_choice["loss_last"],
+                }
+            )
         else:
             _write_planned_stage_manifests(run_root, native=native)
         completed = datetime.now().isoformat(timespec="seconds")
@@ -420,9 +430,10 @@ def run_remaining_stages(
     full_nz: int,
     setup_state: Any,
     params5: np.ndarray,
-) -> tuple[Any, np.ndarray, list[dict[str, Any]]]:
+) -> tuple[Any, np.ndarray, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run detector roll, axis, and pose stages after the COR-only comparator."""
     records: list[dict[str, Any]] = []
+    final_candidates: list[dict[str, Any]] = []
     setup_plan = (
         (
             "01_setup_geometry/02_detector_roll",
@@ -458,6 +469,14 @@ def run_remaining_stages(
                 "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
             }
         )
+        final_candidates.append(
+            {
+                "label": stage_name.rsplit("/", 1)[-1],
+                "source_stage": stage_name,
+                "setup_state": setup_state,
+                "params5": np.asarray(params5, dtype=np.float32).copy(),
+            }
+        )
     pose_plan = (
         ("02_pose_phi", ("phi",), tuple(ctx.args.levels_phi), _pose_phi_bounds(ctx.args)),
         ("03_pose_dx_dz", ("dx", "dz"), tuple(ctx.args.levels_dx_dz), _pose_dx_dz_bounds(ctx.args)),
@@ -491,7 +510,86 @@ def run_remaining_stages(
                 "params_summary": native._params_summary(params5),
             }
         )
-    return setup_state, params5, records
+        final_candidates.append(
+            {
+                "label": stage_name,
+                "source_stage": stage_name,
+                "setup_state": setup_state,
+                "params5": np.asarray(params5, dtype=np.float32).copy(),
+            }
+        )
+    return setup_state, params5, records, final_candidates
+
+
+def run_best_final_reconstruction(
+    ctx: Any,
+    *,
+    native: Any,
+    geometry: Any,
+    grid: Any,
+    detector: Any,
+    projections: np.ndarray,
+    full_nz: int,
+    candidates: list[dict[str, Any]],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Run final FISTA candidates and publish the lowest-loss final artifact."""
+    if not candidates:
+        raise ValueError("at least one final reconstruction candidate is required")
+    root = Path(ctx.run_root)
+    scratch_root = root / "05_final_candidates"
+    if scratch_root.exists():
+        shutil.rmtree(scratch_root)
+    scored: list[dict[str, Any]] = []
+    original_stage_dir = ctx.stage_dir
+    try:
+        for idx, candidate in enumerate(candidates):
+            label = str(candidate["label"]).replace("/", "__")
+            candidate_root = scratch_root / f"{idx:02d}_{label}"
+            ctx.stage_dir = lambda name, candidate_root=candidate_root: candidate_root / name
+            volume = native._final_reconstruct(
+                ctx,
+                geometry=geometry,
+                grid=grid,
+                detector=detector,
+                projections=projections,
+                full_nz=full_nz,
+                setup_state=candidate["setup_state"],
+                params5=np.asarray(candidate["params5"], dtype=np.float32),
+            )
+            manifest = _read_json(candidate_root / "05_final" / "stage_manifest.json")
+            loss_last = _loss_summary(manifest.get("recon_info", {})).get("last")
+            scored.append(
+                {
+                    **candidate,
+                    "candidate_dir": candidate_root / "05_final",
+                    "volume": volume,
+                    "loss_last": float(loss_last),
+                }
+            )
+    finally:
+        ctx.stage_dir = original_stage_dir
+    best = min(scored, key=lambda item: float(item["loss_last"]))
+    final_dir = root / "05_final"
+    if final_dir.exists():
+        shutil.rmtree(final_dir)
+    shutil.copytree(best["candidate_dir"], final_dir)
+    manifest = _read_json(final_dir / "stage_manifest.json")
+    manifest["selected_final_candidate"] = {
+        "label": best["label"],
+        "source_stage": best["source_stage"],
+        "loss_last": best["loss_last"],
+        "candidates": [
+            {
+                "label": item["label"],
+                "source_stage": item["source_stage"],
+                "loss_last": item["loss_last"],
+                "candidate_dir": str(item["candidate_dir"]),
+            }
+            for item in scored
+        ],
+    }
+    native._write_json(final_dir / "stage_manifest.json", manifest)
+    return np.asarray(best["volume"], dtype=np.float32), best
 
 
 def build_v2_cor_mvp_report(

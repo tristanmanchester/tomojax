@@ -84,6 +84,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Close the concrete memory-policy regression found in the real v2 runner:
       no `0`/`None` FISTA batch setting may expand to all views in the
       production-scale path.
+- [x] Add real final-candidate selection for the full v2 path so the published
+      final reconstruction uses the lowest-loss cumulative staged geometry
+      rather than blindly accepting a degrading pose-polish stage.
 - [x] Add or extend focused runner/report tests for the full staged contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.

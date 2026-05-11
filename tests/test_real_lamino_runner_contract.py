@@ -429,6 +429,69 @@ def test_v2_full_mvp_report_fails_when_final_is_worse_than_cor_only(tmp_path) ->
     assert (tmp_path / "v2_full_report" / "publication" / "full_orthos.png").exists()
 
 
+def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None:
+    class FakeContext:
+        def __init__(self, root: Path) -> None:
+            self.run_root = root
+            self.stage_dir = lambda name: root / name
+
+    class FakeNative:
+        def _final_reconstruct(self, ctx, **kwargs):
+            stage_dir = ctx.stage_dir("05_final")
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            loss = float(np.asarray(kwargs["params5"])[0, 0])
+            volume = np.full((2, 2, 1), loss, dtype=np.float32)
+            _write_json(
+                stage_dir / "stage_manifest.json",
+                {
+                    "stage": "05_final",
+                    "status": "completed",
+                    "recon_info": {"loss": [loss]},
+                },
+            )
+            return volume
+
+        def _write_json(self, path: Path, payload: dict[str, object]) -> None:
+            _write_json(path, payload)
+
+    ctx = FakeContext(tmp_path / "run")
+    ctx.run_root.mkdir()
+    candidates = [
+        {
+            "label": "worse",
+            "source_stage": "04_pose_polish",
+            "setup_state": object(),
+            "params5": np.asarray([[10.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        },
+        {
+            "label": "better",
+            "source_stage": "01_setup_geometry/03_axis_direction",
+            "setup_state": object(),
+            "params5": np.asarray([[4.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        },
+    ]
+
+    volume, choice = v2_cor_mvp_runner.run_best_final_reconstruction(
+        ctx,
+        native=FakeNative(),
+        geometry=None,
+        grid=None,
+        detector=None,
+        projections=np.zeros((1, 1, 1), dtype=np.float32),
+        full_nz=1,
+        candidates=candidates,
+    )
+
+    manifest = json.loads((ctx.run_root / "05_final" / "stage_manifest.json").read_text())
+    assert choice["label"] == "better"
+    assert float(volume[0, 0, 0]) == 4.0
+    assert manifest["selected_final_candidate"]["label"] == "better"
+    assert [item["label"] for item in manifest["selected_final_candidate"]["candidates"]] == [
+        "worse",
+        "better",
+    ]
+
+
 def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

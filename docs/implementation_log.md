@@ -3,6 +3,65 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - Real laminography final candidate selection
+
+### Scope
+
+Added reconstruction-quality selection for the v2 full real-laminography final
+stage. The runner now scores cumulative final candidates after detector roll,
+axis direction, phi, dx/dz, and 5DOF polish, then publishes the lowest-loss
+candidate as `05_final`.
+
+This is not a grid search, sinogram method, correlation method, sharpness
+sweep, or synthetic-truth proxy. It uses the same real FISTA reconstruction loss
+that the MVP report already uses to decide whether full staged reconstruction
+improves over COR-only.
+
+### Evidence
+
+A focused stage ablation on the saved conservative smoke run showed:
+
+- COR-only: `9383.8427734375`.
+- Detector roll: `9324.2685546875`.
+- Axis direction: `9279.658203125`.
+- Phi: `9279.658203125`.
+- dx/dz: `9343.529296875`.
+- 5DOF polish: `10028.818359375`.
+
+The first pose regression is dx/dz, and 5DOF polish is the large failure. The
+setup stages improve real reconstruction loss, so the full runner should not
+throw those improvements away by always publishing the final pose-polish state.
+
+The new smoke gate:
+
+- Command: `JAX_PLATFORMS=cuda XLA_PYTHON_CLIENT_PREALLOCATE=false uv run
+  python scripts/real_laminography/run_real_lamino_v2_cor_mvp.py --input
+  /home/tristan/projects/tomojax/runs/real-lamo-256/k11-54014_corrected_log_256cube.nxs
+  --out runs/real_lamino_v2_full_mvp_smoke_bestfinal_20260511
+  --reference-report
+  runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/real_mvp_report/real_mvp_summary.json
+  --smoke --full-staged --overwrite`.
+- Result report:
+  `runs/real_lamino_v2_full_mvp_smoke_bestfinal_20260511/v2_cor_mvp_report/real_mvp_summary.json`.
+- Status: `passed = True`, phase `v2_full_mvp`.
+- COR-only smoke loss: `9383.84765625`.
+- Published final smoke loss: `9279.6572265625`.
+- Improvement: `104.1904296875` absolute, `0.011103167219270148` relative.
+- Selected candidate: `01_setup_geometry/03_axis_direction`.
+- Candidate losses recorded in `05_final/stage_manifest.json`:
+  detector roll `9324.2724609375`, axis direction `9279.6572265625`,
+  phi `9364.12109375`, dx/dz `9414.0966796875`, polish
+  `10016.5966796875`.
+- Peak sampled GPU memory in the run log reached about `2037 MiB`.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 18 tests in 0.90s.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+
 ## 2026-05-11 - Real laminography v2 FISTA memory policy
 
 ### Scope
