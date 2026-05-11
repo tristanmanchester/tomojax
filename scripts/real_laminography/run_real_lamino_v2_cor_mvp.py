@@ -433,7 +433,14 @@ def run_remaining_stages(
 ) -> tuple[Any, np.ndarray, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run detector roll, axis, and pose stages after the COR-only comparator."""
     records: list[dict[str, Any]] = []
-    final_candidates: list[dict[str, Any]] = []
+    final_candidates: list[dict[str, Any]] = [
+        {
+            "label": "01_cor",
+            "source_stage": "01_setup_geometry/01_cor",
+            "setup_state": setup_state,
+            "params5": np.asarray(params5, dtype=np.float32).copy(),
+        }
+    ]
     setup_plan = (
         (
             "01_setup_geometry/02_detector_roll",
@@ -446,8 +453,8 @@ def run_remaining_stages(
             "axis_rot_x_deg=-15:15,axis_rot_y_deg=-15:15",
         ),
     )
-    for stage_name, active_setup, bounds in setup_plan:
-        _, setup_state, stats = native.run_setup_stage(
+    for idx, (stage_name, active_setup, bounds) in enumerate(setup_plan):
+        x_stage, setup_state, stats = native.run_setup_stage(
             ctx,
             stage_dir=ctx.stage_dir(stage_name),
             stage_name=stage_name,
@@ -462,9 +469,41 @@ def run_remaining_stages(
             levels=tuple(int(v) for v in ctx.args.levels_setup),
             bounds=bounds,
         )
+        validation = _validate_stage_output(
+            ctx.stage_dir(stage_name),
+            stage_name=stage_name,
+            volume=x_stage,
+            params5=params5,
+            stats=stats,
+            require_data_loss=False,
+        )
+        if not validation["passed"]:
+            _mark_stage_failed(
+                native,
+                ctx.stage_dir(stage_name),
+                stage_name=stage_name,
+                validation=validation,
+            )
+            records.append(
+                {
+                    "stage": stage_name,
+                    "status": "failed",
+                    "stats_count": len(stats),
+                    "failure_provenance": validation,
+                }
+            )
+            _write_skipped_stage_manifests(
+                ctx.run_root,
+                native=native,
+                stages=[spec[0] for spec in setup_plan[idx + 1 :]]
+                + ["02_pose_phi", "03_pose_dx_dz", "04_pose_polish"],
+                reason=f"upstream stage {stage_name} failed validation",
+            )
+            return setup_state, params5, records, final_candidates
         records.append(
             {
                 "stage": stage_name,
+                "status": "completed",
                 "stats_count": len(stats),
                 "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
             }
@@ -487,8 +526,8 @@ def run_remaining_stages(
             _pose_polish_bounds(ctx.args),
         ),
     )
-    for stage_name, active_pose, levels, bounds in pose_plan:
-        _, params5, stats = native.run_pose_stage(
+    for idx, (stage_name, active_pose, levels, bounds) in enumerate(pose_plan):
+        x_stage, params5, stats = native.run_pose_stage(
             ctx,
             stage_dir=ctx.stage_dir(stage_name),
             stage_name=stage_name,
@@ -503,9 +542,41 @@ def run_remaining_stages(
             levels=tuple(int(v) for v in levels),
             bounds=bounds,
         )
+        validation = _validate_stage_output(
+            ctx.stage_dir(stage_name),
+            stage_name=stage_name,
+            volume=x_stage,
+            params5=params5,
+            stats=stats,
+            require_data_loss=True,
+        )
+        if not validation["passed"]:
+            _mark_stage_failed(
+                native,
+                ctx.stage_dir(stage_name),
+                stage_name=stage_name,
+                validation=validation,
+            )
+            records.append(
+                {
+                    "stage": stage_name,
+                    "status": "failed",
+                    "stats_count": len(stats),
+                    "params_summary": _safe_params_summary(native, params5),
+                    "failure_provenance": validation,
+                }
+            )
+            _write_skipped_stage_manifests(
+                ctx.run_root,
+                native=native,
+                stages=[spec[0] for spec in pose_plan[idx + 1 :]],
+                reason=f"upstream pose stage {stage_name} failed validation",
+            )
+            return setup_state, params5, records, final_candidates
         records.append(
             {
                 "stage": stage_name,
+                "status": "completed",
                 "stats_count": len(stats),
                 "params_summary": native._params_summary(params5),
             }
@@ -558,6 +629,25 @@ def run_best_final_reconstruction(
             )
             manifest = _read_json(candidate_root / "05_final" / "stage_manifest.json")
             loss_last = _loss_summary(manifest.get("recon_info", {})).get("last")
+            validation = _validate_stage_output(
+                candidate_root / "05_final",
+                stage_name=f"05_final:{candidate['source_stage']}",
+                volume=volume,
+                params5=np.asarray(candidate["params5"], dtype=np.float32),
+                stats=[],
+                require_data_loss=False,
+            )
+            if loss_last is None:
+                validation["passed"] = False
+                validation["failures"].append("final candidate loss is missing or non-finite")
+            if not validation["passed"]:
+                _mark_stage_failed(
+                    native,
+                    candidate_root / "05_final",
+                    stage_name="05_final",
+                    validation=validation,
+                )
+                continue
             scored.append(
                 {
                     **candidate,
@@ -568,6 +658,8 @@ def run_best_final_reconstruction(
             )
     finally:
         ctx.stage_dir = original_stage_dir
+    if not scored:
+        raise RuntimeError("no finite final reconstruction candidates passed validation")
     best = min(scored, key=lambda item: float(item["loss_last"]))
     final_dir = root / "05_final"
     if final_dir.exists():
@@ -592,6 +684,163 @@ def run_best_final_reconstruction(
     return np.asarray(best["volume"], dtype=np.float32), best
 
 
+def _validate_stage_output(
+    stage_dir: Path,
+    *,
+    stage_name: str,
+    volume: Any | None,
+    params5: Any | None,
+    stats: list[dict[str, Any]],
+    require_data_loss: bool,
+) -> dict[str, Any]:
+    failures: list[str] = []
+    volume_fraction = _finite_fraction(volume)
+    if volume_fraction != 1.0:
+        failures.append(f"reconstruction volume finite fraction is {volume_fraction:.6g}")
+    params_fraction = _finite_fraction(params5)
+    if params_fraction != 1.0:
+        failures.append(f"pose/setup params finite fraction is {params_fraction:.6g}")
+    checkpoint_failures = _checkpoint_validation_failures(stage_dir)
+    failures.extend(checkpoint_failures)
+    failures.extend(_stat_validation_failures(stats, require_data_loss=require_data_loss))
+    artifact_failures = _artifact_validation_failures(stage_dir)
+    failures.extend(artifact_failures)
+    return {
+        "schema": "tomojax.real_lamino_stage_validation.v1",
+        "stage": stage_name,
+        "passed": not failures,
+        "failures": failures,
+        "volume_finite_fraction": volume_fraction,
+        "params_finite_fraction": params_fraction,
+        "checkpoint_failures": checkpoint_failures,
+        "artifact_failures": artifact_failures,
+        "require_data_loss": bool(require_data_loss),
+    }
+
+
+def _mark_stage_failed(
+    native: Any,
+    stage_dir: Path,
+    *,
+    stage_name: str,
+    validation: Mapping[str, Any],
+) -> None:
+    manifest_path = stage_dir / "stage_manifest.json"
+    manifest = _read_json(manifest_path) if manifest_path.exists() else {"stage": stage_name}
+    manifest["status"] = "failed"
+    manifest["failure_provenance"] = dict(validation)
+    native._write_json(manifest_path, manifest)
+    native._write_json(stage_dir / "failure_provenance.json", dict(validation))
+
+
+def _write_skipped_stage_manifests(
+    root: Path,
+    *,
+    native: Any,
+    stages: list[str],
+    reason: str,
+) -> None:
+    for stage in stages:
+        stage_dir = Path(root) / stage
+        manifest_path = stage_dir / "stage_manifest.json"
+        if manifest_path.exists():
+            continue
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        native._write_json(
+            manifest_path,
+            {
+                "stage": stage,
+                "status": "skipped",
+                "skip_reason": reason,
+                "failure_provenance": {
+                    "schema": "tomojax.real_lamino_stage_validation.v1",
+                    "stage": stage,
+                    "passed": False,
+                    "failures": [reason],
+                },
+            },
+        )
+
+
+def _safe_params_summary(native: Any, params5: np.ndarray) -> dict[str, Any] | None:
+    if _finite_fraction(params5) != 1.0:
+        return None
+    return native._params_summary(params5)
+
+
+def _finite_fraction(value: Any | None) -> float:
+    if value is None:
+        return 0.0
+    arr = np.asarray(value)
+    if arr.size == 0:
+        return 0.0
+    return float(np.isfinite(arr).mean())
+
+
+def _checkpoint_validation_failures(stage_dir: Path) -> list[str]:
+    failures: list[str] = []
+    checkpoint_dir = stage_dir / "checkpoints"
+    if not checkpoint_dir.exists():
+        return failures
+    for path in sorted(checkpoint_dir.glob("*.npz")):
+        try:
+            with np.load(path) as payload:
+                if "x" not in payload:
+                    failures.append(f"{path.name} missing x checkpoint array")
+                    continue
+                fraction = _finite_fraction(payload["x"])
+        except Exception as exc:
+            failures.append(f"{path.name} could not be read: {type(exc).__name__}: {exc}")
+            continue
+        if fraction != 1.0:
+            failures.append(f"{path.name} x finite fraction is {fraction:.6g}")
+    return failures
+
+
+def _stat_validation_failures(
+    stats: list[dict[str, Any]],
+    *,
+    require_data_loss: bool,
+) -> list[str]:
+    failures: list[str] = []
+    for idx, stat in enumerate(stats):
+        failures.extend(
+            f"stat[{idx}] {key} is non-finite: {stat.get(key)!r}"
+            for key in ("geometry_loss_before", "geometry_loss_after", "loss_before", "loss_after")
+            if key in stat and not _is_finite_scalar(stat.get(key))
+        )
+        if require_data_loss and stat.get("data_loss_computed") is False:
+            failures.append(f"stat[{idx}] data_loss_computed is false")
+    return failures
+
+
+def _artifact_validation_failures(stage_dir: Path) -> list[str]:
+    manifest_path = stage_dir / "stage_manifest.json"
+    if not manifest_path.exists():
+        return []
+    manifest = _read_json(manifest_path)
+    artifacts = manifest.get("artifacts", {})
+    if not isinstance(artifacts, Mapping):
+        return ["stage artifacts payload is missing or not an object"]
+    failures: list[str] = []
+    for key, raw_path in artifacts.items():
+        path = Path(str(raw_path))
+        if not path.is_absolute():
+            path = stage_dir / path
+        if not path.exists():
+            failures.append(f"artifact {key} is missing: {path}")
+        elif path.stat().st_size <= 0:
+            failures.append(f"artifact {key} is empty: {path}")
+    return failures
+
+
+def _is_finite_scalar(value: Any) -> bool:
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
 def build_v2_cor_mvp_report(
     run_dir: Path,
     *,
@@ -610,7 +859,8 @@ def build_v2_cor_mvp_report(
     publication = _copy_publication_images(
         root,
         out,
-        full_completed=success["phase"] == "v2_full_mvp",
+        full_completed=reconstruction["final"]["status"] == "completed"
+        and reconstruction["final"]["loss"]["last"] is not None,
     )
     residual_trace = _write_residual_trace(out / "real_mvp_residual_trace.csv", records)
     geometry_trace = _write_geometry_trace(out / "real_mvp_geometry_trace.json", records)
@@ -824,6 +1074,8 @@ def _stage_record(root: Path, spec: Mapping[str, Any]) -> dict[str, Any]:
         "artifacts": _stage_artifacts(stage_dir, manifest),
         "summary_rows": _read_stage_summary(stage_dir / "stage_summary.csv"),
         "planned_after": manifest.get("planned_after"),
+        "skip_reason": manifest.get("skip_reason"),
+        "failure_provenance": manifest.get("failure_provenance"),
     }
 
 
@@ -891,6 +1143,11 @@ def _success_payload(
         for record in records
         if str(record.get("status")) == "planned"
     }
+    failed_or_skipped = [
+        record
+        for record in records
+        if str(record.get("status")) in {"failed", "skipped"}
+    ]
     partial_required = {"00_baseline", "01_setup_geometry/01_cor", "06_cor_only_fista"}
     full_required = {
         "00_baseline",
@@ -913,10 +1170,20 @@ def _success_payload(
         and float(final_loss) < float(cor_loss)
         and bool(reconstruction.get("same_volume_shape"))
     )
-    phase = "v2_full_mvp" if full_complete else "v2_cor_mvp_partial"
+    phase = (
+        "v2_full_mvp_failed_validation"
+        if failed_or_skipped
+        else "v2_full_mvp"
+        if full_complete
+        else "v2_cor_mvp_partial"
+    )
     partial_complete = partial_required <= completed and cor_loss is not None
-    passed = bool(full_improved if full_complete else partial_complete)
+    validation_failed = bool(failed_or_skipped)
+    passed = bool((full_improved if full_complete else partial_complete) and not validation_failed)
     reason = (
+        "v2 staged path failed validation; final report uses the last finite candidate"
+        if validation_failed
+        else
         "v2 full staged reconstruction improves COR-only FISTA loss"
         if full_improved
         else "v2 full staged reconstruction did not improve COR-only FISTA loss"
@@ -949,6 +1216,16 @@ def _success_payload(
         "loss_improvement_rel": reconstruction.get("loss_improvement_rel"),
         "same_volume_shape": bool(reconstruction.get("same_volume_shape")),
         "full_mvp_success_deferred": not full_complete,
+        "validation_failed": validation_failed,
+        "failed_or_skipped_stages": [
+            {
+                "stage": record.get("stage"),
+                "status": record.get("status"),
+                "failure_provenance": record.get("failure_provenance"),
+                "skip_reason": record.get("skip_reason"),
+            }
+            for record in failed_or_skipped
+        ],
     }
 
 
@@ -1137,9 +1414,15 @@ def _loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
     losses = info.get("loss", [])
     if not isinstance(losses, list) or not losses:
         return {"first": None, "last": None, "iters": 0}
+    first = float(losses[0])
+    last = float(losses[-1])
+    if not np.isfinite(first):
+        first = None
+    if not np.isfinite(last):
+        last = None
     return {
-        "first": float(losses[0]),
-        "last": float(losses[-1]),
+        "first": first,
+        "last": last,
         "iters": int(info.get("effective_iters", len(losses))),
     }
 

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -490,6 +491,182 @@ def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None
         "worse",
         "better",
     ]
+
+
+def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
+    class FakeCalibrationState:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def to_calibration_state(self):
+            return self
+
+        def to_dict(self) -> dict[str, str]:
+            return {"label": self.label}
+
+    class FakeContext:
+        def __init__(self, root: Path) -> None:
+            self.run_root = root
+            self.args = SimpleNamespace(
+                levels_setup=[1],
+                levels_phi=[1],
+                levels_dx_dz=[1],
+                levels_polish=[1],
+                pose_bounds_profile="reference_conservative",
+            )
+
+        def stage_dir(self, name: str) -> Path:
+            return self.run_root / name
+
+    class FakeNative:
+        def _write_json(self, path: Path, payload: dict[str, object]) -> None:
+            _write_json(path, payload)
+
+        def _params_summary(self, params: np.ndarray) -> dict[str, object]:
+            return {"phi": {"std": float(np.std(params[:, 2]))}}
+
+        def run_setup_stage(self, _ctx, *, stage_dir: Path, stage_name: str, **_kwargs):
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            _write_stage_images(stage_dir)
+            _write_json(
+                stage_dir / "stage_manifest.json",
+                {
+                    "stage": stage_name,
+                    "status": "completed",
+                    "active_dofs": [],
+                    "artifacts": {
+                        "orthos": "orthos.png",
+                        "aligned_xy": "aligned_xy_global_z209.png",
+                        "delta_xy": "delta_xy_global_z209.png",
+                        "z_stack": "z_stack_global_z198_220.png",
+                    },
+                },
+            )
+            x = np.ones((2, 2, 1), dtype=np.float32)
+            return x, FakeCalibrationState(stage_name), [
+                {"geometry_loss_before": 2.0, "geometry_loss_after": 1.0}
+            ]
+
+        def run_pose_stage(self, _ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            _write_stage_images(stage_dir)
+            (stage_dir / "checkpoints").mkdir()
+            x = np.full((2, 2, 1), np.nan, dtype=np.float32)
+            np.savez(stage_dir / "checkpoints" / "outer_001_level01_iter01.npz", x=x)
+            _write_json(
+                stage_dir / "stage_manifest.json",
+                {
+                    "stage": stage_name,
+                    "status": "completed",
+                    "active_dofs": ["phi"],
+                    "artifacts": {
+                        "orthos": "orthos.png",
+                        "aligned_xy": "aligned_xy_global_z209.png",
+                        "delta_xy": "delta_xy_global_z209.png",
+                        "z_stack": "z_stack_global_z198_220.png",
+                    },
+                },
+            )
+            return x, params5, [
+                {
+                    "loss_before": "nan",
+                    "loss_after": "nan",
+                    "data_loss_computed": False,
+                }
+            ]
+
+    ctx = FakeContext(tmp_path / "run")
+    ctx.run_root.mkdir()
+    setup_state, params5, records, candidates = v2_cor_mvp_runner.run_remaining_stages(
+        ctx,
+        native=FakeNative(),
+        geometry=None,
+        grid=None,
+        detector=None,
+        projections=np.zeros((1, 1, 1), dtype=np.float32),
+        full_nz=1,
+        setup_state=FakeCalibrationState("cor"),
+        params5=np.zeros((1, 5), dtype=np.float32),
+    )
+
+    phi_manifest = json.loads((ctx.run_root / "02_pose_phi" / "stage_manifest.json").read_text())
+    dx_manifest = json.loads((ctx.run_root / "03_pose_dx_dz" / "stage_manifest.json").read_text())
+    assert setup_state.to_dict()["label"] == "01_setup_geometry/03_axis_direction"
+    assert np.all(np.isfinite(params5))
+    assert phi_manifest["status"] == "failed"
+    assert "data_loss_computed is false" in "\n".join(
+        phi_manifest["failure_provenance"]["failures"]
+    )
+    assert dx_manifest["status"] == "skipped"
+    assert records[-1]["stage"] == "02_pose_phi"
+    assert records[-1]["status"] == "failed"
+    assert [candidate["source_stage"] for candidate in candidates] == [
+        "01_setup_geometry/01_cor",
+        "01_setup_geometry/02_detector_roll",
+        "01_setup_geometry/03_axis_direction",
+    ]
+
+
+def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path) -> None:
+    run_dir = _write_minimal_v2_cor_mvp_run(tmp_path)
+    for rel in ["01_setup_geometry/02_detector_roll", "01_setup_geometry/03_axis_direction"]:
+        stage_dir = run_dir / rel
+        _write_stage_images(stage_dir)
+        payload = json.loads((stage_dir / "stage_manifest.json").read_text())
+        payload["status"] = "completed"
+        payload["planned_after"] = None
+        payload["artifacts"] = {
+            "orthos": "orthos.png",
+            "aligned_xy": "aligned_xy_global_z209.png",
+            "delta_xy": "delta_xy_global_z209.png",
+            "z_stack": "z_stack_global_z198_220.png",
+        }
+        _write_json(stage_dir / "stage_manifest.json", payload)
+    phi_manifest = json.loads((run_dir / "02_pose_phi" / "stage_manifest.json").read_text())
+    phi_manifest["status"] = "failed"
+    phi_manifest["failure_provenance"] = {
+        "passed": False,
+        "failures": ["reconstruction volume finite fraction is 0"],
+    }
+    _write_json(run_dir / "02_pose_phi" / "stage_manifest.json", phi_manifest)
+    for rel in ["03_pose_dx_dz", "04_pose_polish"]:
+        payload = json.loads((run_dir / rel / "stage_manifest.json").read_text())
+        payload["status"] = "skipped"
+        payload["skip_reason"] = "upstream pose stage 02_pose_phi failed validation"
+        _write_json(run_dir / rel / "stage_manifest.json", payload)
+    final_dir = run_dir / "05_final"
+    _write_stage_images(final_dir)
+    _write_json(
+        final_dir / "stage_manifest.json",
+        {
+            "stage": "05_final",
+            "status": "completed",
+            "volume_shape": [256, 256, 96],
+            "artifacts": {
+                "orthos": "orthos.png",
+                "aligned_xy": "aligned_xy_global_z209.png",
+                "delta_xy": "delta_xy_global_z209.png",
+                "z_stack": "z_stack_global_z198_220.png",
+            },
+            "recon_info": {"loss": [100.0, 70.0], "effective_iters": 2, "regulariser": "tv"},
+        },
+    )
+
+    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+        run_dir,
+        out_dir=tmp_path / "failed_pose_report",
+    )
+
+    assert summary["success"]["passed"] is False
+    assert summary["success"]["phase"] == "v2_full_mvp_failed_validation"
+    assert summary["success"]["validation_failed"] is True
+    assert summary["success"]["final_loss"] == 70.0
+    failed = summary["success"]["failed_or_skipped_stages"]
+    assert failed[0]["stage"] == "02_pose_phi"
+    assert summary["staged_path"][4]["failure_provenance"]["failures"] == [
+        "reconstruction volume finite fraction is 0"
+    ]
+    assert (tmp_path / "failed_pose_report" / "publication" / "full_orthos.png").exists()
 
 
 def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:

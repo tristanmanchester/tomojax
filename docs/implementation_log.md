@@ -3,6 +3,81 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - Real laminography fail-closed stage validation
+
+### Scope
+
+Added fail-closed validation to
+`scripts/real_laminography/run_real_lamino_v2_cor_mvp.py` so invalid native
+stage output cannot be promoted to the v2 real MVP report.
+
+Changes:
+
+- Validate every wrapped real-runner stage after the native stage returns:
+  reconstruction volume finite fraction, checkpoint `x` finite fraction,
+  finite pose/setup params, finite reported optimization losses, and non-empty
+  rendered artifacts.
+- Treat pose-stage `data_loss_computed=false` as invalid for this real MVP path
+  when the stage claims to optimize pose.
+- Mark failed stages with `failure_provenance.json` and
+  `stage_manifest.json.status = "failed"`.
+- Skip downstream dependent pose stages after a failed pose stage instead of
+  passing NaN volumes into dx/dz or 5DOF polish.
+- Keep the last valid finite final candidates and run final reconstruction
+  selection only over candidates that pass validation.
+- Surface failed/skipped stages in the v2 MVP summary and keep the run from
+  reporting success when validation failed, even if a finite fallback final
+  candidate exists.
+
+### Diagnosis
+
+The interrupted full-settings run
+`runs/real_lamino_v2_full_mvp_fullsettings_bestfinal_20260511` is invalid and
+must not be used as a benchmark result.
+
+Evidence:
+
+- `02_pose_phi` wrote `stage_manifest.json.status = "completed"` with 24 stage
+  rows even though every row had `loss_before = nan` and `loss_after = nan`.
+- `02_pose_phi/level_*_align_info.json` reported
+  `data_loss_computed = false`, `regulariser_value_computed = false`, and
+  `loss = ["nan", ...]`.
+- Every inspected `02_pose_phi/checkpoints/*.npz` had `x` finite fraction
+  `0.0`, including `outer_001_level04_iter01.npz` and the full-resolution
+  checkpoints.
+- Pose params stayed zero, so the failure occurred in the reconstruction/FISTA
+  part of the pose-stage loop before any meaningful phi update.
+- `03_pose_dx_dz` then inherited the invalid volume and produced NaN losses as
+  well.
+
+Working root cause: the pose-stage reconstruction path used the fast Huber-FISTA
+core with final/iteration data-loss diagnostics disabled. At full real settings
+that reconstruction returned an all-NaN volume in the first phi checkpoint, but
+the runner had no finite-output gate, so the native helper marked the stage
+completed and downstream pose stages consumed the invalid state. Setup stages
+remained finite because they completed before this pose-stage FISTA failure.
+
+The immediate fix is fail-closed validation and candidate preservation. The next
+functional fix should make `02_pose_phi` itself finite under full real settings
+or keep it explicitly failed while selecting the last finite setup candidate.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 20 tests in 0.82s.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+- A direct validation probe against the invalid `02_pose_phi` artifacts returned
+  `passed = False` and reported `latest.npz x finite fraction is 0` plus
+  non-finite stage losses.
+
 ## 2026-05-11 - Real laminography final candidate selection
 
 ### Scope
