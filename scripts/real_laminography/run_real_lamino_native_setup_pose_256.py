@@ -830,6 +830,29 @@ def run_pose_stage(
             stat["level_factor"] = int(level_factor)
             stat["global_stage_outer_idx"] = len(stage_stats) + 1
             x_np = np.asarray(x_obs, dtype=np.float32)
+            params_np = np.asarray(params_obs, dtype=np.float32)
+            checkpoint_failures: list[str] = []
+            x_finite_fraction = float(np.isfinite(x_np).mean()) if x_np.size else 0.0
+            params_finite_fraction = float(np.isfinite(params_np).mean()) if params_np.size else 0.0
+            stat["checkpoint_x_finite_fraction"] = x_finite_fraction
+            stat["checkpoint_params_finite_fraction"] = params_finite_fraction
+            if x_finite_fraction < 1.0:
+                checkpoint_failures.append(f"x finite fraction is {x_finite_fraction:.6g}")
+            if params_finite_fraction < 1.0:
+                checkpoint_failures.append(
+                    f"params finite fraction is {params_finite_fraction:.6g}"
+                )
+            for key in ("loss_before", "loss_after"):
+                value = stat.get(key)
+                if value is not None:
+                    try:
+                        if not math.isfinite(float(value)):
+                            checkpoint_failures.append(f"{key} is non-finite")
+                    except (TypeError, ValueError):
+                        checkpoint_failures.append(f"{key} is not numeric")
+            if checkpoint_failures:
+                stat["checkpoint_validation_failed"] = True
+                stat["checkpoint_validation_failures"] = checkpoint_failures
             xy = _xy_at_global_z(x_np, grid=level_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
             ref = _resize_nearest_2d(ctx.naive_slice, xy.shape) if ctx.naive_slice is not None else None
             stem = (
@@ -851,7 +874,7 @@ def run_pose_stage(
             _save_checkpoint(
                 stage_dir / "checkpoints" / f"{stem}.npz",
                 x=x_np,
-                params=np.asarray(params_obs, dtype=np.float32),
+                params=params_np,
                 setup=setup_state,
                 stat=stat,
             )
@@ -871,6 +894,8 @@ def run_pose_stage(
                     "cumulative_time",
                 ],
             )
+            if checkpoint_failures:
+                return "stop_run"
             return "continue"
 
         return observer
@@ -913,6 +938,8 @@ def run_pose_stage(
         x_init = np.asarray(x_lvl, dtype=np.float32)
         prev_factor = int(factor)
         _write_json(stage_dir / f"level_{factor:02d}_align_info.json", info)
+        if info.get("stopped_by_observer") and info.get("observer_action") == "stop_run":
+            break
         if not info.get("outer_stats"):
             stage_stats.append(
                 {

@@ -1850,6 +1850,11 @@ def _run_align_outer_iteration(
         recon_algo=recon_algo,
     )
     stat.update(recon_stat)
+    if bool(stat.get("reconstruction_failed", False)):
+        stat["outer_time"] = time.perf_counter() - outer_start
+        stat["cumulative_time"] = time.perf_counter() - wall_start
+        state.outer_stats.append(stat)
+        return stat, None
     (
         state.params5,
         state.motion_coeffs,
@@ -2148,6 +2153,7 @@ def align(
             state=loop_state,
             stat=stat,
         )
+        should_break = should_break or bool(stat.get("reconstruction_failed", False))
         should_break = should_break or _early_stop_break_decision(
             cfg=cfg,
             state=loop_state,

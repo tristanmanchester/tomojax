@@ -127,6 +127,14 @@ def _is_oom_error_message(message: str) -> bool:
     )
 
 
+def _finite_fraction(value: jnp.ndarray) -> float:
+    array = jnp.asarray(value)
+    if array.size == 0:
+        return 0.0
+    finite_fraction = jnp.mean(jnp.isfinite(array).astype(jnp.float32))
+    return float(jax.device_get(finite_fraction))
+
+
 def _reconstruction_step_stat(
     *,
     recon_start: float,
@@ -165,6 +173,70 @@ def _reconstruction_step_stat(
     return stat, L_next
 
 
+def _mark_nonfinite_reconstruction(
+    stat: OuterStat,
+    *,
+    finite_fraction: float,
+    reason: str,
+) -> None:
+    stat["reconstruction_failed"] = True
+    stat["reconstruction_failure_reason"] = reason
+    stat["reconstruction_finite_fraction"] = float(finite_fraction)
+
+
+def _nonfinite_initial_reconstruction_result(
+    *,
+    x: jnp.ndarray,
+    recon_start: float,
+    recon_algo: str,
+    cfg: object,
+    outer_idx: int,
+    L_prev: float | None,
+    finite_fraction: float,
+) -> tuple[jnp.ndarray, float | None, OuterStat]:
+    stat, L_next = _reconstruction_step_stat(
+        recon_start=recon_start,
+        recon_retry=False,
+        info_rec={},
+        recon_algo=recon_algo,
+        cfg=cfg,
+        outer_idx=outer_idx,
+        L_prev=L_prev,
+    )
+    _mark_nonfinite_reconstruction(
+        stat,
+        finite_fraction=finite_fraction,
+        reason="nonfinite_initial_reconstruction",
+    )
+    return x, L_next, stat
+
+
+def _retry_info_after_nonfinite_core(
+    *,
+    retry_info: Mapping[str, object],
+    core_info: Mapping[str, object],
+    core_finite_fraction: float,
+    cfg: object,
+) -> Mapping[str, object]:
+    return {
+        **dict(retry_info),
+        "recon_nonfinite_retry": True,
+        "nonfinite_core_finite_fraction": float(core_finite_fraction),
+        "nonfinite_core_info": {
+            "requested_backend": core_info.get("requested_backend"),
+            "actual_backend": core_info.get("actual_backend"),
+            "fallback_reason": core_info.get("fallback_reason"),
+            "L": core_info.get("L"),
+        },
+        "fallback_reason": "huber_fista_core_nonfinite_retry_public_stream",
+        "actual_backend": "jax",
+        "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
+        "regulariser": str(getattr(cfg, "regulariser", "")),
+        "data_loss_computed": True,
+        "regulariser_value_computed": True,
+    }
+
+
 @functools.partial(jax.jit, static_argnames=("grid", "detector", "cfg"))
 def _run_huber_fista_core_jit(
     x0: jnp.ndarray,
@@ -198,7 +270,7 @@ def _run_huber_fista_core_jit(
     )
 
 
-def _run_reconstruction_step(
+def _run_reconstruction_step(  # noqa: PLR0915
     *,
     geometry: Geometry,
     grid: Grid,
@@ -365,9 +437,38 @@ def _run_reconstruction_step(
     )
     recon_retry = False
     recon_start = time.perf_counter()
+    x_finite_fraction = _finite_fraction(x)
+    if x_finite_fraction < 1.0:
+        return _nonfinite_initial_reconstruction_result(
+            x=x,
+            recon_start=recon_start,
+            recon_algo=recon_algo,
+            cfg=cfg,
+            outer_idx=outer_idx,
+            L_prev=L_prev,
+            finite_fraction=x_finite_fraction,
+        )
+
     if recon_algo == "fista":
         if str(cfg.regulariser) == "huber_tv":
             x_out, info_rec = _run_huber_fista_core()
+            jax.block_until_ready(x_out)
+            core_finite_fraction = _finite_fraction(x_out)
+            if core_finite_fraction < 1.0:
+                logging.warning(
+                    "Huber-FISTA core returned non-finite reconstruction "
+                    "(finite_fraction=%.6g); retrying public streamed FISTA",
+                    core_finite_fraction,
+                )
+                recon_retry = True
+                core_info = dict(info_rec)
+                x_out, info_rec = _run_fista(1, 1, "fp32", "stream")
+                info_rec = _retry_info_after_nonfinite_core(
+                    retry_info=info_rec,
+                    core_info=core_info,
+                    core_finite_fraction=core_finite_fraction,
+                    cfg=cfg,
+                )
         else:
             try:
                 x_out, info_rec = _run_fista(
@@ -409,4 +510,19 @@ def _run_reconstruction_step(
         outer_idx=outer_idx,
         L_prev=L_prev,
     )
+    output_finite_fraction = _finite_fraction(x_out)
+    stat["reconstruction_finite_fraction"] = float(output_finite_fraction)
+    if isinstance(info_rec, Mapping) and bool(info_rec.get("recon_nonfinite_retry", False)):
+        stat["recon_nonfinite_retry"] = True
+        stat["nonfinite_core_finite_fraction"] = float(
+            info_rec.get("nonfinite_core_finite_fraction", 0.0)
+        )
+    if output_finite_fraction < 1.0:
+        _mark_nonfinite_reconstruction(
+            stat,
+            finite_fraction=output_finite_fraction,
+            reason="nonfinite_reconstruction_after_retry"
+            if recon_retry
+            else "nonfinite_reconstruction",
+        )
     return x_out, L_next, stat

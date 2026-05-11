@@ -90,6 +90,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add fail-closed validation around real-runner stages/checkpoints so
       non-finite pose reconstructions cannot propagate into downstream stages
       or the final selected artifact.
+- [x] Fix the pose-stage Huber-FISTA NaN path by detecting non-finite core
+      reconstructions, retrying with the streamed public FISTA path, and
+      stopping alignment before pose updates if reconstruction remains invalid.
+- [x] Add focused regression coverage for non-finite pose reconstruction output
+      so the runner/align path does not promote invalid checkpoints.
 - [x] Add or extend focused runner/report tests for the full staged contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.

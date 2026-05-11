@@ -3,6 +3,72 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - Real laminography pose-stage NaN fail-closed recovery
+
+### Scope
+
+The full real-laminography MVP run
+`runs/real_lamino_v2_full_mvp_fullsettings_bestfinal_20260511` was invalid after
+`02_pose_phi`: the first phi checkpoint reconstruction was all NaN, reported
+pose losses were NaN, `data_loss_computed=false`, pose updates were zero, and
+`03_pose_dx_dz` inherited the invalid volume. This is a pipeline bug, not a
+benchmark result.
+
+Changes:
+
+- Added finite-volume checks around the pose-stage Huber-FISTA core
+  reconstruction path. If the differentiable core returns a non-finite volume,
+  the alignment reconstruction step now retries once through the public
+  streamed FISTA path with `views_per_batch=1`, `projector_unroll=1`, and
+  `gather_dtype=fp32`.
+- Recorded retry provenance in outer stats:
+  `recon_nonfinite_retry`, `nonfinite_core_finite_fraction`, and
+  `recon_fallback_reason=huber_fista_core_nonfinite_retry_public_stream`.
+- Added a fail-closed alignment-loop guard: if reconstruction remains
+  non-finite after retry, the pose update is skipped, the outer stat is marked
+  `reconstruction_failed`, and the align loop stops before any pose parameter
+  update can be accepted.
+- Hardened the native real-lamino pose-stage checkpoint observer used by the v2
+  runner. Each checkpoint now records finite fractions for `x` and pose params,
+  records checkpoint validation failures, returns `stop_run` on non-finite
+  checkpoint state, and prevents lower pose levels from continuing from that
+  invalid volume.
+- Added focused regression coverage for both recovery and fail-closed behavior.
+
+### Diagnosis
+
+The root-cause evidence points at the pose-stage Huber-FISTA reconstruction
+path, not the phi optimiser itself:
+
+- Setup/COR/roll/axis checkpoints were finite.
+- `02_pose_phi` became non-finite at the first pose-stage reconstruction
+  checkpoint before any meaningful phi update.
+- The fast quality tier explains `data_loss_computed=false`; it suppresses
+  diagnostic loss computation, which hid the reconstruction failure rather than
+  causing it.
+- The old checkpoint observer always returned `continue`, so NaN pose-stage
+  volumes could be written, later pose stages could inherit them, and the old
+  final-selection path could consider black/NaN artifacts.
+
+With this slice, phi either recovers through the streamed public FISTA fallback
+or is marked as a failed stage and downstream dependent pose stages are skipped
+by the v2 runner's fail-closed stage validation.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_pose_reconstruction_fail_closed.py
+  tests/test_real_lamino_runner_contract.py -q` passed: 22 tests in 3.71
+  seconds.
+- `uv run ruff check src/tomojax/align/_reconstruction_stage.py
+  src/tomojax/align/_pose_stage.py
+  tests/test_pose_reconstruction_fail_closed.py` passed.
+- `uv run ruff check --select F821
+  scripts/real_laminography/run_real_lamino_native_setup_pose_256.py` passed.
+  The full native script remains legacy-lint noisy outside this slice, so the
+  validation was limited to unresolved-name safety for the touched script.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-11 - Real laminography fail-closed stage validation
 
 ### Scope
