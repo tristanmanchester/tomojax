@@ -106,6 +106,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Add or extend focused runner/report tests for the full staged contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.
+- [x] Run a full-resolution, non-smoke v2 real-lamino confirmation with
+      reference-scale reconstruction iterations, streamed views, and an
+      explicit final-candidate policy so the current quality gap is measured
+      against a meaningful gate rather than the 3-iteration targeted run.
+- [ ] Run a multiresolution full-resolution confirmation with one outer
+      iteration per level and reference-scale reconstruction iterations to
+      separate underconverged geometry/setup scheduling from final FISTA
+      throughput.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

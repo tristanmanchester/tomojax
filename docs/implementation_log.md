@@ -3,6 +3,69 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - Real laminography 40-iteration full-resolution gate
+
+### Scope
+
+Ran the next non-smoke real-laminography v2 gate after the final-candidate
+policy slice. The goal was to separate the previous 3-iteration targeted
+confirmation from actual reconstruction convergence, while keeping the run
+small enough to finish on the laptop GPU.
+
+Commands:
+
+- Attempted a default full-resolution staged run with streamed views and
+  `--final-candidate-policy setup_only`:
+  `runs/real_lamino_v2_full_mvp_full256_refiters_setup_policy_20260511`.
+  This was interrupted during the first COR multires stage after it proved the
+  path was compute-bound rather than memory-bound: level 8 completed and level
+  4 was still running, with sampled GPU memory around `1.3 GiB`.
+- Completed a targeted full-resolution gate:
+  `runs/real_lamino_v2_full_mvp_full256_oneouter_40iter_setup_policy_20260511`.
+  The run used full detector input, full `256 x 256 x 96` reconstruction
+  volume, streamed views, one outer iteration, level factor `8` for each
+  staged update, `40` reconstruction iterations, and
+  `--final-candidate-policy setup_only`.
+
+### Evidence
+
+Completed report:
+
+- `runs/real_lamino_v2_full_mvp_full256_oneouter_40iter_setup_policy_20260511/v2_cor_mvp_report/real_mvp_summary.json`.
+- Backend/devices: `gpu`, `["cuda:0"]`.
+- Peak sampled GPU memory: `1785 MiB`.
+- Stage validation: `validation_failed: False`; all required stages completed.
+- COR-only comparator: first loss `10879.1513671875`, final loss
+  `7958.2216796875`, `40` iterations.
+- Final selected candidate: `01_setup_geometry/03_axis_direction`, selected by
+  `setup_only`.
+- Final selected loss: first `10796.0732421875`, final
+  `7309.33154296875`, `40` iterations.
+- Improvement over this run's COR-only comparator: `648.89013671875`
+  absolute, `0.08153707735673811` relative.
+- Candidate losses:
+  - `01_cor`: `7958.2216796875`.
+  - `02_detector_roll`: `7689.6943359375`.
+  - `03_axis_direction`: `7309.33154296875`.
+
+Interpretation:
+
+- More reconstruction iterations materially improve the v2 full-resolution
+  staged result compared with the earlier 3-iteration targeted confirmation
+  (`9864.04296875` final loss there versus `7309.33154296875` here).
+- The run is still not production parity with the committed v1 reference final
+  loss (`6438.1611328125`) and still used only one coarse level per stage, so
+  this is a partial recovery, not completion.
+- Pose stages were finite and produced non-zero pose summaries, but the final
+  publication deliberately scored setup candidates only because prior gates
+  showed pose-polish degradation. The next functional gate should run
+  multiresolution setup/pose scheduling with one outer iteration per level to
+  test whether the remaining gap is setup schedule convergence or pose/volume
+  coupling.
+- Throughput is now an observed production-readiness risk: each full-resolution
+  40-iteration FISTA candidate took roughly `779` seconds, while memory stayed
+  below `2 GiB`.
+
 ## 2026-05-11 - Real laminography pose-stage NaN fail-closed recovery
 
 ### Scope
