@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Literal, NamedTuple, Tuple, Optional
+from typing import Literal, NamedTuple, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry.base import Geometry, Grid, Detector
+from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import (
     backproject_view_T,
@@ -34,7 +34,6 @@ from ._tv_ops import (
 )
 from .types import Regulariser
 
-
 GradMode = Literal["auto", "batched", "stream"]
 
 
@@ -55,7 +54,7 @@ def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int
     requested = (
         int(views_per_batch)
         if (views_per_batch is not None and int(views_per_batch) > 0)
-        else int(n_views)
+        else 1
     )
     return max(1, min(requested, int(n_views)))
 
@@ -247,7 +246,7 @@ def grad_data_term(
     eff_b = (
         int(views_per_batch)
         if (views_per_batch is not None and int(views_per_batch) > 0)
-        else T_all.shape[0]
+        else 1
     )
     mode = grad_mode
     if grad_mode == "auto":
@@ -364,7 +363,7 @@ def data_term_value(
     eff_b = (
         int(views_per_batch)
         if (views_per_batch is not None and int(views_per_batch) > 0)
-        else T_all.shape[0]
+        else 1
     )
     mode = grad_mode
     if grad_mode == "auto":

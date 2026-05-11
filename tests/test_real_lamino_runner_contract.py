@@ -306,7 +306,7 @@ def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -
     assert args.outer_iters == 1
     assert args.recon_iters == 3
     assert args.tv_prox_iters == 2
-    assert args.views_per_batch == 16
+    assert args.views_per_batch == 1
 
 
 def test_v2_cor_mvp_runtime_default_streams_fista(monkeypatch, tmp_path) -> None:
@@ -328,6 +328,27 @@ def test_v2_cor_mvp_runtime_default_streams_fista(monkeypatch, tmp_path) -> None
     v2_cor_mvp_runner._normalize_runtime_args(args)
 
     assert args.views_per_batch == 1
+
+
+def test_v2_cor_mvp_defaults_to_reference_conservative_pose_bounds(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.pose_bounds_profile == "reference_conservative"
+    assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.00872665:0.00872665"
+    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-10:10,dz=-10:10"
+    assert "alpha=-0.00872665:0.00872665" in v2_cor_mvp_runner._pose_polish_bounds(args)
 
 
 def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:

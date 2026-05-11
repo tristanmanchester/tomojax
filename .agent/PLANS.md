@@ -79,8 +79,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       phi, dx/dz, 5DOF polish, and final reconstruction after COR-only.
 - [x] Preserve a full report compatible with the committed MVP reference
       contract, including baseline/COR-only/full artifacts.
-- [ ] Run focused real-reference smoke/full gates and compare final-vs-COR-only
+- [x] Run focused real-reference smoke/full gates and compare final-vs-COR-only
       reconstruction quality.
+- [x] Close the concrete memory-policy regression found in the real v2 runner:
+      no `0`/`None` FISTA batch setting may expand to all views in the
+      production-scale path.
 - [x] Add or extend focused runner/report tests for the full staged contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.

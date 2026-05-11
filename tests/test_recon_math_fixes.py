@@ -7,6 +7,7 @@ import pytest
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.recon import fista_tv_core as fista_core_mod
 import tomojax.recon.fista_tv as fista_mod
 from tomojax.recon.spdhg_tv import _estimate_norm_A2, _prox_fstar_l2
 
@@ -14,6 +15,12 @@ from tomojax.recon.spdhg_tv import _estimate_norm_A2, _prox_fstar_l2
 class _OneVoxelGeometry:
     def pose_for_view(self, i: int):
         return jnp.eye(4, dtype=jnp.float32)
+
+
+def test_fista_zero_or_none_view_batch_defaults_to_streaming() -> None:
+    assert fista_mod._effective_view_chunk_size(64, None) == 1
+    assert fista_mod._effective_view_chunk_size(64, 0) == 1
+    assert fista_core_mod._chunk_size(64, 0) == 1
 
 
 def _patch_one_voxel_quadratic(

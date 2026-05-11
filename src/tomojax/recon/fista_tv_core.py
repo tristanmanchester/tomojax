@@ -5,8 +5,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.geometry import Detector, Grid
 from tomojax.core.backend_policy import normalize_projector_backend
+from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 from tomojax.recon.types import Regulariser
@@ -526,7 +526,7 @@ def _resolve_sum_backproject_views(backprojector: str):
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else int(n_views)
+    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else 1
     return max(1, min(int(b), int(n_views)))
 
 

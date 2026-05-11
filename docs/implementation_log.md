@@ -3,6 +3,68 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-11 - Real laminography v2 FISTA memory policy
+
+### Scope
+
+Closed the concrete preallocation-style regression found while diagnosing the
+real 256^3 laminography runner. The v2 real runner and both FISTA
+reconstruction paths now treat unset/zero view batching as one-view streaming
+instead of expanding to the full view stack.
+
+Changes:
+
+- Removed the v2 real-runner handoff that converted `views_per_batch=0` into
+  `None` for COR-only FISTA.
+- Changed v2 real smoke defaults to keep `views_per_batch=1`; smoke mode should
+  reduce the workload, not switch to a larger batched projector.
+- Changed public FISTA and the array-level FISTA core so `None`/`0` resolves to
+  a streaming chunk size of `1`.
+- Kept the conservative real pose-bound profile added during the current
+  staged-run diagnostic; wide bounds were hitting limits and worsening the
+  final smoke reconstruction.
+
+### Evidence
+
+The earlier full-settings v2 COR-only run OOMed because the runner passed
+`views_per_batch=0` through as `None`, which public FISTA interpreted as an
+all-view batched projector/adjoint. Resuming the same run with one-view
+streaming produced COR-only loss `6740.04248046875` against the v1 COR-only
+reference `6804.66845703125` and stayed below the old memory envelope.
+
+The current GPU diagnostic reran the conservative full-smoke saved geometries
+with eight FISTA iterations and `views_per_batch=16`:
+
+- Device: `NVIDIA GeForce RTX 4070 Laptop GPU`.
+- Sampled device memory during the live diagnostic: about `937 MiB` used.
+- COR-only trace:
+  `[10500.9794921875, 9912.005859375, 9383.84375, 8940.51171875,
+  8584.5146484375, 8306.333984375, 8091.85009765625, 7926.6650390625]`.
+- Full-final trace:
+  `[10762.0126953125, 10367.7197265625, 10028.8173828125,
+  9754.2841796875, 9540.0693359375, 9376.064453125, 9250.94140625,
+  9154.591796875]`.
+
+Interpretation: more FISTA iterations reduce both losses, but the full staged
+geometry remains worse than the COR-only geometry. This supports the working
+diagnosis that reconstruction is not merely underconverged; the staged pose
+updates are still degrading the real smoke final.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py tests/test_recon_math_fixes.py -q`
+  passed: 32 tests in 17.75 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- A broader `basedpyright` run over the legacy FISTA modules was intentionally
+  not used as a gate because those files already emit extensive pre-existing
+  JAX typing noise unrelated to this memory-policy change.
+
 ## 2026-05-11 - v2 real laminography full-stage orchestration and COR diagnosis
 
 ### Scope

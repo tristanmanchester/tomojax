@@ -202,6 +202,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "implemented_stages": implemented_stages,
                 "planned_stages": planned_stages,
                 "full_mvp_success_deferred": not full_staged,
+                "pose_bounds_profile": str(args.pose_bounds_profile),
             },
             "reconstruction": {
                 "algorithm": "fista_tv",
@@ -358,9 +359,7 @@ def run_cor_only_fista(
             lambda_tv=float(ctx.args.lambda_tv),
             regulariser=str(ctx.args.regulariser),
             tv_prox_iters=int(ctx.args.tv_prox_iters),
-            views_per_batch=None
-            if int(ctx.args.views_per_batch) == 0
-            else max(1, int(ctx.args.views_per_batch)),
+            views_per_batch=max(1, int(ctx.args.views_per_batch)),
             checkpoint_projector=True,
             gather_dtype=str(ctx.args.gather_dtype),
             positivity=bool(ctx.args.recon_positivity),
@@ -460,16 +459,13 @@ def run_remaining_stages(
             }
         )
     pose_plan = (
-        ("02_pose_phi", ("phi",), tuple(ctx.args.levels_phi), "phi=-0.0872665:0.0872665"),
-        ("03_pose_dx_dz", ("dx", "dz"), tuple(ctx.args.levels_dx_dz), "dx=-16:16,dz=-16:16"),
+        ("02_pose_phi", ("phi",), tuple(ctx.args.levels_phi), _pose_phi_bounds(ctx.args)),
+        ("03_pose_dx_dz", ("dx", "dz"), tuple(ctx.args.levels_dx_dz), _pose_dx_dz_bounds(ctx.args)),
         (
             "04_pose_polish",
             ("alpha", "beta", "phi", "dx", "dz"),
             tuple(ctx.args.levels_polish),
-            (
-                "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
-                "phi=-0.0872665:0.0872665,dx=-16:16,dz=-16:16"
-            ),
+            _pose_polish_bounds(ctx.args),
         ),
     )
     for stage_name, active_pose, levels, bounds in pose_plan:
@@ -614,6 +610,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument("--early-stop-rel", type=float, default=1e-3)
     parser.add_argument("--early-stop-patience", type=int, default=2)
     parser.add_argument("--snapshot-max-cols", type=int, default=6)
+    parser.add_argument(
+        "--pose-bounds-profile",
+        choices=["reference_conservative", "wide"],
+        default="reference_conservative",
+    )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
         "--full-staged",
@@ -633,7 +634,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         args.tv_prox_iters = min(int(args.tv_prox_iters), 2)
         args.snapshot_max_cols = min(int(args.snapshot_max_cols), 4)
         if int(args.views_per_batch) <= 0:
-            args.views_per_batch = 16
+            args.views_per_batch = 1
     return args
 
 
@@ -642,6 +643,30 @@ def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
     if int(args.views_per_batch) <= 0:
         args.views_per_batch = 1
     return args
+
+
+def _pose_phi_bounds(args: argparse.Namespace) -> str:
+    if str(args.pose_bounds_profile) == "wide":
+        return "phi=-0.0872665:0.0872665"
+    return "phi=-0.00872665:0.00872665"
+
+
+def _pose_dx_dz_bounds(args: argparse.Namespace) -> str:
+    if str(args.pose_bounds_profile) == "wide":
+        return "dx=-16:16,dz=-16:16"
+    return "dx=-10:10,dz=-10:10"
+
+
+def _pose_polish_bounds(args: argparse.Namespace) -> str:
+    if str(args.pose_bounds_profile) == "wide":
+        return (
+            "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
+            "phi=-0.0872665:0.0872665,dx=-16:16,dz=-16:16"
+        )
+    return (
+        "alpha=-0.00872665:0.00872665,beta=-0.00872665:0.00872665,"
+        "phi=-0.00872665:0.00872665,dx=-10:10,dz=-10:10"
+    )
 
 
 def _load_native_runner() -> Any:
