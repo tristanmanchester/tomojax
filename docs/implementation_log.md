@@ -125,6 +125,58 @@ Interpretation:
   run stayed close to `2 GiB` peak sampled VRAM. Throughput remains poor:
   production-scale 40-iteration FISTA candidates still take many minutes each.
 
+## 2026-05-12 - Real laminography pose candidate scoring diagnostic
+
+### Scope
+
+Scored the saved pose-stage parameter states from the multires 40-iteration
+gate without rerunning the full staged solver. This isolates whether the
+setup-only publication policy is hiding a good pose candidate or whether the
+pose updates are genuinely worse under the final reconstruction objective.
+
+Diagnostic run:
+
+- `runs/real_lamino_v2_pose_candidate_scoring_multires_20260511`.
+- Inputs: pose `params.csv` files from
+  `runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_setup_policy_20260511`.
+- Setup state: `01_setup_geometry/03_axis_direction` from the same multires
+  run.
+- Reconstruction: full `256 x 256 x 96`, streamed views, `40` FISTA
+  iterations.
+- Peak sampled GPU memory: `1065 MiB`.
+
+### Evidence
+
+Pose candidate final losses:
+
+- Setup-axis publication from the multires gate: `6522.87890625`.
+- `02_pose_phi`: first `10766.5859375`, final `6776.42138671875`.
+- `03_pose_dx_dz`: first `10766.884765625`, final `6807.0205078125`.
+- `04_pose_polish`: first `10849.9833984375`, final `7566.3896484375`.
+
+Pose-stage optimizer diagnostics from the source multires run show why these
+updates are suspicious:
+
+- Pose objective losses become extremely large at finer levels while
+  `data_loss_computed=false` in fast quality mode.
+- `02_pose_phi` and `03_pose_dx_dz` report small fixed-volume objective
+  improvements, but final reconstruction loss is worse than setup-axis.
+- `04_pose_polish` drives several DOFs to bounds: alpha/beta/phi at about
+  `+/-0.5 deg`, dx near `-10 px` / `+9.84 px`, and then scores much worse.
+
+Interpretation:
+
+- The current v2 real path is finite and memory-safe, but pose updates are not
+  production-ready. The fixed-volume pose objective can accept updates that do
+  not improve final reconstruction quality.
+- The next functional slice should add a reconstruction-supported acceptance or
+  validation criterion for real pose stages, or otherwise constrain early pose
+  updates so the volume cannot absorb/setup geometry cannot be degraded by the
+  fixed-volume surrogate.
+- This is not a report-shape problem. Setup-only publication is currently a
+  correct guardrail, but v1 feature parity requires pose stages to become useful
+  rather than merely excluded.
+
 ## 2026-05-11 - Real laminography pose-stage NaN fail-closed recovery
 
 ### Scope

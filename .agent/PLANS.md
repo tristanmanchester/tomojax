@@ -114,10 +114,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       iteration per level and reference-scale reconstruction iterations to
       separate underconverged geometry/setup scheduling from final FISTA
       throughput.
-- [ ] Diagnose why setup-only final publication nearly reaches the v1 real MVP
+- [x] Diagnose why setup-only final publication nearly reaches the v1 real MVP
       target while pose-stage candidates remain excluded/degrading; next
       functional slice should focus on pose/volume coupling rather than report
       wording.
+- [ ] Implement the next pose/volume-coupling fix: constrain or validate real
+      pose updates against reconstruction-supported objective evidence so
+      finite pose stages do not optimize a fixed-volume surrogate that worsens
+      final real-data reconstruction.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 
