@@ -10,6 +10,7 @@ import csv
 from datetime import datetime
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -106,8 +107,8 @@ def run_v2_cor_mvp(  # noqa: PLR0915
     run_root = Path(args.out)
     run_root.mkdir(parents=True, exist_ok=True)
     started = started_at or datetime.now().isoformat(timespec="seconds")
-    ctx = native.RunContext(args)
-    native._status(ctx.status_path, state="starting", started_at=started)
+    status_path = run_root / "status.json"
+    native._status(status_path, state="starting", started_at=started)
     try:
         raw_projections, thetas = native._load_input(
             Path(args.input),
@@ -120,6 +121,13 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             thetas,
             expected_projection_shape=args.expected_projection_shape,
         )
+        raw_projections, thetas, geometry_inputs, binning_provenance = _prepare_binned_fixture(
+            args,
+            native=native,
+            raw_projections=raw_projections,
+            thetas=thetas,
+        )
+        ctx = native.RunContext(args)
         projections, background_offsets = native._apply_projection_background(
             raw_projections,
             mode=str(args.projection_background),
@@ -129,19 +137,10 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             run_root / "projection_background_offsets.npy",
             background_offsets.astype(np.float32),
         )
-        n_views, nv, nu = projections.shape
-        full_nz = int(nv)
-        center_phys_z = native._global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
-        grid = native.Grid(
-            nx=int(nu),
-            ny=int(nu),
-            nz=int(args.slab_nz),
-            vx=1.0,
-            vy=1.0,
-            vz=1.0,
-            vol_center=(0.0, 0.0, center_phys_z),
-        )
-        detector = native.Detector(nu=int(nu), nv=int(nv), du=1.0, dv=1.0, det_center=(0.0, 0.0))
+        n_views, _nv, _nu = projections.shape
+        grid = geometry_inputs["grid"]
+        detector = geometry_inputs["detector"]
+        full_nz = int(geometry_inputs["full_nz"])
         preview_local_z = native._global_z_to_local_index(
             int(args.preview_z),
             full_nz=full_nz,
@@ -189,6 +188,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 else list(args.expected_projection_shape)
             ),
             "input_shape": list(projections.shape),
+            "binning": binning_provenance,
             "raw_projection_stats": native._projection_stats(raw_projections),
             "working_projection_stats": native._projection_stats(projections),
             "projection_preprocessing": {
@@ -203,6 +203,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "planned_stages": planned_stages,
                 "full_mvp_success_deferred": not full_staged,
                 "pose_bounds_profile": str(args.pose_bounds_profile),
+                "binned_translation_bounds_scale": float(_binned_pixel_scale(args)),
             },
             "reconstruction": {
                 "algorithm": "fista_tv",
@@ -254,7 +255,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             setup_state=setup_state,
             params5=params5,
             levels=tuple(int(v) for v in args.levels_setup),
-            bounds="det_u_px=-24:24",
+            bounds=_setup_det_u_bounds(args),
         )
         cor_setup_state = setup_state
         cor_only = run_cor_only_fista(
@@ -333,7 +334,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             reference_report=Path(args.reference_report) if args.reference_report else None,
         )
     except Exception as exc:
-        native._status(ctx.status_path, state="failed", stage="error", error=repr(exc))
+        native._status(status_path, state="failed", stage="error", error=repr(exc))
         raise
 
 
@@ -666,6 +667,7 @@ def run_best_final_reconstruction(
         shutil.rmtree(final_dir)
     shutil.copytree(best["candidate_dir"], final_dir)
     manifest = _read_json(final_dir / "stage_manifest.json")
+    manifest["volume_shape"] = list(np.asarray(best["volume"]).shape)
     manifest["selected_final_candidate"] = {
         "label": best["label"],
         "source_stage": best["source_stage"],
@@ -804,13 +806,24 @@ def _stat_validation_failures(
 ) -> list[str]:
     failures: list[str] = []
     for idx, stat in enumerate(stats):
+        finite_reported_losses = [
+            key
+            for key in ("geometry_loss_before", "geometry_loss_after", "loss_before", "loss_after")
+            if key in stat and _is_finite_scalar(stat.get(key))
+        ]
         failures.extend(
             f"stat[{idx}] {key} is non-finite: {stat.get(key)!r}"
             for key in ("geometry_loss_before", "geometry_loss_after", "loss_before", "loss_after")
             if key in stat and not _is_finite_scalar(stat.get(key))
         )
-        if require_data_loss and stat.get("data_loss_computed") is False:
-            failures.append(f"stat[{idx}] data_loss_computed is false")
+        if (
+            require_data_loss
+            and stat.get("data_loss_computed") is False
+            and not finite_reported_losses
+        ):
+            failures.append(
+                f"stat[{idx}] data_loss_computed is false and no finite objective loss was reported"
+            )
     return failures
 
 
@@ -824,9 +837,7 @@ def _artifact_validation_failures(stage_dir: Path) -> list[str]:
         return ["stage artifacts payload is missing or not an object"]
     failures: list[str] = []
     for key, raw_path in artifacts.items():
-        path = Path(str(raw_path))
-        if not path.is_absolute():
-            path = stage_dir / path
+        path = _resolve_artifact_path(stage_dir, raw_path)
         if not path.exists():
             failures.append(f"artifact {key} is missing: {path}")
         elif path.stat().st_size <= 0:
@@ -884,6 +895,7 @@ def build_v2_cor_mvp_report(
         "publication_artifacts": publication,
         "provenance": {
             "input": run_manifest.get("input"),
+            "binning": run_manifest.get("binning"),
             "backend": run_manifest.get("backend"),
             "devices": run_manifest.get("devices"),
             "final_volume_shape": run_manifest.get("final_volume_shape"),
@@ -925,6 +937,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument("--slab-center-z", type=int, default=209)
     parser.add_argument("--slab-nz", type=int, default=96)
     parser.add_argument("--stack-z-range", default="198:220")
+    parser.add_argument(
+        "--bin-factor",
+        type=int,
+        default=1,
+        help="Bin the real input projections and reconstruction grid by this factor.",
+    )
+    parser.add_argument(
+        "--smoke-shape",
+        type=_parse_shape3,
+        default=None,
+        help=(
+            "Optional real-data smoke target as N,NV,NU. Views are deterministically "
+            "subselected and the bin factor is raised so binned detector dims fit."
+        ),
+    )
     parser.add_argument("--levels-setup", nargs="+", type=int, default=[8, 4, 2])
     parser.add_argument("--levels-phi", nargs="+", type=int, default=[4, 2, 1])
     parser.add_argument("--levels-dx-dz", nargs="+", type=int, default=[4, 2, 1])
@@ -972,6 +999,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
     if bool(args.smoke):
+        if int(args.bin_factor) <= 1 and args.smoke_shape is None:
+            args.bin_factor = 4
         args.slab_nz = min(int(args.slab_nz), 48)
         args.levels_setup = [8]
         args.levels_phi = [8]
@@ -990,7 +1019,166 @@ def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
     """Resolve memory-sensitive runtime defaults after CLI parsing."""
     if int(args.views_per_batch) <= 0:
         args.views_per_batch = 1
+    args.bin_factor = _validate_bin_factor(args.bin_factor)
     return args
+
+
+def _validate_bin_factor(value: object) -> int:
+    try:
+        factor = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"bin factor must be an integer >= 1, got {value!r}") from exc
+    if factor < 1:
+        raise ValueError(f"bin factor must be an integer >= 1, got {value!r}")
+    return factor
+
+
+def _resolve_fixture_bin_factor(
+    *,
+    projection_shape: tuple[int, int, int],
+    slab_nz: int,
+    requested_bin_factor: int,
+    smoke_shape: tuple[int, int, int] | None,
+) -> int:
+    factor = _validate_bin_factor(requested_bin_factor)
+    if smoke_shape is None:
+        return factor
+    _target_views, target_nv, target_nu = smoke_shape
+    if target_nv < 1 or target_nu < 1:
+        raise ValueError(f"smoke shape must be positive, got {smoke_shape!r}")
+    _n_views, nv, nu = projection_shape
+    factor = max(factor, math.ceil(float(nv) / float(target_nv)))
+    factor = max(factor, math.ceil(float(nu) / float(target_nu)))
+    factor = max(factor, math.ceil(float(slab_nz) / float(max(1, target_nv))))
+    return _validate_bin_factor(factor)
+
+
+def _view_indices_for_smoke_shape(
+    n_views: int,
+    smoke_shape: tuple[int, int, int] | None,
+) -> np.ndarray:
+    if smoke_shape is None or int(smoke_shape[0]) >= int(n_views):
+        return np.arange(int(n_views), dtype=np.int64)
+    target = max(1, int(smoke_shape[0]))
+    return np.unique(np.rint(np.linspace(0, int(n_views) - 1, target)).astype(np.int64))
+
+
+def _map_global_z_to_binned(
+    native: Any,
+    global_z: int,
+    *,
+    original_full_nz: int,
+    binned_full_nz: int,
+    binned_grid: Any,
+) -> int:
+    phys_z = native._global_z_to_phys(int(global_z), full_nz=int(original_full_nz))
+    local_z = native._phys_z_to_local_index(phys_z, binned_grid)
+    local_z = int(np.clip(local_z, 0, int(binned_grid.nz) - 1))
+    mapped = native._local_z_to_global_index(
+        local_z,
+        full_nz=int(binned_full_nz),
+        grid=binned_grid,
+    )
+    return int(np.clip(mapped, 0, int(binned_full_nz) - 1))
+
+
+def _prepare_binned_fixture(
+    args: argparse.Namespace,
+    *,
+    native: Any,
+    raw_projections: np.ndarray,
+    thetas: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, Any]]:
+    """Derive the optional binned real-data fixture and mutate working args."""
+    original_shape = tuple(int(v) for v in raw_projections.shape)
+    original_full_nz = int(original_shape[1])
+    view_indices = _view_indices_for_smoke_shape(original_shape[0], args.smoke_shape)
+    raw_selected = np.asarray(raw_projections[view_indices], dtype=np.float32)
+    thetas_selected = np.asarray(thetas[view_indices], dtype=np.float32)
+    bin_factor = _resolve_fixture_bin_factor(
+        projection_shape=tuple(int(v) for v in raw_selected.shape),
+        slab_nz=int(args.slab_nz),
+        requested_bin_factor=int(args.bin_factor),
+        smoke_shape=args.smoke_shape,
+    )
+
+    center_phys_z = native._global_z_to_phys(int(args.slab_center_z), full_nz=original_full_nz)
+    base_grid = native.Grid(
+        nx=int(original_shape[2]),
+        ny=int(original_shape[2]),
+        nz=int(args.slab_nz),
+        vx=1.0,
+        vy=1.0,
+        vz=1.0,
+        vol_center=(0.0, 0.0, center_phys_z),
+    )
+    base_detector = native.Detector(
+        nu=int(original_shape[2]),
+        nv=int(original_shape[1]),
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    if bin_factor > 1:
+        working_raw = np.asarray(
+            native.bin_projections(jnp.asarray(raw_selected, dtype=jnp.float32), bin_factor),
+            dtype=np.float32,
+        )
+        grid = native.scale_grid(base_grid, bin_factor)
+        detector = native.scale_detector(base_detector, bin_factor)
+    else:
+        working_raw = raw_selected
+        grid = base_grid
+        detector = base_detector
+
+    binned_detector_nz = int(detector.nv)
+    original_preview_z = int(args.preview_z)
+    original_slab_center_z = int(args.slab_center_z)
+    original_stack_z_range = tuple(native._parse_range(str(args.stack_z_range)))
+    args.slab_nz = int(grid.nz)
+    args.effective_bin_factor = int(bin_factor)
+    args.effective_view_indices = [int(v) for v in view_indices.tolist()]
+
+    provenance = {
+        "enabled": bool(bin_factor > 1 or len(view_indices) != original_shape[0]),
+        "requested_bin_factor": int(args.bin_factor),
+        "effective_bin_factor": int(bin_factor),
+        "requested_smoke_shape": None if args.smoke_shape is None else list(args.smoke_shape),
+        "original_projection_shape": list(original_shape),
+        "selected_projection_shape_before_binning": list(raw_selected.shape),
+        "working_projection_shape": list(working_raw.shape),
+        "view_indices": [int(v) for v in view_indices.tolist()],
+        "original_slab_nz": int(base_grid.nz),
+        "working_slab_nz": int(grid.nz),
+        "coordinate_full_nz": int(original_full_nz),
+        "working_detector_nz": int(binned_detector_nz),
+        "original_preview_global_z": int(original_preview_z),
+        "working_preview_global_z": int(original_preview_z),
+        "original_slab_center_global_z": int(original_slab_center_z),
+        "working_slab_center_global_z": int(original_slab_center_z),
+        "original_stack_z_range": list(original_stack_z_range),
+        "working_stack_z_range": list(original_stack_z_range),
+        "grid": grid.to_dict(),
+        "detector": detector.to_dict(),
+        "detector_shift_bound_scale": float(_binned_pixel_scale(args)),
+        "pose_dx_dz_bound_scale": float(_binned_pixel_scale(args)),
+    }
+    geometry_inputs = {"grid": grid, "detector": detector, "full_nz": int(original_full_nz)}
+    return working_raw, thetas_selected, geometry_inputs, provenance
+
+
+def _binned_pixel_scale(args: argparse.Namespace) -> float:
+    fallback = getattr(args, "bin_factor", 1)
+    return 1.0 / float(max(1, int(getattr(args, "effective_bin_factor", fallback))))
+
+
+def _scaled_symmetric_bound(name: str, value: float, args: argparse.Namespace) -> str:
+    scaled = float(value) * _binned_pixel_scale(args)
+    return f"{name}={-scaled:.8g}:{scaled:.8g}"
+
+
+def _setup_det_u_bounds(args: argparse.Namespace) -> str:
+    return _scaled_symmetric_bound("det_u_px", 24.0, args)
 
 
 def _pose_phi_bounds(args: argparse.Namespace) -> str:
@@ -1000,20 +1188,22 @@ def _pose_phi_bounds(args: argparse.Namespace) -> str:
 
 
 def _pose_dx_dz_bounds(args: argparse.Namespace) -> str:
-    if str(args.pose_bounds_profile) == "wide":
-        return "dx=-16:16,dz=-16:16"
-    return "dx=-10:10,dz=-10:10"
+    value = 16.0 if str(args.pose_bounds_profile) == "wide" else 10.0
+    dx = _scaled_symmetric_bound("dx", value, args)
+    dz = _scaled_symmetric_bound("dz", value, args)
+    return f"{dx},{dz}"
 
 
 def _pose_polish_bounds(args: argparse.Namespace) -> str:
+    dx_dz = _pose_dx_dz_bounds(args)
     if str(args.pose_bounds_profile) == "wide":
         return (
             "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
-            "phi=-0.0872665:0.0872665,dx=-16:16,dz=-16:16"
+            f"phi=-0.0872665:0.0872665,{dx_dz}"
         )
     return (
         "alpha=-0.00872665:0.00872665,beta=-0.00872665:0.00872665,"
-        "phi=-0.00872665:0.00872665,dx=-10:10,dz=-10:10"
+        f"phi=-0.00872665:0.00872665,{dx_dz}"
     )
 
 
@@ -1396,11 +1586,15 @@ def _stage_artifacts(stage_dir: Path, manifest: Mapping[str, Any]) -> dict[str, 
         return {}
     artifacts: dict[str, str] = {}
     for key, value in raw.items():
-        candidate = Path(str(value))
-        if not candidate.is_absolute():
-            candidate = stage_dir / candidate
-        artifacts[str(key)] = str(candidate)
+        artifacts[str(key)] = str(_resolve_artifact_path(stage_dir, value))
     return artifacts
+
+
+def _resolve_artifact_path(stage_dir: Path, raw_path: object) -> Path:
+    candidate = Path(str(raw_path))
+    if candidate.is_absolute() or candidate.exists():
+        return candidate
+    return stage_dir / candidate
 
 
 def _stage_reconstruction_loss(manifest: Mapping[str, Any]) -> dict[str, Any] | None:

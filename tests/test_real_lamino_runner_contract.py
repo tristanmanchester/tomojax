@@ -308,6 +308,134 @@ def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -
     assert args.recon_iters == 3
     assert args.tv_prox_iters == 2
     assert args.views_per_batch == 1
+    assert args.bin_factor == 4
+
+
+def test_v2_cor_mvp_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--bin-factor",
+            "2",
+            "--smoke-shape",
+            "16x64x64",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.bin_factor == 2
+    assert args.smoke_shape == (16, 64, 64)
+
+
+def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:
+    args = SimpleNamespace(
+        slab_nz=4,
+        slab_center_z=4,
+        preview_z=4,
+        stack_z_range="2:6",
+        bin_factor=2,
+        smoke_shape=None,
+    )
+    raw = np.arange(5 * 8 * 8, dtype=np.float32).reshape(5, 8, 8)
+    thetas = np.linspace(0.0, 180.0, 5, endpoint=False, dtype=np.float32)
+
+    working_raw, working_thetas, geometry_inputs, provenance = (
+        v2_cor_mvp_runner._prepare_binned_fixture(
+            args,
+            native=runner,
+            raw_projections=raw,
+            thetas=thetas,
+        )
+    )
+
+    grid = geometry_inputs["grid"]
+    detector = geometry_inputs["detector"]
+    assert working_raw.shape == (5, 4, 4)
+    assert working_thetas.shape == (5,)
+    assert grid.nx == 4
+    assert grid.nz == 2
+    assert grid.vx == 2.0
+    assert detector.nu == 4
+    assert detector.nv == 4
+    assert detector.du == 2.0
+    assert geometry_inputs["full_nz"] == 8
+    assert args.slab_nz == 2
+    assert args.preview_z == 4
+    assert args.stack_z_range == "2:6"
+    assert provenance["enabled"] is True
+    assert provenance["effective_bin_factor"] == 2
+    assert provenance["original_projection_shape"] == [5, 8, 8]
+    assert provenance["working_projection_shape"] == [5, 4, 4]
+    assert provenance["coordinate_full_nz"] == 8
+    assert provenance["working_detector_nz"] == 4
+    assert provenance["detector_shift_bound_scale"] == 0.5
+
+
+def test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor() -> None:
+    args = SimpleNamespace(
+        slab_nz=8,
+        slab_center_z=8,
+        preview_z=8,
+        stack_z_range="6:10",
+        bin_factor=1,
+        smoke_shape=(3, 4, 4),
+    )
+    raw = np.zeros((7, 16, 16), dtype=np.float32)
+    thetas = np.arange(7, dtype=np.float32)
+
+    working_raw, working_thetas, _geometry_inputs, provenance = (
+        v2_cor_mvp_runner._prepare_binned_fixture(
+            args,
+            native=runner,
+            raw_projections=raw,
+            thetas=thetas,
+        )
+    )
+
+    assert working_raw.shape == (3, 4, 4)
+    assert working_thetas.tolist() == [0.0, 3.0, 6.0]
+    assert provenance["effective_bin_factor"] == 4
+    assert provenance["view_indices"] == [0, 3, 6]
+    assert args.effective_bin_factor == 4
+
+
+def test_v2_stage_validation_accepts_repo_relative_artifact_paths(tmp_path) -> None:
+    stage_dir = tmp_path / "run" / "01_setup_geometry" / "02_detector_roll"
+    stage_dir.mkdir(parents=True)
+    artifact = stage_dir / "orthos.png"
+    artifact.write_bytes(b"png")
+    _write_json(
+        stage_dir / "stage_manifest.json",
+        {
+            "artifacts": {
+                "orthos": str(artifact),
+            }
+        },
+    )
+
+    assert v2_cor_mvp_runner._artifact_validation_failures(stage_dir) == []
+
+
+def test_v2_pose_stage_validation_accepts_finite_fast_profile_losses() -> None:
+    failures = v2_cor_mvp_runner._stat_validation_failures(
+        [
+            {
+                "loss_before": 2.0,
+                "loss_after": 1.0,
+                "data_loss_computed": False,
+            }
+        ],
+        require_data_loss=True,
+    )
+
+    assert failures == []
 
 
 def test_v2_cor_mvp_runtime_default_streams_fista(monkeypatch, tmp_path) -> None:
@@ -350,6 +478,10 @@ def test_v2_cor_mvp_defaults_to_reference_conservative_pose_bounds(monkeypatch, 
     assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.00872665:0.00872665"
     assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-10:10,dz=-10:10"
     assert "alpha=-0.00872665:0.00872665" in v2_cor_mvp_runner._pose_polish_bounds(args)
+
+    args.effective_bin_factor = 4
+    assert v2_cor_mvp_runner._setup_det_u_bounds(args) == "det_u_px=-6:6"
+    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-2.5:2.5,dz=-2.5:2.5"
 
 
 def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:
@@ -486,6 +618,7 @@ def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None
     manifest = json.loads((ctx.run_root / "05_final" / "stage_manifest.json").read_text())
     assert choice["label"] == "better"
     assert float(volume[0, 0, 0]) == 4.0
+    assert manifest["volume_shape"] == [2, 2, 1]
     assert manifest["selected_final_candidate"]["label"] == "better"
     assert [item["label"] for item in manifest["selected_final_candidate"]["candidates"]] == [
         "worse",

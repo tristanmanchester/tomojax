@@ -69,6 +69,96 @@ by the v2 runner's fail-closed stage validation.
   validation was limited to unresolved-name safety for the touched script.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
 
+## 2026-05-11 - Binned real-laminography phi regression harness
+
+### Scope
+
+Added a deterministic binned real-data harness to
+`scripts/real_laminography/run_real_lamino_v2_cor_mvp.py` so the phi NaN bug can
+be debugged on the real NeXus path before rerunning an unbinned 256-detector
+confirmation.
+
+Changes:
+
+- Added `--bin-factor` and `--smoke-shape` CLI controls. `--smoke` now defaults
+  to `--bin-factor 4` unless an explicit bin factor or smoke shape is supplied.
+- Binned fixtures are derived from the same NeXus input by deterministic view
+  sub-selection plus projection binning. The reconstruction grid and detector
+  are scaled with the existing multires geometry helpers so voxel and detector
+  pixel sizes preserve the physical coordinate system.
+- The runner records binning provenance in `run_manifest.json` and the MVP
+  report provenance: original/working projection shapes, view indices, grid and
+  detector dictionaries, coordinate full-z frame, effective bin factor, and
+  translation-bound scales.
+- Detector-shift and pose dx/dz public bounds are scaled to binned-pixel units.
+- Stage validation now accepts fast-profile pose stages when the stage reports
+  finite optimization losses, while still failing non-finite or absent losses.
+- Artifact path validation now accepts existing repo-relative manifest paths
+  instead of prefixing the stage directory twice.
+- Final stage manifests now include `volume_shape` after candidate selection.
+
+### Evidence
+
+Binned real-data smoke run:
+
+- Command used CUDA with the pip-installed NVIDIA library paths in
+  `LD_LIBRARY_PATH`, because JAX could not discover cuSPARSE without them:
+  `NVLIB=$(find "$PWD/.venv/lib/python3.12/site-packages/nvidia" -type d -name lib | paste -sd: -);`
+  then `LD_LIBRARY_PATH="$NVLIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"`
+  with `JAX_PLATFORMS=cuda`.
+- Run:
+  `runs/real_lamino_v2_full_mvp_binned_smoke_20260511`.
+- Report:
+  `runs/real_lamino_v2_full_mvp_binned_smoke_20260511/v2_cor_mvp_report/real_mvp_summary.json`.
+- Backend/devices: `gpu`, `["cuda:0"]`.
+- Binning provenance: enabled, effective factor `4`, original projection shape
+  `[256, 256, 256]`, working projection shape `[256, 64, 64]`, working volume
+  shape `[64, 64, 12]`.
+- Result: `phase_complete: True`, phase `v2_full_mvp`,
+  `validation_failed: False`.
+- All staged steps through `02_pose_phi`, `03_pose_dx_dz`, and
+  `04_pose_polish` completed with checkpoint `x` finite fraction `1.0`.
+- Final-vs-COR losses: COR-only `613.2111206054688`, final
+  `613.2107543945312`, improvement `0.0003662109375`.
+- Selected final candidate: `01_cor`.
+- Peak sampled GPU memory: `795 MiB`.
+
+Targeted unbinned 256-detector confirmation:
+
+- Run:
+  `runs/real_lamino_v2_full_mvp_full256_targeted_confirm_20260511`.
+- Command used `--bin-factor 1`, full staged path, one level per stage
+  (`--levels-setup 8 --levels-phi 8 --levels-dx-dz 8 --levels-polish 8`),
+  one outer iteration, three reconstruction iterations, and streamed views.
+- Report:
+  `runs/real_lamino_v2_full_mvp_full256_targeted_confirm_20260511/v2_cor_mvp_report/real_mvp_summary.json`.
+- Backend/devices: `gpu`, `["cuda:0"]`.
+- Binning provenance: disabled, effective factor `1`, working projection shape
+  `[256, 256, 256]`, final volume shape `[256, 256, 96]`.
+- Result: `phase_complete: True`, phase `v2_full_mvp`,
+  `validation_failed: False`.
+- `02_pose_phi`, `03_pose_dx_dz`, and `04_pose_polish` completed with
+  checkpoint `x` finite fraction `1.0`; no NaN checkpoint was promoted.
+- Final-vs-COR losses: COR-only `9898.6484375`, final `9864.04296875`,
+  improvement `34.60546875`.
+- Selected final candidate: `03_pose_dx_dz`.
+- Peak sampled GPU memory: `2165 MiB`.
+
+An attempted full default unbinned run was stopped after roughly ten minutes
+because it was still in COR setup level 4; it was not the intended quick
+confirmation gate. During that partial run sampled VRAM stayed around
+`1.3 GiB`.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py
+  tests/test_pose_reconstruction_fail_closed.py -q` passed: 27 tests in 3.79
+  seconds.
+- `uv run ruff check scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-11 - Real laminography fail-closed stage validation
 
 ### Scope

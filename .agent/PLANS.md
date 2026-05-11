@@ -95,6 +95,11 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       stopping alignment before pose updates if reconstruction remains invalid.
 - [x] Add focused regression coverage for non-finite pose reconstruction output
       so the runner/align path does not promote invalid checkpoints.
+- [x] Add deterministic binned real-data smoke mode to the v2 real-lamino
+      runner, including geometry scaling, shifted preview/stack provenance,
+      and binned-pixel bounds for detector/pose translations.
+- [x] Run the binned real-laminography path through phi as the primary
+      regression harness before attempting another full 256^3 confirmation.
 - [x] Add or extend focused runner/report tests for the full staged contract.
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.
