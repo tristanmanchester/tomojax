@@ -38,6 +38,11 @@ Tasks:
 - [x] Run focused validation plus `just imports`.
 - [x] Update `docs/implementation_log.md`.
 - [x] Commit the public naming/profile cleanup slice.
+- [x] Fix mandatory synthetic presets so setup-global exercises setup/COR/roll/
+      axis/theta and pose-random exercises dx/dz/phi/alpha/beta.
+- [x] Rerun the smallest useful synthetic gate after preset fixes.
+- [x] Attempt current 128^3 mandatory setup-global and pose-random gates on
+      CUDA and record artifacts/failures.
 
 Historical productionization plan follows for context.
 

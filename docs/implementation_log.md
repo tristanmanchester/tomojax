@@ -3,6 +3,81 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Mandatory synthetic DOF and pose metric gate cleanup
+
+### Scope
+
+Continued the production-hardening synthetic tomography work by fixing two
+small but blocking issues before spending more time on full 128^3 gates:
+
+- The clean `--synthetic-case setup-global` preset now activates the setup DOFs
+  required by the manifest gate: `det_u_px`, `detector_roll_rad`,
+  `axis_rot_x_rad`, `axis_rot_y_rad`, and `theta_offset_rad`.
+- The clean `--synthetic-case pose-random` preset now activates all five
+  per-view pose DOFs: `alpha_rad`, `beta_rad`, `phi_residual_rad`, `dx_px`, and
+  `dz_px`.
+- Synthetic benchmark recovery now computes gauge-centered `dx/dz` and `phi`
+  pose metrics, maps `dx_dz_rmse_px_lt` and `phi_rmse_deg_lt` manifest criteria
+  to those metrics, and emits them in `benchmark_result.json` and
+  `benchmark_report.md`.
+
+### Evidence
+
+Small CUDA gates were run with the JAX CUDA wheel library path exported from
+`.venv/lib/python3.12/site-packages/nvidia/*/lib`; without that path, JAX saw
+the NVIDIA driver but failed CUDA plugin initialization because cuSPARSE was not
+found.
+
+- `.artifacts/production_hardening_synthetic/smoke32_setup_global`:
+  `synth128_setup_global_tomo`, 32^3, 8 views, `cuda:0`,
+  `core_trilinear_ray`. Manifest geometry criteria passed 4/4:
+  `det_u_realized_rmse_px=7.152557373046875e-07`,
+  `theta_realized_rmse_rad=1.1425601487450796e-07`,
+  `detector_roll_error_rad=1.1865574852006067e-07`,
+  `axis_error_rad=1.6091576090535015e-07`.
+- `.artifacts/production_hardening_synthetic/smoke32_pose_random`:
+  `synth128_pose_random_extreme`, 32^3, 8 views, `cuda:0`,
+  `core_trilinear_ray`. The pose criteria are now honestly evaluated instead of
+  reported as unsupported: `dx_dz_rmse_px=1.3711603938613204`,
+  `phi_rmse_rad=0.0840800850321713`, and
+  `alpha_beta_rmse_rad=0.010499916709634224`; all three fail the strict
+  manifest thresholds.
+- A full `synth128_setup_global_tomo` 128^3/256-view CUDA attempt was launched
+  at `.artifacts/production_hardening_synthetic/synth128_setup_global_128`.
+  It selected the GPU backend and held roughly 1.25 GiB on `cuda:0`, but
+  `nvidia-smi pmon` showed 0% SM utilisation while the Python process consumed
+  about 123% CPU for more than 27 minutes. The attempt was terminated and
+  recorded as `exit=terminated_by_agent_after_host_cpu_runtime_blocker`.
+
+### Diagnosis
+
+The 128^3 setup-global failure is not a GPU memory blow-up and not a JAX CPU
+fallback. It is a runtime/orchestration blocker in the current reference path:
+either XLA compilation of the large 256-view Schur/reconstruction graph, or
+host-side loop orchestration around CUDA kernels, dominates before useful GPU
+work appears. The next slice should instrument a bounded 128^3 lower-view gate
+with compile logging and phase timing before changing algorithms.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_synthetic_setup_global_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_legacy_synthetic_tomo_mvp_case_is_hidden_alias
+  tests/test_align_auto_cli.py::test_pose_random_manifest_criteria_evaluate_supported_pose_metrics
+  -q` passed: 5 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py
+  --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_verification.py
+  src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py`
+  passed with 0 errors, 0 warnings, and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Production hardening public naming cleanup
 
 ### Scope

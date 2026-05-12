@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pytest
 
+# check-public-imports: allow-private
+from tomojax.align import _alternating_artifacts
 import tomojax.cli.align_auto as align_auto_cli
 from tomojax.datasets import generate_synthetic_dataset
 
@@ -140,7 +142,7 @@ def test_synthetic_setup_global_case_resolves_bounded_oracle(
     assert cast("bool", args.geometry_update_pose_frozen) is True
     assert (
         cast("str", args.geometry_update_active_setup_parameters)
-        == "det_u_px,theta_offset_rad"
+        == "det_u_px,detector_roll_rad,axis_rot_x_rad,axis_rot_y_rad,theta_offset_rad"
     )
 
 
@@ -172,7 +174,7 @@ def test_synthetic_pose_random_case_resolves_bounded_oracle(
     assert cast("str", args.geometry_update_active_setup_parameters) == "none"
     assert (
         cast("str", args.geometry_update_active_pose_dofs)
-        == "phi_residual_rad,dx_px,dz_px"
+        == "alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px"
     )
     assert cast("int", args.geometry_update_alpha_beta_activate_at_level_factor) == 1
     assert cast("float", args.geometry_update_pose_trust_radius) == -1.0
@@ -193,6 +195,28 @@ def test_legacy_synthetic_tomo_mvp_case_is_hidden_alias(tmp_path: Path) -> None:
 
     assert cast("str", args.profile) == "diagnostic-fast"
     assert cast("str", args.synthetic_dataset) == "synth128_setup_global_tomo"
+
+
+def test_pose_random_manifest_criteria_evaluate_supported_pose_metrics() -> None:
+    evaluation = cast(
+        "dict[str, dict[str, object]]",
+        _alternating_artifacts._benchmark_manifest_evaluation(
+            criteria={
+                "dx_dz_rmse_px_lt": 1.0,
+                "phi_rmse_deg_lt": 0.25,
+                "alpha_beta_rmse_deg_lt": 0.25,
+            },
+            geometry_recovery={
+                "dx_dz_rmse_px": 0.5,
+                "phi_rmse_rad": math.radians(0.1),
+                "alpha_beta_rmse_rad": math.radians(0.2),
+            },
+        ),
+    )
+
+    assert evaluation["dx_dz_rmse_px_lt"]["status"] == "passed"
+    assert evaluation["phi_rmse_deg_lt"]["status"] == "passed"
+    assert evaluation["alpha_beta_rmse_deg_lt"]["status"] == "passed"
 
 
 def test_align_auto_smoke_command_writes_core_artifacts(

@@ -1137,6 +1137,11 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             f"{_markdown_cell(geometry.get('det_v_realized_rmse_px'))} |",
             "| theta realised RMSE rad | "
             f"{_markdown_cell(geometry.get('theta_realized_rmse_rad'))} |",
+            "| dx/dz RMSE px | "
+            f"{_markdown_cell(geometry.get('dx_dz_rmse_px'))} |",
+            f"| phi RMSE rad | {_markdown_cell(geometry.get('phi_rmse_rad'))} |",
+            "| alpha/beta RMSE rad | "
+            f"{_markdown_cell(geometry.get('alpha_beta_rmse_rad'))} |",
             "",
             "## Backend Provenance",
             "",
@@ -1338,6 +1343,8 @@ def _benchmark_result_payload(
             "detector_roll_error_rad": geometry_recovery.get("detector_roll_error_rad"),
             "axis_error_rad": geometry_recovery.get("axis_error_rad"),
             "alpha_beta_rmse_rad": geometry_recovery.get("alpha_beta_rmse_rad"),
+            "dx_dz_rmse_px": geometry_recovery.get("dx_dz_rmse_px"),
+            "phi_rmse_rad": geometry_recovery.get("phi_rmse_rad"),
         },
         "bad_view_detection": bad_view_detection,
         "pose_jump_exclusion": pose_jump_exclusion,
@@ -1996,6 +2003,8 @@ def _criterion_metric_name(name: str) -> str | None:
         "axis_roll_error_deg_lt": "axis_roll_error_rad",
         "alpha_beta_rmse_deg_lt": "alpha_beta_rmse_rad",
         "detector_roll_error_deg_lt": "detector_roll_error_rad",
+        "dx_dz_rmse_px_lt": "dx_dz_rmse_px",
+        "phi_rmse_deg_lt": "phi_rmse_rad",
         "roll_error_deg_lt": "detector_roll_error_rad",
         "theta_offset_error_deg_lt": "theta_realized_rmse_rad",
         "theta_scale_error_lt": "theta_scale_error",
@@ -2021,6 +2030,7 @@ def _criterion_threshold_in_metric_units(name: str, threshold: float) -> float:
         "axis_roll_error_deg_lt",
         "axis_error_deg_lt",
         "detector_roll_error_deg_lt",
+        "phi_rmse_deg_lt",
         "roll_error_deg_lt",
         "theta_offset_error_deg_lt",
     }:

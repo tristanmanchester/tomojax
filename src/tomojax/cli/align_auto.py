@@ -358,12 +358,16 @@ def _apply_synthetic_case(args: argparse.Namespace) -> None:
     if case == "setup-global":
         args.synthetic_dataset = "synth128_setup_global_tomo"
         args.geometry_update_pose_frozen = True
-        args.geometry_update_active_setup_parameters = "det_u_px,theta_offset_rad"
+        args.geometry_update_active_setup_parameters = (
+            "det_u_px,detector_roll_rad,axis_rot_x_rad,axis_rot_y_rad,theta_offset_rad"
+        )
         return
     if case == "pose-random":
         args.synthetic_dataset = "synth128_pose_random_extreme"
         args.geometry_update_active_setup_parameters = "none"
-        args.geometry_update_active_pose_dofs = "phi_residual_rad,dx_px,dz_px"
+        args.geometry_update_active_pose_dofs = (
+            "alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px"
+        )
         args.geometry_update_alpha_beta_activate_at_level_factor = 1
         args.geometry_update_pose_trust_radius = -1.0
         return

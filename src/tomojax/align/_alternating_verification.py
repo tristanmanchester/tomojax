@@ -394,6 +394,10 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         true_geometry.pose.beta_rad,
     )
     beta_rmse = _pose_component_rmse_rad(final_geometry.pose.beta_rad, true_geometry.pose.beta_rad)
+    initial_dx_dz_rmse = _pose_dx_dz_rmse_px(initial_geometry, true_geometry, view_mask=view_mask)
+    dx_dz_rmse = _pose_dx_dz_rmse_px(final_geometry, true_geometry, view_mask=view_mask)
+    initial_phi_rmse = _pose_phi_rmse_rad(initial_geometry, true_geometry, view_mask=view_mask)
+    phi_rmse = _pose_phi_rmse_rad(final_geometry, true_geometry, view_mask=view_mask)
     mean_dx_abs = abs(float(np.mean(final_geometry.pose.dx_px)))
     mean_phi_abs = abs(float(np.mean(final_geometry.pose.phi_residual_rad)))
     mean_dz_abs = abs(float(np.mean(final_geometry.pose.dz_px)))
@@ -510,6 +514,12 @@ def _geometry_recovery_payload(  # noqa: PLR0915 - metric payload stays explicit
         "alpha_rmse_rad": alpha_rmse,
         "initial_beta_rmse_rad": initial_beta_rmse,
         "beta_rmse_rad": beta_rmse,
+        "initial_dx_dz_rmse_px": initial_dx_dz_rmse,
+        "dx_dz_rmse_px": dx_dz_rmse,
+        "dx_dz_rmse_px_improved": bool(dx_dz_rmse < initial_dx_dz_rmse),
+        "initial_phi_rmse_rad": initial_phi_rmse,
+        "phi_rmse_rad": phi_rmse,
+        "phi_rmse_rad_improved": bool(phi_rmse < initial_phi_rmse),
         "mean_dx_abs_px": mean_dx_abs,
         "mean_dx_abs_px_passed": mean_dx_abs <= gauge_limit,
         "mean_dx_abs_px_limit": gauge_limit,
@@ -536,6 +546,40 @@ def _alpha_beta_rmse_rad(geometry: GeometryState, truth: GeometryState) -> float
     alpha = np.asarray(geometry.pose.alpha_rad - truth.pose.alpha_rad, dtype=np.float64)
     beta = np.asarray(geometry.pose.beta_rad - truth.pose.beta_rad, dtype=np.float64)
     return float(np.sqrt(np.mean(np.concatenate([alpha, beta]) ** 2)))
+
+
+def _pose_dx_dz_rmse_px(
+    geometry: GeometryState,
+    truth: GeometryState,
+    *,
+    view_mask: np.ndarray,
+) -> float:
+    dx = _centered_component_error(geometry.pose.dx_px, truth.pose.dx_px)
+    dz = _centered_component_error(geometry.pose.dz_px, truth.pose.dz_px)
+    values = np.concatenate([dx, dz])
+    mask = np.concatenate([view_mask, view_mask])
+    return _masked_rmse(values, mask)
+
+
+def _pose_phi_rmse_rad(
+    geometry: GeometryState,
+    truth: GeometryState,
+    *,
+    view_mask: np.ndarray,
+) -> float:
+    return _masked_rmse(
+        _centered_component_error(
+            geometry.pose.phi_residual_rad,
+            truth.pose.phi_residual_rad,
+        ),
+        view_mask,
+    )
+
+
+def _centered_component_error(value: object, truth: object) -> np.ndarray:
+    value_arr = np.asarray(value, dtype=np.float64)
+    truth_arr = np.asarray(truth, dtype=np.float64)
+    return (value_arr - np.mean(value_arr)) - (truth_arr - np.mean(truth_arr))
 
 
 def _pose_component_rmse_rad(values: np.ndarray, truth: np.ndarray) -> float:
