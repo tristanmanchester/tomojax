@@ -3,6 +3,33 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Phi level-2 parity loss-scale guard
+
+### Scope
+
+Added focused regression coverage for the real-laminography parity failure mode
+that made `02_pose_phi` level 2 blow up before the measured-L FISTA fallback
+was restored.
+
+The new test builds a minimal v1/v2 parity report with phi level-2 losses on
+the reference scale and verifies that the audit records the row without
+`pose_loss_scale_failures` or `loss_scale_mismatch`. The existing companion test
+continues to verify that a wildly different phi loss scale is flagged as a
+failed audit.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py::test_v1_parity_phi_level2_loss_scale_on_reference_path_is_recorded
+  tests/test_real_lamino_runner_contract.py::test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale
+  -q` passed: 2 tests.
+- `uv run ruff check tests/test_real_lamino_runner_contract.py --select
+  F821,I001` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+
 ## 2026-05-12 - Bounded synthetic tomography MVP report
 
 ### Scope

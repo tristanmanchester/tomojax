@@ -1173,6 +1173,55 @@ def test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale(tmp_path) -> 
     assert summary["artifacts"]["v1_parity_table_csv"] == str(table.resolve())
 
 
+def test_v1_parity_phi_level2_loss_scale_on_reference_path_is_recorded(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "reference").mkdir()
+    (tmp_path / "v2").mkdir()
+    reference_run = _write_minimal_real_mvp_run(tmp_path / "reference", final_last_loss=80.0)
+    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_report.parent.mkdir()
+    _write_json(reference_report, {"success": {"passed": True}})
+
+    v2_run = _write_minimal_real_mvp_run(tmp_path / "v2", final_last_loss=70.0)
+    manifest = json.loads((v2_run / "run_manifest.json").read_text())
+    manifest["workflow"] = {
+        "v1_parity_real_lamino": True,
+        "v1_parity_contract": {
+            "passed": True,
+            "mismatches": {},
+        },
+    }
+    _write_json(v2_run / "run_manifest.json", manifest)
+    phi_rows = (
+        "stage,level_factor,outer_idx,loss_before,loss_after,active_dofs\n"
+        "02_pose_phi,4,1,129.0,128.9,phi\n"
+        "02_pose_phi,2,1,482.2211,482.1140,phi\n"
+        "02_pose_phi,1,1,1859.1869,1859.1372,phi\n"
+    )
+    (reference_run / "02_pose_phi" / "stage_summary.csv").write_text(
+        phi_rows,
+        encoding="utf-8",
+    )
+    (v2_run / "02_pose_phi" / "stage_summary.csv").write_text(
+        phi_rows.replace("482.2211,482.1140", "481.8929,481.8202"),
+        encoding="utf-8",
+    )
+
+    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+        v2_run,
+        out_dir=tmp_path / "parity_phi_report",
+        reference_report=reference_report,
+    )
+
+    audit = summary["v1_parity_audit"]
+    assert audit["status"] == "recorded"
+    assert audit["pose_loss_scale_failures"] == []
+    table = (tmp_path / "parity_phi_report" / "real_mvp_v1_parity_table.csv").read_text()
+    assert "02_pose_phi,2,1,482.2211,482.1140,481.8929,481.8202" in table
+    assert "loss_scale_mismatch" not in table
+
+
 def test_v1_parity_table_uses_cor_only_reconstruction_loss_and_flags_missing_rows(
     tmp_path,
 ) -> None:

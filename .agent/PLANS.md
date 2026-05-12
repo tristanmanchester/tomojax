@@ -43,7 +43,7 @@ Current productionization tasks:
       them in manifests/reports.
 - [ ] Split or isolate obvious real-runner profile/report/parity responsibilities
       without a risky rewrite.
-- [ ] Add focused profile/report regression tests, including the phi level-2
+- [x] Add focused profile/report regression tests, including the phi level-2
       loss-scale guard.
 - [x] Add strict v1-parity setup row-count replay so the audit reproduces the
       reference stage/level/iteration structure instead of diverging on
