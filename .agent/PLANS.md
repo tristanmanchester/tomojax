@@ -155,8 +155,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Fix the remaining phi level-2 parity failure by restoring v1-style
       measured-L FISTA behavior when calibrated detector grids force the
       Huber-FISTA Pallas path onto the JAX fallback.
-- [ ] Rerun the full parity gate after the reconstruction fallback fix and
+- [x] Rerun the full parity gate after the reconstruction fallback fix and
       inspect the emitted parity table before accepting dx-dz/polish parity.
+- [ ] Fix the remaining parity-audit reporting gaps: `06_cor_only_fista`
+      currently emits spurious setup-iteration missing rows, and the audit does
+      not fail missing-row statuses even though the prompt requires same
+      stage/level/iteration structure.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

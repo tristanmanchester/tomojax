@@ -83,6 +83,86 @@ dx/dz, polish, and final reconstruction.
   surface, mostly unknown JAX/public-FISTA return types and private test access.
   This slice did not take on that legacy type cleanup.
 
+## 2026-05-12 - Full real-lamino v1-parity gate after FISTA fallback
+
+### Scope
+
+Reran the full v2 real laminography MVP parity gate after committing the
+measured-L FISTA fallback fix:
+
+```bash
+NVLIB=$(find "$PWD/.venv/lib/python3.12/site-packages/nvidia" -type d -name lib | paste -sd: -)
+env LD_LIBRARY_PATH="$NVLIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  UV_CACHE_DIR=.uv-cache JAX_PLATFORMS=cuda \
+  XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  uv run python scripts/real_laminography/run_real_lamino_v2_cor_mvp.py \
+    --input /home/tristan/projects/tomojax/runs/real-lamo-256/k11-54014_corrected_log_256cube.nxs \
+    --out runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512 \
+    --reference-report runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/real_mvp_report/real_mvp_summary.json \
+    --v1-parity-real-lamino \
+    --overwrite
+```
+
+Artifacts:
+
+- Run directory:
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512`.
+- Summary JSON:
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512/v2_cor_mvp_report/real_mvp_summary.json`.
+- Parity audit:
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512/v2_cor_mvp_report/real_mvp_v1_parity_audit.json`.
+- Parity table:
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512/v2_cor_mvp_report/real_mvp_v1_parity_table.csv`.
+- Concise run note:
+  `docs/benchmark_runs/2026-05-12-real-lamino-v1-parity-after-fista-fallback.md`.
+
+### Evidence
+
+The run completed all required stages and passed the real reconstruction gate:
+
+- COR-only FISTA loss: `10766.2012 -> 6740.0513`.
+- Full staged final FISTA loss: `10744.5977 -> 6378.6333`.
+- Improvement over COR-only: `361.4180` absolute, `5.36%` relative.
+- Selected final candidate: `04_pose_polish`.
+- Final volume shape matched COR-only: `256 x 256 x 96`.
+
+The pose-stage loss-scale regression is fixed in the full run. The parity audit
+reported no `pose_loss_scale_failures`.
+
+Stage evidence:
+
+- Phi v2 level 2: `481.8929 -> 481.8202`, `478.6499 -> 478.6471`;
+  v1 reference level 2: `482.2211 -> 482.1140`,
+  `479.0894 -> 479.0851`.
+- Phi v2 level 1: `1857.3625 -> 1857.2839`,
+  `1846.6211 -> 1846.5060`; v1 reference level 1:
+  `1859.1869 -> 1859.1372`, `1849.5734 -> 1849.5734`.
+- dx/dz v2 level 2: `479.6337 -> 479.3388`,
+  `475.7672 -> 475.7672`; v1 reference level 2:
+  `480.0434 -> 479.7271`, `476.3416 -> 476.3380`.
+- 5DOF polish v2 level 1: `1806.1754 -> 1803.7443`,
+  `1788.7288 -> 1788.4834`, `1783.3057 -> 1783.2437`;
+  v1 reference level 1: `1807.4470 -> 1805.0995`,
+  `1790.9491 -> 1790.6700`, `1786.0 -> 1785.6946`.
+- Final FISTA v2: `10744.5977 -> 6378.6333`; v1 reference:
+  `10745.2734 -> 6438.1611`.
+
+### Remaining Risk
+
+The full run is valid functional evidence for the real-lamino MVP path, but the
+strict parity audit/report still has two shape issues:
+
+- `06_cor_only_fista` emits spurious `missing_v2_row` entries because the table
+  compares v1 setup-iteration rows with a v2 final FISTA-only stage.
+- `01_setup_geometry/03_axis_direction` level 8 iteration 7 is marked
+  `missing_v2_row` because v2 early-stopped that level; the audit does not yet
+  fail missing-row statuses even though the parity prompt asks for the same
+  stage/level/iteration structure.
+
+These are reporting/audit correctness issues, not evidence that pose losses are
+still on the wrong scale. The next scoped slice should fix the parity-table row
+matching/fail criteria before treating the strict audit as complete.
+
 ## 2026-05-12 - Real laminography v1 parity audit mode
 
 ### Scope
