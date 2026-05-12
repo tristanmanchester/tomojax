@@ -265,6 +265,30 @@ def solve_joint_schur_lm(
 
     normal_equation_arrays_jit = jax.jit(normal_equation_arrays)
 
+    def scalar_loss(params_arg: jax.Array, prior_reference_arg: jax.Array) -> jax.Array:
+        return _loss_for_params(
+            vol,
+            obs,
+            geometry,
+            params_arg,
+            mask=mask,
+            cfg=cfg,
+            prior_reference=prior_reference_arg,
+        )
+
+    def loss_by_view(params_arg: jax.Array) -> jax.Array:
+        return _loss_by_view_for_params_array(
+            vol,
+            obs,
+            geometry,
+            params_arg,
+            mask=mask,
+            cfg=cfg,
+        )
+
+    scalar_loss_jit = jax.jit(scalar_loss)
+    loss_by_view_jit = jax.jit(loss_by_view)
+
     for _ in range(max(0, int(cfg.max_iterations))):
         setup_prior_strength, pose_prior_strength = _prior_strengths(cfg)
         if use_jitted_stream:
@@ -311,40 +335,46 @@ def solve_joint_schur_lm(
             data_rows=equations.data_rows,
         )
         candidate = params + schur.step
-        candidate_loss = _loss_for_params(
-            vol,
-            obs,
-            geometry,
-            candidate,
-            mask=mask,
-            cfg=cfg,
-            prior_reference=prior_reference,
-        )
-        current_loss = _loss_for_params(
-            vol,
-            obs,
-            geometry,
-            params,
-            mask=mask,
-            cfg=cfg,
-            prior_reference=prior_reference,
-        )
-        current_loss_by_view = _loss_by_view_for_params(
-            vol,
-            obs,
-            geometry,
-            params,
-            mask=mask,
-            cfg=cfg,
-        )
-        candidate_loss_by_view = _loss_by_view_for_params(
-            vol,
-            obs,
-            geometry,
-            candidate,
-            mask=mask,
-            cfg=cfg,
-        )
+        if use_jitted_stream:
+            candidate_loss = scalar_loss_jit(candidate, prior_reference)
+            current_loss = scalar_loss_jit(params, prior_reference)
+            current_loss_by_view = _array_to_tuple(loss_by_view_jit(params))
+            candidate_loss_by_view = _array_to_tuple(loss_by_view_jit(candidate))
+        else:
+            candidate_loss = _loss_for_params(
+                vol,
+                obs,
+                geometry,
+                candidate,
+                mask=mask,
+                cfg=cfg,
+                prior_reference=prior_reference,
+            )
+            current_loss = _loss_for_params(
+                vol,
+                obs,
+                geometry,
+                params,
+                mask=mask,
+                cfg=cfg,
+                prior_reference=prior_reference,
+            )
+            current_loss_by_view = _loss_by_view_for_params(
+                vol,
+                obs,
+                geometry,
+                params,
+                mask=mask,
+                cfg=cfg,
+            )
+            candidate_loss_by_view = _loss_by_view_for_params(
+                vol,
+                obs,
+                geometry,
+                candidate,
+                mask=mask,
+                cfg=cfg,
+            )
         accepted = bool(candidate_loss <= current_loss)
         actual_reduction = float(current_loss - candidate_loss)
         actual_reduction_by_view = tuple(
@@ -1211,6 +1241,10 @@ def _rows_to_tuple(values: jax.Array) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(float(item) for item in row) for row in values)
 
 
+def _array_to_tuple(values: jax.Array) -> tuple[float, ...]:
+    return tuple(float(item) for item in values)
+
+
 def _dynamic_view_weights_for_params(
     volume: jax.Array,
     observed: jax.Array,
@@ -2068,52 +2102,33 @@ def _loss_by_view_for_params(
     mask: jax.Array | None,
     cfg: JointSchurLMConfig,
 ) -> tuple[float, ...]:
-    losses: list[float] = []
-    for view in range(geometry.pose.n_views):
-        if cfg.fit_gain_offset or cfg.fit_background_offset:
-            predicted = _predicted_for_params(volume, geometry, params, config=cfg)
-            predicted = _with_fitted_nuisance(
-                predicted,
-                observed,
-                mask=mask,
-                fit_gain_offset=cfg.fit_gain_offset,
-                fit_background_offset=cfg.fit_background_offset,
-            )
-            filtered = apply_residual_filter_schedule(
-                (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
-                cfg.residual_filters,
-                mask=mask,
-            ).residual
-            filtered_view = filtered[view]
-        else:
-            view_i = jnp.asarray(view, dtype=jnp.int32)
-            predicted_view = _predicted_dynamic_view_for_params(
+    if not cfg.fit_gain_offset and not cfg.fit_background_offset:
+        return _array_to_tuple(
+            _loss_by_view_for_params_array(
                 volume,
                 observed,
                 geometry,
                 params,
-                view_i,
-                config=cfg,
+                mask=mask,
+                cfg=cfg,
             )
-            obs_view = jax.lax.dynamic_slice(
-                jnp.asarray(observed, dtype=jnp.float32),
-                (view_i, 0, 0),
-                (1, int(observed.shape[1]), int(observed.shape[2])),
-            )
-            mask_view = (
-                None
-                if mask is None
-                else jax.lax.dynamic_slice(
-                    mask,
-                    (view_i, 0, 0),
-                    (1, int(observed.shape[1]), int(observed.shape[2])),
-                )
-            )
-            filtered_view = apply_residual_filter_schedule(
-                (predicted_view - obs_view) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
-                cfg.residual_filters,
-                mask=mask_view,
-            ).residual[0]
+        )
+    losses: list[float] = []
+    for view in range(geometry.pose.n_views):
+        predicted = _predicted_for_params(volume, geometry, params, config=cfg)
+        predicted = _with_fitted_nuisance(
+            predicted,
+            observed,
+            mask=mask,
+            fit_gain_offset=cfg.fit_gain_offset,
+            fit_background_offset=cfg.fit_background_offset,
+        )
+        filtered = apply_residual_filter_schedule(
+            (predicted - observed) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+            cfg.residual_filters,
+            mask=mask,
+        ).residual
+        filtered_view = filtered[view]
         loss = residual_loss(
             filtered_view,
             jnp.zeros_like(filtered_view),
@@ -2124,3 +2139,59 @@ def _loss_by_view_for_params(
         ).loss
         losses.append(float(loss))
     return tuple(losses)
+
+
+def _loss_by_view_for_params_array(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+) -> jax.Array:
+    n_views = int(geometry.pose.n_views)
+    obs = jnp.asarray(observed, dtype=jnp.float32)
+
+    def body(losses: jax.Array, view: jax.Array) -> tuple[jax.Array, None]:
+        view_i = jnp.asarray(view, dtype=jnp.int32)
+        predicted_view = _predicted_dynamic_view_for_params(
+            volume,
+            observed,
+            geometry,
+            params,
+            view_i,
+            config=cfg,
+        )
+        obs_view = jax.lax.dynamic_slice(
+            obs,
+            (view_i, 0, 0),
+            (1, int(observed.shape[1]), int(observed.shape[2])),
+        )
+        mask_view = (
+            None
+            if mask is None
+            else jax.lax.dynamic_slice(
+                mask,
+                (view_i, 0, 0),
+                (1, int(observed.shape[1]), int(observed.shape[2])),
+            )
+        )
+        filtered_view = apply_residual_filter_schedule(
+            (predicted_view - obs_view) / jnp.asarray(cfg.sigma, dtype=jnp.float32),
+            cfg.residual_filters,
+            mask=mask_view,
+        ).residual[0]
+        loss = residual_loss(
+            filtered_view,
+            jnp.zeros_like(filtered_view),
+            mask=None,
+            sigma=1.0,
+            delta=cfg.delta,
+            mode="l2" if cfg.loss_mode == "l2" else "pseudo_huber",
+        ).loss
+        return losses.at[view_i].set(loss), None
+
+    init = jnp.zeros((n_views,), dtype=jnp.float32)
+    losses, _ = jax.lax.scan(body, init, jnp.arange(n_views, dtype=jnp.int32))
+    return losses

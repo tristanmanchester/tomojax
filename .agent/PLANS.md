@@ -58,6 +58,9 @@ Tasks:
 - [x] Cache the streamed Schur normal-equation program within each LM solve so
       repeated damping/iteration updates reuse the same JAX trace instead of
       rebuilding the view scan path.
+- [x] Cache streamed Schur loss and per-view loss diagnostics within each LM
+      solve, rerun the mandatory 128^3/256-view setup-global and pose-random
+      gates on CUDA, and record the pass/fail evidence.
 
 Historical productionization plan follows for context.
 

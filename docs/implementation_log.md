@@ -3,6 +3,97 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Synthetic128 full-view gates after Schur loss-cache fix
+
+### Scope
+
+Extended the streamed Schur compile-cache slice to cover scalar loss and
+per-view loss diagnostics inside each LM solve. The normal-equation cache alone
+preserved behavior but did not materially reduce the compile storm. Caching the
+streamed loss diagnostics cut the 128^3/16-view setup-global compile probe from
+2447 compile lines to 1239 and reduced wrapper wall time from 302 seconds to
+154 seconds.
+
+Changes:
+
+- Added cached JIT call sites for no-nuisance streamed scalar loss evaluation
+  inside `solve_joint_schur_lm`.
+- Added a streamed per-view loss array helper so loss diagnostics can be
+  compiled once per solve instead of rebuilding per Python call.
+- Left the nuisance/full-stack loss path unchanged.
+- Updated focused align-auto tests for the current clean public profile names
+  and richer synthetic sidecar unsupported-DOF provenance.
+
+### Evidence
+
+CUDA runs used `LD_LIBRARY_PATH` populated from
+`.venv/lib/python3.12/site-packages/nvidia/*/lib`, `JAX_PLATFORM_NAME=cuda`,
+`JAX_PLATFORMS=cuda,cpu`, and `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+
+- `.artifacts/production_hardening_synthetic/synth128_setup_global_16views_after_loss_cache`:
+  128^3, 16 views, `cuda:0`, `diagnostic-fast`, passed setup criteria.
+  Wrapper wall time was 154 seconds, benchmark time was 33.26 seconds, and peak
+  sampled GPU memory was 766 MiB.
+- `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache`:
+  128^3, 256 views, `cuda:0`, `diagnostic-fast`, passed all four manifest
+  setup criteria. Wrapper wall time was 500 seconds, benchmark time was 164.03
+  seconds, and peak sampled GPU memory was 1402 MiB.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_128_after_loss_cache`:
+  128^3, 256 views, `cuda:0`, `diagnostic-fast`, completed without memory or
+  backend failure but failed the pose gate. `dx_dz_rmse_px` passed at
+  0.10121920919147176, while `phi_rmse_rad` failed at 0.08440607756112731 and
+  `alpha_beta_rmse_rad` failed at 0.009437649551612661.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_reference_probe`:
+  existing `reference` profile diagnostic did not fix pose under-iteration; it
+  made 16-view pose recovery worse than `diagnostic-fast`.
+
+### Diagnosis
+
+The mandatory setup-global tomography gate now passes at the full 128^3/256-view
+manifest count. The remaining mandatory red gate is `synth128_pose_random_extreme`.
+That failure is now isolated to oracle fixed-volume pose recovery: all five
+pose DOFs are active, setup parameters are inactive, the run uses
+`fixed_synthetic_truth`, and the failure persists after trying the existing
+longer public reference profile on a bounded 16-view diagnostic.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  src/tomojax/align/_joint_schur_lm.py --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_joint_schur_lm.py` passed with 0 errors, 0 warnings, and
+  0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume
+  -q` passed: 1 test in 72.27 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_writes_core_artifacts
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_can_enable_gain_offset_nuisance
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_can_enable_background_nuisance
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_generates_named_synthetic_dataset
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset
+  tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir
+  -q` first ran five targeted tests successfully, then the Python process
+  aborted in JAX CPU compilation during the existing-dataset test's FISTA
+  diagnostic recomputation.
+- Rerunning
+  `tests/test_align_auto_cli.py::test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir`
+  alone passed: 1 test in 79.19 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py tests/test_real_lamino_runner_contract.py -q`
+  failed before the test expectation updates, then was not repeated as a single
+  process because the narrower rerun exposed the same JAX CPU compiler-abort
+  instability seen in previous bootstrap validation.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  src/tomojax/align/_joint_schur_lm.py tests/test_align_auto_cli.py
+  --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_joint_schur_lm.py tests/test_align_auto_cli.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Streamed Schur normal-equation compile cache
 
 ### Scope
