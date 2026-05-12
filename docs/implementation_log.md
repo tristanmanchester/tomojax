@@ -3,6 +3,45 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Productionization pivot and real MVP baseline report
+
+### Scope
+
+Stopped the non-v1-parity full-resolution spline/all rerun after the user
+redirected the work to the productionization goal. The run was still in
+`06_cor_only_fista`, so it was killed and its partial output directory was
+removed. The non-v1-parity spline/all gate is now treated as experimental
+follow-up, not a blocker for the real-laminography MVP.
+
+Started the productionization milestone from
+`docs/agent_goal_tomojax_v2_productionization_20260512.md`:
+
+- Updated `.agent/PLANS.md` with the productionization scope and current tasks.
+- Seeded the morning-facing report
+  `docs/benchmark_runs/2026-05-12-real-lamino-v2-production-mvp.md`.
+- Recorded the winning v2 parity run as the strongest current evidence:
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512`.
+- Reconciled current implementation status against the original v2 phases
+  without restarting broad Phase 8-10 work.
+
+### Evidence
+
+Winning v2 run:
+
+- Final loss: `6378.63330078125`.
+- COR-only loss: `6740.05126953125`.
+- Improvement over COR-only: `361.41796875`, or `5.3622436135435436%`.
+- V1 reference final loss: `6438.1611328125`.
+- Full staged path completed with no failed/skipped stages and validation
+  failure set to false.
+- Wall time: `6:11:13`.
+- Sampled peak GPU memory: `5967 MiB`.
+
+The report explicitly records current gaps: no clean `real_lamino_mvp` profile
+yet, strict parity still exposed as the winning command, missing pose summary in
+`real_mvp_summary.json`, stage contact sheets still needed, and bounded
+synthetic tomography MVP reports still pending.
+
 ## 2026-05-12 - Rigid detector-grid folding for real-lamino Pallas recon
 
 ### Scope

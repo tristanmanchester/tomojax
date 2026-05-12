@@ -8,6 +8,52 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ## Active Milestone
 
+### Productionization Pivot - 2026-05-12
+
+Source goal: `docs/agent_goal_tomojax_v2_productionization_20260512.md`.
+
+The current objective is to turn the successful k11 real-laminography v1-parity
+breakthrough into a clean, honest, publishable v2 MVP slice. The non-v1-parity
+full-resolution spline/all gate is now experimental follow-up, not a blocker.
+
+Immediate scope:
+
+- Preserve and document the winning k11 run:
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512`.
+- Add a morning-facing report:
+  `docs/benchmark_runs/2026-05-12-real-lamino-v2-production-mvp.md`.
+- Reconcile current implementation status against the original v2 phases
+  without restarting the broad plan.
+- Introduce a clean `real_lamino_mvp` profile while keeping strict
+  `v1_parity_audit` behavior.
+- Keep synthetic work bounded to the tomography MVP gates:
+  `synth128_setup_global_tomo` and `synth128_pose_random_extreme`.
+- Prefer focused tests, report quality, and clear API/CLI/profile contracts over
+  long GPU diagnostics.
+
+Current productionization tasks:
+
+- [x] Stop the long non-v1-parity full-resolution spline/all rerun; it was still
+      in `06_cor_only_fista` and was killed before spending more GPU time.
+- [ ] Seed the morning-facing real-lamino production MVP report from the
+      winning run, including caveats and phase-status reconciliation.
+- [ ] Add or expose clean real-runner profiles: `real_lamino_mvp`,
+      `v1_parity_audit`, and a bounded diagnostic profile.
+- [ ] Ensure the real MVP profile resolves to the winning settings and records
+      them in manifests/reports.
+- [ ] Split or isolate obvious real-runner profile/report/parity responsibilities
+      without a risky rewrite.
+- [ ] Add focused profile/report regression tests, including the phi level-2
+      loss-scale guard.
+- [ ] Inventory the synthetic phantom/Beer-Lambert/artefact story and document
+      what exists versus design-only functionality.
+- [ ] Implement or document bounded synthetic tomography MVP gates for
+      `synth128_setup_global_tomo` and `synth128_pose_random_extreme`.
+- [ ] Run focused validation, `just imports`, and broader checks where feasible.
+- [ ] Update `docs/implementation_log.md` and commit coherent slices.
+
+Historical real-lamino reproduction plan follows for context.
+
 ### Canonical Phase
 
 - Source plan: `docs/tomojax-v2/04_phased_implementation_plan.md`
@@ -128,9 +174,10 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Fix or gate the 5DOF polish stage: spline dx/dz now improves over setup,
       but polish still degrades the final reconstruction and should not be
       accepted without reconstruction-supported evidence.
-- [ ] Paused: rerun the full-resolution spline/all gate after the
-      post-constraint polish guard. A run was interrupted during the phi stage
-      after the user redirected the work to strict v1 parity auditing.
+- [ ] Rerun the full-resolution spline/all gate after the post-constraint
+      polish guard and calibrated detector-grid Pallas fold. A prior run was
+      interrupted during the phi stage after the user redirected the work to
+      strict v1 parity auditing.
 - [x] Implement strict v1-behaviour parity audit for the real laminography MVP
       using `scripts/real_laminography/run_real_lamino_native_setup_pose_256.py`
       and
