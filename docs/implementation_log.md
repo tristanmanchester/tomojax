@@ -3,6 +3,49 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Bounded synthetic tomography MVP report
+
+### Scope
+
+Recorded the bounded synthetic tomography MVP artifact gates required by the
+productionization goal:
+
+- `synth128_setup_global_tomo`
+- `synth128_pose_random_extreme`
+
+No additional GPU benchmark time was spent. The report summarizes the existing
+32^3 / 8-view smoke artifacts under
+`.artifacts/production_synthetic_tomo_mvp/runs/` and clearly classifies both
+cases as failed wiring/artifact gates rather than alignment-quality evidence.
+
+Artifacts:
+
+- Main report:
+  `docs/benchmark_runs/2026-05-12-synthetic-tomo-mvp.md`.
+- Compare CLI output:
+  `docs/benchmark_runs/2026-05-12-synthetic-tomo-mvp-comparison.md`.
+- Setup-global result:
+  `.artifacts/production_synthetic_tomo_mvp/runs/synth128_setup_global_tomo_32/benchmark_result.json`.
+- Pose-random result:
+  `.artifacts/production_synthetic_tomo_mvp/runs/synth128_pose_random_extreme_32/benchmark_result.json`.
+
+Results:
+
+- `synth128_setup_global_tomo`: failed overall. Supported det_u/theta evidence
+  passed (`det_u_realized_rmse_px=0.0029614`,
+  `theta_realized_rmse_rad=0.000858159`), but axis and detector-roll criteria
+  failed. Final residual was `33.1478`; volume NMSE was `368.469`.
+- `synth128_pose_random_extreme`: failed overall. Alpha/beta recovery failed
+  and dx/dz plus phi were not evaluated by the benchmark-manifest path despite
+  active pose DOFs. Final residual was `33.2626`; volume NMSE was `301.899`.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run
+  tomojax-synthetic-benchmark-compare ... --out
+  docs/benchmark_runs/2026-05-12-synthetic-tomo-mvp-comparison.md` passed and
+  wrote the comparison report.
+
 ## 2026-05-12 - Strict real-lamino v1 parity row replay
 
 ### Scope

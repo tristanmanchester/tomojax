@@ -35,7 +35,7 @@ Current productionization tasks:
 
 - [x] Stop the long non-v1-parity full-resolution spline/all rerun; it was still
       in `06_cor_only_fista` and was killed before spending more GPU time.
-- [ ] Seed the morning-facing real-lamino production MVP report from the
+- [x] Seed the morning-facing real-lamino production MVP report from the
       winning run, including caveats and phase-status reconciliation.
 - [x] Add or expose clean real-runner profiles: `real_lamino_mvp`,
       `v1_parity_audit`, and a bounded diagnostic profile.
@@ -50,7 +50,7 @@ Current productionization tasks:
       early-stop threshold sensitivity.
 - [x] Inventory the synthetic phantom/Beer-Lambert/artefact story and document
       what exists versus design-only functionality.
-- [ ] Implement or document bounded synthetic tomography MVP gates for
+- [x] Implement or document bounded synthetic tomography MVP gates for
       `synth128_setup_global_tomo` and `synth128_pose_random_extreme`.
 - [ ] Run focused validation, `just imports`, and broader checks where feasible.
 - [ ] Update `docs/implementation_log.md` and commit coherent slices.

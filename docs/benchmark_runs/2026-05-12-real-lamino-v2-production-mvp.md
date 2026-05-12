@@ -246,12 +246,11 @@ Design-only or not yet complete:
   user-facing demo profile.
 - `run_real_lamino_v2_cor_mvp.py` still mixes profile selection, execution,
   validation, reporting, and parity table generation.
-- `real_mvp_summary.json` omits `final_pose_summary` even though the run
-  manifest records it.
 - Stage contact sheets and v1-vs-v2 final comparison sheets need to be generated
   or made easy to find.
 - Synthetic tomography MVP gates for `synth128_setup_global_tomo` and
-  `synth128_pose_random_extreme` still need bounded artifact-producing reports.
+  `synth128_pose_random_extreme` now have bounded 32^3 artifact-producing
+  reports, but both runs failed and should not be used as quality evidence.
 - This report does not claim that nuisance fitting, object drift, weak-view
   handling, all five original synthetic cases, or arbitrary scan production use
   are solved.
@@ -262,4 +261,5 @@ Design-only or not yet complete:
    working MVP is not buried as an accidental flag combination.
 2. Add focused tests for phi level-2 loss scale, final
    candidate selection, fail-closed output, and portable artifact paths.
-3. Produce the bounded synthetic tomography MVP report.
+3. Fix the synthetic tomography MVP blockers exposed by the bounded report:
+   setup-global axis/roll recovery and pose-random dx/dz/phi evaluation.
