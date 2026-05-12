@@ -125,9 +125,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Run the full-resolution multires 40-iteration gate with smooth/spline
       pose enabled and all candidate scoring, then decide whether the remaining
       pose gap is objective acceptance, bounds, or volume/reconstruction gauge.
-- [ ] Fix or gate the 5DOF polish stage: spline dx/dz now improves over setup,
+- [x] Fix or gate the 5DOF polish stage: spline dx/dz now improves over setup,
       but polish still degrades the final reconstruction and should not be
       accepted without reconstruction-supported evidence.
+- [ ] Rerun the full-resolution spline/all gate after the post-constraint
+      polish guard when practical; if polish still degrades, tighten polish
+      bounds/objective rather than changing report semantics.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

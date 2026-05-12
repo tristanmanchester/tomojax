@@ -1443,6 +1443,25 @@ def _alignment_relative_improvement(
     return None
 
 
+def _should_reject_post_constraint_loss(
+    *,
+    loss_before: float | None,
+    total_loss: float,
+    rel_tol: float,
+) -> bool:
+    if loss_before is None:
+        return False
+    before = float(loss_before)
+    after = float(total_loss)
+    if not (math.isfinite(before) and math.isfinite(after)):
+        return False
+    if after <= before:
+        return False
+    return not (
+        loss_is_within_relative_tolerance(before, after, rel_tol)
+    )
+
+
 def _run_alignment_step(
     ctx: AlignmentStepContext,
     params5_in: jnp.ndarray,
@@ -1483,6 +1502,21 @@ def _run_alignment_step(
         loss_hist=loss_hist,
         stat=stat,
     )
+    if (
+        ctx.cfg.gn_accept_only_improving
+        and _should_reject_post_constraint_loss(
+            loss_before=result.loss_before,
+            total_loss=total_loss,
+            rel_tol=float(ctx.cfg.gn_accept_tol),
+        )
+    ):
+        params5_out = params5_in
+        motion_coeffs_out = motion_coeffs_in
+        total_loss = float(result.loss_before)
+        stat["post_constraint_rejected"] = True
+        stat["post_constraint_reject_reason"] = "loss_after_constraints_worse_than_before"
+    else:
+        stat["post_constraint_rejected"] = False
     stat["loss_after"] = total_loss
     rel_impr = _alignment_relative_improvement(
         stat,

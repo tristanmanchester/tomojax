@@ -3,6 +3,54 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Real laminography pose post-constraint guard
+
+### Scope
+
+Closed the remaining narrow acceptance bug exposed by the full spline pose gate:
+the 5DOF polish stage could pass the GN candidate search and then become worse
+after smooth-model projection/constraint handling. The align pose step now
+rejects a post-constraint result when `gn_accept_only_improving` is enabled and
+the final evaluated loss is worse than the pre-step loss beyond `gn_accept_tol`.
+
+### Evidence
+
+The full spline/all gate selected `03_pose_dx_dz` with final loss
+`6517.55712890625`, while `04_pose_polish` scored `7309.5048828125`. The polish
+level-1 optimizer stats showed the concrete acceptance hole:
+`loss_before = 1009484684066816.0` and
+`loss_after = 1013218419933184.0` after constraints, a relative worsening of
+about `0.3698655%`.
+
+The fix reverts pose params and smooth motion coefficients to the input state
+for that step, records `post_constraint_rejected = true`, and keeps
+`loss_after` at the pre-step value. This is not a report-shape change; it keeps
+the optimiser acceptance contract honest.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_chunking.py::test_pose_post_constraint_guard_rejects_worse_loss
+  tests/test_align_chunking.py::test_align_smooth_pose_model_keeps_frozen_dofs -q`
+  passed: 4 tests in 47.84 seconds.
+- `uv run ruff check src/tomojax/align/_pose_stage.py
+  tests/test_align_chunking.py --select I001,F821` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_accepts_real_pose_model_options -q`
+  passed.
+- `uv run ruff check src/tomojax/align/_pose_stage.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001` passed.
+- Binned spline/all smoke:
+  `runs/real_lamino_v2_binned_smoke_spline_pose_guard_all_20260512`
+  completed all stages with `validation_failed = false` and peak sampled GPU
+  memory `787 MiB`. The strict phase gate was false only because the selected
+  final loss `613.2105102539062` was worse than COR-only
+  `613.2100830078125` by `0.00042724609375`.
+
+The full-resolution spline/all gate still needs a rerun when practical to
+confirm whether the guarded polish stage is rejected at production scale.
+
 ## 2026-05-11 - Real laminography 40-iteration full-resolution gate
 
 ### Scope

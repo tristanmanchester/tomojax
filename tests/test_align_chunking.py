@@ -1,12 +1,15 @@
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
+
+# check-public-imports: allow-private
+import tomojax.align._pose_stage as pose_stage
 
 # check-public-imports: allow-private
 import tomojax.align._reconstruction_stage as reconstruction_stage
 from tomojax.align.objectives.loss_specs import parse_loss_spec
-from tomojax.align.pipeline import AlignConfig, align
 from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
+from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 
@@ -34,6 +37,29 @@ def make_misaligned_case(nx=10, ny=10, nz=10, n_views=5, seed=0):
         for i in range(n_views)
     ]
     return grid, det, geom_nom, vol, jnp.stack(projs, axis=0)
+
+
+def test_pose_post_constraint_guard_rejects_worse_loss():
+    assert pose_stage._should_reject_post_constraint_loss(
+        loss_before=10.0,
+        total_loss=10.01,
+        rel_tol=0.0,
+    )
+    assert not pose_stage._should_reject_post_constraint_loss(
+        loss_before=10.0,
+        total_loss=10.0,
+        rel_tol=0.0,
+    )
+    assert not pose_stage._should_reject_post_constraint_loss(
+        loss_before=10.0,
+        total_loss=10.001,
+        rel_tol=1e-3,
+    )
+    assert not pose_stage._should_reject_post_constraint_loss(
+        loss_before=None,
+        total_loss=10.01,
+        rel_tol=0.0,
+    )
 
 
 def _freeze_reconstruction(monkeypatch):
