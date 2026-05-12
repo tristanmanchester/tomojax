@@ -1,4 +1,4 @@
-"""Profile contracts for the real-laminography MVP runner."""
+"""Profile contracts for the real-laminography staged runner."""
 
 from __future__ import annotations
 
@@ -46,9 +46,15 @@ V1_PARITY_CONTRACT: dict[str, Any] = {
 
 REAL_LAMINO_PROFILE_CHOICES = (
     "manual",
-    "real_lamino_mvp",
-    "v1_parity_audit",
-    "diagnostic_fast",
+    "staged-lamino",
+    "reference-regression",
+    "diagnostic-fast",
 )
 
 REAL_LAMINO_MVP_CONTRACT: dict[str, Any] = dict(V1_PARITY_CONTRACT)
+
+LEGACY_REAL_LAMINO_PROFILE_ALIASES = {
+    "real_lamino_mvp": "staged-lamino",
+    "v1_parity_audit": "reference-regression",
+    "diagnostic_fast": "diagnostic-fast",
+}

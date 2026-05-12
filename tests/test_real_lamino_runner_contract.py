@@ -345,6 +345,25 @@ def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -
     assert args.bin_factor == 4
 
 
+def test_v2_cor_mvp_public_help_uses_clean_profile_names(
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["runner", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        v2_cor_mvp_runner._parse_args()
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "staged-lamino" in captured.out
+    assert "reference-regression" in captured.out
+    assert "diagnostic-fast" in captured.out
+    assert "real_lamino_mvp" not in captured.out
+    assert "v1_parity_audit" not in captured.out
+    assert "--v1-parity-real-lamino" not in captured.out
+
+
 def test_v2_cor_mvp_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
@@ -388,7 +407,10 @@ def test_v2_cor_mvp_accepts_final_candidate_policy(monkeypatch, tmp_path) -> Non
     assert args.final_candidate_policy == "last_valid"
 
 
-def test_v2_cor_mvp_v1_parity_mode_forces_reference_contract(monkeypatch, tmp_path) -> None:
+def test_v2_cor_mvp_reference_regression_profile_forces_reference_contract(
+    monkeypatch,
+    tmp_path,
+) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -398,7 +420,8 @@ def test_v2_cor_mvp_v1_parity_mode_forces_reference_contract(monkeypatch, tmp_pa
             "input.nxs",
             "--out",
             str(tmp_path),
-            "--v1-parity-real-lamino",
+            "--profile",
+            "reference-regression",
             "--pose-bounds-profile",
             "reference_conservative",
             "--final-candidate-policy",
@@ -437,7 +460,7 @@ def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
             "--out",
             str(tmp_path),
             "--profile",
-            "real_lamino_mvp",
+            "staged-lamino",
             "--pose-model",
             "spline",
             "--final-candidate-policy",
@@ -449,7 +472,7 @@ def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
 
     args = v2_cor_mvp_runner._parse_args()
 
-    assert args.profile == "real_lamino_mvp"
+    assert args.profile == "staged-lamino"
     assert args.v1_parity_real_lamino is False
     assert args.full_staged is True
     assert args.pose_model == "per_view"
@@ -467,7 +490,7 @@ def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
     assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 
 
-def test_v2_cor_mvp_v1_flag_is_profile_alias(monkeypatch, tmp_path) -> None:
+def test_v2_cor_mvp_legacy_reference_flag_is_hidden_profile_alias(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -483,7 +506,7 @@ def test_v2_cor_mvp_v1_flag_is_profile_alias(monkeypatch, tmp_path) -> None:
 
     args = v2_cor_mvp_runner._parse_args()
 
-    assert args.profile == "v1_parity_audit"
+    assert args.profile == "reference-regression"
     assert args.v1_parity_real_lamino is True
 
 
@@ -514,7 +537,7 @@ def test_v1_parity_level_outer_counts_replay_reference_stage_summary(
             "--out",
             str(tmp_path / "out"),
             "--profile",
-            "v1_parity_audit",
+            "reference-regression",
             "--reference-report",
             str(reference_report),
         ],
@@ -542,7 +565,7 @@ def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
             "--out",
             str(tmp_path),
             "--profile",
-            "diagnostic_fast",
+            "diagnostic-fast",
             "--recon-iters",
             "40",
         ],
@@ -550,7 +573,7 @@ def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
 
     args = v2_cor_mvp_runner._parse_args()
 
-    assert args.profile == "diagnostic_fast"
+    assert args.profile == "diagnostic-fast"
     assert args.full_staged is True
     assert args.smoke is True
     assert args.bin_factor == 4

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # pyright: reportAny=false, reportArgumentType=false, reportOptionalMemberAccess=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnusedCallResult=false
-"""Run the v2 real-laminography MVP workflow."""
+"""Run the v2 real-laminography staged workflow."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import numpy as np
 
 try:
     from scripts.real_laminography.real_lamino_profiles import (
+        LEGACY_REAL_LAMINO_PROFILE_ALIASES,
         REAL_LAMINO_MVP_CONTRACT,
         REAL_LAMINO_PROFILE_CHOICES,
         V1_PARITY_CONTRACT,
@@ -42,6 +43,7 @@ except ModuleNotFoundError:
     _PROFILE_SPEC.loader.exec_module(_profiles)
     REAL_LAMINO_MVP_CONTRACT = _profiles.REAL_LAMINO_MVP_CONTRACT
     REAL_LAMINO_PROFILE_CHOICES = _profiles.REAL_LAMINO_PROFILE_CHOICES
+    LEGACY_REAL_LAMINO_PROFILE_ALIASES = _profiles.LEGACY_REAL_LAMINO_PROFILE_ALIASES
     V1_PARITY_CONTRACT = _profiles.V1_PARITY_CONTRACT
 
 STAGED_PATH: tuple[dict[str, Any], ...] = (
@@ -232,11 +234,11 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "implemented_stages": implemented_stages,
                 "planned_stages": planned_stages,
                 "full_mvp_success_deferred": not full_staged,
-                "real_lamino_mvp": str(args.profile) == "real_lamino_mvp",
-                "v1_parity_real_lamino": str(args.profile) == "v1_parity_audit",
+                "staged_lamino": str(args.profile) == "staged-lamino",
+                "reference_regression": str(args.profile) == "reference-regression",
                 "v1_parity_contract": (
                     _v1_parity_contract_payload(args)
-                    if str(args.profile) == "v1_parity_audit"
+                    if str(args.profile) == "reference-regression"
                     else None
                 ),
                 "pose_bounds_profile": str(args.pose_bounds_profile),
@@ -1096,19 +1098,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         choices=REAL_LAMINO_PROFILE_CHOICES,
         default="manual",
         help=(
-            "Resolved real-laminography profile. 'real_lamino_mvp' is the clean "
-            "demo/profile path; 'v1_parity_audit' preserves the strict v1 audit; "
-            "'diagnostic_fast' enables the bounded smoke workflow."
+            "Resolved real-laminography profile. 'staged-lamino' runs the clean "
+            "staged workflow; 'reference-regression' preserves the internal "
+            "reference-run comparison contract; 'diagnostic-fast' enables the "
+            "bounded diagnostic workflow."
         ),
     )
     parser.add_argument(
         "--v1-parity-real-lamino",
         action="store_true",
-        help=(
-            "Deprecated alias for '--profile v1_parity_audit'. Force the real "
-            "laminography MVP stage contract to match the committed native v1 "
-            "reference run and emit v1-v2 parity tables."
-        ),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
@@ -1141,18 +1140,19 @@ def _apply_real_lamino_profile_args(
     parser: argparse.ArgumentParser,
 ) -> None:
     if bool(args.v1_parity_real_lamino):
-        if str(args.profile) not in {"manual", "v1_parity_audit"}:
+        if str(args.profile) not in {"manual", "reference-regression"}:
             parser.error("--v1-parity-real-lamino cannot be combined with another --profile")
-        args.profile = "v1_parity_audit"
-    if str(args.profile) == "v1_parity_audit":
+        args.profile = "reference-regression"
+    args.profile = LEGACY_REAL_LAMINO_PROFILE_ALIASES.get(str(args.profile), str(args.profile))
+    if str(args.profile) == "reference-regression":
         if bool(args.smoke):
-            parser.error("--profile v1_parity_audit cannot be combined with --smoke")
+            parser.error("--profile reference-regression cannot be combined with --smoke")
         _apply_profile_contract_args(args, V1_PARITY_CONTRACT)
         args.v1_parity_real_lamino = True
-    elif str(args.profile) == "real_lamino_mvp":
+    elif str(args.profile) == "staged-lamino":
         _apply_profile_contract_args(args, REAL_LAMINO_MVP_CONTRACT)
         args.v1_parity_real_lamino = False
-    elif str(args.profile) == "diagnostic_fast":
+    elif str(args.profile) == "diagnostic-fast":
         args.full_staged = True
         args.smoke = True
         if str(args.final_candidate_policy) == "all":
@@ -1164,7 +1164,7 @@ def _apply_real_lamino_profile_args(
 
 def _apply_v1_parity_real_lamino_args(args: argparse.Namespace) -> None:
     _apply_profile_contract_args(args, V1_PARITY_CONTRACT)
-    args.profile = "v1_parity_audit"
+    args.profile = "reference-regression"
     args.v1_parity_real_lamino = True
 
 
@@ -1263,7 +1263,7 @@ def _v1_parity_level_outer_counts(
     stage_name: str,
 ) -> dict[int, int] | None:
     """Return v1 per-level setup row counts for strict parity replay."""
-    if str(getattr(args, "profile", "")) != "v1_parity_audit":
+    if str(getattr(args, "profile", "")) != "reference-regression":
         return None
     reference_report = getattr(args, "reference_report", None)
     if not reference_report:

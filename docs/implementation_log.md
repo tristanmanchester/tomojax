@@ -3,6 +3,54 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Production hardening public naming cleanup
+
+### Scope
+
+Started the production-hardening goal from
+`docs/agent_goal_tomojax_v2_production_hardening_20260512.md` with the
+lowest-risk public surface cleanup.
+
+- Replaced public `align-auto` synthetic preset help with
+  `--synthetic-case {setup-global,pose-random}`.
+- Renamed public `align-auto` continuation profiles to
+  `diagnostic-fast`, `fast`, `balanced`, and `reference`, while mapping them to
+  the existing internal continuation schedules.
+- Hid the older `--synthetic-tomo-mvp-case` compatibility flag from public help.
+- Renamed public real-laminography runner profiles to `staged-lamino`,
+  `reference-regression`, and `diagnostic-fast`.
+- Hid the old `--v1-parity-real-lamino` compatibility flag from public help,
+  while keeping the internal reference-regression contract available.
+- Added focused tests that CLI help advertises clean names and does not expose
+  the old profile/preset names.
+
+This slice intentionally leaves report schema names, historical reports, and
+internal regression artifacts for later hardening passes; it only changes the
+public parser/profile surface and focused contract coverage.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_synthetic_setup_global_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_legacy_synthetic_tomo_mvp_case_is_hidden_alias
+  tests/test_real_lamino_runner_contract.py -q` passed: 43 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  src/tomojax/cli/align_auto.py
+  scripts/real_laminography/real_lamino_profiles.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_align_auto_cli.py tests/test_real_lamino_runner_contract.py
+  --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/align_auto.py
+  scripts/real_laminography/real_lamino_profiles.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_align_auto_cli.py tests/test_real_lamino_runner_contract.py` passed
+  with 0 errors, 0 warnings, and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Synthetic tomography MVP CLI presets
 
 ### Scope

@@ -1,4 +1,4 @@
-"""CLI for the Phase 7 deterministic auto-alignment smoke pipeline."""
+"""CLI for deterministic staged synthetic tomography alignment."""
 # ruff: noqa: E402
 # pyright: reportAny=false
 
@@ -39,7 +39,17 @@ from tomojax.datasets import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_PROFILE_CHOICES = ("smoke32", "lightning", "balanced", "reference")
+_PROFILE_CHOICES = ("diagnostic-fast", "fast", "balanced", "reference")
+_PROFILE_TO_SCHEDULE: dict[str, ContinuationScheduleName] = {
+    "diagnostic-fast": "smoke32",
+    "fast": "lightning",
+    "balanced": "balanced",
+    "reference": "reference",
+}
+_LEGACY_PROFILE_TO_SCHEDULE: dict[str, ContinuationScheduleName] = {
+    "smoke32": "smoke32",
+    "lightning": "lightning",
+}
 _SYNTHETIC_SIZE_CHOICES = (32, 64, 128)
 _GEOMETRY_UPDATE_VOLUME_SOURCE_CHOICES = ("stopped_reconstruction", "fixed_synthetic_truth")
 _GEOMETRY_UPDATE_SOLVER_CHOICES = ("joint_schur", "setup_only_lm")
@@ -53,10 +63,10 @@ _STOPPED_PREVIEW_POLICY_CHOICES = (
     "constant_cylindrical_first_level",
     "constant_cylindrical_first_level_no_fista",
 )
-_SYNTHETIC_TOMO_MVP_CASE_CHOICES = (
+_SYNTHETIC_CASE_CHOICES = (
     "none",
-    "setup_global",
-    "pose_random_extreme",
+    "setup-global",
+    "pose-random",
 )
 SyntheticSize = Literal[32, 64, 128]
 
@@ -64,20 +74,20 @@ SyntheticSize = Literal[32, 64, 128]
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the deterministic Phase 7 align=auto smoke pipeline and write "
+            "Run deterministic staged tomography alignment and write "
             "final volume, geometry, and verification artifacts."
         )
     )
     _ = parser.add_argument(
         "--out-dir",
         required=True,
-        help="Run directory for smoke artifacts.",
+        help="Run directory for alignment artifacts.",
     )
     _ = parser.add_argument(
         "--profile",
         choices=_PROFILE_CHOICES,
-        default="smoke32",
-        help="Continuation profile for the deterministic smoke run.",
+        default="diagnostic-fast",
+        help="Continuation profile for staged synthetic tomography alignment.",
     )
     _ = parser.add_argument("--seed", type=int, default=17, help="Synthetic phantom seed.")
     _ = parser.add_argument(
@@ -90,12 +100,18 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument("--views", type=int, default=4, help="Number of synthetic views.")
     _ = parser.add_argument(
         "--synthetic-tomo-mvp-case",
-        choices=_SYNTHETIC_TOMO_MVP_CASE_CHOICES,
+        choices=("none", "setup_global", "pose_random_extreme"),
+        default="none",
+        help=argparse.SUPPRESS,
+    )
+    _ = parser.add_argument(
+        "--synthetic-case",
+        choices=_SYNTHETIC_CASE_CHOICES,
         default="none",
         help=(
-            "Bounded synthetic tomography MVP preset. setup_global resolves to "
-            "the fixed-truth synth128_setup_global_tomo Schur smoke; "
-            "pose_random_extreme resolves to the fixed-truth pose-random smoke."
+            "Synthetic tomography preset. setup-global resolves to the fixed-truth "
+            "synth128_setup_global_tomo Schur gate; pose-random resolves to the "
+            "fixed-truth synth128_pose_random_extreme gate."
         ),
     )
     _ = parser.add_argument(
@@ -327,36 +343,51 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _apply_synthetic_tomo_mvp_case(args: argparse.Namespace) -> None:
-    case = str(args.synthetic_tomo_mvp_case)
+def _apply_synthetic_case(args: argparse.Namespace) -> None:
+    case = str(args.synthetic_case)
+    legacy_case = str(args.synthetic_tomo_mvp_case)
+    if case == "none" and legacy_case != "none":
+        case = legacy_case.replace("_", "-").replace("pose-random-extreme", "pose-random")
     if case == "none":
         return
-    args.profile = "smoke32"
+    args.profile = "diagnostic-fast"
     if int(args.views) == 4:
         args.views = 8
     args.geometry_update_volume_source = "fixed_synthetic_truth"
     args.geometry_update_solver = "joint_schur"
-    if case == "setup_global":
+    if case == "setup-global":
         args.synthetic_dataset = "synth128_setup_global_tomo"
         args.geometry_update_pose_frozen = True
         args.geometry_update_active_setup_parameters = "det_u_px,theta_offset_rad"
         return
-    if case == "pose_random_extreme":
+    if case == "pose-random":
         args.synthetic_dataset = "synth128_pose_random_extreme"
         args.geometry_update_active_setup_parameters = "none"
         args.geometry_update_active_pose_dofs = "phi_residual_rad,dx_px,dz_px"
         args.geometry_update_alpha_beta_activate_at_level_factor = 1
         args.geometry_update_pose_trust_radius = -1.0
         return
-    raise ValueError(f"unsupported synthetic tomography MVP case: {case!r}")
+    raise ValueError(f"unsupported synthetic tomography case: {case!r}")
+
+
+def _resolve_profile_schedule(profile: str) -> ContinuationScheduleName:
+    if profile in _PROFILE_TO_SCHEDULE:
+        return _PROFILE_TO_SCHEDULE[profile]
+    if profile in _LEGACY_PROFILE_TO_SCHEDULE:
+        return _LEGACY_PROFILE_TO_SCHEDULE[profile]
+    choices = ", ".join(_PROFILE_CHOICES)
+    raise ValueError(f"unsupported --profile {profile!r}; choose one of: {choices}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the deterministic Phase 7 auto-alignment smoke command."""
+    """Run the deterministic staged tomography alignment command."""
     parser = _build_parser()
     args = parser.parse_args(argv)
-    _apply_synthetic_tomo_mvp_case(args)
-    profile = cast("ContinuationScheduleName", args.profile)
+    _apply_synthetic_case(args)
+    try:
+        profile = _resolve_profile_schedule(str(args.profile))
+    except ValueError as exc:
+        parser.error(str(exc))
     geometry_update_volume_source = cast(
         "GeometryUpdateVolumeSource",
         args.geometry_update_volume_source,

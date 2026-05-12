@@ -8,6 +8,39 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ## Active Milestone
 
+### Production Hardening - 2026-05-12
+
+Source goal: `docs/agent_goal_tomojax_v2_production_hardening_20260512.md`.
+
+The current objective is to turn the successful real-laminography and bounded
+synthetic prototype work into a production-shaped TomoJAX v2 package surface.
+The first slice removes historical MVP/v1/parity/debug terminology from public
+CLI/profile entrypoints while preserving internal reference-regression coverage.
+
+Immediate scope:
+
+- Rename public real-laminography profile names to behavior-based names:
+  `staged-lamino`, `reference-regression`, and `diagnostic-fast`.
+- Rename public synthetic tomography preset names to behavior-based names:
+  `--synthetic-case setup-global` and `--synthetic-case pose-random`.
+- Hide old aliases from public help where temporary compatibility is useful.
+- Add focused tests that public help does not advertise legacy names and that
+  clean names resolve to the same contracts.
+- Run focused validation plus `just imports`, update implementation log, and
+  commit the coherent naming slice.
+
+Tasks:
+
+- [x] Audit the hardening goal and current public naming surface.
+- [x] Rename public real-laminography profiles/aliases.
+- [x] Rename public `align-auto` synthetic presets/profiles.
+- [x] Add focused tests for clean public names and hidden legacy aliases.
+- [x] Run focused validation plus `just imports`.
+- [x] Update `docs/implementation_log.md`.
+- [x] Commit the public naming/profile cleanup slice.
+
+Historical productionization plan follows for context.
+
 ### Productionization Pivot - 2026-05-12
 
 Source goal: `docs/agent_goal_tomojax_v2_productionization_20260512.md`.
