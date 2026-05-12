@@ -1763,15 +1763,21 @@ def _write_v1_parity_audit(
         if str(row["stage"]).startswith(("02_pose", "03_pose", "04_pose"))
         and row["status"] == "loss_scale_mismatch"
     ]
+    row_shape_failures = [
+        row
+        for row in rows
+        if row["status"] in {"missing_v1_row", "missing_v2_row"}
+    ]
     contract = workflow.get("v1_parity_contract", {}) if isinstance(workflow, Mapping) else {}
     payload = {
         "schema": "tomojax.real_lamino_v1_parity_audit.v1",
         "enabled": True,
-        "status": "failed" if pose_scale_failures else "recorded",
+        "status": "failed" if pose_scale_failures or row_shape_failures else "recorded",
         "source_reference_run": str(reference_root),
         "source_script": "scripts/real_laminography/run_real_lamino_native_setup_pose_256.py",
         "contract": contract,
         "pose_loss_scale_failures": pose_scale_failures,
+        "row_shape_failures": row_shape_failures,
         "stage_summaries": _v1_parity_stage_summaries(reference_root, root),
         "table_csv": str(csv_path.resolve()),
     }
@@ -1789,8 +1795,12 @@ def _write_v1_parity_audit(
 def _build_v1_parity_rows(*, reference_root: Path, v2_root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for v1_stage, v2_stage in V1_PARITY_STAGE_MAP:
-        v1_rows = _loss_rows_for_stage(reference_root / v1_stage)
-        v2_rows = _loss_rows_for_stage(v2_root / v2_stage)
+        if v1_stage in {"05_final", "06_cor_only_fista"}:
+            v1_rows = _reconstruction_loss_rows_for_stage(reference_root / v1_stage)
+            v2_rows = _reconstruction_loss_rows_for_stage(v2_root / v2_stage)
+        else:
+            v1_rows = _loss_rows_for_stage(reference_root / v1_stage)
+            v2_rows = _loss_rows_for_stage(v2_root / v2_stage)
         keys = sorted(set(v1_rows) | set(v2_rows), key=_parity_row_sort_key)
         for key in keys:
             v1 = v1_rows.get(key, {})
@@ -1839,6 +1849,21 @@ def _loss_rows_for_stage(stage_dir: Path) -> dict[tuple[str, str], dict[str, Any
             }
             for row in summary_rows
         }
+    manifest_path = stage_dir / "stage_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    loss = _stage_reconstruction_loss(_read_json(manifest_path))
+    if not loss:
+        return {}
+    return {
+        ("final", ""): {
+            "loss_before": loss.get("first", ""),
+            "loss_after": loss.get("last", ""),
+        }
+    }
+
+
+def _reconstruction_loss_rows_for_stage(stage_dir: Path) -> dict[tuple[str, str], dict[str, Any]]:
     manifest_path = stage_dir / "stage_manifest.json"
     if not manifest_path.exists():
         return {}

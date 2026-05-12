@@ -1023,6 +1023,52 @@ def test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale(tmp_path) -> 
     assert summary["artifacts"]["v1_parity_table_csv"] == str(table.resolve())
 
 
+def test_v1_parity_table_uses_cor_only_reconstruction_loss_and_flags_missing_rows(
+    tmp_path,
+) -> None:
+    (tmp_path / "reference").mkdir()
+    (tmp_path / "v2").mkdir()
+    reference_run = _write_minimal_real_mvp_run(tmp_path / "reference", final_last_loss=80.0)
+    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_report.parent.mkdir()
+    _write_json(reference_report, {"success": {"passed": True}})
+
+    v2_run = _write_minimal_real_mvp_run(tmp_path / "v2", final_last_loss=70.0)
+    manifest = json.loads((v2_run / "run_manifest.json").read_text())
+    manifest["workflow"] = {
+        "v1_parity_real_lamino": True,
+        "v1_parity_contract": {
+            "passed": True,
+            "mismatches": {},
+        },
+    }
+    _write_json(v2_run / "run_manifest.json", manifest)
+    (reference_run / "01_setup_geometry" / "03_axis_direction" / "stage_summary.csv").write_text(
+        "stage,level_factor,outer_iter,geometry_loss_before,geometry_loss_after,geometry_accepted\n"
+        "01_setup_geometry/03_axis_direction,1,1,2.0,1.0,True\n"
+        "01_setup_geometry/03_axis_direction,1,2,1.0,0.9,True\n",
+        encoding="utf-8",
+    )
+    (reference_run / "06_cor_only_fista" / "stage_summary.csv").write_text(
+        "stage,level_factor,outer_iter,geometry_loss_before,geometry_loss_after,geometry_accepted\n"
+        "01_setup_geometry/01_cor,8,1,38.0,37.0,True\n",
+        encoding="utf-8",
+    )
+
+    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+        v2_run,
+        out_dir=tmp_path / "parity_shape_report",
+        reference_report=reference_report,
+    )
+
+    audit = summary["v1_parity_audit"]
+    assert audit["status"] == "failed"
+    assert audit["row_shape_failures"][0]["stage"] == "01_setup_geometry/03_axis_direction"
+    table = (tmp_path / "parity_shape_report" / "real_mvp_v1_parity_table.csv").read_text()
+    assert "06_cor_only_fista,final,,120.0,100.0,120.0,100.0,1.0,matched," in table
+    assert "06_cor_only_fista,8,1" not in table
+
+
 def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

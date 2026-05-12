@@ -147,21 +147,46 @@ Stage evidence:
 - Final FISTA v2: `10744.5977 -> 6378.6333`; v1 reference:
   `10745.2734 -> 6438.1611`.
 
-### Remaining Risk
+### Parity Audit Regeneration
 
-The full run is valid functional evidence for the real-lamino MVP path, but the
-strict parity audit/report still has two shape issues:
+After the full run completed, the parity-audit table still exposed one real
+shape issue and one report bug. The report bug was fixed in
+`scripts/real_laminography/run_real_lamino_v2_cor_mvp.py`: FISTA-only stages
+`05_final` and `06_cor_only_fista` now always compare reconstruction loss from
+`stage_manifest.json` instead of preferring a copied `stage_summary.csv`. The
+audit also now records `row_shape_failures` and sets `status=failed` whenever
+v1/v2 row structure differs.
 
-- `06_cor_only_fista` emits spurious `missing_v2_row` entries because the table
-  compares v1 setup-iteration rows with a v2 final FISTA-only stage.
-- `01_setup_geometry/03_axis_direction` level 8 iteration 7 is marked
-  `missing_v2_row` because v2 early-stopped that level; the audit does not yet
-  fail missing-row statuses even though the parity prompt asks for the same
-  stage/level/iteration structure.
+The report for
+`runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512` was
+regenerated in place. Current parity-table status counts:
 
-These are reporting/audit correctness issues, not evidence that pose losses are
-still on the wrong scale. The next scoped slice should fix the parity-table row
-matching/fail criteria before treating the strict audit as complete.
+- `matched`: 85 rows.
+- `missing_v2_row`: 1 row.
+- `pose_loss_scale_failures`: 0 rows.
+
+The corrected `06_cor_only_fista` row is now:
+
+- v1 `10767.8857 -> 6804.6685`.
+- v2 `10766.2012 -> 6740.0513`.
+- loss-scale ratio after: `0.990504`.
+
+The remaining strict audit failure is real row-shape evidence:
+`01_setup_geometry/03_axis_direction`, level 8, iteration 7 is present in the
+v1 reference but absent in the v2 rerun because setup early stopping diverged
+by one row. This does not invalidate the pose-scale/final-reconstruction
+evidence above, but strict parity should not be marked complete until the
+axis-direction early-stop mismatch is investigated or the contract is adjusted
+with an explicit rationale.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py::test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale
+  tests/test_real_lamino_runner_contract.py::test_v1_parity_table_uses_cor_only_reconstruction_loss_and_flags_missing_rows
+  -q` passed: 2 tests.
+- `uv run ruff check scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001,E501` passed.
 
 ## 2026-05-12 - Real laminography v1 parity audit mode
 

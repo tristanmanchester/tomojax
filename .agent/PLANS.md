@@ -157,10 +157,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       Huber-FISTA Pallas path onto the JAX fallback.
 - [x] Rerun the full parity gate after the reconstruction fallback fix and
       inspect the emitted parity table before accepting dx-dz/polish parity.
-- [ ] Fix the remaining parity-audit reporting gaps: `06_cor_only_fista`
+- [x] Fix the remaining parity-audit reporting gaps: `06_cor_only_fista`
       currently emits spurious setup-iteration missing rows, and the audit does
       not fail missing-row statuses even though the prompt requires same
       stage/level/iteration structure.
+- [ ] Investigate the remaining strict parity row-shape failure:
+      `01_setup_geometry/03_axis_direction` level 8 iteration 7 is present in
+      the v1 reference and absent in the v2 rerun because setup early stopping
+      diverged by one row.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

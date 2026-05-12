@@ -33,13 +33,15 @@ v1 scale.
 
 ## Remaining Audit Gap
 
-This run is valid functional evidence, but the parity-report shape still has two
-known reporting gaps before the audit can be treated as strict pass/fail:
+This run is valid functional evidence, but the strict parity audit still has one
+known row-shape failure:
 
-- `06_cor_only_fista` emits spurious `missing_v2_row` entries because the table
-  compares v1 setup-iteration rows against a v2 final FISTA-only stage.
-- One setup row, `01_setup_geometry/03_axis_direction` level 8 iteration 7, is
-  marked `missing_v2_row` because v2 early-stopped that level. The audit does
-  not currently fail missing-row statuses even though the parity prompt asks for
-  the same stage/level/iteration structure.
+- `01_setup_geometry/03_axis_direction` level 8 iteration 7 is marked
+  `missing_v2_row` because v2 early-stopped that level while the v1 reference
+  emitted the row.
 
+The earlier `06_cor_only_fista` table issue was fixed after this run: FISTA-only
+stages now compare reconstruction loss from `stage_manifest.json` instead of a
+copied setup `stage_summary.csv`. The regenerated report has one matched
+`06_cor_only_fista` final row: v1 `10767.8857 -> 6804.6685`, v2
+`10766.2012 -> 6740.0513`.
