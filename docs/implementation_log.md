@@ -149,6 +149,31 @@ real-laminography tools.
   produced no matches.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
 
+## 2026-05-13 - Production-facing workflow docs
+
+### Scope
+
+Added the clean user-facing documentation bundle required for the
+production-hardening goal:
+
+- `docs/quickstart.md`
+- `docs/real-laminography.md`
+- `docs/synthetic-tomography.md`
+- `docs/known-limitations.md`
+- `docs/benchmark_runs/2026-05-13-production-readiness.md`
+
+The new docs point users at `run_real_lamino_staged.py`,
+`tomojax-align-auto --synthetic-case setup-global`, and
+`tomojax-align-auto --synthetic-case pose-random`, and they summarize the
+current real-data evidence plus the 128^3 setup/pose gate statuses.
+
+### Validation
+
+- `rg -n -i "\b(mvp|v1|parity|audit|cor_mvp|full_mvp|after_fista_fallback|smoke)\b"
+  README.md docs/quickstart.md docs/real-laminography.md
+  docs/synthetic-tomography.md docs/known-limitations.md
+  docs/benchmark_runs/2026-05-13-production-readiness.md` produced no matches.
+
 ## 2026-05-12 - Production hardening public naming cleanup
 
 ### Scope

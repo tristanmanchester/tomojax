@@ -13,6 +13,14 @@ The canonical v2 design docs live in [`docs/tomojax-v2/`](docs/tomojax-v2/):
 - [`06_verification_and_artifact_contract.md`](docs/tomojax-v2/06_verification_and_artifact_contract.md)
 - [`07_synthetic_generator_pseudocode.md`](docs/tomojax-v2/07_synthetic_generator_pseudocode.md)
 
+Current user-facing workflow docs:
+
+- [`docs/quickstart.md`](docs/quickstart.md)
+- [`docs/real-laminography.md`](docs/real-laminography.md)
+- [`docs/synthetic-tomography.md`](docs/synthetic-tomography.md)
+- [`docs/known-limitations.md`](docs/known-limitations.md)
+- [`docs/benchmark_runs/2026-05-13-production-readiness.md`](docs/benchmark_runs/2026-05-13-production-readiness.md)
+
 This is not a backwards-compatible refactor. The v2 work should prefer deep
 modules, small public APIs, typed boundaries, executable architecture checks,
 and deletion of obsolete staged-alignment compatibility code.

@@ -51,6 +51,8 @@ Tasks:
       production names.
 - [x] Rename real-laminography script entrypoints to staged/reference-regression
       names and hide legacy diagnostic aliases from public help.
+- [x] Add clean quickstart, real-laminography, synthetic-tomography, known
+      limitations, and production-readiness docs.
 
 Historical productionization plan follows for context.
 
