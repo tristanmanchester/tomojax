@@ -4,8 +4,10 @@ import csv
 import json
 import math
 import os
+from pathlib import Path
 import subprocess
 import sys
+import tomllib
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -19,8 +21,6 @@ from tomojax.datasets import generate_synthetic_dataset
 # pyright: reportPrivateUsage=false
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from numpy.typing import NDArray
 
 
@@ -54,6 +54,15 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "axis_rot_x_rad" in captured.out
     assert "axis_rot_y_rad" in captured.out
     assert "theta_scale" in captured.out
+
+
+def test_public_cli_scripts_use_production_auto_name() -> None:
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    scripts = cast("dict[str, str]", pyproject["project"]["scripts"])
+
+    assert scripts["tomojax-align-auto"] == "tomojax.cli.align_auto:main"
+    assert "tomojax-align-auto-smoke" not in scripts
+    assert "tomojax-alignment-smoke-bench" not in scripts
 
 
 def test_align_auto_cli_sets_jax_no_preallocate_before_tomojax_import() -> None:

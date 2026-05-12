@@ -47,6 +47,8 @@ Tasks:
       can be tested without bypassing clean `--synthetic-case` names.
 - [x] Record the current synthetic128 production-gate evidence in
       `docs/benchmark_runs/2026-05-13-synthetic128-production-gates.md`.
+- [x] Rename public auto-alignment console scripts from smoke/debug wording to
+      production names.
 
 Historical productionization plan follows for context.
 

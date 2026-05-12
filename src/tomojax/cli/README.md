@@ -36,7 +36,7 @@ Forbidden dependencies:
 ## Tests
 
 - Existing CLI tests cover transitional behavior.
-- `tomojax-align-auto-smoke` runs the deterministic Phase 7 `align=auto` smoke
-  pipeline and writes a run directory containing final volume, geometry, and
-  verification artifacts.
+- `tomojax-align-auto` runs deterministic staged synthetic tomography alignment
+  and writes a run directory containing final volume, geometry, and verification
+  artifacts.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.

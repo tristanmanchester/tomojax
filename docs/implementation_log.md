@@ -20,6 +20,9 @@ small but blocking issues before spending more time on full 128^3 gates:
   pose metrics, maps `dx_dz_rmse_px_lt` and `phi_rmse_deg_lt` manifest criteria
   to those metrics, and emits them in `benchmark_result.json` and
   `benchmark_report.md`.
+- The public console script is now `tomojax-align-auto` instead of
+  `tomojax-align-auto-smoke`, and the diagnostic benchmark console script is
+  now `tomojax-alignment-diagnostic-bench`.
 
 ### Evidence
 
@@ -87,6 +90,12 @@ with compile logging and phase timing before changing algorithms.
   tests/test_align_auto_cli.py::test_legacy_synthetic_tomo_mvp_case_is_hidden_alias
   tests/test_align_auto_cli.py::test_pose_random_manifest_criteria_evaluate_supported_pose_metrics
   -q` passed: 6 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_public_cli_scripts_use_production_auto_name
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  -q` passed: 2 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run tomojax-align-auto
+  --help` displayed the clean `tomojax-align-auto` usage.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
   src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_verification.py
   src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py
