@@ -36,6 +36,9 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 | `synth128_setup_global_tomo` | 128^3 | 256 | `diagnostic-fast` after loss-cache fix | passed | 500 s wrapper, 164.03 s benchmark | 1402 MiB | `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache` |
 | `synth128_pose_random_extreme` | 128^3 | 256 | `diagnostic-fast` after loss-cache fix | failed pose gate | 419 s wrapper, 139.94 s benchmark | 1402 MiB | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_after_loss_cache` |
 | `synth128_pose_random_extreme` | 128^3 | 16 | `reference` diagnostic | failed, worse than diagnostic-fast | 183 s wrapper, 60.56 s benchmark | not sampled | `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_reference_probe` |
+| `synth128_lamino_axis_roll_pose` | 128^3 | 256 | explicit setup+pose oracle diagnostic | failed laminography geometry | 500 s wrapper, 227.86 s benchmark | 1406 MiB | `.artifacts/production_hardening_synthetic/synth128_lamino_axis_roll_pose_128_classification` |
+| `synth128_thermal_object_drift` | 128^3 | 256 | explicit setup+pose oracle diagnostic | failed object-motion recovery | 524 s wrapper, 174.19 s benchmark | 1404 MiB | `.artifacts/production_hardening_synthetic/synth128_thermal_object_drift_128_classification` |
+| `synth128_combined_nuisance_jumps` | 128^3 | 320 | explicit setup+pose oracle diagnostic with nuisance applied | failed hard-case recovery | 614 s wrapper, 279.28 s benchmark | 1436 MiB | `.artifacts/production_hardening_synthetic/synth128_combined_nuisance_jumps_128_classification` |
 
 Earlier baseline evidence kept for comparison:
 
@@ -95,6 +98,53 @@ the oracle fixed-volume pose gate needs a native-level pose refinement that can
 continue reducing accepted pose residual without falling into setup/pose gauge
 coupling or prematurely declaring the update small.
 
+## Remaining Original Scenarios
+
+The remaining original synthetic128 cases were exercised as diagnostic
+classification runs rather than marked green through unsupported terms.
+
+### Laminography Axis/Roll/Pose
+
+`synth128_lamino_axis_roll_pose` ran at 128^3/256 views on `cuda:0` with the
+core trilinear backend. It failed 2/5 criteria:
+
+- Passed: `det_u_error_px_lt`, `backend_policy`.
+- Failed: `axis_error_deg_lt`, `detector_roll_error_deg_lt`.
+- Not evaluated: `det_v_policy`, because the result does not yet contain
+  unobservability-policy evidence.
+
+The backend report correctly records a fallback for the calibrated
+noncanonical detector grid policy. The blocker is laminography axis/roll
+recovery and det-v observability reporting, not dataset generation.
+
+### Thermal Object Drift
+
+`synth128_thermal_object_drift` ran at 128^3/256 views on `cuda:0`. It failed
+1/2 criteria:
+
+- Passed: `core_solver = flags_object_motion_suspected`.
+- Failed: `object_motion_enabled_tx_rmse_px_lt`, because object-frame motion
+  recovery is not enabled. The zero-model `tx_rmse_px` was
+  `7.318335768364758` against `< 1.5`.
+
+This is a correctly classified unsupported model term: v2 can flag object
+motion suspicion, but it does not yet solve object-frame drift.
+
+### Combined Nuisance/Jumps
+
+`synth128_combined_nuisance_jumps` ran at 128^3/320 views on `cuda:0` with
+synthetic nuisance applied. It failed 3/6 criteria:
+
+- Passed: `bad_views_flagged` and `pose_dx_dz_rmse_px_lt_except_jumps`.
+- Failed: `axis_roll_error_deg_lt`, `det_u_error_px_lt`, and
+  `theta_offset_error_deg_lt`.
+- Not evaluated: `beats_current_default_nmse`, because no current-default
+  baseline was supplied in the benchmark result.
+
+The bad-view detector flagged 23 high-residual views, so bad-view observability
+is present. The blocker is hard-case setup/axis/roll/theta recovery under
+nuisance and jump structure, plus missing baseline comparison evidence.
+
 ## Commands
 
 Setup-global full-view gate:
@@ -127,6 +177,10 @@ env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
   --synthetic-case pose-random --size 128 --views 16 --profile reference
 ```
 
+Remaining scenario classification commands used the same CUDA prefix and
+explicit `--synthetic-dataset` names, with active setup and pose DOFs enabled
+where applicable. Artifacts are listed in the summary table.
+
 ## Next Fixes
 
 1. Keep the compile-cache changes; they turned the setup-global 256-view gate
@@ -137,5 +191,9 @@ env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
    updates across levels and add a native-resolution pose refinement policy that
    continues while loss is still reducing and pose criteria are still outside
    tolerance.
-3. Do not treat the 4-view or 16-view diagnostics as alignment-quality gates.
+3. Add real object-frame drift recovery before treating
+   `synth128_thermal_object_drift` as passable.
+4. Improve laminography axis/roll/theta recovery and det-v policy evidence
+   before treating the laminography and combined hard cases as passable.
+5. Do not treat the 4-view or 16-view diagnostics as alignment-quality gates.
    They are now wiring/triage checks only.

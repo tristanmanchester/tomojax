@@ -46,6 +46,20 @@ CUDA runs used `LD_LIBRARY_PATH` populated from
 - `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_reference_probe`:
   existing `reference` profile diagnostic did not fix pose under-iteration; it
   made 16-view pose recovery worse than `diagnostic-fast`.
+- `.artifacts/production_hardening_synthetic/synth128_lamino_axis_roll_pose_128_classification`:
+  128^3, 256 views, `cuda:0`, explicit setup+pose oracle diagnostic. The run
+  completed with 1406 MiB peak sampled GPU memory and failed laminography
+  axis/roll criteria while passing det-u and backend fallback policy.
+- `.artifacts/production_hardening_synthetic/synth128_thermal_object_drift_128_classification`:
+  128^3, 256 views, `cuda:0`, explicit setup+pose oracle diagnostic. The run
+  completed with 1404 MiB peak sampled GPU memory; object motion suspicion was
+  correctly flagged, but object-frame motion recovery failed because that solver
+  is not enabled.
+- `.artifacts/production_hardening_synthetic/synth128_combined_nuisance_jumps_128_classification`:
+  128^3, 320 views, `cuda:0`, nuisance applied. The run completed with 1436
+  MiB peak sampled GPU memory. Bad-view detection and jump-excluded dx/dz
+  passed, while setup/axis/roll/theta recovery failed and current-default NMSE
+  comparison was not evaluated.
 
 ### Diagnosis
 
@@ -55,6 +69,12 @@ That failure is now isolated to oracle fixed-volume pose recovery: all five
 pose DOFs are active, setup parameters are inactive, the run uses
 `fixed_synthetic_truth`, and the failure persists after trying the existing
 longer public reference profile on a bounded 16-view diagnostic.
+
+The remaining original synthetic128 cases are runnable and now explicitly
+classified. None is green: laminography needs axis/roll and det-v policy work,
+thermal drift needs real object-frame motion recovery, and the combined
+nuisance/jumps case still fails setup/axis/theta recovery under hard residual
+structure.
 
 ### Validation
 

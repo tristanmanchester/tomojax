@@ -45,6 +45,9 @@ canonical `core_trilinear_ray` backend.
 |---|---|---|
 | `synth128_setup_global_tomo` | passed at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache` |
 | `synth128_pose_random_extreme` | failed pose recovery at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_after_loss_cache` |
+| `synth128_lamino_axis_roll_pose` | failed laminography axis/roll recovery at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_lamino_axis_roll_pose_128_classification` |
+| `synth128_thermal_object_drift` | flagged object motion but failed recovery because object-frame motion solver is not enabled | `.artifacts/production_hardening_synthetic/synth128_thermal_object_drift_128_classification` |
+| `synth128_combined_nuisance_jumps` | failed hard-case setup/axis/theta recovery at 128^3/320 views; bad-view and jump-excluded dx/dz diagnostics evaluated | `.artifacts/production_hardening_synthetic/synth128_combined_nuisance_jumps_128_classification` |
 
 Detailed metrics, commands, device provenance, runtime, and memory evidence are
 in `docs/benchmark_runs/2026-05-13-synthetic128-production-gates.md`.
@@ -64,9 +67,9 @@ memory and passed all setup/COR/roll/axis/theta criteria.
   tolerances.
 - The next functional slice should improve native-resolution pose Schur update
   policy/conditioning, not add report fields or rename more aliases.
-- Remaining original synthetic scenarios beyond the two mandatory tomography
-  gates still need explicit run/not-implemented classification before the whole
-  production-hardening goal can be called complete.
+- Remaining original synthetic scenarios are now explicitly classified, but the
+  full production-hardening goal is not complete because pose-random and the
+  hard laminography/object-motion/nuisance cases remain red.
 
 ## Validation Snapshot
 

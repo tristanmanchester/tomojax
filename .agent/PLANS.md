@@ -61,6 +61,9 @@ Tasks:
 - [x] Cache streamed Schur loss and per-view loss diagnostics within each LM
       solve, rerun the mandatory 128^3/256-view setup-global and pose-random
       gates on CUDA, and record the pass/fail evidence.
+- [x] Exercise or explicitly classify the remaining original synthetic128
+      scenarios: laminography axis/roll/pose, thermal object drift, and
+      combined nuisance/jumps.
 
 Historical productionization plan follows for context.
 
