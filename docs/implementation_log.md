@@ -42,6 +42,25 @@ found.
   `phi_rmse_rad=0.0840800850321713`, and
   `alpha_beta_rmse_rad=0.010499916709634224`; all three fail the strict
   manifest thresholds.
+- `.artifacts/production_hardening_synthetic/synth128_setup_global_16views_compile_probe`:
+  `synth128_setup_global_tomo`, 128^3, 16 views, `cuda:0`,
+  `core_trilinear_ray`. The diagnostic schedule recovered all four manifest
+  geometry criteria, with `det_u_realized_rmse_px=0.00014972686767578125`,
+  `theta_realized_rmse_rad=6.784388294267529e-06`,
+  `detector_roll_error_rad=7.4714474751092635e-06`, and
+  `axis_error_rad=1.4542516068081725e-05`. The run produced 2467 JAX
+  compilations, dominated by `jit(scan)` and `jit(cond)`.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_compile_probe`:
+  `synth128_pose_random_extreme`, 128^3, 16 views, `cuda:0`,
+  `core_trilinear_ray`. All required pose criteria were evaluated and failed:
+  `dx_dz_rmse_px=1.347414703523529`,
+  `phi_rmse_rad=0.22649383775390775`, and
+  `alpha_beta_rmse_rad=0.018122811693180637`. The run produced 2445 JAX
+  compilations, again dominated by `jit(scan)` and `jit(cond)`.
+- Explicit `--profile` values are now preserved by `--synthetic-case`; this
+  allowed 128^3/16-view `fast` and `balanced` setup-global probes. Both reduced
+  compile/runtime cost but failed setup recovery, so they are not valid
+  substitutes for the diagnostic schedule yet.
 - A full `synth128_setup_global_tomo` 128^3/256-view CUDA attempt was launched
   at `.artifacts/production_hardening_synthetic/synth128_setup_global_128`.
   It selected the GPU backend and held roughly 1.25 GiB on `cuda:0`, but
@@ -64,9 +83,10 @@ with compile logging and phase timing before changing algorithms.
   tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
   tests/test_align_auto_cli.py::test_synthetic_setup_global_case_resolves_bounded_oracle
   tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_synthetic_case_preserves_explicit_profile
   tests/test_align_auto_cli.py::test_legacy_synthetic_tomo_mvp_case_is_hidden_alias
   tests/test_align_auto_cli.py::test_pose_random_manifest_criteria_evaluate_supported_pose_metrics
-  -q` passed: 5 tests.
+  -q` passed: 6 tests.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
   src/tomojax/cli/align_auto.py src/tomojax/align/_alternating_verification.py
   src/tomojax/align/_alternating_artifacts.py tests/test_align_auto_cli.py

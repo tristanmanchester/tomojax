@@ -43,6 +43,10 @@ Tasks:
 - [x] Rerun the smallest useful synthetic gate after preset fixes.
 - [x] Attempt current 128^3 mandatory setup-global and pose-random gates on
       CUDA and record artifacts/failures.
+- [x] Preserve explicit synthetic profile selection so lower-update schedules
+      can be tested without bypassing clean `--synthetic-case` names.
+- [x] Record the current synthetic128 production-gate evidence in
+      `docs/benchmark_runs/2026-05-13-synthetic128-production-gates.md`.
 
 Historical productionization plan follows for context.
 

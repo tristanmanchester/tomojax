@@ -350,7 +350,6 @@ def _apply_synthetic_case(args: argparse.Namespace) -> None:
         case = legacy_case.replace("_", "-").replace("pose-random-extreme", "pose-random")
     if case == "none":
         return
-    args.profile = "diagnostic-fast"
     if int(args.views) == 4:
         args.views = 8
     args.geometry_update_volume_source = "fixed_synthetic_truth"

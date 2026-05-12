@@ -180,6 +180,25 @@ def test_synthetic_pose_random_case_resolves_bounded_oracle(
     assert cast("float", args.geometry_update_pose_trust_radius) == -1.0
 
 
+def test_synthetic_case_preserves_explicit_profile(tmp_path: Path) -> None:
+    parser = align_auto_cli._build_parser()
+    args = parser.parse_args(
+        [
+            "--out-dir",
+            str(tmp_path),
+            "--synthetic-case",
+            "setup-global",
+            "--profile",
+            "fast",
+        ]
+    )
+
+    align_auto_cli._apply_synthetic_case(args)
+
+    assert cast("str", args.profile) == "fast"
+    assert cast("str", args.synthetic_dataset) == "synth128_setup_global_tomo"
+
+
 def test_legacy_synthetic_tomo_mvp_case_is_hidden_alias(tmp_path: Path) -> None:
     parser = align_auto_cli._build_parser()
     args = parser.parse_args(
