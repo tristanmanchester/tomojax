@@ -120,6 +120,23 @@ is the 128^3/256-view run, which now passes for `synth128_pose_random_extreme`.
   tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
+Follow-up public-surface audit found only transfer-guard help text still using
+debug wording in the public CLI modules. That wording was changed to
+diagnostics without changing the option contract.
+
+Validation for that public-help cleanup:
+
+- `uv run ruff check src/tomojax/cli/align.py src/tomojax/cli/misalign.py
+  src/tomojax/cli/recon.py src/tomojax/cli/simulate.py --select F821,I001`
+  passed.
+- `uv run ruff check src/tomojax/cli/align.py src/tomojax/cli/recon.py
+  src/tomojax/cli/simulate.py --select E501` passed. `misalign.py` still has
+  unrelated pre-existing E501 lines, so it was excluded from the E501-only
+  public-help check.
+- Public help for `tomojax-align`, `tomojax-recon`, `tomojax-misalign`, and
+  `tomojax-simulate` no longer contains `debug`; each still describes the
+  transfer guard as a diagnostics option.
+
 ## 2026-05-12 - Synthetic128 full-view gates after Schur loss-cache fix
 
 ### Scope

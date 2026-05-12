@@ -76,6 +76,8 @@ Tasks:
 - [x] Refresh the morning-facing production hardening/readiness reports so they
       reflect the now-green mandatory 128^3 tomography gates and do not expose
       historical development names as current product language.
+- [x] Remove remaining public CLI transfer-guard help wording that described
+      diagnostic modes as debugging.
 
 Historical productionization plan follows for context.
 

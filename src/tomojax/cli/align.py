@@ -565,7 +565,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--transfer-guard",
         choices=["off", "log", "disallow"],
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
-        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+        help=(
+            "JAX transfer guard mode during compute "
+            "(default: off; use log/disallow for diagnostics)"
+        ),
     )
     p.add_argument("--out", help="Output .nxs with recon and alignment params")
     p.add_argument(

@@ -326,7 +326,10 @@ def main() -> None:
         "--transfer-guard",
         choices=["off", "log", "disallow"],
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
-        help="JAX transfer guard mode during compute (default: off; use log/disallow when debugging)",
+        help=(
+            "JAX transfer guard mode during compute "
+            "(default: off; use log/disallow for diagnostics)"
+        ),
     )
     args = p.parse_args()
 
