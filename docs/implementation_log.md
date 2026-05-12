@@ -3,6 +3,86 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Real laminography phi parity reconstruction fallback
+
+### Scope
+
+Fixed the remaining `02_pose_phi` level-2 parity failure after correcting the
+real-laminography parity contract to `pose_model=per_view`.
+
+The corrected per-view parity rerun
+`runs/real_lamino_v2_v1_parity_perview_full_20260512` still failed at phi
+level 2 even though setup geometry was close to the v1 reference. The failure
+was not pose parameterisation: the pose-stage reconstruction was using the
+Huber-FISTA core after the requested Pallas path fell back to JAX for calibrated
+detector grids. That core path used the heuristic Lipschitz estimate instead of
+the public FISTA measured-L policy. At phi level 2 this produced
+`L_next=39331.2`, a finite but invalid checkpoint volume with values around
+`14..1577`, and a pose loss of `3.84e15`. The v1 reference used measured
+Lipschitz values around `7.1e4 -> 1.0e5` and kept the volume at normal
+`~1e-2` scale.
+
+Changes:
+
+- When `regulariser=huber_tv` and the requested reconstruction backend cannot
+  use Pallas because the calibrated detector grid is unsupported, bypass the
+  Huber-FISTA core and run the public streamed FISTA path instead.
+- Preserve the calibrated-grid fallback reason and record
+  `recon_public_fista_fallback=true` in reconstruction stats.
+- Added focused coverage proving the calibrated-grid fallback bypasses the core
+  and propagates the public FISTA measured `L`.
+
+### Evidence
+
+A full v1-parity rerun was started at
+`runs/real_lamino_v2_v1_parity_public_fista_fallback_20260512`, but was stopped
+before pose because it spent nearly an hour redoing setup/COR and COR-only
+publication. It did not exercise the changed code path.
+
+The targeted CUDA phi-only diagnostic
+`runs/real_lamino_v2_v1_parity_phi_only_public_fista_fallback_20260512` reused
+the completed setup state from
+`runs/real_lamino_v2_v1_parity_perview_full_20260512/01_setup_geometry/03_axis_direction`
+and ran the same parity phi schedule until the former failure point:
+
+- v2 phi level 4: `129.6613 -> 129.6380`, then `129.2120 -> 129.2060`.
+- v2 phi level 2 after the fix: `481.9891 -> 481.8374`, then
+  `478.7205 -> 478.6606`.
+- v1 reference phi level 2: `482.2211 -> 482.1140`, then
+  `479.0894 -> 479.0851`.
+- Fixed level-2 reconstruction stats: measured `L` values
+  `71321.834375` and `85595.80125`, with `L_next=102714.9615`.
+- Fixed level-2 checkpoint volume stayed finite and normal scale:
+  min `-0.0127577`, max `0.0225589`, mean `-8.39986e-05`.
+- The prior failed per-view run had level-2 loss
+  `3.840184214880256e15 -> 3.837954321547264e15` and checkpoint volume
+  min `13.9775`, max `1576.91`, mean `657.942`.
+
+The targeted diagnostic was stopped during level 1 after the decisive level-2
+evidence was recorded. The remaining parity work is to rerun the full
+`--v1-parity-real-lamino` gate and inspect the emitted parity table for
+dx/dz, polish, and final reconstruction.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_pose_reconstruction_fail_closed.py -q` passed: 3 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_v1_parity_mode_forces_reference_contract
+  tests/test_real_lamino_runner_contract.py::test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale
+  -q` passed: 2 tests.
+- `uv run ruff check src/tomojax/align/_reconstruction_stage.py
+  tests/test_pose_reconstruction_fail_closed.py --select F821,I001,E501`
+  passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_reconstruction_stage.py
+  tests/test_pose_reconstruction_fail_closed.py` was attempted and failed on
+  existing strict-typing issues in this private reconstruction module/test
+  surface, mostly unknown JAX/public-FISTA return types and private test access.
+  This slice did not take on that legacy type cleanup.
+
 ## 2026-05-12 - Real laminography v1 parity audit mode
 
 ### Scope

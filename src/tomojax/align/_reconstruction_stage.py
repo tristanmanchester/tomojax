@@ -162,6 +162,8 @@ def _reconstruction_step_stat(
         "data_loss_computed": bool(info_mapping.get("data_loss_computed", False)),
         "regulariser_value_computed": bool(info_mapping.get("regulariser_value_computed", False)),
     }
+    if bool(info_mapping.get("recon_public_fista_fallback", False)):
+        stat["recon_public_fista_fallback"] = True
     L_next = _record_reconstruction_info(
         stat,
         info_rec=info_mapping,
@@ -234,6 +236,22 @@ def _retry_info_after_nonfinite_core(
         "regulariser": str(getattr(cfg, "regulariser", "")),
         "data_loss_computed": True,
         "regulariser_value_computed": True,
+    }
+
+
+def _public_fista_info_after_core_bypass(
+    *,
+    public_info: Mapping[str, object],
+    fallback_reason: str,
+    cfg: object,
+) -> Mapping[str, object]:
+    return {
+        **dict(public_info),
+        "recon_public_fista_fallback": True,
+        "fallback_reason": fallback_reason,
+        "actual_backend": "jax",
+        "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
+        "regulariser": str(getattr(cfg, "regulariser", "")),
     }
 
 
@@ -369,6 +387,13 @@ def _run_reconstruction_step(  # noqa: PLR0915
             gather_dtype=str(cfg.gather_dtype),
             fallback_policy=str(getattr(cfg, "fallback_policy", "fallback")),
         )
+        if actual_backend == "jax" and fallback_reason:
+            x_public, public_info = _run_fista(1, 1, "fp32", "stream")
+            return x_public, _public_fista_info_after_core_bypass(
+                public_info=public_info,
+                fallback_reason=fallback_reason,
+                cfg=cfg,
+            )
         quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
         core_cfg = FistaCoreConfig(
             iters=int(cfg.recon_iters),
@@ -452,6 +477,8 @@ def _run_reconstruction_step(  # noqa: PLR0915
     if recon_algo == "fista":
         if str(cfg.regulariser) == "huber_tv":
             x_out, info_rec = _run_huber_fista_core()
+            if bool(info_rec.get("recon_public_fista_fallback", False)):
+                recon_retry = True
             jax.block_until_ready(x_out)
             core_finite_fraction = _finite_fraction(x_out)
             if core_finite_fraction < 1.0:

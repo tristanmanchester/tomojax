@@ -106,6 +106,80 @@ def test_huber_fista_core_nonfinite_output_retries_public_streamed_fista(monkeyp
     assert stat["recon_fallback_reason"] == "huber_fista_core_nonfinite_retry_public_stream"
 
 
+def test_huber_fista_calibrated_grid_fallback_uses_public_measured_l(monkeypatch):
+    grid, detector, geometry, _volume, projections, det_grid = _case()
+    x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    def fake_resolve_backend(**_kwargs):
+        return "jax", "pallas_projector_unsupported: det_grid must be canonical"
+
+    def fail_core_jit(*_args, **_kwargs):
+        raise AssertionError("calibrated-grid fallback should bypass Huber-FISTA core")
+
+    def fake_public_fista(*_args, init_x, config, **_kwargs):
+        assert config.L is None
+        assert config.views_per_batch == 1
+        assert config.gather_dtype == "fp32"
+        assert config.grad_mode == "stream"
+        return (
+            jnp.ones_like(init_x) * jnp.float32(0.125),
+            {
+                "loss": [5.0, 4.0],
+                "L": 80.0,
+                "effective_iters": 2,
+                "early_stop": False,
+                "regulariser": "huber_tv",
+                "huber_delta": 0.01,
+                "data_loss_computed": True,
+                "regulariser_value_computed": True,
+            },
+        )
+
+    monkeypatch.setattr(
+        reconstruction_stage_module,
+        "_resolve_reconstruction_projector_backend",
+        fake_resolve_backend,
+    )
+    monkeypatch.setattr(reconstruction_stage_module, "_run_huber_fista_core_jit", fail_core_jit)
+    monkeypatch.setattr(reconstruction_stage_module, "fista_tv", fake_public_fista)
+
+    x_out, l_next, stat = _run_reconstruction_step(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        det_grid=det_grid,
+        params5=jnp.zeros((projections.shape[0], 5), dtype=jnp.float32),
+        x=x0,
+        cfg=AlignConfig(
+            align_profile="lightning",
+            outer_iters=1,
+            recon_iters=2,
+            regulariser="huber_tv",
+            lambda_tv=0.0,
+            views_per_batch=0,
+            projector_backend="pallas",
+            gather_dtype="bf16",
+        ),
+        L_prev=None,
+        outer_idx=1,
+        recon_algo="fista",
+    )
+
+    np.testing.assert_allclose(np.asarray(x_out), np.full_like(np.asarray(x_out), 0.125))
+    assert l_next == 96.0
+    assert stat["recon_retry"] is True
+    assert stat["recon_public_fista_fallback"] is True
+    assert stat["recon_actual_backend"] == "jax"
+    assert (
+        stat["recon_fallback_reason"]
+        == "pallas_projector_unsupported: det_grid must be canonical"
+    )
+    assert stat["L_meas"] == 80.0
+    assert stat["reconstruction_finite_fraction"] == 1.0
+    assert stat.get("reconstruction_failed") is not True
+
+
 def test_align_stops_before_pose_update_when_reconstruction_remains_nonfinite(monkeypatch):
     grid, detector, geometry, _volume, projections, _det_grid = _case()
     x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)

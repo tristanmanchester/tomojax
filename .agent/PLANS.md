@@ -149,9 +149,14 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Root-cause the first wildly different v2 pose-loss scale before
       accepting a pose stage as parity: the initial parity mode used spline
       pose while the committed v1 reference run used per-view pose.
-- [ ] Rerun full `--v1-parity-real-lamino` after correcting parity pose model
+- [x] Rerun full `--v1-parity-real-lamino` after correcting parity pose model
       to `per_view`, then inspect the emitted parity table before accepting
       phi/dx-dz/polish parity.
+- [x] Fix the remaining phi level-2 parity failure by restoring v1-style
+      measured-L FISTA behavior when calibrated detector grids force the
+      Huber-FISTA Pallas path onto the JAX fallback.
+- [ ] Rerun the full parity gate after the reconstruction fallback fix and
+      inspect the emitted parity table before accepting dx-dz/polish parity.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 
