@@ -683,7 +683,7 @@ def _maybe_run_final_pose_polish(
         last_schur_result=last_schur_result,
         role=role,
         updates=updates,
-        active_setup_parameters=("det_u_px",),
+        active_setup_parameters=tuple(config.geometry_update_active_setup_parameters),
         active_pose_dofs=(
             "alpha_rad",
             "beta_rad",

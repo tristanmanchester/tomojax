@@ -27,6 +27,7 @@ import tomojax.align._alternating_orchestration as alternating_orchestration
 from tomojax.align._alternating_orchestration import (
     _apply_candidate_refresh_acceptance,
     _candidate_refresh_initial_volume,
+    _maybe_run_final_pose_polish,
     _run_phi_polish,
     _run_polish_stage,
     _uses_geometry_first_det_u_bootstrap,
@@ -323,6 +324,54 @@ def test_final_pose_polish_can_open_det_u_with_all_pose_dofs() -> None:
         "dz_px",
     )
     assert result.final_loss <= result.initial_loss
+
+
+def test_final_pose_polish_respects_configured_setup_parameters() -> None:
+    volume = _tiny_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    true_geometry = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            alpha_rad=np.asarray([0.01, -0.015], dtype=np.float64),
+            beta_rad=np.asarray([-0.02, 0.01], dtype=np.float64),
+            phi_residual_rad=np.asarray([0.04, -0.05], dtype=np.float64),
+            dx_px=np.asarray([0.3, -0.2], dtype=np.float64),
+            dz_px=np.asarray([-0.1, 0.15], dtype=np.float64),
+        ),
+        acquisition=nominal.acquisition,
+    )
+    observed = project_parallel_reference(volume, true_geometry)
+
+    _geometry, _report, result = _maybe_run_final_pose_polish(
+        AlternatingSmokeConfig(
+            geometry_update_volume_source="fixed_synthetic_truth",
+            geometry_update_final_pose_polish_updates=1,
+            geometry_update_active_setup_parameters=(),
+        ),
+        reference_continuation_schedule("reference").levels[-1],
+        summaries=[],
+        truth_volume=volume,
+        stopped_volume=volume,
+        observed=observed,
+        train_mask=jnp.ones_like(observed),
+        full_mask=jnp.ones_like(observed),
+        heldout_mask=None,
+        geometry=nominal,
+        gauge_report=GaugeReport(()),
+        last_schur_result=None,
+        role="final_pose_polish",
+        updates=1,
+    )
+
+    assert result is not None
+    assert result.active_setup_parameters == ()
+    assert result.active_pose_dofs == (
+        "alpha_rad",
+        "beta_rad",
+        "phi_residual_rad",
+        "dx_px",
+        "dz_px",
+    )
 
 
 def test_geometry_recovery_can_exclude_flagged_bad_view() -> None:

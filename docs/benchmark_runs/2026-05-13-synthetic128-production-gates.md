@@ -98,6 +98,21 @@ the oracle fixed-volume pose gate needs a native-level pose refinement that can
 continue reducing accepted pose residual without falling into setup/pose gauge
 coupling or prematurely declaring the update small.
 
+Existing polish knobs were tested on 128^3/16-view diagnostics and did not
+solve the pose gate:
+
+- `synth128_pose_random_16views_final_pose_polish_probe`: 16 final pose-polish
+  updates failed all three pose criteria and revealed a det-u setup leak in the
+  final polish path.
+- `synth128_pose_random_16views_pose_only_polish_probe`: after fixing final
+  pose polish to respect configured setup parameters, pose-only polishing still
+  failed all three criteria.
+- `synth128_pose_random_16views_phi_polish_probe`: 16 phi-only polish updates
+  also failed all three criteria.
+
+These probes rule out simply adding more of the existing polish stages as the
+next production fix.
+
 ## Remaining Original Scenarios
 
 The remaining original synthetic128 cases were exercised as diagnostic

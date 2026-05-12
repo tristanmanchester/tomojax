@@ -76,6 +76,22 @@ thermal drift needs real object-frame motion recovery, and the combined
 nuisance/jumps case still fails setup/axis/theta recovery under hard residual
 structure.
 
+Existing polish knobs were checked before adding new pose-solver behavior:
+
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_final_pose_polish_probe`
+  used 16 final pose-polish updates and failed all pose criteria. This exposed
+  that final pose polish was hard-opening `det_u_px` even for pose-random runs
+  where configured active setup parameters are empty.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_pose_only_polish_probe`
+  reran after fixing final pose polish to respect configured setup parameters;
+  it still failed and made dx/dz and phi worse than the baseline diagnostic.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_phi_polish_probe`
+  used 16 phi-only polish updates and also failed all pose criteria.
+
+Conclusion: pose-random needs a deeper pose Schur conditioning/update-policy
+fix. Adding final polish iterations or phi-only polish is not the right low-risk
+recovery path.
+
 ### Validation
 
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
@@ -87,6 +103,9 @@ structure.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
   tests/test_alternating_solver_smoke.py::test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume
   -q` passed: 1 test in 72.27 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_final_pose_polish_respects_configured_setup_parameters
+  -q` passed: 1 test in 5.52 seconds.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
   tests/test_align_auto_cli.py::test_align_auto_smoke_command_writes_core_artifacts
   tests/test_align_auto_cli.py::test_align_auto_smoke_command_can_enable_gain_offset_nuisance
@@ -113,6 +132,20 @@ structure.
   src/tomojax/align/_joint_schur_lm.py tests/test_align_auto_cli.py` passed
   with 0 errors, 0 warnings, and 0 notes.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+- After the final pose-polish setup-parameter fix,
+  `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_final_pose_polish_respects_configured_setup_parameters
+  -q` passed again: 1 test in 5.45 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py --select F821,I001,E501`
+  passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py` passed with 0 errors,
+  0 warnings, and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed again.
 
 ## 2026-05-12 - Streamed Schur normal-equation compile cache
 

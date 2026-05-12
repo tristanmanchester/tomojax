@@ -64,6 +64,9 @@ Tasks:
 - [x] Exercise or explicitly classify the remaining original synthetic128
       scenarios: laminography axis/roll/pose, thermal object drift, and
       combined nuisance/jumps.
+- [x] Verify existing final pose/phi polish knobs do not solve pose-random and
+      fix the final pose-polish setup-parameter leak so pose-only diagnostics
+      remain pose-only.
 
 Historical productionization plan follows for context.
 
