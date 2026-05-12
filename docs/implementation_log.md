@@ -3,6 +3,51 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Synthetic data public-story inventory
+
+### Scope
+
+Completed the lightweight synthetic-story inventory required by the
+productionization goal and made the existing public data facade match that
+story.
+
+Changes:
+
+- Exposed Beer-Lambert conversion helpers through `tomojax.data`:
+  `transmission_to_absorption`, `absorption_to_transmission`, and
+  `flat_dark_to_absorption`.
+- Exposed deterministic projection artefact controls through `tomojax.data`:
+  `SimulationArtefacts` and `apply_simulation_artefacts`.
+- Added a public-path regression test proving the package facade can create a
+  nontrivial random cubes+spheres phantom, perform an absorption/transmission
+  roundtrip, and apply deterministic projection artefacts.
+- Updated the real MVP morning report with an inventory of implemented versus
+  design-only synthetic functionality.
+
+Current synthetic story:
+
+- Implemented: random cubes+spheres / PHANTOM94-style phantoms, benchmark
+  phantoms, Beer-Lambert conversion helpers, Gaussian/Poisson noise, blur,
+  stripes, dead/hot pixels, zingers, dropped views, intensity drift, and small
+  public simulation plumbing.
+- Not yet complete: the full `synthetic128` rich generator with rods/fibres,
+  thin plates/sheets, void-rich ellipsoids, marker clusters, object-frame
+  thermal drift, and all hard nuisance/jump stress cases.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_simulate.py tests/test_contrast.py tests/test_simulation_artefacts.py
+  tests/test_phantoms_random_shapes.py -q` passed: 32 passed, 1 skipped
+  heavy phantom regression.
+- `uv run ruff check src/tomojax/data/__init__.py tests/test_simulate.py
+  --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/data/__init__.py tests/test_simulate.py` completed with 0 errors
+  and 45 warnings from the existing simulation test/public facade typing.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Real-lamino MVP and parity profiles
 
 ### Scope

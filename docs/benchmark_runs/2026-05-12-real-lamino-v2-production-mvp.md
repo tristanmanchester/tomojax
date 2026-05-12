@@ -189,6 +189,38 @@ MVP result with honest provenance.
 | Phase 9 Pallas fast paths | `partial` | Pallas fast paths exist and rigid detector-grid folding was added, but parity mode intentionally preserves measured-FISTA fallback where required. |
 | Phase 10 experimental modules | `out_of_scope_for_mvp` | Not needed for the overnight real-data MVP. |
 
+## Synthetic Story Inventory
+
+Implemented today:
+
+- `tomojax.data.random_cubes_spheres` provides deterministic rich random
+  cubes+spheres phantoms, including the PHANTOM94-style path used by existing
+  synthetic diagnostics.
+- `tomojax.datasets.make_benchmark_phantom` provides the newer benchmark
+  phantom used by v2 alternating smoke artifacts.
+- `tomojax.data.transmission_to_absorption`,
+  `tomojax.data.absorption_to_transmission`, and
+  `tomojax.data.flat_dark_to_absorption` expose Beer-Lambert-style conversion
+  helpers through the public data API.
+- `tomojax.data.SimulationArtefacts` and
+  `tomojax.data.apply_simulation_artefacts` expose deterministic projection
+  artefacts/noise through the public data API: Gaussian/Poisson noise, blur,
+  stripes, dead/hot pixels, zingers, dropped views, and intensity drift.
+- `tomojax.data.SimConfig` / `tomojax.data.simulate` can generate small
+  parallel or laminography synthetic projections with the public phantom and
+  artefact controls.
+
+Design-only or not yet complete:
+
+- The full `synthetic128` generator from
+  `docs/tomojax-v2/07_synthetic_generator_pseudocode.md` is not fully
+  implemented. In particular, rods/fibres, thin plates/sheets, void-rich
+  ellipsoid recipes, asymmetric marker clusters, object-frame thermal drift,
+  and all nuisance/jump stress cases are still future work or diagnostic-only.
+- The overnight MVP does not require the hard
+  `synth128_lamino_axis_roll_pose`, `synth128_thermal_object_drift`, or
+  `synth128_combined_nuisance_jumps` gates. They remain follow-up/stress cases.
+
 ## What Worked
 
 - The k11 v2 real-laminography path improves final reconstruction quality over

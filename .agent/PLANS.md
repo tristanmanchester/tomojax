@@ -45,7 +45,7 @@ Current productionization tasks:
       without a risky rewrite.
 - [ ] Add focused profile/report regression tests, including the phi level-2
       loss-scale guard.
-- [ ] Inventory the synthetic phantom/Beer-Lambert/artefact story and document
+- [x] Inventory the synthetic phantom/Beer-Lambert/artefact story and document
       what exists versus design-only functionality.
 - [ ] Implement or document bounded synthetic tomography MVP gates for
       `synth128_setup_global_tomo` and `synth128_pose_random_extreme`.

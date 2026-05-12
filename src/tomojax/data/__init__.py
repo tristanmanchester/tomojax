@@ -5,6 +5,13 @@ from __future__ import annotations
 from types import ModuleType
 from typing import Any
 
+from . import simulate as _simulate_module
+from .artefacts import SimulationArtefacts, apply_simulation_artefacts
+from .contrast import (
+    absorption_to_transmission,
+    flat_dark_to_absorption,
+    transmission_to_absorption,
+)
 from .io_hdf5 import (
     LoadedNXTomo,
     NXTomoMetadata,
@@ -23,7 +30,6 @@ from .phantoms import (
     shepp_logan_3d,
     sphere,
 )
-from . import simulate as _simulate_module
 
 
 class _CallableDataModule(ModuleType):
@@ -46,10 +52,14 @@ __all__ = [
     "LoadedNXTomo",
     "NXTomoMetadata",
     "SimConfig",
+    "SimulationArtefacts",
     "SimulatedData",
     "ValidationReport",
+    "absorption_to_transmission",
+    "apply_simulation_artefacts",
     "blobs",
     "cube",
+    "flat_dark_to_absorption",
     "lamino_disk",
     "lamino_disk_legacy",
     "load_nxtomo",
@@ -60,5 +70,6 @@ __all__ = [
     "simulate",
     "simulate_to_file",
     "sphere",
+    "transmission_to_absorption",
     "validate_nxtomo",
 ]

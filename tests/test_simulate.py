@@ -1,14 +1,23 @@
 from contextlib import nullcontext
 import os
 import sys
+
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
 from tomojax.cli import simulate as simulate_cli
-from tomojax.data import simulate as simulate_mod
+from tomojax.data import (
+    SimConfig,
+    SimulationArtefacts,
+    absorption_to_transmission,
+    apply_simulation_artefacts,
+    random_cubes_spheres,
+    simulate as simulate_mod,
+    transmission_to_absorption,
+)
 from tomojax.data.io_hdf5 import validate_nxtomo
-from tomojax.data.simulate import SimConfig, simulate, simulate_to_file
+from tomojax.data.simulate import simulate, simulate_to_file
 
 
 def test_simulate_deterministic_seed():
@@ -27,6 +36,44 @@ def test_simulate_deterministic_seed():
     a = simulate(cfg)
     b = simulate(cfg)
     assert np.allclose(np.asarray(a["projections"]), np.asarray(b["projections"]))
+
+
+def test_public_synthetic_story_exports_rich_phantom_contrast_and_artefacts():
+    volume = random_cubes_spheres(
+        32,
+        32,
+        32,
+        n_cubes=4,
+        n_spheres=4,
+        min_size=3,
+        max_size=8,
+        seed=94,
+        use_inscribed_fov=True,
+    )
+    assert volume.shape == (32, 32, 32)
+    assert volume.dtype == np.float32
+    assert float(volume.max()) > float(volume.min())
+
+    transmission = np.asarray([[1.0, 0.7], [0.25, 0.05]], dtype=np.float32)
+    absorption = transmission_to_absorption(transmission)
+    recovered = absorption_to_transmission(absorption)
+    np.testing.assert_allclose(recovered, transmission, rtol=1e-6, atol=1e-6)
+
+    projections = jnp.ones((4, 8, 8), dtype=jnp.float32)
+    artefacts = SimulationArtefacts(
+        gaussian_sigma=0.01,
+        stripe_fraction=0.25,
+        stripe_gain_sigma=0.05,
+        zinger_fraction=0.01,
+    )
+    corrupted_a, meta_a = apply_simulation_artefacts(projections, artefacts, seed=123)
+    corrupted_b, meta_b = apply_simulation_artefacts(projections, artefacts, seed=123)
+
+    assert meta_a.get("enabled") is True
+    assert meta_a.get("seed") == 123
+    assert meta_a == meta_b
+    np.testing.assert_allclose(np.asarray(corrupted_a), np.asarray(corrupted_b))
+    assert not np.allclose(np.asarray(corrupted_a), np.asarray(projections))
 
 
 def test_simulate_nxs_roundtrip(tmp_path):
