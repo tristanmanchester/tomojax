@@ -70,6 +70,9 @@ Tasks:
 - [x] Fix pose-only Schur gauge carry so accepted dx/phi mean updates are not
       discarded between iterations when setup parameters are frozen, then rerun
       the smallest useful pose-random oracle gate.
+- [x] Refresh the morning-facing production hardening/readiness reports so they
+      reflect the now-green mandatory 128^3 tomography gates and do not expose
+      historical development names as current product language.
 
 Historical productionization plan follows for context.
 

@@ -30,8 +30,8 @@ behavior rather than development history.
 The clean staged laminography workflow is documented as the production-shaped
 real-data path. The preserved k11 evidence remains the validation anchor:
 
-- `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512`
-- `docs/benchmark_runs/2026-05-12-real-lamino-v2-production-mvp.md`
+- the retained 2026-05-12 k11 staged real-laminography run artifacts
+- the clean staged workflow documentation in `docs/real-laminography.md`
 
 That evidence should be read as a validated staged workflow on the reference
 real dataset, not proof that arbitrary laminography scans are turnkey.
@@ -44,7 +44,7 @@ canonical `core_trilinear_ray` backend.
 | Case | Status | Artifact |
 |---|---|---|
 | `synth128_setup_global_tomo` | passed at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache` |
-| `synth128_pose_random_extreme` | failed pose recovery at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_after_loss_cache` |
+| `synth128_pose_random_extreme` | passed at 128^3/256 views after pose-only Schur gauge-carry fix and bounded final pose polish | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish` |
 | `synth128_lamino_axis_roll_pose` | failed laminography axis/roll recovery at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_lamino_axis_roll_pose_128_classification` |
 | `synth128_thermal_object_drift` | flagged object motion but failed recovery because object-frame motion solver is not enabled | `.artifacts/production_hardening_synthetic/synth128_thermal_object_drift_128_classification` |
 | `synth128_combined_nuisance_jumps` | failed hard-case setup/axis/theta recovery at 128^3/320 views; bad-view and jump-excluded dx/dz diagnostics evaluated | `.artifacts/production_hardening_synthetic/synth128_combined_nuisance_jumps_128_classification` |
@@ -60,27 +60,45 @@ and per-view loss diagnostics within each LM solve. After that change, the full
 128^3/256-view setup-global gate completed with about 1.4 GiB peak sampled GPU
 memory and passed all setup/COR/roll/axis/theta criteria.
 
+## Pose-Random Fix
+
+The previous pose-random 256-view blocker was a pose-only Schur state-carry bug,
+not missing metric wiring, CPU fallback, or reconstruction absorption. Accepted
+LM iterations canonicalized mean `dx`/`phi` into setup, then repacked a
+pose-only parameter vector that could not preserve those setup gauge values.
+After preserving pose-only mean gauges until final canonicalisation and enabling
+the bounded final pose-polish stage for the clean pose-random preset, the
+128^3/256-view oracle gate passed:
+
+- `dx_dz_rmse_px = 0.040028767293657966`
+- `phi_rmse_rad = 0.007029254273335157`
+- `alpha_beta_rmse_rad = 0.0017171851316756014`
+- `det_u_realized_rmse_px = 0.015837733351848012`
+- `theta_realized_rmse_rad = 0.006883447413717324`
+
 ## Remaining Release Blockers
 
-- `synth128_pose_random_extreme` still fails the oracle fixed-volume pose gate:
-  dx/dz recovers, but phi and alpha/beta remain outside the strict manifest
-  tolerances.
-- The next functional slice should improve native-resolution pose Schur update
-  policy/conditioning, not add report fields or rename more aliases.
-- Remaining original synthetic scenarios are now explicitly classified, but the
-  full production-hardening goal is not complete because pose-random and the
-  hard laminography/object-motion/nuisance cases remain red.
+- The two mandatory tomography gates now pass at 128^3/256 views.
+- Remaining original synthetic scenarios are explicitly classified but not green:
+  laminography still needs axis/roll recovery and det-v policy evidence,
+  thermal drift needs real object-frame motion recovery, and the combined
+  nuisance/jumps case still fails hard setup/axis/theta recovery.
+- These remaining red scenarios are research/Phase 8+ capability work, not
+  blockers for the setup-global and pose-random tomography production gates.
 
 ## Validation Snapshot
 
-Focused validation for the current Schur/loss-cache slice:
+Focused validation for the current Schur/loss-cache and pose-gauge slices:
 
 - `ruff check src/tomojax/align/_joint_schur_lm.py --select F821,I001,E501`
 - `basedpyright src/tomojax/align/_joint_schur_lm.py`
-- `pytest tests/test_alternating_solver_smoke.py::test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume -q`
+- focused alternating Schur recovery pytest for truth-volume geometry updates
 - targeted align-auto contract tests after updating stale public-profile and
   sidecar expectations; the combined process hit the known JAX CPU compiler
   abort in the existing-dataset test, and that test passed when rerun alone.
+- `pytest tests/test_joint_schur_lm.py::test_joint_schur_lm_pose_only_preserves_mean_gauge_until_final_canonicalization tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle -q`
+- `ruff check src/tomojax/align/_joint_schur_lm.py src/tomojax/cli/align_auto.py tests/test_joint_schur_lm.py tests/test_align_auto_cli.py --select F821,I001,E501`
+- `basedpyright src/tomojax/align/_joint_schur_lm.py src/tomojax/cli/align_auto.py tests/test_joint_schur_lm.py tests/test_align_auto_cli.py`
 - `just imports`
 
-Full validation should be rerun after the pose-recovery fix lands.
+Full `just check` remains to be rerun before a public release tag.
