@@ -27,8 +27,7 @@ fitting, object drift, or all Pallas fast paths.
 - Input dataset:
   `/home/tristan/projects/tomojax/runs/real-lamo-256/k11-54014_corrected_log_256cube.nxs`.
 
-The production-named profile still needs to be added. Until then, the exact
-reproducible command is the parity/audit command:
+The production-named profile now exists. The clean MVP command is:
 
 ```bash
 NVLIB=$(find "$PWD/.venv/lib/python3.12/site-packages/nvidia" -type d -name lib | paste -sd: -)
@@ -37,11 +36,15 @@ env LD_LIBRARY_PATH="$NVLIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   XLA_PYTHON_CLIENT_PREALLOCATE=false \
   uv run python scripts/real_laminography/run_real_lamino_v2_cor_mvp.py \
     --input /home/tristan/projects/tomojax/runs/real-lamo-256/k11-54014_corrected_log_256cube.nxs \
-    --out runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512 \
+    --out runs/real_lamino_v2_production_mvp_k11_54014_20260512 \
     --reference-report runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525/real_mvp_report/real_mvp_summary.json \
-    --v1-parity-real-lamino \
+    --profile real_lamino_mvp \
     --overwrite
 ```
+
+The strict audit command is the same except for `--profile v1_parity_audit`.
+The old `--v1-parity-real-lamino` flag remains as an alias for the audit
+profile.
 
 ## Metrics
 
@@ -108,9 +111,9 @@ Winning v2 pose summary from `run_manifest.json`:
 - `alpha`: std `0.280306 deg`
 - `beta`: std `0.318627 deg`
 
-Report-quality gap: `final_pose_summary` is present in `run_manifest.json` but
-not currently copied into `real_mvp_summary.json`. That should be fixed before
-calling the report contract complete.
+Report-quality note: this was initially only present in `run_manifest.json`.
+The report builder now also copies `final_pose_summary` into
+`real_mvp_summary.json`, and the winning report was regenerated in place.
 
 ## Parity Audit
 
@@ -199,10 +202,11 @@ MVP result with honest provenance.
 
 ## What Remains Unproven Or Messy
 
-- A clean `real_lamino_mvp` CLI/profile does not exist yet; the strongest run is
-  still invoked through `--v1-parity-real-lamino`.
-- `v1_parity_audit` should remain available, but it should not be the user-facing
-  demo profile.
+- A clean `real_lamino_mvp` CLI/profile now exists and resolves to the winning
+  v1-derived settings, but it has not been rerun under a production-named output
+  directory.
+- `v1_parity_audit` remains available and should stay separate from the
+  user-facing demo profile.
 - `run_real_lamino_v2_cor_mvp.py` still mixes profile selection, execution,
   validation, reporting, and parity table generation.
 - `real_mvp_summary.json` omits `final_pose_summary` even though the run
@@ -217,12 +221,8 @@ MVP result with honest provenance.
 
 ## Next Actions
 
-1. Add explicit runner profiles: `real_lamino_mvp`, `v1_parity_audit`, and a
-   bounded diagnostic profile.
-2. Make the real MVP profile resolve to the winning settings and include pose
-   summaries in the report summary JSON.
-3. Split the real-runner profile/report/parity responsibilities enough that the
+1. Split the real-runner profile/report/parity responsibilities enough that the
    working MVP is not buried as an accidental flag combination.
-4. Add focused tests for profile resolution, phi level-2 loss scale, final
+2. Add focused tests for phi level-2 loss scale, final
    candidate selection, fail-closed output, and portable artifact paths.
-5. Produce the bounded synthetic tomography MVP report.
+3. Produce the bounded synthetic tomography MVP report.

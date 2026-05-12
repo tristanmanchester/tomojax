@@ -122,6 +122,15 @@ V1_PARITY_CONTRACT: dict[str, Any] = {
     ),
 }
 
+REAL_LAMINO_PROFILE_CHOICES = (
+    "manual",
+    "real_lamino_mvp",
+    "v1_parity_audit",
+    "diagnostic_fast",
+)
+
+REAL_LAMINO_MVP_CONTRACT: dict[str, Any] = dict(V1_PARITY_CONTRACT)
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run the v2 real-laminography MVP workflow."""
@@ -249,13 +258,15 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "cor_and_fista_use": "background_corrected_projections",
             },
             "workflow": {
+                "profile": str(args.profile),
                 "implemented_stages": implemented_stages,
                 "planned_stages": planned_stages,
                 "full_mvp_success_deferred": not full_staged,
-                "v1_parity_real_lamino": bool(args.v1_parity_real_lamino),
+                "real_lamino_mvp": str(args.profile) == "real_lamino_mvp",
+                "v1_parity_real_lamino": str(args.profile) == "v1_parity_audit",
                 "v1_parity_contract": (
                     _v1_parity_contract_payload(args)
-                    if bool(args.v1_parity_real_lamino)
+                    if str(args.profile) == "v1_parity_audit"
                     else None
                 ),
                 "pose_bounds_profile": str(args.pose_bounds_profile),
@@ -993,6 +1004,7 @@ def build_v2_cor_mvp_report(
             "devices": run_manifest.get("devices"),
             "final_volume_shape": run_manifest.get("final_volume_shape"),
             "final_setup_estimates": run_manifest.get("final_setup_estimates"),
+            "final_pose_summary": run_manifest.get("final_pose_summary"),
             "status_completed_at": status.get("completed_at", run_manifest.get("completed_at")),
         },
         "method_constraints": _method_constraints(),
@@ -1102,11 +1114,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         default="reference_conservative",
     )
     parser.add_argument(
+        "--profile",
+        choices=REAL_LAMINO_PROFILE_CHOICES,
+        default="manual",
+        help=(
+            "Resolved real-laminography profile. 'real_lamino_mvp' is the clean "
+            "demo/profile path; 'v1_parity_audit' preserves the strict v1 audit; "
+            "'diagnostic_fast' enables the bounded smoke workflow."
+        ),
+    )
+    parser.add_argument(
         "--v1-parity-real-lamino",
         action="store_true",
         help=(
-            "Force the real laminography MVP stage contract to match the "
-            "committed native v1 reference run and emit v1-v2 parity tables."
+            "Deprecated alias for '--profile v1_parity_audit'. Force the real "
+            "laminography MVP stage contract to match the committed native v1 "
+            "reference run and emit v1-v2 parity tables."
         ),
     )
     parser.add_argument("--smoke", action="store_true")
@@ -1117,10 +1140,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
-    if bool(args.v1_parity_real_lamino) and bool(args.smoke):
-        parser.error("--v1-parity-real-lamino cannot be combined with --smoke")
-    if bool(args.v1_parity_real_lamino):
-        _apply_v1_parity_real_lamino_args(args)
+    _apply_real_lamino_profile_args(args, parser)
     if bool(args.smoke):
         if int(args.bin_factor) <= 1 and args.smoke_shape is None:
             args.bin_factor = 4
@@ -1138,33 +1158,65 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     return args
 
 
+def _apply_real_lamino_profile_args(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> None:
+    if bool(args.v1_parity_real_lamino):
+        if str(args.profile) not in {"manual", "v1_parity_audit"}:
+            parser.error("--v1-parity-real-lamino cannot be combined with another --profile")
+        args.profile = "v1_parity_audit"
+    if str(args.profile) == "v1_parity_audit":
+        if bool(args.smoke):
+            parser.error("--profile v1_parity_audit cannot be combined with --smoke")
+        _apply_profile_contract_args(args, V1_PARITY_CONTRACT)
+        args.v1_parity_real_lamino = True
+    elif str(args.profile) == "real_lamino_mvp":
+        _apply_profile_contract_args(args, REAL_LAMINO_MVP_CONTRACT)
+        args.v1_parity_real_lamino = False
+    elif str(args.profile) == "diagnostic_fast":
+        args.full_staged = True
+        args.smoke = True
+        if str(args.final_candidate_policy) == "all":
+            args.final_candidate_policy = "last_valid"
+        args.v1_parity_real_lamino = False
+    else:
+        args.v1_parity_real_lamino = False
+
+
 def _apply_v1_parity_real_lamino_args(args: argparse.Namespace) -> None:
+    _apply_profile_contract_args(args, V1_PARITY_CONTRACT)
+    args.profile = "v1_parity_audit"
+    args.v1_parity_real_lamino = True
+
+
+def _apply_profile_contract_args(args: argparse.Namespace, contract: Mapping[str, Any]) -> None:
     args.full_staged = True
-    args.levels_setup = list(V1_PARITY_CONTRACT["levels_setup"])
-    args.levels_phi = list(V1_PARITY_CONTRACT["levels_phi"])
-    args.levels_dx_dz = list(V1_PARITY_CONTRACT["levels_dx_dz"])
-    args.levels_polish = list(V1_PARITY_CONTRACT["levels_polish"])
-    args.outer_iters = int(V1_PARITY_CONTRACT["outer_iters"])
-    args.recon_iters = int(V1_PARITY_CONTRACT["recon_iters"])
-    args.tv_prox_iters = int(V1_PARITY_CONTRACT["tv_prox_iters"])
-    args.lambda_tv = float(V1_PARITY_CONTRACT["lambda_tv"])
-    args.align_profile = str(V1_PARITY_CONTRACT["align_profile"])
-    args.regulariser = str(V1_PARITY_CONTRACT["regulariser"])
-    args.gn_damping = float(V1_PARITY_CONTRACT["gn_damping"])
-    args.quality_tier = str(V1_PARITY_CONTRACT["quality_tier"])
-    args.fallback_policy = str(V1_PARITY_CONTRACT["fallback_policy"])
-    args.fold_rigid_detector_grid = bool(V1_PARITY_CONTRACT["fold_rigid_detector_grid"])
-    args.pose_model = str(V1_PARITY_CONTRACT["pose_model"])
-    args.knot_spacing = int(V1_PARITY_CONTRACT["knot_spacing"])
-    args.pose_degree = int(V1_PARITY_CONTRACT["pose_degree"])
-    args.pose_bounds_profile = str(V1_PARITY_CONTRACT["pose_bounds_profile"])
-    args.canonical_det_grid = bool(V1_PARITY_CONTRACT["canonical_det_grid"])
-    args.projection_background = str(V1_PARITY_CONTRACT["projection_background"])
-    args.background_edge_px = int(V1_PARITY_CONTRACT["background_edge_px"])
-    args.recon_positivity = bool(V1_PARITY_CONTRACT["recon_positivity"])
-    args.views_per_batch = int(V1_PARITY_CONTRACT["views_per_batch"])
-    args.gather_dtype = str(V1_PARITY_CONTRACT["gather_dtype"])
-    args.final_candidate_policy = str(V1_PARITY_CONTRACT["final_candidate_policy"])
+    args.levels_setup = list(contract["levels_setup"])
+    args.levels_phi = list(contract["levels_phi"])
+    args.levels_dx_dz = list(contract["levels_dx_dz"])
+    args.levels_polish = list(contract["levels_polish"])
+    args.outer_iters = int(contract["outer_iters"])
+    args.recon_iters = int(contract["recon_iters"])
+    args.tv_prox_iters = int(contract["tv_prox_iters"])
+    args.lambda_tv = float(contract["lambda_tv"])
+    args.align_profile = str(contract["align_profile"])
+    args.regulariser = str(contract["regulariser"])
+    args.gn_damping = float(contract["gn_damping"])
+    args.quality_tier = str(contract["quality_tier"])
+    args.fallback_policy = str(contract["fallback_policy"])
+    args.fold_rigid_detector_grid = bool(contract["fold_rigid_detector_grid"])
+    args.pose_model = str(contract["pose_model"])
+    args.knot_spacing = int(contract["knot_spacing"])
+    args.pose_degree = int(contract["pose_degree"])
+    args.pose_bounds_profile = str(contract["pose_bounds_profile"])
+    args.canonical_det_grid = bool(contract["canonical_det_grid"])
+    args.projection_background = str(contract["projection_background"])
+    args.background_edge_px = int(contract["background_edge_px"])
+    args.recon_positivity = bool(contract["recon_positivity"])
+    args.views_per_batch = int(contract["views_per_batch"])
+    args.gather_dtype = str(contract["gather_dtype"])
+    args.final_candidate_policy = str(contract["final_candidate_policy"])
 
 
 def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:

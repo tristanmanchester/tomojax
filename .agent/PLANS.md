@@ -37,9 +37,9 @@ Current productionization tasks:
       in `06_cor_only_fista` and was killed before spending more GPU time.
 - [ ] Seed the morning-facing real-lamino production MVP report from the
       winning run, including caveats and phase-status reconciliation.
-- [ ] Add or expose clean real-runner profiles: `real_lamino_mvp`,
+- [x] Add or expose clean real-runner profiles: `real_lamino_mvp`,
       `v1_parity_audit`, and a bounded diagnostic profile.
-- [ ] Ensure the real MVP profile resolves to the winning settings and records
+- [x] Ensure the real MVP profile resolves to the winning settings and records
       them in manifests/reports.
 - [ ] Split or isolate obvious real-runner profile/report/parity responsibilities
       without a risky rewrite.

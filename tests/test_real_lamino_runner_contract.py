@@ -423,6 +423,100 @@ def test_v2_cor_mvp_v1_parity_mode_forces_reference_contract(monkeypatch, tmp_pa
     assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 
 
+def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--profile",
+            "real_lamino_mvp",
+            "--pose-model",
+            "spline",
+            "--final-candidate-policy",
+            "all",
+            "--outer-iters",
+            "1",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.profile == "real_lamino_mvp"
+    assert args.v1_parity_real_lamino is False
+    assert args.full_staged is True
+    assert args.pose_model == "per_view"
+    assert args.pose_bounds_profile == "wide"
+    assert args.final_candidate_policy == "last_valid"
+    assert args.fold_rigid_detector_grid is False
+    assert args.outer_iters == 8
+    assert args.levels_setup == [8, 4, 2]
+    assert args.levels_phi == [4, 2, 1]
+    assert args.levels_dx_dz == [4, 2, 1]
+    assert args.levels_polish == [2, 1]
+    cfg = runner._make_cfg(args, active_pose=("phi",))
+    assert cfg.fold_rigid_detector_grid is False
+    assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
+    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
+
+
+def test_v2_cor_mvp_v1_flag_is_profile_alias(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--v1-parity-real-lamino",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.profile == "v1_parity_audit"
+    assert args.v1_parity_real_lamino is True
+
+
+def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--profile",
+            "diagnostic_fast",
+            "--recon-iters",
+            "40",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.profile == "diagnostic_fast"
+    assert args.full_staged is True
+    assert args.smoke is True
+    assert args.bin_factor == 4
+    assert args.recon_iters == 3
+    assert args.final_candidate_policy == "last_valid"
+
+
 def test_v2_cor_mvp_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
@@ -985,6 +1079,17 @@ def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path)
         "reconstruction volume finite fraction is 0"
     ]
     assert (tmp_path / "failed_pose_report" / "publication" / "full_orthos.png").exists()
+
+
+def test_v2_report_copies_final_pose_summary_from_run_manifest(tmp_path) -> None:
+    run_dir = _write_minimal_real_mvp_run(tmp_path, final_last_loss=70.0)
+
+    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+        run_dir,
+        out_dir=tmp_path / "pose_summary_report",
+    )
+
+    assert summary["provenance"]["final_pose_summary"] == {"dx": {"std": 1.0}}
 
 
 def test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale(tmp_path) -> None:

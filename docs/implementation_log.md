@@ -3,6 +3,48 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Real-lamino MVP and parity profiles
+
+### Scope
+
+Added an explicit profile layer to
+`scripts/real_laminography/run_real_lamino_v2_cor_mvp.py` so the working real
+MVP path is no longer exposed only as the historical
+`--v1-parity-real-lamino` flag.
+
+Profiles:
+
+- `--profile real_lamino_mvp`: clean production/demo path using the winning
+  v1-derived settings, full staged workflow, last-valid final candidate policy,
+  streamed view batching, and measured-FISTA fallback behavior where required.
+- `--profile v1_parity_audit`: strict v1 behavior audit with parity tables.
+- `--profile diagnostic_fast`: bounded smoke/debug profile, not a production
+  quality gate.
+
+The legacy `--v1-parity-real-lamino` flag remains as an alias for
+`--profile v1_parity_audit`.
+
+Report quality fix:
+
+- `build_v2_cor_mvp_report` now copies `final_pose_summary` from
+  `run_manifest.json` into `real_mvp_summary.json`.
+- The winning report at
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512/v2_cor_mvp_report`
+  was regenerated in place so the summary includes pose statistics.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 36 tests.
+- `uv run ruff check scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Productionization pivot and real MVP baseline report
 
 ### Scope
