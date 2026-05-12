@@ -55,6 +55,9 @@ Tasks:
       limitations, and production-readiness docs.
 - [x] Remove remaining low-risk legacy wording from public align-auto and visual
       generator help surfaces.
+- [x] Cache the streamed Schur normal-equation program within each LM solve so
+      repeated damping/iteration updates reuse the same JAX trace instead of
+      rebuilding the view scan path.
 
 Historical productionization plan follows for context.
 

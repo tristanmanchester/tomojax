@@ -3,6 +3,52 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Streamed Schur normal-equation compile cache
+
+### Scope
+
+Addressed the compile/orchestration symptom observed while attempting the
+realistic synthetic128 setup-global gate. The full-view CUDA run selected
+`cuda:0` and stayed around the expected memory band, but spent sustained wall
+time with little GPU execution while JAX repeatedly compiled `scan`/`cond`
+programs around the Schur normal-equation path.
+
+Changes:
+
+- Split the streamed joint Schur normal-equation path into a JAX-array
+  accumulator and a Python diagnostics wrapper.
+- Jitted the streamed accumulator once per LM solve so damping and parameter
+  iterations reuse the same traced view-scan program.
+- Preserved the existing small-stack nuisance/setup branch unchanged, since it
+  intentionally uses the full-stack finite-difference path for bounded
+  nuisance fitting.
+
+### Evidence
+
+This is a narrow compile-cache fix, not a new benchmark result. It keeps the
+same loss/Jacobian/reduction math and moves Python tuple/float diagnostics
+outside the jitted accumulation path. The current expectation is that this
+reduces repeated within-solve compilation pressure but may not eliminate all
+compile overhead from candidate loss evaluation, per-view loss diagnostics, or
+FISTA reconstruction.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  src/tomojax/align/_joint_schur_lm.py --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_joint_schur_lm.py` passed with 0 errors, 0 warnings, and
+  0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_alternating_solver_smoke.py::test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume
+  -q` passed: 1 test in 75.50 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_synthetic_setup_global_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_pose_random_manifest_criteria_evaluate_supported_pose_metrics
+  -q` passed: 2 tests in 0.76 seconds.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Mandatory synthetic DOF and pose metric gate cleanup
 
 ### Scope

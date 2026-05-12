@@ -55,6 +55,7 @@ _SETUP_PARAMETER_ORDER: tuple[SetupSchurParameter, ...] = (
     "axis_rot_y_rad",
     "theta_scale",
 )
+_NormalEquationArrayDiagnostics = tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
 
 
 @dataclass(frozen=True)
@@ -234,22 +235,67 @@ def solve_joint_schur_lm(
     damping = float(cfg.damping)
     setup_trust_radius = cfg.setup_trust_radius
     pose_trust_radius = cfg.pose_trust_radius
+    use_jitted_stream = not (
+        (cfg.fit_gain_offset or cfg.fit_background_offset)
+        and pose_dim == 0
+        and int(obs.size) <= _FULL_STACK_LOSS_MAX_ELEMENTS
+    )
 
-    for _ in range(max(0, int(cfg.max_iterations))):
-        equations = _stream_joint_normal_equations_for_geometry(
+    def normal_equation_arrays(
+        params_arg: jax.Array,
+        prior_reference_arg: jax.Array,
+        damping_arg: jax.Array,
+        setup_prior_strength_arg: jax.Array,
+        pose_prior_strength_arg: jax.Array,
+    ) -> tuple[jax.Array, jax.Array, _NormalEquationArrayDiagnostics]:
+        return _stream_joint_normal_equation_arrays_for_geometry(
             vol,
             obs,
             geometry,
-            params,
+            params_arg,
             mask=mask,
             cfg=cfg,
             n_setup=n_setup,
             pose_dim=pose_dim,
-            damping=damping,
-            setup_prior_strength=_prior_strengths(cfg)[0],
-            pose_prior_strength=_prior_strengths(cfg)[1],
-            prior_reference=prior_reference,
+            damping=damping_arg,
+            setup_prior_strength=setup_prior_strength_arg,
+            pose_prior_strength=pose_prior_strength_arg,
+            prior_reference=prior_reference_arg,
         )
+
+    normal_equation_arrays_jit = jax.jit(normal_equation_arrays)
+
+    for _ in range(max(0, int(cfg.max_iterations))):
+        setup_prior_strength, pose_prior_strength = _prior_strengths(cfg)
+        if use_jitted_stream:
+            hessian, gradient, per_view_arrays = normal_equation_arrays_jit(
+                params,
+                prior_reference,
+                jnp.asarray(damping, dtype=jnp.float32),
+                jnp.asarray(setup_prior_strength, dtype=jnp.float32),
+                jnp.asarray(pose_prior_strength, dtype=jnp.float32),
+            )
+            equations = _normal_equations_from_arrays(
+                hessian=hessian,
+                gradient=gradient,
+                per_view_arrays=per_view_arrays,
+                data_rows=int(obs.size),
+            )
+        else:
+            equations = _stream_joint_normal_equations_for_geometry(
+                vol,
+                obs,
+                geometry,
+                params,
+                mask=mask,
+                cfg=cfg,
+                n_setup=n_setup,
+                pose_dim=pose_dim,
+                damping=damping,
+                setup_prior_strength=setup_prior_strength,
+                pose_prior_strength=pose_prior_strength,
+                prior_reference=prior_reference,
+            )
         schur = schur_step_from_normal_equations(
             equations.hessian,
             equations.gradient,
@@ -835,9 +881,6 @@ def _stream_joint_normal_equations_for_geometry(
     pose_prior_strength: float,
     prior_reference: jax.Array,
 ) -> _NormalEquations:
-    n_views = int(geometry.pose.n_views)
-    n_params = n_setup + n_views * pose_dim
-    step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
     if (
         (cfg.fit_gain_offset or cfg.fit_background_offset)
         and pose_dim == 0
@@ -869,6 +912,47 @@ def _stream_joint_normal_equations_for_geometry(
             pose_prior_strength=pose_prior_strength,
             prior_reference=prior_reference,
         )
+
+    hessian, gradient, per_view_arrays = _stream_joint_normal_equation_arrays_for_geometry(
+        volume,
+        observed,
+        geometry,
+        params,
+        mask=mask,
+        cfg=cfg,
+        n_setup=n_setup,
+        pose_dim=pose_dim,
+        damping=jnp.asarray(damping, dtype=jnp.float32),
+        setup_prior_strength=jnp.asarray(setup_prior_strength, dtype=jnp.float32),
+        pose_prior_strength=jnp.asarray(pose_prior_strength, dtype=jnp.float32),
+        prior_reference=prior_reference,
+    )
+    return _normal_equations_from_arrays(
+        hessian=hessian,
+        gradient=gradient,
+        per_view_arrays=per_view_arrays,
+        data_rows=int(observed.size),
+    )
+
+
+def _stream_joint_normal_equation_arrays_for_geometry(
+    volume: jax.Array,
+    observed: jax.Array,
+    geometry: GeometryState,
+    params: jax.Array,
+    *,
+    mask: jax.Array | None,
+    cfg: JointSchurLMConfig,
+    n_setup: int,
+    pose_dim: int,
+    damping: jax.Array,
+    setup_prior_strength: jax.Array,
+    pose_prior_strength: jax.Array,
+    prior_reference: jax.Array,
+) -> tuple[jax.Array, jax.Array, _NormalEquationArrayDiagnostics]:
+    n_views = int(geometry.pose.n_views)
+    n_params = n_setup + n_views * pose_dim
+    step = jnp.asarray(cfg.finite_difference_step, dtype=jnp.float32)
 
     def view_contribution(view: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
         view_i = jnp.asarray(view, dtype=jnp.int32)
@@ -993,17 +1077,44 @@ def _stream_joint_normal_equations_for_geometry(
     prior_delta = params - jnp.asarray(prior_reference, dtype=jnp.float32)
     prior_diag = jnp.concatenate(
         [
-            jnp.full((n_setup,), float(setup_prior_strength), dtype=jnp.float32),
-            jnp.full((n_params - n_setup,), float(pose_prior_strength), dtype=jnp.float32),
+            jnp.full((n_setup,), setup_prior_strength, dtype=jnp.float32),
+            jnp.full((n_params - n_setup,), pose_prior_strength, dtype=jnp.float32),
         ],
         axis=0,
     )
-    hessian = hessian + jnp.diag(prior_diag + jnp.asarray(damping, dtype=jnp.float32))
+    hessian = hessian + jnp.diag(prior_diag + damping)
     gradient = gradient + prior_diag * prior_delta
+    return (
+        hessian,
+        gradient,
+        (
+            setup_gradient_by_view_arr,
+            pose_gradient_by_view_arr,
+            setup_hessian_diag_by_view_arr,
+            pose_hessian_diag_by_view_arr,
+            setup_pose_coupling_norm_by_view_arr,
+        ),
+    )
+
+
+def _normal_equations_from_arrays(
+    *,
+    hessian: jax.Array,
+    gradient: jax.Array,
+    per_view_arrays: _NormalEquationArrayDiagnostics,
+    data_rows: int,
+) -> _NormalEquations:
+    (
+        setup_gradient_by_view_arr,
+        pose_gradient_by_view_arr,
+        setup_hessian_diag_by_view_arr,
+        pose_hessian_diag_by_view_arr,
+        setup_pose_coupling_norm_by_view_arr,
+    ) = per_view_arrays
     return _NormalEquations(
         hessian=hessian,
         gradient=gradient,
-        data_rows=int(observed.size),
+        data_rows=data_rows,
         per_view_blocks=_PerViewNormalBlockDiagnostics(
             setup_gradient_by_view=_rows_to_tuple(setup_gradient_by_view_arr),
             pose_gradient_by_view=_rows_to_tuple(pose_gradient_by_view_arr),
