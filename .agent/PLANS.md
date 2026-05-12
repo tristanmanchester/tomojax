@@ -146,8 +146,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Emit per-stage parity tables with v1/v2 loss_before/loss_after on the
       same stage/level/iteration structure plus geometry/pose summaries and
       visual artifacts.
-- [ ] Root-cause any wildly different v2 pose-loss scale before accepting a
-      pose stage as parity.
+- [x] Root-cause the first wildly different v2 pose-loss scale before
+      accepting a pose stage as parity: the initial parity mode used spline
+      pose while the committed v1 reference run used per-view pose.
+- [ ] Rerun full `--v1-parity-real-lamino` after correcting parity pose model
+      to `per_view`, then inspect the emitted parity table before accepting
+      phi/dx-dz/polish parity.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

@@ -29,7 +29,7 @@ known native reference contract instead of relying on exploratory defaults:
   `lambda_tv=0.008`, `edge_median` background correction,
   `canonical_det_grid=false`, `views_per_batch=1`, `gather_dtype=bf16`,
   `align_profile=lightning`, GN damping `1e-3`, L2/Otsu alignment loss,
-  cylindrical volume mask, `pose_model=spline`, `knot_spacing=8`, and
+  cylindrical volume mask, `pose_model=per_view`, `knot_spacing=8`, and
   `pose_degree=3`.
 - Final publication uses `final_candidate_policy=last_valid`, matching the v1
   contract of composing the solved setup and final polish pose rather than
@@ -58,6 +58,36 @@ from the recent exploratory v2 gates in two important ways:
 
 Those are now made explicit under `--v1-parity-real-lamino` before any further
 optimizer or pose tuning.
+
+### First parity gate evidence
+
+An initial full `--v1-parity-real-lamino` run was started at
+`runs/real_lamino_v2_v1_parity_full_20260512` and intentionally stopped at the
+first pose-objective scale failure:
+
+- COR/det_u parity was close: v2 final det_u `-3.7257409 px` versus v1
+  `-3.7252123 px`; v2 final row `451.3046875` versus v1 `451.7805176`.
+- Detector-roll parity was close: v2 `0.1378975 deg` versus v1
+  `0.1367444 deg`; v2 final row `450.3020020` versus v1 `450.7601624`.
+- Axis-direction was close but not identical: v2 `axis_rot_x=0.4889168 deg`,
+  `axis_rot_y=-0.0063489 deg` versus v1 `0.5087826 deg` and
+  `-0.0021124 deg`.
+- Phi level 4 matched v1 scale: v2 `129.6559 -> 129.6510` and
+  `129.2243 -> 129.2228`; v1 `129.7011 -> 129.6819` and
+  `129.2756 -> 129.2725`.
+- Phi level 2 failed parity: v2 jumped to
+  `4.024255238897664e15 -> 4.02416692363264e15`, then
+  `1.7335308144302946e35 -> 1.733499915446914e35`, while v1 was
+  `482.2211 -> 482.1140` and `479.0894 -> 479.0851`.
+
+The root cause is a parity-mode bug, not a new solver conclusion: the committed
+reference run recorded `pose_model = per_view` and basis `[256, 256]`, while the
+first parity-mode implementation inherited the current script default
+`pose_model = spline` with 33 variables. At phi level 2 the spline candidate
+made the checkpoint volume finite but physically invalid, with `x` magnitude
+growing from about `1e-2` at level 4 to `1e13` by level 2. The parity contract
+has therefore been corrected to `pose_model=per_view`; the failed run remains
+diagnostic only and must be rerun from scratch before accepting pose parity.
 
 ### Validation
 

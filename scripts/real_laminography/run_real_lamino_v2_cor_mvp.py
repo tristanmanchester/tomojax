@@ -104,7 +104,7 @@ V1_PARITY_CONTRACT: dict[str, Any] = {
     "gn_damping": 1e-3,
     "quality_tier": "fast",
     "fallback_policy": "fallback",
-    "pose_model": "spline",
+    "pose_model": "per_view",
     "knot_spacing": 8,
     "pose_degree": 3,
     "pose_bounds_profile": "wide",

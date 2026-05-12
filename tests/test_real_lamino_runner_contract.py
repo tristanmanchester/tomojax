@@ -410,6 +410,7 @@ def test_v2_cor_mvp_v1_parity_mode_forces_reference_contract(monkeypatch, tmp_pa
     args = v2_cor_mvp_runner._parse_args()
 
     assert args.full_staged is True
+    assert args.pose_model == "per_view"
     assert args.pose_bounds_profile == "wide"
     assert args.final_candidate_policy == "last_valid"
     assert args.outer_iters == 8
