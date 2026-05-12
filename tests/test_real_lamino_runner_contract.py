@@ -18,22 +18,22 @@ _SCRIPT_PATH = (
     Path(__file__).resolve().parents[1]
     / "scripts"
     / "real_laminography"
-    / "run_real_lamino_native_setup_pose_256.py"
+    / "run_real_lamino_reference_regression.py"
 )
-_MVP_SCRIPT_PATH = (
+_REPORT_SCRIPT_PATH = (
     Path(__file__).resolve().parents[1]
     / "scripts"
     / "real_laminography"
-    / "summarize_real_lamino_mvp.py"
+    / "summarize_real_lamino_report.py"
 )
-_V2_COR_MVP_SCRIPT_PATH = (
+_STAGED_SCRIPT_PATH = (
     Path(__file__).resolve().parents[1]
     / "scripts"
     / "real_laminography"
-    / "run_real_lamino_v2_cor_mvp.py"
+    / "run_real_lamino_staged.py"
 )
 _SPEC = importlib.util.spec_from_file_location(
-    "run_real_lamino_native_setup_pose_256",
+    "run_real_lamino_reference_regression",
     _SCRIPT_PATH,
 )
 assert _SPEC is not None
@@ -41,20 +41,23 @@ assert _SPEC.loader is not None
 runner = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(runner)
 
-_MVP_SPEC = importlib.util.spec_from_file_location("summarize_real_lamino_mvp", _MVP_SCRIPT_PATH)
-assert _MVP_SPEC is not None
-assert _MVP_SPEC.loader is not None
-mvp_runner = importlib.util.module_from_spec(_MVP_SPEC)
-_MVP_SPEC.loader.exec_module(mvp_runner)
-
-_V2_COR_MVP_SPEC = importlib.util.spec_from_file_location(
-    "run_real_lamino_v2_cor_mvp",
-    _V2_COR_MVP_SCRIPT_PATH,
+_REPORT_SPEC = importlib.util.spec_from_file_location(
+    "summarize_real_lamino_report",
+    _REPORT_SCRIPT_PATH,
 )
-assert _V2_COR_MVP_SPEC is not None
-assert _V2_COR_MVP_SPEC.loader is not None
-v2_cor_mvp_runner = importlib.util.module_from_spec(_V2_COR_MVP_SPEC)
-_V2_COR_MVP_SPEC.loader.exec_module(v2_cor_mvp_runner)
+assert _REPORT_SPEC is not None
+assert _REPORT_SPEC.loader is not None
+report_runner = importlib.util.module_from_spec(_REPORT_SPEC)
+_REPORT_SPEC.loader.exec_module(report_runner)
+
+_STAGED_SPEC = importlib.util.spec_from_file_location(
+    "run_real_lamino_staged",
+    _STAGED_SCRIPT_PATH,
+)
+assert _STAGED_SPEC is not None
+assert _STAGED_SPEC.loader is not None
+staged_runner = importlib.util.module_from_spec(_STAGED_SPEC)
+_STAGED_SPEC.loader.exec_module(staged_runner)
 
 
 def test_runner_input_argument_is_required(monkeypatch, tmp_path) -> None:
@@ -287,35 +290,35 @@ def test_validate_loaded_input_rejects_theta_count_mismatch() -> None:
         )
 
 
-def test_real_mvp_summary_uses_final_vs_cor_only_quality_contract(tmp_path) -> None:
-    run_dir = _write_minimal_real_mvp_run(tmp_path)
+def test_real_lamino_summary_uses_final_vs_cor_only_quality_contract(tmp_path) -> None:
+    run_dir = _write_minimal_real_lamino_run(tmp_path)
 
-    summary = mvp_runner.build_real_mvp_report(run_dir, out_dir=tmp_path / "mvp")
+    summary = report_runner.build_real_lamino_report(run_dir, out_dir=tmp_path / "report")
 
-    assert summary["schema"] == "tomojax.real_lamino_mvp_report.v1"
+    assert summary["schema"] == "tomojax.real_lamino_staged_report.v2"
     assert summary["success"]["passed"] is True
     assert summary["quality_basis"]["truth_metrics"] == "not_applicable_real_data"
     assert summary["reconstruction_comparison"]["loss_improvement_abs"] == 20.0
-    assert (tmp_path / "mvp" / "real_mvp_summary.json").exists()
-    assert (tmp_path / "mvp" / "real_mvp_residual_trace.csv").exists()
-    assert (tmp_path / "mvp" / "real_mvp_geometry_trace.json").exists()
-    assert (tmp_path / "mvp" / "publication" / "before_orthos.png").exists()
-    assert (tmp_path / "mvp" / "publication" / "cor_only_orthos.png").exists()
-    assert (tmp_path / "mvp" / "publication" / "full_orthos.png").exists()
+    assert (tmp_path / "report" / "real_lamino_summary.json").exists()
+    assert (tmp_path / "report" / "real_lamino_residual_trace.csv").exists()
+    assert (tmp_path / "report" / "real_lamino_geometry_trace.json").exists()
+    assert (tmp_path / "report" / "publication" / "before_orthos.png").exists()
+    assert (tmp_path / "report" / "publication" / "cor_only_orthos.png").exists()
+    assert (tmp_path / "report" / "publication" / "full_orthos.png").exists()
 
 
-def test_real_mvp_summary_can_require_quality_success(tmp_path) -> None:
-    run_dir = _write_minimal_real_mvp_run(tmp_path, final_last_loss=130.0)
+def test_real_lamino_summary_can_require_quality_success(tmp_path) -> None:
+    run_dir = _write_minimal_real_lamino_run(tmp_path, final_last_loss=130.0)
 
     with pytest.raises(RuntimeError, match="did not improve"):
-        mvp_runner.build_real_mvp_report(
+        report_runner.build_real_lamino_report(
             run_dir,
-            out_dir=tmp_path / "mvp",
+            out_dir=tmp_path / "report",
             require_success=True,
         )
 
 
-def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -> None:
+def test_staged_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -335,7 +338,7 @@ def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.levels_setup == [8]
     assert args.outer_iters == 1
@@ -345,26 +348,28 @@ def test_v2_cor_mvp_smoke_reduces_to_det_u_and_cor_only(monkeypatch, tmp_path) -
     assert args.bin_factor == 4
 
 
-def test_v2_cor_mvp_public_help_uses_clean_profile_names(
+def test_staged_public_help_uses_clean_profile_names(
     monkeypatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["runner", "--help"])
 
     with pytest.raises(SystemExit) as exc_info:
-        v2_cor_mvp_runner._parse_args()
+        staged_runner._parse_args()
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "staged-lamino" in captured.out
     assert "reference-regression" in captured.out
     assert "diagnostic-fast" in captured.out
-    assert "real_lamino_mvp" not in captured.out
-    assert "v1_parity_audit" not in captured.out
+    assert "staged_lamino" not in captured.out
+    assert "reference_regression_audit" not in captured.out
     assert "--v1-parity-real-lamino" not in captured.out
+    for forbidden in ("mvp", "v1", "parity", "cor_mvp", "full_mvp", "smoke"):
+        assert forbidden not in captured.out.lower()
 
 
-def test_v2_cor_mvp_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -> None:
+def test_staged_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -381,13 +386,13 @@ def test_v2_cor_mvp_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.bin_factor == 2
     assert args.smoke_shape == (16, 64, 64)
 
 
-def test_v2_cor_mvp_accepts_final_candidate_policy(monkeypatch, tmp_path) -> None:
+def test_staged_accepts_final_candidate_policy(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -402,12 +407,12 @@ def test_v2_cor_mvp_accepts_final_candidate_policy(monkeypatch, tmp_path) -> Non
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.final_candidate_policy == "last_valid"
 
 
-def test_v2_cor_mvp_reference_regression_profile_forces_reference_contract(
+def test_staged_reference_regression_profile_forces_reference_contract(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -431,7 +436,7 @@ def test_v2_cor_mvp_reference_regression_profile_forces_reference_contract(
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.full_staged is True
     assert args.pose_model == "per_view"
@@ -442,11 +447,11 @@ def test_v2_cor_mvp_reference_regression_profile_forces_reference_contract(
     assert args.levels_phi == [4, 2, 1]
     cfg = runner._make_cfg(args, active_pose=("phi",))
     assert cfg.fold_rigid_detector_grid is False
-    assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
-    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
+    assert staged_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
+    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 
 
-def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
+def test_staged_staged_lamino_profile_forces_winning_contract(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -470,10 +475,10 @@ def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.profile == "staged-lamino"
-    assert args.v1_parity_real_lamino is False
+    assert args.reference_regression is False
     assert args.full_staged is True
     assert args.pose_model == "per_view"
     assert args.pose_bounds_profile == "wide"
@@ -486,11 +491,11 @@ def test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract(
     assert args.levels_polish == [2, 1]
     cfg = runner._make_cfg(args, active_pose=("phi",))
     assert cfg.fold_rigid_detector_grid is False
-    assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
-    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
+    assert staged_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
+    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 
 
-def test_v2_cor_mvp_legacy_reference_flag_is_hidden_profile_alias(monkeypatch, tmp_path) -> None:
+def test_staged_legacy_reference_flag_is_hidden_profile_alias(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -504,13 +509,13 @@ def test_v2_cor_mvp_legacy_reference_flag_is_hidden_profile_alias(monkeypatch, t
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.profile == "reference-regression"
-    assert args.v1_parity_real_lamino is True
+    assert args.reference_regression is True
 
 
-def test_v1_parity_level_outer_counts_replay_reference_stage_summary(
+def test_reference_regression_level_outer_counts_replay_reference_stage_summary(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -524,7 +529,7 @@ def test_v1_parity_level_outer_counts_replay_reference_stage_summary(
         "01_setup_geometry/03_axis_direction,4,1,4.0,3.0\n",
         encoding="utf-8",
     )
-    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_report = reference_run / "real_lamino_report" / "real_lamino_summary.json"
     reference_report.parent.mkdir(parents=True)
     _write_json(reference_report, {"success": {"passed": True}})
     monkeypatch.setattr(
@@ -543,15 +548,15 @@ def test_v1_parity_level_outer_counts_replay_reference_stage_summary(
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
-    assert v2_cor_mvp_runner._v1_parity_level_outer_counts(
+    assert staged_runner._reference_regression_level_outer_counts(
         args,
         stage_name="01_setup_geometry/03_axis_direction",
     ) == {8: 2, 4: 1}
 
 
-def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
+def test_staged_diagnostic_fast_profile_uses_bounded_smoke(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -571,7 +576,7 @@ def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.profile == "diagnostic-fast"
     assert args.full_staged is True
@@ -581,7 +586,7 @@ def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
     assert args.final_candidate_policy == "last_valid"
 
 
-def test_v2_cor_mvp_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
+def test_staged_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -600,7 +605,7 @@ def test_v2_cor_mvp_accepts_real_pose_model_options(monkeypatch, tmp_path) -> No
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.pose_model == "spline"
     assert args.knot_spacing == 6
@@ -620,7 +625,7 @@ def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:
     thetas = np.linspace(0.0, 180.0, 5, endpoint=False, dtype=np.float32)
 
     working_raw, working_thetas, geometry_inputs, provenance = (
-        v2_cor_mvp_runner._prepare_binned_fixture(
+        staged_runner._prepare_binned_fixture(
             args,
             native=runner,
             raw_projections=raw,
@@ -664,7 +669,7 @@ def test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor() -> N
     thetas = np.arange(7, dtype=np.float32)
 
     working_raw, working_thetas, _geometry_inputs, provenance = (
-        v2_cor_mvp_runner._prepare_binned_fixture(
+        staged_runner._prepare_binned_fixture(
             args,
             native=runner,
             raw_projections=raw,
@@ -693,11 +698,11 @@ def test_v2_stage_validation_accepts_repo_relative_artifact_paths(tmp_path) -> N
         },
     )
 
-    assert v2_cor_mvp_runner._artifact_validation_failures(stage_dir) == []
+    assert staged_runner._artifact_validation_failures(stage_dir) == []
 
 
 def test_v2_pose_stage_validation_accepts_finite_fast_profile_losses() -> None:
-    failures = v2_cor_mvp_runner._stat_validation_failures(
+    failures = staged_runner._stat_validation_failures(
         [
             {
                 "loss_before": 2.0,
@@ -711,7 +716,7 @@ def test_v2_pose_stage_validation_accepts_finite_fast_profile_losses() -> None:
     assert failures == []
 
 
-def test_v2_cor_mvp_runtime_default_streams_fista(monkeypatch, tmp_path) -> None:
+def test_staged_runtime_default_streams_fista(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -724,15 +729,15 @@ def test_v2_cor_mvp_runtime_default_streams_fista(monkeypatch, tmp_path) -> None
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
     assert args.views_per_batch == 0
 
-    v2_cor_mvp_runner._normalize_runtime_args(args)
+    staged_runner._normalize_runtime_args(args)
 
     assert args.views_per_batch == 1
 
 
-def test_v2_cor_mvp_defaults_to_reference_conservative_pose_bounds(monkeypatch, tmp_path) -> None:
+def test_staged_defaults_to_reference_conservative_pose_bounds(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -745,31 +750,31 @@ def test_v2_cor_mvp_defaults_to_reference_conservative_pose_bounds(monkeypatch, 
         ],
     )
 
-    args = v2_cor_mvp_runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.pose_bounds_profile == "reference_conservative"
-    assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.00872665:0.00872665"
-    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-10:10,dz=-10:10"
-    assert "alpha=-0.00872665:0.00872665" in v2_cor_mvp_runner._pose_polish_bounds(args)
+    assert staged_runner._pose_phi_bounds(args) == "phi=-0.00872665:0.00872665"
+    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-10:10,dz=-10:10"
+    assert "alpha=-0.00872665:0.00872665" in staged_runner._pose_polish_bounds(args)
 
     args.effective_bin_factor = 4
-    assert v2_cor_mvp_runner._setup_det_u_bounds(args) == "det_u_px=-6:6"
-    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-2.5:2.5,dz=-2.5:2.5"
+    assert staged_runner._setup_det_u_bounds(args) == "det_u_px=-6:6"
+    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-2.5:2.5,dz=-2.5:2.5"
 
 
-def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:
-    run_dir = _write_minimal_v2_cor_mvp_run(tmp_path)
+def test_v2_cor_real_lamino_report_preserves_partial_contract(tmp_path) -> None:
+    run_dir = _write_minimal_staged_run(tmp_path)
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         run_dir,
         out_dir=tmp_path / "v2_report",
-        reference_report=Path("runs/reference/real_mvp_report/real_mvp_summary.json"),
+        reference_report=Path("runs/reference/real_lamino_report/real_lamino_summary.json"),
     )
 
-    assert summary["schema"] == "tomojax.real_lamino_v2_mvp_report.v1"
-    assert summary["contract_compatible_with"] == "tomojax.real_lamino_mvp_report.v1"
+    assert summary["schema"] == "tomojax.real_lamino_staged_report.v2"
+    assert summary["contract_compatible_with"] == "tomojax.real_lamino_staged_report.v2"
     assert summary["success"]["passed"] is True
-    assert summary["success"]["full_mvp_success_deferred"] is True
+    assert summary["success"]["full_staged_success_deferred"] is True
     assert summary["quality_basis"]["truth_metrics"] == "not_applicable_real_data"
     assert summary["method_constraints"]["cor_grid_search_added"] is False
     assert summary["method_constraints"]["sinogram_or_correlation_method_added"] is False
@@ -781,15 +786,15 @@ def test_v2_cor_mvp_report_preserves_partial_contract(tmp_path) -> None:
     assert statuses["01_setup_geometry/02_detector_roll"] == "planned"
     assert statuses["05_final"] == "planned"
     assert summary["reconstruction_comparison"]["cor_only"]["loss"]["last"] == 80.0
-    assert (tmp_path / "v2_report" / "real_mvp_summary.json").exists()
-    assert (tmp_path / "v2_report" / "real_mvp_residual_trace.csv").exists()
-    assert (tmp_path / "v2_report" / "real_mvp_geometry_trace.json").exists()
+    assert (tmp_path / "v2_report" / "real_lamino_summary.json").exists()
+    assert (tmp_path / "v2_report" / "real_lamino_residual_trace.csv").exists()
+    assert (tmp_path / "v2_report" / "real_lamino_geometry_trace.json").exists()
     assert (tmp_path / "v2_report" / "publication" / "before_orthos.png").exists()
     assert (tmp_path / "v2_report" / "publication" / "cor_only_orthos.png").exists()
 
 
-def test_v2_full_mvp_report_fails_when_final_is_worse_than_cor_only(tmp_path) -> None:
-    run_dir = _write_minimal_v2_cor_mvp_run(tmp_path)
+def test_v2_full_real_lamino_report_fails_when_final_is_worse_than_cor_only(tmp_path) -> None:
+    run_dir = _write_minimal_staged_run(tmp_path)
     final_dir = run_dir / "05_final"
     _write_stage_images(final_dir)
     _write_json(
@@ -821,12 +826,12 @@ def test_v2_full_mvp_report_fails_when_final_is_worse_than_cor_only(tmp_path) ->
         payload["planned_after"] = None
         _write_json(run_dir / rel / "stage_manifest.json", payload)
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         run_dir,
         out_dir=tmp_path / "v2_full_report",
     )
 
-    assert summary["success"]["phase"] == "v2_full_mvp"
+    assert summary["success"]["phase"] == "v2_full_staged"
     assert summary["success"]["passed"] is False
     assert summary["success"]["final_loss"] == 120.0
     assert summary["success"]["cor_only_loss"] == 80.0
@@ -877,7 +882,7 @@ def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None
         },
     ]
 
-    volume, choice = v2_cor_mvp_runner.run_best_final_reconstruction(
+    volume, choice = staged_runner.run_best_final_reconstruction(
         ctx,
         native=FakeNative(),
         geometry=None,
@@ -948,7 +953,7 @@ def test_v2_final_reconstruction_can_score_only_last_valid_candidate(tmp_path) -
         },
     ]
 
-    volume, choice = v2_cor_mvp_runner.run_best_final_reconstruction(
+    volume, choice = staged_runner.run_best_final_reconstruction(
         ctx,
         native=native,
         geometry=None,
@@ -1053,7 +1058,7 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
 
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()
-    setup_state, params5, records, candidates = v2_cor_mvp_runner.run_remaining_stages(
+    setup_state, params5, records, candidates = staged_runner.run_remaining_stages(
         ctx,
         native=FakeNative(),
         geometry=None,
@@ -1084,7 +1089,7 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
 
 
 def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path) -> None:
-    run_dir = _write_minimal_v2_cor_mvp_run(tmp_path)
+    run_dir = _write_minimal_staged_run(tmp_path)
     for rel in ["01_setup_geometry/02_detector_roll", "01_setup_geometry/03_axis_direction"]:
         stage_dir = run_dir / rel
         _write_stage_images(stage_dir)
@@ -1128,13 +1133,13 @@ def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path)
         },
     )
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         run_dir,
         out_dir=tmp_path / "failed_pose_report",
     )
 
     assert summary["success"]["passed"] is False
-    assert summary["success"]["phase"] == "v2_full_mvp_failed_validation"
+    assert summary["success"]["phase"] == "v2_full_staged_failed_validation"
     assert summary["success"]["validation_failed"] is True
     assert summary["success"]["final_loss"] == 70.0
     failed = summary["success"]["failed_or_skipped_stages"]
@@ -1146,9 +1151,9 @@ def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path)
 
 
 def test_v2_report_copies_final_pose_summary_from_run_manifest(tmp_path) -> None:
-    run_dir = _write_minimal_real_mvp_run(tmp_path, final_last_loss=70.0)
+    run_dir = _write_minimal_real_lamino_run(tmp_path, final_last_loss=70.0)
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         run_dir,
         out_dir=tmp_path / "pose_summary_report",
     )
@@ -1156,19 +1161,19 @@ def test_v2_report_copies_final_pose_summary_from_run_manifest(tmp_path) -> None
     assert summary["provenance"]["final_pose_summary"] == {"dx": {"std": 1.0}}
 
 
-def test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale(tmp_path) -> None:
+def test_v2_report_emits_reference_regression_table_and_flags_pose_loss_scale(tmp_path) -> None:
     (tmp_path / "reference").mkdir()
     (tmp_path / "v2").mkdir()
-    reference_run = _write_minimal_real_mvp_run(tmp_path / "reference", final_last_loss=80.0)
-    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_run = _write_minimal_real_lamino_run(tmp_path / "reference", final_last_loss=80.0)
+    reference_report = reference_run / "real_lamino_report" / "real_lamino_summary.json"
     reference_report.parent.mkdir()
     _write_json(reference_report, {"success": {"passed": True}})
 
-    v2_run = _write_minimal_real_mvp_run(tmp_path / "v2", final_last_loss=70.0)
+    v2_run = _write_minimal_real_lamino_run(tmp_path / "v2", final_last_loss=70.0)
     manifest = json.loads((v2_run / "run_manifest.json").read_text())
     manifest["workflow"] = {
-        "v1_parity_real_lamino": True,
-        "v1_parity_contract": {
+        "reference_regression": True,
+        "reference_regression_contract": {
             "passed": True,
             "mismatches": {},
         },
@@ -1180,37 +1185,37 @@ def test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale(tmp_path) -> 
         encoding="utf-8",
     )
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         v2_run,
-        out_dir=tmp_path / "parity_report",
+        out_dir=tmp_path / "reference_regression_report",
         reference_report=reference_report,
     )
 
-    audit = summary["v1_parity_audit"]
+    audit = summary["reference_regression"]
     assert audit["enabled"] is True
     assert audit["status"] == "failed"
     assert audit["pose_loss_scale_failures"][0]["stage"] == "02_pose_phi"
-    table = tmp_path / "parity_report" / "real_mvp_v1_parity_table.csv"
+    table = tmp_path / "reference_regression_report" / "real_lamino_reference_regression_table.csv"
     assert table.exists()
     assert "loss_scale_mismatch" in table.read_text()
-    assert summary["artifacts"]["v1_parity_table_csv"] == str(table.resolve())
+    assert summary["artifacts"]["reference_regression_table_csv"] == str(table.resolve())
 
 
-def test_v1_parity_phi_level2_loss_scale_on_reference_path_is_recorded(
+def test_reference_regression_phi_level2_loss_scale_on_reference_path_is_recorded(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "reference").mkdir()
     (tmp_path / "v2").mkdir()
-    reference_run = _write_minimal_real_mvp_run(tmp_path / "reference", final_last_loss=80.0)
-    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_run = _write_minimal_real_lamino_run(tmp_path / "reference", final_last_loss=80.0)
+    reference_report = reference_run / "real_lamino_report" / "real_lamino_summary.json"
     reference_report.parent.mkdir()
     _write_json(reference_report, {"success": {"passed": True}})
 
-    v2_run = _write_minimal_real_mvp_run(tmp_path / "v2", final_last_loss=70.0)
+    v2_run = _write_minimal_real_lamino_run(tmp_path / "v2", final_last_loss=70.0)
     manifest = json.loads((v2_run / "run_manifest.json").read_text())
     manifest["workflow"] = {
-        "v1_parity_real_lamino": True,
-        "v1_parity_contract": {
+        "reference_regression": True,
+        "reference_regression_contract": {
             "passed": True,
             "mismatches": {},
         },
@@ -1231,35 +1236,37 @@ def test_v1_parity_phi_level2_loss_scale_on_reference_path_is_recorded(
         encoding="utf-8",
     )
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         v2_run,
-        out_dir=tmp_path / "parity_phi_report",
+        out_dir=tmp_path / "reference_phi_report",
         reference_report=reference_report,
     )
 
-    audit = summary["v1_parity_audit"]
+    audit = summary["reference_regression"]
     assert audit["status"] == "recorded"
     assert audit["pose_loss_scale_failures"] == []
-    table = (tmp_path / "parity_phi_report" / "real_mvp_v1_parity_table.csv").read_text()
+    table = (
+        tmp_path / "reference_phi_report" / "real_lamino_reference_regression_table.csv"
+    ).read_text()
     assert "02_pose_phi,2,1,482.2211,482.1140,481.8929,481.8202" in table
     assert "loss_scale_mismatch" not in table
 
 
-def test_v1_parity_table_uses_cor_only_reconstruction_loss_and_flags_missing_rows(
+def test_reference_regression_table_uses_cor_only_reconstruction_loss_and_flags_missing_rows(
     tmp_path,
 ) -> None:
     (tmp_path / "reference").mkdir()
     (tmp_path / "v2").mkdir()
-    reference_run = _write_minimal_real_mvp_run(tmp_path / "reference", final_last_loss=80.0)
-    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_run = _write_minimal_real_lamino_run(tmp_path / "reference", final_last_loss=80.0)
+    reference_report = reference_run / "real_lamino_report" / "real_lamino_summary.json"
     reference_report.parent.mkdir()
     _write_json(reference_report, {"success": {"passed": True}})
 
-    v2_run = _write_minimal_real_mvp_run(tmp_path / "v2", final_last_loss=70.0)
+    v2_run = _write_minimal_real_lamino_run(tmp_path / "v2", final_last_loss=70.0)
     manifest = json.loads((v2_run / "run_manifest.json").read_text())
     manifest["workflow"] = {
-        "v1_parity_real_lamino": True,
-        "v1_parity_contract": {
+        "reference_regression": True,
+        "reference_regression_contract": {
             "passed": True,
             "mismatches": {},
         },
@@ -1277,21 +1284,23 @@ def test_v1_parity_table_uses_cor_only_reconstruction_loss_and_flags_missing_row
         encoding="utf-8",
     )
 
-    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+    summary = staged_runner.build_real_lamino_staged_report(
         v2_run,
-        out_dir=tmp_path / "parity_shape_report",
+        out_dir=tmp_path / "reference_shape_report",
         reference_report=reference_report,
     )
 
-    audit = summary["v1_parity_audit"]
+    audit = summary["reference_regression"]
     assert audit["status"] == "failed"
     assert audit["row_shape_failures"][0]["stage"] == "01_setup_geometry/03_axis_direction"
-    table = (tmp_path / "parity_shape_report" / "real_mvp_v1_parity_table.csv").read_text()
+    table = (
+        tmp_path / "reference_shape_report" / "real_lamino_reference_regression_table.csv"
+    ).read_text()
     assert "06_cor_only_fista,final,,120.0,100.0,120.0,100.0,1.0,matched," in table
     assert "06_cor_only_fista,8,1" not in table
 
 
-def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:
+def _write_minimal_real_lamino_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     _write_json(
@@ -1386,13 +1395,13 @@ def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0
     return run_dir
 
 
-def _write_minimal_v2_cor_mvp_run(tmp_path: Path) -> Path:
+def _write_minimal_staged_run(tmp_path: Path) -> Path:
     run_dir = tmp_path / "v2_run"
     run_dir.mkdir()
     _write_json(
         run_dir / "run_manifest.json",
         {
-            "schema": "tomojax.real_lamino_v2_cor_mvp_run.v1",
+            "schema": "tomojax.real_lamino_staged_run.v2",
             "input": "real.nxs",
             "backend": "gpu",
             "devices": ["cuda:0"],

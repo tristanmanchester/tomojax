@@ -49,6 +49,8 @@ Tasks:
       `docs/benchmark_runs/2026-05-13-synthetic128-production-gates.md`.
 - [x] Rename public auto-alignment console scripts from smoke/debug wording to
       production names.
+- [x] Rename real-laminography script entrypoints to staged/reference-regression
+      names and hide legacy diagnostic aliases from public help.
 
 Historical productionization plan follows for context.
 

@@ -107,6 +107,48 @@ with compile logging and phase timing before changing algorithms.
   passed with 0 errors, 0 warnings, and 0 notes.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
 
+## 2026-05-12 - Real-laminography public script naming cleanup
+
+### Scope
+
+Continued the production-hardening public-surface cleanup for the manual
+real-laminography tools.
+
+- Renamed `scripts/real_laminography/run_real_lamino_v2_cor_mvp.py` to
+  `scripts/real_laminography/run_real_lamino_staged.py`.
+- Renamed `scripts/real_laminography/summarize_real_lamino_mvp.py` to
+  `scripts/real_laminography/summarize_real_lamino_report.py`.
+- Renamed the original behavior-comparison runner to
+  `scripts/real_laminography/run_real_lamino_reference_regression.py`.
+- The staged runner public help now exposes `staged-lamino`,
+  `reference-regression`, `diagnostic-fast`, and `--diagnostic-shape`; hidden
+  compatibility aliases remain for old command transcripts.
+- Staged real-laminography report artifacts now use `real_lamino_*` names and
+  the reference-comparison payload is recorded as `reference_regression` rather
+  than a public parity audit.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 39 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run ruff check
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/summarize_real_lamino_report.py
+  scripts/real_laminography/real_lamino_profiles.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/summarize_real_lamino_report.py
+  scripts/real_laminography/real_lamino_profiles.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run python
+  scripts/real_laminography/run_real_lamino_staged.py --help | rg -i
+  "mvp|v1|parity|cor_mvp|full_mvp|after_fista_fallback|smoke" || true`
+  produced no matches.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Production hardening public naming cleanup
 
 ### Scope

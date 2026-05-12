@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # pyright: reportAny=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnusedCallResult=false
-"""Build the real-laminography MVP artifact contract from a staged run."""
+"""Build the real-laminography staged artifact contract from a staged run."""
 
 from __future__ import annotations
 
@@ -35,30 +35,30 @@ PUBLICATION_IMAGES: tuple[tuple[str, str, str], ...] = (
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the real-laminography MVP report CLI."""
+    """Run the real-laminography staged report CLI."""
     args = _parse_args(argv)
     run_dir = Path(args.run_dir)
-    out_dir = Path(args.out_dir) if args.out_dir else run_dir / "real_mvp_report"
-    report = build_real_mvp_report(
+    out_dir = Path(args.out_dir) if args.out_dir else run_dir / "real_lamino_report"
+    report = build_real_lamino_report(
         run_dir,
         out_dir=out_dir,
         require_success=bool(args.require_success),
     )
-    print(f"mvp_report: {report['artifacts']['summary_json']}")
+    print(f"real_lamino_report: {report['artifacts']['summary_json']}")
     print(f"success: {report['success']['passed']}")
     return 0
 
 
-def build_real_mvp_report(
+def build_real_lamino_report(
     run_dir: Path,
     *,
     out_dir: Path | None = None,
     require_success: bool = False,
 ) -> dict[str, Any]:
-    """Write and return the real-laminography MVP report for ``run_dir``."""
+    """Write and return the real-laminography staged report for ``run_dir``."""
     root = Path(run_dir)
     if out_dir is None:
-        out_dir = root / "real_mvp_report"
+        out_dir = root / "real_lamino_report"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     run_manifest = _read_json(root / "run_manifest.json")
@@ -70,11 +70,17 @@ def build_real_mvp_report(
         raise RuntimeError(str(success["reason"]))
 
     publication_artifacts = _copy_publication_images(root, out_dir)
-    residual_trace = _write_residual_trace(out_dir / "real_mvp_residual_trace.csv", stage_records)
-    geometry_trace = _write_geometry_trace(out_dir / "real_mvp_geometry_trace.json", stage_records)
+    residual_trace = _write_residual_trace(
+        out_dir / "real_lamino_residual_trace.csv",
+        stage_records,
+    )
+    geometry_trace = _write_geometry_trace(
+        out_dir / "real_lamino_geometry_trace.json",
+        stage_records,
+    )
 
     summary: dict[str, Any] = {
-        "schema": "tomojax.real_lamino_mvp_report.v1",
+        "schema": "tomojax.real_lamino_staged_report.v2",
         "run_dir": str(root),
         "reference_case": root.name,
         "success": success,
@@ -104,15 +110,15 @@ def build_real_mvp_report(
             "cor_only_role": "comparator_artifact_from_reference_run",
         },
         "artifacts": {
-            "summary_json": str((out_dir / "real_mvp_summary.json").resolve()),
-            "summary_md": str((out_dir / "real_mvp_summary.md").resolve()),
+            "summary_json": str((out_dir / "real_lamino_summary.json").resolve()),
+            "summary_md": str((out_dir / "real_lamino_summary.md").resolve()),
             "residual_trace_csv": str(residual_trace.resolve()),
             "geometry_trace_json": str(geometry_trace.resolve()),
             "publication_dir": str((out_dir / "publication").resolve()),
         },
     }
-    _write_json(out_dir / "real_mvp_summary.json", summary)
-    _write_markdown(out_dir / "real_mvp_summary.md", summary)
+    _write_json(out_dir / "real_lamino_summary.json", summary)
+    _write_markdown(out_dir / "real_lamino_summary.md", summary)
     return summary
 
 
@@ -302,7 +308,7 @@ def _write_markdown(path: Path, summary: Mapping[str, Any]) -> None:
     success = summary["success"]
     reconstruction = summary["reconstruction_comparison"]
     lines = [
-        "# Real Laminography MVP Report",
+        "# Real Laminography Staged Report",
         "",
         f"- Reference case: `{summary['reference_case']}`",
         f"- Success: `{success['passed']}`",

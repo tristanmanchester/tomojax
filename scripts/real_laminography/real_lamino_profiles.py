@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-V1_PARITY_CONTRACT: dict[str, Any] = {
+REFERENCE_REGRESSION_CONTRACT: dict[str, Any] = {
     "projection_background": "edge_median",
     "background_edge_px": 16,
     "canonical_det_grid": False,
@@ -51,9 +51,9 @@ REAL_LAMINO_PROFILE_CHOICES = (
     "diagnostic-fast",
 )
 
-REAL_LAMINO_MVP_CONTRACT: dict[str, Any] = dict(V1_PARITY_CONTRACT)
+STAGED_LAMINO_CONTRACT: dict[str, Any] = dict(REFERENCE_REGRESSION_CONTRACT)
 
-LEGACY_REAL_LAMINO_PROFILE_ALIASES = {
+INTERNAL_REAL_LAMINO_PROFILE_ALIASES = {
     "real_lamino_mvp": "staged-lamino",
     "v1_parity_audit": "reference-regression",
     "diagnostic_fast": "diagnostic-fast",

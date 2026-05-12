@@ -41,7 +41,7 @@ from tomojax.recon.fista_tv_core import (
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid
 from tomojax.io import normalize_json
 
-from run_real_lamino_native_setup_pose_256 import (
+from run_real_lamino_reference_regression import (
     _apply_projection_background,
     _global_z_to_phys,
     _load_input,

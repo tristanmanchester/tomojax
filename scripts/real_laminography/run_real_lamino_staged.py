@@ -27,10 +27,10 @@ import numpy as np
 
 try:
     from scripts.real_laminography.real_lamino_profiles import (
-        LEGACY_REAL_LAMINO_PROFILE_ALIASES,
-        REAL_LAMINO_MVP_CONTRACT,
+        INTERNAL_REAL_LAMINO_PROFILE_ALIASES,
         REAL_LAMINO_PROFILE_CHOICES,
-        V1_PARITY_CONTRACT,
+        REFERENCE_REGRESSION_CONTRACT,
+        STAGED_LAMINO_CONTRACT,
     )
 except ModuleNotFoundError:
     _PROFILE_SPEC = importlib.util.spec_from_file_location(
@@ -41,10 +41,10 @@ except ModuleNotFoundError:
         raise
     _profiles = importlib.util.module_from_spec(_PROFILE_SPEC)
     _PROFILE_SPEC.loader.exec_module(_profiles)
-    REAL_LAMINO_MVP_CONTRACT = _profiles.REAL_LAMINO_MVP_CONTRACT
+    STAGED_LAMINO_CONTRACT = _profiles.STAGED_LAMINO_CONTRACT
     REAL_LAMINO_PROFILE_CHOICES = _profiles.REAL_LAMINO_PROFILE_CHOICES
-    LEGACY_REAL_LAMINO_PROFILE_ALIASES = _profiles.LEGACY_REAL_LAMINO_PROFILE_ALIASES
-    V1_PARITY_CONTRACT = _profiles.V1_PARITY_CONTRACT
+    INTERNAL_REAL_LAMINO_PROFILE_ALIASES = _profiles.INTERNAL_REAL_LAMINO_PROFILE_ALIASES
+    REFERENCE_REGRESSION_CONTRACT = _profiles.REFERENCE_REGRESSION_CONTRACT
 
 STAGED_PATH: tuple[dict[str, Any], ...] = (
     {"label": "baseline", "stage": "00_baseline", "active_dofs": [], "status": "required"},
@@ -93,7 +93,7 @@ STAGED_PATH: tuple[dict[str, Any], ...] = (
     },
 )
 
-V1_PARITY_STAGE_MAP: tuple[tuple[str, str], ...] = (
+REFERENCE_REGRESSION_STAGE_MAP: tuple[tuple[str, str], ...] = (
     ("01_setup_geometry/01_cor", "01_setup_geometry/01_cor"),
     ("01_setup_geometry/02_detector_roll", "01_setup_geometry/02_detector_roll"),
     ("01_setup_geometry/03_axis_direction", "01_setup_geometry/03_axis_direction"),
@@ -105,7 +105,7 @@ V1_PARITY_STAGE_MAP: tuple[tuple[str, str], ...] = (
 )
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the v2 real-laminography MVP workflow."""
+    """Run the v2 real-laminography staged workflow."""
     args = _parse_args(argv)
     run_root = Path(args.out)
     if run_root.exists() and any(run_root.iterdir()) and not bool(args.overwrite):
@@ -117,21 +117,21 @@ def main(argv: list[str] | None = None) -> int:
     monitor.start()
     started = datetime.now().isoformat(timespec="seconds")
     try:
-        summary = run_v2_cor_mvp(args, native=native, started_at=started)
-        print(f"v2_cor_mvp_report: {summary['artifacts']['summary_json']}")
+        summary = run_real_lamino_staged(args, native=native, started_at=started)
+        print(f"real_lamino_report: {summary['artifacts']['summary_json']}")
         print(f"phase_complete: {summary['success']['passed']}")
         return 0
     finally:
         monitor.close()
 
 
-def run_v2_cor_mvp(  # noqa: PLR0915
+def run_real_lamino_staged(  # noqa: PLR0915
     args: argparse.Namespace,
     *,
     native: Any | None = None,
     started_at: str | None = None,
 ) -> dict[str, Any]:
-    """Execute the v2 real-laminography workflow and write the MVP report."""
+    """Execute the v2 real-laminography workflow and write the staged report."""
     if native is None:
         native = _load_native_runner()
     _normalize_runtime_args(args)
@@ -206,7 +206,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             implemented_stages.extend(planned_stages)
             planned_stages = []
         run_manifest = {
-            "schema": "tomojax.real_lamino_v2_mvp_run.v1",
+            "schema": "tomojax.real_lamino_staged_run.v2",
             "status": "running",
             "started_at": started,
             "input": str(args.input),
@@ -233,11 +233,11 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "profile": str(args.profile),
                 "implemented_stages": implemented_stages,
                 "planned_stages": planned_stages,
-                "full_mvp_success_deferred": not full_staged,
+                "full_staged_success_deferred": not full_staged,
                 "staged_lamino": str(args.profile) == "staged-lamino",
                 "reference_regression": str(args.profile) == "reference-regression",
-                "v1_parity_contract": (
-                    _v1_parity_contract_payload(args)
+                "reference_regression_contract": (
+                    _reference_regression_contract_payload(args)
                     if str(args.profile) == "reference-regression"
                     else None
                 ),
@@ -296,7 +296,7 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             params5=params5,
             levels=tuple(int(v) for v in args.levels_setup),
             bounds=_setup_det_u_bounds(args),
-            level_outer_counts=_v1_parity_level_outer_counts(
+            level_outer_counts=_reference_regression_level_outer_counts(
                 args,
                 stage_name="01_setup_geometry/01_cor",
             ),
@@ -372,9 +372,9 @@ def run_v2_cor_mvp(  # noqa: PLR0915
         }
         native._write_json(run_root / "run_manifest.json", {**run_manifest, **final_payload})
         native._status(ctx.status_path, state="completed", stage="complete", **final_payload)
-        return build_v2_cor_mvp_report(
+        return build_real_lamino_staged_report(
             run_root,
-            out_dir=run_root / "v2_cor_mvp_report",
+            out_dir=run_root / "real_lamino_report",
             reference_report=Path(args.reference_report) if args.reference_report else None,
         )
     except Exception as exc:
@@ -513,7 +513,7 @@ def run_remaining_stages(
             params5=params5,
             levels=tuple(int(v) for v in ctx.args.levels_setup),
             bounds=bounds,
-            level_outer_counts=_v1_parity_level_outer_counts(
+            level_outer_counts=_reference_regression_level_outer_counts(
                 ctx.args,
                 stage_name=stage_name,
             ),
@@ -929,15 +929,15 @@ def _is_finite_scalar(value: Any) -> bool:
         return False
 
 
-def build_v2_cor_mvp_report(
+def build_real_lamino_staged_report(
     run_dir: Path,
     *,
     out_dir: Path | None = None,
     reference_report: Path | None = None,
 ) -> dict[str, Any]:
-    """Write a report matching the real-MVP shape for the partial COR v2 path."""
+    """Write the staged real-laminography report."""
     root = Path(run_dir)
-    out = out_dir or root / "v2_cor_mvp_report"
+    out = out_dir or root / "real_lamino_report"
     out.mkdir(parents=True, exist_ok=True)
     run_manifest = _read_json(root / "run_manifest.json")
     status = _read_json(root / "status.json") if (root / "status.json").exists() else {}
@@ -950,17 +950,17 @@ def build_v2_cor_mvp_report(
         full_completed=reconstruction["final"]["status"] == "completed"
         and reconstruction["final"]["loss"]["last"] is not None,
     )
-    residual_trace = _write_residual_trace(out / "real_mvp_residual_trace.csv", records)
-    geometry_trace = _write_geometry_trace(out / "real_mvp_geometry_trace.json", records)
-    parity_audit = _write_v1_parity_audit(
+    residual_trace = _write_residual_trace(out / "real_lamino_residual_trace.csv", records)
+    geometry_trace = _write_geometry_trace(out / "real_lamino_geometry_trace.json", records)
+    reference_regression = _write_reference_regression_audit(
         root=root,
         out_dir=out,
         reference_report=reference_report,
         run_manifest=run_manifest,
     )
     summary: dict[str, Any] = {
-        "schema": "tomojax.real_lamino_v2_mvp_report.v1",
-        "contract_compatible_with": "tomojax.real_lamino_mvp_report.v1",
+        "schema": "tomojax.real_lamino_staged_report.v2",
+        "contract_compatible_with": "tomojax.real_lamino_staged_report.v2",
         "run_dir": str(root),
         "reference_target_report": str(reference_report) if reference_report else None,
         "reference_case": root.name,
@@ -968,15 +968,15 @@ def build_v2_cor_mvp_report(
         "quality_basis": {
             "kind": success["quality_kind"],
             "primary_metric": success["primary_metric"],
-            "full_mvp_primary_metric": "final_fista_last_loss_lt_cor_only_fista_last_loss",
-            "full_mvp_success_deferred": success["full_mvp_success_deferred"],
+            "full_staged_primary_metric": "final_fista_last_loss_lt_cor_only_fista_last_loss",
+            "full_staged_success_deferred": success["full_staged_success_deferred"],
             "truth_metrics": "not_applicable_real_data",
             "synthetic_truth_metrics_allowed": False,
         },
         "staged_path": records,
         "reconstruction_comparison": reconstruction,
         "publication_artifacts": publication,
-        "v1_parity_audit": parity_audit["payload"],
+        "reference_regression": reference_regression["payload"],
         "provenance": {
             "input": run_manifest.get("input"),
             "binning": run_manifest.get("binning"),
@@ -989,22 +989,22 @@ def build_v2_cor_mvp_report(
         },
         "method_constraints": _method_constraints(),
         "artifacts": {
-            "summary_json": str((out / "real_mvp_summary.json").resolve()),
-            "summary_md": str((out / "real_mvp_summary.md").resolve()),
+            "summary_json": str((out / "real_lamino_summary.json").resolve()),
+            "summary_md": str((out / "real_lamino_summary.md").resolve()),
             "residual_trace_csv": str(residual_trace.resolve()),
             "geometry_trace_json": str(geometry_trace.resolve()),
             "publication_dir": str((out / "publication").resolve()),
-            **parity_audit["artifacts"],
+            **reference_regression["artifacts"],
         },
     }
-    _write_json(out / "real_mvp_summary.json", summary)
-    _write_partial_markdown(out / "real_mvp_summary.md", summary)
+    _write_json(out / "real_lamino_summary.json", summary)
+    _write_partial_markdown(out / "real_lamino_summary.md", summary)
     return summary
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: PLR0915
     parser = argparse.ArgumentParser(
-        description="Run v2 baseline + COR/det_u + COR-only FISTA for real laminography."
+        description="Run the v2 staged real-laminography workflow."
     )
     parser.add_argument("--input", required=True)
     parser.add_argument("--out", required=True)
@@ -1030,13 +1030,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         help="Bin the real input projections and reconstruction grid by this factor.",
     )
     parser.add_argument(
-        "--smoke-shape",
+        "--diagnostic-shape",
+        dest="smoke_shape",
         type=_parse_shape3,
         default=None,
+        metavar="N,NV,NU",
         help=(
-            "Optional real-data smoke target as N,NV,NU. Views are deterministically "
+            "Optional real-data diagnostic target as N,NV,NU. Views are deterministically "
             "subselected and the bin factor is raised so binned detector dims fit."
         ),
+    )
+    parser.add_argument(
+        "--smoke-shape",
+        dest="smoke_shape",
+        type=_parse_shape3,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--levels-setup", nargs="+", type=int, default=[8, 4, 2])
     parser.add_argument("--levels-phi", nargs="+", type=int, default=[4, 2, 1])
@@ -1106,10 +1114,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     )
     parser.add_argument(
         "--v1-parity-real-lamino",
+        dest="reference_regression",
         action="store_true",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--full-staged",
         action="store_true",
@@ -1139,33 +1148,33 @@ def _apply_real_lamino_profile_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> None:
-    if bool(args.v1_parity_real_lamino):
+    if bool(args.reference_regression):
         if str(args.profile) not in {"manual", "reference-regression"}:
-            parser.error("--v1-parity-real-lamino cannot be combined with another --profile")
+            parser.error("reference-regression mode cannot be combined with another --profile")
         args.profile = "reference-regression"
-    args.profile = LEGACY_REAL_LAMINO_PROFILE_ALIASES.get(str(args.profile), str(args.profile))
+    args.profile = INTERNAL_REAL_LAMINO_PROFILE_ALIASES.get(str(args.profile), str(args.profile))
     if str(args.profile) == "reference-regression":
         if bool(args.smoke):
-            parser.error("--profile reference-regression cannot be combined with --smoke")
-        _apply_profile_contract_args(args, V1_PARITY_CONTRACT)
-        args.v1_parity_real_lamino = True
+            parser.error("--profile reference-regression cannot be combined with diagnostic mode")
+        _apply_profile_contract_args(args, REFERENCE_REGRESSION_CONTRACT)
+        args.reference_regression = True
     elif str(args.profile) == "staged-lamino":
-        _apply_profile_contract_args(args, REAL_LAMINO_MVP_CONTRACT)
-        args.v1_parity_real_lamino = False
+        _apply_profile_contract_args(args, STAGED_LAMINO_CONTRACT)
+        args.reference_regression = False
     elif str(args.profile) == "diagnostic-fast":
         args.full_staged = True
         args.smoke = True
         if str(args.final_candidate_policy) == "all":
             args.final_candidate_policy = "last_valid"
-        args.v1_parity_real_lamino = False
+        args.reference_regression = False
     else:
-        args.v1_parity_real_lamino = False
+        args.reference_regression = False
 
 
-def _apply_v1_parity_real_lamino_args(args: argparse.Namespace) -> None:
-    _apply_profile_contract_args(args, V1_PARITY_CONTRACT)
+def _apply_reference_regression_args(args: argparse.Namespace) -> None:
+    _apply_profile_contract_args(args, REFERENCE_REGRESSION_CONTRACT)
     args.profile = "reference-regression"
-    args.v1_parity_real_lamino = True
+    args.reference_regression = True
 
 
 def _apply_profile_contract_args(args: argparse.Namespace, contract: Mapping[str, Any]) -> None:
@@ -1205,7 +1214,7 @@ def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
-def _v1_parity_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
+def _reference_regression_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
     actual = {
         "projection_background": str(args.projection_background),
         "background_edge_px": int(args.background_edge_px),
@@ -1244,25 +1253,25 @@ def _v1_parity_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
     }
     mismatches = {
         key: {"expected": expected, "actual": actual.get(key)}
-        for key, expected in V1_PARITY_CONTRACT.items()
+        for key, expected in REFERENCE_REGRESSION_CONTRACT.items()
         if actual.get(key) != expected
     }
     return {
-        "schema": "tomojax.real_lamino_v1_parity_contract.v1",
-        "source_script": "scripts/real_laminography/run_real_lamino_native_setup_pose_256.py",
-        "expected": V1_PARITY_CONTRACT,
+        "schema": "tomojax.real_lamino_reference_regression_contract.v2",
+        "source_script": "scripts/real_laminography/run_real_lamino_reference_regression.py",
+        "expected": REFERENCE_REGRESSION_CONTRACT,
         "actual": actual,
         "mismatches": mismatches,
         "passed": not mismatches,
     }
 
 
-def _v1_parity_level_outer_counts(
+def _reference_regression_level_outer_counts(
     args: argparse.Namespace,
     *,
     stage_name: str,
 ) -> dict[int, int] | None:
-    """Return v1 per-level setup row counts for strict parity replay."""
+    """Return reference-run per-level setup row counts for strict replay."""
     if str(getattr(args, "profile", "")) != "reference-regression":
         return None
     reference_report = getattr(args, "reference_report", None)
@@ -1303,7 +1312,7 @@ def _resolve_fixture_bin_factor(
         return factor
     _target_views, target_nv, target_nu = smoke_shape
     if target_nv < 1 or target_nu < 1:
-        raise ValueError(f"smoke shape must be positive, got {smoke_shape!r}")
+        raise ValueError(f"diagnostic shape must be positive, got {smoke_shape!r}")
     _n_views, nv, nu = projection_shape
     factor = max(factor, math.ceil(float(nv) / float(target_nv)))
     factor = max(factor, math.ceil(float(nu) / float(target_nu)))
@@ -1466,8 +1475,8 @@ def _pose_polish_bounds(args: argparse.Namespace) -> str:
 
 
 def _load_native_runner() -> Any:
-    path = Path(__file__).with_name("run_real_lamino_native_setup_pose_256.py")
-    spec = importlib.util.spec_from_file_location("run_real_lamino_native_setup_pose_256", path)
+    path = Path(__file__).with_name("run_real_lamino_reference_regression.py")
+    spec = importlib.util.spec_from_file_location("run_real_lamino_reference_regression", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"failed to load native runner from {path}")
     module = importlib.util.module_from_spec(spec)
@@ -1619,11 +1628,11 @@ def _success_payload(
         and bool(reconstruction.get("same_volume_shape"))
     )
     phase = (
-        "v2_full_mvp_failed_validation"
+        "v2_full_staged_failed_validation"
         if failed_or_skipped
-        else "v2_full_mvp"
+        else "v2_full_staged"
         if full_complete
-        else "v2_cor_mvp_partial"
+        else "v2_cor_only_partial"
     )
     partial_complete = partial_required <= completed and cor_loss is not None
     validation_failed = bool(failed_or_skipped)
@@ -1636,7 +1645,7 @@ def _success_payload(
         if full_improved
         else "v2 full staged reconstruction did not improve COR-only FISTA loss"
         if full_complete
-        else "v2 COR-MVP partial path completed baseline, det_u setup, and COR-only FISTA"
+        else "v2 partial path completed baseline, det_u setup, and COR-only FISTA"
         if partial_complete
         else "v2 path is missing required baseline/det_u/COR-only evidence"
     )
@@ -1647,7 +1656,7 @@ def _success_payload(
         "quality_kind": (
             "real_reconstruction_quality"
             if full_complete
-            else "real_reconstruction_quality_partial_cor_mvp"
+            else "real_reconstruction_quality_partial_cor_only"
         ),
         "primary_metric": (
             "final_fista_last_loss_lt_cor_only_fista_last_loss"
@@ -1663,7 +1672,7 @@ def _success_payload(
         "loss_improvement_abs": reconstruction.get("loss_improvement_abs"),
         "loss_improvement_rel": reconstruction.get("loss_improvement_rel"),
         "same_volume_shape": bool(reconstruction.get("same_volume_shape")),
-        "full_mvp_success_deferred": not full_complete,
+        "full_staged_success_deferred": not full_complete,
         "validation_failed": validation_failed,
         "failed_or_skipped_stages": [
             {
@@ -1781,7 +1790,7 @@ def _write_geometry_trace(path: Path, records: list[Mapping[str, Any]]) -> Path:
     return path
 
 
-def _write_v1_parity_audit(
+def _write_reference_regression_audit(
     *,
     root: Path,
     out_dir: Path,
@@ -1789,27 +1798,27 @@ def _write_v1_parity_audit(
     run_manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
     workflow = run_manifest.get("workflow", {})
-    enabled = bool(isinstance(workflow, Mapping) and workflow.get("v1_parity_real_lamino"))
+    enabled = bool(isinstance(workflow, Mapping) and workflow.get("reference_regression"))
     if reference_report is None or not enabled:
         return {
             "payload": {
                 "enabled": enabled,
                 "status": "skipped",
-                "reason": "v1 parity mode and reference report are required",
+                "reason": "reference-regression mode and reference report are required",
             },
             "artifacts": {},
         }
     reference_root = Path(reference_report).resolve().parents[1]
-    rows = _build_v1_parity_rows(reference_root=reference_root, v2_root=root)
-    csv_path = out_dir / "real_mvp_v1_parity_table.csv"
+    rows = _build_reference_regression_rows(reference_root=reference_root, v2_root=root)
+    csv_path = out_dir / "real_lamino_reference_regression_table.csv"
     fields = (
         "stage",
         "level_factor",
         "iteration",
-        "v1_loss_before",
-        "v1_loss_after",
-        "v2_loss_before",
-        "v2_loss_after",
+        "reference_loss_before",
+        "reference_loss_after",
+        "current_loss_before",
+        "current_loss_after",
         "loss_scale_ratio_after",
         "status",
         "notes",
@@ -1824,54 +1833,62 @@ def _write_v1_parity_audit(
     row_shape_failures = [
         row
         for row in rows
-        if row["status"] in {"missing_v1_row", "missing_v2_row"}
+        if row["status"] in {"missing_reference_row", "missing_current_row"}
     ]
-    contract = workflow.get("v1_parity_contract", {}) if isinstance(workflow, Mapping) else {}
+    contract = (
+        workflow.get("reference_regression_contract", {})
+        if isinstance(workflow, Mapping)
+        else {}
+    )
     payload = {
-        "schema": "tomojax.real_lamino_v1_parity_audit.v1",
+        "schema": "tomojax.real_lamino_reference_regression.v2",
         "enabled": True,
         "status": "failed" if pose_scale_failures or row_shape_failures else "recorded",
         "source_reference_run": str(reference_root),
-        "source_script": "scripts/real_laminography/run_real_lamino_native_setup_pose_256.py",
+        "source_script": "scripts/real_laminography/run_real_lamino_reference_regression.py",
         "contract": contract,
         "pose_loss_scale_failures": pose_scale_failures,
         "row_shape_failures": row_shape_failures,
-        "stage_summaries": _v1_parity_stage_summaries(reference_root, root),
+        "stage_summaries": _reference_regression_stage_summaries(reference_root, root),
         "table_csv": str(csv_path.resolve()),
     }
-    json_path = out_dir / "real_mvp_v1_parity_audit.json"
+    json_path = out_dir / "real_lamino_reference_regression.json"
     _write_json(json_path, payload)
     return {
         "payload": payload,
         "artifacts": {
-            "v1_parity_table_csv": str(csv_path.resolve()),
-            "v1_parity_audit_json": str(json_path.resolve()),
+            "reference_regression_table_csv": str(csv_path.resolve()),
+            "reference_regression_json": str(json_path.resolve()),
         },
     }
 
 
-def _build_v1_parity_rows(*, reference_root: Path, v2_root: Path) -> list[dict[str, Any]]:
+def _build_reference_regression_rows(
+    *,
+    reference_root: Path,
+    v2_root: Path,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for v1_stage, v2_stage in V1_PARITY_STAGE_MAP:
-        if v1_stage in {"05_final", "06_cor_only_fista"}:
-            v1_rows = _reconstruction_loss_rows_for_stage(reference_root / v1_stage)
-            v2_rows = _reconstruction_loss_rows_for_stage(v2_root / v2_stage)
+    for reference_stage, current_stage in REFERENCE_REGRESSION_STAGE_MAP:
+        if reference_stage in {"05_final", "06_cor_only_fista"}:
+            reference_rows = _reconstruction_loss_rows_for_stage(reference_root / reference_stage)
+            current_rows = _reconstruction_loss_rows_for_stage(v2_root / current_stage)
         else:
-            v1_rows = _loss_rows_for_stage(reference_root / v1_stage)
-            v2_rows = _loss_rows_for_stage(v2_root / v2_stage)
-        keys = sorted(set(v1_rows) | set(v2_rows), key=_parity_row_sort_key)
+            reference_rows = _loss_rows_for_stage(reference_root / reference_stage)
+            current_rows = _loss_rows_for_stage(v2_root / current_stage)
+        keys = sorted(set(reference_rows) | set(current_rows), key=_reference_row_sort_key)
         for key in keys:
-            v1 = v1_rows.get(key, {})
-            v2 = v2_rows.get(key, {})
-            ratio = _loss_scale_ratio(v1.get("loss_after"), v2.get("loss_after"))
+            reference = reference_rows.get(key, {})
+            current = current_rows.get(key, {})
+            ratio = _loss_scale_ratio(reference.get("loss_after"), current.get("loss_after"))
             status = "matched"
             notes = ""
-            if not v1:
-                status = "missing_v1_row"
-            elif not v2:
-                status = "missing_v2_row"
+            if not reference:
+                status = "missing_reference_row"
+            elif not current:
+                status = "missing_current_row"
             elif (
-                v1_stage.startswith(("02_pose", "03_pose", "04_pose"))
+                reference_stage.startswith(("02_pose", "03_pose", "04_pose"))
                 and ratio is not None
                 and (ratio > 10.0 or ratio < 0.1)
             ):
@@ -1879,13 +1896,13 @@ def _build_v1_parity_rows(*, reference_root: Path, v2_root: Path) -> list[dict[s
                 notes = "pose loss scale differs by more than 10x"
             rows.append(
                 {
-                    "stage": v2_stage,
+                    "stage": current_stage,
                     "level_factor": key[0],
                     "iteration": key[1],
-                    "v1_loss_before": v1.get("loss_before", ""),
-                    "v1_loss_after": v1.get("loss_after", ""),
-                    "v2_loss_before": v2.get("loss_before", ""),
-                    "v2_loss_after": v2.get("loss_after", ""),
+                    "reference_loss_before": reference.get("loss_before", ""),
+                    "reference_loss_after": reference.get("loss_after", ""),
+                    "current_loss_before": current.get("loss_before", ""),
+                    "current_loss_after": current.get("loss_after", ""),
                     "loss_scale_ratio_after": "" if ratio is None else ratio,
                     "status": status,
                     "notes": notes,
@@ -1936,7 +1953,7 @@ def _reconstruction_loss_rows_for_stage(stage_dir: Path) -> dict[tuple[str, str]
     }
 
 
-def _parity_row_sort_key(key: tuple[str, str]) -> tuple[int, int, str, str]:
+def _reference_row_sort_key(key: tuple[str, str]) -> tuple[int, int, str, str]:
     level, iteration = key
     try:
         level_i = int(level)
@@ -1949,34 +1966,39 @@ def _parity_row_sort_key(key: tuple[str, str]) -> tuple[int, int, str, str]:
     return (level_i, iter_i, level, iteration)
 
 
-def _loss_scale_ratio(v1_loss: Any, v2_loss: Any) -> float | None:
+def _loss_scale_ratio(reference_loss: Any, current_loss: Any) -> float | None:
     try:
-        v1 = float(v1_loss)
-        v2 = float(v2_loss)
+        reference = float(reference_loss)
+        current = float(current_loss)
     except (TypeError, ValueError):
         return None
-    if not (np.isfinite(v1) and np.isfinite(v2)) or abs(v1) <= 1e-12:
+    if not (np.isfinite(reference) and np.isfinite(current)) or abs(reference) <= 1e-12:
         return None
-    return float(v2 / v1)
+    return float(current / reference)
 
 
-def _v1_parity_stage_summaries(reference_root: Path, v2_root: Path) -> list[dict[str, Any]]:
+def _reference_regression_stage_summaries(
+    reference_root: Path,
+    v2_root: Path,
+) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
-    for v1_stage, v2_stage in V1_PARITY_STAGE_MAP:
-        v1_manifest = _read_json(reference_root / v1_stage / "stage_manifest.json")
-        v2_manifest_path = v2_root / v2_stage / "stage_manifest.json"
-        v2_manifest = _read_json(v2_manifest_path) if v2_manifest_path.exists() else {}
+    for reference_stage, current_stage in REFERENCE_REGRESSION_STAGE_MAP:
+        reference_manifest = _read_json(reference_root / reference_stage / "stage_manifest.json")
+        current_manifest_path = v2_root / current_stage / "stage_manifest.json"
+        current_manifest = (
+            _read_json(current_manifest_path) if current_manifest_path.exists() else {}
+        )
         summaries.append(
             {
-                "stage": v2_stage,
-                "v1": _parity_manifest_summary(v1_manifest),
-                "v2": _parity_manifest_summary(v2_manifest),
+                "stage": current_stage,
+                "reference": _reference_manifest_summary(reference_manifest),
+                "current": _reference_manifest_summary(current_manifest),
             }
         )
     return summaries
 
 
-def _parity_manifest_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
+def _reference_manifest_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "status": manifest.get("status"),
         "active_dofs": manifest.get("active_dofs"),
@@ -1992,14 +2014,14 @@ def _write_partial_markdown(path: Path, summary: Mapping[str, Any]) -> None:
     success = summary["success"]
     reconstruction = summary["reconstruction_comparison"]
     lines = [
-        "# Real Laminography v2 MVP Report",
+        "# Real Laminography Staged Report",
         "",
         f"- Reference target report: `{summary['reference_target_report']}`",
         f"- Phase complete: `{success['passed']}`",
         f"- Criterion: {success['reason']}",
         f"- Final loss: `{success['final_loss']}`",
         f"- COR-only loss: `{success['cor_only_loss']}`",
-        f"- Full staged success deferred: `{success['full_mvp_success_deferred']}`",
+        f"- Full staged success deferred: `{success['full_staged_success_deferred']}`",
         "",
         "| Stage | Active DOFs | Status |",
         "|---|---|---|",
@@ -2028,7 +2050,8 @@ def _write_partial_markdown(path: Path, summary: Mapping[str, Any]) -> None:
             f"- Residual trace CSV: `{summary['artifacts']['residual_trace_csv']}`",
             f"- Geometry trace JSON: `{summary['artifacts']['geometry_trace_json']}`",
             f"- Publication image directory: `{summary['artifacts']['publication_dir']}`",
-            f"- v1 parity table CSV: `{summary['artifacts'].get('v1_parity_table_csv', '')}`",
+            "- Reference-regression table CSV: "
+            f"`{summary['artifacts'].get('reference_regression_table_csv', '')}`",
             "",
             "Truth metrics are intentionally not used for this real-data gate.",
         ]
