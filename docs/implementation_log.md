@@ -246,6 +246,64 @@ Interpretation:
   scripts/real_laminography/run_real_lamino_native_setup_pose_256.py` passed.
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
 
+## 2026-05-12 - Real laminography full-resolution spline-pose gate
+
+### Scope
+
+Reran the full-resolution multires 40-iteration real-laminography gate after
+the runner stopped forcing per-view pose. This run used the default spline pose
+model and all-candidate final scoring to determine whether pose is now a useful
+part of the publication path.
+
+Run:
+
+- `runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_spline_all_20260512`.
+- Full `256 x 256 x 96` reconstruction volume, full detector input, streamed
+  views, `40` reconstruction iterations.
+- Setup levels: `8 4 2`.
+- Phi and dx/dz levels: `4 2 1`.
+- Polish levels: `2 1`.
+- Outer iterations: `1` per level.
+- Final candidate policy: `all`.
+
+### Evidence
+
+- Backend/devices: `gpu`, `["cuda:0"]`.
+- Peak sampled GPU memory: `2443 MiB`.
+- Stage validation: `validation_failed: False`; all required stages completed.
+- COR-only comparator: first loss `10812.171875`, final loss `7411.73046875`.
+- Final selected candidate: `03_pose_dx_dz`.
+- Final selected loss: first `10753.56640625`, final `6517.55712890625`.
+- Improvement over COR-only: `894.17333984375` absolute,
+  `0.12064299202646986` relative.
+- Pose metadata confirms spline models:
+  - `02_pose_phi`: `pose_model=spline`, variables `33`, basis `[256, 33]`.
+  - `03_pose_dx_dz`: `pose_model=spline`, variables `66`, basis `[256, 33]`.
+  - `04_pose_polish`: `pose_model=spline`, variables `165`, basis `[256, 33]`.
+
+Candidate losses:
+
+- `01_cor`: `7411.73046875`.
+- `02_detector_roll`: `6771.53271484375`.
+- `03_axis_direction`: `6522.80859375`.
+- `02_pose_phi`: `6565.8154296875`.
+- `03_pose_dx_dz`: `6517.55712890625`.
+- `04_pose_polish`: `7309.5048828125`.
+
+Interpretation:
+
+- Smooth/spline pose materially improves the real full-resolution path. The old
+  per-view pose diagnostic scored dx/dz at `6807.0205078125`; spline dx/dz
+  scores `6517.55712890625` and is now the selected publication candidate.
+- The remaining gap to the committed v1 final loss (`6438.1611328125`) is about
+  `79.39599609375` loss units, or roughly `1.2%` of the v1 final loss.
+- The 5DOF polish stage is now the concrete functional blocker: it degrades from
+  spline dx/dz `6517.55712890625` to `7309.5048828125`. The next slice should
+  either fix the polish objective/bounds or gate polish acceptance on
+  reconstruction-supported evidence.
+- Memory remains acceptable for this scale; throughput remains poor because
+  all-candidate 40-iteration scoring is expensive.
+
 ## 2026-05-11 - Real laminography pose-stage NaN fail-closed recovery
 
 ### Scope

@@ -122,9 +122,12 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       laminography runner to use per-view pose and expose the existing smooth
       pose-model controls so real pose updates can use spline/polynomial
       parameterisations.
-- [ ] Run the full-resolution multires 40-iteration gate with smooth/spline
+- [x] Run the full-resolution multires 40-iteration gate with smooth/spline
       pose enabled and all candidate scoring, then decide whether the remaining
       pose gap is objective acceptance, bounds, or volume/reconstruction gauge.
+- [ ] Fix or gate the 5DOF polish stage: spline dx/dz now improves over setup,
+      but polish still degrades the final reconstruction and should not be
+      accepted without reconstruction-supported evidence.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 
