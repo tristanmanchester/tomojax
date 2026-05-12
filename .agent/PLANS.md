@@ -161,10 +161,13 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
       currently emits spurious setup-iteration missing rows, and the audit does
       not fail missing-row statuses even though the prompt requires same
       stage/level/iteration structure.
-- [ ] Investigate the remaining strict parity row-shape failure:
+- [x] Investigate the remaining strict parity row-shape failure:
       `01_setup_geometry/03_axis_direction` level 8 iteration 7 is present in
       the v1 reference and absent in the v2 rerun because setup early stopping
       diverged by one row.
+- [ ] Decide the strict parity audit policy for setup early-stop row-count
+      sensitivity before spending more work on report semantics; functional
+      pose/final reconstruction parity is already on v1 scale.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

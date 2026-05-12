@@ -179,6 +179,27 @@ evidence above, but strict parity should not be marked complete until the
 axis-direction early-stop mismatch is investigated or the contract is adjusted
 with an explicit rationale.
 
+Follow-up inspection showed this is a threshold sensitivity, not a geometry
+convention or pose/reconstruction issue. Both v1 and v2 use the same native
+setup-stage early-stop rule: increment a stale counter when relative
+improvement is below `early_stop_rel=1e-3`, and break when stale reaches
+`early_stop_patience=2`. The v2 level-8 axis-direction losses crossed that
+condition one row earlier because the small loss differences changed the stale
+counter:
+
+- v1 level 8 axis rows continued through iteration 7, ending
+  `34.4950256 -> 34.4910812`.
+- v2 level 8 axis rows stopped after iteration 6, ending
+  `34.5358734 -> 34.5326538`.
+- Subsequent v2 axis level 4 and level 2 rows stayed on v1 scale, and the full
+  pose/final reconstruction parity evidence above remains valid.
+
+The next functional work should not tune this row-count difference by intuition.
+If the strict audit must be made fully green, the choice is between reproducing
+the exact reference early-stop decisions as a parity-only replay contract or
+explicitly declaring early-stop row count as a tolerated diagnostic divergence
+while preserving loss-scale and final-reconstruction checks.
+
 ### Validation
 
 - `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
