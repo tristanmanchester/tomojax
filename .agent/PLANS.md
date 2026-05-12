@@ -128,9 +128,26 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [x] Fix or gate the 5DOF polish stage: spline dx/dz now improves over setup,
       but polish still degrades the final reconstruction and should not be
       accepted without reconstruction-supported evidence.
-- [ ] Rerun the full-resolution spline/all gate after the post-constraint
-      polish guard when practical; if polish still degrades, tighten polish
-      bounds/objective rather than changing report semantics.
+- [ ] Paused: rerun the full-resolution spline/all gate after the
+      post-constraint polish guard. A run was interrupted during the phi stage
+      after the user redirected the work to strict v1 parity auditing.
+- [x] Implement strict v1-behaviour parity audit for the real laminography MVP
+      using `scripts/real_laminography/run_real_lamino_native_setup_pose_256.py`
+      and
+      `runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525`
+      as source of truth.
+- [x] Compare v1 vs v2 stage contracts: inputs, preprocessing, detector/grid
+      convention, canonical detector grid, background correction, loss spec,
+      mask, loss normalization, optimizer, bounds, level schedule, outer
+      iterations, FISTA config, volume carry, pose parameterisation, gauge
+      policy, and final pose composition.
+- [x] Add `--v1-parity-real-lamino` mode if needed so parity behavior stays
+      separate from exploratory defaults.
+- [x] Emit per-stage parity tables with v1/v2 loss_before/loss_after on the
+      same stage/level/iteration structure plus geometry/pose summaries and
+      visual artifacts.
+- [ ] Root-cause any wildly different v2 pose-loss scale before accepting a
+      pose stage as parity.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

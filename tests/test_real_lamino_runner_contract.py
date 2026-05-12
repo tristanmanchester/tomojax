@@ -387,6 +387,37 @@ def test_v2_cor_mvp_accepts_final_candidate_policy(monkeypatch, tmp_path) -> Non
     assert args.final_candidate_policy == "last_valid"
 
 
+def test_v2_cor_mvp_v1_parity_mode_forces_reference_contract(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path),
+            "--v1-parity-real-lamino",
+            "--pose-bounds-profile",
+            "reference_conservative",
+            "--final-candidate-policy",
+            "all",
+            "--outer-iters",
+            "1",
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert args.full_staged is True
+    assert args.pose_bounds_profile == "wide"
+    assert args.final_candidate_policy == "last_valid"
+    assert args.outer_iters == 8
+    assert args.levels_phi == [4, 2, 1]
+    assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
+    assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
+
+
 def test_v2_cor_mvp_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
@@ -949,6 +980,46 @@ def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path)
         "reconstruction volume finite fraction is 0"
     ]
     assert (tmp_path / "failed_pose_report" / "publication" / "full_orthos.png").exists()
+
+
+def test_v2_report_emits_v1_parity_table_and_flags_pose_loss_scale(tmp_path) -> None:
+    (tmp_path / "reference").mkdir()
+    (tmp_path / "v2").mkdir()
+    reference_run = _write_minimal_real_mvp_run(tmp_path / "reference", final_last_loss=80.0)
+    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_report.parent.mkdir()
+    _write_json(reference_report, {"success": {"passed": True}})
+
+    v2_run = _write_minimal_real_mvp_run(tmp_path / "v2", final_last_loss=70.0)
+    manifest = json.loads((v2_run / "run_manifest.json").read_text())
+    manifest["workflow"] = {
+        "v1_parity_real_lamino": True,
+        "v1_parity_contract": {
+            "passed": True,
+            "mismatches": {},
+        },
+    }
+    _write_json(v2_run / "run_manifest.json", manifest)
+    (v2_run / "02_pose_phi" / "stage_summary.csv").write_text(
+        "stage,level_factor,outer_idx,loss_before,loss_after,active_dofs\n"
+        "02_pose_phi,1,1,200.0,200.0,phi\n",
+        encoding="utf-8",
+    )
+
+    summary = v2_cor_mvp_runner.build_v2_cor_mvp_report(
+        v2_run,
+        out_dir=tmp_path / "parity_report",
+        reference_report=reference_report,
+    )
+
+    audit = summary["v1_parity_audit"]
+    assert audit["enabled"] is True
+    assert audit["status"] == "failed"
+    assert audit["pose_loss_scale_failures"][0]["stage"] == "02_pose_phi"
+    table = tmp_path / "parity_report" / "real_mvp_v1_parity_table.csv"
+    assert table.exists()
+    assert "loss_scale_mismatch" in table.read_text()
+    assert summary["artifacts"]["v1_parity_table_csv"] == str(table.resolve())
 
 
 def _write_minimal_real_mvp_run(tmp_path: Path, *, final_last_loss: float = 80.0) -> Path:

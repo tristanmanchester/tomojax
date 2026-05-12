@@ -3,6 +3,71 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Real laminography v1 parity audit mode
+
+### Scope
+
+Stopped the exploratory full spline/all guard rerun after the user redirected
+the work to strict v1 behaviour parity. The interrupted run was
+`runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_spline_all_guard_20260512`;
+it reached `02_pose_phi`, exercised the non-finite Huber-FISTA fallback path,
+and was terminated before producing a valid benchmark report. It is not an
+acceptance result.
+
+Added an explicit `--v1-parity-real-lamino` mode to
+`scripts/real_laminography/run_real_lamino_v2_cor_mvp.py`. The mode forces the
+known native reference contract instead of relying on exploratory defaults:
+
+- Full staged path enabled.
+- COR/det_u bounds `det_u_px=-24:24` with levels `8,4,2`.
+- Detector roll bounds `-10:10` and axis direction bounds `-15:15`.
+- Phi bounds `+-5 deg` (`phi=-0.0872665:0.0872665`) with levels `4,2,1`.
+- dx/dz bounds `+-16 px` with levels `4,2,1`.
+- 5DOF polish bounds matching v1:
+  `alpha,beta=+-2 deg`, `phi=+-5 deg`, `dx,dz=+-16 px`, levels `2,1`.
+- `outer_iters=8`, `recon_iters=40`, `tv_prox_iters=16`,
+  `lambda_tv=0.008`, `edge_median` background correction,
+  `canonical_det_grid=false`, `views_per_batch=1`, `gather_dtype=bf16`,
+  `align_profile=lightning`, GN damping `1e-3`, L2/Otsu alignment loss,
+  cylindrical volume mask, `pose_model=spline`, `knot_spacing=8`, and
+  `pose_degree=3`.
+- Final publication uses `final_candidate_policy=last_valid`, matching the v1
+  contract of composing the solved setup and final polish pose rather than
+  selecting the best exploratory candidate.
+
+The v2 report now emits `real_mvp_v1_parity_table.csv` and
+`real_mvp_v1_parity_audit.json` when this mode is used with a reference report.
+The table compares v1 and v2 loss_before/loss_after rows by
+stage/level/iteration, and the audit records geometry/pose summaries,
+contract mismatches, and pose-stage loss-scale failures. Pose stages with v2
+loss scale more than 10x different from the v1 reference are marked
+`loss_scale_mismatch`; such a run must be treated as a bug to root-cause, not
+as an accepted parity stage.
+
+### Source-of-truth differences documented
+
+The committed native reference run
+`runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525` differs
+from the recent exploratory v2 gates in two important ways:
+
+- The reference uses wide pose bounds (`phi +-5 deg`, `dx/dz +-16 px`, polish
+  alpha/beta +-2 deg) while exploratory v2 defaulted to conservative bounds.
+- The reference final FISTA uses the final solved setup plus pose composition
+  from `04_pose_polish`; exploratory v2 gates used all-candidate scoring to
+  avoid publishing a degrading polish candidate.
+
+Those are now made explicit under `--v1-parity-real-lamino` before any further
+optimizer or pose tuning.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 31 tests.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Real laminography pose post-constraint guard
 
 ### Scope

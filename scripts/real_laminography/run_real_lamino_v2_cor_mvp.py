@@ -72,6 +72,55 @@ STAGED_PATH: tuple[dict[str, Any], ...] = (
     },
 )
 
+V1_PARITY_STAGE_MAP: tuple[tuple[str, str], ...] = (
+    ("01_setup_geometry/01_cor", "01_setup_geometry/01_cor"),
+    ("01_setup_geometry/02_detector_roll", "01_setup_geometry/02_detector_roll"),
+    ("01_setup_geometry/03_axis_direction", "01_setup_geometry/03_axis_direction"),
+    ("02_pose_phi", "02_pose_phi"),
+    ("03_pose_dx_dz", "03_pose_dx_dz"),
+    ("04_pose_polish", "04_pose_polish"),
+    ("05_final", "05_final"),
+    ("06_cor_only_fista", "06_cor_only_fista"),
+)
+
+V1_PARITY_CONTRACT: dict[str, Any] = {
+    "projection_background": "edge_median",
+    "background_edge_px": 16,
+    "canonical_det_grid": False,
+    "levels_setup": [8, 4, 2],
+    "levels_phi": [4, 2, 1],
+    "levels_dx_dz": [4, 2, 1],
+    "levels_polish": [2, 1],
+    "outer_iters": 8,
+    "recon_iters": 40,
+    "tv_prox_iters": 16,
+    "lambda_tv": 0.008,
+    "align_profile": "lightning",
+    "regulariser": "huber_tv",
+    "loss_spec": "l2_otsu",
+    "loss_normalization": "align_config_default_l2_otsu_per_level",
+    "mask_vol": "cyl",
+    "optimizer_kind": "gn",
+    "gn_damping": 1e-3,
+    "quality_tier": "fast",
+    "fallback_policy": "fallback",
+    "pose_model": "spline",
+    "knot_spacing": 8,
+    "pose_degree": 3,
+    "pose_bounds_profile": "wide",
+    "pose_gauge_policy": "mean_translation_for_dx_dz",
+    "final_candidate_policy": "last_valid",
+    "views_per_batch": 1,
+    "gather_dtype": "bf16",
+    "recon_positivity": False,
+    "pose_phi_bounds": "phi=-0.0872665:0.0872665",
+    "pose_dx_dz_bounds": "dx=-16:16,dz=-16:16",
+    "pose_polish_bounds": (
+        "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
+        "phi=-0.0872665:0.0872665,dx=-16:16,dz=-16:16"
+    ),
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run the v2 real-laminography MVP workflow."""
@@ -202,6 +251,12 @@ def run_v2_cor_mvp(  # noqa: PLR0915
                 "implemented_stages": implemented_stages,
                 "planned_stages": planned_stages,
                 "full_mvp_success_deferred": not full_staged,
+                "v1_parity_real_lamino": bool(args.v1_parity_real_lamino),
+                "v1_parity_contract": (
+                    _v1_parity_contract_payload(args)
+                    if bool(args.v1_parity_real_lamino)
+                    else None
+                ),
                 "pose_bounds_profile": str(args.pose_bounds_profile),
                 "binned_translation_bounds_scale": float(_binned_pixel_scale(args)),
             },
@@ -905,6 +960,12 @@ def build_v2_cor_mvp_report(
     )
     residual_trace = _write_residual_trace(out / "real_mvp_residual_trace.csv", records)
     geometry_trace = _write_geometry_trace(out / "real_mvp_geometry_trace.json", records)
+    parity_audit = _write_v1_parity_audit(
+        root=root,
+        out_dir=out,
+        reference_report=reference_report,
+        run_manifest=run_manifest,
+    )
     summary: dict[str, Any] = {
         "schema": "tomojax.real_lamino_v2_mvp_report.v1",
         "contract_compatible_with": "tomojax.real_lamino_mvp_report.v1",
@@ -923,6 +984,7 @@ def build_v2_cor_mvp_report(
         "staged_path": records,
         "reconstruction_comparison": reconstruction,
         "publication_artifacts": publication,
+        "v1_parity_audit": parity_audit["payload"],
         "provenance": {
             "input": run_manifest.get("input"),
             "binning": run_manifest.get("binning"),
@@ -939,6 +1001,7 @@ def build_v2_cor_mvp_report(
             "residual_trace_csv": str(residual_trace.resolve()),
             "geometry_trace_json": str(geometry_trace.resolve()),
             "publication_dir": str((out / "publication").resolve()),
+            **parity_audit["artifacts"],
         },
     }
     _write_json(out / "real_mvp_summary.json", summary)
@@ -1037,6 +1100,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         choices=["reference_conservative", "wide"],
         default="reference_conservative",
     )
+    parser.add_argument(
+        "--v1-parity-real-lamino",
+        action="store_true",
+        help=(
+            "Force the real laminography MVP stage contract to match the "
+            "committed native v1 reference run and emit v1-v2 parity tables."
+        ),
+    )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
         "--full-staged",
@@ -1045,6 +1116,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
+    if bool(args.v1_parity_real_lamino) and bool(args.smoke):
+        parser.error("--v1-parity-real-lamino cannot be combined with --smoke")
+    if bool(args.v1_parity_real_lamino):
+        _apply_v1_parity_real_lamino_args(args)
     if bool(args.smoke):
         if int(args.bin_factor) <= 1 and args.smoke_shape is None:
             args.bin_factor = 4
@@ -1062,12 +1137,90 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     return args
 
 
+def _apply_v1_parity_real_lamino_args(args: argparse.Namespace) -> None:
+    args.full_staged = True
+    args.levels_setup = list(V1_PARITY_CONTRACT["levels_setup"])
+    args.levels_phi = list(V1_PARITY_CONTRACT["levels_phi"])
+    args.levels_dx_dz = list(V1_PARITY_CONTRACT["levels_dx_dz"])
+    args.levels_polish = list(V1_PARITY_CONTRACT["levels_polish"])
+    args.outer_iters = int(V1_PARITY_CONTRACT["outer_iters"])
+    args.recon_iters = int(V1_PARITY_CONTRACT["recon_iters"])
+    args.tv_prox_iters = int(V1_PARITY_CONTRACT["tv_prox_iters"])
+    args.lambda_tv = float(V1_PARITY_CONTRACT["lambda_tv"])
+    args.align_profile = str(V1_PARITY_CONTRACT["align_profile"])
+    args.regulariser = str(V1_PARITY_CONTRACT["regulariser"])
+    args.gn_damping = float(V1_PARITY_CONTRACT["gn_damping"])
+    args.quality_tier = str(V1_PARITY_CONTRACT["quality_tier"])
+    args.fallback_policy = str(V1_PARITY_CONTRACT["fallback_policy"])
+    args.pose_model = str(V1_PARITY_CONTRACT["pose_model"])
+    args.knot_spacing = int(V1_PARITY_CONTRACT["knot_spacing"])
+    args.pose_degree = int(V1_PARITY_CONTRACT["pose_degree"])
+    args.pose_bounds_profile = str(V1_PARITY_CONTRACT["pose_bounds_profile"])
+    args.canonical_det_grid = bool(V1_PARITY_CONTRACT["canonical_det_grid"])
+    args.projection_background = str(V1_PARITY_CONTRACT["projection_background"])
+    args.background_edge_px = int(V1_PARITY_CONTRACT["background_edge_px"])
+    args.recon_positivity = bool(V1_PARITY_CONTRACT["recon_positivity"])
+    args.views_per_batch = int(V1_PARITY_CONTRACT["views_per_batch"])
+    args.gather_dtype = str(V1_PARITY_CONTRACT["gather_dtype"])
+    args.final_candidate_policy = str(V1_PARITY_CONTRACT["final_candidate_policy"])
+
+
 def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
     """Resolve memory-sensitive runtime defaults after CLI parsing."""
     if int(args.views_per_batch) <= 0:
         args.views_per_batch = 1
     args.bin_factor = _validate_bin_factor(args.bin_factor)
     return args
+
+
+def _v1_parity_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
+    actual = {
+        "projection_background": str(args.projection_background),
+        "background_edge_px": int(args.background_edge_px),
+        "canonical_det_grid": bool(args.canonical_det_grid),
+        "levels_setup": list(args.levels_setup),
+        "levels_phi": list(args.levels_phi),
+        "levels_dx_dz": list(args.levels_dx_dz),
+        "levels_polish": list(args.levels_polish),
+        "outer_iters": int(args.outer_iters),
+        "recon_iters": int(args.recon_iters),
+        "tv_prox_iters": int(args.tv_prox_iters),
+        "lambda_tv": float(args.lambda_tv),
+        "align_profile": str(args.align_profile),
+        "regulariser": str(args.regulariser),
+        "loss_spec": "l2_otsu",
+        "loss_normalization": "align_config_default_l2_otsu_per_level",
+        "mask_vol": "cyl",
+        "optimizer_kind": "gn",
+        "gn_damping": float(args.gn_damping),
+        "quality_tier": str(args.quality_tier),
+        "fallback_policy": str(args.fallback_policy),
+        "pose_model": str(args.pose_model),
+        "knot_spacing": int(args.knot_spacing),
+        "pose_degree": int(args.pose_degree),
+        "pose_bounds_profile": str(args.pose_bounds_profile),
+        "pose_gauge_policy": "mean_translation_for_dx_dz",
+        "final_candidate_policy": str(args.final_candidate_policy),
+        "views_per_batch": int(args.views_per_batch),
+        "gather_dtype": str(args.gather_dtype),
+        "recon_positivity": bool(args.recon_positivity),
+        "pose_phi_bounds": _pose_phi_bounds(args),
+        "pose_dx_dz_bounds": _pose_dx_dz_bounds(args),
+        "pose_polish_bounds": _pose_polish_bounds(args),
+    }
+    mismatches = {
+        key: {"expected": expected, "actual": actual.get(key)}
+        for key, expected in V1_PARITY_CONTRACT.items()
+        if actual.get(key) != expected
+    }
+    return {
+        "schema": "tomojax.real_lamino_v1_parity_contract.v1",
+        "source_script": "scripts/real_laminography/run_real_lamino_native_setup_pose_256.py",
+        "expected": V1_PARITY_CONTRACT,
+        "actual": actual,
+        "mismatches": mismatches,
+        "passed": not mismatches,
+    }
 
 
 def _validate_bin_factor(value: object) -> int:
@@ -1570,6 +1723,188 @@ def _write_geometry_trace(path: Path, records: list[Mapping[str, Any]]) -> Path:
     return path
 
 
+def _write_v1_parity_audit(
+    *,
+    root: Path,
+    out_dir: Path,
+    reference_report: Path | None,
+    run_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    workflow = run_manifest.get("workflow", {})
+    enabled = bool(isinstance(workflow, Mapping) and workflow.get("v1_parity_real_lamino"))
+    if reference_report is None or not enabled:
+        return {
+            "payload": {
+                "enabled": enabled,
+                "status": "skipped",
+                "reason": "v1 parity mode and reference report are required",
+            },
+            "artifacts": {},
+        }
+    reference_root = Path(reference_report).resolve().parents[1]
+    rows = _build_v1_parity_rows(reference_root=reference_root, v2_root=root)
+    csv_path = out_dir / "real_mvp_v1_parity_table.csv"
+    fields = (
+        "stage",
+        "level_factor",
+        "iteration",
+        "v1_loss_before",
+        "v1_loss_after",
+        "v2_loss_before",
+        "v2_loss_after",
+        "loss_scale_ratio_after",
+        "status",
+        "notes",
+    )
+    _write_csv(csv_path, rows, fields)
+    pose_scale_failures = [
+        row
+        for row in rows
+        if str(row["stage"]).startswith(("02_pose", "03_pose", "04_pose"))
+        and row["status"] == "loss_scale_mismatch"
+    ]
+    contract = workflow.get("v1_parity_contract", {}) if isinstance(workflow, Mapping) else {}
+    payload = {
+        "schema": "tomojax.real_lamino_v1_parity_audit.v1",
+        "enabled": True,
+        "status": "failed" if pose_scale_failures else "recorded",
+        "source_reference_run": str(reference_root),
+        "source_script": "scripts/real_laminography/run_real_lamino_native_setup_pose_256.py",
+        "contract": contract,
+        "pose_loss_scale_failures": pose_scale_failures,
+        "stage_summaries": _v1_parity_stage_summaries(reference_root, root),
+        "table_csv": str(csv_path.resolve()),
+    }
+    json_path = out_dir / "real_mvp_v1_parity_audit.json"
+    _write_json(json_path, payload)
+    return {
+        "payload": payload,
+        "artifacts": {
+            "v1_parity_table_csv": str(csv_path.resolve()),
+            "v1_parity_audit_json": str(json_path.resolve()),
+        },
+    }
+
+
+def _build_v1_parity_rows(*, reference_root: Path, v2_root: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for v1_stage, v2_stage in V1_PARITY_STAGE_MAP:
+        v1_rows = _loss_rows_for_stage(reference_root / v1_stage)
+        v2_rows = _loss_rows_for_stage(v2_root / v2_stage)
+        keys = sorted(set(v1_rows) | set(v2_rows), key=_parity_row_sort_key)
+        for key in keys:
+            v1 = v1_rows.get(key, {})
+            v2 = v2_rows.get(key, {})
+            ratio = _loss_scale_ratio(v1.get("loss_after"), v2.get("loss_after"))
+            status = "matched"
+            notes = ""
+            if not v1:
+                status = "missing_v1_row"
+            elif not v2:
+                status = "missing_v2_row"
+            elif (
+                v1_stage.startswith(("02_pose", "03_pose", "04_pose"))
+                and ratio is not None
+                and (ratio > 10.0 or ratio < 0.1)
+            ):
+                status = "loss_scale_mismatch"
+                notes = "pose loss scale differs by more than 10x"
+            rows.append(
+                {
+                    "stage": v2_stage,
+                    "level_factor": key[0],
+                    "iteration": key[1],
+                    "v1_loss_before": v1.get("loss_before", ""),
+                    "v1_loss_after": v1.get("loss_after", ""),
+                    "v2_loss_before": v2.get("loss_before", ""),
+                    "v2_loss_after": v2.get("loss_after", ""),
+                    "loss_scale_ratio_after": "" if ratio is None else ratio,
+                    "status": status,
+                    "notes": notes,
+                }
+            )
+    return rows
+
+
+def _loss_rows_for_stage(stage_dir: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    summary_rows = _read_stage_summary(stage_dir / "stage_summary.csv")
+    if summary_rows:
+        return {
+            (
+                str(row.get("level_factor", "")),
+                str(row.get("outer_iter", row.get("outer_idx", ""))),
+            ): {
+                "loss_before": row.get("geometry_loss_before", row.get("loss_before", "")),
+                "loss_after": row.get("geometry_loss_after", row.get("loss_after", "")),
+            }
+            for row in summary_rows
+        }
+    manifest_path = stage_dir / "stage_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    loss = _stage_reconstruction_loss(_read_json(manifest_path))
+    if not loss:
+        return {}
+    return {
+        ("final", ""): {
+            "loss_before": loss.get("first", ""),
+            "loss_after": loss.get("last", ""),
+        }
+    }
+
+
+def _parity_row_sort_key(key: tuple[str, str]) -> tuple[int, int, str, str]:
+    level, iteration = key
+    try:
+        level_i = int(level)
+    except ValueError:
+        level_i = 10**9
+    try:
+        iter_i = int(iteration)
+    except ValueError:
+        iter_i = 10**9
+    return (level_i, iter_i, level, iteration)
+
+
+def _loss_scale_ratio(v1_loss: Any, v2_loss: Any) -> float | None:
+    try:
+        v1 = float(v1_loss)
+        v2 = float(v2_loss)
+    except (TypeError, ValueError):
+        return None
+    if not (np.isfinite(v1) and np.isfinite(v2)) or abs(v1) <= 1e-12:
+        return None
+    return float(v2 / v1)
+
+
+def _v1_parity_stage_summaries(reference_root: Path, v2_root: Path) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for v1_stage, v2_stage in V1_PARITY_STAGE_MAP:
+        v1_manifest = _read_json(reference_root / v1_stage / "stage_manifest.json")
+        v2_manifest_path = v2_root / v2_stage / "stage_manifest.json"
+        v2_manifest = _read_json(v2_manifest_path) if v2_manifest_path.exists() else {}
+        summaries.append(
+            {
+                "stage": v2_stage,
+                "v1": _parity_manifest_summary(v1_manifest),
+                "v2": _parity_manifest_summary(v2_manifest),
+            }
+        )
+    return summaries
+
+
+def _parity_manifest_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "status": manifest.get("status"),
+        "active_dofs": manifest.get("active_dofs"),
+        "bounds": manifest.get("bounds"),
+        "levels": manifest.get("levels"),
+        "geometry_calibration_state": manifest.get("geometry_calibration_state"),
+        "params_summary": manifest.get("params_summary"),
+        "reconstruction_loss": _stage_reconstruction_loss(manifest),
+    }
+
+
 def _write_partial_markdown(path: Path, summary: Mapping[str, Any]) -> None:
     success = summary["success"]
     reconstruction = summary["reconstruction_comparison"]
@@ -1610,6 +1945,7 @@ def _write_partial_markdown(path: Path, summary: Mapping[str, Any]) -> None:
             f"- Residual trace CSV: `{summary['artifacts']['residual_trace_csv']}`",
             f"- Geometry trace JSON: `{summary['artifacts']['geometry_trace_json']}`",
             f"- Publication image directory: `{summary['artifacts']['publication_dir']}`",
+            f"- v1 parity table CSV: `{summary['artifacts'].get('v1_parity_table_csv', '')}`",
             "",
             "Truth metrics are intentionally not used for this real-data gate.",
         ]
