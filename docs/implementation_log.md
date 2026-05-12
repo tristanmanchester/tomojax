@@ -3,6 +3,95 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Pose-only Schur gauge carry and pose-random gate
+
+### Scope
+
+Fixed the mandatory `synth128_pose_random_extreme` oracle gate after the
+Schur loss-cache work made it runnable but still red. The failure was not JAX
+GPU memory, CPU fallback, or reconstruction absorption: the gate used
+`fixed_synthetic_truth` with all five pose DOFs active and setup parameters
+frozen.
+
+Changes:
+
+- Changed `solve_joint_schur_lm` so accepted iterates are only repacked from a
+  canonicalized geometry when the corresponding setup gauge targets are part of
+  the packed parameter state. Pose-only solves now preserve mean `dx_px` and
+  `phi_residual_rad` through intermediate LM iterations, then final
+  canonicalisation transfers those means into `det_u_px` and
+  `theta_offset_rad`.
+- Added a focused Schur regression test for pose-only mean-gauge carry.
+- Made the clean `--synthetic-case pose-random` preset request the existing
+  bounded final pose-polish stage (`16` updates). With the gauge bug fixed,
+  that stage improves alpha/beta instead of polishing the wrong gauge.
+
+### Evidence
+
+CUDA runs used `LD_LIBRARY_PATH` populated from
+`.venv/lib/python3.12/site-packages/nvidia/*/lib`, `JAX_PLATFORM_NAME=cuda`,
+`JAX_PLATFORMS=cuda,cpu`, and `XLA_PYTHON_CLIENT_PREALLOCATE=false`.
+
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_pose_gauge_fix_probe`:
+  128^3, 16 views, `cuda:0`. The gauge fix alone improved det-u from
+  `3.5144701261685487 px` to `0.03307838407963632 px`, theta from
+  `0.23013369370493456 rad` to `0.016624980177947193 rad`, phi from
+  `0.22649383775390775 rad` to `0.015918240150468742 rad`, and dx/dz from
+  `1.347414703523529 px` to `0.4442541074919121 px`. Alpha/beta remained red
+  at `0.010830434241660511 rad`.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_pose_gauge_fix_polish_probe`:
+  128^3, 16 views, `cuda:0`, with 16 final pose-polish updates. Alpha/beta
+  improved to `0.004919762029219438 rad`, still just above the strict
+  `0.004363323129985824 rad` tolerance.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix`:
+  128^3, 256 views, `cuda:0`. The gauge fix alone passed det-u, det-v, theta,
+  dx/dz, and phi recovery, but alpha/beta remained red at
+  `0.008984073962632476 rad`.
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish`:
+  128^3, 256 views, `cuda:0`, with 16 final pose-polish updates. The mandatory
+  pose-random gate passed. Runtime artifact summary reports
+  `total_wall_seconds = 253.3783546090126`, `geometry_updates_executed = 33`,
+  and `reconstruction_calls = 4`; an in-flight `nvidia-smi` sample during the
+  run reported `1259 MiB` used on the RTX 4070 Laptop GPU. Recovery metrics:
+  `dx_dz_rmse_px = 0.040028767293657966`,
+  `phi_rmse_rad = 0.007029254273335157`,
+  `alpha_beta_rmse_rad = 0.0017171851316756014`,
+  `det_u_realized_rmse_px = 0.015837733351848012`,
+  `theta_realized_rmse_rad = 0.006883447413717324`, and
+  `det_v_realized_rmse_px = 0.00023787584153664077`.
+
+### Diagnosis
+
+The red pose-random gate was partly a solver-state bug: intermediate
+canonicalisation transferred mean pose gauges into setup, then repacked a
+pose-only parameter vector that could not carry those setup values. That lost
+the supported mean `dx`/`phi` gauge information between LM iterations. Once the
+state carry was fixed, the existing final pose-polish stage became useful for
+the remaining alpha/beta refinement.
+
+The 16-view diagnostics remain wiring/triage checks only; the real quality gate
+is the 128^3/256-view run, which now passes for `synth128_pose_random_extreme`.
+
+### Validation
+
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_pose_only_preserves_mean_gauge_until_final_canonicalization
+  -q` passed: 1 test in 4.84 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_pose_only_preserves_mean_gauge_until_final_canonicalization
+  tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle
+  -q` passed: 2 tests in 4.93 seconds.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py
+  tests/test_joint_schur_lm.py --select F821,I001,E501` passed.
+- `uv run ruff check src/tomojax/align/_joint_schur_lm.py
+  src/tomojax/cli/align_auto.py tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py --select F821,I001,E501` passed.
+- `PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/cli/align_auto.py
+  tests/test_joint_schur_lm.py tests/test_align_auto_cli.py` passed with
+  0 errors, 0 warnings, and 0 notes.
+- `just imports` passed.
+
 ## 2026-05-12 - Synthetic128 full-view gates after Schur loss-cache fix
 
 ### Scope

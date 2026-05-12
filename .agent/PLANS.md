@@ -67,6 +67,9 @@ Tasks:
 - [x] Verify existing final pose/phi polish knobs do not solve pose-random and
       fix the final pose-polish setup-parameter leak so pose-only diagnostics
       remain pose-only.
+- [x] Fix pose-only Schur gauge carry so accepted dx/phi mean updates are not
+      discarded between iterations when setup parameters are frozen, then rerun
+      the smallest useful pose-random oracle gate.
 
 Historical productionization plan follows for context.
 

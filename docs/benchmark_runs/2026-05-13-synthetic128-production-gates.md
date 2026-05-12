@@ -71,47 +71,43 @@ dropped from 867 to 289. That was enough to complete the full 256-view gate.
 Did `synth128_pose_random_extreme` recover per-view dx/dz/phi/alpha/beta at
 `128^3`?
 
-No. The mandatory 128^3/256-view CUDA gate runs to completion and evaluates all
-required pose metrics, but fails `phi` and `alpha/beta`:
+Yes, after fixing pose-only Schur gauge carry and running the existing bounded
+final pose-polish stage. The passing artifact is:
 
-- `dx_dz_rmse_px = 0.10121920919147176` against `< 1.0`: passed
-- `phi_rmse_rad = 0.08440607756112731` against `< 0.25 deg`: failed
-- `alpha_beta_rmse_rad = 0.009437649551612661` against `< 0.25 deg`: failed
+`.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish`
 
-This is a solver/recovery failure, not a missing metric, unsupported active DOF,
-CPU fallback, or memory failure:
+The 128^3/256-view CUDA gate uses `fixed_synthetic_truth`, all five pose DOFs,
+and no active setup parameters. Runtime summary reports
+`total_wall_seconds = 253.3783546090126`; an in-flight `nvidia-smi` sample
+reported `1259 MiB` used on the RTX 4070 Laptop GPU. It now passes the strict
+pose criteria:
 
-- Active pose DOFs were `alpha_rad`, `beta_rad`, `phi_residual_rad`, `dx_px`,
-  and `dz_px`.
-- Active setup parameters were empty.
-- The run used `fixed_synthetic_truth`, so reconstruction absorption is not the
-  blocker for this oracle gate.
-- The final Schur update was accepted and reduced loss, but one native-level
-  update did not recover the strict pose criteria.
-- A 16-view `reference` profile diagnostic did not fix under-iteration; it made
-  recovery worse (`dx_dz_rmse_px = 2.030042186911155`,
-  `phi_rmse_rad = 0.1737614744829108`,
-  `alpha_beta_rmse_rad = 0.0186320877574164`).
+- `dx_dz_rmse_px = 0.040028767293657966`
+- `phi_rmse_rad = 0.007029254273335157`
+- `alpha_beta_rmse_rad = 0.0017171851316756014` against `< 0.25 deg`
+- `det_u_realized_rmse_px = 0.015837733351848012`
+- `theta_realized_rmse_rad = 0.006883447413717324`
+- `det_v_realized_rmse_px = 0.00023787584153664077`
 
-The next functional fix should stay in pose solver conditioning/update policy:
-the oracle fixed-volume pose gate needs a native-level pose refinement that can
-continue reducing accepted pose residual without falling into setup/pose gauge
-coupling or prematurely declaring the update small.
+The blocker was not underconverged preview reconstruction, CPU fallback, memory,
+or missing active DOFs. It was a pose-only solver state bug: accepted LM
+iterations canonicalized mean `dx`/`phi` into setup and then repacked a
+pose-only parameter vector that could not carry the setup gauge values into the
+next iteration. Preserving those mean gauges until final canonicalisation makes
+the existing final pose-polish stage productive instead of polishing the wrong
+gauge.
 
-Existing polish knobs were tested on 128^3/16-view diagnostics and did not
-solve the pose gate:
+Key diagnostics:
 
-- `synth128_pose_random_16views_final_pose_polish_probe`: 16 final pose-polish
-  updates failed all three pose criteria and revealed a det-u setup leak in the
-  final polish path.
-- `synth128_pose_random_16views_pose_only_polish_probe`: after fixing final
-  pose polish to respect configured setup parameters, pose-only polishing still
-  failed all three criteria.
-- `synth128_pose_random_16views_phi_polish_probe`: 16 phi-only polish updates
-  also failed all three criteria.
-
-These probes rule out simply adding more of the existing polish stages as the
-next production fix.
+- `synth128_pose_random_16views_pose_gauge_fix_probe`: gauge fix alone improved
+  det-u from `3.5144701261685487 px` to `0.03307838407963632 px`, theta from
+  `0.23013369370493456 rad` to `0.016624980177947193 rad`, and phi from
+  `0.22649383775390775 rad` to `0.015918240150468742 rad`.
+- `synth128_pose_random_128_pose_gauge_fix`: the full 256-view gate with the
+  gauge fix alone passed det-u/det-v/theta/dx-dz/phi but still failed
+  alpha/beta at `0.008984073962632476 rad`.
+- `synth128_pose_random_128_pose_gauge_fix_polish`: the same full gate with
+  16 final pose-polish updates passed alpha/beta at `0.0017171851316756014 rad`.
 
 ## Remaining Original Scenarios
 
@@ -178,7 +174,7 @@ Pose-random full-view gate:
 env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
   XLA_PYTHON_CLIENT_PREALLOCATE=false \
   uv run tomojax-align-auto \
-  --out-dir .artifacts/production_hardening_synthetic/synth128_pose_random_128_after_loss_cache \
+  --out-dir .artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish \
   --synthetic-case pose-random --size 128 --views 256
 ```
 
@@ -201,11 +197,8 @@ where applicable. Artifacts are listed in the summary table.
 1. Keep the compile-cache changes; they turned the setup-global 256-view gate
    from a runtime blocker into a passing gate with about 1.4 GiB peak sampled
    GPU memory.
-2. Debug `synth128_pose_random_extreme` as an oracle fixed-volume pose solver
-   failure. The highest-signal next step is to inspect accepted Schur pose
-   updates across levels and add a native-resolution pose refinement policy that
-   continues while loss is still reducing and pose criteria are still outside
-   tolerance.
+2. Keep the pose-only Schur gauge-carry fix and bounded final pose polish for
+   `synth128_pose_random_extreme`; the 128^3/256-view oracle gate is now green.
 3. Add real object-frame drift recovery before treating
    `synth128_thermal_object_drift` as passable.
 4. Improve laminography axis/roll/theta recovery and det-v policy evidence

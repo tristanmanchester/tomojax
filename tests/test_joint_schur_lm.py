@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from tomojax.align import (
     JointSchurLMConfig,
@@ -717,6 +718,51 @@ def test_joint_schur_lm_can_run_alpha_beta_pose_update() -> None:
     assert "beta_rad" not in result.frozen_parameters
     np.testing.assert_allclose(result.geometry.pose.alpha_rad, truth_pose.alpha_rad, atol=0.025)
     np.testing.assert_allclose(result.geometry.pose.beta_rad, truth_pose.beta_rad, atol=0.025)
+
+
+def test_joint_schur_lm_pose_only_preserves_mean_gauge_until_final_canonicalization() -> None:
+    volume = _theta_asymmetric_volume()
+    nominal = GeometryState.zeros(2)
+    nominal = GeometryState(
+        setup=nominal.setup,
+        pose=nominal.pose.with_updates(
+            theta_nominal_rad=np.asarray([0.0, np.pi / 2.0], dtype=np.float64),
+        ),
+    )
+    truth_pose = nominal.pose.with_updates(
+        phi_residual_rad=np.asarray([0.06, 0.09], dtype=np.float64),
+        dx_px=np.asarray([0.6, 0.9], dtype=np.float64),
+        dz_px=np.asarray([0.0, 0.0], dtype=np.float64),
+    )
+    truth = GeometryState(setup=nominal.setup, pose=truth_pose)
+    observed = project_parallel_reference(volume, truth)
+
+    result = solve_joint_schur_lm(
+        volume,
+        observed,
+        nominal,
+        config=JointSchurLMConfig(
+            max_iterations=4,
+            damping=1e-3,
+            delta=1.0,
+            finite_difference_step=1.0e-2,
+            active_setup_parameters=(),
+            active_pose_dofs=("phi_residual_rad", "dx_px", "dz_px"),
+        ),
+    )
+
+    canonical = result.canonicalized_geometry.state
+    assert result.final_loss < result.initial_loss
+    assert abs(float(np.mean(canonical.pose.phi_residual_rad))) < 1.0e-12
+    assert abs(float(np.mean(canonical.pose.dx_px))) < 1.0e-12
+    assert canonical.setup.theta_offset_rad.value == pytest.approx(
+        float(np.mean(truth_pose.phi_residual_rad)),
+        abs=0.03,
+    )
+    assert canonical.setup.det_u_px.value == pytest.approx(
+        float(np.mean(truth_pose.dx_px)),
+        abs=0.3,
+    )
 
 
 def test_joint_schur_lm_can_freeze_phi_while_updating_detector_pose() -> None:

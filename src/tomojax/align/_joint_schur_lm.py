@@ -437,10 +437,10 @@ def solve_joint_schur_lm(
         setup_trust_radius = next_setup_trust_radius
         pose_trust_radius = next_pose_trust_radius
         if accepted:
-            params = _pack_joint(
-                canonicalize_geometry_gauges(_geometry_with_params(geometry, params, cfg)).state,
-                cfg,
-            )
+            accepted_geometry = _geometry_with_params(geometry, params, cfg)
+            if _can_repack_canonicalized_gauge(geometry, cfg):
+                accepted_geometry = canonicalize_geometry_gauges(accepted_geometry).state
+            params = _pack_joint(accepted_geometry, cfg)
         if float(jnp.linalg.norm(schur.step)) < 1e-5:
             break
 
@@ -507,6 +507,26 @@ def adapt_joint_schur_trust_radius(
     else:
         candidate = current
     return min(max(candidate, float(config.min_trust_radius)), float(config.max_trust_radius))
+
+
+def _can_repack_canonicalized_gauge(
+    geometry: GeometryState,
+    config: JointSchurLMConfig,
+) -> bool:
+    """Return true when gauge transfers survive round-tripping through params."""
+    active_setup = set(_active_setup_parameters(geometry, config))
+    active_pose = set(config.active_pose_dofs)
+    if "dx_px" in active_pose and "det_u_px" not in active_setup:
+        return False
+    if "phi_residual_rad" in active_pose and "theta_offset_rad" not in active_setup:
+        return False
+    if (
+        "dz_px" in active_pose
+        and geometry.setup.det_v_px.active
+        and "det_v_px" not in active_setup
+    ):
+        return False
+    return True
 
 
 def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, object]:

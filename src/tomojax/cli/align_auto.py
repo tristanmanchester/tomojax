@@ -369,6 +369,7 @@ def _apply_synthetic_case(args: argparse.Namespace) -> None:
         )
         args.geometry_update_alpha_beta_activate_at_level_factor = 1
         args.geometry_update_pose_trust_radius = -1.0
+        args.geometry_update_final_pose_polish_updates = 16
         return
     raise ValueError(f"unsupported synthetic tomography case: {case!r}")
 
