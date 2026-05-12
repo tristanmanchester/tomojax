@@ -46,7 +46,7 @@ uv run tomojax-align-auto \
 |---|---|---|
 | Real laminography | k11 staged run summarized from retained historical artifacts | Validated real-data staged workflow |
 | Setup-global synthetic | `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache` | Passes 128^3/256-view setup/COR/roll/axis/theta gate |
-| Pose-random synthetic | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish` | Passes 128^3/256-view dx/dz/phi/alpha/beta gate |
+| Pose-random synthetic | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe` | Passes 128^3/256-view dx/dz/phi/alpha/beta gate |
 | Remaining original synthetic scenarios | `synth128_lamino_axis_roll_pose`, `synth128_thermal_object_drift`, `synth128_combined_nuisance_jumps` classification artifacts | Runnable and honestly reported, but still red/partial for unsupported or research-path functionality |
 
 ## Direct Gate Answers
@@ -57,9 +57,9 @@ Yes. The full 128^3/256-view CUDA gate passed at
 
 Did `synth128_pose_random_extreme` recover per-view dx/dz/phi/alpha/beta at
 128^3? Yes. The full 128^3/256-view CUDA gate passed at
-`.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish`
-after fixing pose-only Schur gauge carry and using the bounded final pose-polish
-stage.
+`.artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe`
+after fixing pose-only Schur gauge carry, using the full fixed-truth alignment
+mask, and using the bounded final pose-polish stage.
 
 ## What Remains Research Work
 

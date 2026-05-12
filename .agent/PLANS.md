@@ -70,6 +70,9 @@ Tasks:
 - [x] Fix pose-only Schur gauge carry so accepted dx/phi mean updates are not
       discarded between iterations when setup parameters are frozen, then rerun
       the smallest useful pose-random oracle gate.
+- [x] Fix fixed-truth oracle geometry updates to train on the full alignment
+      mask, increase the clean pose-random preset's bounded final pose polish,
+      and rerun the mandatory 128^3/256-view manifest gate.
 - [x] Refresh the morning-facing production hardening/readiness reports so they
       reflect the now-green mandatory 128^3 tomography gates and do not expose
       historical development names as current product language.

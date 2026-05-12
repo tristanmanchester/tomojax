@@ -22,9 +22,12 @@ Changes:
   canonicalisation transfers those means into `det_u_px` and
   `theta_offset_rad`.
 - Added a focused Schur regression test for pose-only mean-gauge carry.
+- Made fixed-truth oracle geometry updates train on the full alignment mask
+  instead of withholding a held-out view from the Schur update. The held-out
+  mask remains active for stopped-reconstruction alternating diagnostics.
 - Made the clean `--synthetic-case pose-random` preset request the existing
-  bounded final pose-polish stage (`16` updates). With the gauge bug fixed,
-  that stage improves alpha/beta instead of polishing the wrong gauge.
+  bounded final pose-polish stage with `64` updates. With the gauge and mask
+  fixes, that stage improves alpha/beta instead of polishing the wrong gauge.
 
 ### Evidence
 
@@ -47,18 +50,18 @@ CUDA runs used `LD_LIBRARY_PATH` populated from
   128^3, 256 views, `cuda:0`. The gauge fix alone passed det-u, det-v, theta,
   dx/dz, and phi recovery, but alpha/beta remained red at
   `0.008984073962632476 rad`.
-- `.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish`:
-  128^3, 256 views, `cuda:0`, with 16 final pose-polish updates. The mandatory
+- `.artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe`:
+  128^3, 256 views, `cuda:0`, with 64 final pose-polish updates. The mandatory
   pose-random gate passed. Runtime artifact summary reports
-  `total_wall_seconds = 253.3783546090126`, `geometry_updates_executed = 33`,
-  and `reconstruction_calls = 4`; an in-flight `nvidia-smi` sample during the
-  run reported `1259 MiB` used on the RTX 4070 Laptop GPU. Recovery metrics:
-  `dx_dz_rmse_px = 0.040028767293657966`,
-  `phi_rmse_rad = 0.007029254273335157`,
-  `alpha_beta_rmse_rad = 0.0017171851316756014`,
-  `det_u_realized_rmse_px = 0.015837733351848012`,
-  `theta_realized_rmse_rad = 0.006883447413717324`, and
-  `det_v_realized_rmse_px = 0.00023787584153664077`.
+  `total_wall_seconds = 570.9120919359848`, `geometry_updates_executed = 81`,
+  and `reconstruction_calls = 5`; an in-flight `nvidia-smi` sample during the
+  run reported `1361 MiB` used on the RTX 4070 Laptop GPU. Recovery metrics:
+  `dx_dz_rmse_px = 0.000194251102341051`,
+  `phi_rmse_rad = 0.00014290254547410654`,
+  `alpha_beta_rmse_rad = 9.94198190694663e-06`,
+  `det_u_realized_rmse_px = 0.00025558973015988315`,
+  `theta_realized_rmse_rad = 0.00014297660063987256`, and
+  `det_v_realized_rmse_px = 0.00010428826557905991`.
 
 ### Diagnosis
 
@@ -66,8 +69,11 @@ The red pose-random gate was partly a solver-state bug: intermediate
 canonicalisation transferred mean pose gauges into setup, then repacked a
 pose-only parameter vector that could not carry those setup values. That lost
 the supported mean `dx`/`phi` gauge information between LM iterations. Once the
-state carry was fixed, the existing final pose-polish stage became useful for
-the remaining alpha/beta refinement.
+state carry was fixed, the full-view run still missed the strict phi criterion
+when the fixed-truth oracle Schur update trained on a held-out mask. Using the
+full alignment mask for fixed-truth updates and increasing the bounded final
+pose-polish count to 64 made the existing polish stage useful for the remaining
+alpha/beta and phi refinement.
 
 The 16-view diagnostics remain wiring/triage checks only; the real quality gate
 is the 128^3/256-view run, which now passes for `synth128_pose_random_extreme`.
@@ -81,15 +87,37 @@ is the 128^3/256-view run, which now passes for `synth128_pose_random_extreme`.
   tests/test_joint_schur_lm.py::test_joint_schur_lm_pose_only_preserves_mean_gauge_until_final_canonicalization
   tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle
   -q` passed: 2 tests in 4.93 seconds.
+- `JAX_PLATFORM_NAME=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_fixed_truth_geometry_updates_use_full_alignment_mask
+  tests/test_alternating_geometry_update_policy.py::test_stopped_reconstruction_geometry_updates_keep_heldout_mask
+  -q` passed: 2 tests in 0.92 seconds.
+- `JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_alternating_geometry_update_policy.py::test_fixed_truth_geometry_updates_use_full_alignment_mask
+  tests/test_alternating_geometry_update_policy.py::test_stopped_reconstruction_geometry_updates_keep_heldout_mask
+  tests/test_joint_schur_lm.py::test_joint_schur_lm_pose_only_preserves_mean_gauge_until_final_canonicalization
+  tests/test_align_auto_cli.py::test_synthetic_pose_random_case_resolves_bounded_oracle
+  -q` passed: 4 tests in 4.95 seconds.
 - `uv run ruff check src/tomojax/align/_joint_schur_lm.py
   tests/test_joint_schur_lm.py --select F821,I001,E501` passed.
 - `uv run ruff check src/tomojax/align/_joint_schur_lm.py
   src/tomojax/cli/align_auto.py tests/test_joint_schur_lm.py
   tests/test_align_auto_cli.py --select F821,I001,E501` passed.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  tests/test_alternating_geometry_update_policy.py --select F821,I001,E501`
+  passed.
+- `uv run ruff check src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py --select F821,I001,E501` passed.
 - `PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
   src/tomojax/align/_joint_schur_lm.py src/tomojax/cli/align_auto.py
   tests/test_joint_schur_lm.py tests/test_align_auto_cli.py` passed with
   0 errors, 0 warnings, and 0 notes.
+- `PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/align/_alternating_orchestration.py
+  src/tomojax/align/_joint_schur_lm.py src/tomojax/cli/align_auto.py
+  tests/test_alternating_geometry_update_policy.py tests/test_joint_schur_lm.py
+  tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `just imports` passed.
 
 ## 2026-05-12 - Synthetic128 full-view gates after Schur loss-cache fix

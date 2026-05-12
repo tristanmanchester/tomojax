@@ -189,7 +189,7 @@ def test_synthetic_pose_random_case_resolves_bounded_oracle(
     )
     assert cast("int", args.geometry_update_alpha_beta_activate_at_level_factor) == 1
     assert cast("float", args.geometry_update_pose_trust_radius) == -1.0
-    assert cast("int", args.geometry_update_final_pose_polish_updates) == 16
+    assert cast("int", args.geometry_update_final_pose_polish_updates) == 64
 
 
 def test_synthetic_case_preserves_explicit_profile(tmp_path: Path) -> None:

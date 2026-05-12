@@ -25,6 +25,7 @@ import tomojax.align._alternating_orchestration as alternating_orchestration
 
 # check-public-imports: allow-private
 from tomojax.align._alternating_orchestration import (
+    _alignment_train_masks,
     _apply_candidate_refresh_acceptance,
     _candidate_refresh_initial_volume,
     _maybe_run_final_pose_polish,
@@ -624,6 +625,33 @@ def test_stopped_preview_policy_is_inactive_for_fixed_truth() -> None:
     assert _effective_preview_initialization(config, level) == "backprojection"
     assert _effective_preview_volume_support(config, level) == "none"
     assert _effective_preview_residual_filter_mode(config, level) == "continuation"
+
+
+def test_fixed_truth_geometry_updates_use_full_alignment_mask() -> None:
+    mask = jnp.ones((4, 3, 2), dtype=jnp.float32)
+    config = AlternatingSmokeConfig(
+        geometry_update_volume_source="fixed_synthetic_truth",
+        heldout_view_index=-1,
+    )
+
+    train_mask, heldout_mask = _alignment_train_masks(config, mask)
+
+    np.testing.assert_allclose(np.asarray(train_mask), np.asarray(mask))
+    assert heldout_mask is None
+
+
+def test_stopped_reconstruction_geometry_updates_keep_heldout_mask() -> None:
+    mask = jnp.ones((4, 3, 2), dtype=jnp.float32)
+    config = AlternatingSmokeConfig(
+        geometry_update_volume_source="stopped_reconstruction",
+        heldout_view_index=-1,
+    )
+
+    train_mask, heldout_mask = _alignment_train_masks(config, mask)
+
+    assert heldout_mask is not None
+    assert float(train_mask[-1].sum()) == 0.0
+    assert float(heldout_mask[-1].sum()) == float(mask[-1].sum())
 
 
 def test_setup_only_geometry_update_solver_recovers_setup_without_pose() -> None:

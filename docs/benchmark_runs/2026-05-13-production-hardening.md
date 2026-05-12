@@ -44,7 +44,7 @@ canonical `core_trilinear_ray` backend.
 | Case | Status | Artifact |
 |---|---|---|
 | `synth128_setup_global_tomo` | passed at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache` |
-| `synth128_pose_random_extreme` | passed at 128^3/256 views after pose-only Schur gauge-carry fix and bounded final pose polish | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish` |
+| `synth128_pose_random_extreme` | passed at 128^3/256 views after pose-only Schur gauge-carry fix and bounded final pose polish | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe` |
 | `synth128_lamino_axis_roll_pose` | failed laminography axis/roll recovery at 128^3/256 views | `.artifacts/production_hardening_synthetic/synth128_lamino_axis_roll_pose_128_classification` |
 | `synth128_thermal_object_drift` | flagged object motion but failed recovery because object-frame motion solver is not enabled | `.artifacts/production_hardening_synthetic/synth128_thermal_object_drift_128_classification` |
 | `synth128_combined_nuisance_jumps` | failed hard-case setup/axis/theta recovery at 128^3/320 views; bad-view and jump-excluded dx/dz diagnostics evaluated | `.artifacts/production_hardening_synthetic/synth128_combined_nuisance_jumps_128_classification` |
@@ -66,15 +66,16 @@ The previous pose-random 256-view blocker was a pose-only Schur state-carry bug,
 not missing metric wiring, CPU fallback, or reconstruction absorption. Accepted
 LM iterations canonicalized mean `dx`/`phi` into setup, then repacked a
 pose-only parameter vector that could not preserve those setup gauge values.
-After preserving pose-only mean gauges until final canonicalisation and enabling
-the bounded final pose-polish stage for the clean pose-random preset, the
-128^3/256-view oracle gate passed:
+After preserving pose-only mean gauges until final canonicalisation, using the
+full fixed-truth alignment mask, and enabling 64 bounded final pose-polish
+updates for the clean pose-random preset, the 128^3/256-view oracle gate
+passed:
 
-- `dx_dz_rmse_px = 0.040028767293657966`
-- `phi_rmse_rad = 0.007029254273335157`
-- `alpha_beta_rmse_rad = 0.0017171851316756014`
-- `det_u_realized_rmse_px = 0.015837733351848012`
-- `theta_realized_rmse_rad = 0.006883447413717324`
+- `dx_dz_rmse_px = 0.000194251102341051`
+- `phi_rmse_rad = 0.00014290254547410654`
+- `alpha_beta_rmse_rad = 9.94198190694663e-06`
+- `det_u_realized_rmse_px = 0.00025558973015988315`
+- `theta_realized_rmse_rad = 0.00014297660063987256`
 
 ## Remaining Release Blockers
 

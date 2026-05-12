@@ -94,7 +94,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
     projection_valid_mask = inputs.projection_valid_mask
     alignment_loss_mask = inputs.alignment_loss_mask
     true_geometry, initial_geometry = inputs.true_geometry, inputs.initial_geometry
-    train_mask, heldout_mask = _heldout_masks(alignment_loss_mask, config.heldout_view_index)
+    train_mask, heldout_mask = _alignment_train_masks(config, alignment_loss_mask)
 
     geometry, gauge_report = initial_geometry, GaugeReport(())
     volume: jax.Array | None = None
@@ -536,6 +536,15 @@ def _prepare_output_dir(output_dir: str | Path) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
+
+
+def _alignment_train_masks(
+    config: AlternatingSmokeConfig,
+    alignment_loss_mask: jax.Array,
+) -> tuple[jax.Array, jax.Array | None]:
+    if config.geometry_update_volume_source == "fixed_synthetic_truth":
+        return alignment_loss_mask, None
+    return _heldout_masks(alignment_loss_mask, config.heldout_view_index)
 
 
 def _schur_loss_pair(result: JointSchurLMResult) -> tuple[float, float]:

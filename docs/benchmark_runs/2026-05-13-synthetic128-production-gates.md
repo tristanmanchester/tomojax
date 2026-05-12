@@ -35,6 +35,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 | `synth128_setup_global_tomo` | 128^3 | 16 | `diagnostic-fast` after loss-cache fix | passed | 154 s wrapper, 33.26 s benchmark | 766 MiB | `.artifacts/production_hardening_synthetic/synth128_setup_global_16views_after_loss_cache` |
 | `synth128_setup_global_tomo` | 128^3 | 256 | `diagnostic-fast` after loss-cache fix | passed | 500 s wrapper, 164.03 s benchmark | 1402 MiB | `.artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache` |
 | `synth128_pose_random_extreme` | 128^3 | 256 | `diagnostic-fast` after loss-cache fix | failed pose gate | 419 s wrapper, 139.94 s benchmark | 1402 MiB | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_after_loss_cache` |
+| `synth128_pose_random_extreme` | 128^3 | 256 | fixed-truth full-mask pose oracle with bounded polish | passed | 570.91 s benchmark | 1361 MiB | `.artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe` |
 | `synth128_pose_random_extreme` | 128^3 | 16 | `reference` diagnostic | failed, worse than diagnostic-fast | 183 s wrapper, 60.56 s benchmark | not sampled | `.artifacts/production_hardening_synthetic/synth128_pose_random_16views_reference_probe` |
 | `synth128_lamino_axis_roll_pose` | 128^3 | 256 | explicit setup+pose oracle diagnostic | failed laminography geometry | 500 s wrapper, 227.86 s benchmark | 1406 MiB | `.artifacts/production_hardening_synthetic/synth128_lamino_axis_roll_pose_128_classification` |
 | `synth128_thermal_object_drift` | 128^3 | 256 | explicit setup+pose oracle diagnostic | failed object-motion recovery | 524 s wrapper, 174.19 s benchmark | 1404 MiB | `.artifacts/production_hardening_synthetic/synth128_thermal_object_drift_128_classification` |
@@ -74,20 +75,20 @@ Did `synth128_pose_random_extreme` recover per-view dx/dz/phi/alpha/beta at
 Yes, after fixing pose-only Schur gauge carry and running the existing bounded
 final pose-polish stage. The passing artifact is:
 
-`.artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish`
+`.artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe`
 
 The 128^3/256-view CUDA gate uses `fixed_synthetic_truth`, all five pose DOFs,
 and no active setup parameters. Runtime summary reports
-`total_wall_seconds = 253.3783546090126`; an in-flight `nvidia-smi` sample
-reported `1259 MiB` used on the RTX 4070 Laptop GPU. It now passes the strict
+`total_wall_seconds = 570.9120919359848`; an in-flight `nvidia-smi` sample
+reported `1361 MiB` used on the RTX 4070 Laptop GPU. It now passes the strict
 pose criteria:
 
-- `dx_dz_rmse_px = 0.040028767293657966`
-- `phi_rmse_rad = 0.007029254273335157`
-- `alpha_beta_rmse_rad = 0.0017171851316756014` against `< 0.25 deg`
-- `det_u_realized_rmse_px = 0.015837733351848012`
-- `theta_realized_rmse_rad = 0.006883447413717324`
-- `det_v_realized_rmse_px = 0.00023787584153664077`
+- `dx_dz_rmse_px = 0.000194251102341051`
+- `phi_rmse_rad = 0.00014290254547410654`
+- `alpha_beta_rmse_rad = 9.94198190694663e-06` against `< 0.25 deg`
+- `det_u_realized_rmse_px = 0.00025558973015988315`
+- `theta_realized_rmse_rad = 0.00014297660063987256`
+- `det_v_realized_rmse_px = 0.00010428826557905991`
 
 The blocker was not underconverged preview reconstruction, CPU fallback, memory,
 or missing active DOFs. It was a pose-only solver state bug: accepted LM
@@ -106,8 +107,10 @@ Key diagnostics:
 - `synth128_pose_random_128_pose_gauge_fix`: the full 256-view gate with the
   gauge fix alone passed det-u/det-v/theta/dx-dz/phi but still failed
   alpha/beta at `0.008984073962632476 rad`.
-- `synth128_pose_random_128_pose_gauge_fix_polish`: the same full gate with
-  16 final pose-polish updates passed alpha/beta at `0.0017171851316756014 rad`.
+- `synth128_pose_random_128_fullmask_polish64_probe`: the same full gate with
+  64 final pose-polish updates passed all manifest pose criteria, including
+  alpha/beta at `9.94198190694663e-06 rad` and phi at
+  `0.00014290254547410654 rad`.
 
 ## Remaining Original Scenarios
 
@@ -174,7 +177,7 @@ Pose-random full-view gate:
 env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
   XLA_PYTHON_CLIENT_PREALLOCATE=false \
   uv run tomojax-align-auto \
-  --out-dir .artifacts/production_hardening_synthetic/synth128_pose_random_128_pose_gauge_fix_polish \
+  --out-dir .artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe \
   --synthetic-case pose-random --size 128 --views 256
 ```
 
