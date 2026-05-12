@@ -45,3 +45,11 @@ stages now compare reconstruction loss from `stage_manifest.json` instead of a
 copied setup `stage_summary.csv`. The regenerated report has one matched
 `06_cor_only_fista` final row: v1 `10767.8857 -> 6804.6685`, v2
 `10766.2012 -> 6740.0513`.
+
+Follow-up implementation: the runner now takes the strict replay option for
+`--profile v1_parity_audit` / `--v1-parity-real-lamino`. Setup stages read the
+v1 reference `stage_summary.csv` row counts and replay those per-level outer
+iteration counts exactly, so future strict-audit reruns should produce the same
+stage/level/iteration structure instead of letting small early-stop threshold
+differences decide row shape. This is parity-only behavior and does not change
+the clean `real_lamino_mvp` profile.

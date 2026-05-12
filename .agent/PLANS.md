@@ -45,6 +45,9 @@ Current productionization tasks:
       without a risky rewrite.
 - [ ] Add focused profile/report regression tests, including the phi level-2
       loss-scale guard.
+- [x] Add strict v1-parity setup row-count replay so the audit reproduces the
+      reference stage/level/iteration structure instead of diverging on
+      early-stop threshold sensitivity.
 - [x] Inventory the synthetic phantom/Beer-Lambert/artefact story and document
       what exists versus design-only functionality.
 - [ ] Implement or document bounded synthetic tomography MVP gates for
@@ -212,7 +215,7 @@ Historical real-lamino reproduction plan follows for context.
       `01_setup_geometry/03_axis_direction` level 8 iteration 7 is present in
       the v1 reference and absent in the v2 rerun because setup early stopping
       diverged by one row.
-- [ ] Decide the strict parity audit policy for setup early-stop row-count
+- [x] Decide the strict parity audit policy for setup early-stop row-count
       sensitivity before spending more work on report semantics; functional
       pose/final reconstruction parity is already on v1 scale.
 - [x] Add rigid calibrated-detector-grid pose folding so real-lamino

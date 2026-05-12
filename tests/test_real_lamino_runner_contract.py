@@ -487,6 +487,47 @@ def test_v2_cor_mvp_v1_flag_is_profile_alias(monkeypatch, tmp_path) -> None:
     assert args.v1_parity_real_lamino is True
 
 
+def test_v1_parity_level_outer_counts_replay_reference_stage_summary(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    reference_run = tmp_path / "reference_run"
+    summary_path = reference_run / "01_setup_geometry" / "03_axis_direction" / "stage_summary.csv"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(
+        "stage,level_factor,outer_iter,geometry_loss_before,geometry_loss_after\n"
+        "01_setup_geometry/03_axis_direction,8,1,2.0,1.5\n"
+        "01_setup_geometry/03_axis_direction,8,2,1.5,1.4\n"
+        "01_setup_geometry/03_axis_direction,4,1,4.0,3.0\n",
+        encoding="utf-8",
+    )
+    reference_report = reference_run / "real_mvp_report" / "real_mvp_summary.json"
+    reference_report.parent.mkdir(parents=True)
+    _write_json(reference_report, {"success": {"passed": True}})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--input",
+            "input.nxs",
+            "--out",
+            str(tmp_path / "out"),
+            "--profile",
+            "v1_parity_audit",
+            "--reference-report",
+            str(reference_report),
+        ],
+    )
+
+    args = v2_cor_mvp_runner._parse_args()
+
+    assert v2_cor_mvp_runner._v1_parity_level_outer_counts(
+        args,
+        stage_name="01_setup_geometry/03_axis_direction",
+    ) == {8: 2, 4: 1}
+
+
 def test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke(
     monkeypatch,
     tmp_path,

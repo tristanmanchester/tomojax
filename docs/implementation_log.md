@@ -3,6 +3,56 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Strict real-lamino v1 parity row replay
+
+### Scope
+
+Closed the remaining strict-audit contract gap from the full real-laminography
+v1-parity run without changing the optimizer or exploratory defaults.
+
+The completed run
+`runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512` had fixed
+the pose loss-scale regression and passed the real reconstruction gate, but the
+strict parity table still had one row-shape failure:
+`01_setup_geometry/03_axis_direction`, level 8, iteration 7 was present in the
+v1 reference and absent in v2 because setup early stopping crossed the
+`early_stop_rel=1e-3` threshold one row earlier.
+
+Changes:
+
+- Added a parity-only `level_outer_counts` hook to the native setup stage. When
+  counts are supplied, the setup stage runs exactly those per-level row counts
+  and does not apply local early stopping before the replay count is reached.
+- Wired `--profile v1_parity_audit` / `--v1-parity-real-lamino` in the v2
+  runner to read the counts from the reference run's `stage_summary.csv` files
+  for COR, detector-roll, and axis-direction setup stages.
+- Recorded the replay policy in the parity contract as
+  `setup_outer_count_replay=reference_stage_summary_counts`.
+- Added focused coverage for extracting the per-level reference counts.
+
+This is intentionally a strict audit/provenance mechanism, not a new alignment
+tuning path. `real_lamino_mvp`, `diagnostic_fast`, and manual profiles continue
+to use their ordinary early-stop behavior.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py -q` passed: 37 tests.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_native_setup_pose_256.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
+`basedpyright` over the native reference runner itself was not used as a slice
+gate because that file currently has pre-existing script-wide private-use and
+typing errors unrelated to this replay hook.
+
 ## 2026-05-12 - Synthetic data public-story inventory
 
 ### Scope

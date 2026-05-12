@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import replace
+from datetime import datetime
 import json
 import math
 import os
+from pathlib import Path
 import subprocess
 import threading
 import time
-from dataclasses import replace
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
@@ -28,25 +28,25 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
 from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
     geometry_with_axis_state,
     level_detector_grid,
 )
-from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
-from tomojax.align.pipeline import (
-    AlignConfig,
-    align,
-)
 from tomojax.align.geometry.parametrizations import se3_from_5d
 from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
+from tomojax.align.pipeline import (
+    AlignConfig,
+    align,
+)
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
+from tomojax.io import normalize_json
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume
-from tomojax.io import normalize_json
 
 
 def _json_safe(value: Any) -> Any:
@@ -657,6 +657,7 @@ def run_setup_stage(
     params5: np.ndarray,
     levels: tuple[int, ...],
     bounds: str,
+    level_outer_counts: Mapping[int, int] | None = None,
 ) -> tuple[np.ndarray, GeometryCalibrationState, list[dict[str, Any]]]:
     stage_dir.mkdir(parents=True, exist_ok=True)
     cfg_base = _make_cfg(ctx.args, active_setup=active_setup, bounds=bounds, outer_iters=1)
@@ -674,7 +675,11 @@ def run_setup_stage(
             x_level = None
         last_loss = math.inf
         stale = 0
-        for outer in range(1, int(ctx.args.outer_iters) + 1):
+        parity_outer_count = (
+            None if level_outer_counts is None else level_outer_counts.get(int(factor))
+        )
+        outer_limit = int(parity_outer_count or ctx.args.outer_iters)
+        for outer in range(1, outer_limit + 1):
             _status(
                 ctx.status_path,
                 state="running",
@@ -771,7 +776,11 @@ def run_setup_stage(
             rel = (last_loss - loss_after) / max(abs(last_loss), 1e-6) if math.isfinite(last_loss) else math.inf
             stale = stale + 1 if rel < float(ctx.args.early_stop_rel) else 0
             last_loss = loss_after
-            if bool(ctx.args.early_stop) and stale >= int(ctx.args.early_stop_patience):
+            if (
+                parity_outer_count is None
+                and bool(ctx.args.early_stop)
+                and stale >= int(ctx.args.early_stop_patience)
+            ):
                 break
         x_init = np.asarray(x_level, dtype=np.float32)
         prev_factor = int(factor)

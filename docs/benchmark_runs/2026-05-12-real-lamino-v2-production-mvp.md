@@ -132,6 +132,11 @@ diagnosed as early-stop row-count sensitivity: v2 stopped one row earlier after
 near-identical tiny improvements. Pose/final reconstruction losses are on the
 v1 scale, and `pose_loss_scale_failures` is empty.
 
+Follow-up code now makes strict `v1_parity_audit` reruns replay the v1 setup
+stage row counts from the reference `stage_summary.csv` files. That keeps the
+ordinary `real_lamino_mvp` profile unchanged while making the audit structure
+honest against the reference stage/level/iteration contract.
+
 ## Artifacts To Inspect
 
 Primary report artifacts:

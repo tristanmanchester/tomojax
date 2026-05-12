@@ -114,6 +114,7 @@ V1_PARITY_CONTRACT: dict[str, Any] = {
     "views_per_batch": 1,
     "gather_dtype": "bf16",
     "recon_positivity": False,
+    "setup_outer_count_replay": "reference_stage_summary_counts",
     "pose_phi_bounds": "phi=-0.0872665:0.0872665",
     "pose_dx_dz_bounds": "dx=-16:16,dz=-16:16",
     "pose_polish_bounds": (
@@ -324,6 +325,10 @@ def run_v2_cor_mvp(  # noqa: PLR0915
             params5=params5,
             levels=tuple(int(v) for v in args.levels_setup),
             bounds=_setup_det_u_bounds(args),
+            level_outer_counts=_v1_parity_level_outer_counts(
+                args,
+                stage_name="01_setup_geometry/01_cor",
+            ),
         )
         cor_setup_state = setup_state
         cor_only = run_cor_only_fista(
@@ -537,6 +542,10 @@ def run_remaining_stages(
             params5=params5,
             levels=tuple(int(v) for v in ctx.args.levels_setup),
             bounds=bounds,
+            level_outer_counts=_v1_parity_level_outer_counts(
+                ctx.args,
+                stage_name=stage_name,
+            ),
         )
         validation = _validate_stage_output(
             ctx.stage_dir(stage_name),
@@ -1259,6 +1268,7 @@ def _v1_parity_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
         "views_per_batch": int(args.views_per_batch),
         "gather_dtype": str(args.gather_dtype),
         "recon_positivity": bool(args.recon_positivity),
+        "setup_outer_count_replay": "reference_stage_summary_counts",
         "pose_phi_bounds": _pose_phi_bounds(args),
         "pose_dx_dz_bounds": _pose_dx_dz_bounds(args),
         "pose_polish_bounds": _pose_polish_bounds(args),
@@ -1276,6 +1286,30 @@ def _v1_parity_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
         "mismatches": mismatches,
         "passed": not mismatches,
     }
+
+
+def _v1_parity_level_outer_counts(
+    args: argparse.Namespace,
+    *,
+    stage_name: str,
+) -> dict[int, int] | None:
+    """Return v1 per-level setup row counts for strict parity replay."""
+    if str(getattr(args, "profile", "")) != "v1_parity_audit":
+        return None
+    reference_report = getattr(args, "reference_report", None)
+    if not reference_report:
+        return None
+    reference_root = Path(reference_report).resolve().parents[1]
+    summary_path = reference_root / stage_name / "stage_summary.csv"
+    rows = _read_stage_summary(summary_path)
+    counts: dict[int, int] = {}
+    for row in rows:
+        try:
+            level = int(row.get("level_factor", ""))
+        except (TypeError, ValueError):
+            continue
+        counts[level] = counts.get(level, 0) + 1
+    return counts or None
 
 
 def _validate_bin_factor(value: object) -> int:
