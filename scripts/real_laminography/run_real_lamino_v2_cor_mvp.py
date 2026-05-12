@@ -25,6 +25,25 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+try:
+    from scripts.real_laminography.real_lamino_profiles import (
+        REAL_LAMINO_MVP_CONTRACT,
+        REAL_LAMINO_PROFILE_CHOICES,
+        V1_PARITY_CONTRACT,
+    )
+except ModuleNotFoundError:
+    _PROFILE_SPEC = importlib.util.spec_from_file_location(
+        "_real_lamino_profiles",
+        Path(__file__).with_name("real_lamino_profiles.py"),
+    )
+    if _PROFILE_SPEC is None or _PROFILE_SPEC.loader is None:
+        raise
+    _profiles = importlib.util.module_from_spec(_PROFILE_SPEC)
+    _PROFILE_SPEC.loader.exec_module(_profiles)
+    REAL_LAMINO_MVP_CONTRACT = _profiles.REAL_LAMINO_MVP_CONTRACT
+    REAL_LAMINO_PROFILE_CHOICES = _profiles.REAL_LAMINO_PROFILE_CHOICES
+    V1_PARITY_CONTRACT = _profiles.V1_PARITY_CONTRACT
+
 STAGED_PATH: tuple[dict[str, Any], ...] = (
     {"label": "baseline", "stage": "00_baseline", "active_dofs": [], "status": "required"},
     {
@@ -82,56 +101,6 @@ V1_PARITY_STAGE_MAP: tuple[tuple[str, str], ...] = (
     ("05_final", "05_final"),
     ("06_cor_only_fista", "06_cor_only_fista"),
 )
-
-V1_PARITY_CONTRACT: dict[str, Any] = {
-    "projection_background": "edge_median",
-    "background_edge_px": 16,
-    "canonical_det_grid": False,
-    "levels_setup": [8, 4, 2],
-    "levels_phi": [4, 2, 1],
-    "levels_dx_dz": [4, 2, 1],
-    "levels_polish": [2, 1],
-    "outer_iters": 8,
-    "recon_iters": 40,
-    "tv_prox_iters": 16,
-    "lambda_tv": 0.008,
-    "align_profile": "lightning",
-    "regulariser": "huber_tv",
-    "loss_spec": "l2_otsu",
-    "loss_normalization": "align_config_default_l2_otsu_per_level",
-    "mask_vol": "cyl",
-    "optimizer_kind": "gn",
-    "gn_damping": 1e-3,
-    "quality_tier": "fast",
-    "fallback_policy": "fallback",
-    "fold_rigid_detector_grid": False,
-    "pose_model": "per_view",
-    "knot_spacing": 8,
-    "pose_degree": 3,
-    "pose_bounds_profile": "wide",
-    "pose_gauge_policy": "mean_translation_for_dx_dz",
-    "final_candidate_policy": "last_valid",
-    "views_per_batch": 1,
-    "gather_dtype": "bf16",
-    "recon_positivity": False,
-    "setup_outer_count_replay": "reference_stage_summary_counts",
-    "pose_phi_bounds": "phi=-0.0872665:0.0872665",
-    "pose_dx_dz_bounds": "dx=-16:16,dz=-16:16",
-    "pose_polish_bounds": (
-        "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
-        "phi=-0.0872665:0.0872665,dx=-16:16,dz=-16:16"
-    ),
-}
-
-REAL_LAMINO_PROFILE_CHOICES = (
-    "manual",
-    "real_lamino_mvp",
-    "v1_parity_audit",
-    "diagnostic_fast",
-)
-
-REAL_LAMINO_MVP_CONTRACT: dict[str, Any] = dict(V1_PARITY_CONTRACT)
-
 
 def main(argv: list[str] | None = None) -> int:
     """Run the v2 real-laminography MVP workflow."""

@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Real-lamino profile contract extraction
+
+### Scope
+
+Started the pragmatic real-runner cleanup by moving the real-laminography
+profile constants and parity contract out of the 2000-line v2 runner into the
+cohesive script-private module
+`scripts/real_laminography/real_lamino_profiles.py`.
+
+This keeps the public CLI behavior unchanged while making the clean
+`real_lamino_mvp`, strict `v1_parity_audit`, and bounded `diagnostic_fast`
+profile surface easier to inspect and test. The runner still owns execution,
+validation, reporting, and parity table writing; this is intentionally not a
+risky rewrite.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_v1_parity_mode_forces_reference_contract
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_real_lamino_mvp_profile_forces_winning_contract
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_v1_flag_is_profile_alias
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_diagnostic_fast_profile_uses_bounded_smoke
+  -q` passed: 4 tests.
+- `uv run ruff check
+  scripts/real_laminography/real_lamino_profiles.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  scripts/real_laminography/real_lamino_profiles.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py
+  tests/test_real_lamino_runner_contract.py` passed with 0 errors, 0 warnings,
+  and 0 notes.
+
 ## 2026-05-12 - Real-lamino MVP contact sheets
 
 ### Scope

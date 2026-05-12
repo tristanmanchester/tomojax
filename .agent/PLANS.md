@@ -41,7 +41,7 @@ Current productionization tasks:
       `v1_parity_audit`, and a bounded diagnostic profile.
 - [x] Ensure the real MVP profile resolves to the winning settings and records
       them in manifests/reports.
-- [ ] Split or isolate obvious real-runner profile/report/parity responsibilities
+- [x] Split or isolate obvious real-runner profile/report/parity responsibilities
       without a risky rewrite.
 - [x] Add focused profile/report regression tests, including the phi level-2
       loss-scale guard.
