@@ -545,6 +545,7 @@ def _make_cfg(
         projector_backend=str(args.projector_backend),
         quality_tier=str(args.quality_tier),
         fallback_policy=str(args.fallback_policy),
+        fold_rigid_detector_grid=bool(getattr(args, "fold_rigid_detector_grid", True)),
         opt_method="gn",
         gn_damping=float(args.gn_damping),
         optimise_dofs=active_pose or None,

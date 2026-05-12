@@ -117,6 +117,7 @@ def test_runner_defaults_to_explicit_lightning_policy(monkeypatch, tmp_path) -> 
     assert cfg.regulariser == "huber_tv"
     assert cfg.quality_tier == "fast"
     assert cfg.fallback_policy == "fallback"
+    assert cfg.fold_rigid_detector_grid is True
     assert cfg.pose_model == "spline"
     assert cfg.knot_spacing == 8
     assert cfg.degree == 3
@@ -413,8 +414,11 @@ def test_v2_cor_mvp_v1_parity_mode_forces_reference_contract(monkeypatch, tmp_pa
     assert args.pose_model == "per_view"
     assert args.pose_bounds_profile == "wide"
     assert args.final_candidate_policy == "last_valid"
+    assert args.fold_rigid_detector_grid is False
     assert args.outer_iters == 8
     assert args.levels_phi == [4, 2, 1]
+    cfg = runner._make_cfg(args, active_pose=("phi",))
+    assert cfg.fold_rigid_detector_grid is False
     assert v2_cor_mvp_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
     assert v2_cor_mvp_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 

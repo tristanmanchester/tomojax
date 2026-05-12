@@ -151,6 +151,7 @@ class AlignConfig:
     projector_backend: ProjectorBackendInput = "pallas"
     quality_tier: QualityTier = "fast"
     fallback_policy: FallbackPolicy = "fallback"
+    fold_rigid_detector_grid: bool = True
     # Solver and regularization
     opt_method: str = "gn"
     gn_damping: float = 1e-3

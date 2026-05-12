@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import get_detector_grid_device
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
@@ -127,6 +129,90 @@ def _is_oom_error_message(message: str) -> bool:
     )
 
 
+def _rigid_detector_grid_transform(
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    *,
+    atol: float = 2e-4,
+) -> tuple[float, float, float, float, float, float] | None:
+    if det_grid is None:
+        return None
+    try:
+        X0, Z0 = get_detector_grid_device(detector)
+        X0_host = np.asarray(X0, dtype=np.float32).reshape(-1)
+        Z0_host = np.asarray(Z0, dtype=np.float32).reshape(-1)
+        X_host = np.asarray(det_grid[0], dtype=np.float32).reshape(-1)
+        Z_host = np.asarray(det_grid[1], dtype=np.float32).reshape(-1)
+    except Exception:
+        return None
+    if X_host.shape != X0_host.shape or Z_host.shape != Z0_host.shape:
+        return None
+
+    design = np.stack(
+        [X0_host, Z0_host, np.ones_like(X0_host, dtype=np.float32)],
+        axis=1,
+    )
+    try:
+        x_coeffs, *_ = np.linalg.lstsq(design, X_host, rcond=None)
+        z_coeffs, *_ = np.linalg.lstsq(design, Z_host, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+    x_fit = design @ x_coeffs
+    z_fit = design @ z_coeffs
+    if (
+        float(np.max(np.abs(x_fit - X_host), initial=0.0)) > float(atol)
+        or float(np.max(np.abs(z_fit - Z_host), initial=0.0)) > float(atol)
+    ):
+        return None
+
+    a, b, c = (float(v) for v in x_coeffs)
+    d, e, f = (float(v) for v in z_coeffs)
+    transform = np.asarray([[a, b], [d, e]], dtype=np.float32)
+    gram = transform.T @ transform
+    det = float(np.linalg.det(transform))
+    if not (
+        np.allclose(gram, np.eye(2, dtype=np.float32), atol=2e-4, rtol=2e-4)
+        and abs(det - 1.0) <= 2e-4
+    ):
+        return None
+    return a, b, c, d, e, f
+
+
+def _fold_rigid_detector_grid_into_pose_stack(
+    T_all: jnp.ndarray,
+    detector: Detector,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+) -> jnp.ndarray | None:
+    transform = _rigid_detector_grid_transform(detector, det_grid)
+    if transform is None:
+        return None
+    a, b, c, d, e, f = transform
+    T = jnp.asarray(T_all, dtype=jnp.float32)
+    R = T[:, :3, :3]
+    t = T[:, :3, 3]
+    Rinv = jnp.swapaxes(R, 1, 2)
+    tinv = -jnp.einsum("nij,nj->ni", Rinv, t)
+
+    col0 = Rinv[:, :, 0] * jnp.float32(a) + Rinv[:, :, 2] * jnp.float32(d)
+    col1 = Rinv[:, :, 1]
+    col2 = Rinv[:, :, 0] * jnp.float32(b) + Rinv[:, :, 2] * jnp.float32(e)
+    tinv_folded = (
+        tinv
+        + Rinv[:, :, 0] * jnp.float32(c)
+        + Rinv[:, :, 2] * jnp.float32(f)
+    )
+    Rinv_folded = jnp.stack([col0, col1, col2], axis=2)
+    R_folded = jnp.swapaxes(Rinv_folded, 1, 2)
+    t_folded = -jnp.einsum("nij,nj->ni", R_folded, tinv_folded)
+
+    bottom = jnp.broadcast_to(
+        jnp.asarray([0.0, 0.0, 0.0, 1.0], dtype=jnp.float32),
+        (int(T.shape[0]), 1, 4),
+    )
+    upper = jnp.concatenate([R_folded, t_folded[:, :, None]], axis=2)
+    return jnp.concatenate([upper, bottom], axis=1)
+
+
 def _finite_fraction(value: jnp.ndarray) -> float:
     array = jnp.asarray(value)
     if array.size == 0:
@@ -164,6 +250,9 @@ def _reconstruction_step_stat(
     }
     if bool(info_mapping.get("recon_public_fista_fallback", False)):
         stat["recon_public_fista_fallback"] = True
+    if bool(info_mapping.get("detector_grid_folded_into_pose", False)):
+        stat["detector_grid_folded_into_pose"] = True
+        stat["detector_grid_fold_reason"] = info_mapping.get("detector_grid_fold_reason")
     L_next = _record_reconstruction_info(
         stat,
         info_rec=info_mapping,
@@ -387,6 +476,32 @@ def _run_reconstruction_step(  # noqa: PLR0915
             gather_dtype=str(cfg.gather_dtype),
             fallback_policy=str(getattr(cfg, "fallback_policy", "fallback")),
         )
+        detector_grid_folded_into_pose = False
+        detector_grid_fold_reason = None
+        if (
+            actual_backend == "jax"
+            and fallback_reason
+            and requested_backend == "pallas"
+            and bool(getattr(cfg, "fold_rigid_detector_grid", True))
+        ):
+            T_folded = _fold_rigid_detector_grid_into_pose_stack(T_all, detector, det_grid)
+            if T_folded is not None:
+                folded_backend, folded_fallback_reason = _resolve_reconstruction_projector_backend(
+                    requested_backend=requested_backend,
+                    T_all=T_folded,
+                    grid=grid,
+                    detector=detector,
+                    volume=x,
+                    det_grid=None,
+                    gather_dtype=str(cfg.gather_dtype),
+                    fallback_policy=str(getattr(cfg, "fallback_policy", "fallback")),
+                )
+                if folded_backend == "pallas":
+                    T_all = T_folded
+                    actual_backend = folded_backend
+                    detector_grid_folded_into_pose = True
+                    detector_grid_fold_reason = str(fallback_reason)
+                    fallback_reason = folded_fallback_reason
         if actual_backend == "jax" and fallback_reason:
             x_public, public_info = _run_fista(1, 1, "fp32", "stream")
             return x_public, _public_fista_info_after_core_bypass(
@@ -447,6 +562,8 @@ def _run_reconstruction_step(  # noqa: PLR0915
             "requested_backend": requested_backend,
             "actual_backend": actual_backend,
             "fallback_reason": fallback_reason,
+            "detector_grid_folded_into_pose": detector_grid_folded_into_pose,
+            "detector_grid_fold_reason": detector_grid_fold_reason,
         }
         return x_core, info
 

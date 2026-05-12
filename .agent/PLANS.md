@@ -168,6 +168,9 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 - [ ] Decide the strict parity audit policy for setup early-stop row-count
       sensitivity before spending more work on report semantics; functional
       pose/final reconstruction parity is already on v1 scale.
+- [x] Add rigid calibrated-detector-grid pose folding so real-lamino
+      Huber-FISTA/Pallas reconstruction can use det_u/det_v/roll calibration
+      without falling back to the slower public streamed FISTA path.
 - [ ] Commit coherent working milestones; continue after each commit until the
       full real-MVP gate is meaningfully comparable and improving.
 

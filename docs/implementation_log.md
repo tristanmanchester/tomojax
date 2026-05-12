@@ -3,6 +3,52 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Rigid detector-grid folding for real-lamino Pallas recon
+
+### Scope
+
+The v1-parity FISTA fallback fixed the immediate real-laminography phi failure,
+but it also exposed a performance/capability gap: rigid calibrated detector
+grids from det_u/det_v/roll forced the Huber-FISTA core off the Pallas backend.
+This slice keeps the calibrated-grid semantics while avoiding that fallback for
+rigid detector-plane transforms.
+
+Changes:
+
+- Detect whether a supplied detector grid is an affine rigid transform of the
+  canonical detector grid.
+- Fold that transform into the per-view pose stack before backend resolution,
+  then run the Huber-FISTA core with the canonical detector grid when Pallas
+  accepts the folded geometry.
+- Keep `--v1-parity-real-lamino` on the previous calibrated-grid fallback path
+  by disabling this fold through `AlignConfig.fold_rigid_detector_grid`, because
+  the parity gate is checking v1 measured-L behavior rather than a backend
+  modernization.
+- Preserve the public streamed FISTA fallback for non-rigid grids or other
+  unsupported backend cases.
+- Record `detector_grid_folded_into_pose` and the original fold reason in
+  reconstruction stats when this path is used.
+- Added focused coverage that the folded pose projects identically to the
+  calibrated JAX detector grid, and that a rigid calibrated grid stays on the
+  Pallas core path instead of calling the public FISTA fallback.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_pose_reconstruction_fail_closed.py
+  tests/test_real_lamino_runner_contract.py::test_runner_defaults_to_explicit_lightning_policy
+  tests/test_real_lamino_runner_contract.py::test_v2_cor_mvp_v1_parity_mode_forces_reference_contract
+  -q` passed: 7 tests.
+- `uv run ruff check src/tomojax/align/_config.py
+  src/tomojax/align/_reconstruction_stage.py
+  tests/test_pose_reconstruction_fail_closed.py
+  tests/test_real_lamino_runner_contract.py --select F821,I001,E501` passed.
+- `uv run ruff check
+  scripts/real_laminography/run_real_lamino_native_setup_pose_256.py
+  scripts/real_laminography/run_real_lamino_v2_cor_mvp.py --select F821`
+  passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
 ## 2026-05-12 - Real laminography phi parity reconstruction fallback
 
 ### Scope

@@ -104,6 +104,7 @@ V1_PARITY_CONTRACT: dict[str, Any] = {
     "gn_damping": 1e-3,
     "quality_tier": "fast",
     "fallback_policy": "fallback",
+    "fold_rigid_detector_grid": False,
     "pose_model": "per_view",
     "knot_spacing": 8,
     "pose_degree": 3,
@@ -1152,6 +1153,7 @@ def _apply_v1_parity_real_lamino_args(args: argparse.Namespace) -> None:
     args.gn_damping = float(V1_PARITY_CONTRACT["gn_damping"])
     args.quality_tier = str(V1_PARITY_CONTRACT["quality_tier"])
     args.fallback_policy = str(V1_PARITY_CONTRACT["fallback_policy"])
+    args.fold_rigid_detector_grid = bool(V1_PARITY_CONTRACT["fold_rigid_detector_grid"])
     args.pose_model = str(V1_PARITY_CONTRACT["pose_model"])
     args.knot_spacing = int(V1_PARITY_CONTRACT["knot_spacing"])
     args.pose_degree = int(V1_PARITY_CONTRACT["pose_degree"])
@@ -1195,6 +1197,7 @@ def _v1_parity_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
         "gn_damping": float(args.gn_damping),
         "quality_tier": str(args.quality_tier),
         "fallback_policy": str(args.fallback_policy),
+        "fold_rigid_detector_grid": bool(getattr(args, "fold_rigid_detector_grid", True)),
         "pose_model": str(args.pose_model),
         "knot_spacing": int(args.knot_spacing),
         "pose_degree": int(args.pose_degree),
