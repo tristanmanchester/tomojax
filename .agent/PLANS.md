@@ -53,6 +53,8 @@ Tasks:
       names and hide legacy diagnostic aliases from public help.
 - [x] Add clean quickstart, real-laminography, synthetic-tomography, known
       limitations, and production-readiness docs.
+- [x] Remove remaining low-risk legacy wording from public align-auto and visual
+      generator help surfaces.
 
 Historical productionization plan follows for context.
 

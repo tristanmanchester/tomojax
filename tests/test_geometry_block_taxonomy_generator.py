@@ -256,7 +256,7 @@ def test_write_visuals_emits_rich_inspection_artifacts(tmp_path):
     paths = generator._write_visuals(
         generator.AlignmentVisualizationPayload(
             scenario=generator._visual_scenario(scenario),
-            profile=generator._visual_profile(generator.smoke_profile()),
+            profile=generator._visual_profile(generator.diagnostic_profile()),
             theta_span=180.0,
             truth=base,
             naive_fbp=naive,

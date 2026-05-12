@@ -120,7 +120,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="pseudo_huber",
         help=(
             "Projection objective for geometry/reconstruction losses. "
-            "otsu_l2 is the v1-style Otsu foreground mask plus L2 residual."
+            "otsu_l2 uses an Otsu foreground mask plus L2 residual."
         ),
     )
     _ = parser.add_argument(

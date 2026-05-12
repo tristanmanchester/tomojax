@@ -169,9 +169,9 @@ def docs_profile() -> RunProfile:
     )
 
 
-def smoke_profile() -> RunProfile:
+def diagnostic_profile() -> RunProfile:
     return RunProfile(
-        name="smoke_32",
+        name="diagnostic_32",
         size=32,
         views=32,
         levels=(4, 2, 1),
@@ -262,7 +262,8 @@ def scenario_catalog_for_kind(kind: str) -> list[Scenario]:
 
 
 def profile_from_args(args: argparse.Namespace) -> RunProfile:
-    base = docs_profile() if args.profile == "docs" else smoke_profile()
+    profile_name = "diagnostic" if args.profile == "smoke" else str(args.profile)
+    base = docs_profile() if profile_name == "docs" else diagnostic_profile()
     return RunProfile(
         name=base.name,
         size=int(args.size or base.size),
@@ -1437,24 +1438,15 @@ def run(args: argparse.Namespace) -> None:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
-    parser.add_argument("--profile", choices=["docs", "smoke"], default="docs")
+    parser.add_argument(
+        "--profile",
+        default="docs",
+        help="Run profile: docs or diagnostic.",
+    )
     parser.add_argument(
         "--scenario-set",
-        choices=[
-            "default",
-            "visual_stress",
-            "capability",
-            "capability_128",
-            "stress",
-            "stress_128",
-            "diagnostic",
-            "diagnostic_128",
-            "pose_parity",
-            "pose_parity_128",
-            "comprehensive_128",
-            "smoke_64",
-        ],
         default="default",
+        help="Scenario set, for example default, diagnostic, diagnostic_128, or comprehensive_128.",
     )
     parser.add_argument("--naive-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1474,7 +1466,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--scenario", action="append", default=None)
     parser.add_argument("--continue-on-error", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.profile = _normalize_profile_name(str(args.profile), parser)
+    args.scenario_set = _normalize_scenario_set(str(args.scenario_set))
+    return args
+
+
+def _normalize_profile_name(name: str, parser: argparse.ArgumentParser) -> str:
+    normalized = {"smoke": "diagnostic"}.get(name, name)
+    if normalized not in {"docs", "diagnostic"}:
+        parser.error("--profile must be one of: docs, diagnostic")
+    return normalized
+
+
+def _normalize_scenario_set(name: str) -> str:
+    return {
+        "diagnostic_64": "smoke_64",
+        "pose_reference": "pose_parity",
+        "pose_reference_128": "pose_parity_128",
+    }.get(name, name)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

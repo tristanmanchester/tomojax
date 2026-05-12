@@ -54,6 +54,8 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "axis_rot_x_rad" in captured.out
     assert "axis_rot_y_rad" in captured.out
     assert "theta_scale" in captured.out
+    for forbidden in ("mvp", "v1", "parity", "cor_mvp", "full_mvp", "smoke"):
+        assert forbidden not in captured.out.lower()
 
 
 def test_public_cli_scripts_use_production_auto_name() -> None:

@@ -174,6 +174,32 @@ current real-data evidence plus the 128^3 setup/pose gate statuses.
   docs/synthetic-tomography.md docs/known-limitations.md
   docs/benchmark_runs/2026-05-13-production-readiness.md` produced no matches.
 
+## 2026-05-13 - Remaining public help wording cleanup
+
+### Scope
+
+Cleaned two remaining low-risk public help surfaces found by the completion
+audit:
+
+- `tomojax-align-auto --help` no longer describes `otsu_l2` with historical
+  wording.
+- `scripts/generate_alignment_before_after_128.py --help` now exposes a
+  `diagnostic` profile and diagnostic/reference scenario names while retaining
+  internal aliases for older command transcripts.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_geometry_block_taxonomy_generator.py -q` passed: 13 tests.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run python
+  scripts/generate_alignment_before_after_128.py --help | rg -i
+  "mvp|v1|parity|audit|cor_mvp|full_mvp|after_fista_fallback|smoke" || true`
+  produced no matches.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run python -c
+  "import tomojax.cli.align_auto as cli; cli.main(['--help'])" 2>/dev/null |
+  rg -i "v1-style|mvp|parity|smoke" || true` produced no matches.
+
 ## 2026-05-12 - Production hardening public naming cleanup
 
 ### Scope
