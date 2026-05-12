@@ -3,6 +3,49 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Synthetic tomography MVP CLI presets
+
+### Scope
+
+Added `tomojax-align-auto-smoke --synthetic-tomo-mvp-case` as a small CLI
+surface for the two bounded productionization tomography gates:
+
+- `setup_global`, resolving to the fixed-truth
+  `synth128_setup_global_tomo` Schur smoke with pose frozen and active
+  `det_u_px,theta_offset_rad`.
+- `pose_random_extreme`, resolving to the fixed-truth
+  `synth128_pose_random_extreme` smoke with setup frozen and active
+  `phi_residual_rad,dx_px,dz_px`.
+
+The preset keeps the default bounded shape at 32^3 and raises default views from
+4 to 8, while preserving explicit `--size` and `--views` overrides. The
+synthetic MVP report now shows these concise commands and notes that the
+existing artifacts were generated with the equivalent explicit flags before the
+preset existed.
+
+### Validation
+
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_synthetic_tomo_mvp_setup_global_case_resolves_bounded_oracle
+  tests/test_align_auto_cli.py::test_synthetic_tomo_mvp_pose_random_case_resolves_bounded_oracle
+  -q` passed: 3 tests.
+- `uv run ruff check src/tomojax/cli/align_auto.py
+  tests/test_align_auto_cli.py --select F821,I001,E501` passed.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu
+  PYTHONPATH=.venv/lib/python3.12/site-packages uv run basedpyright
+  src/tomojax/cli/align_auto.py tests/test_align_auto_cli.py` passed with
+  0 errors, 0 warnings, and 0 notes.
+- `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu just imports` passed.
+
+Validation limitation:
+
+- The broader `env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu uv run pytest
+  tests/test_align_auto_cli.py -q` run segfaulted in the existing heavy
+  `test_align_auto_records_geometry_first_bootstrap_stage` JAX Schur path while
+  compiling `_stream_joint_normal_equations_for_geometry`. The three new
+  preset-focused tests had already passed before this broad-file crash.
+
 ## 2026-05-12 - Real-lamino profile contract extraction
 
 ### Scope

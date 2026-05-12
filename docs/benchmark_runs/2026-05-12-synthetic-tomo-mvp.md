@@ -19,13 +19,7 @@ Setup-global oracle Schur geometry smoke:
 env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu UV_CACHE_DIR=.uv-cache \
   uv run tomojax-align-auto-smoke \
     --out-dir .artifacts/production_synthetic_tomo_mvp/runs/synth128_setup_global_tomo_32 \
-    --profile smoke32 \
-    --synthetic-dataset synth128_setup_global_tomo \
-    --views 8 \
-    --geometry-update-volume-source fixed_synthetic_truth \
-    --geometry-update-pose-frozen \
-    --geometry-update-active-setup-parameters det_u_px,theta_offset_rad \
-    --geometry-update-solver joint_schur
+    --synthetic-tomo-mvp-case setup_global
 ```
 
 Pose-random fixed-truth Schur smoke:
@@ -34,15 +28,12 @@ Pose-random fixed-truth Schur smoke:
 env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu UV_CACHE_DIR=.uv-cache \
   uv run tomojax-align-auto-smoke \
     --out-dir .artifacts/production_synthetic_tomo_mvp/runs/synth128_pose_random_extreme_32 \
-    --profile smoke32 \
-    --synthetic-dataset synth128_pose_random_extreme \
-    --views 8 \
-    --geometry-update-volume-source fixed_synthetic_truth \
-    --geometry-update-active-setup-parameters none \
-    --geometry-update-active-pose-dofs phi_residual_rad,dx_px,dz_px \
-    --geometry-update-alpha-beta-activate-at-level-factor 1 \
-    --geometry-update-pose-trust-radius -1
+    --synthetic-tomo-mvp-case pose_random_extreme
 ```
+
+The committed runs used the equivalent explicit flags before
+`--synthetic-tomo-mvp-case` existed; the preset now resolves to those bounded
+32^3 / 8-view fixed-truth smoke settings.
 
 Comparison report:
 

@@ -52,8 +52,8 @@ Current productionization tasks:
       what exists versus design-only functionality.
 - [x] Implement or document bounded synthetic tomography MVP gates for
       `synth128_setup_global_tomo` and `synth128_pose_random_extreme`.
-- [ ] Run focused validation, `just imports`, and broader checks where feasible.
-- [ ] Update `docs/implementation_log.md` and commit coherent slices.
+- [x] Run focused validation, `just imports`, and broader checks where feasible.
+- [x] Update `docs/implementation_log.md` and commit coherent slices.
 
 Historical real-lamino reproduction plan follows for context.
 

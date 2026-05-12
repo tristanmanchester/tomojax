@@ -53,6 +53,11 @@ _STOPPED_PREVIEW_POLICY_CHOICES = (
     "constant_cylindrical_first_level",
     "constant_cylindrical_first_level_no_fista",
 )
+_SYNTHETIC_TOMO_MVP_CASE_CHOICES = (
+    "none",
+    "setup_global",
+    "pose_random_extreme",
+)
 SyntheticSize = Literal[32, 64, 128]
 
 
@@ -83,6 +88,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Synthetic cubic volume size.",
     )
     _ = parser.add_argument("--views", type=int, default=4, help="Number of synthetic views.")
+    _ = parser.add_argument(
+        "--synthetic-tomo-mvp-case",
+        choices=_SYNTHETIC_TOMO_MVP_CASE_CHOICES,
+        default="none",
+        help=(
+            "Bounded synthetic tomography MVP preset. setup_global resolves to "
+            "the fixed-truth synth128_setup_global_tomo Schur smoke; "
+            "pose_random_extreme resolves to the fixed-truth pose-random smoke."
+        ),
+    )
     _ = parser.add_argument(
         "--projection-loss-mode",
         choices=_PROJECTION_LOSS_MODE_CHOICES,
@@ -312,10 +327,35 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_synthetic_tomo_mvp_case(args: argparse.Namespace) -> None:
+    case = str(args.synthetic_tomo_mvp_case)
+    if case == "none":
+        return
+    args.profile = "smoke32"
+    if int(args.views) == 4:
+        args.views = 8
+    args.geometry_update_volume_source = "fixed_synthetic_truth"
+    args.geometry_update_solver = "joint_schur"
+    if case == "setup_global":
+        args.synthetic_dataset = "synth128_setup_global_tomo"
+        args.geometry_update_pose_frozen = True
+        args.geometry_update_active_setup_parameters = "det_u_px,theta_offset_rad"
+        return
+    if case == "pose_random_extreme":
+        args.synthetic_dataset = "synth128_pose_random_extreme"
+        args.geometry_update_active_setup_parameters = "none"
+        args.geometry_update_active_pose_dofs = "phi_residual_rad,dx_px,dz_px"
+        args.geometry_update_alpha_beta_activate_at_level_factor = 1
+        args.geometry_update_pose_trust_radius = -1.0
+        return
+    raise ValueError(f"unsupported synthetic tomography MVP case: {case!r}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the deterministic Phase 7 auto-alignment smoke command."""
     parser = _build_parser()
     args = parser.parse_args(argv)
+    _apply_synthetic_tomo_mvp_case(args)
     profile = cast("ContinuationScheduleName", args.profile)
     geometry_update_volume_source = cast(
         "GeometryUpdateVolumeSource",

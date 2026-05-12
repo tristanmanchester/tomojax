@@ -32,6 +32,7 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
     assert "verification artifacts" in captured.out
     assert "smoke32" in captured.out
     assert "--synthetic-dataset" in captured.out
+    assert "--synthetic-tomo-mvp-case" in captured.out
     assert "--synthetic-dataset-dir" in captured.out
     assert "--current-default-baseline-json" in captured.out
     assert "--projection-loss-mode" in captured.out
@@ -111,6 +112,68 @@ def test_align_auto_rejects_unknown_geometry_update_dofs() -> None:
         _ = align_auto_cli._parse_active_pose_dofs("omega_rad")
     with pytest.raises(ValueError, match="unsupported --geometry-update-active-setup-parameters"):
         _ = align_auto_cli._parse_active_setup_parameters("tilt_rad")
+
+
+def test_synthetic_tomo_mvp_setup_global_case_resolves_bounded_oracle(
+    tmp_path: Path,
+) -> None:
+    parser = align_auto_cli._build_parser()
+    args = parser.parse_args(
+        [
+            "--out-dir",
+            str(tmp_path),
+            "--synthetic-tomo-mvp-case",
+            "setup_global",
+        ]
+    )
+
+    align_auto_cli._apply_synthetic_tomo_mvp_case(args)
+
+    assert cast("str", args.profile) == "smoke32"
+    assert cast("int", args.size) == 32
+    assert cast("int", args.views) == 8
+    assert cast("str", args.synthetic_dataset) == "synth128_setup_global_tomo"
+    assert cast("str", args.geometry_update_volume_source) == "fixed_synthetic_truth"
+    assert cast("str", args.geometry_update_solver) == "joint_schur"
+    assert cast("bool", args.geometry_update_pose_frozen) is True
+    assert (
+        cast("str", args.geometry_update_active_setup_parameters)
+        == "det_u_px,theta_offset_rad"
+    )
+
+
+def test_synthetic_tomo_mvp_pose_random_case_resolves_bounded_oracle(
+    tmp_path: Path,
+) -> None:
+    parser = align_auto_cli._build_parser()
+    args = parser.parse_args(
+        [
+            "--out-dir",
+            str(tmp_path),
+            "--synthetic-tomo-mvp-case",
+            "pose_random_extreme",
+            "--size",
+            "64",
+            "--views",
+            "16",
+        ]
+    )
+
+    align_auto_cli._apply_synthetic_tomo_mvp_case(args)
+
+    assert cast("str", args.profile) == "smoke32"
+    assert cast("int", args.size) == 64
+    assert cast("int", args.views) == 16
+    assert cast("str", args.synthetic_dataset) == "synth128_pose_random_extreme"
+    assert cast("str", args.geometry_update_volume_source) == "fixed_synthetic_truth"
+    assert cast("str", args.geometry_update_solver) == "joint_schur"
+    assert cast("str", args.geometry_update_active_setup_parameters) == "none"
+    assert (
+        cast("str", args.geometry_update_active_pose_dofs)
+        == "phi_residual_rad,dx_px,dz_px"
+    )
+    assert cast("int", args.geometry_update_alpha_beta_activate_at_level_factor) == 1
+    assert cast("float", args.geometry_update_pose_trust_radius) == -1.0
 
 
 def test_align_auto_smoke_command_writes_core_artifacts(
