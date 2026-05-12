@@ -3,6 +3,26 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-12 - Real-lamino MVP contact sheets
+
+### Scope
+
+Generated committed visual contact sheets from existing v1/v2 real-laminography
+MVP artifacts without rerunning alignment:
+
+- `docs/benchmark_runs/figures/2026-05-12-real-lamino-v2-stage-contact-sheet.png`
+- `docs/benchmark_runs/figures/2026-05-12-real-lamino-v1-v2-contact-sheet.png`
+
+Updated the production MVP report to link these figures and changed the
+remaining caveat from "contact sheets need to be generated" to "the runner does
+not yet generate them automatically."
+
+### Validation
+
+- Generated both figures from existing PNG artifacts under
+  `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512` and
+  `runs/real_lamino_native_setup_pose_256_k11_54014-edge-20260427-153525`.
+
 ## 2026-05-12 - Phi level-2 parity loss-scale guard
 
 ### Scope

@@ -163,8 +163,12 @@ Publication PNGs:
 - Full-vs-baseline delta:
   `runs/real_lamino_v2_v1_parity_full_after_fista_fallback_20260512/v2_cor_mvp_report/publication/full_delta_xy_delta_xy_global_z209.png`
 
-Contact sheets for stage-by-stage central slice, orthos, z-stack, and direct
-v1-vs-v2 final comparison still need to be generated or linked into the report.
+Committed contact sheets:
+
+- V2 stage central-slice sheet:
+  `docs/benchmark_runs/figures/2026-05-12-real-lamino-v2-stage-contact-sheet.png`
+- V1-vs-v2 visual comparison sheet:
+  `docs/benchmark_runs/figures/2026-05-12-real-lamino-v1-v2-contact-sheet.png`
 
 ## Runtime And Memory
 
@@ -246,8 +250,9 @@ Design-only or not yet complete:
   user-facing demo profile.
 - `run_real_lamino_v2_cor_mvp.py` still mixes profile selection, execution,
   validation, reporting, and parity table generation.
-- Stage contact sheets and v1-vs-v2 final comparison sheets need to be generated
-  or made easy to find.
+- Stage contact sheets and v1-vs-v2 final comparison sheets are now committed
+  as lightweight report figures, but the runner does not yet generate them
+  automatically.
 - Synthetic tomography MVP gates for `synth128_setup_global_tomo` and
   `synth128_pose_random_extreme` now have bounded 32^3 artifact-producing
   reports, but both runs failed and should not be used as quality evidence.
