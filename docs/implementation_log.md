@@ -15029,3 +15029,19 @@ Validation:
   `test_preprocess_cli_combines_crop_reject_and_auto_reject`.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 842 to 788.
+
+### CLI manifest typing cleanup
+
+- Tightened the reproducibility manifest helper around the public
+  `tomojax.io.JsonValue` contract and isolated the small untyped JAX runtime
+  introspection surface behind a local protocol. This keeps manifest/provenance
+  generation JSON-serializable without leaking `Any` through the CLI package.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/manifest.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/manifest.py` passed.
+- `uv run pytest tests/test_manifest.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 788 to 775.

@@ -1008,6 +1008,11 @@ and proposed next fix before stopping.
   CLI smoke tests, Ruff, single-file Basedpyright with 0 warnings, and
   `just production-surface-check` passed. Full CLI Basedpyright warnings are
   now 788 with 0 errors.
+- [x] CLI manifest typing cleanup: reproducibility manifest generation now
+  uses the public `tomojax.io.JsonValue` contract and isolates JAX runtime
+  introspection behind a local protocol. Focused manifest tests, Ruff,
+  single-file Basedpyright with 0 warnings, and `just production-surface-check`
+  passed. Full CLI Basedpyright warnings are now 775 with 0 errors.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions
