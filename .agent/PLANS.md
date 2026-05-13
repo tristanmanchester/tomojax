@@ -100,6 +100,12 @@ Tasks:
       inputs locally, and avoids untyped JAX dtype members in CLI wrapper
       conversions. Ruff and `just production-surface-check` passed. Full CLI
       Basedpyright warnings are now 266 with 0 errors, all still in `align.py`.
+- [x] Alignment typed command boundary: `tomojax align` now snapshots resolved
+      parser/config values into an `AlignCommand` used by checkpoint metadata,
+      transfer-guard execution, output writing, sidecar exports, and manifest
+      payloads. The raw namespace remains only for manifest CLI-argument
+      compatibility. `just production-surface-check` passed; full CLI
+      Basedpyright warnings are now 164 with 0 errors, all still in `align.py`.
 
 Historical productionization plan follows for context.
 

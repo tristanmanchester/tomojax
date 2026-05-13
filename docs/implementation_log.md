@@ -15122,3 +15122,21 @@ Validation:
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 364 to 266,
   all still isolated to `src/tomojax/cli/align.py`.
+
+### Alignment CLI typed command boundary
+
+- Added an `AlignCommand` command-plan snapshot for `tomojax align` so
+  checkpoint metadata, output writing, parameter sidecars, transfer-guard
+  execution, and reproducibility manifest payloads read typed command values
+  instead of raw `argparse.Namespace` fields.
+- Preserved the manifest compatibility contract by retaining the original raw
+  parser namespace only for `build_manifest`'s `cli_args` serialization path.
+  Runtime execution now uses the typed command boundary where the parser/config
+  layer hands off to alignment behavior.
+
+Validation:
+
+- `uv run ruff check src/tomojax/cli/align.py` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 266 to 164,
+  all still isolated to `src/tomojax/cli/align.py`.
