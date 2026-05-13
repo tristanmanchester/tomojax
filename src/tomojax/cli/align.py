@@ -122,6 +122,18 @@ def _init_jax_compilation_cache() -> None:
         pass
 
 
+def _metadata_int(value: object, default: int = 0) -> int:
+    if isinstance(value, int | float | str):
+        return int(value)
+    return default
+
+
+def _metadata_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, int | float | str):
+        return float(value)
+    return default
+
+
 def _resolve_recon_grid_and_mask(
     grid: Grid,
     detector: Detector,
@@ -780,15 +792,15 @@ def _resume_state_from_checkpoint(
                 if isinstance(geometry_calibration_state, dict)
                 else None
             ),
-            stage_index=int(schedule_state.get("stage_index", 0)),
+            stage_index=_metadata_int(schedule_state.get("stage_index"), 0),
             stage_name=(
                 str(schedule_state["stage_name"])
                 if schedule_state.get("stage_name") is not None
                 else None
             ),
             stage_completed=bool(schedule_state.get("stage_completed", False)),
-            completed_outer_iters_in_stage=int(
-                schedule_state.get("completed_outer_iters_in_stage", 0)
+            completed_outer_iters_in_stage=_metadata_int(
+                schedule_state.get("completed_outer_iters_in_stage"), 0
             ),
         )
     return AlignResumeState(
@@ -1255,6 +1267,11 @@ def _execute_alignment_plan(
     info_dict = dict(info)
     if plan.checkpoint_path is not None:
         motion_coeffs = info_dict.get("motion_coeffs")
+        motion_coeffs_array = (
+            jnp.asarray(motion_coeffs, dtype=jnp.float32)
+            if isinstance(motion_coeffs, np.ndarray)
+            else None
+        )
         outer_stats_raw = info_dict.get("outer_stats", [])
         if not isinstance(outer_stats_raw, list):
             outer_stats_raw = []
@@ -1269,13 +1286,13 @@ def _execute_alignment_plan(
             AlignResumeState(
                 x=x,
                 params5=params5,
-                motion_coeffs=motion_coeffs if isinstance(motion_coeffs, np.ndarray) else None,
-                start_outer_iter=int(completed_outer_iters),
+                motion_coeffs=motion_coeffs_array,
+                start_outer_iter=_metadata_int(completed_outer_iters, len(outer_stats_raw)),
                 loss=list(loss_raw),
                 outer_stats=[dict(stat) for stat in outer_stats_raw if isinstance(stat, dict)],
                 L=float(l_value) if isinstance(l_value, int | float) else None,
-                small_impr_streak=int(small_impr_streak),
-                elapsed_offset=float(wall_time_total),
+                small_impr_streak=_metadata_int(small_impr_streak, 0),
+                elapsed_offset=_metadata_float(wall_time_total, 0.0),
             ),
             run_complete=True,
         )
