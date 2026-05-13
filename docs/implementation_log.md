@@ -15444,3 +15444,17 @@ Validation:
   passed with 0 errors and 0 warnings.
 - `uv run pytest tests/test_cli_public_surface.py::test_production_cli_uses_alignment_facade_for_schedules_and_losses tests/test_misalign_schedules.py -q`
   passed with 9 tests.
+
+### CLI alignment facade boundary made executable
+
+- Added the import-linter contract
+  `CLI uses alignment facade instead of nested alignment internals`.
+- The contract forbids direct imports from `tomojax.cli` into
+  `tomojax.align.geometry`, `tomojax.align.model`, and
+  `tomojax.align.objectives`, while allowing indirect imports through
+  `tomojax.align.api`.
+
+Validation:
+
+- `uv run lint-imports --config .importlinter` passed with 4 contracts kept.
+- `just production-surface-check` passed with 75 focused tests.

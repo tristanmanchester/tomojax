@@ -59,3 +59,14 @@ source_modules =
     tomojax.verify
 forbidden_modules =
     tomojax.calibration
+
+[importlinter:contract:cli-uses-align-facade]
+name = CLI uses alignment facade instead of nested alignment internals
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.cli
+forbidden_modules =
+    tomojax.align.geometry
+    tomojax.align.model
+    tomojax.align.objectives

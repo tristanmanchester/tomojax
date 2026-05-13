@@ -1166,6 +1166,12 @@ and proposed next fix before stopping.
   `tomojax.align.api`, and the public-surface guard now rejects direct
   production CLI imports from `tomojax.align.geometry`, `tomojax.align.model`,
   or `tomojax.align.objectives`.
+- [x] Added an import-linter contract,
+  `CLI uses alignment facade instead of nested alignment internals`, so
+  `tomojax.cli` cannot directly import `tomojax.align.geometry`,
+  `tomojax.align.model`, or `tomojax.align.objectives`. `just
+  production-surface-check` passed with 75 focused tests and 4 import
+  contracts kept.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks
