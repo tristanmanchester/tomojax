@@ -14994,3 +14994,19 @@ Validation:
 - `uv run pytest tests/test_runtime_checks.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 862 to 860.
+
+### CLI config parser typing cleanup
+
+- Tightened the shared TOML config parsing helper around an explicit
+  `ConfigValue` boundary. `argparse` and `tomllib` remain the only untyped
+  edges, while the public parser helper now avoids leaking `Any` into the
+  CLI package type gate.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/config.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/config.py` passed.
+- `uv run pytest tests/test_cli_config.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 860 to 842.

@@ -6,10 +6,13 @@ import argparse
 from pathlib import Path
 import sys
 import tomllib
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
+
+
+ConfigValue = object
 
 
 def parse_args_with_config(
@@ -17,7 +20,7 @@ def parse_args_with_config(
     argv: Sequence[str] | None = None,
     *,
     required: Sequence[str] = (),
-) -> tuple[argparse.Namespace, dict[str, Any]]:
+) -> tuple[argparse.Namespace, dict[str, ConfigValue]]:
     """Parse CLI args with optional TOML defaults.
 
     Precedence is:
@@ -25,23 +28,24 @@ def parse_args_with_config(
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     config_path = _discover_config_path(parser, raw_argv)
-    config_values: dict[str, Any] = {}
-    config_defaults: dict[str, Any] = {}
+    config_values: dict[str, ConfigValue] = {}
+    config_defaults: dict[str, ConfigValue] = {}
     explicit_dests = _explicit_cli_dests(parser, raw_argv)
 
     if config_path is not None:
         config_values = _load_config_file(parser, config_path)
         _validate_config_keys(parser, config_path, config_values)
         config_defaults = _coerce_config_defaults(parser, config_path, config_values)
-        parser.set_defaults(
-            **{dest: value for dest, value in config_defaults.items() if dest not in explicit_dests}
-        )
+        defaults = {
+            dest: value for dest, value in config_defaults.items() if dest not in explicit_dests
+        }
+        parser.set_defaults(**defaults)
 
     args = parser.parse_args(raw_argv)
     _validate_required(parser, args, required)
 
-    effective_options = dict(vars(args))
-    metadata = {
+    effective_options = cast("dict[str, ConfigValue]", dict(vars(args)))
+    metadata: dict[str, ConfigValue] = {
         "config_path": str(config_path) if config_path is not None else None,
         "config_file_values": config_defaults,
         "explicit_cli_keys": sorted(explicit_dests),
@@ -57,16 +61,16 @@ def _discover_config_path(
     config_parser = argparse.ArgumentParser(add_help=False, prog=parser.prog)
     _ = config_parser.add_argument("--config", default=None)
     namespace, _ = config_parser.parse_known_args(list(argv))
-    config_value = getattr(namespace, "config", None)
+    config_value = cast("str | None", getattr(namespace, "config", None))
     if config_value is None:
         return None
-    return Path(str(config_value))
+    return Path(config_value)
 
 
 def _load_config_file(
     parser: argparse.ArgumentParser,
     path: Path,
-) -> dict[str, Any]:
+) -> dict[str, ConfigValue]:
     suffix = path.suffix.lower()
     if suffix in {".yaml", ".yml"}:
         parser.error(
@@ -83,13 +87,13 @@ def _load_config_file(
     except OSError as exc:
         parser.error(f"could not read config file {path}: {exc}")
 
-    return dict(payload)
+    return cast("dict[str, ConfigValue]", dict(payload))
 
 
 def _validate_config_keys(
     parser: argparse.ArgumentParser,
     path: Path,
-    values: Mapping[str, Any],
+    values: Mapping[str, ConfigValue],
 ) -> None:
     valid_keys = _config_actions_by_dest(parser).keys()
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
@@ -103,10 +107,10 @@ def _validate_config_keys(
 def _coerce_config_defaults(
     parser: argparse.ArgumentParser,
     path: Path,
-    values: Mapping[str, Any],
-) -> dict[str, Any]:
+    values: Mapping[str, ConfigValue],
+) -> dict[str, ConfigValue]:
     actions = _config_actions_by_dest(parser)
-    coerced: dict[str, Any] = {}
+    coerced: dict[str, ConfigValue] = {}
     for raw_key, raw_value in values.items():
         dest = str(raw_key)
         action = actions[dest]
@@ -129,7 +133,7 @@ def _config_actions_by_dest(
             continue
         if not action.option_strings:
             continue
-        actions.setdefault(action.dest, action)
+        _ = actions.setdefault(action.dest, action)
     return actions
 
 
@@ -155,14 +159,15 @@ def _explicit_cli_dests(
     return explicit
 
 
-def _coerce_action_value(action: argparse.Action, value: Any) -> Any:
-    if action.nargs == 0 and isinstance(action.const, bool):
+def _coerce_action_value(action: argparse.Action, value: ConfigValue) -> ConfigValue:
+    action_const = cast("object", action.const)
+    if action.nargs == 0 and isinstance(action_const, bool):
         if not isinstance(value, bool):
             raise TypeError("expected a boolean")
         return bool(value)
 
     if action.__class__.__name__ == "_AppendAction":
-        values = cast("list[Any]", value) if isinstance(value, list) else [value]
+        values = cast("list[ConfigValue]", value) if isinstance(value, list) else [value]
         return [_coerce_scalar(action, item) for item in values]
 
     nargs = action.nargs
@@ -173,7 +178,7 @@ def _coerce_action_value(action: argparse.Action, value: Any) -> Any:
 
     if not isinstance(value, list):
         raise TypeError("expected a list value")
-    list_value = cast("list[Any]", value)
+    list_value = cast("list[ConfigValue]", value)
     if isinstance(nargs, int) and len(list_value) != nargs:
         raise ValueError(f"expected {nargs} values, got {len(list_value)}")
     if nargs == "+" and len(list_value) == 0:
@@ -181,10 +186,10 @@ def _coerce_action_value(action: argparse.Action, value: Any) -> Any:
     return [_coerce_scalar(action, item) for item in list_value]
 
 
-def _coerce_scalar(action: argparse.Action, value: Any) -> Any:
+def _coerce_scalar(action: argparse.Action, value: ConfigValue) -> ConfigValue:
     if action.type is None:
         return value
-    coercer = cast("Callable[[Any], Any]", action.type)
+    coercer = cast("Callable[[ConfigValue], ConfigValue]", action.type)
     return coercer(value)
 
 
@@ -193,18 +198,19 @@ def _validate_choices(
     path: Path,
     dest: str,
     action: argparse.Action,
-    value: Any,
+    value: ConfigValue,
 ) -> None:
     if action.choices is None:
         return
 
-    values = cast("list[Any]", value) if isinstance(value, list) else [value]
-    invalid: list[Any] = [item for item in values if item not in action.choices]
+    choices = cast("Iterable[ConfigValue]", action.choices)
+    values = cast("list[ConfigValue]", value) if isinstance(value, list) else [value]
+    invalid: list[ConfigValue] = [item for item in values if item not in choices]
     if invalid:
-        choices = ", ".join(str(choice) for choice in action.choices)
+        choices_text = ", ".join(str(choice) for choice in choices)
         parser.error(
             f"invalid choice for config key '{dest}' in {path}: "
-            f"{invalid[0]!r} (choose from {choices})"
+            f"{invalid[0]!r} (choose from {choices_text})"
         )
 
 

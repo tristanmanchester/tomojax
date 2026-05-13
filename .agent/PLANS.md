@@ -997,6 +997,11 @@ and proposed next fix before stopping.
   Focused runtime tests, Ruff, single-file Basedpyright with 0 warnings, and
   `just production-surface-check` passed. Full CLI Basedpyright warnings are
   now 860 with 0 errors.
+- [x] Shared CLI config parser typing cleanup: TOML/default handling now uses
+  an explicit `ConfigValue` boundary instead of leaking `Any` through the public
+  CLI package. Focused config tests, Ruff, single-file Basedpyright with
+  0 warnings, and `just production-surface-check` passed. Full CLI Basedpyright
+  warnings are now 842 with 0 errors.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions
