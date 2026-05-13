@@ -1,14 +1,13 @@
-from __future__ import annotations
-
 """Helpers for materializing geometry objects from persisted NXtomo metadata."""
 
-from collections.abc import Sequence
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 
-from ..core.geometry import (
+from tomojax.core.geometry import (
     Detector,
     Geometry,
     Grid,
@@ -17,17 +16,25 @@ from ..core.geometry import (
     RotationAxisGeometry,
     normalize_axis_unit,
 )
-from ..core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from tomojax.core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
 
 class LoadedGeometryMetaRequired(TypedDict):
+    """Required metadata for constructing a geometry object."""
+
     detector: DetectorDict
     thetas_deg: Sequence[float] | np.ndarray
 
 
 class LoadedGeometryMeta(LoadedGeometryMetaRequired, total=False):
+    """Optional persisted geometry metadata fields."""
+
     grid: GridDict
     geometry_type: str
     tilt_deg: float
@@ -70,12 +77,14 @@ class AugmentedGeometry:
     align_params: np.ndarray
 
     def pose_for_view(self, i: int) -> PoseMatrix:
+        """Return nominal pose with saved 5-DOF alignment applied."""
         T_nom = np.asarray(self.base.pose_for_view(i), dtype=np.float32)
         T_delta = _se3_from_5d_np(self.align_params[i])
         T = T_nom @ T_delta
         return tuple(map(tuple, T))
 
     def rays_for_view(self, i: int) -> RayPair:
+        """Return ray callbacks from the wrapped base geometry."""
         return self.base.rays_for_view(i)
 
     def __getattr__(self, name: str) -> object:
@@ -90,9 +99,11 @@ class DetectorRollGeometry:
     detector_roll_deg: float
 
     def pose_for_view(self, i: int) -> PoseMatrix:
+        """Return the wrapped geometry pose."""
         return self.base.pose_for_view(i)
 
     def rays_for_view(self, i: int) -> RayPair:
+        """Return ray callbacks from the wrapped base geometry."""
         return self.base.rays_for_view(i)
 
     def __getattr__(self, name: str) -> object:
@@ -313,11 +324,13 @@ def build_geometry_from_meta(
             raise ValueError("align_params must be a 2-D array with shape (n_views, >=5)")
         if align_params.shape[0] != len(thetas_deg):
             raise ValueError(
-                f"align_params row count ({align_params.shape[0]}) must match number of views ({len(thetas_deg)})"
+                f"align_params row count ({align_params.shape[0]}) must match "
+                f"number of views ({len(thetas_deg)})"
             )
         if align_params.shape[1] < 5:
             raise ValueError(
-                f"align_params must provide at least 5 columns [alpha, beta, phi, dx, dz], got {align_params.shape[1]}"
+                "align_params must provide at least 5 columns "
+                f"[alpha, beta, phi, dx, dz], got {align_params.shape[1]}"
             )
         geom = AugmentedGeometry(base=geom, align_params=align_params[:, :5])
 

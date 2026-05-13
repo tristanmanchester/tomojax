@@ -7,18 +7,21 @@ This module focuses on accessibility at beamlines and interop with existing
 pipelines, while keeping simulation-friendly metadata.
 """
 
+# ruff: noqa: PLR0911, PLR0912, PLR0915
+
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import logging
 import os
-from typing import TypedDict
+from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
 import h5py
 import numpy as np
 
+from tomojax.core.geometry.base import Detector, DetectorDict, Grid, GridDict
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
     INTERNAL_VOLUME_AXES,
@@ -28,7 +31,8 @@ from tomojax.geometry import (
     transpose_volume,
 )
 
-from ..core.geometry.base import Detector, DetectorDict, Grid, GridDict
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 LOG = logging.getLogger(__name__)
 
@@ -37,6 +41,8 @@ type JsonObject = dict[str, JsonValue]
 
 
 class SourceInfo(TypedDict, total=False):
+    """Source metadata persisted in NXtomo files."""
+
     name: str | None
     type: str | None
     probe: str | None
@@ -72,6 +78,7 @@ class NXTomoMetadata:
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> NXTomoMetadata:
+        """Build metadata from a generic loaded dataset mapping."""
         source_info = data.get("source")
         source_name = data.get("source_name")
         source_type = data.get("source_type")
@@ -127,6 +134,7 @@ class LoadedNXTomo:
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> LoadedNXTomo:
+        """Build a loaded payload from a generic dataset mapping."""
         source_info = data.get("source")
         return cls(
             projections=np.asarray(data["projections"]),
@@ -144,7 +152,7 @@ class LoadedNXTomo:
             ),
         )
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> object:
         if name in _NXTOMO_METADATA_FIELDS:
             return getattr(self.metadata, name)
         raise AttributeError(name)
@@ -172,6 +180,7 @@ class LoadedNXTomo:
         return value
 
     def get(self, key: str, default: DatasetValue | None = None) -> DatasetValue | None:
+        """Return a metadata or payload value by mapping-style key."""
         if key == "projections":
             return self.projections
         if key == "source":
@@ -187,6 +196,7 @@ class LoadedNXTomo:
         return geom_meta.get(key, default)
 
     def to_dataset_dict(self) -> LoadedDataset:
+        """Return this payload as a generic dataset mapping."""
         data: LoadedDataset = {"projections": np.asarray(self.projections)}
         for field_name in _NXTOMO_METADATA_FIELDS:
             value = getattr(self.metadata, field_name)
@@ -209,6 +219,7 @@ class LoadedNXTomo:
         return NXTomoMetadata.from_dataset(self.to_dataset_dict())
 
     def geometry_inputs(self) -> dict[str, DatasetValue]:
+        """Return the subset of metadata needed to materialize geometry."""
         detector = self.metadata.detector
         if detector is None:
             raise ValueError("NXtomo payload is missing detector metadata")
@@ -249,6 +260,8 @@ class LoadedNXTomo:
 
 
 class ValidationReport(TypedDict):
+    """Lightweight validation report for an NXtomo file."""
+
     issues: list[str]
 
 
@@ -435,7 +448,8 @@ def _load_detector_metadata(
         )
     if detector_dict is None:
         _axes_log_warning(
-            "load_nxtomo: missing detector metadata for %s; synthesizing unit detector from projection shape",
+            "load_nxtomo: missing detector metadata for %s; "
+            "synthesizing unit detector from projection shape",
             path,
         )
         detector_dict = _default_detector_meta(projections)
@@ -550,16 +564,12 @@ def save_nxtomo(
     `metadata.volume_axes_order` to control how that internal volume is serialized
     on disk.
     """
-    # Ensure parent directory exists
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
+    parent = Path(path).parent
+    if str(parent) not in {"", "."}:
+        parent.mkdir(parents=True, exist_ok=True)
 
     meta = metadata or NXTomoMetadata()
-    if overwrite:
-        mode = "w"
-    else:
-        mode = "x"
+    mode = "w" if overwrite else "x"
 
     proj = np.asarray(projections)
     if proj.ndim != 3:
@@ -614,7 +624,6 @@ def save_nxtomo(
             det.create_dataset("y_pixel_size", data=np.asarray(det_dict.get("dv", 1.0)))
             det["y_pixel_size"].attrs["units"] = "pixel"
 
-        # Sample and transformations (angles)
         sample = _ensure_group(entry, "sample", "NXsample")
         trans = _ensure_group(sample, "transformations", "NXtransformations")
         if meta.thetas_deg is None:
@@ -793,7 +802,8 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
             if disk_axes == DISK_VOLUME_AXES:
                 if source == "heuristic":
                     _axes_log_warning(
-                        "load_nxtomo: inferred disk volume axes zyx for %s; transposing to internal xyz",
+                        "load_nxtomo: inferred disk volume axes zyx for %s; "
+                        "transposing to internal xyz",
                         path,
                     )
                 volume_np = np.asarray(
@@ -827,7 +837,8 @@ def load_nxtomo(path: str) -> LoadedNXTomo:
             vol = out["volume"]
             nx, ny, nz = int(vol.shape[0]), int(vol.shape[1]), int(vol.shape[2])
             _axes_log_warning(
-                "load_nxtomo: missing grid metadata for %s; synthesizing unit grid from loaded volume shape",
+                "load_nxtomo: missing grid metadata for %s; "
+                "synthesizing unit grid from loaded volume shape",
                 path,
             )
             out["grid"] = {

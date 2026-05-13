@@ -15552,3 +15552,23 @@ Validation:
   passed with 218 tests and 10 expected real-Pallas GPU skips.
 - `just production-surface-check` passed with 75 focused tests and all 4 import
   contracts kept.
+
+### Lower-level data package Ruff cleanup completed
+
+- Kept `tomojax.data` as a retained lower-level implementation package behind
+  the production `tomojax.io` facade rather than expanding its public role.
+- Added documentation coverage for NXtomo metadata/payload types, simulation
+  artefacts, inspection reports, synthetic phantoms, and simulator outputs.
+- Replaced parent-relative production imports in data/simulation paths with
+  absolute TomoJAX imports and moved type-only imports behind `TYPE_CHECKING`.
+- Localized complexity exceptions to retained IO/preprocess/artefact routines
+  where splitting would risk changing mature beamline file semantics.
+
+Validation:
+
+- `uv run ruff check src/tomojax/data src/tomojax/io --statistics` passed.
+- `uv run ruff format --check src/tomojax/data src/tomojax/io` passed.
+- `uv run pytest tests/test_io_public_dataset.py tests/test_convert.py tests/test_validate_cli.py tests/test_inspect_cli.py tests/test_preprocess.py tests/test_simulate.py tests/test_axes_io.py tests/test_nexus_data_wrangler.py tests/test_phantoms.py tests/test_phantoms_random_shapes.py tests/test_simulation_artefacts.py tests/test_regression_geometry_io.py -q`
+  passed with 107 tests and 1 expected heavy-phantom skip.
+- `just production-surface-check` passed with 75 focused tests and all 4 import
+  contracts kept.

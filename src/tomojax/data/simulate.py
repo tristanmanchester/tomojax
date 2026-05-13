@@ -1,8 +1,10 @@
+"""Synthetic data generation and persistence helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from typing import Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -10,15 +12,14 @@ import numpy as np
 
 from tomojax.backends import default_gather_dtype
 from tomojax.core import progress_iter
-
-from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from ..core.geometry.base import DetectorDict, GridDict
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import (
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import (
     forward_project_view,
     forward_project_view_T,
     get_detector_grid_device,
 )
+
 from .artefacts import (
     ArtefactMetadata,
     SimulationArtefacts,
@@ -36,13 +37,20 @@ from .phantoms import (
     sphere,
 )
 
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import DetectorDict, GridDict
+
 
 class LaminoGeometryMeta(TypedDict):
+    """Laminography geometry fields stored with synthetic datasets."""
+
     tilt_deg: float
     tilt_about: str
 
 
 class SimMetadata(TypedDict, total=False):
+    """Simulation provenance metadata."""
+
     seed: int
     noise: str
     noise_level: float
@@ -50,6 +58,8 @@ class SimMetadata(TypedDict, total=False):
 
 
 class SimulatedData(TypedDict):
+    """Generated projections, geometry metadata, and ground-truth volume."""
+
     projections: jnp.ndarray
     thetas_deg: np.ndarray
     grid: GridDict
@@ -63,6 +73,8 @@ class SimulatedData(TypedDict):
 
 @dataclass
 class SimConfig:
+    """Configuration for deterministic synthetic dataset generation."""
+
     nx: int
     ny: int
     nz: int
@@ -99,6 +111,7 @@ class SimConfig:
 
 
 def make_phantom(cfg: SimConfig) -> jnp.ndarray:
+    """Construct the configured phantom volume."""
     if cfg.phantom == "shepp":
         vol = shepp_logan_3d(cfg.nx, cfg.ny, cfg.nz)
     elif cfg.phantom == "cube":
@@ -165,6 +178,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
 
 
 def simulate(cfg: SimConfig) -> SimulatedData:
+    """Generate projections and metadata from a simulation config."""
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz)
     det = Detector(cfg.nu, cfg.nv, cfg.du, cfg.dv, det_center=(0.0, 0.0))
     # Determine total rotation based on geometry unless overridden
@@ -207,16 +221,18 @@ def simulate(cfg: SimConfig) -> SimulatedData:
     if use_fast:
 
         @jax.jit
-        def project_all(vol_in):
-            f = lambda T: forward_project_view_T(
-                T,
-                grid,
-                det,
-                vol_in,
-                use_checkpoint=True,
-                gather_dtype=gather,
-                det_grid=det_grid,
-            )
+        def project_all(vol_in: jnp.ndarray) -> jnp.ndarray:
+            def f(T: jnp.ndarray) -> jnp.ndarray:
+                return forward_project_view_T(
+                    T,
+                    grid,
+                    det,
+                    vol_in,
+                    use_checkpoint=True,
+                    gather_dtype=gather,
+                    det_grid=det_grid,
+                )
+
             return jax.vmap(f, in_axes=0)(T_all)
 
         proj = project_all(vol)
@@ -263,6 +279,7 @@ def simulate(cfg: SimConfig) -> SimulatedData:
 
 
 def simulate_to_file(cfg: SimConfig, out_path: str) -> str:
+    """Generate a synthetic dataset and save it as NXtomo."""
     data = simulate(cfg)
     metadata = NXTomoMetadata.from_dataset(data)
     metadata.image_key = np.zeros((cfg.n_views,), dtype=np.int32)

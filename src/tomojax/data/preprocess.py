@@ -1,5 +1,7 @@
 """Raw NXtomo preprocessing with flat/dark correction."""
 
+# ruff: noqa: PLR0912, PLR0915
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -292,8 +294,8 @@ def _validate_config(config: PreprocessConfig) -> np.dtype:
 
 def _view_tokens_from_text(text: str) -> list[str]:
     tokens: list[str] = []
-    for line in str(text).splitlines():
-        line = line.split("#", 1)[0]
+    for raw_line in str(text).splitlines():
+        line = raw_line.split("#", 1)[0]
         if not line.strip():
             continue
         tokens.extend(part for part in line.replace(",", " ").split() if part)
@@ -400,7 +402,7 @@ def _resolve_sample_view_indices(
 
     explicit_rejected = np.asarray([], dtype=np.int64)
     if reject is not None and reject.size:
-        reject_set = set(int(v) for v in reject.tolist())
+        reject_set = {int(v) for v in reject.tolist()}
         keep_mask = np.asarray([int(v) not in reject_set for v in candidate], dtype=bool)
         explicit_rejected = candidate[~keep_mask]
         candidate = candidate[keep_mask]
@@ -461,10 +463,7 @@ def _coverage_stats(angles: np.ndarray) -> dict[str, float | int | None]:
             "span_deg": None,
             "max_gap_deg": None,
         }
-    if finite.size >= 2:
-        max_gap = float(np.max(np.diff(finite)))
-    else:
-        max_gap = 0.0
+    max_gap = float(np.max(np.diff(finite))) if finite.size >= 2 else 0.0
     return {
         "count": int(values.size),
         "finite_count": int(finite.size),
@@ -790,7 +789,8 @@ def preprocess_nxtomo(
         image_key = np.asarray(key_dataset[...], dtype=np.int32).reshape(-1)
         if image_key.shape != (n_frames,):
             raise ValueError(
-                f"image_key length must match raw frame count ({n_frames}), got {image_key.shape[0]}"
+                f"image_key length must match raw frame count ({n_frames}), "
+                f"got {image_key.shape[0]}"
             )
 
         angle_path, angle_dataset = _resolve_dataset(
@@ -802,7 +802,8 @@ def preprocess_nxtomo(
         angles_all = np.asarray(angle_dataset[...], dtype=np.float32).reshape(-1)
         if angles_all.shape[0] != n_frames:
             raise ValueError(
-                f"rotation_angle length must match raw frame count ({n_frames}), got {angles_all.shape[0]}"
+                f"rotation_angle length must match raw frame count ({n_frames}), "
+                f"got {angles_all.shape[0]}"
             )
 
         sample_mask = image_key == 0

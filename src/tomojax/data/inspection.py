@@ -1,27 +1,33 @@
 """Lightweight HDF5/NXtomo inspection helpers."""
 
+# ruff: noqa: PLR0912
+
 from __future__ import annotations
 
 import json
 import math
 from pathlib import Path
-from typing import Any, TypeAlias, TypedDict
+from typing import Any, TypedDict
 
 import h5py
 import imageio.v3 as iio
 import numpy as np
 
-from ..recon.quicklook import scale_to_uint8
+from tomojax.recon.quicklook import scale_to_uint8
 
-PathLike: TypeAlias = str | Path
+type PathLike = str | Path
 
 
 class DetectorShapeReport(TypedDict):
+    """Detector pixel shape in v/u order."""
+
     nv: int
     nu: int
 
 
 class ProjectionStatsReport(TypedDict):
+    """Summary statistics for a projection stack."""
+
     min: float | None
     p01: float | None
     mean: float | None
@@ -31,6 +37,8 @@ class ProjectionStatsReport(TypedDict):
 
 
 class NonfiniteReport(TypedDict):
+    """Non-finite value counts for a projection stack."""
+
     nan_count: int | None
     posinf_count: int | None
     neginf_count: int | None
@@ -38,6 +46,8 @@ class NonfiniteReport(TypedDict):
 
 
 class ProjectionReport(TypedDict):
+    """Projection dataset discovery and summary report."""
+
     found: bool
     path: str | None
     shape: list[int] | None
@@ -50,6 +60,8 @@ class ProjectionReport(TypedDict):
 
 
 class DetectorMetadataReport(TypedDict):
+    """Detector metadata discovery report."""
+
     found: bool
     nu: object
     nv: object
@@ -59,6 +71,8 @@ class DetectorMetadataReport(TypedDict):
 
 
 class AlignmentReport(TypedDict):
+    """Persisted alignment metadata discovery report."""
+
     found: bool
     params_found: bool
     params_shape: list[int] | None
@@ -69,6 +83,8 @@ class AlignmentReport(TypedDict):
 
 
 class InspectionReport(TypedDict):
+    """Top-level dataset inspection report."""
+
     schema_version: int
     input_path: str
     projection: ProjectionReport
@@ -311,7 +327,7 @@ def _geometry_report(file: h5py.File) -> dict[str, Any]:
         if found and isinstance(geom, h5py.Group)
         else None,
         "meta_found": meta is not None,
-        "meta_keys": sorted(str(k) for k in meta.keys()) if meta is not None else [],
+        "meta_keys": sorted(str(k) for k in meta) if meta is not None else [],
     }
 
 
@@ -590,7 +606,8 @@ def format_inspection_report(report: InspectionReport) -> str:
             "Memory estimates: "
             f"grid={memory['reconstruction_grid_shape']}, "
             f"fbp_fp32={memory['modes']['fbp_fp32']['estimated_working_set_bytes']} bytes, "
-            f"fista_tv_fp32={memory['modes']['fista_tv_fp32']['estimated_working_set_bytes']} bytes, "
+            "fista_tv_fp32="
+            f"{memory['modes']['fista_tv_fp32']['estimated_working_set_bytes']} bytes, "
             f"spdhg_tv_fp32={memory['modes']['spdhg_tv_fp32']['estimated_working_set_bytes']} bytes"
         )
     else:

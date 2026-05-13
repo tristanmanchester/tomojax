@@ -1,7 +1,7 @@
 """Contrast conversion utilities.
 
 Provide helpers to move between transmission (intensity) and absorption (line
-integral) domains, matching the Beer–Lambert model used throughout TomoJAX.
+integral) domains, matching the Beer-Lambert model used throughout TomoJAX.
 """
 
 from __future__ import annotations

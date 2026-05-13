@@ -1,3 +1,5 @@
+"""Synthetic phantom generators retained for simulation and benchmark fixtures."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -33,6 +35,7 @@ def cube(
 
     Centered in the volume. Returns float32 array of shape (nx, ny, nz).
     """
+    del seed
     x = np.zeros((nx, ny, nz), dtype=np.float32)
     s = int(max(1, round(size * min(nx, ny, nz))))
     sx = (nx - s) // 2
@@ -105,7 +108,11 @@ def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
     X = np.zeros((nx, ny, nz), dtype=np.float32)
     cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
 
-    def add_ellipsoid(axes, center, value):
+    def add_ellipsoid(
+        axes: tuple[float, float, float],
+        center: tuple[float, float, float],
+        value: float,
+    ) -> None:
         ax, ay, az = axes
         ox, oy, oz = center
         xs = (np.arange(nx) - (cx + ox)) / ax
@@ -126,7 +133,7 @@ def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
 # ----------------------------
 # Random cubes + spheres phantom (deterministic)
 # ----------------------------
-def _rotation_matrix_3d(angles):
+def _rotation_matrix_3d(angles: tuple[float, float, float]) -> np.ndarray:
     rx, ry, rz = angles
     Rx = np.array(
         [[1, 0, 0], [0, np.cos(rx), -np.sin(rx)], [0, np.sin(rx), np.cos(rx)]], dtype=np.float64
@@ -141,8 +148,13 @@ def _rotation_matrix_3d(angles):
 
 
 def _add_rotated_cube_soft(
-    vol: np.ndarray, center, size: float, value: float, angles, edge_softness: float = 1.0
-):
+    vol: np.ndarray,
+    center: tuple[float, float, float],
+    size: float,
+    value: float,
+    angles: tuple[float, float, float],
+    edge_softness: float = 1.0,
+) -> None:
     """Add a softly edged rotated cube into vol by ROI evaluation (no SciPy)."""
     nx, ny, nz = vol.shape
     cx, cy, cz = center
@@ -413,7 +425,7 @@ def lamino_disk(
     therefore orthogonal to +z, i.e., confined to the central few z-slices.
     """
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
-    nz_thin = int(round(ratio * nz))
+    nz_thin = round(ratio * nz)
     nz_thin = max(1, min(nz, nz_thin))
 
     vol = random_cubes_spheres(
@@ -422,8 +434,8 @@ def lamino_disk(
         nz,
         n_cubes=n_cubes,
         n_spheres=n_spheres,
-        min_size=int(round(min_size)),
-        max_size=int(round(max_size)),
+        min_size=round(min_size),
+        max_size=round(max_size),
         min_value=min_value,
         max_value=max_value,
         max_rot_degrees=max_rot_degrees,

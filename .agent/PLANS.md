@@ -1198,6 +1198,13 @@ and proposed next fix before stopping.
   projector lint exceptions narrow to existing kernel annotation/complexity
   debt. Focused core/projector tests passed with 218 tests and 10 expected
   real-Pallas GPU skips; `just production-surface-check` still passes.
+- [x] The retained lower-level `src/tomojax/data` package now passes Ruff while
+  remaining behind the production `tomojax.io` facade. The cleanup documented
+  NXtomo/simulation/phantom/preprocess payload types, replaced parent relative
+  imports with absolute production imports where relevant, and left complexity
+  exceptions localized to retained IO/preprocess/artefact routines. Focused
+  IO/data tests passed with 107 tests and 1 expected heavy-phantom skip;
+  `just production-surface-check` still passes.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

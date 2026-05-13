@@ -1,3 +1,7 @@
+"""Synthetic projection artefact models for deterministic benchmark datasets."""
+
+# ruff: noqa: PLR0915
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -14,6 +18,8 @@ IntensityDriftMode = Literal["none", "linear", "sinusoidal"]
 
 
 class ArtefactMetadata(TypedDict, total=False):
+    """JSON-compatible metadata emitted after applying synthetic artefacts."""
+
     enabled: bool
     seed: int
     order: list[str]
@@ -56,9 +62,11 @@ class SimulationArtefacts:
     intensity_drift_mode: IntensityDriftMode = "none"
 
     def to_dict(self) -> JsonObject:
+        """Return a JSON-compatible artefact configuration."""
         return {key: _json_scalar(value) for key, value in asdict(self).items()}
 
     def has_enabled(self) -> bool:
+        """Return whether any artefact field will alter projections."""
         return (
             self.poisson_scale > 0.0
             or self.gaussian_sigma > 0.0
