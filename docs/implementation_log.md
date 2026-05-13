@@ -15218,3 +15218,20 @@ Validation:
 
 - `uv run basedpyright src/tomojax/cli` passed with 0 errors and 0 warnings.
 - `just production-surface-check` passed with 70 focused tests.
+
+### Public IO solver metadata boundary
+
+- Extended the public `ProjectionDataset` contract to carry solver-facing
+  alignment metadata (`angle_offset_deg`, `align_params`, and `align_gauge`)
+  through load/save round trips and `geometry_inputs()`. This keeps alignment
+  and reconstruction commands on the `tomojax.io` facade instead of requiring
+  callers or tests to construct lower-level data payloads directly.
+- Updated public IO tests to build NXtomo fixtures through `ProjectionDataset`
+  and `save_dataset`, and expanded the public wording guard to include the IO
+  README/dataset facade.
+
+Validation:
+
+- `uv run pytest tests/test_io_public_dataset.py tests/test_cli_public_surface.py -q`
+  passed.
+- `just production-surface-check` passed with 71 focused tests.

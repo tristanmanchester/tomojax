@@ -130,6 +130,11 @@ Tasks:
       public `tomojax align` command boundary and manifest/output handoff.
       `uv run basedpyright src/tomojax/cli` now passes with 0 errors and
       0 warnings; `just production-surface-check` passed.
+- [x] Public IO solver metadata boundary: `ProjectionDataset` now carries
+      `angle_offset_deg`, `align_params`, and `align_gauge` through public
+      load/save/geometry-input paths, so public IO tests no longer construct
+      fixtures through lower-level data payloads. `just production-surface-check`
+      passed with 71 focused tests.
 
 Historical productionization plan follows for context.
 

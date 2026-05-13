@@ -26,6 +26,8 @@ from tomojax.data.io_hdf5 import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from tomojax.io._json import JsonValue
+
 type PathLike = str | Path
 
 _HDF5_SUFFIXES = {".nxs", ".h5", ".hdf5"}
@@ -57,9 +59,9 @@ def build_geometry_from_dataset_metadata(
 ) -> tuple[Grid, Detector, Geometry]:
     """Build geometry objects from normalized dataset metadata.
 
-    The implementation still lives in the transitional data module. Keeping this
-    wrapper in `tomojax.io` makes the command/data dependency explicit and gives
-    the future `ProjectionDataset` solver contract one replacement point.
+    Keeping this wrapper in `tomojax.io` makes the command/data dependency
+    explicit and gives the `ProjectionDataset` solver contract one replacement
+    point.
     """
     return build_geometry_from_meta(
         cast("LoadedGeometryMeta", dict(meta)),
@@ -84,6 +86,9 @@ class ProjectionDataset:
     grid: Grid | None = None
     geometry_type: str = "parallel"
     geometry_metadata: dict[str, Any] = field(default_factory=dict)
+    angle_offset_deg: np.ndarray | None = None
+    align_params: np.ndarray | None = None
+    align_gauge: dict[str, JsonValue] | None = None
     source_path: str | None = None
     source_format: str | None = None
     sample_name: str | None = None
@@ -116,6 +121,15 @@ class ProjectionDataset:
             else (_grid_from_mapping(grid) if grid is not None else None),
             geometry_type=str(metadata.geometry_type),
             geometry_metadata=dict(metadata.geometry_meta or {}),
+            angle_offset_deg=(
+                None
+                if metadata.angle_offset_deg is None
+                else np.asarray(metadata.angle_offset_deg, dtype=np.float32)
+            ),
+            align_params=(
+                None if metadata.align_params is None else np.asarray(metadata.align_params)
+            ),
+            align_gauge=None if metadata.align_gauge is None else dict(metadata.align_gauge),
             source_path=None if source_path is None else str(source_path),
             source_format="nxtomo",
             sample_name=metadata.sample_name,
@@ -131,6 +145,15 @@ class ProjectionDataset:
             metadata.detector = self.detector
             metadata.geometry_type = self.geometry_type
             metadata.geometry_meta = dict(self.geometry_metadata)
+            metadata.angle_offset_deg = (
+                None
+                if self.angle_offset_deg is None
+                else np.asarray(self.angle_offset_deg, dtype=np.float32)
+            )
+            metadata.align_params = (
+                None if self.align_params is None else np.asarray(self.align_params)
+            )
+            metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
             metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
             return metadata
         return NXTomoMetadata(
@@ -139,6 +162,13 @@ class ProjectionDataset:
             detector=self.detector,
             geometry_type=self.geometry_type,
             geometry_meta=dict(self.geometry_metadata),
+            angle_offset_deg=(
+                None
+                if self.angle_offset_deg is None
+                else np.asarray(self.angle_offset_deg, dtype=np.float32)
+            ),
+            align_params=None if self.align_params is None else np.asarray(self.align_params),
+            align_gauge=None if self.align_gauge is None else dict(self.align_gauge),
             sample_name=self.sample_name or "sample",
         )
 
@@ -158,6 +188,13 @@ class ProjectionDataset:
         metadata.detector = self.detector
         metadata.geometry_type = self.geometry_type
         metadata.geometry_meta = dict(self.geometry_metadata)
+        metadata.angle_offset_deg = (
+            None
+            if self.angle_offset_deg is None
+            else np.asarray(self.angle_offset_deg, dtype=np.float32)
+        )
+        metadata.align_params = None if self.align_params is None else np.asarray(self.align_params)
+        metadata.align_gauge = None if self.align_gauge is None else dict(self.align_gauge)
         metadata.sample_name = self.sample_name or metadata.sample_name or "sample"
         return metadata
 
@@ -176,6 +213,7 @@ class ProjectionDataset:
         if self._metadata is not None:
             _merge_optional_geometry_metadata(payload, self._metadata)
         else:
+            _merge_dataset_solver_metadata(payload, self)
             _merge_geometry_metadata_dict(payload, self.geometry_metadata)
         return payload
 
@@ -306,6 +344,18 @@ def _merge_optional_geometry_metadata(payload: dict[str, Any], metadata: NXTomoM
     if metadata.align_gauge is not None:
         payload["align_gauge"] = metadata.align_gauge
     _merge_geometry_metadata_dict(payload, metadata.geometry_meta or {})
+
+
+def _merge_dataset_solver_metadata(
+    payload: dict[str, Any],
+    dataset: ProjectionDataset,
+) -> None:
+    if dataset.angle_offset_deg is not None:
+        payload["angle_offset_deg"] = np.asarray(dataset.angle_offset_deg, dtype=np.float32)
+    if dataset.align_params is not None:
+        payload["align_params"] = np.asarray(dataset.align_params)
+    if dataset.align_gauge is not None:
+        payload["align_gauge"] = dict(dataset.align_gauge)
 
 
 def _merge_geometry_metadata_dict(

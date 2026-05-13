@@ -5,13 +5,13 @@ import numpy as np
 import pytest
 
 from tomojax.core.geometry import Detector, Grid
-from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
 from tomojax.io import (
     ProjectionDataset,
     load_dataset,
     load_projection_payload,
     load_tiff_stack,
     save_dataset,
+    save_projection_payload,
     validate_dataset,
 )
 
@@ -21,15 +21,18 @@ def test_public_io_loads_nxtomo_as_projection_dataset(tmp_path):
     projections = np.arange(24, dtype=np.float32).reshape(3, 2, 4)
     detector = Detector(nu=4, nv=2, du=0.5, dv=0.75, det_center=(1.0, -2.0))
     grid = Grid(nx=4, ny=4, nz=2, vx=1.0, vy=1.0, vz=2.0)
-    metadata = NXTomoMetadata(
-        thetas_deg=np.asarray([0.0, 45.0, 90.0], dtype=np.float32),
-        detector=detector,
-        grid=grid,
-        geometry_type="parallel",
-        geometry_meta={"beamline": "test"},
-        sample_name="fixture",
+    save_dataset(
+        path,
+        ProjectionDataset(
+            projections=projections,
+            angles_deg=np.asarray([0.0, 45.0, 90.0], dtype=np.float32),
+            detector=detector,
+            grid=grid,
+            geometry_type="parallel",
+            geometry_metadata={"beamline": "test"},
+            sample_name="fixture",
+        ),
     )
-    save_nxtomo(path, projections=projections, metadata=metadata)
 
     dataset = load_dataset(path)
 
@@ -44,6 +47,46 @@ def test_public_io_loads_nxtomo_as_projection_dataset(tmp_path):
     assert geometry_inputs["detector"] == detector.to_dict()
     np.testing.assert_allclose(geometry_inputs["thetas_deg"], [0.0, 45.0, 90.0])
     assert geometry_inputs["geometry_type"] == "parallel"
+
+
+def test_public_io_projection_dataset_preserves_solver_metadata(tmp_path):
+    path = tmp_path / "payload_from_dataset.nxs"
+    projections = np.arange(12, dtype=np.float32).reshape(3, 2, 2)
+    detector = Detector(nu=2, nv=2, du=0.5, dv=0.75)
+    grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    align_params = np.ones((3, 5), dtype=np.float32)
+    dataset = ProjectionDataset(
+        projections=projections,
+        angles_deg=np.asarray([0.0, 45.0, 90.0], dtype=np.float32),
+        detector=detector,
+        grid=grid,
+        geometry_type="lamino",
+        geometry_metadata={
+            "tilt_deg": 55.0,
+            "tilt_about": "x",
+            "detector_roll_deg": 1.25,
+        },
+        angle_offset_deg=np.asarray([1.0, 2.0, 3.0], dtype=np.float32),
+        align_params=align_params,
+        align_gauge={"mode": "mean_zero"},
+    )
+    save_dataset(path, dataset)
+
+    dataset = load_dataset(path)
+
+    np.testing.assert_allclose(dataset.projections, projections)
+    np.testing.assert_allclose(dataset.angles_deg, [0.0, 45.0, 90.0])
+    np.testing.assert_allclose(dataset.angle_offset_deg, [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(dataset.align_params, align_params)
+    assert dataset.align_gauge == {"mode": "mean_zero"}
+    geometry_inputs = dataset.geometry_inputs()
+    assert geometry_inputs["geometry_type"] == "lamino"
+    assert geometry_inputs["tilt_deg"] == pytest.approx(55.0)
+    assert geometry_inputs["tilt_about"] == "x"
+    assert geometry_inputs["detector_roll_deg"] == pytest.approx(1.25)
+    np.testing.assert_allclose(geometry_inputs["angle_offset_deg"], [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(geometry_inputs["align_params"], align_params)
+    assert geometry_inputs["align_gauge"] == {"mode": "mean_zero"}
 
 
 def test_public_io_roundtrips_dataset_to_nxtomo(tmp_path):
@@ -70,12 +113,13 @@ def test_public_io_projection_payload_preserves_solver_metadata(tmp_path):
     detector = Detector(nu=2, nv=2, du=0.5, dv=0.75)
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
     align_params = np.ones((3, 5), dtype=np.float32)
-    metadata = NXTomoMetadata(
-        thetas_deg=np.asarray([0.0, 45.0, 90.0], dtype=np.float32),
+    dataset = ProjectionDataset(
+        projections=projections,
+        angles_deg=np.asarray([0.0, 45.0, 90.0], dtype=np.float32),
         detector=detector,
         grid=grid,
         geometry_type="lamino",
-        geometry_meta={
+        geometry_metadata={
             "tilt_deg": 55.0,
             "tilt_about": "x",
             "detector_roll_deg": 1.25,
@@ -84,7 +128,11 @@ def test_public_io_projection_payload_preserves_solver_metadata(tmp_path):
         align_params=align_params,
         align_gauge={"mode": "mean_zero"},
     )
-    save_nxtomo(path, projections=projections, metadata=metadata)
+    save_projection_payload(
+        path,
+        projections=dataset.projections,
+        metadata=dataset.to_nxtomo_metadata(),
+    )
 
     payload = load_projection_payload(path)
 

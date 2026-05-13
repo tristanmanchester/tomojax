@@ -30,18 +30,17 @@ artifact schemas.
 
 ## Dependencies
 
-This module may depend on `tomojax.core` data structures and transitional
-low-level data readers while the v2 IO boundary is being consolidated. It must
-not depend on alignment, reconstruction, benchmark, or CLI implementation
-modules.
+This module may depend on `tomojax.core` data structures and low-level dataset
+readers owned by the IO layer. It must not depend on alignment, reconstruction,
+benchmark, or CLI implementation modules.
 
 ## Invariants
 
 - Public helpers return strict JSON-compatible values.
 - Real input datasets cross into TomoJAX through `ProjectionDataset`.
 - Solver-heavy commands use `ProjectionDataset.geometry_inputs()` and
-  `ProjectionDataset.copy_metadata()` rather than importing legacy data payloads
-  directly.
+  `ProjectionDataset.copy_metadata()` rather than importing lower-level data
+  payloads directly.
 - TIFF stack loading requires explicit angle metadata.
 - Raw NXtomo flat/dark correction crosses through the public IO facade before
   producing corrected projection datasets.
