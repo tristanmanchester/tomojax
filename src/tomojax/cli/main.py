@@ -53,14 +53,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
         return _run_sysargv_cli(simulate.main, "tomojax simulate", tail)
     if command == "dev":
         return _run_dev_command(tail)
-    if command == "test-gpu":
-        from tomojax.cli.runtime_checks import test_gpu_main
-
-        return _run_sysargv_cli(test_gpu_main, "tomojax test-gpu", tail)
-    if command == "test-cpu":
-        from tomojax.cli.runtime_checks import test_cpu_main
-
-        return _run_sysargv_cli(test_cpu_main, "tomojax test-cpu", tail)
 
     parser = _build_parser()
     parser.error(f"unknown command {command!r}")
@@ -86,8 +78,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "align",
             "simulate",
             "dev",
-            "test-gpu",
-            "test-cpu",
         ],
         help="Command to run.",
     )
@@ -156,6 +146,14 @@ def _run_dev_command(argv: list[str]) -> int:  # noqa: PLR0911
             "tomojax dev current-baseline-normalize",
             tail,
         )
+    if command == "test-gpu":
+        from tomojax.cli.runtime_checks import test_gpu_main
+
+        return _run_sysargv_cli(test_gpu_main, "tomojax dev test-gpu", tail)
+    if command == "test-cpu":
+        from tomojax.cli.runtime_checks import test_cpu_main
+
+        return _run_sysargv_cli(test_cpu_main, "tomojax dev test-cpu", tail)
 
     parser = _dev_parser()
     parser.error(f"unknown dev command {command!r}")
@@ -181,6 +179,8 @@ def _dev_parser() -> argparse.ArgumentParser:
             "pallas-sanity",
             "synthetic-benchmark-compare",
             "current-baseline-normalize",
+            "test-gpu",
+            "test-cpu",
         ],
     )
     return parser

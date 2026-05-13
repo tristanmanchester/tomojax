@@ -15235,3 +15235,20 @@ Validation:
 - `uv run pytest tests/test_io_public_dataset.py tests/test_cli_public_surface.py -q`
   passed.
 - `just production-surface-check` passed with 71 focused tests.
+
+### Runtime checks moved under developer CLI
+
+- Removed `test-gpu` and `test-cpu` from the top-level `tomojax` command list
+  and routed them through `tomojax dev test-gpu` / `tomojax dev test-cpu`.
+  This keeps runtime probes available while preserving the top-level CLI as
+  the production workflow surface.
+- Updated quickstart docs and added public-surface tests preventing diagnostic
+  commands from being documented as top-level workflows.
+
+Validation:
+
+- `uv run pytest tests/test_cli_entrypoints.py tests/test_cli_public_surface.py -q`
+  passed.
+- `uv run basedpyright src/tomojax/cli/main.py` passed with 0 errors and
+  0 warnings.
+- `just production-surface-check` passed with 73 focused tests.

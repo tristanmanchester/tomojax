@@ -135,6 +135,11 @@ Tasks:
       load/save/geometry-input paths, so public IO tests no longer construct
       fixtures through lower-level data payloads. `just production-surface-check`
       passed with 71 focused tests.
+- [x] Runtime diagnostics moved under developer CLI: removed `test-gpu` and
+      `test-cpu` from the top-level production command list and routed them as
+      `tomojax dev test-gpu` / `tomojax dev test-cpu`. Quickstart and
+      public-surface guards were updated; `just production-surface-check`
+      passed with 73 focused tests.
 
 Historical productionization plan follows for context.
 

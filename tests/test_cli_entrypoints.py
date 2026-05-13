@@ -35,6 +35,8 @@ def test_top_level_cli_help_shows_clean_public_commands(capsys):
     assert "tomojax ingest ./projections" in captured.out
     assert "tomojax recon corrected.nxs --out recon.nxs" in captured.out
     assert "Developer diagnostics" in captured.out
+    assert "test-gpu" not in captured.out
+    assert "test-cpu" not in captured.out
 
 
 def test_top_level_cli_recon_accepts_positional_input(monkeypatch):
@@ -99,6 +101,20 @@ def test_top_level_cli_dev_routes_misalign(monkeypatch):
 
     assert result == 0
     assert captured == [["tomojax dev misalign", "--data", "gt.nxs", "--out", "bad.nxs"]]
+
+
+def test_top_level_cli_dev_routes_runtime_checks(monkeypatch):
+    captured: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "tomojax.cli.runtime_checks.test_gpu_main",
+        lambda: captured.append(list(sys.argv)),
+    )
+
+    result = main_cli.main(["dev", "test-gpu"])
+
+    assert result == 0
+    assert captured == [["tomojax dev test-gpu"]]
 
 
 def test_ingest_cli_loads_tiffs_and_writes_standard_dataset(monkeypatch, tmp_path):

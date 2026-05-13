@@ -52,6 +52,24 @@ def test_current_docs_use_grouped_cli_commands() -> None:
     assert {path: matches for path, matches in leaks.items() if matches} == {}
 
 
+def test_current_docs_keep_diagnostics_under_dev_namespace() -> None:
+    current_docs = [
+        Path("README.md"),
+        Path("docs/quickstart.md"),
+        Path("docs/synthetic-tomography.md"),
+        Path("src/tomojax/cli/README.md"),
+    ]
+    top_level_diagnostic = re.compile(
+        r"\btomojax\s+(?!dev\s)(align-auto|loss-bench|misalign|test-gpu|test-cpu)\b"
+    )
+    leaks = {
+        str(path): top_level_diagnostic.findall(path.read_text(encoding="utf-8"))
+        for path in current_docs
+    }
+
+    assert {path: matches for path, matches in leaks.items() if matches} == {}
+
+
 def test_public_cli_docs_avoid_development_era_terms() -> None:
     public_cli_paths = [
         Path("src/tomojax/cli/README.md"),

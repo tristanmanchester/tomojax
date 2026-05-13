@@ -24,7 +24,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 Verify the selected backend:
 
 ```bash
-uv run tomojax test-gpu
+uv run tomojax dev test-gpu
 ```
 
 ## Real Laminography
