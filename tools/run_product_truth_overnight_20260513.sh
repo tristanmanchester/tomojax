@@ -18,6 +18,12 @@ run_case() {
   shift
   local out="$ROOT/$name"
   mkdir -p "$out"
+  if [[ "${PRODUCT_TRUTH_RERUN_COMPLETED:-0}" != "1" ]] \
+    && { [[ -f "$out/runner_status.json" ]] || [[ -f "$out/run/benchmark_result.json" ]] || [[ -f "$out/run/summary.json" ]]; }; then
+    echo "=== $name ===" | tee -a "$out/runner.log"
+    echo "skipped_existing_result" | tee -a "$out/runner.log"
+    return
+  fi
   echo "=== $name ===" | tee "$out/runner.log"
   date --iso-8601=seconds | tee -a "$out/runner.log"
   set +e
