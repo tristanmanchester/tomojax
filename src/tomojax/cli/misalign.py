@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -23,6 +24,10 @@ from tomojax.io import (
 )
 
 from ._runtime import transfer_guard_context
+
+
+def _jnp_float32_array(value: object) -> Any:
+    return jnp.asarray(value, dtype=jnp.float32)  # pyright: ignore[reportUnknownMemberType]
 
 
 def _parse_number_with_unit(val: str) -> tuple[float, str | None]:
@@ -89,7 +94,7 @@ def _window_indices_for_domain(
         return si, ei
     # angle domain
     if "start_deg" in params or "end_deg" in params:
-        th = jnp.asarray(thetas_deg)
+        th = _jnp_float32_array(thetas_deg)
         th0 = float(params.get("start_deg", float(th.min())))
         th1 = float(params.get("end_deg", float(th.max())))
         # pick closest indices bounding the window
@@ -235,7 +240,7 @@ def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:  # noqa
     import json
 
     with Path(path).open(encoding="utf-8") as f:
-        data = json.load(f)
+        data = cast("object", json.load(f))
     out: list[tuple[str, str, dict[str, str]]] = []
     # Two accepted layouts:
     # 1) { "dx": [{"kind":"step", ...}], "angle": [{...}], ... }
@@ -243,30 +248,36 @@ def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:  # noqa
     if isinstance(data, dict) and any(
         k in data for k in ("angle", "alpha", "beta", "phi", "dx", "dz")
     ):
-        for dof, lst in data.items():
+        data_by_dof = cast("dict[str, object]", data)
+        for dof, lst in data_by_dof.items():
             if dof not in ("angle", "alpha", "beta", "phi", "dx", "dz"):
                 continue
             if not isinstance(lst, list):
                 raise ValueError(f"Spec field for {dof} must be a list")
-            for item in lst:
+            items = cast("list[object]", lst)
+            for item in items:
                 if not isinstance(item, dict) or "kind" not in item:
                     raise ValueError(f"Spec items for {dof} must be dicts with 'kind'")
 
-                kind = str(item["kind"]).lower()
-                params = {k: str(v) for k, v in item.items() if k != "kind"}
+                item_map = cast("dict[str, object]", item)
+                kind = str(item_map["kind"]).lower()
+                params = {k: str(v) for k, v in item_map.items() if k != "kind"}
                 out.append((dof, kind, params))
     elif isinstance(data, dict) and "schedules" in data and isinstance(data["schedules"], list):
-        for it in data["schedules"]:
+        data_with_schedules = cast("dict[str, object]", data)
+        schedules = cast("list[object]", data_with_schedules["schedules"])
+        for it in schedules:
             if not isinstance(it, dict) or "dof" not in it or "kind" not in it:
                 raise ValueError("Each schedule must have 'dof' and 'kind'")
-            dof = str(it["dof"]).lower()
-            kind = str(it["kind"]).lower()
-            params = {k: str(v) for k, v in it.items() if k not in ("dof", "kind")}
+            schedule_item = cast("dict[str, object]", it)
+            dof = str(schedule_item["dof"]).lower()
+            kind = str(schedule_item["kind"]).lower()
+            params = {k: str(v) for k, v in schedule_item.items() if k not in ("dof", "kind")}
             out.append((dof, kind, params))
     else:
         raise ValueError("Unrecognized spec file schema")
     # Normalize aliases in dof
-    normed = []
+    normed: list[tuple[str, str, dict[str, str]]] = []
     for raw_dof, kind, params in out:
         normalized_dof = raw_dof
         if normalized_dof in ("x", "u"):
@@ -365,7 +376,7 @@ def main() -> None:  # noqa: PLR0915
         volume_shape=volume_shape,
     )
     thetas = np.asarray(dataset.angles_deg, dtype=np.float32)
-    vol = jnp.asarray(source_metadata.volume, jnp.float32)
+    vol = _jnp_float32_array(source_metadata.volume)
     n_views = len(thetas)
 
     # Build deterministic schedules if requested
@@ -381,9 +392,7 @@ def main() -> None:  # noqa: PLR0915
 
     misalign_spec_dict = None
     if pert_specs:
-        schedules, norm_spec = _build_schedules(
-            jnp.asarray(thetas, jnp.float32), n_views, pert_specs
-        )
+        schedules, norm_spec = _build_schedules(_jnp_float32_array(thetas), n_views, pert_specs)
         misalign_spec_dict = norm_spec
         # Apply angle offset
         angle_offset = schedules.get("angle", angle_offset).astype(np.float32)
@@ -413,30 +422,34 @@ def main() -> None:  # noqa: PLR0915
         params5_np[:, 4] += random_dz.astype(np.float32) * float(det.dv)
 
     # Rebuild T_nom with possibly modified thetas
+    thetas_used_list = [float(value) for value in thetas_used.tolist()]
     if isinstance(base_geom, ParallelGeometry):
-        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_used)
+        geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas_used_list)
     else:
         geom = LaminographyGeometry(
             grid=grid,
             detector=det,
-            thetas_deg=thetas_used,
+            thetas_deg=thetas_used_list,
             tilt_deg=base_geom.tilt_deg,
             tilt_about=base_geom.tilt_about,
         )
 
     # Recompute nominal poses with final geometry (possibly modified angles)
     T_nom = stack_view_poses(geom, n_views)
-    params5 = jnp.asarray(params5_np, jnp.float32)
+    params5 = _jnp_float32_array(params5_np)
 
     with transfer_guard_context(args.transfer_guard):
         T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
         from tomojax.core.projector import get_detector_grid_device
 
         det_grid = get_detector_grid_device(det)
-        vm_project = jax.vmap(
-            lambda T, v: forward_project_view_T(
-                T, grid, det, v, use_checkpoint=True, det_grid=det_grid
-            ),
+        jax_runtime: Any = jax
+
+        def project_one(T: Any, v: Any) -> Any:
+            return forward_project_view_T(T, grid, det, v, use_checkpoint=True, det_grid=det_grid)
+
+        vm_project: Any = jax_runtime.vmap(
+            project_one,
             in_axes=(0, None),
         )
         proj = vm_project(T_aug, vol).astype(jnp.float32)
@@ -448,7 +461,7 @@ def main() -> None:  # noqa: PLR0915
         noisy = np.random.default_rng(args.seed + 1).poisson(lam=lam).astype(np.float32) / max(
             1e-6, s
         )
-        proj = jnp.asarray(noisy, jnp.float32)
+        proj = _jnp_float32_array(noisy)
 
     save_meta = dataset.copy_metadata()
     save_meta.thetas_deg = np.asarray(thetas_used)
@@ -458,7 +471,7 @@ def main() -> None:  # noqa: PLR0915
     save_meta.volume = np.asarray(vol)
     save_meta.align_params = np.asarray(params5)
     save_meta.angle_offset_deg = np.asarray(angle_offset) if pert_specs else None
-    save_meta.misalign_spec = misalign_spec_dict
+    cast("Any", save_meta).misalign_spec = misalign_spec_dict
     save_meta.frame = str(source_metadata.frame or "sample")
     save_projection_payload(
         args.out,
