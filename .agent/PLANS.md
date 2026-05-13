@@ -145,6 +145,10 @@ Tasks:
       longer present it as production API. `tomojax.io` owns measured data and
       `tomojax.datasets` owns synthetic data. `just production-surface-check`
       passed with 72 focused tests.
+- [x] Production module data-import guard: public-surface tests now fail if
+      production modules import `tomojax.data` directly, keeping measured IO
+      behind `tomojax.io` and synthetic generation behind `tomojax.datasets`.
+      `just production-surface-check` passed with 73 focused tests.
 
 Historical productionization plan follows for context.
 

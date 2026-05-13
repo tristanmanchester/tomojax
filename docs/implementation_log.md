@@ -15266,3 +15266,16 @@ Validation:
 Validation:
 
 - `just production-surface-check` passed with 72 focused tests.
+
+### Production module data-import guard
+
+- Added a public-surface architecture test that prevents production modules
+  (`align`, `backends`, `calibration`, `cli`, `core`, `forward`, `geometry`,
+  `motion`, `nuisance`, `recon`, and `verify`) from importing the lower-level
+  `tomojax.data` package directly. The intended ownership remains:
+  `tomojax.io` wraps measured-data persistence and `tomojax.datasets` wraps
+  deterministic synthetic data generation.
+
+Validation:
+
+- `just production-surface-check` passed with 73 focused tests.

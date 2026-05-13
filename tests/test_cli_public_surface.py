@@ -108,3 +108,38 @@ def test_cli_modules_do_not_import_transitional_data_package() -> None:
             leaks[str(path)] = forbidden
 
     assert leaks == {}
+
+
+def test_production_modules_do_not_import_lower_level_data_package() -> None:
+    production_modules = [
+        "align",
+        "backends",
+        "calibration",
+        "cli",
+        "core",
+        "forward",
+        "geometry",
+        "motion",
+        "nuisance",
+        "recon",
+        "verify",
+    ]
+    leaks: dict[str, list[str]] = {}
+    for module in production_modules:
+        for path in sorted(Path("src/tomojax", module).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            imports: list[str] = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imports.extend(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                    imports.append("." * node.level + node.module)
+            forbidden = [
+                imported
+                for imported in imports
+                if imported == "tomojax.data" or imported.startswith(("tomojax.data.", "..data"))
+            ]
+            if forbidden:
+                leaks[str(path)] = forbidden
+
+    assert leaks == {}
