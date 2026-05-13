@@ -1,3 +1,5 @@
+"""Frequency-domain filters for filtered backprojection."""
+
 from __future__ import annotations
 
 from collections import OrderedDict

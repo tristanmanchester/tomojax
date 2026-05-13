@@ -1,13 +1,11 @@
+"""Multiresolution reconstruction helpers."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
-
-import jax.numpy as jnp
+from typing import TYPE_CHECKING
 
 from tomojax.core import progress_iter
-
-from ..core.geometry.base import Detector, Geometry, Grid
-from ..core.multires import (
+from tomojax.core.multires import (
     bin_projections,
     create_resolution_pyramid,
     scale_detector,
@@ -15,7 +13,15 @@ from ..core.multires import (
     upsample_volume,
     validate_scale_factor,
 )
+
 from .fista_tv import FistaConfig, fista_tv
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import jax.numpy as jnp
+
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 _validated_scale_factor = validate_scale_factor
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import math
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 
-from .types import Regulariser
+if TYPE_CHECKING:
+    from .types import Regulariser
 
 
-def grad3(u: jnp.ndarray):
+def grad3(u: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     dx = jnp.concatenate(
         [jnp.diff(u, axis=0), jnp.zeros((1, u.shape[1], u.shape[2]), u.dtype)],
         axis=0,
@@ -24,7 +25,7 @@ def grad3(u: jnp.ndarray):
     return dx, dy, dz
 
 
-def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray):
+def div3(px: jnp.ndarray, py: jnp.ndarray, pz: jnp.ndarray) -> jnp.ndarray:
     """Discrete divergence matching the TV updates: ``div3 = -grad3*``."""
     if px.shape[0] == 1:
         dx = jnp.zeros_like(px)

@@ -15515,3 +15515,21 @@ Validation:
 - `uv run ruff format --check src/tomojax/align` passed.
 - `uv run pytest tests/test_align_optimizers.py tests/test_align_verification.py tests/test_align_contracts.py tests/test_align_quick.py -q`
   passed with 92 tests.
+
+### Reconstruction package Ruff cleanup completed
+
+- Added module/API docs across the public reconstruction package.
+- Moved type-only imports behind `TYPE_CHECKING`, converted type aliases to the
+  Python 3.12 form, and annotated JAX scan helpers in FBP, FISTA, SPDHG, and
+  the FISTA core.
+- Replaced mutable default `FistaConfig()` and `SPDHGConfig()` arguments with
+  `None` defaults that instantiate inside the function.
+- Normalized ambiguous mathematical docstrings to ASCII wording so the public
+  docs stay lint-clean.
+
+Validation:
+
+- `uv run ruff check src/tomojax/recon --statistics` passed.
+- `uv run ruff format --check src/tomojax/recon` passed.
+- `uv run pytest tests/test_recon.py tests/test_recon_math_fixes.py tests/test_recon_quicklook.py tests/test_fbp_batching.py tests/test_spdhg.py tests/test_multires.py tests/test_grad_modes.py tests/test_bilevel_recon_layer.py -q`
+  passed with 136 tests and 3 expected Pallas lowering skips.

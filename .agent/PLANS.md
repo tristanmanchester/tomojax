@@ -1187,6 +1187,11 @@ and proposed next fix before stopping.
   mutable optimizer config defaults, and added narrow complexity exceptions for
   existing numerical routines instead of broad package ignores. Focused
   optimizer/pipeline/verification tests passed with 92 tests.
+- [x] The whole `src/tomojax/recon` package now passes Ruff on its own. The
+  cleanup documented public reconstruction modules, moved type-only imports,
+  annotated JAX scan helpers, replaced mutable FISTA/SPDHG config defaults, and
+  kept existing numerical routines behaviorally unchanged. Focused reconstruction
+  tests passed with 136 tests and 3 expected Pallas lowering skips.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

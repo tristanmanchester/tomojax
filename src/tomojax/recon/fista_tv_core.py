@@ -1,19 +1,26 @@
+"""Array-level differentiable FISTA reconstruction core."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
 from tomojax.core.backend_policy import normalize_projector_backend
-from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
-from tomojax.recon.types import Regulariser
+
+if TYPE_CHECKING:
+    from tomojax.core.geometry import Detector, Grid
+    from tomojax.recon.types import Regulariser
 
 
 @dataclass(frozen=True, slots=True)
 class FistaCoreConfig:
+    """Configuration for the array-level FISTA core."""
+
     iters: int = 10
     lambda_tv: float = 0.005
     regulariser: Regulariser = "huber_tv"
@@ -42,6 +49,8 @@ class FistaCoreConfig:
 
 @dataclass(frozen=True, slots=True)
 class FistaCoreResult:
+    """Array-level FISTA result and diagnostics."""
+
     x: jnp.ndarray
     loss: jnp.ndarray
     data_loss: jnp.ndarray
@@ -50,6 +59,7 @@ class FistaCoreResult:
     status: str
 
     def info(self) -> dict[str, object]:
+        """Return JAX-friendly result metadata."""
         return {
             "loss": self.loss,
             "data_loss": self.data_loss,
@@ -59,6 +69,7 @@ class FistaCoreResult:
         }
 
     def python_info(self) -> dict[str, object]:
+        """Return Python scalar/list metadata for JSON reports."""
         return {
             "loss": [float(v) for v in list(self.loss)],
             "data_loss": float(self.data_loss),
@@ -142,7 +153,10 @@ def fista_tv_core_arrays(
             return huber_tv_value(x, float(cfg.huber_delta))
         return isotropic_tv_value(x)
 
-    def body(carry, k):
+    def body(
+        carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        k: jnp.ndarray,
+    ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
         x_prev, z_prev, t_prev, loss_arr, last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
         if cfg.regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
@@ -279,7 +293,10 @@ def _project_stack(
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
 
-    def body(out, i):
+    def body(
+        out: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
         start_shifted, _valid_mask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         pred = _project_chunk(
@@ -374,7 +391,10 @@ def _projection_loss(
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
 
-    def body(loss_acc, i):
+    def body(
+        loss_acc: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
@@ -445,7 +465,10 @@ def _projection_loss_and_explicit_grad(
     nu = int(projections.shape[2])
     backproject_fn = _resolve_sum_backproject_views(backprojector)
 
-    def body(carry, i):
+    def body(
+        carry: tuple[jnp.ndarray, jnp.ndarray],
+        i: jnp.ndarray,
+    ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc = carry
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
@@ -511,7 +534,7 @@ def _projection_loss_and_explicit_grad(
     return loss, grad
 
 
-def _resolve_sum_backproject_views(backprojector: str):
+def _resolve_sum_backproject_views(backprojector: str) -> object:
     if backprojector == "jax":
         return sum_backproject_views_T
     if backprojector == "pallas":

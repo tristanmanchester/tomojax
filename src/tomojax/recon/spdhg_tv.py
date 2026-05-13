@@ -1,19 +1,21 @@
+"""SPDHG/TV reconstruction routine."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core.geometry.base import Detector, Geometry, Grid
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import (
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import (
     forward_project_view_T,
     get_detector_grid_device,
     sum_backproject_views_T,
 )
-from ..core.validation import (
+from tomojax.core.validation import (
     validate_grid,
     validate_optional_broadcastable_shape,
     validate_optional_same_shape,
@@ -21,6 +23,7 @@ from ..core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
     div3,
@@ -30,12 +33,18 @@ from ._tv_ops import (
     prox_huber_tv_conj,
     validate_regulariser,
 )
-from .types import Regulariser
+
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
+
+    from .types import Regulariser
 
 
 # --------- config ----------
 @dataclass
 class SPDHGConfig:
+    """Configuration for stochastic primal-dual TV reconstruction."""
+
     iters: int = 400
     lambda_tv: float = 5e-3
     regulariser: Regulariser = "tv"
@@ -79,11 +88,12 @@ def _estimate_norm_A2(
     safety: float = 1.05,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
-    """Reuse your power method to estimate ||A||^2 (i.e., Lipschitz of ∇(1/2||Ax||^2))."""
+    """Estimate the squared projection-operator norm by power iteration."""
+    del geometry
     n_views, nv, nu = projections_shape
     det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
-    def A_apply(vol, T_chunk):
+    def A_apply(vol: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
                 T,
@@ -103,9 +113,12 @@ def _estimate_norm_A2(
     m = (n_views + b - 1) // b
     num_iters = max(1, int(power_iters))
 
-    def AtranA(v):
+    def AtranA(v: jnp.ndarray) -> jnp.ndarray:
         # iterate over contiguous blocks with masking of the last chunk
-        def body(g_acc, i):
+        def body(
+            g_acc: jnp.ndarray,
+            i: jnp.ndarray,
+        ) -> tuple[jnp.ndarray, None]:
             i = jnp.int32(i)
             start = i * jnp.int32(b)
             remaining = jnp.maximum(0, jnp.int32(n_views) - start)
@@ -114,7 +127,10 @@ def _estimate_norm_A2(
             start_shifted = jnp.maximum(0, start - shift)
 
             T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-            pred_fun = lambda vol: A_apply(vol, T_chunk)
+
+            def pred_fun(vol: jnp.ndarray) -> jnp.ndarray:
+                return A_apply(vol, T_chunk)
+
             proj = pred_fun(v)
             idx = jnp.arange(b)
             mask = (idx >= (jnp.int32(b) - valid))[:, None, None]
@@ -135,7 +151,7 @@ def _estimate_norm_A2(
         g_final, _ = jax.lax.scan(body, g0, jnp.arange(m))
         return g_final
 
-    def normalize(v):
+    def normalize(v: jnp.ndarray) -> jnp.ndarray:
         return v / (jnp.linalg.norm(v) + 1e-12)
 
     AtranA_jit = jax.jit(AtranA)
@@ -151,7 +167,11 @@ def _estimate_norm_A2(
     return max(L, 1e-6)
 
 
-def _proj_pos_support(x: jnp.ndarray, positivity: bool, support: jnp.ndarray | None):
+def _proj_pos_support(
+    x: jnp.ndarray,
+    positivity: bool,
+    support: jnp.ndarray | None,
+) -> jnp.ndarray:
     if support is not None:
         x = x * support
     if positivity:
@@ -159,9 +179,16 @@ def _proj_pos_support(x: jnp.ndarray, positivity: bool, support: jnp.ndarray | N
     return x
 
 
-def _prox_fstar_l2(u: jnp.ndarray, sigma: float, y_meas: jnp.ndarray, w: jnp.ndarray):
-    """prox_{σ f*}(u) for f(z) = 1/2 ||W^{1/2}(z - y)||^2. Elementwise:
-    if w>0: (u - σ y) * w / (σ + w); if w==0: 0  (domain of f*).
+def _prox_fstar_l2(
+    u: jnp.ndarray,
+    sigma: float,
+    y_meas: jnp.ndarray,
+    w: jnp.ndarray,
+) -> jnp.ndarray:
+    """Apply the weighted L2 dual proximal.
+
+    Elementwise: if w > 0, return ``(u - sigma * y) * w / (sigma + w)``;
+    otherwise return zero for the domain of the conjugate.
     """
     sigma = jnp.asarray(sigma, dtype=u.dtype)
     denom = sigma + w
@@ -170,7 +197,7 @@ def _prox_fstar_l2(u: jnp.ndarray, sigma: float, y_meas: jnp.ndarray, w: jnp.nda
 
 
 # --------- main algorithm ----------
-def spdhg_tv(
+def spdhg_tv(  # noqa: PLR0915
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -178,7 +205,7 @@ def spdhg_tv(
     *,
     weights: jnp.ndarray | None = None,  # same shape as projections; 0 for unmeasured
     init_x: jnp.ndarray | None = None,
-    config: SPDHGConfig = SPDHGConfig(),
+    config: SPDHGConfig | None = None,
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
@@ -191,6 +218,7 @@ def spdhg_tv(
     are eligible for callbacks; if a single logged sample exists, the callback
     fires once.
     """
+    config = SPDHGConfig() if config is None else config
     regulariser = validate_regulariser(
         config.regulariser,
         config.huber_delta,
@@ -231,7 +259,7 @@ def spdhg_tv(
     det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
     # batched projector over a chunk of views
-    def project_chunk(T_chunk, vol):
+    def project_chunk(T_chunk: jnp.ndarray, vol: jnp.ndarray) -> jnp.ndarray:
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
                 T,
@@ -311,7 +339,31 @@ def spdhg_tv(
     # allocate logging
     losses = jnp.zeros((config.iters,), dtype=jnp.float32)
 
-    def one_step(carry, t):
+    def one_step(
+        carry: tuple[
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+        ],
+        t: jnp.ndarray,
+    ) -> tuple[
+        tuple[
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+            jnp.ndarray,
+        ],
+        None,
+    ]:
         (x, x_bar, y_data, p1, p2, p3, s, losses) = carry
         block = block_ids[t]
         start = block * jnp.int32(b)
@@ -395,7 +447,7 @@ def spdhg_tv(
         # minibatch objective estimate for logging (optional)
         do_log = (config.log_every > 0) & ((t + 1) % config.log_every == 0)
 
-        def _log_step():
+        def _log_step() -> jnp.ndarray:
             resid = (pred - y_chunk) * jnp.sqrt(w_chunk) * row_mask
             data_est = (
                 0.5
@@ -409,7 +461,7 @@ def spdhg_tv(
             obj = (data_est + lam * reg_value).astype(jnp.float32)
             return losses.at[t].set(obj)
 
-        def _no_log():
+        def _no_log() -> jnp.ndarray:
             return losses
 
         losses_new = jax.lax.cond(do_log, _log_step, _no_log)

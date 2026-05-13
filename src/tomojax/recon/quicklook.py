@@ -1,12 +1,13 @@
+"""Quicklook image extraction and PNG writing helpers."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypeAlias
 
 import imageio.v3 as iio
 import numpy as np
 
-PathLike: TypeAlias = str | Path
+type PathLike = str | Path
 
 
 def extract_central_slice(volume: np.ndarray) -> np.ndarray:

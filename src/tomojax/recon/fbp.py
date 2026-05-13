@@ -1,11 +1,12 @@
+"""Filtered-backprojection reconstruction routines."""
+
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 import functools
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 from jax.experimental import pallas as pl
@@ -14,18 +15,21 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core import progress_iter
-
-from ..core.geometry.base import Detector, Geometry, Grid, _grid_volume_origin
-from ..core.geometry.parallel import ParallelGeometry
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import backproject_view_T
-from ..core.validation import (
+from tomojax.core.geometry.base import Detector, Geometry, Grid, _grid_volume_origin
+from tomojax.core.geometry.parallel import ParallelGeometry
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import backproject_view_T
+from tomojax.core.validation import (
     validate_detector_grid,
     validate_grid,
     validate_pose_stack,
     validate_projection_stack,
 )
+
 from .filters import get_filter_np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 _RFFT_FILTER_CACHE: OrderedDict[tuple[str, int, float, str], np.ndarray] = OrderedDict()
 _RFFT_FILTER_CACHE_CAP = 8
@@ -90,8 +94,7 @@ def _fft_filter_rows(rows: jnp.ndarray, du: float, filter_name: str) -> jnp.ndar
     nu = int(rows.shape[-1])
     H_r = _get_rfft_filter_cached(filter_name, nu, du, rows.dtype)
     F = jnp.fft.rfft(rows, axis=-1)
-    out = jnp.fft.irfft(F * H_r, n=int(nu), axis=-1)
-    return out
+    return jnp.fft.irfft(F * H_r, n=int(nu), axis=-1)
 
 
 _fft_filter_rows_jit = jax.jit(_fft_filter_rows, static_argnames=("du", "filter_name"))
@@ -146,7 +149,10 @@ def _bp_batch_sum(
 ) -> jnp.ndarray:
     """Backproject a fixed-size chunk while keeping peak memory at one volume."""
 
-    def body(accum, inputs):
+    def body(
+        accum: jnp.ndarray,
+        inputs: tuple[jnp.ndarray, jnp.ndarray],
+    ) -> tuple[jnp.ndarray, None]:
         T, F = inputs
         bp = _bp_one_jit(
             T,
@@ -474,7 +480,12 @@ def _run_fbp_fast_path(
     y_chunks = proj.reshape((num_chunks, batch_size, nv, nu))
     valid_mask = (jnp.arange(total_views) < n_views).reshape((num_chunks, batch_size, 1, 1))
 
-    def scan_chunks(T_chunks_in, y_chunks_in, valid_mask_in, det_grid_in):
+    def scan_chunks(
+        T_chunks_in: jnp.ndarray,
+        y_chunks_in: jnp.ndarray,
+        valid_mask_in: jnp.ndarray,
+        det_grid_in: tuple[jnp.ndarray, jnp.ndarray] | None,
+    ) -> jnp.ndarray:
         rows = y_chunks_in.reshape((num_chunks, batch_size * nv, nu))
         rows_f = jax.vmap(
             lambda chunk_rows: _fft_filter_rows_jit(
@@ -486,7 +497,10 @@ def _run_fbp_fast_path(
         filt_chunks = rows_f.reshape((num_chunks, batch_size, nv, nu))
         filt_chunks = jnp.where(valid_mask_in, filt_chunks, 0.0)
 
-        def body(accum, inputs):
+        def body(
+            accum: jnp.ndarray,
+            inputs: tuple[jnp.ndarray, jnp.ndarray],
+        ) -> tuple[jnp.ndarray, None]:
             T_chunk, filt_chunk = inputs
             acc_chunk = _bp_batch_sum_jit(
                 T_chunk,
@@ -675,8 +689,4 @@ def fbp(
     else:
         acc = run_generic_path()
 
-    if cfg.scale is None:
-        acc = acc * _default_fbp_scale(n_views)
-    else:
-        acc = acc * float(cfg.scale)
-    return acc
+    return acc * _default_fbp_scale(n_views) if cfg.scale is None else acc * float(cfg.scale)
