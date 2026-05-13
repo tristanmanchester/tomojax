@@ -1,8 +1,8 @@
-"""Developer-facing alignment smoke diagnostics.
+"""Developer-facing alignment diagnostic runners.
 
 This module is intentionally separate from :mod:`tomojax.align.api`: the
-objects here run synthetic smoke/benchmark harnesses and are useful for
-verification, but they are not part of the production alignment facade.
+objects here run synthetic benchmark harnesses and are useful for verification,
+but they are not part of the production alignment facade.
 """
 
 from __future__ import annotations

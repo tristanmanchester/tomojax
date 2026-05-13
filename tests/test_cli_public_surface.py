@@ -4,11 +4,15 @@ import ast
 from pathlib import Path
 import re
 import tomllib
+from typing import cast
 
 
 def test_project_scripts_keep_diagnostics_off_public_surface() -> None:
-    payload = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    scripts = payload["project"]["scripts"]
+    payload = cast(
+        "dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    )
+    project = cast("dict[str, object]", payload["project"])
+    scripts = cast("dict[str, str]", project["scripts"])
 
     assert "tomojax" in scripts
     assert scripts["tomojax"] == "tomojax.cli.main:main"
@@ -82,7 +86,10 @@ def test_public_cli_docs_avoid_development_era_terms() -> None:
         Path("src/tomojax/io/_datasets.py"),
         Path("src/tomojax/recon/README.md"),
     ]
-    development_terms = re.compile(r"\b(legacy|transitional|pre-v2)\b", re.IGNORECASE)
+    development_terms = re.compile(
+        r"\b(legacy|transitional|pre-v2|mvp|v1|parity|smoke)\b",
+        re.IGNORECASE,
+    )
     leaks = {
         str(path): development_terms.findall(path.read_text(encoding="utf-8"))
         for path in public_cli_paths

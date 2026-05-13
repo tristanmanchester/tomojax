@@ -78,9 +78,9 @@ Forbidden dependencies:
 
 ## Developer Diagnostics
 
-- `tomojax.align.smoke_diagnostics` owns synthetic alignment smoke runners that are
-  useful for development and verification but are deliberately excluded from
-  `tomojax.align.api`.
+- `tomojax.align.developer_diagnostics` owns synthetic alignment benchmark
+  runners that are useful for development and verification but are deliberately
+  excluded from `tomojax.align.api`.
 - `tomojax.bench` re-exports those diagnostic runners for benchmark-facing
   tests and developer CLI commands.
 
@@ -88,5 +88,5 @@ Forbidden dependencies:
 
 - Existing alignment tests cover retained staged behavior.
 - `tests/test_alternating_solver_smoke.py` covers the Phase 7 deterministic
-  artifact smoke run.
+  diagnostic artifact run.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.

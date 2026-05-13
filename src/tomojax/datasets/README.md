@@ -5,10 +5,11 @@
 `tomojax.datasets` owns deterministic synthetic benchmark specifications,
 phantom generation, dataset manifests, masks, and recovery tolerances.
 
-The current implementation is a foundation writer: it emits deterministic
-32^3 smoke artifacts and can configure 128^3 benchmark artifacts from the v2
-manifest. Its projection writer is a CPU smoke projector, not the final
-differentiable `tomojax.forward` reference path.
+The current implementation emits deterministic small synthetic artifacts for
+fast development checks and can configure 128^3 benchmark artifacts from the v2
+manifest. Its projection writer is a CPU reference projector used for synthetic
+data generation, while production forward modelling belongs to
+`tomojax.forward`.
 
 ## Public API
 
@@ -56,4 +57,4 @@ Forbidden dependencies:
 
 - `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
 - `tests/test_synthetic_datasets.py` verifies manifest loading, deterministic
-  phantom generation, and smoke artifact emission.
+  phantom generation, and artifact emission.

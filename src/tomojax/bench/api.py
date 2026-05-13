@@ -1,6 +1,6 @@
 """Public API for developer benchmark helpers."""
 
-from tomojax.align.smoke_diagnostics import (
+from tomojax.align.developer_diagnostics import (
     AlignmentSmokeReport,
     AlternatingAlignmentSolver,
     AlternatingLevelSummary,

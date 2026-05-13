@@ -15316,7 +15316,7 @@ Validation:
   `AlternatingAlignmentSolver`, `AlternatingLevelSummary`,
   `AlternatingSmokeConfig`, and `AlternatingSmokeResult` no longer appear as
   production alignment API.
-- Added `tomojax.align.smoke_diagnostics` as the owner-local developer surface
+- Added `tomojax.align.developer_diagnostics` as the owner-local developer surface
   for those smoke runners, avoiding the existing compatibility alias at
   `tomojax.align.diagnostics`.
 - Re-exported the smoke runner types/functions from `tomojax.bench` so
@@ -15328,7 +15328,26 @@ Validation:
 Validation:
 
 - `just production-surface-check` passed with 73 focused tests.
-- `uv run basedpyright src/tomojax/align/api.py src/tomojax/align/smoke_diagnostics.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/cli/align_auto.py tests/test_public_facades.py tests/test_vertical_smoke.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+- `uv run basedpyright src/tomojax/align/api.py src/tomojax/align/developer_diagnostics.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/cli/align_auto.py tests/test_public_facades.py tests/test_vertical_smoke.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
   passed with 0 errors and 0 warnings.
 - `uv run pytest tests/test_public_facades.py tests/test_vertical_smoke.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py -q`
   passed with 28 tests.
+
+### Public diagnostic wording guard tightened
+
+- Renamed the owner-local alignment diagnostic surface from
+  `tomojax.align.smoke_diagnostics` to `tomojax.align.developer_diagnostics`.
+  This keeps the implementation role explicit without making a development-era
+  term part of the public module documentation.
+- Reworded the public `tomojax.align`, `tomojax.recon`, and
+  `tomojax.datasets` READMEs so current production-facing module docs avoid
+  `mvp`, `v1`, `parity`, and `smoke` terminology.
+- Expanded `tests/test_cli_public_surface.py` so the public wording guard now
+  rejects those terms, in addition to `legacy`, `transitional`, and `pre-v2`,
+  across the current public docs it checks.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/align/api.py src/tomojax/align/developer_diagnostics.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/cli/align_auto.py tests/test_cli_public_surface.py tests/test_public_facades.py`
+  passed with 0 errors and 0 warnings.
+- `just production-surface-check` passed with 73 focused tests.

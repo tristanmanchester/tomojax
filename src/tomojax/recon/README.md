@@ -66,10 +66,11 @@ Forbidden dependencies:
 - `reference_fista_diagnostic_artifacts` emits deterministic scalar-gradient,
   adjoint, detector-centre JVP/VJP, loss-normalisation, and trace-recompute
   payloads for diagnostic run artifacts.
-- `reconstruct_average_reference` is a tiny smoke helper, not the final default
-  reconstruction algorithm.
+- `reconstruct_average_reference` is a small deterministic reference helper,
+  not the default reconstruction algorithm.
 - `reconstruct_backprojection_reference` is a deterministic geometry-aware
-  initializer using the core explicit adjoint for smoke and FISTA warm starts.
+  initializer using the core explicit adjoint for diagnostics and FISTA warm
+  starts.
 
 ## Tests
 

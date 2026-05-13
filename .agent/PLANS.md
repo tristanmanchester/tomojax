@@ -1126,11 +1126,17 @@ and proposed next fix before stopping.
 - [x] Public alignment smoke diagnostics quarantined: production
   `tomojax.align.api` no longer exports `run_alignment_smoke`,
   `run_alternating_solver_smoke`, or `AlternatingSmokeConfig`. Synthetic smoke
-  runners remain available through `tomojax.align.smoke_diagnostics` and the
+  runners remain available through `tomojax.align.developer_diagnostics` and the
   developer-facing `tomojax.bench` facade, and `tomojax dev align-auto` imports
   them through the benchmark boundary. `just production-surface-check`,
   focused Basedpyright on the touched API/CLI files, and the smoke artifact
   regression set passed.
+- [x] Public wording guard tightened again: renamed the owner-local diagnostic
+  surface to `tomojax.align.developer_diagnostics`, removed `smoke` wording
+  from public align/recon/datasets READMEs, and expanded
+  `test_public_cli_docs_avoid_development_era_terms` to reject `mvp`, `v1`,
+  `parity`, and `smoke` in the current production-facing docs. Focused
+  Basedpyright and `just production-surface-check` passed.
 
 ### Risks
 
