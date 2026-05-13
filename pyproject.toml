@@ -124,6 +124,13 @@ ban-relative-imports = "parents"
     "D",
     "ANN",
 ]
+"src/tomojax/bench/**" = [
+    "D",      # developer diagnostics, not production API docs
+    "ANN",    # benchmark callbacks often wrap JAX/ASTRA/Pallas callables
+    "PL",     # reporting/CLI runners are intentionally orchestration-heavy
+    "PERF",   # benchmark reporting clarity is preferred over micro-style rewrites
+    "E501",   # markdown table literals are easier to audit inline
+]
 "src/tomojax/backends/pallas/**" = [
     "PLR0913",
 ]

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared loss-benchmark helpers.
 
 This module is the reusable boundary between user-facing loss-benchmark orchestration
@@ -7,21 +5,24 @@ and controller-specific benchmark harness code. Keep stable dataset, misalignmen
 and metric helpers here instead of duplicating them across ``bench/`` and ``scripts/``.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
-import os
+from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..align.geometry.parametrizations import se3_from_5d
-from ..core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import forward_project_view_T, get_detector_grid_device
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..data.simulate import SimConfig, simulate_to_file
+from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.data.geometry_meta import build_geometry_from_meta
+from tomojax.data.io_hdf5 import load_nxtomo, save_nxtomo
+from tomojax.data.simulate import SimConfig, simulate_to_file
 
 _PROVENANCE_KEY = "loss_experiment_provenance"
 _PROVENANCE_VERSION = 1
@@ -40,7 +41,7 @@ def make_gt_dataset(
     seed: int,
 ) -> str:
     """Create or reuse the benchmark ground-truth dataset for an experiment."""
-    gt_path = os.path.join(expdir, "gt.nxs")
+    gt_path = Path(expdir) / "gt.nxs"
     provenance = _gt_provenance(
         nx=nx,
         ny=ny,
@@ -51,8 +52,8 @@ def make_gt_dataset(
         geometry=geometry,
         seed=seed,
     )
-    if os.path.exists(gt_path) and _has_matching_gt_provenance(gt_path, provenance):
-        return gt_path
+    if gt_path.exists() and _has_matching_gt_provenance(str(gt_path), provenance):
+        return str(gt_path)
     cfg = SimConfig(
         nx=nx,
         ny=ny,
@@ -65,16 +66,16 @@ def make_gt_dataset(
         rotation_deg=None,
         seed=seed,
     )
-    simulate_to_file(cfg, gt_path)
-    _write_gt_provenance(gt_path, provenance)
-    return gt_path
+    simulate_to_file(cfg, str(gt_path))
+    _write_gt_provenance(str(gt_path), provenance)
+    return str(gt_path)
 
 
 def make_misaligned_dataset(
     expdir: str, gt_path: str, *, rot_deg: float, trans_px: float, seed: int
 ) -> str:
     """Create or reuse a misaligned benchmark dataset derived from the GT volume."""
-    mis_path = os.path.join(expdir, "misaligned.nxs")
+    mis_path = Path(expdir) / "misaligned.nxs"
     meta = load_nxtomo(gt_path)
     source_gt = _source_gt_fingerprint(meta)
     provenance = _misaligned_provenance(
@@ -83,11 +84,11 @@ def make_misaligned_dataset(
         seed=seed,
         source_gt=source_gt,
     )
-    if os.path.exists(mis_path) and _has_matching_misaligned_provenance(
-        mis_path,
+    if mis_path.exists() and _has_matching_misaligned_provenance(
+        str(mis_path),
         provenance,
     ):
-        return mis_path
+        return str(mis_path)
 
     volume = np.asarray(meta.volume, dtype=np.float32)
     grid, det, geom = build_geometry_from_meta(
@@ -138,11 +139,11 @@ def make_misaligned_dataset(
     save_meta.misalign_spec = _with_provenance(save_meta.misalign_spec, provenance)
     save_meta.frame = str(meta.frame or "sample")
     save_nxtomo(
-        mis_path,
+        str(mis_path),
         projections=np.asarray(projections),
         metadata=save_meta,
     )
-    return mis_path
+    return str(mis_path)
 
 
 def _gt_provenance(
@@ -230,7 +231,7 @@ def _with_provenance(
     return updated
 
 
-def _source_gt_fingerprint(meta) -> dict[str, object]:
+def _source_gt_fingerprint(meta: Any) -> dict[str, object]:
     payload: dict[str, object] = {
         "provenance": _read_provenance(meta.geometry_meta),
         "projections": _array_fingerprint(meta.projections),
@@ -276,7 +277,7 @@ def _jsonable(value: object) -> object:
             str(key): _jsonable(val)
             for key, val in sorted(value.items(), key=lambda item: str(item[0]))
         }
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_jsonable(item) for item in value]
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -388,9 +389,7 @@ def metrics_gauge_fixed(
         U[:, -1] *= -1
         Rg = U @ Vt
 
-    t_res = []
-    for i in range(Tt.shape[0]):
-        t_res.append(Tt[i, :3, 3] - Rg @ Te[i, :3, 3])
+    t_res = [Tt[i, :3, 3] - Rg @ Te[i, :3, 3] for i in range(Tt.shape[0])]
     tg = np.mean(np.asarray(t_res), axis=0)
 
     G = np.eye(4, dtype=np.float32)

@@ -55,7 +55,7 @@ def _block(value: Any) -> Any:
 
 
 class GpuMemorySampler:
-    def __init__(self, interval_sec: float = 0.005):
+    def __init__(self, interval_sec: float = 0.005) -> None:
         self.interval_sec = float(interval_sec)
         self.pid = os.getpid()
         self.samples_mb: list[float] = []
@@ -453,7 +453,7 @@ def _tomojax_fbp(
             detector=det,
             filter_name="ramp",
         ) * jnp.float32(_default_fbp_scale(int(projections.shape[0])))
-    recon = fbp(
+    return fbp(
         geom,
         grid,
         det,
@@ -462,7 +462,6 @@ def _tomojax_fbp(
         views_per_batch=views_per_batch,
         gather_dtype="fp32",
     )
-    return recon
 
 
 def _use_specialized_pallas_fbp(grid: Grid, det: Detector) -> bool:
@@ -690,7 +689,7 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
         if (report.get("fbp_path") or {}).get("specialized_pallas_fbp_timed")
         else "TomoJAX public fbp()"
     )
-    rows = [
+    return [
         {
             "comparison": "TomoJAX Pallas forward vs TomoJAX JAX forward",
             "mse": pallas["mse_vs_tomojax"] if pallas else None,
@@ -740,7 +739,6 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "max_abs": recon["tomojax_direct_fbp_vs_generic_fbp"]["max_abs_vs_tomojax"],
         },
     ]
-    return rows
 
 
 def _fmt(value: Any) -> str:

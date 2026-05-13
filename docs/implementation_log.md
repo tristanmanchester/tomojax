@@ -15590,3 +15590,25 @@ Validation:
   passed with 37 tests.
 - `just production-surface-check` passed with 75 focused tests and all 4 import
   contracts kept.
+
+### Benchmark package diagnostic quarantine cleanup completed
+
+- Added an explicit Ruff quarantine for `src/tomojax/bench/**`: benchmark
+  runners are developer diagnostics reached through `tomojax dev`, not
+  production API documentation surfaces.
+- Kept the quarantine scoped to diagnostic-style rules (`D`, `ANN`, `PL`,
+  `PERF`, and markdown-table `E501`) and fixed remaining non-quarantine issues
+  such as import order, parent-relative imports, pathlib use, and simple
+  modernization.
+- This preserves the public CLI/API boundary while keeping repo-wide source
+  lint green.
+
+Validation:
+
+- `uv run ruff check src/tomojax/bench --output-format=concise` passed.
+- `uv run ruff check src --statistics` passed.
+- `uv run ruff format --check src` passed.
+- `uv run pytest tests/test_bench_forward_projector.py tests/test_bench_pallas_sanity.py tests/test_bench_alignment_smoke.py tests/test_alignment_scenario_catalog.py tests/test_bench_fista_iteration.py tests/test_loss_bench.py tests/test_synthetic_datasets.py -q`
+  passed with 82 tests.
+- `just production-surface-check` passed with 75 focused tests and all 4 import
+  contracts kept.

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 import json
-from pathlib import Path
 import statistics
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +18,10 @@ from tomojax.bench.forward_projector import (
 )
 from tomojax.core.projector import forward_project_view_T
 from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 FISTA_ITERATION_SUITE_NAMES = ("fista_iteration",)
 FISTA_SMALL_PALLAS_TILE_SHAPE = (12, 4)

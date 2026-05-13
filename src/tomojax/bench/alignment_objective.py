@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 import json
 import math
 from pathlib import Path
 import statistics
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +19,9 @@ from tomojax.align.objectives.loss_specs import L2LossSpec
 from tomojax.bench.forward_projector import _device_metadata
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True)

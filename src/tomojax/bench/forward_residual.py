@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 import importlib
 import json
 from pathlib import Path
 import statistics
 import time
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +25,9 @@ from tomojax.bench.forward_projector import (
     sinogram_dispatch_selected_mode,
 )
 from tomojax.core.projector import forward_project_view_T
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ResidualModeName = Literal[
     "jax_materialized",

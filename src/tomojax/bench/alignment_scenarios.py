@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from tomojax.align.model.dof_specs import dof_spec
 from tomojax.align.model.schedules import schedule_preset
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 GeometryType = Literal["parallel", "lamino"]
 ScenarioCategory = Literal["capability", "stress", "pose_parity", "diagnostic"]

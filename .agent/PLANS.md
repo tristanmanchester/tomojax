@@ -1210,6 +1210,12 @@ and proposed next fix before stopping.
   kept the production-facing contract that calibration primitives are consumed
   through `tomojax.geometry`. Focused calibration tests passed with 37 tests;
   `just production-surface-check` still passes.
+- [x] The developer-only `src/tomojax/bench` package now passes Ruff under an
+  explicit diagnostic quarantine rule in `pyproject.toml`. The rule documents
+  that long benchmark runners are not production API surfaces, while remaining
+  non-quarantine issues such as import order and pathlib usage were fixed.
+  Focused benchmark tests passed with 82 tests; repo-wide `uv run ruff check
+  src --statistics` and `uv run ruff format --check src` now pass.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

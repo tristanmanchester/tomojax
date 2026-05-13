@@ -86,7 +86,7 @@ def _sample_forward_config(rng: np.random.Generator, seed: int) -> ForwardSinogr
         gather_dtype="fp32",
         pose_mode="general_5d",
         pallas_state_mode="cached",
-        pallas_tile_shape=tuple((int(rng.choice([8, 12, 16, 24])), int(rng.choice([4, 8])))),
+        pallas_tile_shape=(int(rng.choice([8, 12, 16, 24])), int(rng.choice([4, 8]))),
         pallas_num_warps=1,
     )
 
