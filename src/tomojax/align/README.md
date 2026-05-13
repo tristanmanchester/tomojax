@@ -6,9 +6,9 @@
 geometry updates, continuation policy, observability reporting, gauge
 canonicalisation, and solver traces.
 
-The current package still contains transitional pre-v2 staged alignment code.
-This README and `api.py` define the public boundary while later milestones
-delete or migrate internal owners.
+This README and `api.py` define the public boundary. Diagnostic runners and
+retained compatibility aliases remain internal/developer surfaces unless they
+are explicitly re-exported below.
 
 ## Public API
 
@@ -61,7 +61,7 @@ Forbidden dependencies:
 
 - private implementation files from other deep modules
 - generic utility modules
-- new legacy compatibility layers
+- new compatibility aliases outside the documented facade
 
 ## Invariants
 
@@ -91,7 +91,7 @@ Forbidden dependencies:
 
 ## Tests
 
-- Existing alignment tests cover transitional behavior.
+- Existing alignment tests cover retained staged behavior.
 - `tests/test_alternating_solver_smoke.py` covers the Phase 7 deterministic
   artifact smoke run.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.

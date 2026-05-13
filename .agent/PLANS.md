@@ -149,6 +149,10 @@ Tasks:
       production modules import `tomojax.data` directly, keeping measured IO
       behind `tomojax.io` and synthetic generation behind `tomojax.datasets`.
       `just production-surface-check` passed with 73 focused tests.
+- [x] Public architecture wording cleanup: removed temporary-era wording from
+      the root README and public align/recon facade docs, renamed the alignment
+      compatibility alias map, and expanded public wording guards to cover
+      those docs. `just production-surface-check` passed with 73 focused tests.
 
 Historical productionization plan follows for context.
 

@@ -15279,3 +15279,18 @@ Validation:
 Validation:
 
 - `just production-surface-check` passed with 73 focused tests.
+
+### Public architecture wording cleanup
+
+- Removed temporary-era wording from the root README and the public
+  `tomojax.align` / `tomojax.recon` module READMEs. Retained compatibility
+  aliases are now described as bounded internal/developer surfaces rather than
+  production API.
+- Renamed the alignment facade's compatibility alias map away from
+  development-era terminology without changing the import aliases themselves.
+- Expanded the public wording guard to cover the root README plus the align and
+  recon module facade docs.
+
+Validation:
+
+- `just production-surface-check` passed with 73 focused tests.

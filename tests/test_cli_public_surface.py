@@ -72,11 +72,15 @@ def test_current_docs_keep_diagnostics_under_dev_namespace() -> None:
 
 def test_public_cli_docs_avoid_development_era_terms() -> None:
     public_cli_paths = [
+        Path("README.md"),
+        Path("src/tomojax/align/README.md"),
+        Path("src/tomojax/align/__init__.py"),
         Path("src/tomojax/cli/README.md"),
         Path("src/tomojax/cli/main.py"),
         Path("src/tomojax/cli/simulate.py"),
         Path("src/tomojax/io/README.md"),
         Path("src/tomojax/io/_datasets.py"),
+        Path("src/tomojax/recon/README.md"),
     ]
     development_terms = re.compile(r"\b(legacy|transitional|pre-v2)\b", re.IGNORECASE)
     leaks = {

@@ -5,10 +5,9 @@
 `tomojax.recon` owns volume reconstruction routines, schedules, priors, trace
 rows, warm starts, and non-negativity/support constraints.
 
-The current package still contains transitional reconstruction code. This
-README and `api.py` define the public boundary while later milestones migrate
-the default reconstruction step to FISTA / Huber-TV FISTA against the v2
-forward model.
+This README and `api.py` define the public reconstruction boundary. Retained
+reference helpers remain available for diagnostics and warm starts, while the
+production reconstruction path should flow through the facade.
 
 ## Public API
 
@@ -74,5 +73,5 @@ Forbidden dependencies:
 
 ## Tests
 
-- Existing reconstruction tests cover transitional behavior.
+- Existing reconstruction tests cover retained reconstruction behavior.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.

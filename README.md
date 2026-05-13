@@ -68,7 +68,8 @@ just typecheck
 just check
 ```
 
-`just check` is the target milestone gate. It may fail while the old
-transitional implementation is being replaced; do not weaken the guardrails to
-make old code pass. Instead, remove or migrate the old code into the v2 deep
-module architecture and record temporary failures in `docs/implementation_log.md`.
+`just check` is the target milestone gate. It may fail while retained internal
+implementation code is being migrated; do not weaken the guardrails to make
+that code pass. Instead, remove or migrate retained code into the v2 deep
+module architecture and record temporary failures in
+`docs/implementation_log.md`.
