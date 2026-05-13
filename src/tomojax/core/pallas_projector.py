@@ -1,11 +1,14 @@
+"""Pallas projector/backprojector kernels and Python wrappers."""
+
+# ruff: noqa: ANN001, ANN202, PLR0915
+
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 import functools
 import math
 import operator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 from jax.experimental import pallas as pl
@@ -25,6 +28,9 @@ from .validation import (
     validate_projection_stack,
     validate_volume,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class PallasProjectorUnsupported(ValueError):
@@ -514,7 +520,7 @@ def _resolve_effective_pallas_n_steps(
     max_path_length = float(np.min(support_lengths[active_axes] / abs_dir[active_axes]))
     # Preserve a small fp32/slab-boundary guard; per-ray n_steps_ray still masks
     # the exact active samples.
-    effective_n_steps = int(math.ceil(max_path_length / float(step_size))) + 2
+    effective_n_steps = math.ceil(max_path_length / float(step_size)) + 2
     return max(1, min(int(resolved_n_steps), effective_n_steps))
 
 
@@ -550,7 +556,7 @@ def _resolve_effective_pallas_n_steps_for_stack(
         axis=1,
     )
     max_path_length = float(np.max(path_lengths))
-    effective_n_steps = int(math.ceil(max_path_length / float(step_size))) + 2
+    effective_n_steps = math.ceil(max_path_length / float(step_size)) + 2
     return max(1, min(int(resolved_n_steps), effective_n_steps))
 
 
@@ -805,10 +811,7 @@ def _validate_public_call(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
         )
 
-    if step_size is None:
-        step_size_value = float(grid.vy)
-    else:
-        step_size_value = float(step_size)
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
     effective_n_steps_value = _resolve_effective_pallas_n_steps(
         T,
@@ -895,10 +898,7 @@ def _validate_public_sinogram_call(
             _unsupported("real Pallas lowering is unavailable on CPU; pass interpret=True")
         )
 
-    if step_size is None:
-        step_size_value = float(grid.vy)
-    else:
-        step_size_value = float(step_size)
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
     n_steps_value = _resolve_n_steps(grid, step_size_value, n_steps)
     effective_n_steps_value = _resolve_effective_pallas_n_steps_for_stack(
         T_stack,
@@ -2088,10 +2088,7 @@ def prepare_forward_project_view_T_pallas_state(
             )
         )
 
-    if step_size is None:
-        step_size_value = float(grid.vy)
-    else:
-        step_size_value = float(step_size)
+    step_size_value = float(grid.vy) if step_size is None else float(step_size)
     resolved_n_steps = _resolve_n_steps(grid, step_size_value, n_steps)
     effective_n_steps = _resolve_effective_pallas_n_steps(
         T,
@@ -2213,6 +2210,7 @@ class BoundForwardProjectViewTPallas:
         )
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
+        """Project ``volume`` with the cached single-view traversal state."""
         nx, ny, nz = validate_volume(
             volume,
             Grid(nx=self.state.nx, ny=self.state.ny, nz=self.state.nz, vx=1.0, vy=1.0, vz=1.0),
@@ -3090,6 +3088,7 @@ class BoundForwardProjectViewsTPallas:
         self.unroll = unroll
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
+        """Project ``volume`` for the cached pose stack."""
         return forward_project_views_T_pallas_with_state(
             self.state,
             volume,
@@ -3115,6 +3114,7 @@ class BoundForwardProjectResidualSseTPallas:
         self.unroll = unroll
 
     def __call__(self, volume: jnp.ndarray) -> jnp.ndarray:
+        """Return residual SSE for ``volume`` against the cached target stack."""
         return forward_project_residual_sse_T_pallas_with_state(
             self.state,
             volume,

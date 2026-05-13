@@ -1192,6 +1192,12 @@ and proposed next fix before stopping.
   annotated JAX scan helpers, replaced mutable FISTA/SPDHG config defaults, and
   kept existing numerical routines behaviorally unchanged. Focused reconstruction
   tests passed with 136 tests and 3 expected Pallas lowering skips.
+- [x] The whole `src/tomojax/core` package now passes Ruff on its own. The
+  cleanup documented public geometry/multires/operator/validation APIs, added
+  explicit callable docs to Pallas wrappers, and kept dense Pallas/reference
+  projector lint exceptions narrow to existing kernel annotation/complexity
+  debt. Focused core/projector tests passed with 218 tests and 10 expected
+  real-Pallas GPU skips; `just production-surface-check` still passes.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

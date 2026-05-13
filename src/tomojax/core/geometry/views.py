@@ -1,9 +1,14 @@
+"""Helpers for materialising per-view pose stacks."""
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
-from .base import Geometry
+if TYPE_CHECKING:
+    from .base import Geometry
 
 
 def stack_view_poses(
@@ -12,6 +17,7 @@ def stack_view_poses(
     *,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
+    """Stack world-from-object poses for the first ``n_views`` views."""
     from .parallel import ParallelGeometry
 
     if isinstance(geometry, ParallelGeometry):

@@ -1,13 +1,18 @@
+"""Resolution-pyramid helpers for grids, detectors, projections, and volumes."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
 import math
+from typing import TYPE_CHECKING, Any
 
 import jax.image as jimage
 import jax.numpy as jnp
 
 from .geometry.base import Detector, Grid
 from .validation import validate_detector, validate_grid, validate_projection_stack
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def validate_scale_factor(factor: object) -> int:
@@ -29,9 +34,9 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
     """
     f = validate_scale_factor(factor)
     validate_grid(grid, "scale_grid grid")
-    nx = int(math.ceil(grid.nx / f))
-    ny = int(math.ceil(grid.ny / f))
-    nz = int(math.ceil(grid.nz / f))
+    nx = math.ceil(grid.nx / f)
+    ny = math.ceil(grid.ny / f)
+    nz = math.ceil(grid.nz / f)
     return Grid(
         nx=nx,
         ny=ny,
@@ -49,14 +54,14 @@ def scale_detector(det: Detector, factor: int) -> Detector:
 
     Supports non-divisible sizes by using ceil(n/f) and increasing pixel size.
     The projector operates in world units; increasing du/dv by `factor` keeps
-    per-ray spacing consistent with decimated projections. `bin_projections`
-    selects the center sample from each padded f×f block, so the coarse detector
+    per-ray spacing consistent with decimated projections. ``bin_projections``
+    selects the center sample from each padded f x f block, so the coarse detector
     center must shift to keep those coarse rays aligned with the sampled pixels.
     """
     f = validate_scale_factor(factor)
     validate_detector(det, "scale_detector detector")
-    nu = int(math.ceil(det.nu / f))
-    nv = int(math.ceil(det.nv / f))
+    nu = math.ceil(det.nu / f)
+    nv = math.ceil(det.nv / f)
 
     def _scaled_center(n: int, d: float, center: float) -> float:
         pad = (f - (n % f)) % f
@@ -98,7 +103,7 @@ def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
     """Downsample projections by strided pick with symmetric edge padding.
 
     Pads to make dims divisible by `factor` (edge mode), then takes one pixel
-    per f×f block using a centered offset (f//2). This preserves per-ray scale
+    per f x f block using a centered offset (f//2). This preserves per-ray scale
     better than averaging while tolerating arbitrary input sizes.
     """
     f = validate_scale_factor(factor)
@@ -111,6 +116,7 @@ def bin_projections(proj: jnp.ndarray, factor: int) -> jnp.ndarray:
 
 
 def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
+    """Downsample a volume by block averaging with edge padding."""
     f = validate_scale_factor(factor)
     if f == 1:
         return vol
@@ -141,8 +147,9 @@ def upsample_volume(
 
 def create_resolution_pyramid(
     grid: Grid, detector: Detector, projections: jnp.ndarray, factors: Iterable[int]
-):
-    levels: list[dict] = []
+) -> list[dict[str, Any]]:
+    """Create coarser grid/detector/projection levels for each scale factor."""
+    levels: list[dict[str, Any]] = []
     for f in factors:
         factor = validate_scale_factor(f)
         levels.append(

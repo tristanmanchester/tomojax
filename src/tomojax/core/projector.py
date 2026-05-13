@@ -1,3 +1,7 @@
+"""Reference JAX projector and backprojector operators."""
+
+# ruff: noqa: ANN001, ANN202
+
 from __future__ import annotations
 
 from collections import OrderedDict
@@ -166,7 +170,7 @@ def _resolve_n_steps(grid: Grid, step_size: float, n_steps: int | None) -> int:
         float((grid.nz + 1) * grid.vz),
     )
     max_path_length = math.sqrt(sum(length * length for length in support_lengths))
-    return int(math.ceil(max_path_length / float(step_size)))
+    return math.ceil(max_path_length / float(step_size))
 
 
 def _projector_traversal_state(
@@ -248,7 +252,7 @@ def _projector_traversal_state(
 
 
 @jax.jit
-def _flat_index(ix, iy, iz, nx, ny, nz):
+def _flat_index(ix, iy, iz, _nx, ny, nz):
     return ix * (ny * nz) + iy * nz + iz
 
 
@@ -436,7 +440,7 @@ def backproject_view_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Backproject one detector image as the explicit adjoint of the configured projector."""
-    acc = _backproject_view_accum_T(
+    return _backproject_view_accum_T(
         T,
         grid,
         detector,
@@ -447,7 +451,6 @@ def backproject_view_T(
         gather_dtype=gather_dtype,
         det_grid=det_grid,
     )
-    return acc
 
 
 def sum_backproject_views_T(

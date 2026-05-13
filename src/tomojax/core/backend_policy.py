@@ -1,10 +1,12 @@
+"""Backend selection and provenance helpers."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
-ProjectorBackend: TypeAlias = Literal["jax", "pallas"]
-ProjectorBackendInput: TypeAlias = ProjectorBackend | str
+type ProjectorBackend = Literal["jax", "pallas"]
+type ProjectorBackendInput = ProjectorBackend | str
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,9 +22,11 @@ class BackendProvenance:
 
     @property
     def eligible_for_speed_claim(self) -> bool:
+        """Return whether timings can be described as using the requested backend."""
         return self.status == "supported" and self.requested_backend == self.actual_backend
 
     def to_dict(self) -> dict[str, object]:
+        """Return JSON-compatible backend provenance."""
         data = asdict(self)
         data["eligible_for_speed_claim"] = self.eligible_for_speed_claim
         return data

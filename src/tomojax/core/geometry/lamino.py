@@ -1,15 +1,21 @@
+"""Laminography geometry helpers for tilted-axis parallel-beam scans."""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
 from .transforms import align_u_to_v, rot_axis_angle
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 
 def laminography_tilt_matrix(tilt_deg: float, tilt_about: str) -> np.ndarray:
+    """Return the fixed rotation that tilts the nominal tomography axis."""
     tilt = float(np.deg2rad(tilt_deg))
     if abs(tilt) < 1e-12:
         return np.eye(3, dtype=np.float64)
@@ -23,6 +29,7 @@ def laminography_tilt_matrix(tilt_deg: float, tilt_about: str) -> np.ndarray:
 
 
 def laminography_axis_unit(tilt_deg: float, tilt_about: str) -> np.ndarray:
+    """Return the unit rotation axis implied by the laminography tilt."""
     R_tilt = laminography_tilt_matrix(tilt_deg, tilt_about)
     ax = R_tilt @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
     return ax / (np.linalg.norm(ax) + 1e-12)
@@ -74,5 +81,7 @@ class LaminographyGeometry:
         return tuple(map(tuple, T))  # 4x4
 
     def rays_for_view(self, i: int) -> RayPair:
+        """Return detector ray callbacks for inspection tools."""
+        del i
         # Use the same detector plane and beam direction as parallel CT.
         return _parallel_detector_rays(self.grid, self.detector)

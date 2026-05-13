@@ -9,11 +9,13 @@ import numpy as np
 
 
 def hat_so3(w: np.ndarray) -> np.ndarray:
+    """Return the skew-symmetric matrix for a 3-vector."""
     wx, wy, wz = w
     return np.array([[0.0, -wz, wy], [wz, 0.0, -wx], [-wy, wx, 0.0]], dtype=np.float64)
 
 
 def exp_so3(w: np.ndarray) -> np.ndarray:
+    """Map an axis-angle vector in so(3) to a 3x3 rotation matrix."""
     theta = float(np.linalg.norm(w))
     if theta < 1e-12:
         return np.eye(3, dtype=np.float64)
@@ -54,6 +56,7 @@ def compose(T_a: np.ndarray, T_b: np.ndarray) -> np.ndarray:
 
 
 def invert(T: np.ndarray) -> np.ndarray:
+    """Invert a homogeneous SE(3) transform."""
     R = T[:3, :3]
     t = T[:3, 3]
     Ti = np.eye(4, dtype=T.dtype)
@@ -64,6 +67,7 @@ def invert(T: np.ndarray) -> np.ndarray:
 
 
 def rotz(phi: float) -> np.ndarray:
+    """Return a homogeneous transform for rotation about +z."""
     c, s = np.cos(phi), np.sin(phi)
     R = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     T = np.eye(4, dtype=np.float64)
@@ -72,6 +76,7 @@ def rotz(phi: float) -> np.ndarray:
 
 
 def rot_axis_angle(axis: np.ndarray, theta: float) -> np.ndarray:
+    """Return a homogeneous transform for rotation about an arbitrary axis."""
     a = np.asarray(axis, dtype=np.float64)
     axis_norm = float(np.linalg.norm(a))
     if axis_norm < 1e-12:

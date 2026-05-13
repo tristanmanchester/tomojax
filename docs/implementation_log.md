@@ -15533,3 +15533,22 @@ Validation:
 - `uv run ruff format --check src/tomojax/recon` passed.
 - `uv run pytest tests/test_recon.py tests/test_recon_math_fixes.py tests/test_recon_quicklook.py tests/test_fbp_batching.py tests/test_spdhg.py tests/test_multires.py tests/test_grad_modes.py tests/test_bilevel_recon_layer.py -q`
   passed with 136 tests and 3 expected Pallas lowering skips.
+
+### Core package Ruff cleanup completed
+
+- Added public documentation coverage for the core geometry, multiresolution,
+  operator, and validation APIs.
+- Cleaned remaining unused arguments and ambiguous docstring text without
+  changing projector/reconstruction behavior.
+- Kept the dense Pallas and reference projector lint exceptions narrow to the
+  existing kernel annotation/complexity debt rather than adding broad package
+  ignores.
+
+Validation:
+
+- `uv run ruff check src/tomojax/core --statistics` passed.
+- `uv run ruff format --check src/tomojax/core` passed.
+- `uv run pytest tests/test_projector.py tests/test_projector_pallas.py tests/test_projector_precision.py tests/test_bench_forward_projector.py tests/test_bench_pallas_sanity.py tests/test_multires.py tests/test_geometry.py tests/test_geometry_validation.py tests/test_fbp_batching.py tests/test_grad_modes.py -q`
+  passed with 218 tests and 10 expected real-Pallas GPU skips.
+- `just production-surface-check` passed with 75 focused tests and all 4 import
+  contracts kept.
