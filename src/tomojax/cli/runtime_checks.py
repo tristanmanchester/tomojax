@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 
 def _print_runtime() -> None:
     """Print the active JAX backend and devices."""
     import jax
 
-    print(f"JAX backend: {jax.default_backend()}")
-    print(f"Devices: {jax.devices()}")
+    jax_runtime: Any = jax
+    print(f"JAX backend: {jax_runtime.default_backend()}")
+    print(f"Devices: {jax_runtime.devices()}")
 
 
 def test_gpu_main() -> None:

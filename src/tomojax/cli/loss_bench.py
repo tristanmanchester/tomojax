@@ -15,6 +15,7 @@ import json
 import logging
 from pathlib import Path
 import time
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -41,6 +42,17 @@ type BenchmarkResultValue = str | float | None
 
 def _ensure_dir(p: str) -> None:
     Path(p).mkdir(parents=True, exist_ok=True)
+
+
+def _jnp_float32_array(value: object) -> Any:
+    return jnp.asarray(value, dtype=jnp.float32)  # pyright: ignore[reportUnknownMemberType]
+
+
+def _result_metric(result: dict[str, BenchmarkResultValue], key: str) -> float:
+    value = result.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return 1e9
 
 
 def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
@@ -79,7 +91,7 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
     )
     du, dv = float(det.du), float(det.dv)
     thetas = np.asarray(dataset_mis.angles_deg, dtype=np.float32)
-    projections = jnp.asarray(dataset_mis.projections, jnp.float32)
+    projections = _jnp_float32_array(dataset_mis.projections)
 
     gn_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
     high_iter_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
@@ -123,7 +135,7 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
         err_msg = None
         metrics: dict[str, float] = {}
         try:
-            p_est_np: np.ndarray
+            p_est_np: np.ndarray | None = None
             x_est_np: np.ndarray | None = None
             if out_path.exists():
                 logging.info(
@@ -144,11 +156,11 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
                     run_name,
                 )
                 status = "missing"
-                p_est_np = None  # type: ignore[assignment]
+                p_est_np = None
             elif not is_gn:
                 logging.warning("[%s] skipped: not an LS-like loss (GN-only mode)", run_name)
                 status = "skipped"
-                p_est_np = None  # type: ignore[assignment]
+                p_est_np = None
             else:
                 outer_iters = (
                     args.outer_iters
@@ -187,11 +199,11 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
                 if levels is not None:
                     from tomojax.align.pipeline import align_multires
 
-                    x_est, p_est, info = align_multires(
+                    x_est, p_est, _info = align_multires(
                         geom, grid, det, projections, factors=levels, cfg=cfg
                     )
                 else:
-                    x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
+                    x_est, p_est, _info = align(geom, grid, det, projections, cfg=cfg)
                 p_est_np = np.asarray(p_est)
                 x_est_np = np.asarray(x_est)
                 save_meta = dataset_mis.copy_metadata()
@@ -214,13 +226,13 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
                 metrics.update(gf_m)
                 if args.gt_metric != "none":
                     y_hat = _project_gt_with_estimated_poses(
-                        jnp.asarray(metadata_mis.volume, jnp.float32),
+                        _jnp_float32_array(metadata_mis.volume),
                         grid,
                         det,
                         geom,
                         p_est_np,
                     )
-                    y = jnp.asarray(dataset_mis.projections, jnp.float32)
+                    y = _jnp_float32_array(dataset_mis.projections)
                     gt_mse = float(jnp.mean((y_hat - y) ** 2).item())
                     metrics["gt_mse"] = gt_mse
         except Exception as e:
@@ -315,7 +327,9 @@ def _best_result(
         return None
     return min(
         ok,
-        key=lambda result: (result.get("rot_rmse_deg", 1e9) + result.get("trans_rmse_px", 1e9)),
+        key=lambda result: (
+            _result_metric(result, "rot_rmse_deg") + _result_metric(result, "trans_rmse_px")
+        ),
     )
 
 

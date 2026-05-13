@@ -90,10 +90,11 @@ def _jax_runtime() -> dict[str, Any]:
     except Exception as exc:
         return {"available": False, "backend": None, "devices": [], "error": str(exc)}
 
+    jax_runtime: Any = jax
     report: dict[str, Any] = {"available": True, "backend": None, "devices": []}
     errors: list[str] = []
     try:
-        report["backend"] = _normalize_json(jax.default_backend())
+        report["backend"] = _normalize_json(jax_runtime.default_backend())
     except Exception as exc:
         errors.append(f"default_backend: {exc}")
     try:
@@ -105,7 +106,7 @@ def _jax_runtime() -> dict[str, Any]:
                 "process_index": _device_field(device, "process_index"),
                 "repr": str(device),
             }
-            for device in jax.devices()
+            for device in jax_runtime.devices()
         ]
     except Exception as exc:
         errors.append(f"devices: {exc}")
@@ -135,7 +136,7 @@ def build_manifest(
     }
     # Keep this helper honest: callers should be able to pass the result straight
     # to json.dump(..., allow_nan=False).
-    json.dumps(manifest, allow_nan=False)
+    _ = json.dumps(manifest, allow_nan=False)
     return manifest
 
 
@@ -146,4 +147,4 @@ def save_manifest(path: str | os.PathLike[str], manifest: Mapping[str, Any]) -> 
         out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as fh:
         json.dump(_normalize_json(manifest), fh, indent=2, sort_keys=True, allow_nan=False)
-        fh.write("\n")
+        _ = fh.write("\n")
