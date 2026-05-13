@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tomojax.core import setup_logging
 from tomojax.io import PreprocessConfig, preprocess_nxtomo
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+@dataclass(frozen=True)
+class PreprocessCommand:
+    """Typed command plan for raw NXtomo preprocessing."""
+
+    input_path: Path
+    output_path: Path
+    config: PreprocessConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -21,60 +31,60 @@ def _build_parser() -> argparse.ArgumentParser:
             "transmission or absorption projections"
         )
     )
-    parser.add_argument("input", help="Input raw .nxs/.h5/.hdf5 file")
-    parser.add_argument("output", help="Output corrected .nxs/.h5/.hdf5 file")
-    parser.add_argument(
+    _ = parser.add_argument("input", help="Input raw .nxs/.h5/.hdf5 file")
+    _ = parser.add_argument("output", help="Output corrected .nxs/.h5/.hdf5 file")
+    _ = parser.add_argument(
         "--log",
         action="store_true",
         help="Write absorption projections (-log transmission) instead of transmission",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--epsilon",
         type=float,
         default=1e-6,
         help="Positive floor for flat-dark denominator and log safeguard",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--clip-min",
         type=float,
         default=None,
         help="Optional positive floor applied to transmission before writing/log",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--dtype",
         dest="output_dtype",
         choices=["float32", "float64"],
         default="float32",
         help="Output projection dtype",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--data-path",
         default=None,
         help="Override HDF5 path to raw frame stack [n_frames, nv, nu]",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--angles-path",
         default=None,
         help="Override HDF5 path to rotation angles [n_frames]",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--image-key-path",
         default=None,
         help="Override HDF5 path to image_key [n_frames] with 0=sample, 1=flat, 2=dark",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--assume-dark-field",
         type=float,
         default=None,
         help="Explicit constant dark field to use when no dark frames are present",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--assume-flat-field",
         type=float,
         default=None,
         help="Explicit constant flat field to use when no flat frames are present",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--select-views",
         default=None,
         help=(
@@ -82,14 +92,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "(e.g. '0:90,120:180:2')"
         ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--reject-views",
         default=None,
         help=(
             "Reject these sample-view indices/ranges after image_key filtering (e.g. '12,57:61')"
         ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--select-views-file",
         default=None,
         help=(
@@ -97,7 +107,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "whitespace, and # comments allowed"
         ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--reject-views-file",
         default=None,
         help=(
@@ -105,7 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "whitespace, and # comments allowed"
         ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--auto-reject",
         choices=["off", "nonfinite", "outliers", "both"],
         default="off",
@@ -114,13 +124,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "and/or robust intensity outliers"
         ),
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--outlier-z-threshold",
         type=float,
         default=6.0,
         help="Robust z-score threshold for --auto-reject outliers/both",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--crop",
         default=None,
         help="Detector ROI crop in projection axis order y0:y1,x0:x1",
@@ -128,11 +138,58 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _optional_str(value: object) -> str | None:
+    return cast("str | None", value)
+
+
+def _optional_float(value: object) -> float | None:
+    return cast("float | None", value)
+
+
+def _parse_command(argv: Sequence[str] | None) -> PreprocessCommand:
+    """Parse CLI arguments into a typed preprocessing command plan."""
+    args = _build_parser().parse_args(argv)
+    clip_min = cast("float | None", args.clip_min)
+    data_path = cast("str | None", args.data_path)
+    angles_path = cast("str | None", args.angles_path)
+    image_key_path = cast("str | None", args.image_key_path)
+    assume_dark_field = cast("float | None", args.assume_dark_field)
+    assume_flat_field = cast("float | None", args.assume_flat_field)
+    select_views = cast("str | None", args.select_views)
+    reject_views = cast("str | None", args.reject_views)
+    select_views_file = cast("str | None", args.select_views_file)
+    reject_views_file = cast("str | None", args.reject_views_file)
+    crop = cast("str | None", args.crop)
+    config = PreprocessConfig(
+        log=cast("bool", args.log),
+        epsilon=cast("float", args.epsilon),
+        clip_min=_optional_float(clip_min),
+        output_dtype=cast("str", args.output_dtype),
+        data_path=_optional_str(data_path),
+        angles_path=_optional_str(angles_path),
+        image_key_path=_optional_str(image_key_path),
+        assume_dark_field=_optional_float(assume_dark_field),
+        assume_flat_field=_optional_float(assume_flat_field),
+        select_views=_optional_str(select_views),
+        reject_views=_optional_str(reject_views),
+        select_views_file=_optional_str(select_views_file),
+        reject_views_file=_optional_str(reject_views_file),
+        auto_reject=cast("str", args.auto_reject),
+        outlier_z_threshold=cast("float", args.outlier_z_threshold),
+        crop=_optional_str(crop),
+    )
+    return PreprocessCommand(
+        input_path=Path(cast("str", args.input)),
+        output_path=Path(cast("str", args.output)),
+        config=config,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the raw NXtomo preprocessing command."""
-    args = _build_parser().parse_args(argv)
-    input_path = Path(args.input)
-    output_path = Path(args.output)
+    command = _parse_command(argv)
+    input_path = command.input_path
+    output_path = command.output_path
 
     if not input_path.exists():
         print(f"ERROR: file not found: {input_path}", file=sys.stderr)
@@ -145,26 +202,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     setup_logging()
-    config = PreprocessConfig(
-        log=bool(args.log),
-        epsilon=float(args.epsilon),
-        clip_min=args.clip_min,
-        output_dtype=str(args.output_dtype),
-        data_path=args.data_path,
-        angles_path=args.angles_path,
-        image_key_path=args.image_key_path,
-        assume_dark_field=args.assume_dark_field,
-        assume_flat_field=args.assume_flat_field,
-        select_views=args.select_views,
-        reject_views=args.reject_views,
-        select_views_file=args.select_views_file,
-        reject_views_file=args.reject_views_file,
-        auto_reject=str(args.auto_reject),
-        outlier_z_threshold=float(args.outlier_z_threshold),
-        crop=args.crop,
-    )
     try:
-        result = preprocess_nxtomo(input_path, output_path, config)
+        result = preprocess_nxtomo(input_path, output_path, command.config)
     except Exception as exc:
         print(f"ERROR: could not preprocess {input_path}: {exc}", file=sys.stderr)
         return 1

@@ -15010,3 +15010,22 @@ Validation:
 - `uv run pytest tests/test_cli_config.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 860 to 842.
+
+### Preprocess CLI command-plan adapter
+
+- Split `tomojax preprocess` into parser construction, a typed
+  `PreprocessCommand`, and a typed `PreprocessConfig` assembly step before
+  dispatching to `tomojax.io.preprocess_nxtomo`. This keeps raw real-data
+  flat/dark correction behind the public IO facade and removes the argparse
+  `Any` surface from the product preprocessing command.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/preprocess.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/preprocess.py` passed.
+- Focused preprocessing CLI smoke tests passed:
+  `test_preprocess_cli_smoke` and
+  `test_preprocess_cli_combines_crop_reject_and_auto_reject`.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 842 to 788.

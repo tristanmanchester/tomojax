@@ -1002,6 +1002,12 @@ and proposed next fix before stopping.
   CLI package. Focused config tests, Ruff, single-file Basedpyright with
   0 warnings, and `just production-surface-check` passed. Full CLI Basedpyright
   warnings are now 842 with 0 errors.
+- [x] Preprocess command adapter cleanup: `tomojax preprocess` now parses into
+  a typed `PreprocessCommand` and assembles a typed `PreprocessConfig` before
+  calling the public `tomojax.io.preprocess_nxtomo` facade. Focused preprocess
+  CLI smoke tests, Ruff, single-file Basedpyright with 0 warnings, and
+  `just production-surface-check` passed. Full CLI Basedpyright warnings are
+  now 788 with 0 errors.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions
