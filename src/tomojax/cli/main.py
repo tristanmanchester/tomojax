@@ -87,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "  tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs\n"
         "  tomojax preprocess raw.nxs corrected.nxs --log\n"
         "  tomojax recon corrected.nxs --out recon.nxs\n"
-        "  tomojax align corrected.nxs --out aligned.nxs --schedule cor\n"
+        "  tomojax align corrected.nxs --out aligned.nxs --mode cor\n"
         "\n"
         "Developer diagnostics and benchmark probes are grouped under tomojax dev."
     )

@@ -84,6 +84,28 @@ if TYPE_CHECKING:
     from tomojax.align.model.schedules import GaugePolicy
     from tomojax.recon.types import Regulariser
 
+type AlignmentMode = Literal["cor", "pose", "auto", "max"]
+
+_PUBLIC_HELP_OPTIONS = frozenset(
+    {
+        "-h",
+        "--help",
+        "--config",
+        "--data",
+        "--mode",
+        "--quality",
+        "--out",
+        "--save-manifest",
+        "--progress",
+        "--roi",
+        "--grid",
+        "--volume-axes",
+        "--checkpoint",
+        "--checkpoint-every",
+        "--resume",
+    }
+)
+
 
 def _positive_float(value: str) -> float:
     try:
@@ -274,13 +296,27 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     p.add_argument("--config", help="Load command defaults from a TOML config file")
     p.add_argument("--data", help="Input .nxs")
     p.add_argument(
-        "--align-profile",
+        "--mode",
+        choices=["cor", "pose", "auto", "max"],
+        default="auto",
+        help=(
+            "High-level alignment mode. cor solves detector centre; pose solves "
+            "per-view motion; auto runs the default setup+pose workflow; max "
+            "uses the slower reference-quality posture."
+        ),
+    )
+    p.add_argument(
+        "--quality",
+        dest="align_profile",
         choices=["lightning", "tortoise"],
         default="lightning",
-        help=(
-            "High-level alignment posture: lightning is the default aggressive path; "
-            "tortoise favors JAX/FP32/reference-oriented behavior"
-        ),
+        help="Execution quality posture: lightning is fast; tortoise is slower and conservative.",
+    )
+    p.add_argument(
+        "--align-profile",
+        dest="align_profile",
+        choices=["lightning", "tortoise"],
+        help=argparse.SUPPRESS,
     )
     p.add_argument("--outer-iters", type=int, default=5)
     p.add_argument("--recon-iters", type=int, default=10)
@@ -680,7 +716,17 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
         default=DISK_VOLUME_AXES,
         help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
     )
+    _hide_expert_alignment_help(p)
     return p
+
+
+def _hide_expert_alignment_help(parser: argparse.ArgumentParser) -> None:
+    """Keep default alignment help product-shaped while accepting expert flags."""
+    for action in parser._actions:
+        if not action.option_strings:
+            continue
+        if set(action.option_strings).isdisjoint(_PUBLIC_HELP_OPTIONS):
+            action.help = argparse.SUPPRESS
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +735,7 @@ class AlignCommand:
 
     data: str
     out: str
+    mode: AlignmentMode
     align_profile: str
     outer_iters: int
     recon_iters: int
@@ -751,6 +798,7 @@ def _align_command_from_args(args: argparse.Namespace) -> AlignCommand:
     return AlignCommand(
         data=cast("str", args.data),
         out=cast("str", args.out),
+        mode=cast("AlignmentMode", args.mode),
         align_profile=cast("str", args.align_profile),
         outer_iters=cast("int", args.outer_iters),
         recon_iters=cast("int", args.recon_iters),
@@ -812,6 +860,7 @@ def _align_command_from_args(args: argparse.Namespace) -> AlignCommand:
 def _checkpoint_cli_options(command: AlignCommand, *, gather_dtype: str) -> dict[str, object]:
     return {
         "align_profile": command.align_profile,
+        "mode": command.mode,
         "roi": command.roi,
         "grid": command.grid,
         "requested_gather_dtype": command.requested_gather_dtype,
@@ -903,6 +952,17 @@ def _checkpoint_metadata(
             schedule_state=schedule_state,
         )
     )
+
+
+def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str:
+    """Resolve the product-facing alignment mode to an internal schedule."""
+    if mode == "cor":
+        return "cor"
+    if mode == "pose":
+        return "lightning_pose" if align_profile == "lightning" else "tortoise_pose"
+    if mode == "max":
+        return "setup_safe"
+    return "setup_safe"
 
 
 def _resume_state_from_checkpoint(
@@ -1041,6 +1101,12 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     configured_keys = set(cast("list[str]", config_metadata.get("explicit_cli_keys", []))) | set(
         cast("dict[str, object]", config_metadata.get("config_file_values", {})).keys()
     )
+    if (
+        cast("str", args.mode) == "max"
+        and "align_profile" not in configured_keys
+        and "quality" not in configured_keys
+    ):
+        args.align_profile = "tortoise"
     profile_options = resolve_profiled_cli_defaults(
         align_profile=cast("str", args.align_profile),
         current={
@@ -1064,13 +1130,15 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     args.quality_tier = str(profile_options["quality_tier"])
     args.fallback_policy = str(profile_options["fallback_policy"])
     if "schedule" not in configured_keys and optimise_dofs is None:
-        args.schedule = (
-            "lightning_pose" if cast("str", args.align_profile) == "lightning" else "tortoise_pose"
+        args.schedule = _schedule_for_public_mode(
+            cast("AlignmentMode", args.mode),
+            align_profile=cast("str", args.align_profile),
         )
     config_metadata["profile_options"] = dict(profile_options)
     effective_options = config_metadata.get("effective_options")
     if isinstance(effective_options, dict):
         for key in (
+            "mode",
             "align_profile",
             "projector_backend",
             "gather_dtype",

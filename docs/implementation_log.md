@@ -15351,3 +15351,22 @@ Validation:
 - `uv run basedpyright src/tomojax/align/api.py src/tomojax/align/developer_diagnostics.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/cli/align_auto.py tests/test_cli_public_surface.py tests/test_public_facades.py`
   passed with 0 errors and 0 warnings.
 - `just production-surface-check` passed with 73 focused tests.
+
+### Public align CLI help simplified
+
+- Added `--mode {cor,pose,auto,max}` and `--quality {lightning,tortoise}` to
+  the public alignment command so the default user-facing surface describes
+  product workflows rather than internal schedules, losses, optimizers, and
+  active DOF sets.
+- Kept the existing expert flags parseable for config files, developer runs,
+  and reproducibility, but hid them from default `tomojax align --help`.
+- Mapped public modes to internal schedules: `cor -> cor`,
+  `pose -> lightning_pose/tortoise_pose`, and `auto/max -> setup_safe`, with
+  `max` selecting the conservative quality posture when no explicit quality is
+  configured.
+- Updated current public examples from `--schedule cor` to `--mode cor`.
+
+Validation:
+
+- `uv run tomojax align --help` shows the small public surface.
+- `just production-surface-check` passed with 74 focused tests.

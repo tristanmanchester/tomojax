@@ -33,7 +33,7 @@ uv run tomojax dev test-gpu
 uv run tomojax inspect /path/to/scan.nxs
 uv run tomojax align /path/to/scan.nxs \
   --out runs/real_lamino_aligned.nxs \
-  --schedule cor
+  --mode cor
 ```
 
 The dedicated staged laminography evidence runner still exists for the current

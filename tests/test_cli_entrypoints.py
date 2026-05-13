@@ -301,7 +301,7 @@ def test_preprocess_help_documents_safeguards(monkeypatch, capsys):
     assert "output" in captured.out
 
 
-def test_align_help_documents_bounds_example(monkeypatch, capsys):
+def test_align_help_keeps_product_surface_small(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["tomojax-align", "--help"])
 
     with pytest.raises(SystemExit) as exc_info:
@@ -309,24 +309,30 @@ def test_align_help_documents_bounds_example(monkeypatch, capsys):
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "--bounds" in captured.out
-    assert "det_u_px=-8:8,detector_roll_deg=-5:5" in captured.out
-    assert "--pose-model" in captured.out
-    assert "--recon-algo" in captured.out
-    assert "--views-per-batch" in captured.out
-    assert "--projector-backend" in captured.out
-    assert "--spdhg-seed" in captured.out
-    assert "--no-recon-positivity" in captured.out
+    assert "--mode" in captured.out
+    assert "--quality" in captured.out
+    assert "--out" in captured.out
+    assert "--save-manifest" in captured.out
     assert "--checkpoint" in captured.out
     assert "--checkpoint-every" in captured.out
     assert "--resume" in captured.out
-    assert "--optimise-geometry" not in captured.out
-    assert "--schedule" in captured.out
-    assert "cor" in captured.out
-    assert "det_u_px" in captured.out
-    assert "detector_roll" in captured.out
-    assert "lbfgs" in captured.out
-    assert "--lbfgs-memory-size" in captured.out
+    assert "--schedule" not in captured.out
+    assert "--bounds" not in captured.out
+    assert "--optimise-dofs" not in captured.out
+    assert "--loss" not in captured.out
+    assert "--opt-method" not in captured.out
+    assert "--recon-algo" not in captured.out
+    assert "--projector-backend" not in captured.out
+
+
+def test_align_public_modes_resolve_to_internal_schedules() -> None:
+    assert align_cli._schedule_for_public_mode("cor", align_profile="lightning") == "cor"
+    assert (
+        align_cli._schedule_for_public_mode("pose", align_profile="lightning") == "lightning_pose"
+    )
+    assert align_cli._schedule_for_public_mode("pose", align_profile="tortoise") == "tortoise_pose"
+    assert align_cli._schedule_for_public_mode("auto", align_profile="lightning") == "setup_safe"
+    assert align_cli._schedule_for_public_mode("max", align_profile="tortoise") == "setup_safe"
 
 
 def test_align_primary_dof_parser_accepts_geometry_dofs():

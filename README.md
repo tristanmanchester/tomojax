@@ -10,7 +10,7 @@ uv run tomojax inspect scan.nxs
 uv run tomojax ingest ./projections --angles angles.csv --out scan.nxs
 uv run tomojax preprocess raw.nxs corrected.nxs --log
 uv run tomojax recon corrected.nxs --out recon.nxs
-uv run tomojax align corrected.nxs --out aligned.nxs --schedule cor
+uv run tomojax align corrected.nxs --out aligned.nxs --mode cor
 ```
 
 The installed package exposes a single `tomojax` console script. Developer

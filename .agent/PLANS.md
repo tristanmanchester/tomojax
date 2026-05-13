@@ -1137,6 +1137,13 @@ and proposed next fix before stopping.
   `test_public_cli_docs_avoid_development_era_terms` to reject `mvp`, `v1`,
   `parity`, and `smoke` in the current production-facing docs. Focused
   Basedpyright and `just production-surface-check` passed.
+- [x] Public `tomojax align` help simplified: added product-facing
+  `--mode {cor,pose,auto,max}` and `--quality`, hid expert
+  schedule/loss/optimizer/DOF flags from default help while keeping them
+  accepted for configs and developer workflows, updated public examples from
+  `--schedule cor` to `--mode cor`, and covered mode-to-schedule mapping plus
+  help-surface expectations in tests. `just production-surface-check` passed
+  with 74 focused tests.
 
 ### Risks
 
