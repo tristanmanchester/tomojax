@@ -83,6 +83,12 @@ Tasks:
       Focused loss-bench tests, Ruff, single-file Basedpyright with 0 warnings,
       and `just production-surface-check` passed. Full CLI Basedpyright
       warnings are now 673 with 0 errors.
+- [x] Misalignment developer command cleanup: `tomojax dev misalign` now
+      parses into a typed `MisalignCommand` and isolates deterministic schedule
+      handling plus JAX projection behind a typed generation workflow. Focused
+      schedule tests, Ruff, single-file Basedpyright with 0 warnings, and
+      `just production-surface-check` passed. Full CLI Basedpyright warnings
+      are now 550 with 0 errors.
 
 Historical productionization plan follows for context.
 

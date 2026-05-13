@@ -15062,3 +15062,23 @@ Validation:
 - `uv run pytest tests/test_loss_bench.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 775 to 673.
+
+### Misalignment CLI command-plan adapter
+
+- Split `tomojax dev misalign` into parser construction, a typed
+  `MisalignCommand`, and a typed generation workflow. The command remains a
+  developer dataset-generation surface, but its public IO boundary now stays
+  explicit through `load_projection_payload`, `build_geometry_from_dataset_metadata`,
+  and `save_projection_payload`.
+- Tightened deterministic schedule arrays, JAX projection calls, and
+  JSON-normalized misalignment metadata so the single-file CLI type gate is
+  clean without changing the generated misalignment contract.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/misalign.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/misalign.py` passed.
+- `uv run pytest tests/test_misalign_schedules.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 673 to 550.
