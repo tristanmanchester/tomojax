@@ -7,9 +7,9 @@ production-facing surface is the grouped `tomojax` dispatcher, which exposes
 simple product commands while hiding method-level solver choices behind
 profiles.
 
-The package still contains transitional pre-v2 command modules. They remain
-importable for tests and the grouped dispatcher, but the package installs only
-the `tomojax` console script.
+The package keeps command implementations behind the grouped dispatcher. The
+installed product entrypoint is the `tomojax` console script; implementation
+modules are not separate public commands.
 
 ## Public API
 
@@ -38,14 +38,14 @@ Forbidden dependencies:
 
 ## Tests
 
-- Existing CLI tests cover transitional behavior.
+- Existing CLI tests cover command routing, manifests, and product-facing help.
 - `tomojax inspect`, `tomojax validate`, `tomojax ingest`,
   `tomojax preprocess`, `tomojax recon`, `tomojax align`, and
   `tomojax simulate` cover the public workflow.
 - `tomojax dev ...` owns benchmark and diagnostic probes that should stay out
   of the product-facing command list.
-- `tomojax dev align-auto` is a transitional staged synthetic tomography
-  benchmark runner, not the final public auto-alignment interface.
+- `tomojax dev align-auto` is a staged synthetic tomography benchmark runner,
+  not the public auto-alignment interface.
 - `tomojax dev misalign` and `tomojax dev loss-bench` are developer
   diagnostics. They route real-data containers through `tomojax.io`, but they
   should not be documented as production reconstruction workflows.

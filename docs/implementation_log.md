@@ -15177,3 +15177,19 @@ Validation:
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 61 to 19,
   all still isolated to `src/tomojax/cli/align.py`.
+
+### Public CLI wording cleanup
+
+- Removed remaining `legacy`/`transitional` wording from the public CLI package
+  README, grouped dispatcher shorthand documentation, and simulation warning
+  text. The implementation still preserves hidden aliases and compatibility
+  behavior where tests require it, but public-facing language now describes
+  those paths as shorthand, developer commands, or internal surfaces.
+- Renamed the internal `align_auto` synthetic-case alias variable away from
+  legacy terminology without changing the hidden alias contract.
+
+Validation:
+
+- `uv run ruff check src/tomojax/cli/main.py src/tomojax/cli/simulate.py src/tomojax/cli/align_auto.py`
+  passed.
+- `just production-surface-check` passed after the wording cleanup.

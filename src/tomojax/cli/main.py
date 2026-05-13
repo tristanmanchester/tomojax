@@ -187,7 +187,7 @@ def _dev_parser() -> argparse.ArgumentParser:
 
 
 def _with_data_alias(argv: list[str]) -> list[str]:
-    """Allow `tomojax recon scan.nxs --out ...` over legacy `--data scan.nxs`."""
+    """Allow `tomojax recon scan.nxs --out ...` as shorthand for `--data scan.nxs`."""
     if not argv:
         return argv
     first = argv[0]

@@ -117,6 +117,11 @@ Tasks:
       casts and typing the align run plan around `ProjectionDataset`/`Geometry`.
       `just production-surface-check` passed; full CLI Basedpyright warnings
       are now 19 with 0 errors, all still in `align.py`.
+- [x] Public CLI wording cleanup: removed remaining `legacy`/`transitional`
+      terminology from the CLI package README, grouped dispatcher shorthand
+      docs, and simulation warning text while preserving hidden aliases and
+      compatibility tests. Focused Ruff and `just production-surface-check`
+      passed.
 
 Historical productionization plan follows for context.
 

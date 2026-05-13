@@ -2,9 +2,9 @@
 
 ## Status
 
-`tomojax.data` is a transitional package retained while the v2 IO, dataset, and
-simulation deep modules absorb its responsibilities. It is not the production
-entrypoint for user data loading.
+`tomojax.data` contains lower-level persistence and generator internals used by
+the v2 IO, dataset, and simulation modules. It is not the production entrypoint
+for user data loading.
 
 ## Intended Migration
 
@@ -16,9 +16,9 @@ entrypoint for user data loading.
 
 ## Current Responsibilities
 
-This package still owns lower-level NXtomo/HDF5 persistence, legacy phantom
+This package still owns lower-level NXtomo/HDF5 persistence, retained phantom
 helpers, raw preprocessing internals, and simulation helpers used by existing
-tests and transitional commands.
+tests and developer commands.
 
 ## Boundary Rule
 
@@ -27,6 +27,6 @@ behavior in the owning v2 deep module first, then migrate call sites.
 
 ## Public API
 
-`tomojax.data.api` and the package root re-export the retained transitional
-surface for older tests and migration-only code. This is not the preferred
-production import path for new features.
+`tomojax.data.api` and the package root re-export the retained internal surface
+for tests and migration-only code. This is not the preferred production import
+path for new features.

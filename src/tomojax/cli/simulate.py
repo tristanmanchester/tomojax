@@ -230,7 +230,8 @@ def _build_artefacts(
         return None
     if cast("NoiseName", args.noise) != "none" and cast("float", args.noise_level) > 0.0:
         logging.warning(
-            "Ignoring legacy --noise/--noise-level because explicit artefact options were supplied"
+            "Ignoring shorthand --noise/--noise-level because explicit artefact "
+            "options were supplied"
         )
     return artefacts
 
