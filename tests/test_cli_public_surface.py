@@ -52,6 +52,21 @@ def test_current_docs_use_grouped_cli_commands() -> None:
     assert {path: matches for path, matches in leaks.items() if matches} == {}
 
 
+def test_public_cli_docs_avoid_development_era_terms() -> None:
+    public_cli_paths = [
+        Path("src/tomojax/cli/README.md"),
+        Path("src/tomojax/cli/main.py"),
+        Path("src/tomojax/cli/simulate.py"),
+    ]
+    development_terms = re.compile(r"\b(legacy|transitional|pre-v2)\b", re.IGNORECASE)
+    leaks = {
+        str(path): development_terms.findall(path.read_text(encoding="utf-8"))
+        for path in public_cli_paths
+    }
+
+    assert {path: matches for path, matches in leaks.items() if matches} == {}
+
+
 def test_cli_modules_do_not_import_transitional_data_package() -> None:
     cli_files = sorted(Path("src/tomojax/cli").glob("*.py"))
     leaks: dict[str, list[str]] = {}

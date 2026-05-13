@@ -15193,3 +15193,13 @@ Validation:
 - `uv run ruff check src/tomojax/cli/main.py src/tomojax/cli/simulate.py src/tomojax/cli/align_auto.py`
   passed.
 - `just production-surface-check` passed after the wording cleanup.
+
+### Public CLI wording guard
+
+- Added a focused public-surface regression test that prevents development-era
+  terms from reappearing in public CLI docs and user-facing CLI text.
+
+Validation:
+
+- `uv run pytest tests/test_cli_public_surface.py -q` passed.
+- `just production-surface-check` passed with 70 focused tests.

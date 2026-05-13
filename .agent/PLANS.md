@@ -122,6 +122,10 @@ Tasks:
       docs, and simulation warning text while preserving hidden aliases and
       compatibility tests. Focused Ruff and `just production-surface-check`
       passed.
+- [x] Public CLI wording guard: added a regression test preventing development-
+      era terms from reappearing in public CLI docs and user-facing text.
+      `tests/test_cli_public_surface.py` and `just production-surface-check`
+      passed.
 
 Historical productionization plan follows for context.
 
