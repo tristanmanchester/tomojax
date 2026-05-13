@@ -15140,3 +15140,22 @@ Validation:
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 266 to 164,
   all still isolated to `src/tomojax/cli/align.py`.
+
+### Alignment CLI typed configuration handoff
+
+- Extended `AlignCommand` to carry the resolved alignment solver options used
+  to build `AlignConfig`, including reconstruction settings, optimizer knobs,
+  pose-model settings, stopping controls, and bounds. This moves the main
+  `tomojax align` plan-building handoff away from raw parser fields while
+  preserving the parser/config mutation point needed for profile defaults.
+- Kept remaining type debt localized to geometry payload metadata and typed-IO
+  gaps rather than public CLI option flow. The CLI now has a clearer boundary:
+  parse/config/profile defaults first, typed command snapshot second,
+  alignment execution third.
+
+Validation:
+
+- `uv run ruff check src/tomojax/cli/align.py` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 164 to 61,
+  all still isolated to `src/tomojax/cli/align.py`.

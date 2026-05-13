@@ -106,6 +106,12 @@ Tasks:
       payloads. The raw namespace remains only for manifest CLI-argument
       compatibility. `just production-surface-check` passed; full CLI
       Basedpyright warnings are now 164 with 0 errors, all still in `align.py`.
+- [x] Alignment typed configuration handoff: `AlignCommand` now carries the
+      solver, reconstruction, optimizer, pose-model, bounds, and stopping
+      values used to build `AlignConfig`, leaving raw parser access mostly at
+      the parser/config/profile-default boundary. `just production-surface-check`
+      passed; full CLI Basedpyright warnings are now 61 with 0 errors, all
+      still in `align.py`.
 
 Historical productionization plan follows for context.
 

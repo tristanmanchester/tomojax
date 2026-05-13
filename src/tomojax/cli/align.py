@@ -667,12 +667,16 @@ class AlignCommand:
     data: str
     out: str
     align_profile: str
+    outer_iters: int
+    recon_iters: int
     roi: str
     grid: list[int] | None
     requested_gather_dtype: str
     recon_algo: str
+    lambda_tv: float
     regulariser: str
     huber_delta: float
+    tv_prox_iters: int
     views_per_batch: int
     spdhg_seed: int
     recon_positivity: bool
@@ -684,6 +688,28 @@ class AlignCommand:
     mask_vol: str
     gauge_fix: str
     gauge_policy: str
+    opt_method: str
+    gn_damping: float
+    lbfgs_maxiter: int
+    lbfgs_ftol: float
+    lbfgs_gtol: float
+    lbfgs_maxls: int
+    lbfgs_memory_size: int
+    lr_rot: float
+    lr_trans: float
+    w_rot: float
+    w_trans: float
+    bounds: DofBounds | None
+    pose_model: str
+    knot_spacing: int
+    degree: int
+    seed_translations: bool
+    log_summary: bool
+    log_compact: bool
+    recon_l: float | None
+    early_stop: bool
+    early_stop_rel: float | None
+    early_stop_patience: int | None
     optimise_dofs: list[str]
     freeze_dofs: list[str]
     schedule: str | None
@@ -703,12 +729,16 @@ def _align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         data=cast("str", args.data),
         out=cast("str", args.out),
         align_profile=cast("str", args.align_profile),
+        outer_iters=cast("int", args.outer_iters),
+        recon_iters=cast("int", args.recon_iters),
         roi=cast("str", args.roi),
         grid=cast("list[int] | None", args.grid),
         requested_gather_dtype=cast("str", args.gather_dtype),
         recon_algo=cast("str", args.recon_algo),
+        lambda_tv=cast("float", args.lambda_tv),
         regulariser=cast("str", args.regulariser),
         huber_delta=cast("float", args.huber_delta),
+        tv_prox_iters=cast("int", args.tv_prox_iters),
         views_per_batch=cast("int", args.views_per_batch),
         spdhg_seed=cast("int", args.spdhg_seed),
         recon_positivity=cast("bool", args.recon_positivity),
@@ -720,6 +750,28 @@ def _align_command_from_args(args: argparse.Namespace) -> AlignCommand:
         mask_vol=cast("str", args.mask_vol),
         gauge_fix=cast("str", args.gauge_fix),
         gauge_policy=cast("str", args.gauge_policy),
+        opt_method=cast("str", args.opt_method),
+        gn_damping=cast("float", args.gn_damping),
+        lbfgs_maxiter=cast("int", args.lbfgs_maxiter),
+        lbfgs_ftol=cast("float", args.lbfgs_ftol),
+        lbfgs_gtol=cast("float", args.lbfgs_gtol),
+        lbfgs_maxls=cast("int", args.lbfgs_maxls),
+        lbfgs_memory_size=cast("int", args.lbfgs_memory_size),
+        lr_rot=cast("float", args.lr_rot),
+        lr_trans=cast("float", args.lr_trans),
+        w_rot=cast("float", args.w_rot),
+        w_trans=cast("float", args.w_trans),
+        bounds=cast("DofBounds | None", args.bounds),
+        pose_model=cast("str", args.pose_model),
+        knot_spacing=cast("int", args.knot_spacing),
+        degree=cast("int", args.degree),
+        seed_translations=cast("bool", args.seed_translations),
+        log_summary=cast("bool", args.log_summary),
+        log_compact=cast("bool", args.log_compact),
+        recon_l=cast("float | None", args.recon_L),
+        early_stop=cast("bool", args.early_stop),
+        early_stop_rel=cast("float | None", args.early_stop_rel),
+        early_stop_patience=cast("int | None", args.early_stop_patience),
         optimise_dofs=list(cast("list[str] | None", args.optimise_dofs) or []),
         freeze_dofs=list(cast("list[str] | None", args.freeze_dofs) or []),
         schedule=cast("str | None", args.schedule),
@@ -960,22 +1012,22 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     except ValueError as exc:
         parser.error(str(exc))
     try:
-        args.align_profile = normalize_alignment_profile(args.align_profile)
+        args.align_profile = normalize_alignment_profile(cast("str", args.align_profile))
     except ValueError as exc:
         parser.error(str(exc))
-    configured_keys = set(config_metadata.get("explicit_cli_keys", [])) | set(
-        config_metadata.get("config_file_values", {}).keys()
+    configured_keys = set(cast("list[str]", config_metadata.get("explicit_cli_keys", []))) | set(
+        cast("dict[str, object]", config_metadata.get("config_file_values", {})).keys()
     )
     profile_options = resolve_profiled_cli_defaults(
-        align_profile=args.align_profile,
+        align_profile=cast("str", args.align_profile),
         current={
-            "projector_backend": args.projector_backend,
-            "gather_dtype": args.gather_dtype,
-            "regulariser": args.regulariser,
-            "recon_algo": args.recon_algo,
-            "views_per_batch": args.views_per_batch,
-            "checkpoint_projector": args.checkpoint_projector,
-            "pose_model": args.pose_model,
+            "projector_backend": cast("str", args.projector_backend),
+            "gather_dtype": cast("str", args.gather_dtype),
+            "regulariser": cast("str", args.regulariser),
+            "recon_algo": cast("str", args.recon_algo),
+            "views_per_batch": cast("int", args.views_per_batch),
+            "checkpoint_projector": cast("bool", args.checkpoint_projector),
+            "pose_model": cast("str", args.pose_model),
         },
         configured_keys=configured_keys,
     )
@@ -989,7 +1041,9 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     args.quality_tier = str(profile_options["quality_tier"])
     args.fallback_policy = str(profile_options["fallback_policy"])
     if "schedule" not in configured_keys and optimise_dofs is None:
-        args.schedule = "lightning_pose" if args.align_profile == "lightning" else "tortoise_pose"
+        args.schedule = (
+            "lightning_pose" if cast("str", args.align_profile) == "lightning" else "tortoise_pose"
+        )
     config_metadata["profile_options"] = dict(profile_options)
     effective_options = config_metadata.get("effective_options")
     if isinstance(effective_options, dict):
@@ -1007,9 +1061,12 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
         ):
             effective_options[key] = getattr(args, key)
 
-    meta = load_projection_payload(args.data)
+    command = _align_command_from_args(args)
+    meta = load_projection_payload(command.data)
     geometry_meta = meta.geometry_inputs()
-    initial_grid_override = args.grid if (meta.grid is None and args.grid is not None) else None
+    initial_grid_override = (
+        command.grid if (meta.grid is None and command.grid is not None) else None
+    )
     grid, detector, geom = build_geometry_from_dataset_metadata(
         geometry_meta,
         grid_override=initial_grid_override,
@@ -1018,15 +1075,15 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     projections = jnp.asarray(meta.projections, dtype=np.float32)
     try:
         resolved_schedule = resolve_alignment_schedule(
-            schedule=args.schedule,
+            schedule=command.schedule,
             optimise_dofs=optimise_dofs,
             freeze_dofs=freeze_dofs,
             geometry_dofs=(),
             geometry=geom,
-            gauge_policy=cast("GaugePolicy", str(args.gauge_policy)),
-            opt_method=str(args.opt_method),
-            outer_iters=int(args.outer_iters),
-            early_stop=bool(args.early_stop),
+            gauge_policy=cast("GaugePolicy", command.gauge_policy),
+            opt_method=command.opt_method,
+            outer_iters=command.outer_iters,
+            early_stop=command.early_stop,
         )
         geometry_dofs = resolved_schedule.active_geometry_dofs
         schedule_metadata: dict[str, object] | None = resolved_schedule.to_dict()
@@ -1035,70 +1092,70 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
 
     from tomojax.backends import default_gather_dtype as _default_gather_dtype
 
-    gather_dtype = str(args.gather_dtype)
+    gather_dtype = command.requested_gather_dtype
     if gather_dtype == "auto":
         gather_dtype = _default_gather_dtype()
 
     cfg = AlignConfig(
-        align_profile=str(args.align_profile),
-        outer_iters=args.outer_iters,
-        recon_iters=args.recon_iters,
-        recon_algo=cast("Any", str(args.recon_algo)),
-        lambda_tv=args.lambda_tv,
-        regulariser=cast("Regulariser", str(args.regulariser)),
-        huber_delta=float(args.huber_delta),
-        tv_prox_iters=int(args.tv_prox_iters),
-        recon_positivity=bool(args.recon_positivity),
-        spdhg_seed=int(args.spdhg_seed),
-        lr_rot=args.lr_rot,
-        lr_trans=args.lr_trans,
-        views_per_batch=int(args.views_per_batch),
-        projector_unroll=int(args.projector_unroll),
-        projector_backend=str(args.projector_backend),
-        quality_tier=cast("QualityTier", str(args.quality_tier)),
-        fallback_policy=cast("FallbackPolicy", str(args.fallback_policy)),
-        checkpoint_projector=bool(args.checkpoint_projector),
+        align_profile=command.align_profile,
+        outer_iters=command.outer_iters,
+        recon_iters=command.recon_iters,
+        recon_algo=cast("Any", command.recon_algo),
+        lambda_tv=command.lambda_tv,
+        regulariser=cast("Regulariser", command.regulariser),
+        huber_delta=command.huber_delta,
+        tv_prox_iters=command.tv_prox_iters,
+        recon_positivity=command.recon_positivity,
+        spdhg_seed=command.spdhg_seed,
+        lr_rot=command.lr_rot,
+        lr_trans=command.lr_trans,
+        views_per_batch=command.views_per_batch,
+        projector_unroll=command.projector_unroll,
+        projector_backend=command.projector_backend,
+        quality_tier=cast("QualityTier", command.quality_tier),
+        fallback_policy=cast("FallbackPolicy", command.fallback_policy),
+        checkpoint_projector=command.checkpoint_projector,
         gather_dtype=gather_dtype,
-        opt_method=str(args.opt_method),
-        gn_damping=float(args.gn_damping),
-        lbfgs_maxiter=int(args.lbfgs_maxiter),
-        lbfgs_ftol=float(args.lbfgs_ftol),
-        lbfgs_gtol=float(args.lbfgs_gtol),
-        lbfgs_maxls=int(args.lbfgs_maxls),
-        lbfgs_memory_size=int(args.lbfgs_memory_size),
-        w_rot=float(args.w_rot),
-        w_trans=float(args.w_trans),
-        schedule=args.schedule,
+        opt_method=command.opt_method,
+        gn_damping=command.gn_damping,
+        lbfgs_maxiter=command.lbfgs_maxiter,
+        lbfgs_ftol=command.lbfgs_ftol,
+        lbfgs_gtol=command.lbfgs_gtol,
+        lbfgs_maxls=command.lbfgs_maxls,
+        lbfgs_memory_size=command.lbfgs_memory_size,
+        w_rot=command.w_rot,
+        w_trans=command.w_trans,
+        schedule=command.schedule,
         optimise_dofs=optimise_dofs,
         freeze_dofs=freeze_dofs,
         geometry_dofs=(),
-        bounds=args.bounds,
-        gauge_policy=cast("Any", str(args.gauge_policy)),
-        pose_model=cast("Any", str(args.pose_model)),
-        knot_spacing=int(args.knot_spacing),
-        degree=int(args.degree),
-        gauge_fix=cast("GaugeFixMode", str(args.gauge_fix)),
+        bounds=() if command.bounds is None else command.bounds,
+        gauge_policy=cast("Any", command.gauge_policy),
+        pose_model=cast("Any", command.pose_model),
+        knot_spacing=command.knot_spacing,
+        degree=command.degree,
+        gauge_fix=cast("GaugeFixMode", command.gauge_fix),
         loss=loss_config,
-        seed_translations=bool(args.seed_translations),
-        log_summary=bool(args.log_summary),
-        log_compact=bool(args.log_compact),
-        recon_L=(float(args.recon_L) if args.recon_L is not None else None),
-        early_stop=bool(args.early_stop),
+        seed_translations=command.seed_translations,
+        log_summary=command.log_summary,
+        log_compact=command.log_compact,
+        recon_L=command.recon_l,
+        early_stop=command.early_stop,
         early_stop_rel_impr=(
-            float(args.early_stop_rel) if args.early_stop_rel is not None else 1e-3
+            command.early_stop_rel if command.early_stop_rel is not None else 1e-3
         ),
         early_stop_patience=(
-            int(args.early_stop_patience) if args.early_stop_patience is not None else 2
+            command.early_stop_patience if command.early_stop_patience is not None else 2
         ),
-        mask_vol=str(args.mask_vol),
+        mask_vol=command.mask_vol,
     )
     schedule_metadata["profile_policy"] = profile_policy_from_config(cfg).to_dict()
     recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
         grid,
         detector,
         is_parallel=meta.geometry_type == "parallel",
-        roi_mode=str(args.roi).lower(),
-        grid_override=args.grid,
+        roi_mode=command.roi.lower(),
+        grid_override=command.grid,
     )
     if recon_grid is not grid:
         _, _, geom = build_geometry_from_dataset_metadata(
@@ -1107,16 +1164,15 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
             apply_saved_alignment=False,
         )
 
-    command = _align_command_from_args(args)
-    checkpoint_path = args.checkpoint or args.resume
-    checkpoint_every = args.checkpoint_every
+    checkpoint_path = command.checkpoint or command.resume
+    checkpoint_every = command.checkpoint_every
     if checkpoint_path is not None and checkpoint_every is None:
         checkpoint_every = 1
     if checkpoint_every is not None and int(checkpoint_every) < 1:
         parser.error("--checkpoint-every must be an integer >= 1")
 
     run_levels = levels
-    if run_levels is None and (args.schedule is not None or bool(geometry_dofs)):
+    if run_levels is None and (command.schedule is not None or bool(geometry_dofs)):
         run_levels = [1]
 
     expected_checkpoint_metadata = _checkpoint_metadata(
@@ -1143,16 +1199,16 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
         schedule_metadata=schedule_metadata,
     )
     resume_state = None
-    if args.resume is not None:
+    if command.resume is not None:
         try:
             resume_state = _resume_state_from_checkpoint(
-                args.resume,
+                command.resume,
                 expected_metadata=expected_checkpoint_metadata,
                 used_multires=run_levels is not None,
             )
         except CheckpointError as exc:
             raise SystemExit(f"tomojax align: {exc}") from exc
-        logging.info("Resuming alignment from checkpoint %s", args.resume)
+        logging.info("Resuming alignment from checkpoint %s", command.resume)
 
     return AlignCliRunPlan(
         command=command,
