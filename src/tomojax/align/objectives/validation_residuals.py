@@ -1,25 +1,32 @@
+"""Validation residual and normal-equation accumulation helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.geometry import Detector, Grid
-from tomojax.core.projector import forward_project_view_T
-
-from ..geometry.geometry_applier import (
+from tomojax.align.geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_alignment_state,
     subset_base_geometry,
 )
-from ..model.dof_specs import ActiveParameterView
-from ..model.state import AlignmentState
-from .loss_adapters import LossAdapter
+from tomojax.core.projector import forward_project_view_T
+
+if TYPE_CHECKING:
+    from tomojax.align.model.dof_specs import ActiveParameterView
+    from tomojax.align.model.state import AlignmentState
+    from tomojax.core.geometry import Detector, Grid
+
+    from .loss_adapters import LossAdapter
 
 
 @dataclass(frozen=True, slots=True)
 class ValidationNormalResult:
+    """Validation loss, gradient, Hessian approximation, and diagnostics."""
+
     loss: jnp.ndarray
     grad: jnp.ndarray
     hess: jnp.ndarray
@@ -91,7 +98,7 @@ def accumulate_validation_normals(
         local_idx = jax.lax.dynamic_slice(local_indices, (start_shifted,), (b,))
         view_weight = jax.lax.dynamic_slice(val_mask, (start_shifted,), (b,))
 
-        def project_one(T):
+        def project_one(T: jnp.ndarray) -> jnp.ndarray:
             return forward_project_view_T(
                 T,
                 grid,
@@ -113,7 +120,10 @@ def accumulate_validation_normals(
         del local_idx
         return resid.reshape(-1)
 
-    def body(carry, i):
+    def body(
+        carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        i: jnp.ndarray,
+    ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc, hess_acc, count_acc = carry
         r, lin = jax.linearize(lambda zz: residual_chunk(zz, i), z0)
         cols = jax.vmap(lin)(eye)
@@ -171,6 +181,7 @@ def score_validation_fixed_volume(
     checkpoint_projector: bool,
     gather_dtype: str,
 ) -> jnp.ndarray:
+    """Score a fixed-volume validation fold without returning normal equations."""
     normals = accumulate_validation_normals(
         frozen_state=frozen_state,
         active_view=active_view,

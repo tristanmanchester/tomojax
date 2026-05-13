@@ -1,12 +1,15 @@
+"""Projection-domain loss kernels for alignment scoring."""
+
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .loss_state import LossState
+if TYPE_CHECKING:
+    from .loss_state import LossState
 
 T = TypeVar("T")
 
@@ -141,12 +144,14 @@ def _sobel(x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
 
 
 def _loss_grad_l1(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
+    del st
     pgx, pgy = _sobel(pred.astype(jnp.float32))
     tgx, tgy = _sobel(tar.astype(jnp.float32))
     return jnp.sum(jnp.abs(pgx - tgx) + jnp.abs(pgy - tgy))
 
 
 def _loss_edge_aware_l2(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
+    del st
     tgx, tgy = _sobel(tar.astype(jnp.float32))
     w = jnp.sqrt(tgx * tgx + tgy * tgy)
     r = (pred - tar).astype(jnp.float32)
@@ -188,6 +193,7 @@ def _loss_phase_corr_soft(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) ->
 
 
 def _loss_fft_mag(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
+    del st
     Ap = _fft2(pred)
     At = _fft2(tar)
     mp = jnp.abs(Ap)
@@ -204,6 +210,7 @@ def _required_state_precompute[T](value: T | None, message: str) -> T:
 
 
 def _loss_chamfer_edge(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
+    del tar
     dt_edge = _required_state_precompute(st.dt_edge, "dt_edge precompute required")
     gx, gy = _sobel(pred.astype(jnp.float32))
     mag = jnp.sqrt(gx * gx + gy * gy)
@@ -212,6 +219,7 @@ def _loss_chamfer_edge(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jn
 
 
 def _loss_poisson_nll(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray:
+    del st
     eps = 1e-6
     predp = jnp.clip(pred.astype(jnp.float32), eps, None)
     y = jnp.clip(tar.astype(jnp.float32), 0.0, None)
@@ -384,12 +392,12 @@ def _loss_swd(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState) -> jnp.ndarray
 def _gauss_kernel(size: int, sigma: float) -> jnp.ndarray:
     ax = jnp.arange(-size // 2 + 1.0, size // 2 + 1.0)
     kernel = jnp.exp(-0.5 * (ax / sigma) ** 2)
-    kernel = kernel / jnp.sum(kernel)
-    return kernel
+    return kernel / jnp.sum(kernel)
 
 
 def _mind_descriptor(x: jnp.ndarray, st: LossState) -> jnp.ndarray:
     """Simplified MIND features with 4 neighbors and 3x3 patch smoothing."""
+    del st
     x = x.astype(jnp.float32)
     # Smooth with 3x3 mean filter
     x4 = x[None, :, :, None]

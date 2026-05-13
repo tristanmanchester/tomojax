@@ -1,3 +1,5 @@
+"""Cross-validation fold construction for bilevel alignment objectives."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +11,8 @@ import numpy as np
 
 @dataclass(frozen=True, slots=True)
 class FoldArrays:
+    """Padded train/validation indices and masks for all folds."""
+
     train_idx: jnp.ndarray
     train_mask: jnp.ndarray
     val_idx: jnp.ndarray
@@ -16,9 +20,11 @@ class FoldArrays:
 
     @property
     def n_folds(self) -> int:
+        """Return the number of configured folds."""
         return int(self.train_idx.shape[0])
 
     def to_metadata(self) -> dict[str, object]:
+        """Return JSON-compatible fold metadata."""
         return {
             "n_folds": int(self.train_idx.shape[0]),
             "max_train": int(self.train_idx.shape[1]),
@@ -30,10 +36,13 @@ class FoldArrays:
 
 @dataclass(frozen=True, slots=True)
 class FoldSpec:
+    """Fold construction parameters."""
+
     n_folds: int = 4
     mode: Literal["interleaved"] = "interleaved"
 
     def build(self, n_views: int) -> FoldArrays:
+        """Build interleaved train/validation folds for a view count."""
         n = int(n_views)
         k = int(self.n_folds)
         if k < 2:

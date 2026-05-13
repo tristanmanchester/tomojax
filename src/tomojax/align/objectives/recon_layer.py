@@ -1,13 +1,16 @@
+"""Differentiable reconstruction layer used by bilevel alignment objectives."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
-from tomojax.core.geometry import Detector, Geometry, Grid
+from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align.geometry.parametrizations import se3_from_5d
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     FistaCoreResult,
@@ -15,9 +18,9 @@ from tomojax.recon.fista_tv_core import (
     fista_tv_core_arrays,
 )
 
-from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from ..geometry.parametrizations import se3_from_5d
-from ..model.state import AlignmentState
+if TYPE_CHECKING:
+    from tomojax.align.model.state import AlignmentState
+    from tomojax.core.geometry import Detector, Geometry, Grid
 
 ReconDifferentiationMode = Literal["unrolled", "implicit"]
 
@@ -29,17 +32,21 @@ class PoseAdjustedGeometry:
     geometry: Geometry
     params5: jnp.ndarray
 
-    def pose_for_view(self, i: int):
+    def pose_for_view(self, i: int) -> tuple[tuple[jnp.ndarray, ...], ...]:
+        """Return the nominal pose composed with the aligned 5-DOF update."""
         T_nom = jnp.asarray(self.geometry.pose_for_view(i), dtype=jnp.float32)
         T_aligned = se3_from_5d(self.params5[i])
         return tuple(map(tuple, T_nom @ T_aligned))
 
-    def rays_for_view(self, i: int):
+    def rays_for_view(self, i: int) -> object:
+        """Return detector rays for the wrapped geometry view."""
         return self.geometry.rays_for_view(i)
 
 
 @dataclass(frozen=True, slots=True)
 class ReconLayerConfig:
+    """Configuration for differentiable preview reconstruction."""
+
     iters: int = 5
     lambda_tv: float = 0.005
     regulariser: Literal["huber_tv", "tv"] = "huber_tv"
@@ -58,6 +65,8 @@ class ReconLayerConfig:
 
 @dataclass(frozen=True, slots=True)
 class ReconLayerResult:
+    """Reconstruction result and diagnostic info."""
+
     x: jnp.ndarray
     info: dict[str, object]
 
@@ -79,6 +88,7 @@ class ReconLayer:
         init_x: jnp.ndarray | None = None,
         view_weights: jnp.ndarray | None = None,
     ) -> ReconLayerResult:
+        """Run a reconstruction layer for an alignment state."""
         if self.config.regulariser != "huber_tv" and self.config.lambda_tv != 0.0:
             raise ValueError("ReconLayer differentiable modes require huber_tv or lambda_tv=0")
         effective = apply_alignment_state(self.base, state)
@@ -157,6 +167,7 @@ class ReconLayer:
 
 
 def core_result_to_info(result: FistaCoreResult) -> dict[str, object]:
+    """Convert a FISTA core result into JSON-compatible metadata."""
     return result.info()
 
 
@@ -195,7 +206,13 @@ def _implicit_reconstruct_arrays(
         ).x
 
     @jax.custom_vjp
-    def solve(T: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray, y: jnp.ndarray, x_init: jnp.ndarray):
+    def solve(
+        T: jnp.ndarray,
+        u: jnp.ndarray,
+        v: jnp.ndarray,
+        y: jnp.ndarray,
+        x_init: jnp.ndarray,
+    ) -> jnp.ndarray:
         return solve_primal(T, u, v, y, x_init)
 
     def solve_fwd(
@@ -204,14 +221,22 @@ def _implicit_reconstruct_arrays(
         v: jnp.ndarray,
         y: jnp.ndarray,
         x_init: jnp.ndarray,
-    ):
+    ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
         x_star = solve_primal(T, u, v, y, x_init)
         return x_star, (x_star, T, u, v, y)
 
-    def solve_bwd(res, x_bar: jnp.ndarray):
+    def solve_bwd(
+        res: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        x_bar: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         x_star, T, u, v, y = res
 
-        def objective_x(x: jnp.ndarray, T_arg: jnp.ndarray, u_arg: jnp.ndarray, v_arg: jnp.ndarray):
+        def objective_x(
+            x: jnp.ndarray,
+            T_arg: jnp.ndarray,
+            u_arg: jnp.ndarray,
+            v_arg: jnp.ndarray,
+        ) -> jnp.ndarray:
             return fista_objective_arrays(
                 T_all=T_arg,
                 grid=grid,
@@ -242,7 +267,11 @@ def _implicit_reconstruct_arrays(
             maxiter=int(cg_iters),
         )
 
-        def stationarity(T_arg: jnp.ndarray, u_arg: jnp.ndarray, v_arg: jnp.ndarray):
+        def stationarity(
+            T_arg: jnp.ndarray,
+            u_arg: jnp.ndarray,
+            v_arg: jnp.ndarray,
+        ) -> jnp.ndarray:
             return grad_x(x_star, T_arg, u_arg, v_arg)
 
         _, pullback = jax.vjp(stationarity, T, u, v)

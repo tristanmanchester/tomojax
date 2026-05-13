@@ -1,12 +1,18 @@
+"""Mutable precomputed state for projection loss kernels."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
+if TYPE_CHECKING:
+    import jax.numpy as jnp
 
 
 @dataclass
 class LossState:
+    """Precomputed loss state shared across per-view loss calls."""
+
     kind: str
     params: dict[str, float]
     # Optional per-view mask (n, nv, nu) for masked/ROI losses

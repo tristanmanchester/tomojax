@@ -1,3 +1,5 @@
+"""Projection-domain alignment objective implementations."""
+
 from __future__ import annotations
 
 from .fixed_volume import (

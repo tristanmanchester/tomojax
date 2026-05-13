@@ -1,8 +1,9 @@
+"""Adapters from typed loss specs to vectorised per-view loss functions."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -59,12 +60,12 @@ from .loss_specs import (
 )
 from .loss_state import LossState
 
-PerViewLossFn: TypeAlias = Callable[
+type PerViewLossFn = Callable[
     [jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None],
     jnp.ndarray,
 ]
-GaussNewtonWeightFn: TypeAlias = Callable[[jnp.ndarray, jnp.ndarray | None], jnp.ndarray]
-LossBuilderFn: TypeAlias = Callable[
+type GaussNewtonWeightFn = Callable[[jnp.ndarray, jnp.ndarray | None], jnp.ndarray]
+type LossBuilderFn = Callable[
     [LossState, jnp.ndarray],
     Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray],
 ]
@@ -72,6 +73,8 @@ LossBuilderFn: TypeAlias = Callable[
 
 @dataclass(frozen=True, slots=True)
 class LossAdapter:
+    """Prepared loss callable plus metadata used by alignment objectives."""
+
     spec: AlignmentLossSpec
     name: str
     state: LossState
@@ -84,7 +87,11 @@ class LossAdapter:
 def _plain_loss_builder(
     loss_fn: Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray],
 ) -> LossBuilderFn:
-    def _builder(state: LossState, targets: jnp.ndarray):
+    def _builder(
+        state: LossState,
+        targets: jnp.ndarray,
+    ) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
+        del state
         del targets
         return loss_fn
 
@@ -107,7 +114,10 @@ def _otsu_thresholds(targets: jnp.ndarray) -> np.ndarray:
     return np.array([_compute_otsu_threshold(Ys[i]) for i in range(Ys.shape[0])], dtype=np.float32)
 
 
-def _build_chamfer_edge_loss(state: LossState, targets: jnp.ndarray):
+def _build_chamfer_edge_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     if distance_transform_edt is None:
         raise ValueError("scipy.ndimage is required for chamfer_edge loss")
     Ys = np.asarray(targets, np.float32)
@@ -121,31 +131,46 @@ def _build_chamfer_edge_loss(state: LossState, targets: jnp.ndarray):
     return _loss_chamfer_edge
 
 
-def _build_mi_kde_loss(state: LossState, targets: jnp.ndarray):
+def _build_mi_kde_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     _precompute_kde_state(state, targets)
     return _loss_mi_kde
 
 
-def _build_nmi_kde_loss(state: LossState, targets: jnp.ndarray):
+def _build_nmi_kde_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     _precompute_kde_state(state, targets)
     state.params["nmi"] = 1.0
     return _loss_mi_kde
 
 
-def _build_renyi_mi_loss(state: LossState, targets: jnp.ndarray):
+def _build_renyi_mi_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     _validated_renyi_alpha(state.params)
     _precompute_kde_state(state, targets)
     return _loss_renyi_mi
 
 
-def _build_l2_otsu_loss(state: LossState, targets: jnp.ndarray):
+def _build_l2_otsu_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     temp = _safe_epsilon(state.params, "temp", 0.5)
     thr = _otsu_thresholds(targets)
     state.mask = jax.device_put(jax.nn.sigmoid((targets - jnp.asarray(thr)[:, None, None]) / temp))
     return _loss_l2_otsu_soft
 
 
-def _build_ssim_otsu_loss(state: LossState, targets: jnp.ndarray):
+def _build_ssim_otsu_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     Ys = np.asarray(targets)
     thr = _otsu_thresholds(targets)
     mask = (Ys >= thr[:, None, None]).astype(np.float32)
@@ -153,7 +178,10 @@ def _build_ssim_otsu_loss(state: LossState, targets: jnp.ndarray):
     return _loss_ssim_otsu
 
 
-def _build_tversky_loss(state: LossState, targets: jnp.ndarray):
+def _build_tversky_loss(
+    state: LossState,
+    targets: jnp.ndarray,
+) -> Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray]:
     state.thr = jax.device_put(jnp.asarray(_otsu_thresholds(targets))[:, None, None])
     return _loss_tversky
 
@@ -226,7 +254,12 @@ def _build_loss_from_kind(
         else:
             global_indices = jnp.asarray(view_indices, dtype=jnp.int32)
 
-        def apply_one(a, b, local_idx, global_idx):
+        def apply_one(
+            a: jnp.ndarray,
+            b: jnp.ndarray,
+            local_idx: jnp.ndarray,
+            global_idx: jnp.ndarray,
+        ) -> jnp.ndarray:
             ls = LossState(kind=state.kind, params=state.params)
             if state.mask is not None:
                 ls.mask = state.mask[global_idx]
@@ -276,7 +309,7 @@ def _edge_aware_ls_weights(y_chunk: jnp.ndarray) -> jnp.ndarray:
 
 def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNewtonWeightFn]:
     if isinstance(spec, L2LossSpec):
-        return True, lambda y_chunk, mask_chunk: jnp.ones_like(y_chunk)
+        return True, lambda y_chunk, _mask_chunk: jnp.ones_like(y_chunk)
     if isinstance(spec, L2OtsuLossSpec):
         temp = jnp.float32(max(float(spec.temp), 1e-6))
 
@@ -290,19 +323,21 @@ def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNe
     if isinstance(spec, PWLSLossSpec):
         a = jnp.float32(spec.a)
         b = jnp.float32(spec.b)
-        return True, lambda y_chunk, mask_chunk: jnp.sqrt(
+        return True, lambda y_chunk, _mask_chunk: jnp.sqrt(
             1.0 / (a * jnp.clip(y_chunk, 0.0) + b + 1e-6)
         )
     if isinstance(spec, EdgeL2LossSpec):
-        return True, lambda y_chunk, mask_chunk: _edge_aware_ls_weights(y_chunk)
-    return False, lambda y_chunk, mask_chunk: jnp.ones_like(y_chunk)
+        return True, lambda y_chunk, _mask_chunk: _edge_aware_ls_weights(y_chunk)
+    return False, lambda y_chunk, _mask_chunk: jnp.ones_like(y_chunk)
 
 
 def loss_supports_setup_validation_lm(spec: AlignmentLossSpec) -> bool:
+    """Return whether a loss can be represented as validation-LM residuals."""
     return loss_spec_supports_setup_validation_lm(spec)
 
 
 def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAdapter:
+    """Build a prepared loss adapter for a target projection stack."""
     name = loss_spec_name(spec)
     params = loss_spec_params(spec)
     per_view_loss, state = _build_loss_from_kind(name, params, targets)
@@ -323,6 +358,7 @@ def build_loss(
     params: dict[str, float] | None,
     targets: jnp.ndarray,
 ) -> tuple[PerViewLossFn, LossState]:
+    """Build a per-view loss function and its precomputed state."""
     adapter = build_loss_adapter(parse_loss_spec(kind, params), targets)
     return adapter.per_view_loss, adapter.state
 

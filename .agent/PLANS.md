@@ -1177,6 +1177,11 @@ and proposed next fix before stopping.
   without broad per-file ignores. Focused schedule/state/gauge/profile tests
   and `just production-surface-check` passed. Whole-package Basedpyright still
   exposes existing JAX typing debt, tracked outside this Ruff cleanup slice.
+- [x] `tomojax.align.objectives` now passes Ruff on its own: added module and
+  public API docstrings, modernized type aliases, moved type-only imports,
+  annotated scan/custom-VJP helpers, and cleaned unused kernel arguments without
+  changing objective behavior. Objective-focused tests passed with 60 passed and
+  1 expected Pallas skip.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

@@ -1,24 +1,29 @@
+"""Fixed-volume projection objectives for alignment updates."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import jax
 import jax.numpy as jnp
 
+from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.core.backend_policy import (
     BackendProvenance,
     ProjectorBackendInput,
     backend_provenance,
     normalize_projector_backend,
 )
-from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
-from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from ..model.state import AlignmentState
 from .loss_adapters import LossAdapter, build_loss_adapter
-from .loss_specs import AlignmentLossSpec
+
+if TYPE_CHECKING:
+    from tomojax.align.model.state import AlignmentState
+    from tomojax.core.geometry import Detector, Grid
+
+    from .loss_specs import AlignmentLossSpec
 
 ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
 DifferentiationMode = Literal["none", "unrolled", "implicit"]
@@ -29,6 +34,8 @@ InnerInitPolicy = Literal[
 
 @dataclass(frozen=True, slots=True)
 class ObjectiveProvenance:
+    """Provenance describing how an alignment objective was constructed."""
+
     outer_loss_source: str
     outer_loss_kind: str
     inner_data_term: str
@@ -38,6 +45,7 @@ class ObjectiveProvenance:
     initialization_policy: InnerInitPolicy
 
     def to_dict(self) -> dict[str, str]:
+        """Return a JSON-compatible provenance mapping."""
         return {
             "outer_loss_source": self.outer_loss_source,
             "outer_loss_kind": self.outer_loss_kind,
@@ -51,19 +59,26 @@ class ObjectiveProvenance:
 
 @dataclass(frozen=True, slots=True)
 class ObjectiveResult:
+    """Objective value plus auxiliary diagnostics."""
+
     value: jnp.ndarray
     aux: dict[str, object]
 
 
 class AlignmentObjective:
+    """Protocol-like base for alignment objectives."""
+
     kind: ObjectiveKind
 
     def evaluate(self, state: AlignmentState) -> ObjectiveResult:
+        """Evaluate the objective at an alignment state."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
 class FixedVolumeProjectionObjective(AlignmentObjective):
+    """Project a fixed volume under candidate geometry and score projections."""
+
     base: BaseGeometryArrays
     grid: Grid
     detector: Detector
@@ -89,8 +104,9 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
         projections: jnp.ndarray,
         volume: jnp.ndarray,
         loss_spec: AlignmentLossSpec,
-        **kwargs,
+        **kwargs: Any,
     ) -> FixedVolumeProjectionObjective:
+        """Build a fixed-volume objective from a loss specification."""
         adapter = build_loss_adapter(loss_spec, projections)
         return cls(
             base=base,
@@ -112,6 +128,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
         )
 
     def evaluate(self, state: AlignmentState) -> ObjectiveResult:
+        """Evaluate projection loss after applying the candidate alignment state."""
         effective = apply_alignment_state(self.base, state)
         value = project_and_score_stack(
             pose_stack=effective.pose_stack,
@@ -165,6 +182,7 @@ def project_stack(
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
 ) -> jnp.ndarray:
+    """Project all views for a fixed volume in bounded-size batches."""
     backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
@@ -199,7 +217,10 @@ def project_stack(
         )
     )
 
-    def body(out, i):
+    def body(
+        out: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
         start_shifted, _vmask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         pred = vm_project(T_chunk)
@@ -228,6 +249,7 @@ def project_and_score_stack(
     projector_backend: ProjectorBackendInput = "jax",
     require_differentiable_projector: bool = True,
 ) -> jnp.ndarray:
+    """Project and score all views without materialising unnecessary batches."""
     backend = normalize_projector_backend(projector_backend)
     n_views = int(pose_stack.shape[0])
     if n_views == 0:
@@ -290,7 +312,10 @@ def project_and_score_stack(
         )
         return jnp.sum(losses * per_view_weight, dtype=jnp.float32)
 
-    def body(loss_acc, i):
+    def body(
+        loss_acc: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
@@ -309,7 +334,10 @@ def project_and_score_stack(
         )
         return loss_acc + jnp.sum(losses * valid_mask * weight_chunk), None
 
-    def body_l2(loss_acc, i):
+    def body_l2(
+        loss_acc: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
         start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
@@ -338,6 +366,7 @@ def alignment_projector_backend_provenance(
     api_surface: str,
     gather_dtype: str = "fp32",
 ) -> BackendProvenance:
+    """Report which projector backend is used by an alignment objective."""
     requested = normalize_projector_backend(projector_backend)
     if requested == "jax":
         return backend_provenance(
@@ -412,6 +441,7 @@ def score_projection_stack(
     mask: jnp.ndarray | None = None,
     view_indices: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
+    """Score an already-projected stack with an alignment loss adapter."""
     losses = adapter.per_view_loss(
         pred,
         targets,

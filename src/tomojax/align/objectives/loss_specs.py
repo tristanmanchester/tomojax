@@ -1,10 +1,12 @@
+"""Typed alignment loss specifications and parsers."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal, TypeAlias, cast
+from typing import Literal, cast
 
-RobustLossKind: TypeAlias = Literal[
+type RobustLossKind = Literal[
     "charbonnier",
     "huber",
     "cauchy",
@@ -13,33 +15,39 @@ RobustLossKind: TypeAlias = Literal[
     "barron",
     "correntropy",
 ]
-CorrelationLossKind: TypeAlias = Literal["zncc", "phasecorr", "fft_mag"]
-GradientLossKind: TypeAlias = Literal["grad_l1", "ngf", "grad_orient", "chamfer_edge"]
+type CorrelationLossKind = Literal["zncc", "phasecorr", "fft_mag"]
+type GradientLossKind = Literal["grad_l1", "ngf", "grad_orient", "chamfer_edge"]
 
 
 @dataclass(frozen=True, slots=True)
 class L2LossSpec:
-    pass
+    """Plain squared-error projection loss."""
 
 
 @dataclass(frozen=True, slots=True)
 class L2OtsuLossSpec:
+    """Squared-error loss weighted by a soft Otsu foreground mask."""
+
     temp: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
 class PWLSLossSpec:
+    """Poisson-weighted least-squares projection loss."""
+
     a: float = 1.0
     b: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class EdgeL2LossSpec:
-    pass
+    """Squared-error loss with target-edge-aware weights."""
 
 
 @dataclass(frozen=True, slots=True)
 class RobustLossSpec:
+    """Robust projection-domain loss family."""
+
     kind: RobustLossKind
     eps: float = 1e-3
     delta: float = 1.0
@@ -51,6 +59,8 @@ class RobustLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class CorrelationLossSpec:
+    """Correlation-style projection loss family."""
+
     kind: CorrelationLossKind
     eps: float = 1e-5
     beta: float = 10.0
@@ -58,6 +68,8 @@ class CorrelationLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class SSIMLossSpec:
+    """Structural-similarity projection loss."""
+
     multiscale: bool = False
     otsu_mask: bool = False
     K1: float = 0.01
@@ -68,6 +80,8 @@ class SSIMLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class TverskyLossSpec:
+    """Soft foreground-overlap loss based on the Tversky index."""
+
     temp: float = 0.5
     alpha: float = 0.7
     beta: float = 0.3
@@ -76,12 +90,16 @@ class TverskyLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class GradientLossSpec:
+    """Gradient-domain projection loss family."""
+
     kind: GradientLossKind
     eps: float = 1e-3
 
 
 @dataclass(frozen=True, slots=True)
 class InformationLossSpec:
+    """Mutual-information projection loss family."""
+
     normalized: bool = False
     renyi_alpha: float | None = None
     bins: int = 32
@@ -91,21 +109,23 @@ class InformationLossSpec:
 
 @dataclass(frozen=True, slots=True)
 class SWDLossSpec:
+    """Sliced-Wasserstein projection loss."""
+
     n_samples: int = -1
     p: int = 1
 
 
 @dataclass(frozen=True, slots=True)
 class MindLossSpec:
-    pass
+    """MIND descriptor projection loss."""
 
 
 @dataclass(frozen=True, slots=True)
 class PoissonLossSpec:
-    pass
+    """Poisson negative-log-likelihood projection loss."""
 
 
-AlignmentLossSpec: TypeAlias = (
+type AlignmentLossSpec = (
     L2LossSpec
     | L2OtsuLossSpec
     | PWLSLossSpec
@@ -124,22 +144,26 @@ AlignmentLossSpec: TypeAlias = (
 
 @dataclass(frozen=True, slots=True)
 class LossScheduleEntry:
+    """One level-specific loss override."""
+
     level_factor: int
     spec: AlignmentLossSpec
 
 
 @dataclass(frozen=True, slots=True)
 class AlignmentLossSchedule:
+    """Default loss plus optional per-pyramid-level overrides."""
+
     default: AlignmentLossSpec
     by_level: tuple[LossScheduleEntry, ...]
 
 
-AlignmentLossConfig: TypeAlias = AlignmentLossSpec | AlignmentLossSchedule
+type AlignmentLossConfig = AlignmentLossSpec | AlignmentLossSchedule
 
-LossBuilder: TypeAlias = Callable[[Mapping[str, float]], AlignmentLossSpec]
-LossMatcher: TypeAlias = Callable[[AlignmentLossSpec], bool]
-LossNameEmitter: TypeAlias = Callable[[AlignmentLossSpec], str]
-LossParamEmitter: TypeAlias = Callable[[AlignmentLossSpec], dict[str, float]]
+type LossBuilder = Callable[[Mapping[str, float]], AlignmentLossSpec]
+type LossMatcher = Callable[[AlignmentLossSpec], bool]
+type LossNameEmitter = Callable[[AlignmentLossSpec], str]
+type LossParamEmitter = Callable[[AlignmentLossSpec], dict[str, float]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,11 +550,13 @@ _LOSS_SPEC_DESCRIPTORS: tuple[LossSpecDescriptor, ...] = (
 
 
 def canonicalize_loss_kind(kind: str) -> str:
+    """Normalize a user-facing loss kind or alias."""
     normalized = str(kind).strip().lower()
     return _LOSS_ALIASES.get(normalized, normalized)
 
 
 def loss_spec_name(spec: AlignmentLossSpec) -> str:
+    """Return the canonical loss name for a loss spec."""
     for descriptor in _LOSS_SPEC_DESCRIPTORS:
         if descriptor.matches(spec):
             return descriptor.name(spec)
@@ -538,6 +564,7 @@ def loss_spec_name(spec: AlignmentLossSpec) -> str:
 
 
 def loss_spec_params(spec: AlignmentLossSpec) -> dict[str, float]:
+    """Return JSON-compatible scalar parameters for a loss spec."""
     for descriptor in _LOSS_SPEC_DESCRIPTORS:
         if descriptor.matches(spec):
             return descriptor.params(spec)
@@ -545,6 +572,7 @@ def loss_spec_params(spec: AlignmentLossSpec) -> dict[str, float]:
 
 
 def loss_spec_supports_setup_validation_lm(spec: AlignmentLossSpec) -> bool:
+    """Return whether a loss can provide validation-LM residual weights."""
     return loss_spec_name(spec) in _SETUP_VALIDATION_LM_LOSSES
 
 
@@ -552,6 +580,7 @@ def parse_loss_spec(
     kind: str,
     params: Mapping[str, float] | None = None,
 ) -> AlignmentLossSpec:
+    """Parse a named loss and scalar parameters into a typed spec."""
     canonical = canonicalize_loss_kind(kind)
     raw = {} if params is None else {str(k): float(v) for k, v in params.items()}
     entry = _LOSS_KIND_REGISTRY.get(canonical)
@@ -641,6 +670,7 @@ def resolve_loss_for_level(
     loss_config: AlignmentLossConfig,
     level_factor: int,
 ) -> AlignmentLossSpec:
+    """Resolve the loss active at a pyramid level."""
     if not isinstance(loss_config, AlignmentLossSchedule):
         return loss_config
     level = int(level_factor)
@@ -654,6 +684,7 @@ def validate_loss_schedule_levels(
     loss_config: AlignmentLossConfig,
     factors: Iterable[int],
 ) -> None:
+    """Validate that scheduled loss levels exist in the configured pyramid."""
     if not isinstance(loss_config, AlignmentLossSchedule):
         return
     factor_list = [int(factor) for factor in factors]

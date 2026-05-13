@@ -1,19 +1,28 @@
+"""Stopped train-fold reconstruction helpers for bilevel objectives."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry import Detector, Geometry, Grid
+from tomojax.align.geometry.geometry_applier import (
+    apply_setup_to_detector_grid,
+    materialize_setup_geometry,
+)
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
-from ..geometry.geometry_applier import apply_setup_to_detector_grid, materialize_setup_geometry
-from ..model.state import AlignmentState
+if TYPE_CHECKING:
+    from tomojax.align.model.state import AlignmentState
+    from tomojax.core.geometry import Detector, Geometry, Grid
 
 
 @dataclass(frozen=True, slots=True)
 class FoldReconstructionConfig:
+    """Configuration for per-fold stopped FISTA reconstruction."""
+
     iters: int
     lambda_tv: float
     regulariser: str

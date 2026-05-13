@@ -15479,3 +15479,21 @@ Residual:
 - `uv run basedpyright src/tomojax/align/model` still reports existing JAX
   typing debt in the broader package. This slice keeps that visible instead of
   hiding it with broad ignores.
+
+### Alignment objectives package Ruff cleanup
+
+- Added module docstrings and public API docstrings across
+  `tomojax.align.objectives`.
+- Modernized objective loss type aliases to Python 3.12 `type` aliases and
+  moved type-only imports behind `TYPE_CHECKING`.
+- Annotated JAX scan bodies and custom-VJP helpers in the fixed-volume,
+  validation, and reconstruction-layer objective paths.
+- Cleaned unused loss-kernel arguments explicitly without changing the loss
+  formulas.
+
+Validation:
+
+- `uv run ruff check src/tomojax/align/objectives --statistics` passed.
+- `uv run ruff format --check src/tomojax/align/objectives` passed.
+- `uv run pytest tests/test_alignment_objectives.py tests/test_align_loss_logic.py tests/test_bilevel_recon_layer.py tests/test_bilevel_setup_alignment.py tests/test_detector_center_objective.py -q`
+  passed with 60 tests and 1 expected Pallas lowering skip.
