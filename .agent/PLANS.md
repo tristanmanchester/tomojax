@@ -1260,6 +1260,13 @@ and proposed next fix before stopping.
   with final staged FISTA loss `6517.55712890625` versus COR-only
   `7411.73046875` and matching output shape. Recorded in
   `docs/benchmark_runs/2026-05-13-real-lamino-product-workflow.md`.
+- [x] Stopped-alignment product blocker report added at
+  `docs/benchmark_runs/2026-05-13-stopped-alignment-product-blocker.md`.
+  The report separates the current truth-free detector-u blocker from
+  fixed-volume/oracle geometry gates and records the best completed
+  scout/tangent run: `128^3` det_u RMSE improved to `1.924456 px` and volume
+  NMSE to `0.218229`, but the result still fails production detector-center
+  recovery.
 
 ### Risks
 

@@ -15667,3 +15667,22 @@ Validation:
 
 - `uv run python scripts/real_laminography/summarize_real_lamino_report.py --run-dir runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_spline_all_20260512 --require-success`
   passed and wrote the `real_lamino_report/` artifact bundle.
+
+### Stopped-alignment product blocker report added
+
+- Added `docs/benchmark_runs/2026-05-13-stopped-alignment-product-blocker.md`
+  to keep the truth-free stopped detector-center blocker separate from the
+  fixed-volume/oracle geometry gates.
+- Recorded the current best scout/tangent stopped evidence:
+  `128^3` det_u RMSE improved from the earlier stopped baseline
+  `2.954166 px` to `1.924456 px`, and volume NMSE improved from `0.502960` to
+  `0.218229`, but the classification remains
+  `reconstruction_absorbed_geometry`.
+- The report explicitly prevents overclaiming: Schur acceptance and improved
+  volume NMSE are not production success if detector-u is still wrong.
+
+Validation:
+
+- Documentation-only report based on the previously recorded
+  `runs/rich_phantom_v1_parity_20260510_tangent_gauge_stopped` CUDA artifact
+  and existing `2026-05-10` benchmark reports.
