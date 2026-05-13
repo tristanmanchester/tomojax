@@ -15045,3 +15045,20 @@ Validation:
 - `uv run pytest tests/test_manifest.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 788 to 775.
+
+### Loss benchmark CLI command-plan adapter
+
+- Split `tomojax dev loss-bench` into parser construction and a typed
+  `LossBenchCommand` before running the developer loss benchmark workflow. The
+  command remains a diagnostic surface under `tomojax dev`, while benchmark
+  construction stays in `tomojax.bench` and dataset loading/saving continues to
+  route through public IO facades.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/loss_bench.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/loss_bench.py` passed.
+- `uv run pytest tests/test_loss_bench.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 775 to 673.

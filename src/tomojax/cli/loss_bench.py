@@ -11,11 +11,12 @@ from __future__ import annotations
 import argparse
 from contextlib import suppress
 import csv
+from dataclasses import asdict, dataclass
 import json
 import logging
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -39,13 +40,47 @@ from tomojax.io import (
 
 type BenchmarkResultValue = str | float | None
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from tomojax.core.geometry.base import Detector, Grid
+    from tomojax.core.geometry.lamino import LaminographyGeometry
+    from tomojax.core.geometry.parallel import ParallelGeometry
+
+    type BenchmarkGeometry = ParallelGeometry | LaminographyGeometry
+
+
+@dataclass(frozen=True)
+class LossBenchCommand:
+    """Typed command plan for the developer loss benchmark."""
+
+    expdir: str
+    nx: int
+    ny: int
+    nz: int
+    nu: int
+    nv: int
+    n_views: int
+    geometry: str
+    seed: int
+    rot_deg: float
+    trans_px: float
+    outer_iters: int
+    recon_iters: int
+    progress: bool
+    metrics_only: bool
+    k_step: int
+    gt_metric: str
+    levels: tuple[int, ...] | None
+    losses: tuple[str, ...]
+
 
 def _ensure_dir(p: str) -> None:
     Path(p).mkdir(parents=True, exist_ok=True)
 
 
-def _jnp_float32_array(value: object) -> Any:
-    return jnp.asarray(value, dtype=jnp.float32)  # pyright: ignore[reportUnknownMemberType]
+def _jnp_float32_array(value: object) -> jnp.ndarray:
+    return jnp.asarray(value, dtype=np.float32)  # pyright: ignore[reportUnknownMemberType]
 
 
 def _result_metric(result: dict[str, BenchmarkResultValue], key: str) -> float:
@@ -56,26 +91,26 @@ def _result_metric(result: dict[str, BenchmarkResultValue], key: str) -> float:
 
 
 def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
-    args: argparse.Namespace,
+    command: LossBenchCommand,
 ) -> list[dict[str, BenchmarkResultValue]]:
-    expdir = Path(args.expdir)
+    expdir = Path(command.expdir)
     gt = _make_gt_dataset(
-        args.expdir,
-        nx=args.nx,
-        ny=args.ny,
-        nz=args.nz,
-        nu=args.nu,
-        nv=args.nv,
-        n_views=args.n_views,
-        geometry=args.geometry,
-        seed=args.seed,
+        command.expdir,
+        nx=command.nx,
+        ny=command.ny,
+        nz=command.nz,
+        nu=command.nu,
+        nv=command.nv,
+        n_views=command.n_views,
+        geometry=command.geometry,
+        seed=command.seed,
     )
     mis = _make_misaligned_dataset(
-        args.expdir,
+        command.expdir,
         gt,
-        rot_deg=args.rot_deg,
-        trans_px=args.trans_px,
-        seed=args.seed + 1,
+        rot_deg=command.rot_deg,
+        trans_px=command.trans_px,
+        seed=command.seed + 1,
     )
     dataset_mis = load_projection_payload(mis)
     metadata_mis = dataset_mis.copy_metadata()
@@ -84,10 +119,13 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
     true_params = np.asarray(metadata_mis.align_params, dtype=np.float32)
     volume = metadata_mis.volume
 
-    grid, det, geom = build_geometry_from_dataset_metadata(
-        dataset_mis.geometry_inputs(),
-        apply_saved_alignment=False,
-        volume_shape=(np.asarray(volume).shape if volume is not None else None),
+    grid, det, geom = cast(
+        "tuple[Grid, Detector, BenchmarkGeometry]",
+        build_geometry_from_dataset_metadata(
+            dataset_mis.geometry_inputs(),
+            apply_saved_alignment=False,
+            volume_shape=(np.asarray(volume).shape if volume is not None else None),
+        ),
     )
     du, dv = float(det.du), float(det.dv)
     thetas = np.asarray(dataset_mis.angles_deg, dtype=np.float32)
@@ -115,7 +153,7 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
     }
 
     results: list[dict[str, BenchmarkResultValue]] = []
-    for loss in args.losses:
+    for loss in command.losses:
         run_name = str(loss).lower()
         out_path = expdir / f"align_{run_name}.nxs"
         log_path = expdir / "logs" / f"{run_name}.log"
@@ -125,8 +163,8 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
         logging.getLogger().addHandler(fh)
         is_gn = run_name in gn_losses
         levels = default_levels.get(run_name)
-        if args.levels is not None and len(args.levels) > 0:
-            levels = tuple(int(v) for v in args.levels)
+        if command.levels is not None and len(command.levels) > 0:
+            levels = command.levels
         logging.info("=== [%s] starting (GN) ===", run_name.upper())
         if levels is not None:
             logging.info("[%s] multires levels: %s", run_name, levels)
@@ -150,7 +188,7 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
                 x_est_np = (
                     np.asarray(metadata_out.volume) if metadata_out.volume is not None else None
                 )
-            elif args.metrics_only:
+            elif command.metrics_only:
                 logging.warning(
                     "[%s] metrics-only set and output missing; skipping (status=missing)",
                     run_name,
@@ -163,14 +201,14 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
                 p_est_np = None
             else:
                 outer_iters = (
-                    args.outer_iters
+                    command.outer_iters
                     if run_name not in high_iter_losses
-                    else max(args.outer_iters, 8)
+                    else max(command.outer_iters, 8)
                 )
                 recon_iters = (
-                    args.recon_iters
+                    command.recon_iters
                     if run_name not in high_iter_losses
-                    else max(args.recon_iters, 30)
+                    else max(command.recon_iters, 30)
                 )
                 cfg = AlignConfig(
                     outer_iters=outer_iters,
@@ -219,12 +257,18 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
 
             if status == "ok" and p_est_np is not None:
                 abs_m = _metrics_abs(true_params, p_est_np, du=du, dv=dv)
-                rel_m = _metrics_relative(true_params, p_est_np, du=du, dv=dv, k_step=args.k_step)
+                rel_m = _metrics_relative(
+                    true_params,
+                    p_est_np,
+                    du=du,
+                    dv=dv,
+                    k_step=command.k_step,
+                )
                 gf_m = _metrics_gauge_fixed(true_params, p_est_np, du=du, dv=dv)
                 metrics.update(abs_m)
                 metrics.update(rel_m)
                 metrics.update(gf_m)
-                if args.gt_metric != "none":
+                if command.gt_metric != "none":
                     y_hat = _project_gt_with_estimated_poses(
                         _jnp_float32_array(metadata_mis.volume),
                         grid,
@@ -252,7 +296,7 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
             elapsed,
             metrics.get("rot_rmse_deg", float("nan")),
             metrics.get("trans_rmse_px", float("nan")),
-            args.k_step,
+            command.k_step,
             metrics.get("rot_rel_rmse_deg", float("nan")),
             metrics.get("trans_rel_rmse_px", float("nan")),
             metrics.get("rot_gf_rmse_deg", float("nan")),
@@ -282,13 +326,14 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
 
 def _write_results_summary(
     expdir: str,
-    args: argparse.Namespace,
+    command: LossBenchCommand | argparse.Namespace,
     results: list[dict[str, BenchmarkResultValue]],
 ) -> None:
     expdir_path = Path(expdir)
+    config = asdict(command) if isinstance(command, LossBenchCommand) else vars(command)
     with (expdir_path / "results.json").open("w", encoding="utf-8") as f:
         json.dump(
-            {"results": results, "config": {k: getattr(args, k) for k in vars(args)}},
+            {"results": results, "config": config},
             f,
             indent=2,
         )
@@ -337,85 +382,116 @@ def _has_failed_result(results: list[dict[str, BenchmarkResultValue]]) -> bool:
     return any(result.get("status") == "error" for result in results)
 
 
-def main() -> None:
-    """Run the developer loss benchmark."""
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Benchmark multiple alignment losses on a small misaligned phantom."
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--expdir",
         default="runs/loss_experiment",
         help="Experiment output directory (datasets, logs, results)",
     )
-    p.add_argument("--nx", type=int, default=128)
-    p.add_argument("--ny", type=int, default=128)
-    p.add_argument("--nz", type=int, default=1)
-    p.add_argument("--nu", type=int, default=128)
-    p.add_argument("--nv", type=int, default=128)
-    p.add_argument("--n-views", type=int, default=60)
-    p.add_argument("--geometry", choices=["parallel", "lamino"], default="parallel")
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument(
+    _ = p.add_argument("--nx", type=int, default=128)
+    _ = p.add_argument("--ny", type=int, default=128)
+    _ = p.add_argument("--nz", type=int, default=1)
+    _ = p.add_argument("--nu", type=int, default=128)
+    _ = p.add_argument("--nv", type=int, default=128)
+    _ = p.add_argument("--n-views", type=int, default=60)
+    _ = p.add_argument("--geometry", choices=["parallel", "lamino"], default="parallel")
+    _ = p.add_argument("--seed", type=int, default=0)
+    _ = p.add_argument(
         "--rot-deg",
         type=float,
         default=1.0,
         help="Max |rotation| per-axis used to generate misalignment (degrees)",
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--trans-px",
         type=float,
         default=5.0,
         help="Max |translation| used to generate misalignment (pixels)",
     )
-    p.add_argument("--outer-iters", type=int, default=4)
-    p.add_argument("--recon-iters", type=int, default=10)
-    p.add_argument("--progress", action="store_true")
-    p.add_argument(
+    _ = p.add_argument("--outer-iters", type=int, default=4)
+    _ = p.add_argument("--recon-iters", type=int, default=10)
+    _ = p.add_argument("--progress", action="store_true")
+    _ = p.add_argument(
         "--metrics-only",
         action="store_true",
         help="Do not run alignment; only (re)compute metrics for existing outputs",
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--k-step",
         type=int,
         default=1,
         help="k-step for relative-motion metric (default: 1)",
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--gt-metric",
         choices=["none", "mse"],
         default="mse",
         help="Physics-aware metric against GT projections",
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--levels",
         type=int,
         nargs="*",
         default=None,
         help="Optional multiresolution pyramid factors (e.g., 4 2 1). Applied to all losses.",
     )
-    p.add_argument(
+    _ = p.add_argument(
         "--losses",
         nargs="*",
         default=["l2", "l2_otsu", "pwls"],
         help="Subset of losses to run; default tests LS-like losses (GN-only)",
     )
-    args = p.parse_args()
+    return p
 
-    _ensure_dir(args.expdir)
-    _ensure_dir(str(Path(args.expdir) / "logs"))
+
+def _parse_command(argv: Sequence[str] | None = None) -> LossBenchCommand:
+    args = _build_parser().parse_args(argv)
+    levels = cast("list[int] | None", args.levels)
+    losses = cast("list[str]", args.losses)
+    return LossBenchCommand(
+        expdir=cast("str", args.expdir),
+        nx=cast("int", args.nx),
+        ny=cast("int", args.ny),
+        nz=cast("int", args.nz),
+        nu=cast("int", args.nu),
+        nv=cast("int", args.nv),
+        n_views=cast("int", args.n_views),
+        geometry=cast("str", args.geometry),
+        seed=cast("int", args.seed),
+        rot_deg=cast("float", args.rot_deg),
+        trans_px=cast("float", args.trans_px),
+        outer_iters=cast("int", args.outer_iters),
+        recon_iters=cast("int", args.recon_iters),
+        progress=cast("bool", args.progress),
+        metrics_only=cast("bool", args.metrics_only),
+        k_step=cast("int", args.k_step),
+        gt_metric=cast("str", args.gt_metric),
+        levels=tuple(levels) if levels is not None else None,
+        losses=tuple(losses),
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run the developer loss benchmark."""
+    command = _parse_command(argv)
+
+    _ensure_dir(command.expdir)
+    _ensure_dir(str(Path(command.expdir) / "logs"))
     setup_logging()
     log_jax_env()
-    if args.progress:
+    if command.progress:
         from os import environ
 
         environ["TOMOJAX_PROGRESS"] = "1"
-    results = _run_benchmark_workflow(args)
-    _write_results_summary(args.expdir, args, results)
+    results = _run_benchmark_workflow(command)
+    _write_results_summary(command.expdir, command, results)
     best = _best_result(results)
     if best:
         logging.info("Best by (rot_rmse_deg + trans_rmse_px): %s", best)
-    print(f"Results written to {args.expdir} (results.json, results.csv)")
+    print(f"Results written to {command.expdir} (results.json, results.csv)")
     if _has_failed_result(results):
         raise SystemExit(1)
 

@@ -78,6 +78,11 @@ Tasks:
       historical development names as current product language.
 - [x] Remove remaining public CLI transfer-guard help wording that described
       diagnostic modes as debugging.
+- [x] Loss benchmark developer command cleanup: `tomojax dev loss-bench` now
+      parses into a typed `LossBenchCommand` before running the workflow.
+      Focused loss-bench tests, Ruff, single-file Basedpyright with 0 warnings,
+      and `just production-surface-check` passed. Full CLI Basedpyright
+      warnings are now 673 with 0 errors.
 
 Historical productionization plan follows for context.
 
