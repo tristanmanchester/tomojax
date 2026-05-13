@@ -1,3 +1,5 @@
+"""Detector and angle convention audit records."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -17,6 +19,7 @@ class ConventionEvidence:
     score: float | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this evidence as JSON-compatible metadata."""
         return drop_none(
             {
                 "source": self.source,
@@ -47,9 +50,11 @@ class ConventionAudit:
 
     @property
     def is_ambiguous(self) -> bool:
+        """Return whether the convention decision is below confidence threshold."""
         return self.confidence is None or float(self.confidence) < 0.5
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this audit as JSON-compatible metadata."""
         return drop_none(
             {
                 "flip_u": self.flip_u,

@@ -1,10 +1,14 @@
+"""Typed calibration-state records."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from ._json import JsonValue, drop_none, normalize_json
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 VariableStatus = Literal["estimated", "supplied", "frozen", "derived"]
 CalibrationFrame = Literal[
@@ -49,6 +53,7 @@ class CalibrationVariable:
             raise ValueError(f"Unknown calibration variable frame {self.frame!r}")
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this variable as JSON-compatible metadata."""
         return drop_none(
             {
                 "name": self.name,
@@ -64,6 +69,7 @@ class CalibrationVariable:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> CalibrationVariable:
+        """Build a calibration variable from JSON-like metadata."""
         return cls(
             name=str(payload["name"]),
             value=normalize_json(payload.get("value")),
@@ -102,6 +108,7 @@ class CalibrationState:
             raise ValueError(f"Calibration variable names must be unique: {duplicates}")
 
     def variables(self) -> tuple[CalibrationVariable, ...]:
+        """Return all calibration variables in stable section order."""
         return (
             *self.detector,
             *self.scan,
@@ -112,12 +119,15 @@ class CalibrationState:
         )
 
     def variables_by_name(self) -> dict[str, CalibrationVariable]:
+        """Return calibration variables keyed by name."""
         return {variable.name: variable for variable in self.variables()}
 
     def estimated_names(self) -> set[str]:
+        """Return names of variables marked as estimated."""
         return {variable.name for variable in self.variables() if variable.status == "estimated"}
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this state as JSON-compatible metadata."""
         return {
             field_name: [variable.to_dict() for variable in getattr(self, field_name)]
             for field_name in _SECTION_NAMES
@@ -125,6 +135,7 @@ class CalibrationState:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> CalibrationState:
+        """Build grouped calibration state from JSON-like metadata."""
         sections = {}
         for field_name in _SECTION_NAMES:
             values = payload.get(field_name, [])

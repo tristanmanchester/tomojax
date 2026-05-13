@@ -1,10 +1,15 @@
+"""Gauge validation rules for calibration variables."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ._json import JsonValue
 from .state import CalibrationState, CalibrationVariable
+
+if TYPE_CHECKING:
+    from ._json import JsonValue
 
 
 @dataclass(frozen=True)
@@ -16,6 +21,7 @@ class GaugeConflict:
     message: str
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this conflict as JSON-compatible metadata."""
         return {
             "code": self.code,
             "variables": list(self.variables),
@@ -26,7 +32,7 @@ class GaugeConflict:
 class GaugeValidationError(ValueError):
     """Raised when a calibration state contains underdetermined gauge choices."""
 
-    def __init__(self, conflicts: Iterable[GaugeConflict]):
+    def __init__(self, conflicts: Iterable[GaugeConflict]) -> None:
         self.conflicts = tuple(conflicts)
         codes = ", ".join(conflict.code for conflict in self.conflicts)
         super().__init__(f"Calibration gauge conflicts: {codes}")

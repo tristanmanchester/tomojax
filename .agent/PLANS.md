@@ -1205,6 +1205,11 @@ and proposed next fix before stopping.
   exceptions localized to retained IO/preprocess/artefact routines. Focused
   IO/data tests passed with 107 tests and 1 expected heavy-phantom skip;
   `just production-surface-check` still passes.
+- [x] The transitional `src/tomojax/calibration` package now passes Ruff on its
+  own. The cleanup documented calibration metadata/state/objective helpers and
+  kept the production-facing contract that calibration primitives are consumed
+  through `tomojax.geometry`. Focused calibration tests passed with 37 tests;
+  `just production-surface-check` still passes.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

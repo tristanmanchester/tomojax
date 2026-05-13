@@ -15572,3 +15572,21 @@ Validation:
   passed with 107 tests and 1 expected heavy-phantom skip.
 - `just production-surface-check` passed with 75 focused tests and all 4 import
   contracts kept.
+
+### Calibration package Ruff cleanup completed
+
+- Added module and public-method documentation coverage for calibration state,
+  gauge, convention, unit, objective, manifest, axis, and detector-grid helpers.
+- Kept calibration as a transitional package whose primitives are routed through
+  the `tomojax.geometry` facade for production consumers.
+- Left the JSON-normalization helper's existing branchy shape explicit with a
+  narrow complexity exception.
+
+Validation:
+
+- `uv run ruff check src/tomojax/calibration --statistics` passed.
+- `uv run ruff format --check src/tomojax/calibration` passed.
+- `uv run pytest tests/test_calibration_axis_geometry.py tests/test_calibration_conventions_objectives.py tests/test_calibration_detector_grid.py tests/test_calibration_gauge.py tests/test_calibration_state.py tests/test_calibration_units.py -q`
+  passed with 37 tests.
+- `just production-surface-check` passed with 75 focused tests and all 4 import
+  contracts kept.

@@ -1,12 +1,18 @@
+"""Calibration manifest construction helpers."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from ._json import JsonValue, drop_none, normalize_json
-from .conventions import ConventionAudit
-from .objectives import ObjectiveCard
 from .state import CalibrationState
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from .conventions import ConventionAudit
+    from .objectives import ObjectiveCard
 
 CALIBRATION_MANIFEST_SCHEMA_VERSION = 1
 
@@ -46,7 +52,7 @@ def build_calibration_manifest(
     timestamp: datetime | str | None = None,
 ) -> dict[str, JsonValue]:
     """Build a strict JSON-compatible manifest for geometry calibration metadata."""
-    manifest = drop_none(
+    return drop_none(
         {
             "schema_version": CALIBRATION_MANIFEST_SCHEMA_VERSION,
             "created_at": _timestamp_utc(timestamp),
@@ -61,7 +67,6 @@ def build_calibration_manifest(
             "extra": normalize_json(extra),
         }
     )
-    return manifest
 
 
 def build_calibrated_geometry_metadata_patch(

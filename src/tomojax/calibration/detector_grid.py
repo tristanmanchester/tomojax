@@ -1,11 +1,16 @@
+"""Detector-grid calibration helpers."""
+
 from __future__ import annotations
 
 import dataclasses
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from tomojax.core.geometry import Detector
 from tomojax.core.projector import get_detector_grid_device
+
+if TYPE_CHECKING:
+    from tomojax.core.geometry import Detector
 
 
 def zero_center_detector_grid(detector: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:

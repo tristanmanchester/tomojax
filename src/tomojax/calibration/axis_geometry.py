@@ -1,12 +1,17 @@
+"""Rotation-axis calibration helpers."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry.lamino import laminography_axis_unit
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 AXIS_DIRECTION_DOFS: tuple[str, ...] = ("axis_rot_x_deg", "axis_rot_y_deg")
 
@@ -34,6 +39,7 @@ def nominal_axis_unit_from_inputs(geometry_inputs: Mapping[str, object]) -> np.n
 
 
 def default_active_axis_dofs(geometry_inputs: Mapping[str, object]) -> tuple[str, ...]:
+    """Return the default active axis-direction DOFs for geometry metadata."""
     if (
         str(geometry_inputs.get("geometry_type", "parallel")).lower()
         in {
@@ -52,6 +58,7 @@ def axis_values_from_rotations(
     axis_rot_x_deg: float,
     axis_rot_y_deg: float,
 ) -> jnp.ndarray:
+    """Pack axis rotation values according to active DOF names."""
     values = []
     for name in active_names:
         if name == "axis_rot_x_deg":
@@ -68,6 +75,7 @@ def axis_rotations_from_active(
     fixed_axis_rot_x_deg: float,
     fixed_axis_rot_y_deg: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Unpack active axis values into x/y rotation values."""
     values = jnp.asarray(active_values, dtype=jnp.float32)
     rot_x = jnp.asarray(fixed_axis_rot_x_deg, dtype=jnp.float32)
     rot_y = jnp.asarray(fixed_axis_rot_y_deg, dtype=jnp.float32)
@@ -85,6 +93,7 @@ def axis_unit_from_rotations(
     axis_rot_x_deg: object,
     axis_rot_y_deg: object,
 ) -> jnp.ndarray:
+    """Apply x/y calibration rotations to a nominal lab-frame axis."""
     axis = jnp.asarray(nominal_axis_unit, dtype=jnp.float32)
     rx = jnp.deg2rad(jnp.asarray(axis_rot_x_deg, dtype=jnp.float32))
     ry = jnp.deg2rad(jnp.asarray(axis_rot_y_deg, dtype=jnp.float32))
@@ -110,6 +119,7 @@ def axis_unit_from_active(
     fixed_axis_rot_x_deg: float,
     fixed_axis_rot_y_deg: float,
 ) -> jnp.ndarray:
+    """Return the calibrated axis unit vector from active packed values."""
     rot_x, rot_y = axis_rotations_from_active(
         active_values,
         active_names=active_names,
@@ -174,7 +184,6 @@ def axis_pose_stack(
         c, s = jnp.cos(theta), jnp.sin(theta)
         Rz = jnp.asarray([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float32)
         T = jnp.eye(4, dtype=jnp.float32)
-        T = T.at[:3, :3].set(S @ Rz)
-        return T
+        return T.at[:3, :3].set(S @ Rz)
 
     return jax.vmap(one)(thetas)

@@ -1,3 +1,7 @@
+"""JSON normalization helpers for calibration metadata."""
+
+# ruff: noqa: PLR0911
+
 from __future__ import annotations
 
 from collections.abc import Mapping

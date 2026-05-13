@@ -1,9 +1,14 @@
+"""Objective-card metadata for calibration diagnostics."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ._json import JsonValue, drop_none, normalize_json
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,7 @@ class MetricSpec:
             raise ValueError("metric direction must be 'minimize' or 'maximize'")
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this metric spec as JSON-compatible metadata."""
         return drop_none(
             {
                 "name": self.name,
@@ -41,6 +47,7 @@ class CandidateScore:
     artifacts: Mapping[str, object] | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this candidate score as JSON-compatible metadata."""
         return drop_none(
             {
                 "parameters": normalize_json(self.parameters),
@@ -64,6 +71,7 @@ class ObjectiveCard:
     contact_sheet: str | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return this objective card as JSON-compatible metadata."""
         return drop_none(
             {
                 "primary_metric": self.primary_metric.to_dict(),

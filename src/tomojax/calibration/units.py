@@ -1,10 +1,13 @@
+"""Detector-pixel unit conversion helpers for calibration reports."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from tomojax.core.geometry import Detector
+if TYPE_CHECKING:
+    from tomojax.core.geometry import Detector
 
 DetectorAxis = Literal["u", "v"]
 
@@ -26,6 +29,7 @@ class DetectorPixelScale:
 
     @classmethod
     def from_detectors(cls, native: Detector, level: Detector) -> DetectorPixelScale:
+        """Build pixel scaling between native and level detectors."""
         return cls(
             native_du=float(native.du),
             native_dv=float(native.dv),
@@ -34,22 +38,27 @@ class DetectorPixelScale:
         )
 
     def native_px_to_physical(self, value_px: float, axis: DetectorAxis) -> float:
+        """Convert native detector pixels to physical detector units."""
         spacing = self.native_du if axis == "u" else self.native_dv
         return float(value_px) * spacing
 
     def physical_to_native_px(self, value_physical: float, axis: DetectorAxis) -> float:
+        """Convert physical detector units to native detector pixels."""
         spacing = self.native_du if axis == "u" else self.native_dv
         return float(value_physical) / spacing
 
     def native_px_to_level_px(self, value_px: float, axis: DetectorAxis) -> float:
+        """Convert native detector pixels to binned level pixels."""
         factor = self.bin_factor_u if axis == "u" else self.bin_factor_v
         return float(value_px) / factor
 
     def level_px_to_native_px(self, value_px: float, axis: DetectorAxis) -> float:
+        """Convert binned level pixels to native detector pixels."""
         factor = self.bin_factor_u if axis == "u" else self.bin_factor_v
         return float(value_px) * factor
 
     def to_dict(self) -> dict[str, float]:
+        """Return scale fields as JSON-compatible floats."""
         return {
             "native_du": float(self.native_du),
             "native_dv": float(self.native_dv),
@@ -66,6 +75,7 @@ class DetectorPixelValue:
     native_px: float
 
     def report(self, scale: DetectorPixelScale) -> dict[str, float | str]:
+        """Return this value in native, level, and physical units."""
         return {
             "axis": self.axis,
             "native_px": float(self.native_px),
