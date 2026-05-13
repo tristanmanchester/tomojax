@@ -15203,3 +15203,18 @@ Validation:
 
 - `uv run pytest tests/test_cli_public_surface.py -q` passed.
 - `just production-surface-check` passed with 70 focused tests.
+
+### Align CLI type-warning cleanup
+
+- Removed the remaining `Any` leaks from the public `tomojax align` command
+  boundary by typing profile defaults, alignment config handoff literals,
+  gauge metadata, and manifest result extraction. Alignment output persistence
+  now returns the saved output frame explicitly instead of passing loose
+  persistence metadata through manifest assembly.
+- Kept the behavior unchanged while making the focused public CLI and IO
+  surface fully clean under Basedpyright.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli` passed with 0 errors and 0 warnings.
+- `just production-surface-check` passed with 70 focused tests.

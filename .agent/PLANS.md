@@ -126,6 +126,10 @@ Tasks:
       era terms from reappearing in public CLI docs and user-facing text.
       `tests/test_cli_public_surface.py` and `just production-surface-check`
       passed.
+- [x] Align CLI type-warning cleanup: removed remaining `Any` leaks from the
+      public `tomojax align` command boundary and manifest/output handoff.
+      `uv run basedpyright src/tomojax/cli` now passes with 0 errors and
+      0 warnings; `just production-surface-check` passed.
 
 Historical productionization plan follows for context.
 
