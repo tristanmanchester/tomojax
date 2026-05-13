@@ -1,7 +1,8 @@
 # TomoJAX v2 Quickstart
 
 This branch is the v2 staged tomography and laminography workflow. Use the
-commands below as the clean public entrypoints for current evidence runs.
+commands below as the clean public entrypoints for current evidence runs. The
+current support matrix is in [`support-matrix.md`](support-matrix.md).
 
 ## GPU Setup
 
@@ -51,6 +52,10 @@ uv run tomojax ingest ./projections \
 ```
 
 ## Synthetic Tomography
+
+The commands below are developer diagnostics for the original synthetic plan,
+not normal user workflows. They are useful for reproducing the current evidence
+and checking whether a change has damaged the geometry solver.
 
 Setup-global gate:
 

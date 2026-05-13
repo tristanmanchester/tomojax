@@ -1,16 +1,21 @@
 # Known Limitations
 
 Current production-shaped coverage is intentionally narrower than the full v2
-research plan.
+research plan. The detailed status table is in
+[`support-matrix.md`](support-matrix.md).
 
-- Real laminography is validated on the k11 staged workflow evidence, not on a
-  broad multi-scan corpus.
-- `synth128_setup_global_tomo` passes a 128^3/16-view geometry gate with the
-  diagnostic schedule, but the full 256-view manifest run is blocked by
-  compile/orchestration time.
-- `synth128_pose_random_extreme` runs and evaluates dx/dz/phi/alpha/beta at
-  128^3/16 views, but currently fails the strict pose recovery thresholds.
-- Nuisance fitting, object drift/deformation, and end-to-end Pallas defaults
-  remain research/diagnostic surfaces rather than default production paths.
+- Real laminography is validated on the retained k11 staged workflow evidence,
+  not on a broad multi-scan corpus.
+- The original synthetic setup-global and pose-random `128^3` gates currently
+  prove oracle/fixed-volume geometry recovery. They are strong solver evidence,
+  but they are not truth-free stopped-reconstruction production passes.
+- Truth-free stopped detector-centre recovery remains a research blocker: a
+  wrong-geometry preview reconstruction can absorb the detector-centre error
+  into the volume.
+- Laminography axis/roll/theta recovery, object-frame drift, nuisance fitting,
+  and combined bad-view/jump handling remain diagnostic or research surfaces
+  until their dedicated reports contain production evidence.
+- End-to-end Pallas defaults remain diagnostic. Reference/JAX paths are the
+  current correctness baseline for publication-facing claims.
 - JAX GPU selection currently requires exporting the venv NVIDIA library path
-  before launching CUDA runs.
+  before launching CUDA runs on the laptop.
