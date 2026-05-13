@@ -9,7 +9,7 @@ from dataclasses import replace
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
@@ -38,9 +38,15 @@ from tomojax.io import (
     save_projection_payload,
 )
 from tomojax.recon.fbp import FBPConfig, fbp
-from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.recon.fista_tv import (
+    FistaConfig,
+    fista_tv,  # pyright: ignore[reportUnknownVariableType]
+)
 from tomojax.recon.quicklook import save_quicklook_png
-from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
+from tomojax.recon.spdhg_tv import (
+    SPDHGConfig,
+    spdhg_tv,  # pyright: ignore[reportUnknownVariableType]
+)
 
 if TYPE_CHECKING:
     from tomojax.recon.types import Regulariser
@@ -69,6 +75,10 @@ def _positive_float(value: str) -> float:
 
 def _default_views_per_batch(algo: str) -> int:
     return 16 if str(algo).lower() == "spdhg" else 1
+
+
+def _jnp_float32_array(value: object) -> Any:
+    return jnp.asarray(value, dtype=jnp.float32)  # pyright: ignore[reportUnknownMemberType]
 
 
 def _resolve_views_per_batch(
@@ -161,7 +171,7 @@ def _resolve_volume_mask_for_cli(
         return None
     try:
         m_xy = cylindrical_mask_xy(grid, detector)
-        return jnp.asarray(m_xy, dtype=jnp.float32)[:, :, None]
+        return _jnp_float32_array(m_xy)[:, :, None]
     except Exception as exc:
         raise ValueError(f"Failed to apply requested --mask-vol={mask_mode!r}") from exc
 
@@ -383,7 +393,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
     )
-    proj = jnp.asarray(meta.projections, dtype=jnp.float32)
+    proj = _jnp_float32_array(meta.projections)
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
     if det_grid is not None:
         logging.info(
@@ -511,14 +521,14 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             "upper_bound": cfg.upper_bound,
         }
         with transfer_guard_context(args.transfer_guard):
-            vol, _info = fista_tv(
+            vol = fista_tv(
                 geom,
                 recon_grid,
                 detector,
                 proj,
                 config=cfg,
                 det_grid=det_grid,
-            )
+            )[0]
     else:  # spdhg
         # Build SPDHG config
         cfg = SPDHGConfig(
@@ -585,7 +595,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             # Enforce positivity for a clean start (harmless if TV/signal expects nonnegative)
             init_x = jnp.maximum(init_x, 0.0)
         with transfer_guard_context(args.transfer_guard):
-            vol, _info = spdhg_tv(
+            vol = spdhg_tv(
                 geom,
                 recon_grid,
                 detector,
@@ -593,7 +603,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 init_x=init_x,
                 config=cfg,
                 det_grid=det_grid,
-            )
+            )[0]
 
     # Save the reconstruction in the object (sample) frame.
     # Reuse host projections from metadata to avoid a device-to-host copy.
