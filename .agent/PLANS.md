@@ -8,6 +8,33 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ## Active Milestone
 
+### Overnight Product Truth Push - 2026-05-13
+
+Source goal: `docs/agent_goal_tomojax_v2_overnight_product_truth_20260513.md`.
+
+The current objective is to turn the cleaned production surface into a
+publication-facing MVP truth pass: verify the public CLI on real/synthetic
+fixtures, rerun or validate the original `128^3` scenarios honestly, clean the
+real-laminography staged workflow, and advance the stopped detector-centre
+blocker without promoting benchmark-specific tricks.
+
+Tasks:
+
+- [ ] Public MVP polish: verify the cleaned CLI on real/synthetic fixtures,
+      improve user-facing reports/failure messages where needed, and add a
+      support matrix that does not overclaim diagnostic/research functionality.
+- [ ] Original `128^3` synthetic gates: rerun or validate all five original
+      scenarios, fix supported failures where feasible, and classify unsupported
+      blockers with artifact-backed evidence.
+- [ ] Real laminography production workflow: clean the staged real-data path,
+      remove development-era wording from user-facing reports, and produce
+      inspectable PNG/report artifacts against the retained reference run.
+- [ ] Stopped-alignment blocker: run a bounded truth-free detector-centre/COR
+      gate, try at least one differentiable/objective-consistent fix, and
+      document whether it is production-supported today.
+- [ ] Final validation: sync remote artifacts back, run `just check`, update
+      docs/implementation_log.md, and commit each verified slice.
+
 ### Production Hardening - 2026-05-12
 
 Source goal: `docs/agent_goal_tomojax_v2_production_hardening_20260512.md`.
