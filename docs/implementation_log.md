@@ -15409,3 +15409,22 @@ Validation:
 - `just check` was run and failed during `ruff check --fix src tests tools`.
   This is now tracked as remaining cleanup work rather than hidden behind the
   focused production-surface gate.
+
+### Alignment schedule and loss helpers moved behind facade
+
+- Re-exported the CLI-facing alignment DOF, schedule, gauge, and loss parsing
+  helpers from `tomojax.align.api`.
+- Updated `tomojax align` and `tomojax dev loss-bench` so they no longer import
+  `tomojax.align.model` or `tomojax.align.objectives` directly for public
+  schedule/loss parsing. This keeps product CLI code attached to the deep
+  module facade instead of nested implementation packages.
+- Added a public-surface test that rejects new direct imports from production
+  CLI files into `tomojax.align.model` and `tomojax.align.objectives`.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/align/api.py src/tomojax/cli/align.py src/tomojax/cli/loss_bench.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_cli_entrypoints.py tests/test_loss_bench.py -q`
+  passed with 28 tests.
+- `just production-surface-check` passed with 74 focused tests.

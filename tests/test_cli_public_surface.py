@@ -121,6 +121,31 @@ def test_cli_modules_do_not_import_transitional_data_package() -> None:
     assert leaks == {}
 
 
+def test_production_cli_uses_alignment_facade_for_schedules_and_losses() -> None:
+    cli_files = [
+        Path("src/tomojax/cli/align.py"),
+        Path("src/tomojax/cli/loss_bench.py"),
+    ]
+    leaks: dict[str, list[str]] = {}
+    for path in cli_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imports.append("." * node.level + node.module)
+        forbidden = [
+            module
+            for module in imports
+            if module.startswith(("tomojax.align.model", "tomojax.align.objectives"))
+        ]
+        if forbidden:
+            leaks[str(path)] = forbidden
+
+    assert leaks == {}
+
+
 def test_production_modules_do_not_import_lower_level_data_package() -> None:
     production_modules = [
         "align",

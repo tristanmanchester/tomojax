@@ -1156,9 +1156,12 @@ and proposed next fix before stopping.
   production surface is clean, but the objective is not complete because
   repo-wide `just check` is still red and nested alignment implementation
   packages still behave as public modules.
-- [ ] Continue architecture cleanup by moving CLI-facing alignment schedule/loss
-  dependencies behind the public `tomojax.align` facade and reducing the nested
-  align package public/internal mismatch.
+- [x] CLI-facing alignment schedule/loss dependencies moved behind the public
+  `tomojax.align.api` facade: `tomojax align` and `tomojax dev loss-bench`
+  no longer import `tomojax.align.model` or `tomojax.align.objectives`
+  directly, and a public-surface test now guards that boundary.
+  `just production-surface-check` passed with 74 focused tests.
+- [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks
 

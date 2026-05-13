@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, cast
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.objectives.loss_specs import parse_loss_spec
+from tomojax.align.api import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.bench.loss_experiment import (
     make_gt_dataset as _make_gt_dataset,

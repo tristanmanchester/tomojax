@@ -21,13 +21,22 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align.api import (
+    PUBLIC_SCHEDULE_PRESETS,
     AlignConfig,
+    AlignmentLossConfig,
     AlignMultiresResumeState,
     AlignResumeState,
+    DofBounds,
     align,
+    normalize_alignment_dofs,
     normalize_alignment_profile,
+    normalize_bounds,
+    parse_loss_schedule,
+    parse_loss_spec,
     profile_policy_from_config,
+    resolve_alignment_schedule,
     resolve_profiled_cli_defaults,
+    validate_loss_schedule_levels,
 )
 from tomojax.align.io.checkpoint import (
     AlignmentCheckpointGeometrySnapshot,
@@ -42,18 +51,6 @@ from tomojax.align.io.checkpoint import (
     validate_alignment_checkpoint,
 )
 from tomojax.align.io.params_export import save_alignment_params_csv, save_alignment_params_json
-from tomojax.align.model.dofs import (
-    DofBounds,
-    normalize_alignment_dofs,
-    normalize_bounds,
-)
-from tomojax.align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
-from tomojax.align.objectives.loss_specs import (
-    AlignmentLossConfig,
-    parse_loss_schedule,
-    parse_loss_spec,
-    validate_loss_schedule_levels,
-)
 from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
@@ -79,9 +76,7 @@ from tomojax.io import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tomojax.align.api import FallbackPolicy, QualityTier
-    from tomojax.align.model.gauge import GaugeFixMode
-    from tomojax.align.model.schedules import GaugePolicy
+    from tomojax.align.api import FallbackPolicy, GaugeFixMode, GaugePolicy, QualityTier
     from tomojax.recon.types import Regulariser
 
 type AlignmentMode = Literal["cor", "pose", "auto", "max"]

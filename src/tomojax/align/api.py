@@ -42,6 +42,23 @@ from tomojax.align._profiles import (
     resolve_profiled_cli_defaults,
 )
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
+from tomojax.align.model.dofs import (
+    DofBounds,
+    normalize_alignment_dofs,
+    normalize_bounds,
+)
+from tomojax.align.model.gauge import GaugeFixMode
+from tomojax.align.model.schedules import (
+    PUBLIC_SCHEDULE_PRESETS,
+    GaugePolicy,
+    resolve_alignment_schedule,
+)
+from tomojax.align.objectives.loss_specs import (
+    AlignmentLossConfig,
+    parse_loss_schedule,
+    parse_loss_spec,
+    validate_loss_schedule_levels,
+)
 from tomojax.align.pipeline import (
     AlignConfig,
     AlignMultiresResumeState,
@@ -51,16 +68,21 @@ from tomojax.align.pipeline import (
 )
 
 __all__ = [
+    "PUBLIC_SCHEDULE_PRESETS",
     "AlignConfig",
     "AlignMultiresResumeState",
     "AlignResumeState",
+    "AlignmentLossConfig",
     "AlignmentProfile",
     "AlignmentProfileInput",
     "AlignmentProfilePolicy",
     "ContinuationLevel",
     "ContinuationSchedule",
     "ContinuationScheduleName",
+    "DofBounds",
     "FallbackPolicy",
+    "GaugeFixMode",
+    "GaugePolicy",
     "GeometryUpdateSolver",
     "GeometryUpdateVolumeSource",
     "JointSchurDiagnostics",
@@ -83,13 +105,19 @@ __all__ = [
     "align_multires",
     "alignment_profile_policy",
     "joint_schur_normal_eq_summary",
+    "normalize_alignment_dofs",
     "normalize_alignment_profile",
+    "normalize_bounds",
+    "parse_loss_schedule",
+    "parse_loss_spec",
     "profile_policy_from_config",
     "reference_continuation_schedule",
+    "resolve_alignment_schedule",
     "resolve_profiled_cli_defaults",
     "schur_step_from_jacobian",
     "solve_joint_schur_lm",
     "solve_pose_only_lm",
     "solve_setup_only_lm",
+    "validate_loss_schedule_levels",
     "write_joint_schur_normal_eq_summary",
 ]
