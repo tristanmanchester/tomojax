@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tomojax.io import (
     format_inspection_report,
@@ -18,18 +19,27 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+@dataclass(frozen=True)
+class InspectCommand:
+    """Typed command plan for dataset inspection."""
+
+    input_path: Path
+    json_path: Path | None
+    quicklook_path: Path | None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Inspect an HDF5/NXtomo (.nxs) file before reconstruction"
     )
-    parser.add_argument("input", help="Input .nxs/.h5/.hdf5 file")
-    parser.add_argument(
+    _ = parser.add_argument("input", help="Input .nxs/.h5/.hdf5 file")
+    _ = parser.add_argument(
         "--json",
         metavar="PATH",
         default=None,
         help="Write a stable machine-readable inspection report to PATH",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--quicklook",
         metavar="PATH",
         default=None,
@@ -38,10 +48,22 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_command(argv: Sequence[str] | None) -> InspectCommand:
+    """Parse CLI arguments into a typed inspection command plan."""
+    args = _build_parser().parse_args(argv)
+    json_arg = cast("str | None", args.json)
+    quicklook_arg = cast("str | None", args.quicklook)
+    return InspectCommand(
+        input_path=Path(cast("str", args.input)),
+        json_path=Path(json_arg) if json_arg is not None else None,
+        quicklook_path=Path(quicklook_arg) if quicklook_arg is not None else None,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the dataset inspection command."""
-    args = _build_parser().parse_args(argv)
-    path = Path(args.input)
+    command = _parse_command(argv)
+    path = command.input_path
 
     if not path.exists():
         print(f"ERROR: file not found: {path}", file=sys.stderr)
@@ -58,20 +80,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(format_inspection_report(report))
 
-    if args.json is not None:
-        json_path = Path(args.json)
+    if command.json_path is not None:
+        json_path = command.json_path
         json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(
+        _ = json_path.write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
-    if args.quicklook is not None:
+    if command.quicklook_path is not None:
         try:
-            save_projection_quicklook(path, args.quicklook)
+            _ = save_projection_quicklook(path, command.quicklook_path)
         except Exception as exc:
             print(
-                f"ERROR: could not write quicklook {args.quicklook}: {exc}",
+                f"ERROR: could not write quicklook {command.quicklook_path}: {exc}",
                 file=sys.stderr,
             )
             return 1

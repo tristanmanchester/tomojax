@@ -14962,3 +14962,19 @@ Validation:
   -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 882 to 876.
+
+### Inspect CLI command-plan adapter
+
+- Split `tomojax inspect` into parser construction and a typed `InspectCommand`
+  plan carrying parsed `Path` values for the input, JSON report, and quicklook
+  output. The command still routes all inspection and quicklook work through
+  the public `tomojax.io` facade.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/inspect.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/inspect.py` passed.
+- `uv run pytest tests/test_inspect_cli.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 876 to 862.

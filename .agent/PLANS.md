@@ -987,6 +987,11 @@ and proposed next fix before stopping.
   Focused convert tests, Ruff, single-file Basedpyright with 0 warnings, and
   `just production-surface-check` passed. Full CLI Basedpyright warnings are now
   876 with 0 errors.
+- [x] Small inspect command adapter cleanup: `tomojax inspect` now parses into
+  a typed `InspectCommand` carrying `Path` values before calling the
+  `tomojax.io` inspection and quicklook facades. Focused inspect tests, Ruff,
+  single-file Basedpyright with 0 warnings, and `just production-surface-check`
+  passed. Full CLI Basedpyright warnings are now 862 with 0 errors.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions
