@@ -89,6 +89,12 @@ Tasks:
       schedule tests, Ruff, single-file Basedpyright with 0 warnings, and
       `just production-surface-check` passed. Full CLI Basedpyright warnings
       are now 550 with 0 errors.
+- [x] Reconstruction product command cleanup: `tomojax recon` now parses into a
+      typed `ReconCommand` after config-file defaults are applied, and the
+      runtime path no longer depends on raw argparse fields. Recon tests,
+      manifest sidecar regression coverage, Ruff, single-file Basedpyright with
+      0 warnings, and `just production-surface-check` passed. Full CLI
+      Basedpyright warnings are now 364 with 0 errors, all in `align.py`.
 
 Historical productionization plan follows for context.
 

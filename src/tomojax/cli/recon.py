@@ -1,15 +1,16 @@
 """Run reconstruction workflows from the public TomoJAX CLI."""
 
 # ruff: noqa: E402
+# pyright: reportUnusedCallResult=false
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import asdict, dataclass, replace
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
@@ -21,10 +22,10 @@ import numpy as np
 from tomojax.backends import estimate_views_per_batch_info
 from tomojax.calibration.detector_grid import detector_grid_from_geometry_inputs
 from tomojax.cli._runtime import transfer_guard_context
-from tomojax.cli.config import parse_args_with_config
+from tomojax.cli.config import ConfigValue, parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.core.geometry import Detector, Grid  # noqa: TC001
+from tomojax.core.geometry import Detector, Geometry, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
     compute_roi,
@@ -49,7 +50,55 @@ from tomojax.recon.spdhg_tv import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from tomojax.recon.types import Regulariser
+
+type ViewsPerBatch = int | Literal["auto"]
+type ReconTransferGuardMode = Literal["off", "log", "disallow"]
+type ReconAlgorithm = Literal["fbp", "fista", "spdhg"]
+type ReconRoiMode = Literal["off", "auto", "cube", "bbox"]
+type ReconMaskMode = Literal["off", "cyl"]
+type ReconFrame = Literal["sample", "lab"]
+type ReconVolumeAxes = Literal["zyx", "xyz"]
+
+
+@dataclass(frozen=True)
+class ReconCommand:
+    """Typed command plan for the public reconstruction workflow."""
+
+    config: str | None
+    data: str
+    out: str
+    algo: ReconAlgorithm
+    filter: str
+    iters: int
+    lambda_tv: float
+    regulariser: str
+    huber_delta: float
+    tv_prox_iters: int
+    lipschitz: float | None
+    positivity: bool
+    lower_bound: float | None
+    upper_bound: float | None
+    views_per_batch: ViewsPerBatch | None
+    theta: float
+    spdhg_seed: int
+    spdhg_tau: float | None
+    spdhg_sigma_data: float | None
+    spdhg_sigma_tv: float | None
+    warm_start: str
+    gather_dtype: str
+    checkpoint_projector: bool
+    quicklook: str | None
+    save_manifest: str | None
+    roi: ReconRoiMode
+    grid: tuple[int, int, int] | None
+    frame: ReconFrame
+    volume_axes: ReconVolumeAxes
+    progress: bool
+    transfer_guard: ReconTransferGuardMode
+    mask_vol: ReconMaskMode
 
 
 def _parse_views_per_batch(value: str) -> int | str:
@@ -77,8 +126,8 @@ def _default_views_per_batch(algo: str) -> int:
     return 16 if str(algo).lower() == "spdhg" else 1
 
 
-def _jnp_float32_array(value: object) -> Any:
-    return jnp.asarray(value, dtype=jnp.float32)  # pyright: ignore[reportUnknownMemberType]
+def _jnp_float32_array(value: object) -> jnp.ndarray:
+    return jnp.asarray(value, dtype=np.float32)  # pyright: ignore[reportUnknownMemberType]
 
 
 def _resolve_views_per_batch(
@@ -375,23 +424,71 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main() -> None:  # noqa: PLR0912, PLR0915
-    """Run reconstruction from the public CLI."""
+def _parse_command(
+    argv: Sequence[str] | None = None,
+) -> tuple[ReconCommand, dict[str, ConfigValue]]:
+    """Parse CLI/config defaults into a typed reconstruction command plan."""
     p = _build_parser()
-    args, config_metadata = parse_args_with_config(p, required=("data", "out"))
+    args, config_metadata = parse_args_with_config(p, argv, required=("data", "out"))
+    grid = cast("list[int] | None", args.grid)
+    return (
+        ReconCommand(
+            config=cast("str | None", args.config),
+            data=cast("str", args.data),
+            out=cast("str", args.out),
+            algo=cast("ReconAlgorithm", args.algo),
+            filter=cast("str", args.filter),
+            iters=cast("int", args.iters),
+            lambda_tv=cast("float", args.lambda_tv),
+            regulariser=cast("str", args.regulariser),
+            huber_delta=cast("float", args.huber_delta),
+            tv_prox_iters=cast("int", args.tv_prox_iters),
+            lipschitz=cast("float | None", args.L),
+            positivity=cast("bool", args.positivity),
+            lower_bound=cast("float | None", args.lower_bound),
+            upper_bound=cast("float | None", args.upper_bound),
+            views_per_batch=cast("ViewsPerBatch | None", args.views_per_batch),
+            theta=cast("float", args.theta),
+            spdhg_seed=cast("int", args.spdhg_seed),
+            spdhg_tau=cast("float | None", args.spdhg_tau),
+            spdhg_sigma_data=cast("float | None", args.spdhg_sigma_data),
+            spdhg_sigma_tv=cast("float | None", args.spdhg_sigma_tv),
+            warm_start=cast("str", args.warm_start),
+            gather_dtype=cast("str", args.gather_dtype),
+            checkpoint_projector=cast("bool", args.checkpoint_projector),
+            quicklook=cast("str | None", args.quicklook),
+            save_manifest=cast("str | None", args.save_manifest),
+            roi=cast("ReconRoiMode", args.roi),
+            grid=None if grid is None else (int(grid[0]), int(grid[1]), int(grid[2])),
+            frame=cast("ReconFrame", args.frame),
+            volume_axes=cast("ReconVolumeAxes", args.volume_axes),
+            progress=cast("bool", args.progress),
+            transfer_guard=cast("ReconTransferGuardMode", args.transfer_guard),
+            mask_vol=cast("ReconMaskMode", args.mask_vol),
+        ),
+        config_metadata,
+    )
 
+
+def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, ConfigValue]) -> None:  # noqa: PLR0912, PLR0915
+    """Run reconstruction from a typed command plan."""
     setup_logging()
     log_jax_env()
-    if args.progress:
+    if command.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
-    meta = load_projection_payload(args.data)
+    meta = load_projection_payload(command.data)
     geometry_meta = meta.geometry_inputs()
-    initial_grid_override = args.grid if (meta.grid is None and args.grid is not None) else None
-    grid, detector, geom = build_geometry_from_dataset_metadata(
-        geometry_meta,
-        grid_override=initial_grid_override,
-        apply_saved_alignment=False,
+    initial_grid_override = (
+        command.grid if (meta.grid is None and command.grid is not None) else None
+    )
+    grid, detector, geom = cast(
+        "tuple[Grid, Detector, Geometry]",
+        build_geometry_from_dataset_metadata(
+            geometry_meta,
+            grid_override=initial_grid_override,
+            apply_saved_alignment=False,
+        ),
     )
     proj = _jnp_float32_array(meta.projections)
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
@@ -403,12 +500,12 @@ def main() -> None:  # noqa: PLR0912, PLR0915
 
     from tomojax.backends import default_gather_dtype as _default_gather_dtype
 
-    _gather = str(args.gather_dtype)
+    _gather = str(command.gather_dtype)
     if _gather == "auto":
         _gather = _default_gather_dtype()
 
     # Optional ROI selection
-    roi_mode = str(args.roi).lower()
+    roi_mode = str(command.roi).lower()
     is_parallel = meta.geometry_type == "parallel"
     recon_grid = _resolve_recon_grid_for_cli(
         grid,
@@ -418,49 +515,52 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     )
 
     # Rebuild geometry if grid changed
-    if args.grid is not None:
-        NX, NY, NZ = map(int, args.grid)
+    if command.grid is not None:
+        NX, NY, NZ = map(int, command.grid)
         recon_grid = replace(recon_grid, nx=NX, ny=NY, nz=NZ)
 
     if recon_grid is not grid:
         # Once ROI and explicit sizing resolve an effective grid, keep that grid's
         # origin/centre metadata authoritative when rebuilding geometry.
-        _, _, geom = build_geometry_from_dataset_metadata(
-            geometry_meta,
-            grid_override=recon_grid,
-            apply_saved_alignment=False,
+        _, _, geom = cast(
+            "tuple[Grid, Detector, Geometry]",
+            build_geometry_from_dataset_metadata(
+                geometry_meta,
+                grid_override=recon_grid,
+                apply_saved_alignment=False,
+            ),
         )
 
     # Prepare optional volume mask
     vol_mask = _resolve_volume_mask_for_cli(
         recon_grid,
         detector,
-        mask_vol=str(args.mask_vol),
+        mask_vol=str(command.mask_vol),
     )
 
     resolved_vpb, vpb_mode = _resolve_views_per_batch(
-        args.views_per_batch,
-        algo=str(args.algo),
+        command.views_per_batch,
+        algo=str(command.algo),
         n_views=int(proj.shape[0]),
         grid=recon_grid,
         detector=detector,
         gather_dtype=_gather,
-        checkpoint_projector=bool(args.checkpoint_projector),
+        checkpoint_projector=bool(command.checkpoint_projector),
     )
     logging.info(
         "Reconstruction views_per_batch=%d (mode=%s, algo=%s)",
         resolved_vpb,
         vpb_mode,
-        args.algo,
+        command.algo,
     )
 
     algorithm_config: dict[str, object]
-    if args.algo == "fbp":
+    if command.algo == "fbp":
         cfg = FBPConfig(
-            filter_name=str(args.filter),
+            filter_name=str(command.filter),
             views_per_batch=int(resolved_vpb),
             projector_unroll=1,
-            checkpoint_projector=bool(args.checkpoint_projector),
+            checkpoint_projector=bool(command.checkpoint_projector),
             gather_dtype=_gather,
         )
         algorithm_config = {
@@ -470,7 +570,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             "checkpoint_projector": bool(cfg.checkpoint_projector),
             "gather_dtype": str(cfg.gather_dtype),
         }
-        with transfer_guard_context(args.transfer_guard):
+        with transfer_guard_context(command.transfer_guard):
             vol = fbp(
                 geom,
                 recon_grid,
@@ -483,22 +583,22 @@ def main() -> None:  # noqa: PLR0912, PLR0915
         # For FBP, apply mask post-hoc if requested for parity
         if vol_mask is not None:
             vol = vol * vol_mask
-    elif args.algo == "fista":
+    elif command.algo == "fista":
         cfg = FistaConfig(
-            iters=int(args.iters),
-            lambda_tv=float(args.lambda_tv),
-            regulariser=cast("Regulariser", str(args.regulariser)),
-            huber_delta=float(args.huber_delta),
-            L=(float(args.L) if args.L is not None else None),
+            iters=int(command.iters),
+            lambda_tv=float(command.lambda_tv),
+            regulariser=cast("Regulariser", str(command.regulariser)),
+            huber_delta=float(command.huber_delta),
+            L=(float(command.lipschitz) if command.lipschitz is not None else None),
             views_per_batch=resolved_vpb,
             projector_unroll=1,
-            checkpoint_projector=bool(args.checkpoint_projector),
+            checkpoint_projector=bool(command.checkpoint_projector),
             gather_dtype=_gather,
-            tv_prox_iters=int(args.tv_prox_iters),
+            tv_prox_iters=int(command.tv_prox_iters),
             support=vol_mask,
-            positivity=bool(args.positivity),
-            lower_bound=(float(args.lower_bound) if args.lower_bound is not None else None),
-            upper_bound=(float(args.upper_bound) if args.upper_bound is not None else None),
+            positivity=bool(command.positivity),
+            lower_bound=(float(command.lower_bound) if command.lower_bound is not None else None),
+            upper_bound=(float(command.upper_bound) if command.upper_bound is not None else None),
         )
         algorithm_config = {
             "iters": int(cfg.iters),
@@ -520,7 +620,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             "lower_bound": cfg.lower_bound,
             "upper_bound": cfg.upper_bound,
         }
-        with transfer_guard_context(args.transfer_guard):
+        with transfer_guard_context(command.transfer_guard):
             vol = fista_tv(
                 geom,
                 recon_grid,
@@ -532,20 +632,22 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     else:  # spdhg
         # Build SPDHG config
         cfg = SPDHGConfig(
-            iters=int(args.iters),
-            lambda_tv=float(args.lambda_tv),
-            regulariser=cast("Regulariser", str(args.regulariser)),
-            huber_delta=float(args.huber_delta),
-            theta=float(args.theta),
+            iters=int(command.iters),
+            lambda_tv=float(command.lambda_tv),
+            regulariser=cast("Regulariser", str(command.regulariser)),
+            huber_delta=float(command.huber_delta),
+            theta=float(command.theta),
             views_per_batch=int(resolved_vpb),
-            seed=int(args.spdhg_seed),
-            tau=(float(args.spdhg_tau) if args.spdhg_tau is not None else None),
+            seed=int(command.spdhg_seed),
+            tau=(float(command.spdhg_tau) if command.spdhg_tau is not None else None),
             sigma_data=(
-                float(args.spdhg_sigma_data) if args.spdhg_sigma_data is not None else None
+                float(command.spdhg_sigma_data) if command.spdhg_sigma_data is not None else None
             ),
-            sigma_tv=(float(args.spdhg_sigma_tv) if args.spdhg_sigma_tv is not None else None),
+            sigma_tv=(
+                float(command.spdhg_sigma_tv) if command.spdhg_sigma_tv is not None else None
+            ),
             projector_unroll=1,
-            checkpoint_projector=bool(args.checkpoint_projector),
+            checkpoint_projector=bool(command.checkpoint_projector),
             gather_dtype=_gather,
             positivity=True,
             support=vol_mask if vol_mask is not None else None,
@@ -568,18 +670,18 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             "positivity": bool(cfg.positivity),
             "support": "cylindrical" if vol_mask is not None else None,
             "log_every": int(cfg.log_every),
-            "warm_start": str(args.warm_start),
+            "warm_start": str(command.warm_start),
         }
         # Optional warm-start for SPDHG
         init_x = None
-        if str(args.warm_start).lower() == "fbp":
+        if str(command.warm_start).lower() == "fbp":
             # Compute a quick FBP and use as initialization
             warm_start_vpb = 1 if vpb_mode == "default" else int(resolved_vpb)
             warm_start_cfg = FBPConfig(
-                filter_name=str(args.filter),
+                filter_name=str(command.filter),
                 views_per_batch=warm_start_vpb,
                 projector_unroll=1,
-                checkpoint_projector=bool(args.checkpoint_projector),
+                checkpoint_projector=bool(command.checkpoint_projector),
                 gather_dtype=_gather,
             )
             init_x = fbp(
@@ -594,7 +696,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 init_x = init_x * vol_mask
             # Enforce positivity for a clean start (harmless if TV/signal expects nonnegative)
             init_x = jnp.maximum(init_x, 0.0)
-        with transfer_guard_context(args.transfer_guard):
+        with transfer_guard_context(command.transfer_guard):
             vol = spdhg_tv(
                 geom,
                 recon_grid,
@@ -611,32 +713,32 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     save_meta = meta.copy_metadata()
     save_meta.grid = recon_grid.to_dict()
     save_meta.volume = volume_np
-    save_meta.frame = str(args.frame)
-    save_meta.volume_axes_order = str(args.volume_axes)
+    save_meta.frame = str(command.frame)
+    save_meta.volume_axes_order = str(command.volume_axes)
     save_projection_payload(
-        args.out,
+        command.out,
         projections=meta.projections,
         metadata=save_meta,
     )
-    logging.info("Saved reconstruction to %s", args.out)
-    if args.quicklook is not None:
-        _ = save_quicklook_png(args.quicklook, volume_np)
-        logging.info("Saved reconstruction quicklook to %s", args.quicklook)
-    if args.save_manifest is not None:
+    logging.info("Saved reconstruction to %s", command.out)
+    if command.quicklook is not None:
+        _ = save_quicklook_png(command.quicklook, volume_np)
+        logging.info("Saved reconstruction quicklook to %s", command.quicklook)
+    if command.save_manifest is not None:
         manifest = build_manifest(
             "tomojax recon",
             list(sys.argv),
-            args,
+            asdict(command),
             {
-                "input_path": args.data,
-                "output_path": args.out,
-                "quicklook_path": args.quicklook,
-                "manifest_path": args.save_manifest,
+                "input_path": command.data,
+                "output_path": command.out,
+                "quicklook_path": command.quicklook,
+                "manifest_path": command.save_manifest,
                 "config_path": config_metadata["config_path"],
                 "config_file_values": config_metadata["config_file_values"],
                 "explicit_cli_keys": config_metadata["explicit_cli_keys"],
                 "effective_options": config_metadata["effective_options"],
-                "algorithm": str(args.algo),
+                "algorithm": str(command.algo),
                 "algorithm_config": algorithm_config,
                 "geometry_type": str(meta.geometry_type),
                 "input_projection_shape": list(meta.projections.shape),
@@ -649,22 +751,28 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                     "is_parallel": bool(is_parallel),
                     "grid_changed": recon_grid != grid,
                 },
-                "requested_views_per_batch": args.views_per_batch,
+                "requested_views_per_batch": command.views_per_batch,
                 "views_per_batch": int(resolved_vpb),
                 "views_per_batch_mode": vpb_mode,
-                "requested_gather_dtype": str(args.gather_dtype),
+                "requested_gather_dtype": str(command.gather_dtype),
                 "gather_dtype": _gather,
-                "checkpoint_projector": bool(args.checkpoint_projector),
-                "transfer_guard": str(args.transfer_guard),
-                "mask_vol": str(args.mask_vol),
+                "checkpoint_projector": bool(command.checkpoint_projector),
+                "transfer_guard": str(command.transfer_guard),
+                "mask_vol": str(command.mask_vol),
                 "mask_applied": vol_mask is not None,
                 "volume_shape": list(volume_np.shape),
-                "volume_axes": str(args.volume_axes),
-                "frame": str(args.frame),
+                "volume_axes": str(command.volume_axes),
+                "frame": str(command.frame),
             },
         )
-        save_manifest(args.save_manifest, manifest)
-        logging.info("Saved reproducibility manifest to %s", args.save_manifest)
+        save_manifest(command.save_manifest, manifest)
+        logging.info("Saved reproducibility manifest to %s", command.save_manifest)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run reconstruction from the public CLI."""
+    command, config_metadata = _parse_command(argv)
+    _run_reconstruction(command, config_metadata)
 
 
 if __name__ == "__main__":  # pragma: no cover

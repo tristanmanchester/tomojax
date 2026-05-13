@@ -15082,3 +15082,25 @@ Validation:
 - `uv run pytest tests/test_misalign_schedules.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 673 to 550.
+
+### Reconstruction CLI command-plan adapter
+
+- Split `tomojax recon` into config-aware parser handling, a typed
+  `ReconCommand`, and a typed reconstruction workflow. The product
+  reconstruction entrypoint now keeps argparse/config coercion at the boundary
+  while the runtime path carries explicit algorithm, ROI, batching, mask,
+  manifest, and output settings.
+- Preserved the existing manifest/config contract, including the `config`
+  field in recorded CLI arguments, while moving the execution code off raw
+  `argparse.Namespace` access.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/recon.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/recon.py` passed.
+- `uv run pytest tests/test_recon.py tests/test_recon_quicklook.py -q` passed.
+- `uv run pytest tests/test_cli_entrypoints.py::test_recon_main_writes_manifest_sidecar -q`
+  passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 550 to 364.
