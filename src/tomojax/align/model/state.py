@@ -1,7 +1,10 @@
+"""Optimizer-time alignment state containers."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -58,6 +61,7 @@ class SetupGeometryState:
         tilt_deg: object = 0.0,
         nominal_axis_unit: object = (0.0, 0.0, 1.0),
     ) -> SetupGeometryState:
+        """Build setup state from degree-facing metadata values."""
         return cls(
             det_u_px=_scalar(det_u_px),
             det_v_px=_scalar(det_v_px),
@@ -69,6 +73,7 @@ class SetupGeometryState:
         )
 
     def degrees_dict(self) -> dict[str, jnp.ndarray]:
+        """Return angular setup fields in degrees."""
         return {
             "detector_roll_deg": jnp.rad2deg(self.detector_roll_rad),
             "axis_rot_x_deg": jnp.rad2deg(self.axis_rot_x_rad),
@@ -77,6 +82,7 @@ class SetupGeometryState:
         }
 
     def axis_unit_lab(self) -> jnp.ndarray:
+        """Return the realised lab-frame rotation-axis unit vector."""
         deg = self.degrees_dict()
         return axis_unit_from_rotations(
             self.nominal_axis_unit,
@@ -85,6 +91,7 @@ class SetupGeometryState:
         )
 
     def replace(self, **updates: object) -> SetupGeometryState:
+        """Return a copy with selected setup fields replaced."""
         values = {
             "det_u_px": self.det_u_px,
             "det_v_px": self.det_v_px,
@@ -97,7 +104,8 @@ class SetupGeometryState:
         values.update(updates)
         return SetupGeometryState(**values)
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> tuple[tuple[jnp.ndarray, ...], None]:
+        """Flatten this state for JAX pytree handling."""
         children = (
             self.det_u_px,
             self.det_v_px,
@@ -110,7 +118,12 @@ class SetupGeometryState:
         return children, None
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(
+        cls,
+        aux_data: object,
+        children: tuple[jnp.ndarray, ...],
+    ) -> SetupGeometryState:
+        """Rebuild setup state from JAX pytree children."""
         del aux_data
         return cls(*children)
 
@@ -125,18 +138,26 @@ class PoseState:
 
     @classmethod
     def zeros(cls, n_views: int) -> PoseState:
+        """Return a zero pose table for the requested number of views."""
         return cls(jnp.zeros((int(n_views), 5), dtype=jnp.float32))
 
     def replace(self, **updates: object) -> PoseState:
+        """Return a copy with selected pose fields replaced."""
         values = {"params5": self.params5, "motion_coeffs": self.motion_coeffs}
         values.update(updates)
         return PoseState(**values)
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> tuple[tuple[jnp.ndarray, jnp.ndarray | None], None]:
+        """Flatten this state for JAX pytree handling."""
         return (self.params5, self.motion_coeffs), None
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(
+        cls,
+        aux_data: object,
+        children: tuple[jnp.ndarray, jnp.ndarray | None],
+    ) -> PoseState:
+        """Rebuild pose state from JAX pytree children."""
         del aux_data
         params5, motion_coeffs = children
         return cls(params5=params5, motion_coeffs=motion_coeffs)
@@ -158,6 +179,7 @@ class AlignmentState:
         n_views: int,
         volume_shape: tuple[int, int, int] | None = None,
     ) -> AlignmentState:
+        """Return an alignment state with zero setup, pose, and optional volume."""
         volume = (
             None
             if volume_shape is None
@@ -166,6 +188,7 @@ class AlignmentState:
         return cls(setup=SetupGeometryState(), pose=PoseState.zeros(n_views), volume=volume)
 
     def replace(self, **updates: object) -> AlignmentState:
+        """Return a copy with selected alignment fields replaced."""
         values = {"setup": self.setup, "pose": self.pose, "volume": self.volume}
         values.update(updates)
         return AlignmentState(**values)
@@ -175,7 +198,8 @@ class AlignmentState:
         *,
         active_dofs: Iterable[str] = (),
     ) -> CalibrationState:
-        active = set(str(name) for name in active_dofs)
+        """Convert optimizer state into persisted calibration metadata."""
+        active = {str(name) for name in active_dofs}
 
         def status(name: str) -> str:
             return "estimated" if name in active else "frozen"
@@ -237,11 +261,19 @@ class AlignmentState:
             ),
         )
 
-    def tree_flatten(self):
+    def tree_flatten(
+        self,
+    ) -> tuple[tuple[SetupGeometryState, PoseState, jnp.ndarray | None], None]:
+        """Flatten this state for JAX pytree handling."""
         return (self.setup, self.pose, self.volume), None
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(
+        cls,
+        aux_data: object,
+        children: tuple[SetupGeometryState, PoseState, jnp.ndarray | None],
+    ) -> AlignmentState:
+        """Rebuild alignment state from JAX pytree children."""
         del aux_data
         setup, pose, volume = children
         return cls(setup=setup, pose=pose, volume=volume)
@@ -265,6 +297,7 @@ def alignment_state_from_checkpoint(
         for item in section:
             if not isinstance(item, Mapping):
                 continue
+            item = cast("Mapping[str, Any]", item)
             name = str(item.get("name", ""))
             raw_value = item.get("value")
             if raw_value is None:

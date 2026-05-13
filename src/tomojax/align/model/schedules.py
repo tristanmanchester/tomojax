@@ -1,8 +1,9 @@
+"""Alignment schedule presets and resolution helpers."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from .diagnostics import GaugeDecision, GaugePolicyError, validate_active_gauge_policy
 from .dof_specs import ActiveParameterView
@@ -13,6 +14,9 @@ from .dofs import (
     normalize_alignment_dofs,
     resolve_scoped_alignment_dofs,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
 OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm"]
@@ -39,6 +43,8 @@ PUBLIC_SCHEDULE_PRESETS = (
 
 @dataclass(frozen=True, slots=True)
 class AlignmentStage:
+    """One declared stage in an alignment schedule."""
+
     name: str
     active_dofs: tuple[str, ...]
     objective_kind: ObjectiveKind
@@ -52,16 +58,20 @@ class AlignmentStage:
     speed_claim_eligible: bool = True
 
     def active_view(self) -> ActiveParameterView:
+        """Return this stage's active parameters split by owner."""
         return ActiveParameterView.from_dofs(self.active_dofs)
 
 
 @dataclass(frozen=True, slots=True)
 class AlignmentSchedule:
+    """Unresolved alignment schedule declaration."""
+
     name: str
     stages: tuple[AlignmentStage, ...]
     metadata: dict[str, object] = field(default_factory=dict)
 
     def validate(self) -> AlignmentSchedule:
+        """Validate schedule invariants and return this schedule."""
         if not self.stages:
             raise ValueError("alignment schedule must contain at least one stage")
         for stage in self.stages:
@@ -83,6 +93,7 @@ class AlignmentSchedule:
 
     @property
     def active_dofs(self) -> tuple[str, ...]:
+        """Return active DOFs from all stages in first-seen order."""
         seen: list[str] = []
         for stage in self.stages:
             for dof in stage.active_dofs:
@@ -91,6 +102,7 @@ class AlignmentSchedule:
         return tuple(seen)
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible schedule description."""
         return {
             "name": self.name,
             "stages": [
@@ -115,6 +127,8 @@ class AlignmentSchedule:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAlignmentStage:
+    """Alignment stage after preset/direct inputs and gauges are resolved."""
+
     index: int
     name: str
     active_dofs: tuple[str, ...]
@@ -133,6 +147,7 @@ class ResolvedAlignmentStage:
 
     @property
     def scoped_dofs(self) -> ScopedAlignmentDofs:
+        """Return active DOFs split into pose and geometry scopes."""
         return ScopedAlignmentDofs(
             active_pose_dofs=self.active_pose_dofs,
             active_geometry_dofs=self.active_geometry_dofs,
@@ -141,6 +156,7 @@ class ResolvedAlignmentStage:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible resolved-stage description."""
         return {
             "stage_index": int(self.index),
             "stage_name": self.name,
@@ -162,6 +178,8 @@ class ResolvedAlignmentStage:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAlignmentSchedule:
+    """Executable alignment schedule after resolving presets and frozen DOFs."""
+
     name: str
     source: ScheduleSource
     stages: tuple[ResolvedAlignmentStage, ...]
@@ -172,6 +190,7 @@ class ResolvedAlignmentSchedule:
 
     @property
     def active_dofs(self) -> tuple[str, ...]:
+        """Return active DOFs from all resolved stages in first-seen order."""
         seen: list[str] = []
         for stage in self.stages:
             for dof in stage.active_dofs:
@@ -181,20 +200,24 @@ class ResolvedAlignmentSchedule:
 
     @property
     def active_pose_dofs(self) -> tuple[str, ...]:
+        """Return active pose DOFs in canonical pose order."""
         active = set(self.active_dofs)
         return tuple(name for name in DOF_NAMES if name in active)
 
     @property
     def active_geometry_dofs(self) -> tuple[str, ...]:
+        """Return active setup geometry DOFs in canonical setup order."""
         active = set(self.active_dofs)
         return tuple(name for name in GEOMETRY_DOF_NAMES if name in active)
 
     @property
     def pose_mask(self) -> tuple[bool, bool, bool, bool, bool]:
+        """Return a 5-column mask for active pose DOFs."""
         active = set(self.active_pose_dofs)
         return tuple(name in active for name in DOF_NAMES)  # type: ignore[return-value]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible resolved-schedule description."""
         return {
             "name": self.name,
             "source": self.source,
@@ -364,6 +387,7 @@ def schedule_preset(
     active_dofs: Iterable[str] | None = None,
     gauge_policy: GaugePolicy | None = None,
 ) -> AlignmentSchedule:
+    """Return a named public or expert alignment schedule preset."""
     key = str(name).strip().lower().replace("-", "_")
     if key == "detector_center_2d":
         raise ValueError(
@@ -394,7 +418,7 @@ def schedule_preset(
     raise ValueError(f"Unknown alignment schedule preset {name!r}")
 
 
-def resolve_alignment_schedule(
+def resolve_alignment_schedule(  # noqa: PLR0912
     *,
     schedule: str | AlignmentSchedule | None = None,
     optimise_dofs: str | Iterable[str] | None = None,

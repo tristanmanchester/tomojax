@@ -1172,6 +1172,11 @@ and proposed next fix before stopping.
   `tomojax.align.model`, or `tomojax.align.objectives`. `just
   production-surface-check` passed with 75 focused tests and 4 import
   contracts kept.
+- [x] `tomojax.align.model` now passes Ruff on its own: added module,
+  class, method, and pytree doc/typing coverage in `state` and `schedules`
+  without broad per-file ignores. Focused schedule/state/gauge/profile tests
+  and `just production-surface-check` passed. Whole-package Basedpyright still
+  exposes existing JAX typing debt, tracked outside this Ruff cleanup slice.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

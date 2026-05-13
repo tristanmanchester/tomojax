@@ -15458,3 +15458,24 @@ Validation:
 
 - `uv run lint-imports --config .importlinter` passed with 4 contracts kept.
 - `just production-surface-check` passed with 75 focused tests.
+
+### Alignment model package Ruff cleanup
+
+- Added public module/class/method docstrings and pytree return annotations in
+  `tomojax.align.model.state`.
+- Added public schedule/model docstrings in `tomojax.align.model.schedules`.
+- Kept the cleanup code-level rather than adding broad per-file Ruff ignores;
+  the only localized exception is the existing schedule resolver complexity.
+
+Validation:
+
+- `uv run ruff check src/tomojax/align/model --statistics` passed.
+- `uv run pytest tests/test_alignment_schedules.py tests/test_alignment_state.py tests/test_align_gauge.py tests/test_align_profiles.py -q`
+  passed with 37 tests.
+- `just production-surface-check` passed with 75 focused tests.
+
+Residual:
+
+- `uv run basedpyright src/tomojax/align/model` still reports existing JAX
+  typing debt in the broader package. This slice keeps that visible instead of
+  hiding it with broad ignores.
