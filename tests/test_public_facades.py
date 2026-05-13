@@ -3,7 +3,6 @@ from __future__ import annotations
 import tomojax.align as align_api
 import tomojax.bench as bench_api
 import tomojax.calibration as calibration_api
-import tomojax.data as data_api
 import tomojax.io as io_api
 import tomojax.recon as recon_api
 
@@ -21,17 +20,6 @@ def test_reconstruction_facade_exports_documented_api() -> None:
     assert callable(recon_api.fbp)
     assert callable(recon_api.fista_tv)
     assert callable(recon_api.spdhg_tv)
-
-
-def test_data_facade_exports_documented_api() -> None:
-    assert data_api.LoadedNXTomo.__name__ == "LoadedNXTomo"
-    assert data_api.NXTomoMetadata.__name__ == "NXTomoMetadata"
-    assert data_api.SimConfig.__name__ == "SimConfig"
-    assert callable(data_api.load_nxtomo)
-    assert callable(data_api.save_nxtomo)
-    assert callable(data_api.validate_nxtomo)
-    assert callable(data_api.simulate)
-    assert callable(data_api.sphere)
 
 
 def test_io_facade_exports_dataset_boundary() -> None:

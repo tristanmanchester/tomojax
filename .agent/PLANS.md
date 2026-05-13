@@ -140,6 +140,11 @@ Tasks:
       `tomojax dev test-gpu` / `tomojax dev test-cpu`. Quickstart and
       public-surface guards were updated; `just production-surface-check`
       passed with 73 focused tests.
+- [x] Data package demoted from production facade list: `tomojax.data` remains
+      retained lower-level implementation surface, but public facade tests no
+      longer present it as production API. `tomojax.io` owns measured data and
+      `tomojax.datasets` owns synthetic data. `just production-surface-check`
+      passed with 72 focused tests.
 
 Historical productionization plan follows for context.
 

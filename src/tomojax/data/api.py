@@ -1,9 +1,9 @@
-"""Transitional public API for legacy data helpers.
+"""Retained lower-level API for data helpers.
 
 New production IO should use `tomojax.io`; deterministic synthetic generation
-should use `tomojax.datasets`. This API file exists so the retained transitional
+should use `tomojax.datasets`. This API file exists so the retained lower-level
 package still follows the v2 deep-module shape while its responsibilities are
-migrated.
+moved behind the owning modules.
 """
 
 from __future__ import annotations

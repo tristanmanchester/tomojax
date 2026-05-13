@@ -1,4 +1,4 @@
-"""Public data, simulation, and phantom API."""
+"""Retained lower-level data, simulation, and phantom helpers."""
 
 from __future__ import annotations
 

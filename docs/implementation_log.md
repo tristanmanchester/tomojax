@@ -15252,3 +15252,17 @@ Validation:
 - `uv run basedpyright src/tomojax/cli/main.py` passed with 0 errors and
   0 warnings.
 - `just production-surface-check` passed with 73 focused tests.
+
+### Data package demoted from public facade list
+
+- Stopped treating `tomojax.data` as a documented production facade in
+  `tests/test_public_facades.py`. The package remains importable for retained
+  lower-level internals and older tests, but the production public surfaces are
+  now `tomojax.io` for measured data and `tomojax.datasets` for deterministic
+  synthetic data.
+- Updated data package docstrings to describe the retained lower-level role
+  without presenting it as the public data-loading API.
+
+Validation:
+
+- `just production-surface-check` passed with 72 focused tests.
