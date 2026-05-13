@@ -1,9 +1,9 @@
 """Public alignment API and bounded compatibility aliases.
 
 Only ``AlignConfig``, ``align``, and ``align_multires`` are the public
-alignment extension surface. New code that needs internals should import owner
-modules under ``align.model``, ``align.geometry``, ``align.objectives``, or
-``align.io`` directly.
+alignment extension surface. Production code that needs schedule, loss,
+profile, or geometry-update helpers should import them from ``tomojax.align.api``
+so nested implementation packages can keep moving toward private ownership.
 
 ``tomojax.align.losses`` remains as a documented compatibility alias for older
 callers that imported the loss facade through the alignment package.
