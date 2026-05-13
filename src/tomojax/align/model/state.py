@@ -6,8 +6,7 @@ from dataclasses import dataclass, field
 import jax
 import jax.numpy as jnp
 
-from tomojax.calibration.axis_geometry import axis_unit_from_rotations
-from tomojax.calibration.state import CalibrationState, CalibrationVariable
+from tomojax.geometry import CalibrationState, CalibrationVariable, axis_unit_from_rotations
 
 
 def _scalar(value: object) -> jnp.ndarray:

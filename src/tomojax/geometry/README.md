@@ -3,8 +3,9 @@
 ## Purpose
 
 `tomojax.geometry` owns public geometry metadata, v2 setup/pose state, gauge
-canonicalisation, and detector field-of-view helpers that are shared by
-datasets, CLI entrypoints, reconstruction, and alignment.
+canonicalisation, calibration-derived detector/axis primitives, and detector
+field-of-view helpers that are shared by datasets, CLI entrypoints,
+reconstruction, and alignment.
 
 ## Public API
 
@@ -17,6 +18,11 @@ datasets, CLI entrypoints, reconstruction, and alignment.
   `cylindrical_mask_xy`
 - State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
   `AcquisitionParameters`, `GeometryState`
+- Calibration state and materialisation helpers: `CalibrationState`,
+  `CalibrationVariable`, `detector_grid_from_calibration`,
+  `detector_grid_from_geometry_inputs`, `axis_pose_stack`,
+  `axis_unit_from_rotations`, `nominal_axis_unit_from_inputs`,
+  `build_calibrated_geometry_metadata_patch`
 - Gauge helpers: `canonicalize_geometry_gauges`, `CanonicalizedGeometry`,
   `GaugeReport`, `GaugeTransfer`
 - Artifact helpers: `geometry_state_to_dict`, `geometry_state_from_dict`,
@@ -26,13 +32,18 @@ datasets, CLI entrypoints, reconstruction, and alignment.
 ## Dependencies
 
 This module currently depends on `tomojax.core.geometry.base` for the existing
-`Grid` and `Detector` types. It must not depend on alignment, reconstruction,
-datasets, or CLI modules.
+`Grid` and `Detector` types and wraps the provisional `tomojax.calibration`
+implementation so production modules do not import calibration helpers
+directly. It must not depend on alignment, reconstruction, datasets, or CLI
+modules.
 
 ## Invariants
 
 - Public imports go through `tomojax.geometry`, not private `_axes` or `_fov`
   modules.
+- Production modules import detector-grid, axis-direction, and calibration
+  metadata helpers through `tomojax.geometry`, not through
+  `tomojax.calibration`.
 - Axis helpers preserve NumPy/JAX array type where practical.
 - FOV helpers keep the centered-origin grid convention used by existing
   reconstruction tests.

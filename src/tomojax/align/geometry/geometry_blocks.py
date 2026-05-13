@@ -11,13 +11,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align.model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
-from tomojax.calibration.axis_geometry import (
+from tomojax.geometry import (
+    CalibrationState,
+    CalibrationVariable,
     axis_unit_from_rotations,
+    detector_grid_from_calibration,
     nominal_axis_unit_from_inputs,
+    validate_calibration_gauges,
 )
-from tomojax.calibration.detector_grid import detector_grid_from_calibration
-from tomojax.calibration.gauge import validate_calibration_gauges
-from tomojax.calibration.state import CalibrationState, CalibrationVariable
 from tomojax.core.geometry import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry

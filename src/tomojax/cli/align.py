@@ -54,7 +54,6 @@ from tomojax.align.objectives.loss_specs import (
     parse_loss_spec,
     validate_loss_schedule_levels,
 )
-from tomojax.calibration.manifest import build_calibrated_geometry_metadata_patch
 from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
@@ -62,6 +61,7 @@ from tomojax.core import log_jax_env, setup_logging
 from tomojax.core.geometry import Detector, Geometry, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
+    build_calibrated_geometry_metadata_patch,
     compute_roi,
     cylindrical_mask_xy,
     grid_from_detector_fov,

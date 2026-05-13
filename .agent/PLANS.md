@@ -1144,6 +1144,13 @@ and proposed next fix before stopping.
   `--schedule cor` to `--mode cor`, and covered mode-to-schedule mapping plus
   help-surface expectations in tests. `just production-surface-check` passed
   with 74 focused tests.
+- [x] Calibration internals quarantined behind `tomojax.geometry`: production
+  modules now import detector-grid, axis-direction, calibration-state, and
+  calibration metadata helpers through the geometry facade. Import-linter now
+  enforces this with
+  `Production modules use geometry facade for calibration primitives`, alongside
+  the data-boundary contract. `just production-surface-check` passed with
+  74 focused tests.
 
 ### Risks
 

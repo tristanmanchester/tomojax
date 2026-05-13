@@ -20,5 +20,7 @@ schema/value types:
 
 Calibration estimation should remain owned by `tomojax.align` until the v2 plan
 promotes calibration into a first-class deep module. New production workflows
-should avoid importing calibration helper internals directly unless they are the
-module owner for geometry application or artifact serialization.
+must import detector-grid, axis-direction, calibration state, and calibration
+metadata helpers through `tomojax.geometry`. Direct imports from
+`tomojax.calibration` are reserved for this package's own tests and
+implementation.

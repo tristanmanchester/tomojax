@@ -16,9 +16,9 @@ layers =
     tomojax.forward
     tomojax.backends
     tomojax.nuisance
-    tomojax.calibration
     tomojax.motion
     tomojax.geometry
+    tomojax.calibration
     tomojax.core
 
 [importlinter:contract:production-no-data]
@@ -39,3 +39,23 @@ source_modules =
     tomojax.verify
 forbidden_modules =
     tomojax.data
+
+[importlinter:contract:production-no-calibration]
+name = Production modules use geometry facade for calibration primitives
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.align
+    tomojax.backends
+    tomojax.cli
+    tomojax.core
+    tomojax.data
+    tomojax.datasets
+    tomojax.forward
+    tomojax.io
+    tomojax.motion
+    tomojax.nuisance
+    tomojax.recon
+    tomojax.verify
+forbidden_modules =
+    tomojax.calibration

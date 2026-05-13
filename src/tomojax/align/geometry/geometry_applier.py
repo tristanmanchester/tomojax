@@ -9,12 +9,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.calibration.axis_geometry import axis_pose_stack, axis_unit_from_rotations
-from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry.axis import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.geometry import (
+    axis_pose_stack,
+    axis_unit_from_rotations,
+    detector_grid_from_calibration,
+)
 
 from .parametrizations import se3_from_5d
 

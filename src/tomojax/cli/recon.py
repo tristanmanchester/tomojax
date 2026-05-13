@@ -20,7 +20,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends import estimate_views_per_batch_info
-from tomojax.calibration.detector_grid import detector_grid_from_geometry_inputs
 from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import ConfigValue, parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
@@ -30,6 +29,7 @@ from tomojax.geometry import (
     DISK_VOLUME_AXES,
     compute_roi,
     cylindrical_mask_xy,
+    detector_grid_from_geometry_inputs,
     grid_from_detector_fov,
     grid_from_detector_fov_slices,
 )

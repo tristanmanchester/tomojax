@@ -15370,3 +15370,22 @@ Validation:
 
 - `uv run tomojax align --help` shows the small public surface.
 - `just production-surface-check` passed with 74 focused tests.
+
+### Calibration primitives routed through geometry
+
+- Re-exported detector-grid, axis-direction, calibration-state, and calibrated
+  geometry metadata helpers from the public `tomojax.geometry` facade.
+- Updated production callers in `tomojax.forward`, `tomojax.align`, and
+  `tomojax.cli` to import those helpers through `tomojax.geometry` rather than
+  the provisional `tomojax.calibration` package.
+- Added an import-linter contract,
+  `Production modules use geometry facade for calibration primitives`, so
+  production modules cannot reintroduce direct `tomojax.calibration` imports.
+- Documented `tomojax.calibration` as implementation-owned support code and
+  `tomojax.geometry` as the production owner for calibration-derived geometry
+  primitives.
+
+Validation:
+
+- `uv run lint-imports --config .importlinter` passed with 3 contracts kept.
+- `just production-surface-check` passed with 74 focused tests.

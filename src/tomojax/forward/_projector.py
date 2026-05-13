@@ -11,10 +11,13 @@ from typing import TYPE_CHECKING, Literal, cast
 import jax
 import jax.numpy as jnp
 
-from tomojax.calibration.axis_geometry import axis_pose_stack, axis_unit_from_rotations
-from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
+from tomojax.geometry import (
+    axis_pose_stack,
+    axis_unit_from_rotations,
+    detector_grid_from_calibration,
+)
 
 if TYPE_CHECKING:
     from tomojax.geometry import GeometryState

@@ -1,5 +1,27 @@
 """Public API for geometry metadata, axes, and field-of-view helpers."""
 
+from tomojax.calibration.axis_geometry import (
+    AXIS_DIRECTION_DOFS,
+    axis_pose_stack,
+    axis_rotations_from_active,
+    axis_unit_from_active,
+    axis_unit_from_rotations,
+    axis_values_from_rotations,
+    default_active_axis_dofs,
+    nominal_axis_unit_from_inputs,
+)
+from tomojax.calibration.detector_grid import (
+    detector_grid_from_calibration,
+    detector_grid_from_center_offset,
+    detector_grid_from_detector_roll,
+    detector_grid_from_geometry_inputs,
+    offset_detector_grid,
+    transform_detector_grid,
+    zero_center_detector_grid,
+)
+from tomojax.calibration.gauge import validate_calibration_gauges
+from tomojax.calibration.manifest import build_calibrated_geometry_metadata_patch
+from tomojax.calibration.state import CalibrationState, CalibrationVariable
 from tomojax.geometry._axes import (
     CORE_X_AXIS,
     CORE_Y_AXIS,
@@ -50,6 +72,7 @@ from tomojax.geometry._state import (
 )
 
 __all__ = [
+    "AXIS_DIRECTION_DOFS",
     "CORE_X_AXIS",
     "CORE_Y_AXIS",
     "CORE_Z_AXIS",
@@ -63,6 +86,8 @@ __all__ = [
     "VOLUME_AXES_ATTR",
     "AcquisitionParameters",
     "CanonicalizedGeometry",
+    "CalibrationState",
+    "CalibrationVariable",
     "GaugeReport",
     "GaugeTransfer",
     "GeometryState",
@@ -70,10 +95,21 @@ __all__ = [
     "RoiInfo",
     "ScalarParameter",
     "SetupParameters",
+    "axis_pose_stack",
+    "axis_rotations_from_active",
+    "axis_unit_from_active",
+    "axis_unit_from_rotations",
+    "axis_values_from_rotations",
     "axes_to_perm",
+    "build_calibrated_geometry_metadata_patch",
     "canonicalize_geometry_gauges",
     "compute_roi",
     "cylindrical_mask_xy",
+    "default_active_axis_dofs",
+    "detector_grid_from_calibration",
+    "detector_grid_from_center_offset",
+    "detector_grid_from_detector_roll",
+    "detector_grid_from_geometry_inputs",
     "geometry_state_from_dict",
     "geometry_state_to_dict",
     "grid_from_detector_fov",
@@ -82,10 +118,15 @@ __all__ = [
     "infer_disk_axes",
     "is_shape_xyz",
     "is_shape_zyx",
+    "nominal_axis_unit_from_inputs",
+    "offset_detector_grid",
     "read_geometry_json",
     "read_pose_params_csv",
+    "transform_detector_grid",
     "transpose_volume",
+    "validate_calibration_gauges",
     "write_geometry_json",
     "write_pose_decomposition_csv",
     "write_pose_params_csv",
+    "zero_center_detector_grid",
 ]
