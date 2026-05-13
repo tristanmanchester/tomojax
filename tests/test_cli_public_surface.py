@@ -138,7 +138,9 @@ def test_production_cli_uses_alignment_facade_for_schedules_and_losses() -> None
         forbidden = [
             module
             for module in imports
-            if module.startswith(("tomojax.align.model", "tomojax.align.objectives"))
+            if module.startswith(
+                ("tomojax.align.geometry", "tomojax.align.model", "tomojax.align.objectives")
+            )
         ]
         if forbidden:
             leaks[str(path)] = forbidden

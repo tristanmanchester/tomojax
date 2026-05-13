@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.typing import NDArray
 
-from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.align.api import se3_from_5d
 from tomojax.core import log_jax_env, setup_logging
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses

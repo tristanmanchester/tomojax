@@ -1161,6 +1161,11 @@ and proposed next fix before stopping.
   no longer import `tomojax.align.model` or `tomojax.align.objectives`
   directly, and a public-surface test now guards that boundary.
   `just production-surface-check` passed with 74 focused tests.
+- [x] `tomojax dev misalign` no longer imports nested alignment geometry
+  internals directly. The 5-DOF pose transform helper is re-exported through
+  `tomojax.align.api`, and the public-surface guard now rejects direct
+  production CLI imports from `tomojax.align.geometry`, `tomojax.align.model`,
+  or `tomojax.align.objectives`.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

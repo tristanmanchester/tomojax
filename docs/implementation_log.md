@@ -15428,3 +15428,19 @@ Validation:
 - `uv run pytest tests/test_cli_entrypoints.py tests/test_loss_bench.py -q`
   passed with 28 tests.
 - `just production-surface-check` passed with 74 focused tests.
+
+### Misalignment CLI pose helper moved behind facade
+
+- Re-exported `se3_from_5d` from `tomojax.align.api` so the developer
+  misalignment command does not import the nested alignment geometry
+  implementation package directly.
+- Expanded the CLI public-surface guard to reject direct production CLI imports
+  from `tomojax.align.geometry`, `tomojax.align.model`, or
+  `tomojax.align.objectives`.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/align/api.py src/tomojax/cli/misalign.py tests/test_cli_public_surface.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_cli_public_surface.py::test_production_cli_uses_alignment_facade_for_schedules_and_losses tests/test_misalign_schedules.py -q`
+  passed with 9 tests.

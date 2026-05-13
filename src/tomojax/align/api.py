@@ -42,6 +42,7 @@ from tomojax.align._profiles import (
     resolve_profiled_cli_defaults,
 )
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
+from tomojax.align.geometry.parametrizations import se3_from_5d
 from tomojax.align.model.dofs import (
     DofBounds,
     normalize_alignment_dofs,
@@ -115,6 +116,7 @@ __all__ = [
     "resolve_alignment_schedule",
     "resolve_profiled_cli_defaults",
     "schur_step_from_jacobian",
+    "se3_from_5d",
     "solve_joint_schur_lm",
     "solve_pose_only_lm",
     "solve_setup_only_lm",
