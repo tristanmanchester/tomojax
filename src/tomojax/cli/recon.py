@@ -25,7 +25,7 @@ from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import ConfigValue, parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.core.geometry import Detector, Geometry, Grid  # noqa: TC001
+from tomojax.core.geometry import Detector, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
     compute_roi,
@@ -482,13 +482,10 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
     initial_grid_override = (
         command.grid if (meta.grid is None and command.grid is not None) else None
     )
-    grid, detector, geom = cast(
-        "tuple[Grid, Detector, Geometry]",
-        build_geometry_from_dataset_metadata(
-            geometry_meta,
-            grid_override=initial_grid_override,
-            apply_saved_alignment=False,
-        ),
+    grid, detector, geom = build_geometry_from_dataset_metadata(
+        geometry_meta,
+        grid_override=initial_grid_override,
+        apply_saved_alignment=False,
     )
     proj = _jnp_float32_array(meta.projections)
     det_grid = detector_grid_from_geometry_inputs(detector, geometry_meta)
@@ -522,13 +519,10 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
     if recon_grid is not grid:
         # Once ROI and explicit sizing resolve an effective grid, keep that grid's
         # origin/centre metadata authoritative when rebuilding geometry.
-        _, _, geom = cast(
-            "tuple[Grid, Detector, Geometry]",
-            build_geometry_from_dataset_metadata(
-                geometry_meta,
-                grid_override=recon_grid,
-                apply_saved_alignment=False,
-            ),
+        _, _, geom = build_geometry_from_dataset_metadata(
+            geometry_meta,
+            grid_override=recon_grid,
+            apply_saved_alignment=False,
         )
 
     # Prepare optional volume mask

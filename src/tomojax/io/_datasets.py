@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax.core.geometry import Detector, Grid
-from tomojax.data.geometry_meta import build_geometry_from_meta
+from tomojax.core.geometry import Detector, Geometry, Grid
+from tomojax.data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta
 from tomojax.data.io_hdf5 import (
     LoadedNXTomo,
     NXTomoMetadata,
@@ -48,14 +48,25 @@ def save_projection_payload(
     save_nxtomo(str(path), projections=projections, metadata=metadata)
 
 
-def build_geometry_from_dataset_metadata(*args: Any, **kwargs: Any) -> Any:
+def build_geometry_from_dataset_metadata(
+    meta: Mapping[str, Any],
+    *,
+    grid_override: Grid | tuple[int, int, int] | list[int] | None = None,
+    apply_saved_alignment: bool = False,
+    volume_shape: Sequence[int] | None = None,
+) -> tuple[Grid, Detector, Geometry]:
     """Build geometry objects from normalized dataset metadata.
 
     The implementation still lives in the transitional data module. Keeping this
     wrapper in `tomojax.io` makes the command/data dependency explicit and gives
     the future `ProjectionDataset` solver contract one replacement point.
     """
-    return build_geometry_from_meta(*args, **kwargs)
+    return build_geometry_from_meta(
+        cast("LoadedGeometryMeta", dict(meta)),
+        grid_override=grid_override,
+        apply_saved_alignment=apply_saved_alignment,
+        volume_shape=volume_shape,
+    )
 
 
 @dataclass(slots=True)

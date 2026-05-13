@@ -59,7 +59,7 @@ from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.core.geometry import Detector, Grid  # noqa: TC001
+from tomojax.core.geometry import Detector, Geometry, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
     compute_roi,
@@ -68,6 +68,7 @@ from tomojax.geometry import (
     grid_from_detector_fov_slices,
 )
 from tomojax.io import (
+    ProjectionDataset,
     build_geometry_from_dataset_metadata,
     load_projection_payload,
     save_projection_payload,
@@ -962,12 +963,12 @@ class AlignCliRunPlan:
     loss_params: dict[str, float]
     levels: list[int] | None
     run_levels: list[int] | None
-    meta: Any
+    meta: ProjectionDataset
     geometry_meta: dict[str, Any]
     grid: Grid
     recon_grid: Grid
     detector: Detector
-    geometry: Any
+    geometry: Geometry
     projections: jnp.ndarray
     cfg: AlignConfig
     gather_dtype: str
@@ -1474,7 +1475,7 @@ def _write_alignment_result_volume(
     save_meta.grid = plan.recon_grid.to_dict()
     save_meta.volume = np.asarray(x)
     save_meta.align_params = params5_np
-    save_meta.align_gauge = gauge_metadata
+    save_meta.align_gauge = gauge_metadata  # type: ignore[attr-defined]
     if isinstance(geometry_calibration_state, dict):
         calibration_patch = build_calibrated_geometry_metadata_patch(
             calibration_state=geometry_calibration_state,
@@ -1484,7 +1485,7 @@ def _write_alignment_result_volume(
         save_meta.detector = calibration_patch["detector"]  # type: ignore[assignment]
         save_meta.geometry_meta = calibration_patch["geometry_meta"]  # type: ignore[assignment]
         save_meta.geometry_calibration = calibration_patch["geometry_calibration"]  # type: ignore[assignment]
-    save_meta.frame = str(plan.meta.frame or "sample")
+    save_meta.frame = str(plan.meta.sample_name or "sample")
     save_meta.volume_axes_order = plan.command.volume_axes
     save_projection_payload(
         plan.command.out,

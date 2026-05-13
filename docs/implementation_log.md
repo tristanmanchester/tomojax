@@ -15159,3 +15159,21 @@ Validation:
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 164 to 61,
   all still isolated to `src/tomojax/cli/align.py`.
+
+### Public IO geometry builder typing
+
+- Tightened `tomojax.io.build_geometry_from_dataset_metadata` from an
+  untyped passthrough to a public typed facade returning `(Grid, Detector,
+  Geometry)`. This makes reconstruction/alignment CLI code depend on the
+  `tomojax.io` boundary rather than compensating for `Any` at each call site.
+- Removed now-unnecessary casts in `tomojax recon` and typed the `tomojax align`
+  run plan around `ProjectionDataset` and `Geometry`, leaving only the remaining
+  alignment metadata/reporting edge warnings in `align.py`.
+
+Validation:
+
+- `uv run ruff check src/tomojax/io/_datasets.py src/tomojax/cli/align.py`
+  passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 61 to 19,
+  all still isolated to `src/tomojax/cli/align.py`.

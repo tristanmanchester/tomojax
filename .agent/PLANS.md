@@ -112,6 +112,11 @@ Tasks:
       the parser/config/profile-default boundary. `just production-surface-check`
       passed; full CLI Basedpyright warnings are now 61 with 0 errors, all
       still in `align.py`.
+- [x] Public IO geometry builder typing: `tomojax.io.build_geometry_from_dataset_metadata`
+      now returns typed `(Grid, Detector, Geometry)` values, removing recon
+      casts and typing the align run plan around `ProjectionDataset`/`Geometry`.
+      `just production-surface-check` passed; full CLI Basedpyright warnings
+      are now 19 with 0 errors, all still in `align.py`.
 
 Historical productionization plan follows for context.
 
