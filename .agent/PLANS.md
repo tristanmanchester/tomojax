@@ -153,6 +153,11 @@ Tasks:
       the root README and public align/recon facade docs, renamed the alignment
       compatibility alias map, and expanded public wording guards to cover
       those docs. `just production-surface-check` passed with 73 focused tests.
+- [x] Import-linter production data boundary: added an executable forbidden
+      import contract preventing production modules from importing
+      `tomojax.data` directly while allowing the intended wrapper paths through
+      `tomojax.io` and `tomojax.datasets`. `just production-surface-check`
+      passed with 73 focused tests.
 
 Historical productionization plan follows for context.
 

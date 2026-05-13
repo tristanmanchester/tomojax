@@ -15294,3 +15294,16 @@ Validation:
 Validation:
 
 - `just production-surface-check` passed with 73 focused tests.
+
+### Import-linter production data boundary
+
+- Added an executable import-linter contract preventing direct imports from
+  production modules into the lower-level `tomojax.data` package. Indirect
+  imports through the owning wrappers (`tomojax.io` and `tomojax.datasets`) are
+  intentionally allowed so measured IO and synthetic generation remain behind
+  their public facades.
+
+Validation:
+
+- `uv run lint-imports --config .importlinter` passed with 2 contracts kept.
+- `just production-surface-check` passed with 73 focused tests.

@@ -20,3 +20,22 @@ layers =
     tomojax.motion
     tomojax.geometry
     tomojax.core
+
+[importlinter:contract:production-no-data]
+name = Production modules avoid lower-level data package
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.align
+    tomojax.backends
+    tomojax.calibration
+    tomojax.cli
+    tomojax.core
+    tomojax.forward
+    tomojax.geometry
+    tomojax.motion
+    tomojax.nuisance
+    tomojax.recon
+    tomojax.verify
+forbidden_modules =
+    tomojax.data
