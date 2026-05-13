@@ -22,45 +22,54 @@ The latest completed truth-free scout/tangent stopped gate is:
 
 ```bash
 uv run python tools/run_rich_phantom_v1_parity_gate.py \
-  --out-dir runs/rich_phantom_v1_parity_20260510_tangent_gauge_stopped \
+  --out-dir .artifacts/product_truth_20260513/stopped_detu_scout_tangent/run \
   --views 128 \
-  --profile lightning \
+  --profile reference \
   --mode stopped_multires \
   --preview-volume-support scout_soft \
-  --preview-support-outside-weight 0.1 \
-  --preview-low-frequency-anchor-weight 0.05 \
-  --preview-det-u-gauge-mode-weight 0.2
+  --preview-support-outside-weight 0.05 \
+  --preview-low-frequency-anchor-weight 0.02 \
+  --preview-det-u-gauge-mode-weight 0.05
 ```
 
-It completed on CUDA without OOM and reached about `6074 MiB` sampled GPU
-memory during the `128^3` stage.
+It completed on CUDA without OOM as part of the product-truth runner.
 
 ## Results
 
-| Level | Classification | Initial det_u RMSE px | Final det_u RMSE px | Volume NMSE | Schur accepted |
-|---|---|---:|---:|---:|---|
-| `32^3` | `independent_projection_losses_consistent` | `3.625000` | `0.297959` | `0.769341` | `true` |
-| `64^3` | `reconstruction_absorbed_geometry` | `0.595917` | `0.904070` | `0.203639` | `true` |
-| `128^3` | `reconstruction_absorbed_geometry` | `1.808140` | `1.924456` | `0.218229` | `true` |
+| Level | Classification | Final det_u RMSE px | Volume NMSE | Schur accepted |
+|---|---|---:|---:|---|
+| `32^3` | `independent_projection_losses_consistent` | `0.369589` | `0.768313` | `true` |
+| `64^3` | `reconstruction_absorbed_geometry` | `0.665706` | `0.073194` | `true` |
+| `128^3` | `reconstruction_absorbed_geometry` | `1.704632` | `0.120314` | `true` |
 
 Against the previous stopped baseline:
 
-| Level | Baseline det_u RMSE px | Scout/tangent det_u RMSE px | Baseline volume NMSE | Scout/tangent volume NMSE |
+| Level | Baseline det_u RMSE px | Latest scout/tangent det_u RMSE px | Baseline volume NMSE | Latest scout/tangent volume NMSE |
 |---|---:|---:|---:|---:|
-| `32^3` | `1.607467` | `0.297959` | `0.740777` | `0.769341` |
-| `64^3` | `1.675375` | `0.904070` | `0.512812` | `0.203639` |
-| `128^3` | `2.954166` | `1.924456` | `0.502960` | `0.218229` |
+| `32^3` | `1.607467` | `0.369589` | `0.740777` | `0.768313` |
+| `64^3` | `1.675375` | `0.665706` | `0.512812` | `0.073194` |
+| `128^3` | `2.954166` | `1.704632` | `0.502960` | `0.120314` |
+
+Against the previous scout/tangent stopped artifact:
+
+| Level | Previous scout/tangent det_u RMSE px | Latest scout/tangent det_u RMSE px | Previous volume NMSE | Latest volume NMSE |
+|---|---:|---:|---:|---:|
+| `32^3` | `0.297959` | `0.369589` | `0.769341` | `0.768313` |
+| `64^3` | `0.904070` | `0.665706` | `0.203639` | `0.073194` |
+| `128^3` | `1.924456` | `1.704632` | `0.218229` | `0.120314` |
 
 ## Interpretation
 
 The scout-support and tangent-gauge direction is useful, not solved:
 
 - It materially improves the 64^3 and 128^3 stopped trajectory compared with
-  the previous rich-phantom stopped baseline.
+  both the original rich-phantom stopped baseline and the previous
+  scout/tangent artifact.
 - It improves volume NMSE sharply at 64^3 and 128^3.
 - It still does not pass detector-u recovery at production scale.
-- Gauge-transfer diagnostics remain absorbed-like at 64^3 and 128^3, meaning
-  the preview volume can still represent much of the detector-u tangent.
+- The final `128^3` result is still classified
+  `reconstruction_absorbed_geometry`, meaning the preview volume can still
+  represent enough detector-center error to bias the geometry handoff.
 
 The current production blocker is therefore still:
 
@@ -97,4 +106,3 @@ The next work should strengthen the constrained alignment-volume handoff:
    reaches `< 0.5 px` first, then `< 0.2 px`;
 5. avoid new geometry DOFs, nuisance terms, Pallas optimization, or extra
    benchmark cases until this handoff improves.
-

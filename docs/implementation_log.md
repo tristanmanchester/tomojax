@@ -15707,3 +15707,33 @@ Validation:
 - `bash -n tools/run_product_truth_overnight_20260513.sh` passed.
 - `uv run pytest tests/test_alternating_benchmark_criteria.py -q` passed with
   20 tests.
+
+### Synthetic128 product-truth run completed
+
+- Completed the overnight product-truth artifact set on `vivobook-ts` under
+  `.artifacts/product_truth_20260513` and synced it locally.
+- Added
+  `docs/benchmark_runs/2026-05-13-synthetic128-product-truth.md`, covering the
+  original five `128^3` cases plus the stopped det-u scout/tangent follow-up.
+- Reran `synth128_lamino_axis_roll_pose` after the det-v policy fix. The stale
+  `not_evaluated` det-v policy became a pass, leaving the case honestly red for
+  axis and detector-roll recovery: axis `0.19178020406063725 rad`, detector
+  roll `0.034477245845192656 rad`.
+- `synth128_thermal_object_drift` now runs without an invalid active-DOF crash
+  and fails for the intended missing feature: object-frame drift recovery
+  remains disabled, with `tx_rmse_px = 7.318335768364758`.
+- `synth128_combined_nuisance_jumps` runs through 320 views with nuisance
+  fitting and fails axis/roll/theta plus the missing current-default NMSE
+  baseline comparison, while passing bad-view flagging, det-u, and non-jump
+  dx/dz.
+- Updated the stopped-alignment blocker report with the latest
+  scout/tangent run: `128^3` det_u RMSE `1.7046318054199219`, volume NMSE
+  `0.12031387537717819`, still classified
+  `reconstruction_absorbed_geometry`.
+
+Validation:
+
+- Remote CUDA product-truth runner completed with `exit_status=0` for
+  `synth128_thermal_object_drift`, `synth128_combined_nuisance_jumps`, and
+  `stopped_detu_scout_tangent`; the laminography rerun completed and produced
+  `benchmark_result.json`.

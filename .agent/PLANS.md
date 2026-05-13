@@ -1274,6 +1274,23 @@ and proposed next fix before stopping.
   weak-DOF decisions now count as reported detector-v policy evidence, so
   laminography failures stay focused on axis/roll rather than missing policy
   plumbing.
+- [x] Product-truth artifact set completed and synced locally under
+  `.artifacts/product_truth_20260513`.
+- [x] `synth128_lamino_axis_roll_pose` rerun after det-v policy fix:
+  `det_u_error_px_lt`, `det_v_policy`, and `backend_policy` pass; axis
+  `0.19178020406063725 rad` and detector roll `0.034477245845192656 rad`
+  still fail.
+- [x] `synth128_thermal_object_drift` completed after active-DOF fix and now
+  fails for the intended missing object-frame motion solver:
+  `tx_rmse_px = 7.318335768364758`.
+- [x] `synth128_combined_nuisance_jumps` completed at 128^3/320 views with
+  nuisance fitting: bad views, det-u, and non-jump dx/dz pass; axis/roll/theta
+  and current-default NMSE comparison remain unresolved.
+- [x] Latest stopped det-u scout/tangent run completed: `128^3` det_u RMSE
+  `1.7046318054199219`, volume NMSE `0.12031387537717819`, classification
+  still `reconstruction_absorbed_geometry`.
+- [x] Consolidated report added at
+  `docs/benchmark_runs/2026-05-13-synthetic128-product-truth.md`.
 
 ### Risks
 
