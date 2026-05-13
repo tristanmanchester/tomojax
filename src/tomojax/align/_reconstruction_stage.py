@@ -122,14 +122,10 @@ def _resolve_reconstruction_projector_backend(
 
 
 def _is_oom_error_message(message: str) -> bool:
-    return (
-        ("RESOURCE_EXHAUSTED" in message)
-        or ("Out of memory" in message)
-        or ("Allocator" in message)
-    )
+    return any(term in message for term in ("RESOURCE_EXHAUSTED", "Out of memory", "Allocator"))
 
 
-def _rigid_detector_grid_transform(
+def _rigid_detector_grid_transform(  # noqa: PLR0911
     detector: Detector,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
@@ -380,7 +376,7 @@ def _run_huber_fista_core_jit(
     )
 
 
-def _run_reconstruction_step(  # noqa: PLR0915
+def _run_reconstruction_step(  # noqa: PLR0912, PLR0915
     *,
     geometry: Geometry,
     grid: Grid,

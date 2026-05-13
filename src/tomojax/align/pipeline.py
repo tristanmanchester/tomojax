@@ -7,11 +7,8 @@ details should import those owner modules directly.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
-
-from ..core.geometry.base import Detector, Geometry, Grid
 from . import _pose_stage as _pose_stage_mod, _stage_loop as _stage_loop_mod
 from ._config import AlignConfig
 from ._observer import (
@@ -32,6 +29,13 @@ from ._results import (
 )
 from ._stage_loop import MultiresLevel
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import jax.numpy as jnp
+
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
+
 
 def align(
     geometry: Geometry,
@@ -47,6 +51,7 @@ def align(
     checkpoint_callback: AlignCheckpointCallback | None = None,
     det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
+    """Run single-resolution alignment through the stable facade."""
     return _pose_stage_mod.align(
         geometry,
         grid,
@@ -74,6 +79,7 @@ def align_multires(
     resume_state: AlignMultiresResumeState | None = None,
     checkpoint_callback: AlignMultiresCheckpointCallback | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignMultiresInfo]:
+    """Run multiresolution alignment through the stable facade."""
     return _stage_loop_mod.align_multires(
         geometry,
         grid,

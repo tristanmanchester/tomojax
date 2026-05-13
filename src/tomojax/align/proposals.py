@@ -1,18 +1,25 @@
+"""Performance-oriented proposal scoring for alignment stages."""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
-from ..core.backend_policy import ProjectorBackendInput
-from ..core.geometry import Detector, Grid
 from .objectives.fixed_volume import (
     alignment_projector_backend_provenance,
     project_and_score_stack,
 )
-from .objectives.loss_adapters import LossAdapter
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from tomojax.core.backend_policy import ProjectorBackendInput
+    from tomojax.core.geometry import Detector, Grid
+
+    from .objectives.loss_adapters import LossAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,9 +44,11 @@ class ProposalScoringResult:
 
     @property
     def improved(self) -> bool:
+        """Return whether the best candidate improves on the first candidate."""
         return self.best_index > 0 and self.best_value < self.values[0]
 
     def to_dict(self) -> dict[str, object]:
+        """Return JSON-compatible proposal scoring metadata."""
         return {
             "best_index": int(self.best_index),
             "best_name": self.best_name,

@@ -190,7 +190,7 @@ class JointSchurLMResult:
     iteration_diagnostics: tuple[JointSchurDiagnostics, ...]
 
 
-def solve_joint_schur_lm(
+def solve_joint_schur_lm(  # noqa: PLR0915
     volume: jax.Array,
     observed: jax.Array,
     geometry: GeometryState,
@@ -520,9 +520,9 @@ def _can_repack_canonicalized_gauge(
         return False
     if "phi_residual_rad" in active_pose and "theta_offset_rad" not in active_setup:
         return False
-    if "dz_px" in active_pose and geometry.setup.det_v_px.active and "det_v_px" not in active_setup:
-        return False
-    return True
+    return not (
+        "dz_px" in active_pose and geometry.setup.det_v_px.active and "det_v_px" not in active_setup
+    )
 
 
 def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, object]:

@@ -1,3 +1,5 @@
+"""Alignment acceptance helpers for production and benchmark reports."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -27,6 +29,7 @@ class AlignmentVerificationResult:
     recommended_next: str | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible verification result."""
         data = asdict(self)
         data["reasons"] = list(self.reasons)
         data["metrics"] = dict(self.metrics)

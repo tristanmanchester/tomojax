@@ -15497,3 +15497,21 @@ Validation:
 - `uv run ruff format --check src/tomojax/align/objectives` passed.
 - `uv run pytest tests/test_alignment_objectives.py tests/test_align_loss_logic.py tests/test_bilevel_recon_layer.py tests/test_bilevel_setup_alignment.py tests/test_detector_center_objective.py -q`
   passed with 60 tests and 1 expected Pallas lowering skip.
+
+### Alignment package Ruff cleanup completed
+
+- Added docs to the remaining public alignment optimizer/proposal/verification
+  facades.
+- Moved remaining type-only imports behind `TYPE_CHECKING` and replaced mutable
+  optimizer config defaults with `None` defaults that instantiate inside the
+  functions.
+- Added narrow `PLR` exceptions on existing complex numerical routines rather
+  than disabling lint for the package.
+- Simplified the Schur gauge repack predicate and reconstruction OOM detector.
+
+Validation:
+
+- `uv run ruff check src/tomojax/align --statistics` passed.
+- `uv run ruff format --check src/tomojax/align` passed.
+- `uv run pytest tests/test_align_optimizers.py tests/test_align_verification.py tests/test_align_contracts.py tests/test_align_quick.py -q`
+  passed with 92 tests.

@@ -1182,6 +1182,11 @@ and proposed next fix before stopping.
   annotated scan/custom-VJP helpers, and cleaned unused kernel arguments without
   changing objective behavior. Objective-focused tests passed with 60 passed and
   1 expected Pallas skip.
+- [x] The whole `src/tomojax/align` package now passes Ruff on its own. The
+  final slice documented the optimizer/proposal/verification facades, fixed
+  mutable optimizer config defaults, and added narrow complexity exceptions for
+  existing numerical routines instead of broad package ignores. Focused
+  optimizer/pipeline/verification tests passed with 92 tests.
 - [ ] Continue reducing the nested align package public/internal mismatch.
 
 ### Risks

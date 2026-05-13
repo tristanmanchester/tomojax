@@ -1,9 +1,10 @@
+"""Alignment optimizer implementations and result containers."""
+
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -11,13 +12,17 @@ import numpy as np
 import optax
 
 from .model.dof_specs import ActiveParameterView, optimizer_step_stats
-from .model.dofs import DofBounds
 from .model.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
-from .model.state import AlignmentState
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from .model.dofs import DofBounds
+    from .model.state import AlignmentState
 
 type OptimizerStatValue = float | int | bool | str | None
 type OptimizerStats = dict[str, OptimizerStatValue]
@@ -25,6 +30,8 @@ type OptimizerStats = dict[str, OptimizerStatValue]
 
 @dataclass(frozen=True)
 class PoseLbfgsConfig:
+    """Configuration for pose-only Optax L-BFGS."""
+
     maxiter: int
     ftol: float
     gtol: float
@@ -45,9 +52,11 @@ class PoseOptimizationContext:
 
     @property
     def active_cols_np(self) -> np.ndarray:
+        """Return active pose columns as a NumPy index array."""
         return np.asarray(self.active_cols, dtype=np.int32)
 
     def active_bound_transform(self, n_views: int) -> tuple[jnp.ndarray, BoundTransform]:
+        """Return active pose columns and their bound transform."""
         active_cols_jnp = jnp.asarray(self.active_cols_np, dtype=jnp.int32)
         active_shape = (int(n_views), int(active_cols_jnp.size))
         lower_active = jnp.tile(self.bounds_lower[active_cols_jnp], (active_shape[0], 1)).reshape(
@@ -65,6 +74,8 @@ class PoseOptimizationContext:
 
 @dataclass(frozen=True)
 class PoseLbfgsResult:
+    """Result from pose-only L-BFGS optimization."""
+
     params5: jnp.ndarray
     motion_coeffs: jnp.ndarray | None
     loss: float | None
@@ -74,12 +85,16 @@ class PoseLbfgsResult:
 
 @dataclass(frozen=True)
 class PoseLbfgsTransform:
+    """Initial unconstrained vector and pose reconstruction map."""
+
     z0: jnp.ndarray
     params_from_z: Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray | None]]
 
 
 @dataclass(frozen=True)
 class PoseLbfgsLoopResult:
+    """Raw result from the low-level L-BFGS loop."""
+
     z: jnp.ndarray
     best_z: jnp.ndarray | None
     best_value: float
@@ -112,6 +127,7 @@ class BoundTransform:
         *,
         value_shape: Sequence[int],
     ) -> BoundTransform:
+        """Build an unconstrained transform from lower and upper bounds."""
         lower_flat = jnp.asarray(lower, dtype=jnp.float32).reshape(-1)
         upper_flat = jnp.asarray(upper, dtype=jnp.float32).reshape(-1)
         if lower_flat.shape != upper_flat.shape:
@@ -133,11 +149,13 @@ class BoundTransform:
 
     @property
     def has_finite_bounds(self) -> bool:
+        """Return whether any bound is finite."""
         lower_np = np.asarray(self.lower)
         upper_np = np.asarray(self.upper)
         return bool(np.any(np.isfinite(lower_np)) or np.any(np.isfinite(upper_np)))
 
     def to_unconstrained(self, values: jnp.ndarray) -> jnp.ndarray:
+        """Map bounded values into unconstrained optimizer coordinates."""
         values_flat = jnp.asarray(values, dtype=jnp.float32).reshape(-1)
         lower = self.lower
         upper = self.upper
@@ -165,6 +183,7 @@ class BoundTransform:
         return z.reshape(self.value_shape)
 
     def from_unconstrained(self, z: jnp.ndarray) -> jnp.ndarray:
+        """Map unconstrained optimizer coordinates back into bounded values."""
         z_flat = jnp.asarray(z, dtype=jnp.float32).reshape(-1)
         lower = self.lower
         upper = self.upper
@@ -248,7 +267,7 @@ def _build_pose_lbfgs_transform(
     return PoseLbfgsTransform(z0=z0, params_from_z=params_from_z)
 
 
-def _run_pose_lbfgs_optax_loop(
+def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
     *,
     z0: jnp.ndarray,
     objective_jit: Callable[[jnp.ndarray], jnp.ndarray],
@@ -447,7 +466,7 @@ def _run_pose_lbfgs_optax_loop(
     )
 
 
-def run_pose_lbfgs(
+def run_pose_lbfgs(  # noqa: PLR0915
     *,
     params5_in: jnp.ndarray,
     motion_coeffs_in: jnp.ndarray | None,
@@ -641,6 +660,8 @@ def _stats_with_aliases(stats: OptimizerStats) -> OptimizerStats:
 
 @dataclass(frozen=True)
 class ActiveLbfgsConfig:
+    """Configuration for active-state L-BFGS."""
+
     maxiter: int = 12
     ftol: float = 1e-6
     gtol: float = 1e-5
@@ -650,6 +671,8 @@ class ActiveLbfgsConfig:
 
 @dataclass(frozen=True)
 class ActiveOptimizerResult:
+    """Result from an active-state optimizer step."""
+
     state: AlignmentState
     loss: float
     accepted: bool
@@ -658,12 +681,14 @@ class ActiveOptimizerResult:
 
 @dataclass(frozen=True)
 class ValidationLmConfig:
+    """Configuration for validation-LM active-state optimization."""
+
     damping: float = 1e-3
     min_damping: float = 1e-8
     step_scales: tuple[float, ...] = (1.0, 0.5, 0.25, 0.0)
 
 
-def run_active_validation_lm(
+def run_active_validation_lm(  # noqa: PLR0915
     *,
     state: AlignmentState,
     view: ActiveParameterView,
@@ -672,9 +697,10 @@ def run_active_validation_lm(
     hess: jnp.ndarray,
     score_fn: Callable[[jnp.ndarray], float],
     bounds: DofBounds | None = None,
-    cfg: ValidationLmConfig = ValidationLmConfig(),
+    cfg: ValidationLmConfig | None = None,
 ) -> ActiveOptimizerResult:
     """Run one damped validation-LM step over the active whitened state."""
+    cfg = ValidationLmConfig() if cfg is None else cfg
     z0 = jnp.asarray(view.pack(state), dtype=jnp.float32).reshape(-1)
     lower, upper = view.bounds_whitened(state, bounds=bounds)
     lower = jnp.asarray(lower, dtype=jnp.float32).reshape(z0.shape)
@@ -772,7 +798,7 @@ def run_active_validation_lm(
     )
 
 
-def run_active_lbfgs(
+def run_active_lbfgs(  # noqa: PLR0915
     *,
     state: AlignmentState,
     view: ActiveParameterView,
@@ -780,9 +806,10 @@ def run_active_lbfgs(
     objective_value_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
     objective_value_and_grad_fn: Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]
     | None = None,
-    cfg: ActiveLbfgsConfig = ActiveLbfgsConfig(),
+    cfg: ActiveLbfgsConfig | None = None,
 ) -> ActiveOptimizerResult:
     """Run Optax L-BFGS over a unified whitened active-state vector."""
+    cfg = ActiveLbfgsConfig() if cfg is None else cfg
     z0 = view.pack(state)
     lower, upper = view.bounds_whitened(state)
     bounds_transform = BoundTransform.from_bounds(lower, upper, value_shape=tuple(z0.shape))
