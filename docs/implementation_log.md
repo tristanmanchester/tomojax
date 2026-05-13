@@ -14873,8 +14873,13 @@ Validation:
   warnings from argparse `Any` values.
 - `just production-surface-check` passed with the strengthened full-CLI Ruff
   step, expanded scoped Basedpyright set, and 69 focused tests.
-- A broad `uv run basedpyright src/tomojax/cli --stats` snapshot now reports 65
-  errors and 975 warnings. This is improved from the earlier 124-error snapshot
-  but remains intentionally outside the production gate until the large legacy
+- After follow-up slices, `uv run basedpyright src/tomojax/cli --outputjson`
+  reports 0 errors across the whole CLI package. The command package still has
+  warning-only argparse/JAX `Any` debt, but the red failures in `align.py`,
+  `recon.py`, `misalign.py`, `manifest.py`, `runtime_checks.py`, and
+  `loss_bench.py` were removed without changing solver behavior.
+- `just production-surface-check` remains green after the broader CLI type-error
+  cleanup. The next architectural cleanup is still to split the large legacy
   `align.py`, `recon.py`, `misalign.py`, and developer benchmark command bodies
-  are split into typed command-plan adapters.
+  into typed command-plan adapters, but that is now structure debt rather than a
+  failing type gate.
