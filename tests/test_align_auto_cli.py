@@ -692,7 +692,7 @@ def test_align_auto_smoke_command_can_generate_dirty_synthetic_dataset(
     )
 
 
-def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(  # noqa: PLR0915 - broad artifact smoke
+def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:

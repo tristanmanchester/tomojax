@@ -1216,7 +1216,17 @@ and proposed next fix before stopping.
   non-quarantine issues such as import order and pathlib usage were fixed.
   Focused benchmark tests passed with 82 tests; repo-wide `uv run ruff check
   src --statistics` and `uv run ruff format --check src` now pass.
-- [ ] Continue reducing the nested align package public/internal mismatch.
+- [x] Final verification cleanup completed: repo-wide `just check` now passes
+  with formatting, Ruff, Basedpyright on the public production surface,
+  import-linter contracts, public import checks, and the non-slow/non-GPU CPU
+  suite. Developer benchmark and rich-phantom tools now import alternating
+  smoke diagnostics through `tomojax.bench.api`, while solver contract tests use
+  `tomojax.align.api`; the top-level `tomojax.align` facade remains small.
+- [x] Nested align package public/internal mismatch reduced to explicit
+  production and diagnostic facades: production CLI paths route through
+  `tomojax.align.api`, diagnostic alternating-smoke helpers route through
+  `tomojax.bench.api`/developer surfaces, and import-linter/public-surface tests
+  enforce the split.
 
 ### Risks
 

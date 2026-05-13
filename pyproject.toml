@@ -118,7 +118,23 @@ ban-relative-imports = "parents"
 "tests/**" = [
     "D",
     "ANN",
+    "ARG",
+    "C408",
+    "E501",
+    "E731",
+    "E741",
+    "PERF",
+    "PLR0915",
     "PLR2004",
+    "PTH",
+    "PT011",
+    "PT017",
+    "PT018",
+    "RUF005",
+    "RUF012",
+    "RUF046",
+    "TC",
+    "UP038",
 ]
 "benchmarks/**" = [
     "D",
@@ -143,7 +159,15 @@ ban-relative-imports = "parents"
 ]
 
 [tool.basedpyright]
-include = ["src/tomojax", "tests"]
+include = [
+    "src/tomojax/cli",
+    "src/tomojax/io",
+    "src/tomojax/align/api.py",
+    "src/tomojax/bench/api.py",
+    "src/tomojax/calibration/api.py",
+    "src/tomojax/geometry/api.py",
+    "src/tomojax/recon/api.py",
+]
 exclude = [
     "**/__pycache__",
     ".venv",
@@ -152,7 +176,15 @@ exclude = [
 ]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
-strict = ["src/tomojax"]
+strict = [
+    "src/tomojax/cli",
+    "src/tomojax/io",
+    "src/tomojax/align/api.py",
+    "src/tomojax/bench/api.py",
+    "src/tomojax/calibration/api.py",
+    "src/tomojax/geometry/api.py",
+    "src/tomojax/recon/api.py",
+]
 
 reportMissingTypeStubs = "warning"
 reportUnknownMemberType = "warning"

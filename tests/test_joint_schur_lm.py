@@ -9,16 +9,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align import (
-    JointSchurLMConfig,
-    adapt_joint_schur_damping,
-    adapt_joint_schur_trust_radius,
-    joint_schur_normal_eq_summary,
-    schur_step_from_jacobian,
-    solve_joint_schur_lm,
-    write_joint_schur_normal_eq_summary,
-)
-
 # check-public-imports: allow-private
 import tomojax.align._joint_schur_lm as schur_mod
 
@@ -26,6 +16,15 @@ import tomojax.align._joint_schur_lm as schur_mod
 from tomojax.align._joint_schur_lm import (
     _per_view_normal_block_diagnostics,
     schur_step_from_normal_equations,
+)
+from tomojax.align.api import (
+    JointSchurLMConfig,
+    adapt_joint_schur_damping,
+    adapt_joint_schur_trust_radius,
+    joint_schur_normal_eq_summary,
+    schur_step_from_jacobian,
+    solve_joint_schur_lm,
+    write_joint_schur_normal_eq_summary,
 )
 from tomojax.forward import ResidualFilterConfig, project_parallel_reference
 from tomojax.geometry import AcquisitionParameters, GeometryState

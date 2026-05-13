@@ -17,10 +17,10 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.api import (
+from tomojax.align.api import reference_continuation_schedule
+from tomojax.bench.api import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
-    reference_continuation_schedule,
 )
 from tomojax.core.multires import bin_volume, upsample_volume
 from tomojax.datasets import generate_synthetic_dataset, load_synthetic_dataset_sidecars

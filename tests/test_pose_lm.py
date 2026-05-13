@@ -6,7 +6,7 @@ from dataclasses import replace
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align import PoseOnlyLMConfig, solve_pose_only_lm
+from tomojax.align.api import PoseOnlyLMConfig, solve_pose_only_lm
 from tomojax.forward import project_parallel_reference
 from tomojax.geometry import AcquisitionParameters, GeometryState
 

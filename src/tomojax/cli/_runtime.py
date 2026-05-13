@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from contextlib import AbstractContextManager
 
 LOG = logging.getLogger(__name__)
 _DISABLED_TRANSFER_GUARD_MODES = frozenset(("off", "none", "disable", "disabled"))
@@ -20,48 +20,34 @@ def _warn_transfer_guard_demotion(mode: str, reason: str) -> None:
     )
 
 
-@contextmanager
-def transfer_guard_context(mode: str | None = None) -> Generator[None, None, None]:
+def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[object]:  # noqa: PLR0911
     """Return the configured JAX transfer-guard context, if available."""
     if mode is None:
         mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log")
     mode = str(mode).lower()
     if mode in _DISABLED_TRANSFER_GUARD_MODES:
-        with nullcontext():
-            yield
-        return
+        return nullcontext()
     try:
         import jax
     except Exception as exc:
         _warn_transfer_guard_demotion(mode, str(exc))
-        with nullcontext():
-            yield
-        return
+        return nullcontext()
 
     transfer_guard = getattr(jax, "transfer_guard", None)
     if transfer_guard is not None:
         try:
-            with transfer_guard(mode):
-                yield
-            return
+            return cast("AbstractContextManager[object]", transfer_guard(mode))
         except Exception as exc:
             _warn_transfer_guard_demotion(mode, str(exc))
-            with nullcontext():
-                yield
-            return
+            return nullcontext()
     try:
         from jax.experimental import transfer_guard as experimental_transfer_guard  # type: ignore
 
         try:
-            with experimental_transfer_guard(mode):
-                yield
-            return
+            return cast("AbstractContextManager[object]", experimental_transfer_guard(mode))
         except Exception as exc:
             _warn_transfer_guard_demotion(mode, str(exc))
-            with nullcontext():
-                yield
-            return
+            return nullcontext()
     except Exception as exc:
         _warn_transfer_guard_demotion(mode, str(exc))
-        with nullcontext():
-            yield
+        return nullcontext()
