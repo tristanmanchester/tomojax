@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
@@ -68,9 +68,11 @@ from tomojax.geometry import (
     grid_from_detector_fov_slices,
 )
 from tomojax.io import (
+    JsonValue,
     ProjectionDataset,
     build_geometry_from_dataset_metadata,
     load_projection_payload,
+    normalize_json,
     save_projection_payload,
 )
 
@@ -133,6 +135,26 @@ def _metadata_float(value: object, default: float = 0.0) -> float:
     if isinstance(value, int | float | str):
         return float(value)
     return default
+
+
+def _metadata_list(value: object) -> list[object]:
+    if isinstance(value, list | tuple):
+        return list(value)
+    return []
+
+
+def _metadata_json_list(value: object) -> list[JsonValue]:
+    normalized = normalize_json(value)
+    if isinstance(normalized, list):
+        return normalized
+    return []
+
+
+def _metadata_json_mapping(value: object) -> dict[str, JsonValue]:
+    normalized = normalize_json(value)
+    if isinstance(normalized, dict):
+        return normalized
+    return {}
 
 
 def _resolve_recon_grid_and_mask(
@@ -1036,7 +1058,7 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     args.gather_dtype = str(profile_options["gather_dtype"])
     args.regulariser = str(profile_options["regulariser"])
     args.recon_algo = str(profile_options["recon_algo"])
-    args.views_per_batch = int(cast("Any", profile_options["views_per_batch"]))
+    args.views_per_batch = _metadata_int(profile_options["views_per_batch"], 0)
     args.checkpoint_projector = bool(profile_options["checkpoint_projector"])
     args.pose_model = str(profile_options["pose_model"])
     args.quality_tier = str(profile_options["quality_tier"])
@@ -1101,7 +1123,10 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
         align_profile=command.align_profile,
         outer_iters=command.outer_iters,
         recon_iters=command.recon_iters,
-        recon_algo=cast("Any", command.recon_algo),
+        recon_algo=cast(
+            "Literal['fista', 'spdhg', 'fista_tv', 'spdhg_tv', 'fista-tv', 'spdhg-tv']",
+            command.recon_algo,
+        ),
         lambda_tv=command.lambda_tv,
         regulariser=cast("Regulariser", command.regulariser),
         huber_delta=command.huber_delta,
@@ -1131,8 +1156,14 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
         freeze_dofs=freeze_dofs,
         geometry_dofs=(),
         bounds=() if command.bounds is None else command.bounds,
-        gauge_policy=cast("Any", command.gauge_policy),
-        pose_model=cast("Any", command.pose_model),
+        gauge_policy=cast(
+            "GaugePolicy | Literal['anchor-mean', 'prior-required', 'diagnose-only']",
+            command.gauge_policy,
+        ),
+        pose_model=cast(
+            "Literal['per_view', 'per-view', 'polynomial', 'spline']",
+            command.pose_model,
+        ),
         knot_spacing=command.knot_spacing,
         degree=command.degree,
         gauge_fix=cast("GaugeFixMode", command.gauge_fix),
@@ -1455,11 +1486,14 @@ def _apply_alignment_output_mask(plan: AlignCliRunPlan, x: jnp.ndarray) -> jnp.n
 def _alignment_gauge_metadata(
     plan: AlignCliRunPlan,
     info: dict[str, Any],
-) -> dict[str, object]:
+) -> dict[str, JsonValue]:
+    mode = cast("object", info.get("gauge_fix", plan.command.gauge_fix))
+    dofs = cast("object", info.get("gauge_fix_dofs", []))
+    final = cast("object", info.get("gauge_fix_final", {}))
     return {
-        "mode": str(info.get("gauge_fix", plan.command.gauge_fix)),
-        "dofs": list(info.get("gauge_fix_dofs", [])),
-        "final": dict(info.get("gauge_fix_final", {}) or {}),
+        "mode": str(mode),
+        "dofs": _metadata_json_list(dofs),
+        "final": _metadata_json_mapping(final),
     }
 
 
@@ -1468,14 +1502,14 @@ def _write_alignment_result_volume(
     *,
     x: jnp.ndarray,
     params5_np: np.ndarray,
-    gauge_metadata: dict[str, object],
+    gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
-) -> Any:
+) -> str:
     save_meta = plan.meta.copy_metadata()
     save_meta.grid = plan.recon_grid.to_dict()
     save_meta.volume = np.asarray(x)
     save_meta.align_params = params5_np
-    save_meta.align_gauge = gauge_metadata  # type: ignore[attr-defined]
+    save_meta.align_gauge = gauge_metadata
     if isinstance(geometry_calibration_state, dict):
         calibration_patch = build_calibrated_geometry_metadata_patch(
             calibration_state=geometry_calibration_state,
@@ -1493,14 +1527,14 @@ def _write_alignment_result_volume(
         metadata=save_meta,
     )
     logging.info("Saved alignment results to %s", plan.command.out)
-    return save_meta
+    return str(save_meta.frame)
 
 
 def _write_alignment_params_exports(
     plan: AlignCliRunPlan,
     *,
     params5_np: np.ndarray,
-    gauge_metadata: dict[str, object],
+    gauge_metadata: dict[str, JsonValue],
 ) -> None:
     if plan.command.save_params_json is not None:
         save_alignment_params_json(
@@ -1527,13 +1561,17 @@ def _build_alignment_manifest_payload_from_result(
     *,
     x: jnp.ndarray,
     params5_np: np.ndarray,
-    gauge_metadata: dict[str, object],
+    gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
-    save_meta: Any,
+    output_frame: str,
 ) -> dict[str, object]:
     command = plan.command
     info = execution.info
-    loss_values = info.get("loss", [])
+    loss_values = _metadata_list(cast("object", info.get("loss", [])))
+    objective_kinds = _metadata_list(cast("object", info.get("objective_kinds", [])))
+    active_dofs = _metadata_list(cast("object", info.get("active_dofs", [])))
+    active_pose_dofs = _metadata_list(cast("object", info.get("active_pose_dofs", [])))
+    active_geometry_dofs = _metadata_list(cast("object", info.get("active_geometry_dofs", [])))
     return {
         "input_path": command.data,
         "output_path": command.out,
@@ -1580,21 +1618,21 @@ def _build_alignment_manifest_payload_from_result(
         "loss_spec": plan.loss_config,
         "align_config": plan.cfg,
         "objective_kind": info.get("objective_kind"),
-        "objective_kinds": list(info.get("objective_kinds", [])),
+        "objective_kinds": objective_kinds,
         "objective_provenance": info.get("objective_provenance"),
         "backend_provenance": info.get("backend_provenance"),
         "gauge_policy": command.gauge_policy,
         "gauge_decision": info.get("gauge_decision"),
-        "active_dofs": list(info.get("active_dofs", [])),
-        "active_pose_dofs": list(info.get("active_pose_dofs", [])),
-        "active_geometry_dofs": list(info.get("active_geometry_dofs", [])),
+        "active_dofs": active_dofs,
+        "active_pose_dofs": active_pose_dofs,
+        "active_geometry_dofs": active_geometry_dofs,
         "geometry_dofs": list(plan.geometry_dofs),
         "geometry_calibration_state": geometry_calibration_state,
         "alignment_params_shape": list(params5_np.shape),
         "alignment_gauge": gauge_metadata,
         "volume_shape": list(np.asarray(x).shape),
         "volume_axes": command.volume_axes,
-        "frame": str(save_meta.frame),
+        "frame": output_frame,
         "run_info": {
             "loss_count": len(loss_values),
             "final_loss": loss_values[-1] if len(loss_values) else None,
@@ -1611,9 +1649,9 @@ def _write_alignment_manifest(
     *,
     x: jnp.ndarray,
     params5_np: np.ndarray,
-    gauge_metadata: dict[str, object],
+    gauge_metadata: dict[str, JsonValue],
     geometry_calibration_state: object,
-    save_meta: Any,
+    output_frame: str,
 ) -> None:
     if plan.command.save_manifest is None:
         return
@@ -1624,7 +1662,7 @@ def _write_alignment_manifest(
         params5_np=params5_np,
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
-        save_meta=save_meta,
+        output_frame=output_frame,
     )
     manifest = build_manifest("tomojax align", list(sys.argv), plan.cli_args, payload)
     save_manifest(plan.command.save_manifest, manifest)
@@ -1639,7 +1677,7 @@ def _write_alignment_outputs(
     params5_np = np.asarray(execution.params5)
     gauge_metadata = _alignment_gauge_metadata(plan, execution.info)
     geometry_calibration_state = execution.info.get("geometry_calibration_state")
-    save_meta = _write_alignment_result_volume(
+    output_frame = _write_alignment_result_volume(
         plan,
         x=x,
         params5_np=params5_np,
@@ -1658,7 +1696,7 @@ def _write_alignment_outputs(
         params5_np=params5_np,
         gauge_metadata=gauge_metadata,
         geometry_calibration_state=geometry_calibration_state,
-        save_meta=save_meta,
+        output_frame=output_frame,
     )
 
 
