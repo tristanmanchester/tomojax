@@ -992,6 +992,11 @@ and proposed next fix before stopping.
   `tomojax.io` inspection and quicklook facades. Focused inspect tests, Ruff,
   single-file Basedpyright with 0 warnings, and `just production-surface-check`
   passed. Full CLI Basedpyright warnings are now 862 with 0 errors.
+- [x] Runtime check typing cleanup: `tomojax test-gpu` and `tomojax test-cpu`
+  now isolate the small untyped JAX runtime surface behind a local protocol.
+  Focused runtime tests, Ruff, single-file Basedpyright with 0 warnings, and
+  `just production-surface-check` passed. Full CLI Basedpyright warnings are
+  now 860 with 0 errors.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions

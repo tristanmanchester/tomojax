@@ -14978,3 +14978,19 @@ Validation:
 - `uv run pytest tests/test_inspect_cli.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 876 to 862.
+
+### Runtime check CLI typing cleanup
+
+- Added a local protocol for the small JAX runtime surface used by
+  `tomojax test-gpu` and `tomojax test-cpu`. This prevents untyped JAX module
+  calls from leaking `Any` warnings into the public CLI type gate without
+  changing runtime behavior.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/runtime_checks.py --outputjson` passed
+  with 0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/runtime_checks.py` passed.
+- `uv run pytest tests/test_runtime_checks.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 862 to 860.
