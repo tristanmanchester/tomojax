@@ -14903,3 +14903,28 @@ Validation:
   `src/tomojax/cli`, import-linter kept the layer direction, the private-import
   guard passed, and the focused production-surface pytest set reported 69
   passed tests.
+
+### Simulate CLI command-plan adapter
+
+- Split the product-facing `tomojax simulate` command into parser construction,
+  a typed `SimulateCommand` plan, explicit artefact parsing/validation, and a
+  small execution function. This is the first command-body cleanup slice toward
+  replacing large argparse-driven command bodies with typed adapters at the CLI
+  boundary.
+- The refactor keeps the public command behavior intact: explicit artefact
+  flags still override legacy `--noise/--noise-level` only when an artefact is
+  actually enabled, transfer-guard behavior is unchanged, and the datasets
+  facade remains the command's only simulation backend dependency.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/simulate.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/simulate.py` passed.
+- Focused simulate CLI tests passed:
+  `test_simulate_cli_builds_config_and_calls_simulate_to_file`,
+  `test_simulate_cli_incomplete_explicit_artefacts_preserve_legacy_noise`, and
+  `test_simulate_cli_rejects_invalid_explicit_artefact`.
+- `just production-surface-check` passed after the adapter refactor; the full
+  CLI package remains at 0 Basedpyright errors, with warning count reduced from
+  1016 to 885.

@@ -972,6 +972,11 @@ and proposed next fix before stopping.
   warning-only argparse/JAX `Any` debt, so future command cleanups can be done as
   structure work rather than fire-drill type-error repair. Broad repo-wide
   Basedpyright debt remains outside this cleaned surface.
+- [x] First typed command-plan adapter cleanup: `tomojax simulate` now parses
+  argparse output into a typed `SimulateCommand` before calling the datasets
+  facade. Focused simulate CLI tests, Ruff, single-file Basedpyright with
+  0 warnings, and `just production-surface-check` passed. This reduces full CLI
+  Basedpyright warnings from 1016 to 885 while keeping full CLI errors at 0.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions
