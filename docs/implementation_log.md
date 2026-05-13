@@ -15389,3 +15389,23 @@ Validation:
 
 - `uv run lint-imports --config .importlinter` passed with 3 contracts kept.
 - `just production-surface-check` passed with 74 focused tests.
+
+### CLI/deep-module cleanup completion audit started
+
+- Added `docs/architecture_cleanup_audit_20260513.md` mapping the current
+  cleanup objective to concrete files, commands, and gate evidence.
+- The audit confirms that the single public CLI, IO/data boundary,
+  production-vs-diagnostic split, calibration-through-geometry boundary, public
+  wording guard, and focused production-surface gate are now covered by
+  executable checks.
+- The audit also records why the cleanup is not yet complete: `just check`
+  remains red on broad Ruff lint, especially because nested alignment
+  implementation packages (`tomojax.align.model`, `tomojax.align.objectives`,
+  and `tomojax.align.geometry`) still look public to the tooling, and some CLI
+  code still consumes those implementation namespaces directly.
+
+Validation:
+
+- `just check` was run and failed during `ruff check --fix src tests tools`.
+  This is now tracked as remaining cleanup work rather than hidden behind the
+  focused production-surface gate.

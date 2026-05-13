@@ -29,7 +29,9 @@ from .validation import (
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
 # Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
-_DET_GRID_CACHE: OrderedDict[tuple[int, int, float, float, float, float], tuple[np.ndarray, np.ndarray]] = OrderedDict()
+_DET_GRID_CACHE: OrderedDict[
+    tuple[int, int, float, float, float, float], tuple[np.ndarray, np.ndarray]
+] = OrderedDict()
 _DET_GRID_CACHE_CAP = 8
 
 

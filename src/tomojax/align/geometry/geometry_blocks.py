@@ -11,6 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align.model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
+from tomojax.core.geometry import RotationAxisGeometry
+from tomojax.core.geometry.lamino import LaminographyGeometry
+from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.geometry import (
     CalibrationState,
     CalibrationVariable,
@@ -19,9 +22,6 @@ from tomojax.geometry import (
     nominal_axis_unit_from_inputs,
     validate_calibration_gauges,
 )
-from tomojax.core.geometry import RotationAxisGeometry
-from tomojax.core.geometry.lamino import LaminographyGeometry
-from tomojax.core.geometry.parallel import ParallelGeometry
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence

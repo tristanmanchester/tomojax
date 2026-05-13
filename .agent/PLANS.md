@@ -1151,6 +1151,14 @@ and proposed next fix before stopping.
   `Production modules use geometry facade for calibration primitives`, alongside
   the data-boundary contract. `just production-surface-check` passed with
   74 focused tests.
+- [x] Completion audit started and recorded in
+  `docs/architecture_cleanup_audit_20260513.md`. The audit confirms the focused
+  production surface is clean, but the objective is not complete because
+  repo-wide `just check` is still red and nested alignment implementation
+  packages still behave as public modules.
+- [ ] Continue architecture cleanup by moving CLI-facing alignment schedule/loss
+  dependencies behind the public `tomojax.align` facade and reducing the nested
+  align package public/internal mismatch.
 
 ### Risks
 
