@@ -8,9 +8,10 @@ Usage example:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tomojax.io import validate_dataset
 
@@ -18,16 +19,29 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+@dataclass(frozen=True)
+class ValidateCommand:
+    """Typed command plan for dataset validation."""
+
+    input_path: Path
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Validate an HDF5/NXtomo (.nxs) file")
-    p.add_argument("input", help="Input .nxs/.h5/.hdf5 file")
+    _ = p.add_argument("input", help="Input .nxs/.h5/.hdf5 file")
     return p
+
+
+def _parse_command(argv: Sequence[str] | None) -> ValidateCommand:
+    """Parse CLI arguments into a typed validation command plan."""
+    args = _build_parser().parse_args(argv)
+    return ValidateCommand(input_path=Path(cast("str", args.input)))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the dataset validation command."""
-    args = _build_parser().parse_args(argv)
-    path = Path(args.input)
+    command = _parse_command(argv)
+    path = command.input_path
 
     if not path.exists():
         print(f"ERROR: file not found: {path}", file=sys.stderr)

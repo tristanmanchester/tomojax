@@ -14928,3 +14928,19 @@ Validation:
 - `just production-surface-check` passed after the adapter refactor; the full
   CLI package remains at 0 Basedpyright errors, with warning count reduced from
   1016 to 885.
+
+### Validate CLI command-plan adapter
+
+- Split the small `tomojax validate` command into parser construction and a
+  typed `ValidateCommand` plan. This removes the remaining argparse `Any`
+  warnings from the validation command while preserving the existing public
+  behavior and `tomojax.io.validate_dataset` boundary.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/validate.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/validate.py` passed.
+- `uv run pytest tests/test_validate_cli.py -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 885 to 882.
