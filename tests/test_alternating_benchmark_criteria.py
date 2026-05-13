@@ -140,6 +140,29 @@ def test_benchmark_manifest_passes_det_v_policy_when_reported_frozen() -> None:
     assert det_v["reason"] == "det_v_px is frozen in the current geometry"
 
 
+def test_benchmark_manifest_passes_det_v_policy_when_freeze_or_prior_required() -> None:
+    evaluation = _benchmark_manifest_evaluation(
+        criteria={"det_v_policy": "recovered_or_reported_unobservable"},
+        geometry_recovery={
+            "det_v_realized_rmse_px": 4.0,
+            "det_v_realized_rmse_px_passed": False,
+        },
+        weak_dof_policy={
+            "decisions": {
+                "det_v_px": {
+                    "decision": "freeze_or_prior_required",
+                    "reason": "insufficient curvature, correlation, or accepted-step evidence",
+                }
+            }
+        },
+    )
+
+    det_v = cast("dict[str, object]", evaluation["det_v_policy"])
+    assert det_v["status"] == "passed"
+    assert det_v["value"] == 4.0
+    assert det_v["reason"] == "insufficient curvature, correlation, or accepted-step evidence"
+
+
 def test_benchmark_manifest_reports_missing_object_motion_suspicion_payload() -> None:
     evaluation = _benchmark_manifest_evaluation(
         criteria={"core_solver": "flags_object_motion_suspected"},

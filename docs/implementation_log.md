@@ -15686,3 +15686,24 @@ Validation:
 - Documentation-only report based on the previously recorded
   `runs/rich_phantom_v1_parity_20260510_tangent_gauge_stopped` CUDA artifact
   and existing `2026-05-10` benchmark reports.
+
+### Product-truth runner resumed and det-v policy evidence tightened
+
+- Hardened `tools/run_product_truth_overnight_20260513.sh` so one failing
+  long-running case records an exit status instead of aborting the remaining
+  overnight gates, and so completed result artifacts can be skipped on resume.
+- Removed `det_v_px` from synthetic cases whose geometry declares detector-v
+  inactive. The first failed resume attempt surfaced the previous invalid
+  active-DOF request for `synth128_thermal_object_drift`; the corrected runner
+  resumed from that case on the laptop.
+- Updated benchmark manifest evaluation so a `det_v_policy` criterion counts
+  weak-DOF policy evidence with decision `freeze_or_prior_required` as a
+  reported detector-v policy outcome, not as missing evidence. This keeps the
+  laminography case red for real axis/roll errors rather than for absent
+  det-v-policy plumbing.
+
+Validation:
+
+- `bash -n tools/run_product_truth_overnight_20260513.sh` passed.
+- `uv run pytest tests/test_alternating_benchmark_criteria.py -q` passed with
+  20 tests.

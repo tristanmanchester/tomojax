@@ -1920,12 +1920,15 @@ def _det_v_policy_evaluation(
             "reason": "det_v recovered within geometry recovery tolerance",
         }
     det_v_decision = _weak_dof_decision_from_policy(weak_dof_policy, "det_v_px")
-    if det_v_decision is not None and det_v_decision.get("decision") == "keep_frozen":
+    if det_v_decision is not None and det_v_decision.get("decision") in {
+        "keep_frozen",
+        "freeze_or_prior_required",
+    }:
         return {
             "status": "passed",
             "value": value,
             "threshold": threshold,
-            "reason": str(det_v_decision.get("reason", "det_v reported unobservable")),
+            "reason": str(det_v_decision.get("reason", "det_v requires weak-DOF policy")),
         }
     return {
         "status": "not_evaluated",

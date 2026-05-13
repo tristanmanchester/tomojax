@@ -1267,6 +1267,13 @@ and proposed next fix before stopping.
   scout/tangent run: `128^3` det_u RMSE improved to `1.924456 px` and volume
   NMSE to `0.218229`, but the result still fails production detector-center
   recovery.
+- [x] Product-truth runner resumed safely: it now records per-case exit status,
+  skips completed result artifacts on resume, and avoids activating `det_v_px`
+  for synthetic datasets whose geometry declares detector-v inactive.
+- [x] `det_v_policy` benchmark evidence tightened: `freeze_or_prior_required`
+  weak-DOF decisions now count as reported detector-v policy evidence, so
+  laminography failures stay focused on axis/roll rather than missing policy
+  plumbing.
 
 ### Risks
 
