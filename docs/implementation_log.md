@@ -14944,3 +14944,21 @@ Validation:
 - `uv run pytest tests/test_validate_cli.py -q` passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 885 to 882.
+
+### Convert CLI command-plan adapter
+
+- Split `tomojax convert` into parser construction and a typed `ConvertCommand`
+  plan before dispatching to `tomojax.io.convert_dataset`. This keeps another
+  product-facing IO command on the same small parser/plan/execute pattern as
+  `simulate` and `validate`.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/convert.py --outputjson` passed with
+  0 errors and 0 warnings.
+- `uv run ruff check src/tomojax/cli/convert.py` passed.
+- `uv run pytest tests/test_convert.py
+  tests/test_small_module_coverage.py::test_convert_main_parses_paths_and_calls_convert
+  -q` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 882 to 876.
