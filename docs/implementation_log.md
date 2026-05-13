@@ -14883,3 +14883,23 @@ Validation:
   `align.py`, `recon.py`, `misalign.py`, and developer benchmark command bodies
   into typed command-plan adapters, but that is now structure debt rather than a
   failing type gate.
+
+### Full CLI type gate added to production surface check
+
+- Tightened `just production-surface-check` so its Basedpyright step now covers
+  the full `src/tomojax/cli` package, not only the first typed facade files.
+  This makes the current zero-error CLI state executable instead of relying on a
+  manually recorded broad sweep.
+- The gate still permits warning-only argparse/JAX `Any` debt while rejecting
+  red type errors. That matches the current cleanup boundary: the grouped CLI is
+  product-facing and error-free, while command-plan adapter extraction remains
+  follow-up structure work.
+
+Validation:
+
+- `just production-surface-check` passed with full `src/tomojax/cli`
+  Basedpyright coverage.
+- The gate reported 0 Basedpyright errors for `tomojax.io` and
+  `src/tomojax/cli`, import-linter kept the layer direction, the private-import
+  guard passed, and the focused production-surface pytest set reported 69
+  passed tests.

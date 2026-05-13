@@ -966,13 +966,12 @@ and proposed next fix before stopping.
   `calibration` packages with explicit public APIs and READMEs, tightened
   import-linter/public-import checks, and added `just production-surface-check`
   as the focused executable guard. The gate now includes full Ruff over
-  `src/tomojax/cli` plus scoped Basedpyright for `tomojax.io`, `tomojax.cli.main`,
-  `tomojax.cli.ingest`, `tomojax.cli._runtime`, and `tomojax.cli.config`. The
-  public surface gate passes, and a broad `uv run basedpyright src/tomojax/cli`
-  sweep now reports 0 errors. The remaining CLI type output is warning-only
-  argparse/JAX `Any` debt, so future command cleanups can be done as structure
-  work rather than fire-drill type-error repair. Broad repo-wide Basedpyright
-  debt remains outside this cleaned surface.
+  `src/tomojax/cli` and full Basedpyright coverage for `tomojax.io` plus
+  `src/tomojax/cli`, so the grouped CLI/IO surface is kept error-free by an
+  executable check rather than a one-off sweep. The remaining CLI type output is
+  warning-only argparse/JAX `Any` debt, so future command cleanups can be done as
+  structure work rather than fire-drill type-error repair. Broad repo-wide
+  Basedpyright debt remains outside this cleaned surface.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions
