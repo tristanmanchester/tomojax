@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 import jax.numpy as jnp
 
@@ -9,13 +8,13 @@ import jax.numpy as jnp
 @dataclass
 class LossState:
     kind: str
-    params: Dict[str, float]
+    params: dict[str, float]
     # Optional per-view mask (n, nv, nu) for masked/ROI losses
-    mask: Optional[jnp.ndarray] = None
+    mask: jnp.ndarray | None = None
     # Optional per-view precomputes
-    bins_x: Optional[jnp.ndarray] = None
-    bins_y: Optional[jnp.ndarray] = None
-    bw_x: Optional[float] = None
-    bw_y: Optional[float] = None
-    dt_edge: Optional[jnp.ndarray] = None
-    thr: Optional[jnp.ndarray] = None  # per-view scalar thresholds broadcastable
+    bins_x: jnp.ndarray | None = None
+    bins_y: jnp.ndarray | None = None
+    bw_x: float | None = None
+    bw_y: float | None = None
+    dt_edge: jnp.ndarray | None = None
+    thr: jnp.ndarray | None = None  # per-view scalar thresholds broadcastable

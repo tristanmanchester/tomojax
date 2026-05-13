@@ -14512,3 +14512,369 @@ JAX preallocation settings or smaller benchmarks.
   tests/test_alternating_geometry_update_policy.py
   tests/test_align_auto_cli.py` passed with 0 errors, 0 warnings, and 0 notes.
 - `env UV_CACHE_DIR=.uv-cache JAX_PLATFORM_NAME=cpu just imports` passed.
+
+## 2026-05-13 - Public IO and CLI surface consolidation
+
+### Scope
+
+Started the productionization cleanup around the original v2 deep-module plan.
+This slice focuses on the two most visible usability seams: real dataset loading
+and the command-line surface.
+
+Changes:
+
+- Added `tomojax.io.ProjectionDataset` as the public measured-projection data
+  boundary.
+- Added `tomojax.io.load_dataset`, `save_dataset`, `validate_dataset`, and
+  `load_tiff_stack`.
+- Kept the existing NXtomo/HDF5 implementation in `tomojax.data.io_hdf5` as the
+  transitional low-level reader while moving the public facade to `tomojax.io`.
+- Added the grouped `tomojax` command with production-facing subcommands:
+  `inspect`, `validate`, `ingest`, `preprocess`, `convert`, `recon`, `align`,
+  `simulate`, `test-gpu`, and `test-cpu`.
+- Added `tomojax ingest` for TIFF-stack ingestion into the standard TomoJAX
+  dataset contract with explicit angle metadata.
+- Moved benchmark/diagnostic probes behind `tomojax dev ...` and removed their
+  top-level console-script exposure from `pyproject.toml`.
+- Updated README, quickstart, and `tomojax.cli`/`tomojax.io` module READMEs to
+  distinguish production-facing commands from transitional diagnostics.
+- Adjusted import-linter layering so `tomojax.io` can wrap the transitional
+  `tomojax.data` readers during the migration. Removed the calibration module's
+  dependency on `tomojax.io` so the layer contract remains executable.
+
+### Decision
+
+The public package should now point users at:
+
+```bash
+tomojax inspect scan.nxs
+tomojax ingest ./projections --angles angles.csv --out scan.nxs
+tomojax preprocess raw.nxs corrected.nxs --log
+tomojax recon corrected.nxs --out recon.nxs
+tomojax align corrected.nxs --out aligned.nxs --schedule cor
+```
+
+The underlying legacy command modules remain importable for tests and internal
+dispatch, but the installed package now exposes only the grouped `tomojax`
+console script. Benchmark and synthetic-development probes live under
+`tomojax dev` rather than looking like product commands; the staged synthetic
+runner is reachable as `tomojax dev align-auto`.
+
+### Validation
+
+- `uv run pytest tests/test_io_public_dataset.py tests/test_public_facades.py
+  tests/test_cli_public_surface.py
+  tests/test_cli_entrypoints.py::test_top_level_cli_help_shows_clean_public_commands
+  tests/test_cli_entrypoints.py::test_top_level_cli_recon_accepts_positional_input
+  tests/test_cli_entrypoints.py::test_top_level_cli_routes_validate
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_benchmark_probes
+  tests/test_cli_entrypoints.py::test_ingest_cli_loads_tiffs_and_writes_standard_dataset
+  -q` passed: 15 tests.
+- `just imports` passed.
+- `uv run ruff check src/tomojax/io src/tomojax/cli/main.py
+  src/tomojax/cli/ingest.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py tests/test_cli_public_surface.py` passed.
+- `uv run basedpyright src/tomojax/io src/tomojax/cli/main.py
+  src/tomojax/cli/ingest.py` passed with 0 errors and warnings only from
+  argparse/imageio typing.
+
+### Follow-up consolidation
+
+- Removed the remaining `tomojax-*` console-script exports from
+  `pyproject.toml`; `tomojax` is now the single installed command.
+- Routed `tomojax convert`, `tomojax validate`, `tomojax inspect`, and
+  `tomojax preprocess` through the public `tomojax.io` facade instead of direct
+  CLI imports from `tomojax.data`.
+- Added `tomojax.io.PreprocessConfig`, `PreprocessResult`, and
+  `preprocess_nxtomo` as the public raw-NXtomo flat/dark correction boundary.
+- Kept solver-heavy command internals (`recon`, `align`, `misalign`,
+  `loss-bench`) on the transitional lower-level dataset payload until a
+  solver-facing `ProjectionDataset` geometry/metadata contract is introduced.
+  This avoids mechanically moving old `LoadedNXTomo.geometry_inputs()` calls
+  behind a new facade name without cleaning the architecture.
+
+Additional validation:
+
+- `uv run pytest tests/test_convert.py tests/test_validate_cli.py
+  tests/test_inspect_cli.py
+  tests/test_small_module_coverage.py::test_convert_main_parses_paths_and_calls_convert
+  tests/test_cli_entrypoints.py::test_convert_main_delegates_to_converter
+  tests/test_cli_public_surface.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py -q` passed: 25 tests.
+- `uv run pytest
+  tests/test_preprocess.py::test_preprocess_cli_smoke
+  tests/test_preprocess.py::test_preprocess_cli_combines_crop_reject_and_auto_reject
+  tests/test_public_facades.py::test_io_facade_exports_dataset_boundary -q`
+  passed: 3 tests.
+- `uv run pytest tests/test_cli_public_surface.py
+  tests/test_align_auto_cli.py::test_public_cli_scripts_use_single_grouped_entrypoint
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_align_auto
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_benchmark_probes -q`
+  passed: 4 tests.
+- `uv run ruff check src/tomojax/cli/convert.py
+  src/tomojax/cli/validate.py src/tomojax/cli/inspect.py
+  src/tomojax/cli/preprocess.py src/tomojax/cli/main.py src/tomojax/io
+  tests/test_cli_public_surface.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py tests/test_align_auto_cli.py` passed.
+- `uv run basedpyright src/tomojax/io src/tomojax/cli/validate.py` passed
+  with 0 errors and warnings only from argparse/low-level metadata typing.
+- `just imports` passed.
+- `uv run tomojax --help` and `uv run tomojax dev align-auto --help` passed.
+
+### Remaining cleanup gaps
+
+This slice does not complete the full original v2 architecture cleanup.
+Remaining known gaps:
+
+- `tomojax.data` is still a public/transitional package and lacks the deep-module
+  README/API shape expected by the v2 plan.
+- Solver-heavy CLI internals still depend on lower-level `tomojax.data`
+  payloads in `misalign` and the diagnostic `loss-bench`.
+- `tomojax.bench`, `tomojax.calibration`, and `tomojax.data` still need either
+  explicit deep-module contracts or quarantine/demotion decisions.
+- `recon` and `align` now cross through `tomojax.io` and consume a
+  `ProjectionDataset`, but simulation/misalignment generation still needs a
+  cleaner v2 home before `tomojax.data` can be retired.
+
+### Solver-facing IO bridge follow-up
+
+- Added `tomojax.io.load_projection_payload`,
+  `save_projection_payload`, and `build_geometry_from_dataset_metadata`.
+- Added `ProjectionDataset.geometry_inputs()` and
+  `ProjectionDataset.copy_metadata()`, preserving saved NXtomo solver metadata
+  such as angle offsets, alignment params/gauge, tilt, detector roll, and grid
+  metadata.
+- Updated `tomojax recon` and `tomojax align` internals to use those facade
+  functions instead of direct `tomojax.data.io_hdf5` and
+  `tomojax.data.geometry_meta` imports.
+- Updated `load_projection_payload()` to return `ProjectionDataset` rather than
+  the transitional `LoadedNXTomo` payload.
+- Updated CLI coverage so reconstruction/alignment tests monkeypatch the public
+  IO boundary rather than lower-level data functions.
+
+Additional validation:
+
+- `uv run pytest tests/test_cli_entrypoints.py::test_recon_main_writes_manifest_sidecar
+  tests/test_cli_entrypoints.py::test_recon_main_passes_fista_constraints_and_records_manifest
+  tests/test_cli_entrypoints.py::test_align_main_writes_parameter_sidecars_from_returned_params
+  tests/test_public_facades.py::test_io_facade_exports_dataset_boundary -q`
+  passed: 4 tests.
+- `uv run pytest tests/test_cli_public_surface.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py tests/test_convert.py tests/test_validate_cli.py
+  tests/test_inspect_cli.py tests/test_preprocess.py::test_preprocess_cli_smoke
+  tests/test_preprocess.py::test_preprocess_cli_combines_crop_reject_and_auto_reject
+  tests/test_align_auto_cli.py::test_public_cli_scripts_use_single_grouped_entrypoint
+  tests/test_cli_entrypoints.py::test_top_level_cli_help_shows_clean_public_commands
+  tests/test_cli_entrypoints.py::test_top_level_cli_recon_accepts_positional_input
+  tests/test_cli_entrypoints.py::test_top_level_cli_routes_validate
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_benchmark_probes
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_align_auto
+  tests/test_cli_entrypoints.py::test_ingest_cli_loads_tiffs_and_writes_standard_dataset
+  tests/test_cli_entrypoints.py::test_convert_main_delegates_to_converter
+  tests/test_cli_entrypoints.py::test_recon_main_writes_manifest_sidecar
+  tests/test_cli_entrypoints.py::test_recon_main_passes_fista_constraints_and_records_manifest
+  tests/test_cli_entrypoints.py::test_align_main_writes_parameter_sidecars_from_returned_params
+  tests/test_small_module_coverage.py::test_convert_main_parses_paths_and_calls_convert
+  -q` passed: 37 tests.
+- `uv run basedpyright src/tomojax/io` passed with 0 errors and warnings only
+  from transitional low-level metadata typing.
+- `uv run pytest tests/test_io_public_dataset.py
+  tests/test_cli_entrypoints.py::test_recon_main_writes_manifest_sidecar
+  tests/test_cli_entrypoints.py::test_recon_main_passes_fista_constraints_and_records_manifest
+  tests/test_cli_entrypoints.py::test_align_main_writes_parameter_sidecars_from_returned_params
+  -q` passed: 8 tests.
+- `uv run ruff check src/tomojax/io tests/test_io_public_dataset.py` passed.
+
+### Simulation facade follow-up
+
+- Added `tomojax.datasets` exports for the legacy simulation primitives used by
+  the public `tomojax simulate` command: `SimConfig`, `SimulatedData`,
+  `SimulationArtefacts`, `simulate`, `simulate_to_file`, and
+  `validate_simulation_artefacts`.
+- Updated `tomojax simulate` to import simulation behavior from
+  `tomojax.datasets` rather than directly from `tomojax.data`.
+- Updated `tomojax.datasets` documentation so deterministic synthetic
+  generation is explicitly owned by the datasets deep module.
+
+Additional validation:
+
+- `uv run pytest
+  tests/test_simulate.py::test_simulate_cli_builds_config_and_calls_simulate_to_file
+  tests/test_simulate.py::test_simulate_cli_incomplete_explicit_artefacts_preserve_legacy_noise
+  tests/test_simulate.py::test_simulate_cli_rejects_invalid_explicit_artefact
+  tests/test_public_facades.py -q` passed: 8 tests.
+- `uv run ruff check src/tomojax/datasets src/tomojax/cli/simulate.py`
+  passed.
+- `just imports` passed after the simulation facade move.
+
+### Transitional package quarantine
+
+- Added READMEs for `tomojax.data`, `tomojax.bench`, and
+  `tomojax.calibration` documenting their non-final status.
+- Added `api.py` files for `tomojax.data`, `tomojax.bench`, and
+  `tomojax.calibration` so retained transitional/provisional top-level packages
+  still follow the v2 deep-module shape (`api.py`, package re-export, README).
+- `tomojax.data` is explicitly marked as a transitional lower-level package;
+  production data loading should route through `tomojax.io`, while synthetic
+  benchmark generation should route through `tomojax.datasets`.
+- `tomojax.bench` is explicitly marked as developer/verification-only and
+  exposed through `tomojax dev ...`, not package-facing console scripts.
+- `tomojax.calibration` is explicitly marked provisional, with only schema/value
+  types exposed at the package root; estimation workflows remain owned by
+  `tomojax.align`.
+- Added `tomojax.cli` to the import-linter layer contract so CLI code is
+  explicitly top-level orchestration and production modules cannot import it.
+- Removed the static benchmark-to-CLI import from the alignment smoke benchmark
+  by making its in-process diagnostic import dynamic; this keeps import-linter
+  enforcing that production/benchmark modules do not compile-time depend on
+  command modules.
+- `just imports` passed after adding `tomojax.cli` to the layer contract.
+- `uv run pytest
+  tests/test_bench_alignment_smoke.py::test_alignment_smoke_in_process_align_preserves_cli_shape
+  -q` passed.
+- `uv run pytest tests/test_public_facades.py tests/test_cli_public_surface.py
+  tests/test_io_public_dataset.py tests/test_misalign_schedules.py
+  tests/test_loss_bench.py
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_misalign -q`
+  passed: 26 tests after adding the transitional `api.py` files.
+- `uv run ruff check --select I,TID,D100,E402` on the new API files and the
+  migrated diagnostic CLIs passed.
+- `uv run tomojax --help` and `uv run tomojax dev --help` passed, showing the
+  production commands and the grouped developer diagnostics.
+- Updated current-facing synthetic benchmark docs and CLI usage strings away
+  from retired `tomojax-*` console scripts toward `tomojax ...` and
+  `tomojax dev ...`. Historical implementation-log/archive command transcripts
+  were left unchanged as provenance.
+- `uv run pytest tests/test_cli_public_surface.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py tests/test_convert.py tests/test_validate_cli.py
+  tests/test_inspect_cli.py ... tests/test_loss_bench.py -q` passed: 57 focused
+  CLI/IO/facade tests.
+- `uv run basedpyright src/tomojax/io` passed with 0 errors and 18 warnings
+  from transitional low-level metadata typing.
+
+### Diagnostic CLI facade cleanup
+
+- Updated `tomojax dev misalign` routing so the synthetic misalignment generator
+  remains available as a developer diagnostic without being installed as a
+  package-facing console script.
+- Migrated `tomojax.cli.misalign` off direct `tomojax.data.io_hdf5` and
+  `tomojax.data.geometry_meta` imports. It now loads/saves through
+  `tomojax.io.load_projection_payload`, `save_projection_payload`, and
+  `build_geometry_from_dataset_metadata`.
+- Migrated the developer `tomojax dev loss-bench` command off direct
+  lower-level data IO imports. Benchmark dataset construction still lives in
+  `tomojax.bench`, but CLI dataset persistence now crosses the public
+  `tomojax.io` boundary.
+- Updated CLI routing tests for `tomojax dev misalign` and focused benchmark
+  tests to monkeypatch the public IO facade rather than lower-level data
+  readers.
+
+Additional validation:
+
+- `uv run pytest tests/test_misalign_schedules.py -q` passed: 8 tests.
+- `uv run pytest tests/test_loss_bench.py -q` passed: 5 tests.
+
+### Public CLI boundary hardening
+
+- Cleaned the old production `tomojax recon` and `tomojax align` command
+  modules so they now have explicit module documentation and absolute imports.
+- Kept the allocator-before-JAX import ordering as an explicit Ruff exception
+  in those command modules; moving that setup below JAX imports would make the
+  CLI cleaner on paper but would break the runtime memory policy.
+- Promoted the alignment profile defaults and resume-state types used by the
+  CLI through the `tomojax.align` public API instead of importing the private
+  `_profiles` module across the deep-module boundary.
+- Re-ran the public import checker after the API promotion so command code no
+  longer reaches into private alignment implementation modules.
+
+Additional validation:
+
+- `uv run ruff check --select I,TID,D100,E402
+  src/tomojax/align/api.py src/tomojax/align/__init__.py
+  src/tomojax/cli/recon.py src/tomojax/cli/align.py
+  src/tomojax/cli/misalign.py src/tomojax/cli/loss_bench.py` passed.
+- `uv run pytest tests/test_cli_entrypoints.py tests/test_public_facades.py -q`
+  passed: 27 tests.
+- `uv run pytest tests/test_cli_public_surface.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py tests/test_convert.py tests/test_validate_cli.py
+  tests/test_inspect_cli.py ... tests/test_loss_bench.py -q` passed: 67 focused
+  CLI/IO/facade tests.
+- `just imports` passed after the final alignment API boundary cleanup.
+
+### Production surface check target
+
+- Added `just production-surface-check` as the executable guard for the cleaned
+  public CLI/IO/deep-module surface. This intentionally checks the production
+  surface and retained developer CLI facades without pretending the entire
+  research codebase is already free of inherited lint/type debt.
+- The target verifies:
+  - Ruff format on the public facade/CLI/IO files and their focused tests.
+  - Ruff import/module-boundary lint (`I,TID,D100,E402,RUF022`) on the public
+    facade/CLI/IO files and their focused tests.
+  - Basedpyright on `tomojax.io`, `tomojax.cli.main`, and `tomojax.cli.ingest`.
+  - Import-linter plus the public private-import checker.
+  - Focused CLI/IO/facade tests, including grouped CLI docs checks and a guard
+    that CLI modules do not import the transitional `tomojax.data` package.
+- Added tests that current-facing docs no longer mention retired `tomojax-*`
+  console scripts and that CLI modules route data access through public facades
+  rather than `tomojax.data`.
+
+Validation:
+
+- `just production-surface-check` passed.
+- The focused production-surface pytest set now reports 69 tests passed.
+
+### Wider CLI lint cleanup and remaining type boundary
+
+- Made the whole `src/tomojax/cli` package Ruff-clean. The cleanup kept the
+  legacy `align`, `recon`, `misalign`, and `loss-bench` command bodies intact
+  while fixing low-risk issues: explicit exception chaining, Path usage,
+  module/function/class documentation, ASCII help text, deterministic list
+  construction, and runtime-check typing.
+- Restored `Detector`/`Grid` as runtime attributes on `tomojax.cli.align` and
+  `tomojax.cli.recon` because existing command contract tests instantiate them
+  through those modules.
+- Kept large parser/runner complexity suppressions localized to existing legacy
+  command functions. The production API surface is now grouped and guarded, but
+  those command bodies are not presented as a fully typed internal architecture.
+- Checked the broader CLI package with Basedpyright. It still reports inherited
+  type debt in legacy command modules, especially argparse `Any` propagation in
+  `align.py`, `recon.py`, and `simulate.py`. The production type gate therefore
+  remains scoped to `tomojax.io`, `tomojax.cli.main`, and `tomojax.cli.ingest`
+  until those command bodies are converted into typed command-plan adapters.
+
+Validation:
+
+- `uv run ruff check src/tomojax/cli --output-format=concise` passed.
+- `uv run basedpyright src/tomojax/cli/_runtime.py` passed with 0 errors and 0
+  warnings.
+- `just production-surface-check` passed after the CLI cleanup.
+- `uv run basedpyright src/tomojax/cli --stats` still fails with legacy command
+  type debt; latest snapshot reported 124 errors and 973 warnings.
+
+### Strengthened production surface gate
+
+- Strengthened `just production-surface-check` so it now runs full Ruff over
+  `src/tomojax/cli`, not only selected import/doc rules. This keeps the grouped
+  production and developer CLI package lint-clean while avoiding a false claim
+  that the old large argparse command bodies are fully typed.
+- Added `src/tomojax/cli/_runtime.py` and `src/tomojax/cli/config.py` to the
+  scoped Basedpyright production gate. The typed gate now covers `tomojax.io`,
+  `tomojax.cli.main`, `tomojax.cli.ingest`, the shared runtime context helper,
+  and config-file parsing.
+- Confirmed `tomojax.cli.align` does not need private `_config` type imports for
+  command validation. Literal casts that would have required private imports
+  were changed to use the existing runtime validation path instead, preserving
+  the public-import check.
+
+Validation:
+
+- `uv run basedpyright src/tomojax/cli/config.py` passed with 0 errors and 18
+  warnings from argparse `Any` values.
+- `just production-surface-check` passed with the strengthened full-CLI Ruff
+  step, expanded scoped Basedpyright set, and 69 focused tests.
+- A broad `uv run basedpyright src/tomojax/cli --stats` snapshot now reports 65
+  errors and 975 warnings. This is improved from the earlier 124-error snapshot
+  but remains intentionally outside the production gate until the large legacy
+  `align.py`, `recon.py`, `misalign.py`, and developer benchmark command bodies
+  are split into typed command-plan adapters.

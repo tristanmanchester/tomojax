@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
-from tomojax.align.model.dof_specs import ActiveParameterView
-from tomojax.align.objectives.folds import FoldSpec
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align.model.dof_specs import ActiveParameterView
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.objectives.fixed_volume import (
     FixedVolumeProjectionObjective,
     project_and_score_stack,
     project_stack,
 )
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.objectives.folds import FoldSpec
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import L2LossSpec, L2OtsuLossSpec
 from tomojax.align.objectives.validation_residuals import (

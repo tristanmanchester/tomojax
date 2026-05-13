@@ -9,8 +9,8 @@ Clean user-facing entrypoints now exist for the primary workflows:
 
 ```bash
 tomojax align --profile staged-lamino --out <run-dir> <scan-or-stack>
-tomojax-align-auto --synthetic-case setup-global --size 128 --views 256 --out-dir <run-dir>
-tomojax-align-auto --synthetic-case pose-random --size 128 --views 256 --out-dir <run-dir>
+tomojax dev align-auto --synthetic-case setup-global --size 128 --views 256 --out-dir <run-dir>
+tomojax dev align-auto --synthetic-case pose-random --size 128 --views 256 --out-dir <run-dir>
 ```
 
 Public documentation was added or updated in:

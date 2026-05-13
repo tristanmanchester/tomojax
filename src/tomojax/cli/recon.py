@@ -1,3 +1,7 @@
+"""Run reconstruction workflows from the public TomoJAX CLI."""
+
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -5,8 +9,9 @@ from dataclasses import replace
 import logging
 import os
 import sys
+from typing import TYPE_CHECKING, cast
 
-from ._jax_allocator import configure_jax_allocator_defaults
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
 configure_jax_allocator_defaults()
 
@@ -14,7 +19,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.backends import estimate_views_per_batch_info
+from tomojax.calibration.detector_grid import detector_grid_from_geometry_inputs
+from tomojax.cli._runtime import transfer_guard_context
+from tomojax.cli.config import parse_args_with_config
+from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.core import log_jax_env, setup_logging
+from tomojax.core.geometry import Detector, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
     compute_roi,
@@ -22,18 +32,18 @@ from tomojax.geometry import (
     grid_from_detector_fov,
     grid_from_detector_fov_slices,
 )
+from tomojax.io import (
+    build_geometry_from_dataset_metadata,
+    load_projection_payload,
+    save_projection_payload,
+)
+from tomojax.recon.fbp import FBPConfig, fbp
+from tomojax.recon.fista_tv import FistaConfig, fista_tv
+from tomojax.recon.quicklook import save_quicklook_png
+from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
-from ..calibration.detector_grid import detector_grid_from_geometry_inputs
-from ..core.geometry import Detector, Grid
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ..recon.fbp import FBPConfig, fbp
-from ..recon.fista_tv import FistaConfig, fista_tv
-from ..recon.quicklook import save_quicklook_png
-from ..recon.spdhg_tv import SPDHGConfig, spdhg_tv
-from ._runtime import transfer_guard_context
-from .config import parse_args_with_config
-from .manifest import build_manifest, save_manifest
+if TYPE_CHECKING:
+    from tomojax.recon.types import Regulariser
 
 
 def _parse_views_per_batch(value: str) -> int | str:
@@ -43,15 +53,15 @@ def _parse_views_per_batch(value: str) -> int | str:
         return "auto"
     try:
         return int(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError("--views-per-batch must be 'auto' or an integer")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--views-per-batch must be 'auto' or an integer") from exc
 
 
 def _positive_float(value: str) -> float:
     try:
         parsed = float(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError("value must be a positive float")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a positive float") from exc
     if not np.isfinite(parsed) or parsed <= 0.0:
         raise argparse.ArgumentTypeError("value must be a positive float")
     return parsed
@@ -98,7 +108,7 @@ def _resolve_views_per_batch(
     return max(1, int(requested)), "explicit"
 
 
-def _resolve_recon_grid_for_cli(
+def _resolve_recon_grid_for_cli(  # noqa: PLR0911
     grid: Grid,
     detector: Detector,
     *,
@@ -304,7 +314,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help=(
             "Optional ROI cropping based on detector FOV (default: auto). "
-            "auto: square x–y slices + z from detector height if detector < grid; "
+            "auto: square x-y slices + z from detector height if detector < grid; "
             "cube: force cubic ROI (nx=ny=nz) inside FOV; "
             "bbox: rectangular FOV bbox; off: keep original grid"
         ),
@@ -349,13 +359,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="off",
         help=(
             "Mask the volume during forward projection (FISTA) or on output (FBP): "
-            "off (default), cyl for cylindrical x–y mask broadcast along z."
+            "off (default), cyl for cylindrical x-y mask broadcast along z."
         ),
     )
     return p
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0912, PLR0915
+    """Run reconstruction from the public CLI."""
     p = _build_parser()
     args, config_metadata = parse_args_with_config(p, required=("data", "out"))
 
@@ -364,10 +375,10 @@ def main() -> None:
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
-    meta = load_nxtomo(args.data)
+    meta = load_projection_payload(args.data)
     geometry_meta = meta.geometry_inputs()
     initial_grid_override = args.grid if (meta.grid is None and args.grid is not None) else None
-    grid, detector, geom = build_geometry_from_meta(
+    grid, detector, geom = build_geometry_from_dataset_metadata(
         geometry_meta,
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
@@ -404,7 +415,7 @@ def main() -> None:
     if recon_grid is not grid:
         # Once ROI and explicit sizing resolve an effective grid, keep that grid's
         # origin/centre metadata authoritative when rebuilding geometry.
-        _, _, geom = build_geometry_from_meta(
+        _, _, geom = build_geometry_from_dataset_metadata(
             geometry_meta,
             grid_override=recon_grid,
             apply_saved_alignment=False,
@@ -466,7 +477,7 @@ def main() -> None:
         cfg = FistaConfig(
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
-            regulariser=str(args.regulariser),
+            regulariser=cast("Regulariser", str(args.regulariser)),
             huber_delta=float(args.huber_delta),
             L=(float(args.L) if args.L is not None else None),
             views_per_batch=resolved_vpb,
@@ -500,7 +511,7 @@ def main() -> None:
             "upper_bound": cfg.upper_bound,
         }
         with transfer_guard_context(args.transfer_guard):
-            vol, info = fista_tv(
+            vol, _info = fista_tv(
                 geom,
                 recon_grid,
                 detector,
@@ -513,7 +524,7 @@ def main() -> None:
         cfg = SPDHGConfig(
             iters=int(args.iters),
             lambda_tv=float(args.lambda_tv),
-            regulariser=str(args.regulariser),
+            regulariser=cast("Regulariser", str(args.regulariser)),
             huber_delta=float(args.huber_delta),
             theta=float(args.theta),
             views_per_batch=int(resolved_vpb),
@@ -574,7 +585,7 @@ def main() -> None:
             # Enforce positivity for a clean start (harmless if TV/signal expects nonnegative)
             init_x = jnp.maximum(init_x, 0.0)
         with transfer_guard_context(args.transfer_guard):
-            vol, info = spdhg_tv(
+            vol, _info = spdhg_tv(
                 geom,
                 recon_grid,
                 detector,
@@ -592,18 +603,18 @@ def main() -> None:
     save_meta.volume = volume_np
     save_meta.frame = str(args.frame)
     save_meta.volume_axes_order = str(args.volume_axes)
-    save_nxtomo(
+    save_projection_payload(
         args.out,
         projections=meta.projections,
         metadata=save_meta,
     )
     logging.info("Saved reconstruction to %s", args.out)
     if args.quicklook is not None:
-        save_quicklook_png(args.quicklook, volume_np)
+        _ = save_quicklook_png(args.quicklook, volume_np)
         logging.info("Saved reconstruction quicklook to %s", args.quicklook)
     if args.save_manifest is not None:
         manifest = build_manifest(
-            "tomojax-recon",
+            "tomojax recon",
             list(sys.argv),
             args,
             {

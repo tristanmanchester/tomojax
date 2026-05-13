@@ -3,8 +3,8 @@ from __future__ import annotations
 import builtins
 from types import SimpleNamespace
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from tomojax.align.motion_models import (

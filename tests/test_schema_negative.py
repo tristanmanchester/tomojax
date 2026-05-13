@@ -1,6 +1,5 @@
 import h5py
 import numpy as np
-import pytest
 
 from tomojax.data.io_hdf5 import validate_nxtomo
 
@@ -14,7 +13,7 @@ def test_validator_catches_missing_groups(tmp_path):
         det.create_dataset("data", data=np.zeros((2, 4, 4), dtype=np.float32))
         # Intentionally omit sample/transformations/rotation_angle
     rep = validate_nxtomo(str(p))
-    assert rep["issues"] and any("rotation_angle" in s for s in rep["issues"]) 
+    assert rep["issues"] and any("rotation_angle" in s for s in rep["issues"])
 
 
 def test_validator_reports_unreadable_hdf5_file(tmp_path):

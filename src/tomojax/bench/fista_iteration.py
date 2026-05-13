@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 import json
+from pathlib import Path
 import statistics
 import time
-from dataclasses import asdict, dataclass, replace
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +20,6 @@ from tomojax.bench.forward_projector import (
 )
 from tomojax.core.projector import forward_project_view_T
 from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
-
 
 FISTA_ITERATION_SUITE_NAMES = ("fista_iteration",)
 FISTA_SMALL_PALLAS_TILE_SHAPE = (12, 4)
@@ -58,7 +58,9 @@ def fista_iteration_pallas_tile_shape(
     return FISTA_DEFAULT_PALLAS_TILE_SHAPE
 
 
-def fista_iteration_suite_cases(name: str = "fista_iteration") -> tuple[FistaIterationSuiteCase, ...]:
+def fista_iteration_suite_cases(
+    name: str = "fista_iteration",
+) -> tuple[FistaIterationSuiteCase, ...]:
     if name != "fista_iteration":
         raise ValueError(
             f"fista iteration suite must be one of: {', '.join(FISTA_ITERATION_SUITE_NAMES)}"
@@ -128,7 +130,9 @@ def _projection_fixture(config: FistaIterationBenchmarkConfig):
     return fixture, projections
 
 
-def _make_fista_call(config: FistaIterationBenchmarkConfig) -> tuple[Callable[[], Any], dict[str, Any]]:
+def _make_fista_call(
+    config: FistaIterationBenchmarkConfig,
+) -> tuple[Callable[[], Any], dict[str, Any]]:
     fixture, projections = _projection_fixture(config)
     x0 = jnp.zeros_like(fixture.volume)
     cfg = FistaCoreConfig(

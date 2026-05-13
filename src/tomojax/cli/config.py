@@ -1,11 +1,15 @@
+"""Config-file parsing helpers for TomoJAX CLI commands."""
+
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
 from pathlib import Path
 import sys
 import tomllib
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
 
 
 def parse_args_with_config(
@@ -30,11 +34,7 @@ def parse_args_with_config(
         _validate_config_keys(parser, config_path, config_values)
         config_defaults = _coerce_config_defaults(parser, config_path, config_values)
         parser.set_defaults(
-            **{
-                dest: value
-                for dest, value in config_defaults.items()
-                if dest not in explicit_dests
-            }
+            **{dest: value for dest, value in config_defaults.items() if dest not in explicit_dests}
         )
 
     args = parser.parse_args(raw_argv)
@@ -55,11 +55,12 @@ def _discover_config_path(
     argv: Sequence[str],
 ) -> Path | None:
     config_parser = argparse.ArgumentParser(add_help=False, prog=parser.prog)
-    config_parser.add_argument("--config", default=None)
+    _ = config_parser.add_argument("--config", default=None)
     namespace, _ = config_parser.parse_known_args(list(argv))
-    if namespace.config is None:
+    config_value = getattr(namespace, "config", None)
+    if config_value is None:
         return None
-    return Path(namespace.config)
+    return Path(str(config_value))
 
 
 def _load_config_file(
@@ -82,8 +83,6 @@ def _load_config_file(
     except OSError as exc:
         parser.error(f"could not read config file {path}: {exc}")
 
-    if not isinstance(payload, Mapping):
-        parser.error(f"config file {path} must contain top-level key/value pairs")
     return dict(payload)
 
 
@@ -157,13 +156,13 @@ def _explicit_cli_dests(
 
 
 def _coerce_action_value(action: argparse.Action, value: Any) -> Any:
-    if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+    if action.nargs == 0 and isinstance(action.const, bool):
         if not isinstance(value, bool):
             raise TypeError("expected a boolean")
         return bool(value)
 
-    if isinstance(action, argparse._AppendAction):
-        values = value if isinstance(value, list) else [value]
+    if action.__class__.__name__ == "_AppendAction":
+        values = cast("list[Any]", value) if isinstance(value, list) else [value]
         return [_coerce_scalar(action, item) for item in values]
 
     nargs = action.nargs
@@ -174,17 +173,19 @@ def _coerce_action_value(action: argparse.Action, value: Any) -> Any:
 
     if not isinstance(value, list):
         raise TypeError("expected a list value")
-    if isinstance(nargs, int) and len(value) != nargs:
-        raise ValueError(f"expected {nargs} values, got {len(value)}")
-    if nargs == "+" and len(value) == 0:
+    list_value = cast("list[Any]", value)
+    if isinstance(nargs, int) and len(list_value) != nargs:
+        raise ValueError(f"expected {nargs} values, got {len(list_value)}")
+    if nargs == "+" and len(list_value) == 0:
         raise ValueError("expected at least one value")
-    return [_coerce_scalar(action, item) for item in value]
+    return [_coerce_scalar(action, item) for item in list_value]
 
 
 def _coerce_scalar(action: argparse.Action, value: Any) -> Any:
     if action.type is None:
         return value
-    return action.type(value)
+    coercer = cast("Callable[[Any], Any]", action.type)
+    return coercer(value)
 
 
 def _validate_choices(
@@ -197,8 +198,8 @@ def _validate_choices(
     if action.choices is None:
         return
 
-    values = value if isinstance(value, list) else [value]
-    invalid = [item for item in values if item not in action.choices]
+    values = cast("list[Any]", value) if isinstance(value, list) else [value]
+    invalid: list[Any] = [item for item in values if item not in action.choices]
     if invalid:
         choices = ", ".join(str(choice) for choice in action.choices)
         parser.error(

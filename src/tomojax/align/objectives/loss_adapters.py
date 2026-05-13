@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, TypeAlias, Tuple
+from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -58,12 +59,11 @@ from .loss_specs import (
 )
 from .loss_state import LossState
 
-
 PerViewLossFn: TypeAlias = Callable[
-    [jnp.ndarray, jnp.ndarray, Optional[jnp.ndarray], Optional[jnp.ndarray]],
+    [jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None],
     jnp.ndarray,
 ]
-GaussNewtonWeightFn: TypeAlias = Callable[[jnp.ndarray, Optional[jnp.ndarray]], jnp.ndarray]
+GaussNewtonWeightFn: TypeAlias = Callable[[jnp.ndarray, jnp.ndarray | None], jnp.ndarray]
 LossBuilderFn: TypeAlias = Callable[
     [LossState, jnp.ndarray],
     Callable[[jnp.ndarray, jnp.ndarray, LossState], jnp.ndarray],
@@ -192,9 +192,9 @@ _LOSS_BUILDERS: dict[str, LossBuilderFn] = {
 
 def _build_loss_from_kind(
     kind: str,
-    params: Optional[Dict[str, float]],
+    params: dict[str, float] | None,
     targets: jnp.ndarray,
-) -> Tuple[PerViewLossFn, LossState]:
+) -> tuple[PerViewLossFn, LossState]:
     k = canonicalize_loss_kind(kind)
     p = {} if params is None else {str(a): float(b) for a, b in params.items()}
     state = LossState(kind=k, params=p)
@@ -206,8 +206,8 @@ def _build_loss_from_kind(
     def per_view_fn(
         pred_chunk: jnp.ndarray,
         tar_chunk: jnp.ndarray,
-        mask_chunk: Optional[jnp.ndarray],
-        view_indices: Optional[jnp.ndarray] = None,
+        mask_chunk: jnp.ndarray | None,
+        view_indices: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         # Vectorized application over batch of views (b, nv, nu)
         if (
@@ -280,7 +280,7 @@ def _gauss_newton_weight_builder(spec: AlignmentLossSpec) -> tuple[bool, GaussNe
     if isinstance(spec, L2OtsuLossSpec):
         temp = jnp.float32(max(float(spec.temp), 1e-6))
 
-        def _otsu_weights(y_chunk: jnp.ndarray, mask_chunk: Optional[jnp.ndarray]) -> jnp.ndarray:
+        def _otsu_weights(y_chunk: jnp.ndarray, mask_chunk: jnp.ndarray | None) -> jnp.ndarray:
             if mask_chunk is None:
                 return jnp.ones_like(y_chunk)
             base = mask_chunk.astype(jnp.float32)
@@ -320,9 +320,9 @@ def build_loss_adapter(spec: AlignmentLossSpec, targets: jnp.ndarray) -> LossAda
 
 def build_loss(
     kind: str,
-    params: Optional[Dict[str, float]],
+    params: dict[str, float] | None,
     targets: jnp.ndarray,
-) -> Tuple[PerViewLossFn, LossState]:
+) -> tuple[PerViewLossFn, LossState]:
     adapter = build_loss_adapter(parse_loss_spec(kind, params), targets)
     return adapter.per_view_loss, adapter.state
 

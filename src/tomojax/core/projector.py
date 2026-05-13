@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 import math
 import operator
-from typing import Tuple
-from collections import OrderedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from .backend_policy import ProjectorBackendInput, normalize_projector_backend
-from .geometry.base import Grid, Detector, Geometry, _grid_volume_origin
+from .geometry.base import Detector, Geometry, Grid, _grid_volume_origin
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -30,7 +29,7 @@ from .validation import (
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
 # Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
-_DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
+_DET_GRID_CACHE: OrderedDict[tuple[int, int, float, float, float, float], tuple[np.ndarray, np.ndarray]] = OrderedDict()
 _DET_GRID_CACHE_CAP = 8
 
 
@@ -41,7 +40,7 @@ def _volume_origin(grid: Grid) -> jnp.ndarray:
 
 def _interpolation_support_bounds(
     grid: Grid, vol_origin: jnp.ndarray
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return a conservative object-space support box for trilinear sampling.
 
     ``vol_origin`` denotes the centre of voxel ``(0, 0, 0)``. The projector
@@ -57,7 +56,7 @@ def _interpolation_support_bounds(
     return vol_origin - voxel, upper
 
 
-def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
+def _build_detector_grid(det: Detector) -> tuple[np.ndarray, np.ndarray]:
     key = (
         int(det.nu),
         int(det.nv),
@@ -83,7 +82,7 @@ def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
     return X, Z
 
 
-def get_detector_grid_device(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return detector coordinate grids as device arrays.
 
     Note: call this outside of any JAX-transformed context (jit/grad/scan) to avoid
@@ -142,9 +141,7 @@ def _resolve_detector_grid(
 
 def _resolve_n_steps(grid: Grid, step_size: float, n_steps: int | None) -> int:
     if not math.isfinite(step_size) or step_size <= 0.0:
-        raise ValueError(
-            f"projector traversal step_size must be finite and > 0; got {step_size!r}"
-        )
+        raise ValueError(f"projector traversal step_size must be finite and > 0; got {step_size!r}")
     if n_steps is not None:
         if isinstance(n_steps, bool):
             raise ValueError(

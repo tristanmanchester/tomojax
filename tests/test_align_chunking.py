@@ -33,8 +33,7 @@ def make_misaligned_case(nx=10, ny=10, nz=10, n_views=5, seed=0):
         params5=jnp.asarray(true_params, dtype=jnp.float32),
     )
     projs = [
-        forward_project_view(aligned_geometry, grid, det, vol, view_index=i)
-        for i in range(n_views)
+        forward_project_view(aligned_geometry, grid, det, vol, view_index=i) for i in range(n_views)
     ]
     return grid, det, geom_nom, vol, jnp.stack(projs, axis=0)
 

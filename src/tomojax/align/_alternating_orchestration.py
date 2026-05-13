@@ -228,9 +228,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
                     level.residual_filters,
                 ),
                 center_l2_weight=max(float(config.preview_center_l2_weight), 0.0),
-                soft_support=(
-                    None if scout_support is None else scout_support.support_probability
-                ),
+                soft_support=(None if scout_support is None else scout_support.support_probability),
                 soft_support_outside_weight=max(
                     float(config.preview_support_outside_weight),
                     0.0,
@@ -393,9 +391,7 @@ def _run_alternating_solver_smoke_impl(  # noqa: PLR0915 - orchestrates level st
         previous_loss = loss_after
         coarse_verified, time_to_verified_geometry_seconds = _coarse_verification_state(
             level=level,
-            checks_verified=(
-                _allows_coarse_early_exit(config) and verification_checks.verified
-            ),
+            checks_verified=(_allows_coarse_early_exit(config) and verification_checks.verified),
             already_verified=coarse_verified,
             previous_time_to_verified=time_to_verified_geometry_seconds,
             run_start=run_start,
@@ -988,8 +984,7 @@ def _preview_reconstruction_mask(
     if config.preview_reconstruction_mask_source in {"all_views", "train_views"}:
         return mask
     raise ValueError(
-        "unknown preview reconstruction mask source "
-        f"{config.preview_reconstruction_mask_source!r}"
+        f"unknown preview reconstruction mask source {config.preview_reconstruction_mask_source!r}"
     )
 
 

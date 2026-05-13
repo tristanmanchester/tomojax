@@ -6,7 +6,6 @@ from typing import Literal
 
 from tomojax.core.geometry import Detector
 
-
 DetectorAxis = Literal["u", "v"]
 
 
@@ -26,7 +25,7 @@ class DetectorPixelScale:
                 raise ValueError(f"{name} must be positive and finite, got {value!r}")
 
     @classmethod
-    def from_detectors(cls, native: Detector, level: Detector) -> "DetectorPixelScale":
+    def from_detectors(cls, native: Detector, level: Detector) -> DetectorPixelScale:
         return cls(
             native_du=float(native.du),
             native_dv=float(native.dv),

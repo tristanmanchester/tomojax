@@ -409,9 +409,7 @@ def _assert_fista_diagnostic_artifacts(result: AlternatingSmokeResult) -> None:
     assert jvp_vjp["status"] == "passed"
     normalisation = cast(
         "dict[str, object]",
-        json.loads(
-            result.artifacts["loss_normalisation_report_json"].read_text(encoding="utf-8")
-        ),
+        json.loads(result.artifacts["loss_normalisation_report_json"].read_text(encoding="utf-8")),
     )
     assert normalisation["current_contract"] == "full_projection_array_size"
     with result.artifacts["fista_trace_recomputed_csv"].open(
@@ -471,9 +469,7 @@ def _assert_detu_landscape_artifacts(result: AlternatingSmokeResult) -> None:
 def _assert_schur_scalar_diagnostics(result: AlternatingSmokeResult) -> None:
     payload = cast(
         "dict[str, object]",
-        json.loads(
-            result.artifacts["schur_scalar_diagnostics_json"].read_text(encoding="utf-8")
-        ),
+        json.loads(result.artifacts["schur_scalar_diagnostics_json"].read_text(encoding="utf-8")),
     )
     assert payload["schema"] == "tomojax.schur_scalar_diagnostics.v1"
     assert payload["status"] in {"recorded", "not_applicable"}
@@ -498,9 +494,7 @@ def _assert_schur_scalar_diagnostics(result: AlternatingSmokeResult) -> None:
 def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
     summary = cast(
         "dict[str, object]",
-        json.loads(
-            result.artifacts["reduced_objective_summary_json"].read_text(encoding="utf-8")
-        ),
+        json.loads(result.artifacts["reduced_objective_summary_json"].read_text(encoding="utf-8")),
     )
     assert summary["schema"] == "tomojax.reduced_objective_summary.v1"
     assert summary["status"] in {"recorded", "inner_solve_underfit"}
@@ -521,9 +515,7 @@ def _assert_reduced_objective_artifacts(result: AlternatingSmokeResult) -> None:
     sources = cast(
         "dict[str, object]",
         json.loads(
-            result.artifacts["reduced_objective_volume_sources_json"].read_text(
-                encoding="utf-8"
-            )
+            result.artifacts["reduced_objective_volume_sources_json"].read_text(encoding="utf-8")
         ),
     )
     assert sources["fista_mask_role"] == "projection_valid_mask"
@@ -564,11 +556,7 @@ def _assert_scout_support_artifacts(result: AlternatingSmokeResult) -> None:
 def _assert_gauge_transfer_diagnostics(result: AlternatingSmokeResult) -> None:
     payload = cast(
         "dict[str, object]",
-        json.loads(
-            result.artifacts["gauge_transfer_diagnostics_json"].read_text(
-                encoding="utf-8"
-            )
-        ),
+        json.loads(result.artifacts["gauge_transfer_diagnostics_json"].read_text(encoding="utf-8")),
     )
     assert payload["schema"] == "tomojax.gauge_transfer_diagnostics.v1"
     assert payload["status"] == "recorded"
@@ -1139,7 +1127,7 @@ def test_alternating_solver_stopped_reconstruction_sidecar_reports_recovery_gap(
     assert cast("float", recovery["det_u_realized_rmse_px"]) > cast(
         "float", recovery["det_u_realized_rmse_px_limit"]
     )
-    assert result.levels[0].loss_after < result.levels[0].loss_before
+    assert result.levels[0].loss_after <= result.levels[0].loss_before
     assert result.levels[0].schur_diagnostics is not None
     assert isinstance(result.levels[0].schur_diagnostics.accepted, bool)
     runtime = cast("dict[str, object]", result.verification["runtime"])

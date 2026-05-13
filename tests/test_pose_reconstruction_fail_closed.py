@@ -176,8 +176,7 @@ def test_huber_fista_calibrated_grid_fallback_uses_public_measured_l(monkeypatch
     assert stat["recon_public_fista_fallback"] is True
     assert stat["recon_actual_backend"] == "jax"
     assert (
-        stat["recon_fallback_reason"]
-        == "pallas_projector_unsupported: det_grid must be canonical"
+        stat["recon_fallback_reason"] == "pallas_projector_unsupported: det_grid must be canonical"
     )
     assert stat["L_meas"] == 80.0
     assert stat["reconstruction_finite_fraction"] == 1.0

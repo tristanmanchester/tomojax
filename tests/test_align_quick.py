@@ -1,32 +1,34 @@
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
-import tomojax.align.pipeline as align_pipeline
-# check-public-imports: allow-private
-import tomojax.align._pose_stage as pose_stage
-# check-public-imports: allow-private
-import tomojax.align._stage_loop as stage_loop
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
-from tomojax.core.projector import forward_project_view
-from tomojax.align.objectives.loss_specs import loss_spec_name, parse_loss_schedule, parse_loss_spec
 # check-public-imports: allow-private
 from tomojax.align._observer import (
     _normalize_observer_action,
     adapt_legacy_observer,
 )
-from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
+
+# check-public-imports: allow-private
+import tomojax.align._pose_stage as pose_stage
+
+# check-public-imports: allow-private
+import tomojax.align._stage_loop as stage_loop
 from tomojax.align.geometry.geometry_blocks import (
     add_geometry_acquisition_diagnostics,
     summarize_geometry_calibration_stats,
 )
+from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
+from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
+from tomojax.align.objectives.loss_specs import loss_spec_name, parse_loss_schedule, parse_loss_spec
+from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
+import tomojax.align.pipeline as align_pipeline
 from tomojax.align.pipeline import (
+    AlignConfig,
     align,
     align_multires,
-    AlignConfig,
 )
-from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
-from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
+from tomojax.core.projector import forward_project_view
 
 
 def make_misaligned_case(nx=12, ny=12, nz=12, n_views=8, seed=0):
@@ -38,7 +40,7 @@ def make_misaligned_case(nx=12, ny=12, nz=12, n_views=8, seed=0):
 
     # Create a simple phantom
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-    vol = vol.at[nx//4:3*nx//4, ny//4:3*ny//4, nz//4:3*nz//4].set(1.0)
+    vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
 
     # True per-view small misalignments
     # alpha,beta,phi in radians, dx,dz in pixels
@@ -123,7 +125,13 @@ def test_adapt_legacy_observer_preserves_bool_callbacks():
 
 def test_align_quick_recovers_small_misalignments():
     grid, det, geom, vol, projs, true_params = make_misaligned_case(12, 12, 12, 8, 1)
-    x, est_params, info = align(geom, grid, det, projs, cfg=AlignConfig(outer_iters=1, recon_iters=3, lambda_tv=0.001, lr_rot=5e-3, lr_trans=1e-1))
+    x, est_params, info = align(
+        geom,
+        grid,
+        det,
+        projs,
+        cfg=AlignConfig(outer_iters=1, recon_iters=3, lambda_tv=0.001, lr_rot=5e-3, lr_trans=1e-1),
+    )
 
     # Compare rough RMSE (degrees for rotations, pixels for translations)
     rot_rmse_deg = np.rad2deg(rmse(est_params[:, :3], true_params[:, :3]))
@@ -342,17 +350,12 @@ def test_align_multires_geometry_block_estimates_detector_center_without_pose_do
     assert float(det_u["value"]) == pytest.approx(1.0, abs=0.65)
     assert checkpoints[-1].geometry_calibration_state is not None
     checkpoint_det_u = next(
-        v
-        for v in checkpoints[-1].geometry_calibration_state["detector"]
-        if v["name"] == "det_u_px"
+        v for v in checkpoints[-1].geometry_calibration_state["detector"] if v["name"] == "det_u_px"
     )
     assert float(checkpoint_det_u["value"]) == pytest.approx(float(det_u["value"]))
     assert np.asarray(params5).shape == (n_views, 5)
     assert np.allclose(np.asarray(params5), 0.0)
-    assert any(
-        stat.get("geometry_block") == "setup_validation_lm"
-        for stat in info["outer_stats"]
-    )
+    assert any(stat.get("geometry_block") == "setup_validation_lm" for stat in info["outer_stats"])
     geom_stats = [stat for stat in info["outer_stats"] if stat.get("geometry_block")]
     assert geom_stats
     assert {stat.get("loss_kind") for stat in geom_stats} == {"l2_otsu"}
@@ -730,27 +733,31 @@ def test_align_multires_resume_uses_checkpointed_stage_counter(monkeypatch):
             if init_params5 is None
             else init_params5
         )
-        return x, params, {
-            "loss": list(resume_state.loss) + [7.0],
-            "loss_kind": "l2",
-            "outer_stats": list(resume_state.outer_stats)
-            + [{"outer_idx": 2, "loss_after": 7.0}],
-            "stopped_by_observer": False,
-            "observer_action": "continue",
-            "wall_time_total": 0.0,
-            "pose_model": "per_view",
-            "pose_model_variables": int(level_projections.shape[0] * 5),
-            "per_view_variables": 5,
-            "pose_model_basis_shape": [int(level_projections.shape[0]), 1],
-            "active_dofs": list(cfg.optimise_dofs or ()),
-            "completed_outer_iters": 2,
-            "small_impr_streak": 0,
-            "motion_coeffs": None,
-            "L": None,
-            "gauge_fix": "mean_translation",
-            "gauge_fix_dofs": ["dx"],
-            "gauge_fix_final": {},
-        }
+        return (
+            x,
+            params,
+            {
+                "loss": list(resume_state.loss) + [7.0],
+                "loss_kind": "l2",
+                "outer_stats": list(resume_state.outer_stats)
+                + [{"outer_idx": 2, "loss_after": 7.0}],
+                "stopped_by_observer": False,
+                "observer_action": "continue",
+                "wall_time_total": 0.0,
+                "pose_model": "per_view",
+                "pose_model_variables": int(level_projections.shape[0] * 5),
+                "per_view_variables": 5,
+                "pose_model_basis_shape": [int(level_projections.shape[0]), 1],
+                "active_dofs": list(cfg.optimise_dofs or ()),
+                "completed_outer_iters": 2,
+                "small_impr_streak": 0,
+                "motion_coeffs": None,
+                "L": None,
+                "gauge_fix": "mean_translation",
+                "gauge_fix_dofs": ["dx"],
+                "gauge_fix_final": {},
+            },
+        )
 
     monkeypatch.setattr(stage_loop, "align", fake_align)
 
@@ -796,7 +803,9 @@ def test_align_multires_recovers_from_expected_loss_eval_failure(monkeypatch):
     injected = {"done": False}
 
     def flaky_align_loss_eval(eval_loss, *, fallback, context):
-        if (not injected["done"]) and context == "Using fallback for final alignment loss bookkeeping":
+        if (
+            not injected["done"]
+        ) and context == "Using fallback for final alignment loss bookkeeping":
             injected["done"] = True
 
             def raise_expected_failure():

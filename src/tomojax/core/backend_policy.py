@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Literal, TypeAlias
 
-
 ProjectorBackend: TypeAlias = Literal["jax", "pallas"]
 ProjectorBackendInput: TypeAlias = ProjectorBackend | str
 

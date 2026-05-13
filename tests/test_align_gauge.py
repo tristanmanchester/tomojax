@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
 from tomojax.align.model.dofs import DOF_INDEX
 from tomojax.align.model.gauge import (

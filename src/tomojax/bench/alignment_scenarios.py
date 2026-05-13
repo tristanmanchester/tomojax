@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Mapping
+from typing import Literal
 
 from tomojax.align.model.dof_specs import dof_spec
 from tomojax.align.model.schedules import schedule_preset
-
 
 GeometryType = Literal["parallel", "lamino"]
 ScenarioCategory = Literal["capability", "stress", "pose_parity", "diagnostic"]
@@ -99,7 +99,9 @@ class AlignmentScenario:
     def headline_eligible(self) -> bool:
         return bool(self.expectation.headline_eligible)
 
-    def to_manifest(self, *, suite_name: str | None = None, n_views: int | None = None) -> dict[str, object]:
+    def to_manifest(
+        self, *, suite_name: str | None = None, n_views: int | None = None
+    ) -> dict[str, object]:
         payload: dict[str, object] = {
             "slug": self.slug,
             "title": self.title,
@@ -698,7 +700,9 @@ def scenario_suite(name: str) -> ScenarioSuite:
         return _SUITES[key]
     except KeyError as exc:
         valid = ", ".join(sorted((*_SUITES.keys(), *_SUITE_ALIASES.keys())))
-        raise ValueError(f"Unknown alignment scenario suite {name!r}; valid suites: {valid}") from exc
+        raise ValueError(
+            f"Unknown alignment scenario suite {name!r}; valid suites: {valid}"
+        ) from exc
 
 
 def validate_scenario_catalog() -> None:
@@ -727,7 +731,10 @@ def validate_scenario_catalog() -> None:
             raise ValueError(
                 f"Headline arbitrary-axis scenario {scenario.slug!r} must use 360 degrees"
             )
-        if scenario.expectation.kind in {"diagnostic", "rejected", "weak"} and scenario.headline_eligible:
+        if (
+            scenario.expectation.kind in {"diagnostic", "rejected", "weak"}
+            and scenario.headline_eligible
+        ):
             raise ValueError(f"Diagnostic scenario {scenario.slug!r} cannot be headline eligible")
     for suite in _SUITES.values():
         for slug in suite.scenario_slugs:

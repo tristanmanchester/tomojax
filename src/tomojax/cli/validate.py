@@ -2,7 +2,7 @@
 
 Usage example:
 
-  uv run tomojax-validate data/sim.nxs
+  uv run tomojax validate data/sim.nxs
 """
 
 from __future__ import annotations
@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
-from typing import Sequence
+from typing import TYPE_CHECKING
 
-from ..data.io_hdf5 import validate_nxtomo
+from tomojax.io import validate_dataset
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -22,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the dataset validation command."""
     args = _build_parser().parse_args(argv)
     path = Path(args.input)
 
@@ -32,7 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"ERROR: not a file: {path}", file=sys.stderr)
         return 2
 
-    report = validate_nxtomo(str(path))
+    report = validate_dataset(path)
     issues = report["issues"]
     if not issues:
         print(f"OK: {path}")

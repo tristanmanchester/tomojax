@@ -56,7 +56,9 @@ def test_headline_arbitrary_axis_scenarios_use_full_rotation():
     ],
 )
 def test_weak_180_axis_cases_are_diagnostic_not_headline(slug: str):
-    diagnostic = {scenario.slug: scenario for scenario in scenario_suite("diagnostic_128").scenarios()}
+    diagnostic = {
+        scenario.slug: scenario for scenario in scenario_suite("diagnostic_128").scenarios()
+    }
 
     scenario = diagnostic[slug]
     assert scenario.acquisition_span_deg == 180.0

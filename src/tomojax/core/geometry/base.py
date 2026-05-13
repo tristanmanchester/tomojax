@@ -6,9 +6,9 @@ them lightweight and JAX-friendly (no heavy runtime logic here).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Protocol, TypedDict
-
+from typing import Protocol, TypedDict
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]

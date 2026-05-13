@@ -634,12 +634,8 @@ def _bootstrap_summary_payload(summary: AlternatingBootstrapSummary) -> dict[str
         },
         "diagnostics": {
             "parameter_update_norm": summary.parameter_update_norm,
-            "first_schur": _schur_stage_diagnostics_payload(
-                summary.first_schur_diagnostics
-            ),
-            "final_schur": _schur_stage_diagnostics_payload(
-                summary.final_schur_diagnostics
-            ),
+            "first_schur": _schur_stage_diagnostics_payload(summary.first_schur_diagnostics),
+            "final_schur": _schur_stage_diagnostics_payload(summary.final_schur_diagnostics),
         },
     }
 
@@ -1038,9 +1034,7 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
     runtime = cast("dict[object, object]", benchmark_result.get("runtime", {}))
     bootstrap = cast("dict[object, object] | None", runtime.get("bootstrap_stage"))
     bootstrap_losses = (
-        {}
-        if bootstrap is None
-        else cast("dict[object, object]", bootstrap.get("losses", {}))
+        {} if bootstrap is None else cast("dict[object, object]", bootstrap.get("losses", {}))
     )
     bootstrap_updates = None if bootstrap is None else bootstrap.get("executed_geometry_updates")
     bootstrap_fista = None if bootstrap is None else bootstrap.get("fista_refresh_iterations")
@@ -1082,14 +1076,11 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             f"- Role: {_markdown_cell(None if bootstrap is None else bootstrap.get('role'))}",
             "- Schur passes: "
             f"{_markdown_cell(None if bootstrap is None else bootstrap.get('schur_passes'))}",
-            "- Executed geometry updates: "
-            f"{_markdown_cell(bootstrap_updates)}",
-            "- FISTA refresh iterations: "
-            f"{_markdown_cell(bootstrap_fista)}",
+            f"- Executed geometry updates: {_markdown_cell(bootstrap_updates)}",
+            f"- FISTA refresh iterations: {_markdown_cell(bootstrap_fista)}",
             "- Final Schur accepted: "
             f"{_markdown_cell(None if bootstrap is None else bootstrap.get('accepted'))}",
-            "- Final Schur loss: "
-            f"{_markdown_cell(bootstrap_losses.get('after_final_schur'))}",
+            f"- Final Schur loss: {_markdown_cell(bootstrap_losses.get('after_final_schur'))}",
             "",
             "## Dataset",
             "",
@@ -1137,11 +1128,9 @@ def _benchmark_report_markdown(benchmark_result: Mapping[str, object]) -> str:
             f"{_markdown_cell(geometry.get('det_v_realized_rmse_px'))} |",
             "| theta realised RMSE rad | "
             f"{_markdown_cell(geometry.get('theta_realized_rmse_rad'))} |",
-            "| dx/dz RMSE px | "
-            f"{_markdown_cell(geometry.get('dx_dz_rmse_px'))} |",
+            f"| dx/dz RMSE px | {_markdown_cell(geometry.get('dx_dz_rmse_px'))} |",
             f"| phi RMSE rad | {_markdown_cell(geometry.get('phi_rmse_rad'))} |",
-            "| alpha/beta RMSE rad | "
-            f"{_markdown_cell(geometry.get('alpha_beta_rmse_rad'))} |",
+            f"| alpha/beta RMSE rad | {_markdown_cell(geometry.get('alpha_beta_rmse_rad'))} |",
             "",
             "## Backend Provenance",
             "",
@@ -1304,9 +1293,7 @@ def _benchmark_result_payload(
                 summary.executed_geometry_updates for summary in summaries
             ),
             "bootstrap_stage": (
-                None
-                if bootstrap_summary is None
-                else _bootstrap_summary_payload(bootstrap_summary)
+                None if bootstrap_summary is None else _bootstrap_summary_payload(bootstrap_summary)
             ),
             "projector_calls": None,
         },
@@ -1413,7 +1400,8 @@ def _bad_view_detection_payload(
     robust_sigma = jnp.asarray(1.4826, dtype=jnp.float32) * mad
     threshold = median + jnp.maximum(
         jnp.asarray(2.0, dtype=jnp.float32) * robust_sigma,
-        jnp.asarray(0.005, dtype=jnp.float32) * jnp.maximum(
+        jnp.asarray(0.005, dtype=jnp.float32)
+        * jnp.maximum(
             jnp.abs(median),
             jnp.asarray(1.0, dtype=jnp.float32),
         ),
@@ -1944,8 +1932,7 @@ def _det_v_policy_evaluation(
         "value": value,
         "threshold": threshold,
         "reason": (
-            "det_v was not recovered and unobservability policy evidence is not "
-            "in benchmark_result"
+            "det_v was not recovered and unobservability policy evidence is not in benchmark_result"
         ),
     }
 
@@ -2108,14 +2095,14 @@ def _write_config_resolved(
         lines.append(f"geometry_update_pose_trust_radius = {geometry_update_pose_trust_radius}")
     lines.append(f"geometry_update_pose_frozen = {str(bool(geometry_update_pose_frozen)).lower()}")
     lines.extend(
-            _activation_config_lines(
-                geometry_update_pose_activate_at_level_factor=(
-                    geometry_update_pose_activate_at_level_factor
-                ),
-                geometry_update_alpha_beta_activate_at_level_factor=(
-                    geometry_update_alpha_beta_activate_at_level_factor
-                ),
-                geometry_update_theta_activate_at_level_factor=(
+        _activation_config_lines(
+            geometry_update_pose_activate_at_level_factor=(
+                geometry_update_pose_activate_at_level_factor
+            ),
+            geometry_update_alpha_beta_activate_at_level_factor=(
+                geometry_update_alpha_beta_activate_at_level_factor
+            ),
+            geometry_update_theta_activate_at_level_factor=(
                 geometry_update_theta_activate_at_level_factor
             ),
         )

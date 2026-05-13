@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -19,11 +19,11 @@ memory = importlib.import_module("memory")
 
 
 class _FakeProc:
-    def __init__(self, pid: int, *, children: list["_FakeProc"] | None = None) -> None:
+    def __init__(self, pid: int, *, children: list[_FakeProc] | None = None) -> None:
         self.pid = pid
         self._children = list(children or [])
 
-    def children(self, recursive: bool = True) -> list["_FakeProc"]:
+    def children(self, recursive: bool = True) -> list[_FakeProc]:
         return list(self._children)
 
     def is_running(self) -> bool:
@@ -68,7 +68,9 @@ class _FakeNVML:
 
 
 class _TrackingNVML(_FakeNVML):
-    def __init__(self, *, device_used: list[int], process_rows: dict[int, list[_FakeProcessRow]]) -> None:
+    def __init__(
+        self, *, device_used: list[int], process_rows: dict[int, list[_FakeProcessRow]]
+    ) -> None:
         super().__init__(device_used=device_used, process_rows=process_rows)
         self.shutdown_calls = 0
 

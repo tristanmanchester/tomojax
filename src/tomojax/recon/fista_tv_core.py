@@ -152,7 +152,9 @@ def fista_tv_core_arrays(
         # smoothed regularisers. Exact TV belongs to the public reconstruction
         # adapter or a future nonsmooth implicit path, not the bilevel hot path.
         x_next = _project_constraints(step, cfg)
-        t_next = jnp.float32(0.5) * (jnp.float32(1.0) + jnp.sqrt(jnp.float32(1.0) + 4.0 * t_prev * t_prev))
+        t_next = jnp.float32(0.5) * (
+            jnp.float32(1.0) + jnp.sqrt(jnp.float32(1.0) + 4.0 * t_prev * t_prev)
+        )
         z_next = x_next + ((t_prev - jnp.float32(1.0)) / t_next) * (x_next - x_prev)
         z_next = _project_constraints(z_next, cfg)
         if cfg.compute_iteration_loss:
@@ -278,9 +280,7 @@ def _project_stack(
     num_chunks = (n_views + b - 1) // b
 
     def body(out, i):
-        start_shifted, _valid_mask, view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+        start_shifted, _valid_mask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         pred = _project_chunk(
             T_chunk=T_chunk,
@@ -375,9 +375,7 @@ def _projection_loss(
     nu = int(projections.shape[2])
 
     def body(loss_acc, i):
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
         w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
@@ -449,9 +447,7 @@ def _projection_loss_and_explicit_grad(
 
     def body(carry, i):
         loss_acc, grad_acc = carry
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
         w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))

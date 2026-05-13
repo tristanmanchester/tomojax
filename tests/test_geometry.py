@@ -2,12 +2,12 @@ import numpy as np
 import pytest
 
 from tomojax.core.geometry import (
-    Grid,
     Detector,
-    ParallelGeometry,
+    Grid,
     LaminographyGeometry,
+    ParallelGeometry,
 )
-from tomojax.core.geometry.transforms import rotz, rot_axis_angle, exp_se3, invert, compose
+from tomojax.core.geometry.transforms import compose, exp_se3, invert, rot_axis_angle, rotz
 
 
 def test_parallel_pose_identity_and_quarter_turn():
@@ -57,7 +57,9 @@ def test_parallel_rays_use_grid_volume_center_when_origin_missing():
 def test_lamino_axis_tilt_and_pose():
     grid = Grid(nx=8, ny=8, nz=8, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=4, nv=4, du=1.0, dv=1.0)
-    geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=[0.0, 10.0], tilt_deg=30.0, tilt_about="x")
+    geom = LaminographyGeometry(
+        grid=grid, detector=det, thetas_deg=[0.0, 10.0], tilt_deg=30.0, tilt_about="x"
+    )
 
     ax = geom._axis_unit()
     exp_ax = np.array([0.0, np.sin(np.deg2rad(30.0)), np.cos(np.deg2rad(30.0))])
@@ -82,8 +84,10 @@ def test_lamino_axis_tilt_and_pose():
     elif c < -1.0 + 1e-12:
         S = np.diag([1.0, -1.0, -1.0])
     else:
-        k = np.cross(u, v); s = np.linalg.norm(k); k = k / s
-        K = np.array([[0,-k[2],k[1]],[k[2],0,-k[0]],[-k[1],k[0],0]],float)
+        k = np.cross(u, v)
+        s = np.linalg.norm(k)
+        k = k / s
+        K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]], float)
         # Proper Rodrigues formula for aligning u->v
         S = np.eye(3) + s * K + (1 - c) * (K @ K)
     Rz = rot_axis_angle(ez, theta)[:3, :3]

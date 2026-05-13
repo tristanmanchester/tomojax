@@ -127,7 +127,9 @@ def test_fista_iteration_case_compares_jax_and_pallas(monkeypatch: pytest.Monkey
     assert metrics["candidate_mode"] == "pallas"
 
 
-def test_fista_iteration_quality_marks_data_loss_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fista_iteration_quality_marks_data_loss_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_make_call(config: FistaIterationBenchmarkConfig):
         del config
         return (

@@ -10,7 +10,6 @@ and metric helpers here instead of duplicating them across ``bench/`` and ``scri
 import hashlib
 import json
 import os
-from typing import Dict, List
 
 import jax
 import jax.numpy as jnp
@@ -23,7 +22,6 @@ from ..core.projector import forward_project_view_T, get_detector_grid_device
 from ..data.geometry_meta import build_geometry_from_meta
 from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ..data.simulate import SimConfig, simulate_to_file
-
 
 _PROVENANCE_KEY = "loss_experiment_provenance"
 _PROVENANCE_VERSION = 1
@@ -289,7 +287,7 @@ def _jsonable(value: object) -> object:
 
 def metrics_abs(
     params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Absolute parameter RMSE/MAE in degrees and pixels."""
     _validate_matching_pose_params(params_true, params_est)
     d = params_est - params_true
@@ -348,7 +346,7 @@ def metrics_relative(
     dv: float,
     *,
     k_step: int = 1,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Gauge-invariant relative-motion error over k-step pose differences."""
     _validate_matching_pose_params(params_true, params_est)
     if params_true.shape[0] <= k_step:
@@ -356,8 +354,8 @@ def metrics_relative(
 
     Tt = _params_to_T(params_true)
     Te = _params_to_T(params_est)
-    rot_errs: List[float] = []
-    trans_errs_sq: List[float] = []
+    rot_errs: list[float] = []
+    trans_errs_sq: list[float] = []
     for i in range(params_true.shape[0] - k_step):
         Dt = Tt[i + k_step] @ _inv_T(Tt[i])
         De = Te[i + k_step] @ _inv_T(Te[i])
@@ -377,7 +375,7 @@ def metrics_relative(
 
 def metrics_gauge_fixed(
     params_true: np.ndarray, params_est: np.ndarray, du: float, dv: float
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Align the estimate with one global gauge transform before scoring."""
     Tt = _params_to_T(params_true)
     Te = _params_to_T(params_est)
@@ -399,8 +397,8 @@ def metrics_gauge_fixed(
     G[:3, :3] = Rg.astype(np.float32)
     G[:3, 3] = tg.astype(np.float32)
 
-    rot_errs: List[float] = []
-    trans_errs_sq: List[float] = []
+    rot_errs: list[float] = []
+    trans_errs_sq: list[float] = []
     for i in range(Tt.shape[0]):
         E = _inv_T(Tt[i]) @ (G @ Te[i])
         rot_errs.append(_so3_geodesic_deg(E))
@@ -446,7 +444,7 @@ __all__ = [
     "make_gt_dataset",
     "make_misaligned_dataset",
     "metrics_abs",
-    "metrics_relative",
     "metrics_gauge_fixed",
+    "metrics_relative",
     "project_gt_with_estimated_poses",
 ]

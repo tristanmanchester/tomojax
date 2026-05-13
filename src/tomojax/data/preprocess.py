@@ -13,7 +13,6 @@ import numpy as np
 
 from .io_hdf5 import NXTomoMetadata, save_nxtomo
 
-
 LOG = logging.getLogger(__name__)
 
 PREPROCESS_SCHEMA_VERSION = 1
@@ -761,7 +760,6 @@ def preprocess_nxtomo(
     config: PreprocessConfig | None = None,
 ) -> PreprocessResult:
     """Preprocess raw NXtomo sample/flat/dark frames into corrected projections."""
-
     cfg = config or PreprocessConfig()
     output_dtype = _validate_config(cfg)
 

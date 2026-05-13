@@ -1,35 +1,35 @@
+"""Run geometry alignment workflows from the public TomoJAX CLI."""
+
+# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 import logging
 import os
+from pathlib import Path
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from ._jax_allocator import configure_jax_allocator_defaults
+from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 
 configure_jax_allocator_defaults()
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core import log_jax_env, setup_logging
-from tomojax.geometry import (
-    DISK_VOLUME_AXES,
-    compute_roi,
-    cylindrical_mask_xy,
-    grid_from_detector_fov,
-    grid_from_detector_fov_slices,
-)
-
-from ..align._profiles import (
+from tomojax.align.api import (
+    AlignConfig,
+    AlignMultiresResumeState,
+    AlignResumeState,
+    align,
     normalize_alignment_profile,
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
 )
-from ..align.io.checkpoint import (
+from tomojax.align.io.checkpoint import (
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
     AlignmentCheckpointProgress,
@@ -41,39 +41,52 @@ from ..align.io.checkpoint import (
     save_alignment_checkpoint,
     validate_alignment_checkpoint,
 )
-from ..align.io.params_export import save_alignment_params_csv, save_alignment_params_json
-from ..align.model.dofs import (
+from tomojax.align.io.params_export import save_alignment_params_csv, save_alignment_params_json
+from tomojax.align.model.dofs import (
     DofBounds,
     normalize_alignment_dofs,
     normalize_bounds,
 )
-from ..align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
-from ..align.objectives.loss_specs import (
+from tomojax.align.model.schedules import PUBLIC_SCHEDULE_PRESETS, resolve_alignment_schedule
+from tomojax.align.objectives.loss_specs import (
     AlignmentLossConfig,
     parse_loss_schedule,
     parse_loss_spec,
     validate_loss_schedule_levels,
 )
-from ..align.pipeline import (
-    AlignConfig,
-    AlignMultiresResumeState,
-    AlignResumeState,
-    align,
+from tomojax.calibration.manifest import build_calibrated_geometry_metadata_patch
+from tomojax.cli._runtime import transfer_guard_context
+from tomojax.cli.config import parse_args_with_config
+from tomojax.cli.manifest import build_manifest, save_manifest
+from tomojax.core import log_jax_env, setup_logging
+from tomojax.core.geometry import Detector, Grid  # noqa: TC001
+from tomojax.geometry import (
+    DISK_VOLUME_AXES,
+    compute_roi,
+    cylindrical_mask_xy,
+    grid_from_detector_fov,
+    grid_from_detector_fov_slices,
 )
-from ..calibration.manifest import build_calibrated_geometry_metadata_patch
-from ..core.geometry import Detector, Grid
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
-from ._runtime import transfer_guard_context
-from .config import parse_args_with_config
-from .manifest import build_manifest, save_manifest
+from tomojax.io import (
+    build_geometry_from_dataset_metadata,
+    load_projection_payload,
+    save_projection_payload,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tomojax.align.api import FallbackPolicy, QualityTier
+    from tomojax.align.model.gauge import GaugeFixMode
+    from tomojax.align.model.schedules import GaugePolicy
+    from tomojax.recon.types import Regulariser
 
 
 def _positive_float(value: str) -> float:
     try:
         parsed = float(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError("value must be a positive float")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a positive float") from exc
     if not np.isfinite(parsed) or parsed <= 0.0:
         raise argparse.ArgumentTypeError("value must be a positive float")
     return parsed
@@ -89,12 +102,14 @@ def _init_jax_compilation_cache() -> None:
     try:
         import jax
 
-        cache_dir = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
-        if not cache_dir:
-            base = os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
-            cache_dir = os.path.join(base, "tomojax", "jax_cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        jax.config.update("jax_compilation_cache_dir", cache_dir)
+        cache_dir_text = os.environ.get("TOMOJAX_JAX_CACHE_DIR")
+        if cache_dir_text:
+            cache_dir = Path(cache_dir_text)
+        else:
+            base = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser()
+            cache_dir = base / "tomojax" / "jax_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        jax.config.update("jax_compilation_cache_dir", str(cache_dir))
         jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
         jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
         jax.config.update(
@@ -214,7 +229,7 @@ def _parse_loss_config(
     raise AssertionError("unreachable")
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
     p.add_argument("--data", help="Input .nxs")
@@ -597,7 +612,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["auto", "off", "cube", "bbox", "cyl"],
         default="auto",
         help=(
-            "Region to reconstruct: auto: square x–y slices + z from detector height; "
+            "Region to reconstruct: auto: square x-y slices + z from detector height; "
             "off: use full grid; cube: same as auto; bbox: rectangular FOV bbox; "
             "cyl: auto + zero outside cylindrical FOV"
         ),
@@ -608,7 +623,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="off",
         help=(
             "Mask the volume before forward projection in alignment: "
-            "off (default), or cyl for cylindrical x–y mask broadcast along z."
+            "off (default), or cyl for cylindrical x-y mask broadcast along z."
         ),
     )
     p.add_argument(
@@ -737,6 +752,9 @@ def _resume_state_from_checkpoint(
         schedule_state = metadata.get("schedule_state")
         if not isinstance(schedule_state, dict):
             schedule_state = {}
+        schedule_state = cast("dict[str, object]", schedule_state)
+        prev_factor_value = metadata.get("prev_factor")
+        geometry_calibration_state = metadata.get("geometry_calibration_state")
         return AlignMultiresResumeState(
             x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
             params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
@@ -749,9 +767,7 @@ def _resume_state_from_checkpoint(
             level_factor=int(metadata.get("level_factor", 1)),
             completed_outer_iters_in_level=int(metadata.get("completed_outer_iters_in_level", 0)),
             global_outer_iters_completed=int(metadata.get("global_outer_iters_completed", 0)),
-            prev_factor=(
-                None if metadata.get("prev_factor") is None else int(metadata.get("prev_factor"))
-            ),
+            prev_factor=None if prev_factor_value is None else int(prev_factor_value),
             loss=list(checkpoint.loss_history),
             outer_stats=[dict(stat) for stat in checkpoint.outer_stats],
             L=metadata.get("L_prev"),
@@ -760,8 +776,8 @@ def _resume_state_from_checkpoint(
             level_complete=bool(metadata.get("level_complete", False)),
             run_complete=bool(metadata.get("run_complete", False)),
             geometry_calibration_state=(
-                dict(metadata["geometry_calibration_state"])
-                if isinstance(metadata.get("geometry_calibration_state"), dict)
+                dict(geometry_calibration_state)
+                if isinstance(geometry_calibration_state, dict)
                 else None
             ),
             stage_index=int(schedule_state.get("stage_index", 0)),
@@ -794,6 +810,8 @@ def _resume_state_from_checkpoint(
 
 @dataclass(frozen=True, slots=True)
 class AlignCliRunPlan:
+    """Resolved inputs needed to execute an alignment CLI run."""
+
     args: argparse.Namespace
     config_metadata: dict[str, Any]
     loss_config: AlignmentLossConfig
@@ -819,6 +837,8 @@ class AlignCliRunPlan:
 
 @dataclass(frozen=True, slots=True)
 class AlignCliExecutionResult:
+    """Alignment result returned by the CLI execution helper."""
+
     x: jnp.ndarray
     params5: jnp.ndarray
     info: dict[str, Any]
@@ -826,11 +846,13 @@ class AlignCliExecutionResult:
 
 @dataclass(frozen=True, slots=True)
 class AlignCliCheckpointCallbacks:
+    """Checkpoint callbacks for single-level and multires alignment runs."""
+
     single: Callable[..., None]
     multires: Callable[[AlignMultiresResumeState], None]
 
 
-def _build_align_cli_run_plan(
+def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     config_metadata: dict[str, Any],
@@ -868,7 +890,7 @@ def _build_align_cli_run_plan(
     args.gather_dtype = str(profile_options["gather_dtype"])
     args.regulariser = str(profile_options["regulariser"])
     args.recon_algo = str(profile_options["recon_algo"])
-    args.views_per_batch = int(profile_options["views_per_batch"])
+    args.views_per_batch = int(cast("Any", profile_options["views_per_batch"]))
     args.checkpoint_projector = bool(profile_options["checkpoint_projector"])
     args.pose_model = str(profile_options["pose_model"])
     args.quality_tier = str(profile_options["quality_tier"])
@@ -892,10 +914,10 @@ def _build_align_cli_run_plan(
         ):
             effective_options[key] = getattr(args, key)
 
-    meta = load_nxtomo(args.data)
+    meta = load_projection_payload(args.data)
     geometry_meta = meta.geometry_inputs()
     initial_grid_override = args.grid if (meta.grid is None and args.grid is not None) else None
-    grid, detector, geom = build_geometry_from_meta(
+    grid, detector, geom = build_geometry_from_dataset_metadata(
         geometry_meta,
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
@@ -908,7 +930,7 @@ def _build_align_cli_run_plan(
             freeze_dofs=freeze_dofs,
             geometry_dofs=(),
             geometry=geom,
-            gauge_policy=str(args.gauge_policy),
+            gauge_policy=cast("GaugePolicy", str(args.gauge_policy)),
             opt_method=str(args.opt_method),
             outer_iters=int(args.outer_iters),
             early_stop=bool(args.early_stop),
@@ -928,9 +950,9 @@ def _build_align_cli_run_plan(
         align_profile=str(args.align_profile),
         outer_iters=args.outer_iters,
         recon_iters=args.recon_iters,
-        recon_algo=str(args.recon_algo),
+        recon_algo=cast("Any", str(args.recon_algo)),
         lambda_tv=args.lambda_tv,
-        regulariser=str(args.regulariser),
+        regulariser=cast("Regulariser", str(args.regulariser)),
         huber_delta=float(args.huber_delta),
         tv_prox_iters=int(args.tv_prox_iters),
         recon_positivity=bool(args.recon_positivity),
@@ -940,8 +962,8 @@ def _build_align_cli_run_plan(
         views_per_batch=int(args.views_per_batch),
         projector_unroll=int(args.projector_unroll),
         projector_backend=str(args.projector_backend),
-        quality_tier=str(args.quality_tier),
-        fallback_policy=str(args.fallback_policy),
+        quality_tier=cast("QualityTier", str(args.quality_tier)),
+        fallback_policy=cast("FallbackPolicy", str(args.fallback_policy)),
         checkpoint_projector=bool(args.checkpoint_projector),
         gather_dtype=gather_dtype,
         opt_method=str(args.opt_method),
@@ -958,11 +980,11 @@ def _build_align_cli_run_plan(
         freeze_dofs=freeze_dofs,
         geometry_dofs=(),
         bounds=args.bounds,
-        gauge_policy=str(args.gauge_policy),
-        pose_model=str(args.pose_model),
+        gauge_policy=cast("Any", str(args.gauge_policy)),
+        pose_model=cast("Any", str(args.pose_model)),
         knot_spacing=int(args.knot_spacing),
         degree=int(args.degree),
-        gauge_fix=str(args.gauge_fix),
+        gauge_fix=cast("GaugeFixMode", str(args.gauge_fix)),
         loss=loss_config,
         seed_translations=bool(args.seed_translations),
         log_summary=bool(args.log_summary),
@@ -977,8 +999,7 @@ def _build_align_cli_run_plan(
         ),
         mask_vol=str(args.mask_vol),
     )
-    if schedule_metadata is not None:
-        schedule_metadata["profile_policy"] = profile_policy_from_config(cfg).to_dict()
+    schedule_metadata["profile_policy"] = profile_policy_from_config(cfg).to_dict()
     recon_grid, apply_cyl_mask = _resolve_recon_grid_and_mask(
         grid,
         detector,
@@ -987,7 +1008,7 @@ def _build_align_cli_run_plan(
         grid_override=args.grid,
     )
     if recon_grid is not grid:
-        _, _, geom = build_geometry_from_meta(
+        _, _, geom = build_geometry_from_dataset_metadata(
             geometry_meta,
             grid_override=recon_grid,
             apply_saved_alignment=False,
@@ -1036,7 +1057,7 @@ def _build_align_cli_run_plan(
                 used_multires=run_levels is not None,
             )
         except CheckpointError as exc:
-            raise SystemExit(f"tomojax-align: {exc}") from exc
+            raise SystemExit(f"tomojax align: {exc}") from exc
         logging.info("Resuming alignment from checkpoint %s", args.resume)
 
     return AlignCliRunPlan(
@@ -1072,7 +1093,7 @@ def _state_grid_detector_for_checkpoint(
 ) -> tuple[Grid, Detector]:
     if plan.run_levels is None or run_complete:
         return plan.recon_grid, plan.detector
-    from ..core.multires import scale_detector, scale_grid
+    from tomojax.core.multires import scale_detector, scale_grid
 
     return scale_grid(plan.recon_grid, int(level_factor)), scale_detector(
         plan.detector,
@@ -1196,7 +1217,7 @@ def _execute_alignment_plan(
 ) -> AlignCliExecutionResult:
     args = plan.args
     if plan.run_levels is not None and len(plan.run_levels) > 0:
-        from ..align.pipeline import align_multires
+        from tomojax.align.pipeline import align_multires
 
         with transfer_guard_context(args.transfer_guard):
             x, params5, info = align_multires(
@@ -1233,22 +1254,28 @@ def _execute_alignment_plan(
         )
     info_dict = dict(info)
     if plan.checkpoint_path is not None:
+        motion_coeffs = info_dict.get("motion_coeffs")
+        outer_stats_raw = info_dict.get("outer_stats", [])
+        if not isinstance(outer_stats_raw, list):
+            outer_stats_raw = []
+        completed_outer_iters = info_dict.get("completed_outer_iters", len(outer_stats_raw))
+        loss_raw = info_dict.get("loss", [])
+        if not isinstance(loss_raw, list):
+            loss_raw = []
+        l_value = info_dict.get("L")
+        small_impr_streak = info_dict.get("small_impr_streak", 0)
+        wall_time_total = info_dict.get("wall_time_total", 0.0)
         single_checkpoint_callback(
             AlignResumeState(
                 x=x,
                 params5=params5,
-                motion_coeffs=info_dict.get("motion_coeffs"),
-                start_outer_iter=int(
-                    info_dict.get(
-                        "completed_outer_iters",
-                        len(info_dict.get("outer_stats", [])),
-                    )
-                ),
-                loss=list(info_dict.get("loss", [])),
-                outer_stats=[dict(stat) for stat in info_dict.get("outer_stats", [])],
-                L=info_dict.get("L"),
-                small_impr_streak=int(info_dict.get("small_impr_streak", 0)),
-                elapsed_offset=float(info_dict.get("wall_time_total", 0.0)),
+                motion_coeffs=motion_coeffs if isinstance(motion_coeffs, np.ndarray) else None,
+                start_outer_iter=int(completed_outer_iters),
+                loss=list(loss_raw),
+                outer_stats=[dict(stat) for stat in outer_stats_raw if isinstance(stat, dict)],
+                L=float(l_value) if isinstance(l_value, int | float) else None,
+                small_impr_streak=int(small_impr_streak),
+                elapsed_offset=float(wall_time_total),
             ),
             run_complete=True,
         )
@@ -1303,7 +1330,7 @@ def _write_alignment_result_volume(
         save_meta.geometry_calibration = calibration_patch["geometry_calibration"]  # type: ignore[assignment]
     save_meta.frame = str(plan.meta.frame or "sample")
     save_meta.volume_axes_order = str(plan.args.volume_axes)
-    save_nxtomo(
+    save_projection_payload(
         plan.args.out,
         projections=plan.meta.projections,
         metadata=save_meta,
@@ -1442,7 +1469,7 @@ def _write_alignment_manifest(
         geometry_calibration_state=geometry_calibration_state,
         save_meta=save_meta,
     )
-    manifest = build_manifest("tomojax-align", list(sys.argv), plan.args, payload)
+    manifest = build_manifest("tomojax align", list(sys.argv), plan.args, payload)
     save_manifest(plan.args.save_manifest, manifest)
     logging.info("Saved reproducibility manifest to %s", plan.args.save_manifest)
 
@@ -1479,6 +1506,7 @@ def _write_alignment_outputs(
 
 
 def main() -> None:
+    """Run alignment from the public CLI."""
     p = _build_parser()
     args, config_metadata = parse_args_with_config(p, required=("data", "out"))
 

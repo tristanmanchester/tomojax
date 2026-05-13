@@ -3,6 +3,19 @@
 This branch is reimagining TomoJAX as a fast, differentiable tomography and
 laminography alignment/reconstruction toolbox.
 
+The package-facing CLI is the grouped `tomojax` command:
+
+```bash
+uv run tomojax inspect scan.nxs
+uv run tomojax ingest ./projections --angles angles.csv --out scan.nxs
+uv run tomojax preprocess raw.nxs corrected.nxs --log
+uv run tomojax recon corrected.nxs --out recon.nxs
+uv run tomojax align corrected.nxs --out aligned.nxs --schedule cor
+```
+
+The installed package exposes a single `tomojax` console script. Developer
+diagnostics and benchmark probes live under `tomojax dev ...`.
+
 The canonical v2 design docs live in [`docs/tomojax-v2/`](docs/tomojax-v2/):
 
 - [`01_high_level_architecture.md`](docs/tomojax-v2/01_high_level_architecture.md)

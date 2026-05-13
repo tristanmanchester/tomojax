@@ -7,11 +7,12 @@ details should import those owner modules directly.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import jax.numpy as jnp
 
 from ..core.geometry.base import Detector, Geometry, Grid
+from . import _pose_stage as _pose_stage_mod, _stage_loop as _stage_loop_mod
 from ._config import AlignConfig
 from ._observer import (
     LegacyObserverCallback,
@@ -21,8 +22,6 @@ from ._observer import (
     OuterStatValue,
     adapt_legacy_observer,
 )
-from . import _pose_stage as _pose_stage_mod
-from . import _stage_loop as _stage_loop_mod
 from ._results import (
     AlignCheckpointCallback,
     AlignInfo,

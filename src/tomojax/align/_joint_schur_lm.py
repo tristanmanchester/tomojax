@@ -520,11 +520,7 @@ def _can_repack_canonicalized_gauge(
         return False
     if "phi_residual_rad" in active_pose and "theta_offset_rad" not in active_setup:
         return False
-    if (
-        "dz_px" in active_pose
-        and geometry.setup.det_v_px.active
-        and "det_v_px" not in active_setup
-    ):
+    if "dz_px" in active_pose and geometry.setup.det_v_px.active and "det_v_px" not in active_setup:
         return False
     return True
 

@@ -1,7 +1,5 @@
-
 import h5py
 import numpy as np
-import pytest
 
 from tomojax.cli import validate as validate_cli
 

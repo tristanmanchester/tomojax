@@ -959,6 +959,17 @@ and proposed next fix before stopping.
 
 ### Completed Previous Slices
 
+- [x] Public CLI/deep-module production surface cleanup: consolidated installed
+  entrypoints under `tomojax`, moved developer commands under `tomojax dev`,
+  added public `tomojax.io` dataset/inspection/preprocess facades, routed CLI
+  data access through public facades, quarantined transitional `data`/`bench`/
+  `calibration` packages with explicit public APIs and READMEs, tightened
+  import-linter/public-import checks, and added `just production-surface-check`
+  as the focused executable guard. The gate now includes full Ruff over
+  `src/tomojax/cli` plus scoped Basedpyright for `tomojax.io`, `tomojax.cli.main`,
+  `tomojax.cli.ingest`, `tomojax.cli._runtime`, and `tomojax.cli.config`. The
+  public surface gate passes; broad repo-wide Basedpyright debt remains outside
+  this cleaned surface.
 - [x] 256^3 memory materialisation cleanup in progress: reference FISTA now
   scans projection/adjoint batches instead of building an all-view predicted
   stack, and joint Schur now scans finite-difference parameter directions

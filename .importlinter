@@ -5,10 +5,12 @@ root_package = tomojax
 name = Layer direction
 type = layers
 layers =
+    tomojax.cli
     tomojax.bench
     tomojax.align
     tomojax.verify
     tomojax.datasets
+    tomojax.io
     tomojax.data
     tomojax.recon
     tomojax.forward
@@ -17,5 +19,4 @@ layers =
     tomojax.calibration
     tomojax.motion
     tomojax.geometry
-    tomojax.io
     tomojax.core

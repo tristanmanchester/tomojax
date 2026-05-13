@@ -1457,9 +1457,7 @@ def _should_reject_post_constraint_loss(
         return False
     if after <= before:
         return False
-    return not (
-        loss_is_within_relative_tolerance(before, after, rel_tol)
-    )
+    return not (loss_is_within_relative_tolerance(before, after, rel_tol))
 
 
 def _run_alignment_step(
@@ -1502,13 +1500,10 @@ def _run_alignment_step(
         loss_hist=loss_hist,
         stat=stat,
     )
-    if (
-        ctx.cfg.gn_accept_only_improving
-        and _should_reject_post_constraint_loss(
-            loss_before=result.loss_before,
-            total_loss=total_loss,
-            rel_tol=float(ctx.cfg.gn_accept_tol),
-        )
+    if ctx.cfg.gn_accept_only_improving and _should_reject_post_constraint_loss(
+        loss_before=result.loss_before,
+        total_loss=total_loss,
+        rel_tol=float(ctx.cfg.gn_accept_tol),
     ):
         params5_out = params5_in
         motion_coeffs_out = motion_coeffs_in

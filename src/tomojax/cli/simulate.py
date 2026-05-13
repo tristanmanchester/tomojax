@@ -1,3 +1,5 @@
+"""CLI: simulate synthetic TomoJAX datasets."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,9 +8,13 @@ import os
 import sys
 
 from tomojax.core import log_jax_env, setup_logging
+from tomojax.datasets import (
+    SimConfig,
+    SimulationArtefacts,
+    simulate_to_file,
+    validate_simulation_artefacts,
+)
 
-from ..data.artefacts import SimulationArtefacts, validate_simulation_artefacts
-from ..data.simulate import SimConfig, simulate_to_file
 from ._runtime import transfer_guard_context
 
 _ARTEFACT_OPTION_STRINGS = {
@@ -38,7 +44,8 @@ def _artefact_options_present(argv: list[str]) -> bool:
     return False
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915
+    """Run the synthetic dataset simulation command."""
     p = argparse.ArgumentParser(description="Simulate tomographic dataset and save to .nxs")
     p.add_argument("--out", required=True, help="Output .nxs path")
     p.add_argument("--nx", type=int, required=True)

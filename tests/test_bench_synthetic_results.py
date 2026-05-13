@@ -151,9 +151,7 @@ def test_synthetic_benchmark_compare_cli_accepts_current_baseline(
         volume_nmse=0.5,
     )
 
-    exit_code = synthetic_results_main(
-        [str(result_path), "--current-baseline", str(baseline_path)]
-    )
+    exit_code = synthetic_results_main([str(result_path), "--current-baseline", str(baseline_path)])
 
     assert exit_code == 0
     captured = capsys.readouterr()

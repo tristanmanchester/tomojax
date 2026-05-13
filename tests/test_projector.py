@@ -1,20 +1,20 @@
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
+from tomojax.core import operators as operators_mod
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.operators import adjoint_test_once
 from tomojax.core.projector import (
     backproject_view,
     backproject_view_T,
-    forward_project_view_T,
     forward_project_view,
+    forward_project_view_T,
     get_detector_grid_device,
     sum_backproject_views_T,
 )
-from tomojax.core import operators as operators_mod
-from tomojax.core.operators import adjoint_test_once
 
 
 def _gather_dtype_adjoint_tolerance(gather_dtype: str) -> dict[str, float]:

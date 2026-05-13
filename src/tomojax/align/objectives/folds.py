@@ -39,9 +39,7 @@ class FoldSpec:
         if k < 2:
             raise ValueError("bilevel CV requires at least two folds")
         if n < k:
-            raise ValueError(
-                f"bilevel CV requires at least {k} views for {k} folds; got {n}"
-            )
+            raise ValueError(f"bilevel CV requires at least {k} views for {k} folds; got {n}")
         indices = np.arange(n, dtype=np.int32)
         val_parts = [indices[(indices % k) == fold] for fold in range(k)]
         if any(part.size == 0 for part in val_parts):

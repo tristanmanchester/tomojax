@@ -23,7 +23,7 @@ uv run python scripts/real_laminography/run_real_lamino_staged.py \
 Synthetic setup-global:
 
 ```bash
-uv run tomojax-align-auto \
+uv run tomojax dev align-auto \
   --out-dir .artifacts/synthetic/setup_global_128 \
   --synthetic-case setup-global \
   --size 128 \
@@ -33,7 +33,7 @@ uv run tomojax-align-auto \
 Synthetic pose-random:
 
 ```bash
-uv run tomojax-align-auto \
+uv run tomojax dev align-auto \
   --out-dir .artifacts/synthetic/pose_random_128 \
   --synthetic-case pose-random \
   --size 128 \

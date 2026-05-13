@@ -16,11 +16,17 @@ differentiable `tomojax.forward` reference path.
 - `SyntheticArrayMetadata`
 - `SyntheticDatasetSidecars`
 - `SyntheticDatasetSpec`
+- `SimConfig`
+- `SimulatedData`
+- `SimulationArtefacts`
 - `generate_synthetic_dataset`
 - `load_synthetic_dataset_sidecars`
 - `load_synthetic128_specs`
 - `make_benchmark_phantom`
+- `simulate`
+- `simulate_to_file`
 - `synthetic128_spec`
+- `validate_simulation_artefacts`
 
 ## Dependencies
 

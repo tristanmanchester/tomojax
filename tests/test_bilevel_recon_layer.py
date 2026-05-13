@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 import tomojax.align.objectives.recon_layer as recon_layer_module
 from tomojax.align.objectives.recon_layer import ReconLayer, ReconLayerConfig
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-from tomojax.recon.fista_tv_core import FistaCoreConfig, fista_tv_core_arrays
-from tomojax.recon.fista_tv_core import projection_loss_arrays
+from tomojax.recon.fista_tv_core import (
+    FistaCoreConfig,
+    fista_tv_core_arrays,
+    projection_loss_arrays,
+)
 
 
 def _case(size: int = 6, n_views: int = 5):
@@ -330,7 +333,9 @@ def test_fista_core_pallas_backprojector_matches_jax_backprojector():
 
     np.testing.assert_allclose(np.asarray(pallas_result[1]), np.asarray(jax_result[1]))
     np.testing.assert_allclose(np.asarray(pallas_result[2]), np.asarray(jax_result[2]))
-    np.testing.assert_allclose(np.asarray(pallas_result[0]), np.asarray(jax_result[0]), atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(
+        np.asarray(pallas_result[0]), np.asarray(jax_result[0]), atol=1e-5, rtol=1e-5
+    )
 
 
 def test_recon_layer_unrolled_mode_returns_diagnostics():

@@ -141,4 +141,3 @@ def benchmark_targets_report() -> dict[str, Any]:
         "target_policy": "Improve each current best guard value by 2x while preserving quality/parity gates.",
         "targets": [asdict(target) for target in TARGETS_2X],
     }
-

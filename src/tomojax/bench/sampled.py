@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 import json
 import os
-from dataclasses import asdict, dataclass
 from pathlib import Path
 import subprocess
 import sys
@@ -11,7 +11,6 @@ from typing import Any
 import numpy as np
 
 from tomojax.bench.alignment_objective import (
-    AlignmentObjectiveBenchmarkConfig,
     run_alignment_objective_suite,
 )
 from tomojax.bench.fista_iteration import (
@@ -87,9 +86,7 @@ def _sample_forward_config(rng: np.random.Generator, seed: int) -> ForwardSinogr
         gather_dtype="fp32",
         pose_mode="general_5d",
         pallas_state_mode="cached",
-        pallas_tile_shape=tuple(
-            (int(rng.choice([8, 12, 16, 24])), int(rng.choice([4, 8])))
-        ),
+        pallas_tile_shape=tuple((int(rng.choice([8, 12, 16, 24])), int(rng.choice([4, 8])))),
         pallas_num_warps=1,
     )
 
@@ -389,8 +386,7 @@ def run_sampled_representative_suite(
         for case in alignment_smoke_cases
     ]
     alignment_smoke_success_totals = [
-        len(case.get("success", {}))
-        for case in alignment_smoke_cases
+        len(case.get("success", {})) for case in alignment_smoke_cases
     ]
 
     def geomean(values: list[float]) -> float | None:

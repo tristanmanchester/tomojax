@@ -1024,9 +1024,11 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
                 },
             )
             x = np.ones((2, 2, 1), dtype=np.float32)
-            return x, FakeCalibrationState(stage_name), [
-                {"geometry_loss_before": 2.0, "geometry_loss_after": 1.0}
-            ]
+            return (
+                x,
+                FakeCalibrationState(stage_name),
+                [{"geometry_loss_before": 2.0, "geometry_loss_after": 1.0}],
+            )
 
         def run_pose_stage(self, _ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
             stage_dir.mkdir(parents=True, exist_ok=True)
@@ -1048,13 +1050,17 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
                     },
                 },
             )
-            return x, params5, [
-                {
-                    "loss_before": "nan",
-                    "loss_after": "nan",
-                    "data_loss_computed": False,
-                }
-            ]
+            return (
+                x,
+                params5,
+                [
+                    {
+                        "loss_before": "nan",
+                        "loss_after": "nan",
+                        "data_loss_computed": False,
+                    }
+                ],
+            )
 
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()

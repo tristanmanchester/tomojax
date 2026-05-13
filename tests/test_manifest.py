@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from importlib import metadata
 import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from importlib import metadata
 import numpy as np
 import pytest
 
@@ -53,7 +53,7 @@ def test_build_manifest_is_json_serializable_and_accepts_fixed_timestamp(monkeyp
             "detector": _DictBacked(),
             "scalar": np.float32(2.25),
         },
-        timestamp=datetime(2026, 4, 19, 12, 30, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 19, 12, 30, 0, tzinfo=UTC),
     )
 
     json.dumps(manifest, allow_nan=False)

@@ -166,7 +166,7 @@ Setup-global full-view gate:
 ```bash
 env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
   XLA_PYTHON_CLIENT_PREALLOCATE=false \
-  uv run tomojax-align-auto \
+  uv run tomojax dev align-auto \
   --out-dir .artifacts/production_hardening_synthetic/synth128_setup_global_128_after_loss_cache \
   --synthetic-case setup-global --size 128 --views 256
 ```
@@ -176,7 +176,7 @@ Pose-random full-view gate:
 ```bash
 env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
   XLA_PYTHON_CLIENT_PREALLOCATE=false \
-  uv run tomojax-align-auto \
+  uv run tomojax dev align-auto \
   --out-dir .artifacts/production_hardening_synthetic/synth128_pose_random_128_fullmask_polish64_probe \
   --synthetic-case pose-random --size 128 --views 256
 ```
@@ -186,7 +186,7 @@ Pose-random under-iteration diagnostic:
 ```bash
 env LD_LIBRARY_PATH="$CUDA_LIBS" JAX_PLATFORM_NAME=cuda JAX_PLATFORMS=cuda,cpu \
   XLA_PYTHON_CLIENT_PREALLOCATE=false \
-  uv run tomojax-align-auto \
+  uv run tomojax dev align-auto \
   --out-dir .artifacts/production_hardening_synthetic/synth128_pose_random_16views_reference_probe \
   --synthetic-case pose-random --size 128 --views 16 --profile reference
 ```

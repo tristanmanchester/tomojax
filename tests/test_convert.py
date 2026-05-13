@@ -8,7 +8,7 @@ def test_convert_main_parses_paths_and_calls_convert(monkeypatch):
 
     monkeypatch.setattr(
         convert_cli,
-        "convert",
+        "convert_dataset",
         lambda in_path, out_path: captured.update({"in_path": in_path, "out_path": out_path}),
     )
     monkeypatch.setattr(

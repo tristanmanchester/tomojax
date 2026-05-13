@@ -156,10 +156,14 @@ def _matvec_for_geometry(
             geometry,
             detector_shape=(int(mask.shape[1]), int(mask.shape[2])),
         )
-        return sum_backproject_views_chunked(core, projected) + jnp.asarray(
-            regularisation,
-            dtype=jnp.float32,
-        ) * candidate
+        return (
+            sum_backproject_views_chunked(core, projected)
+            + jnp.asarray(
+                regularisation,
+                dtype=jnp.float32,
+            )
+            * candidate
+        )
 
     return matvec
 

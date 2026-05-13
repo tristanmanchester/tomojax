@@ -1,8 +1,8 @@
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
@@ -15,7 +15,7 @@ def make_simple_case(nx=16, ny=16, nz=16, n_views=16):
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     # Ground truth: small cube in center
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-    vol = vol.at[nx//4:3*nx//4, ny//4:3*ny//4, nz//4:3*nz//4].set(1.0)
+    vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
     # Projections
     projs = []
     for i in range(n_views):
@@ -177,4 +177,6 @@ def test_fista_early_stop_triggers():
     if info["effective_iters"] > 1:
         expected_steps.append(info["effective_iters"] - 1)
     assert [step for step, _ in callbacks] == expected_steps
-    assert [value for _, value in callbacks] == pytest.approx([loss[step] for step in expected_steps])
+    assert [value for _, value in callbacks] == pytest.approx(
+        [loss[step] for step in expected_steps]
+    )

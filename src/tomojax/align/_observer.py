@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Callable, Literal, cast
+from collections.abc import Callable
+from typing import Literal, cast
 
 import jax.numpy as jnp
 
@@ -23,7 +24,7 @@ def _normalize_observer_action(
     if isinstance(action, str):
         lowered = action.strip().lower()
         if lowered in {"continue", "advance_level", "stop_run"}:
-            return cast(ObserverAction, lowered)
+            return cast("ObserverAction", lowered)
     raise ValueError(f"Unsupported observer action: {action!r}")
 
 

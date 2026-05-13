@@ -277,8 +277,7 @@ def _loss_and_explicit_gradient(
     scaled_tv = jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_value
     scaled_center = jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_value
     scaled_soft_support = (
-        jnp.asarray(config.soft_support_outside_weight, dtype=jnp.float32)
-        * soft_support_value
+        jnp.asarray(config.soft_support_outside_weight, dtype=jnp.float32) * soft_support_value
     )
     scaled_anchor = (
         jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32) * anchor_value
@@ -291,10 +290,8 @@ def _loss_and_explicit_gradient(
         data_gradient
         + jnp.asarray(config.tv_weight, dtype=jnp.float32) * tv_gradient
         + jnp.asarray(config.center_l2_weight, dtype=jnp.float32) * center_gradient
-        + jnp.asarray(config.soft_support_outside_weight, dtype=jnp.float32)
-        * soft_support_gradient
-        + jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32)
-        * anchor_gradient
+        + jnp.asarray(config.soft_support_outside_weight, dtype=jnp.float32) * soft_support_gradient
+        + jnp.asarray(config.low_frequency_anchor_weight, dtype=jnp.float32) * anchor_gradient
         + jnp.asarray(config.gauge_mode_weight, dtype=jnp.float32) * gauge_gradient
     )
     return data_loss + scaled_regulariser, data_loss, scaled_regulariser, gradient
@@ -616,11 +613,14 @@ def _box_blur3d(volume: jax.Array, *, radius: int) -> jax.Array:
     for dx in range(2 * radius + 1):
         for dy in range(2 * radius + 1):
             for dz in range(2 * radius + 1):
-                acc = acc + padded[
-                    dx : dx + vol.shape[0],
-                    dy : dy + vol.shape[1],
-                    dz : dz + vol.shape[2],
-                ]
+                acc = (
+                    acc
+                    + padded[
+                        dx : dx + vol.shape[0],
+                        dy : dy + vol.shape[1],
+                        dz : dz + vol.shape[2],
+                    ]
+                )
                 count += 1
     return acc / jnp.asarray(count, dtype=jnp.float32)
 
@@ -647,9 +647,7 @@ def _gauge_mode_l2(
     if mode_arr.shape != vol.shape:
         raise ValueError("gauge_mode must match volume shape")
     reference_arr = (
-        jnp.zeros_like(vol)
-        if reference is None
-        else jnp.asarray(reference, dtype=jnp.float32)
+        jnp.zeros_like(vol) if reference is None else jnp.asarray(reference, dtype=jnp.float32)
     )
     if reference_arr.shape != vol.shape:
         raise ValueError("gauge_reference must match volume shape")

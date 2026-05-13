@@ -1,21 +1,27 @@
+"""Developer CLI for generating projection datasets with known misalignment."""
+
 from __future__ import annotations
 
 import argparse
 import logging
 import os
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.align.geometry.parametrizations import se3_from_5d
 from tomojax.core import log_jax_env, setup_logging
+from tomojax.core.geometry import LaminographyGeometry, ParallelGeometry
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import forward_project_view_T
+from tomojax.io import (
+    build_geometry_from_dataset_metadata,
+    load_projection_payload,
+    save_projection_payload,
+)
 
-from ..align.geometry.parametrizations import se3_from_5d
-from ..core.geometry import LaminographyGeometry, ParallelGeometry
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import forward_project_view_T
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
 from ._runtime import transfer_guard_context
 
 
@@ -33,7 +39,7 @@ def _parse_number_with_unit(val: str) -> tuple[float, str | None]:
 
 
 def _parse_pert(spec: str) -> tuple[str, str, dict[str, str]]:
-    """Parse a --pert specification: dof:shape[:k=v[,k=v...]]"""
+    """Parse a --pert specification: dof:shape[:k=v[,k=v...]]."""
     parts = spec.split(":", 2)
     if len(parts) < 2:
         raise ValueError(f"Invalid --pert spec (need dof:shape): {spec}")
@@ -225,10 +231,10 @@ def _build_schedules(
     return schedules, norm_spec
 
 
-def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
+def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:  # noqa: PLR0912
     import json
 
-    with open(path, encoding="utf-8") as f:
+    with Path(path).open(encoding="utf-8") as f:
         data = json.load(f)
     out: list[tuple[str, str, dict[str, str]]] = []
     # Two accepted layouts:
@@ -261,18 +267,22 @@ def _load_spec_file(path: str) -> list[tuple[str, str, dict[str, str]]]:
         raise ValueError("Unrecognized spec file schema")
     # Normalize aliases in dof
     normed = []
-    for dof, kind, params in out:
-        if dof in ("x", "u"):
-            dof = "dx"
-        if dof in ("y", "v"):
-            dof = "dz"
-        normed.append((dof, kind, params))
+    for raw_dof, kind, params in out:
+        normalized_dof = raw_dof
+        if normalized_dof in ("x", "u"):
+            normalized_dof = "dx"
+        if normalized_dof in ("y", "v"):
+            normalized_dof = "dz"
+        normed.append((normalized_dof, kind, params))
     return normed
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915
+    """Generate a misaligned projection dataset from a ground-truth NXtomo file."""
     p = argparse.ArgumentParser(
-        description="Create a misaligned (and optionally noisy) dataset from a ground-truth NXtomo file."
+        description=(
+            "Create a misaligned (and optionally noisy) dataset from a ground-truth NXtomo file."
+        )
     )
     p.add_argument(
         "--data",
@@ -297,7 +307,9 @@ def main() -> None:
         "--pert",
         action="append",
         default=[],
-        help="Additive schedule spec: dof:shape[:k=v[,k=v...]]; dof in {angle,alpha,beta,phi,dx,dz}",
+        help=(
+            "Additive schedule spec: dof:shape[:k=v[,k=v...]]; dof in {angle,alpha,beta,phi,dx,dz}"
+        ),
     )
     p.add_argument(
         "--spec",
@@ -338,28 +350,29 @@ def main() -> None:
     if args.progress:
         os.environ["TOMOJAX_PROGRESS"] = "1"
 
-    meta = load_nxtomo(args.data)
-    if meta.volume is None:
+    dataset = load_projection_payload(args.data)
+    source_metadata = dataset.copy_metadata()
+    if source_metadata.volume is None:
         raise ValueError(
-            "Input file does not contain a ground-truth volume under /entry/processing/tomojax/volume."
+            "Input file does not contain a ground-truth volume under "
+            "/entry/processing/tomojax/volume."
         )
 
-    volume_shape = tuple(int(v) for v in np.asarray(meta.volume).shape)
-    grid, det, base_geom = build_geometry_from_meta(
-        meta.geometry_inputs(),
+    volume_shape = tuple(int(v) for v in np.asarray(source_metadata.volume).shape)
+    grid, det, base_geom = build_geometry_from_dataset_metadata(
+        dataset.geometry_inputs(),
         apply_saved_alignment=False,
         volume_shape=volume_shape,
     )
-    thetas = np.asarray(meta.thetas_deg, dtype=np.float32)
-    vol = jnp.asarray(meta.volume, jnp.float32)
+    thetas = np.asarray(dataset.angles_deg, dtype=np.float32)
+    vol = jnp.asarray(source_metadata.volume, jnp.float32)
     n_views = len(thetas)
 
     # Build deterministic schedules if requested
     pert_specs: list[tuple[str, str, dict[str, str]]] = []
     if args.spec:
         pert_specs.extend(_load_spec_file(args.spec))
-    for s in args.pert:
-        pert_specs.append(_parse_pert(s))
+    pert_specs.extend(_parse_pert(s) for s in args.pert)
 
     # Set base angles and params
     thetas_used = np.asarray(thetas, dtype=np.float32)
@@ -391,15 +404,13 @@ def main() -> None:
     if (not pert_specs) or args.with_random:
         rng = np.random.default_rng(args.seed)
         rot_scale = np.float32(np.deg2rad(float(args.rot_deg)))
-        params5_np[:, 0] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # alpha
-        params5_np[:, 1] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # beta
-        params5_np[:, 2] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)  # phi
-        params5_np[:, 3] += rng.uniform(
-            -float(args.trans_px), float(args.trans_px), n_views
-        ).astype(np.float32) * float(det.du)
-        params5_np[:, 4] += rng.uniform(
-            -float(args.trans_px), float(args.trans_px), n_views
-        ).astype(np.float32) * float(det.dv)
+        params5_np[:, 0] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)
+        params5_np[:, 1] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)
+        params5_np[:, 2] += rng.uniform(-rot_scale, rot_scale, n_views).astype(np.float32)
+        random_dx = rng.uniform(-float(args.trans_px), float(args.trans_px), n_views)
+        random_dz = rng.uniform(-float(args.trans_px), float(args.trans_px), n_views)
+        params5_np[:, 3] += random_dx.astype(np.float32) * float(det.du)
+        params5_np[:, 4] += random_dz.astype(np.float32) * float(det.dv)
 
     # Rebuild T_nom with possibly modified thetas
     if isinstance(base_geom, ParallelGeometry):
@@ -419,7 +430,7 @@ def main() -> None:
 
     with transfer_guard_context(args.transfer_guard):
         T_aug = T_nom @ jax.vmap(se3_from_5d)(params5)
-        from ..core.projector import get_detector_grid_device
+        from tomojax.core.projector import get_detector_grid_device
 
         det_grid = get_detector_grid_device(det)
         vm_project = jax.vmap(
@@ -439,7 +450,7 @@ def main() -> None:
         )
         proj = jnp.asarray(noisy, jnp.float32)
 
-    save_meta = meta.copy_metadata()
+    save_meta = dataset.copy_metadata()
     save_meta.thetas_deg = np.asarray(thetas_used)
     save_meta.grid = grid.to_dict()
     save_meta.detector = det.to_dict()
@@ -448,8 +459,8 @@ def main() -> None:
     save_meta.align_params = np.asarray(params5)
     save_meta.angle_offset_deg = np.asarray(angle_offset) if pert_specs else None
     save_meta.misalign_spec = misalign_spec_dict
-    save_meta.frame = str(meta.frame or "sample")
-    save_nxtomo(
+    save_meta.frame = str(source_metadata.frame or "sample")
+    save_projection_payload(
         args.out,
         projections=np.asarray(proj),
         metadata=save_meta,

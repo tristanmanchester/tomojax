@@ -10,15 +10,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+from .model.dof_specs import ActiveParameterView, optimizer_step_stats
+from .model.dofs import DofBounds
 from .model.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
-from .model.dof_specs import ActiveParameterView, optimizer_step_stats
-from .model.dofs import DofBounds
 from .model.state import AlignmentState
-
 
 type OptimizerStatValue = float | int | bool | str | None
 type OptimizerStats = dict[str, OptimizerStatValue]
@@ -51,8 +50,12 @@ class PoseOptimizationContext:
     def active_bound_transform(self, n_views: int) -> tuple[jnp.ndarray, BoundTransform]:
         active_cols_jnp = jnp.asarray(self.active_cols_np, dtype=jnp.int32)
         active_shape = (int(n_views), int(active_cols_jnp.size))
-        lower_active = jnp.tile(self.bounds_lower[active_cols_jnp], (active_shape[0], 1)).reshape(-1)
-        upper_active = jnp.tile(self.bounds_upper[active_cols_jnp], (active_shape[0], 1)).reshape(-1)
+        lower_active = jnp.tile(self.bounds_lower[active_cols_jnp], (active_shape[0], 1)).reshape(
+            -1
+        )
+        upper_active = jnp.tile(self.bounds_upper[active_cols_jnp], (active_shape[0], 1)).reshape(
+            -1
+        )
         return active_cols_jnp, BoundTransform.from_bounds(
             lower_active,
             upper_active,
@@ -456,7 +459,6 @@ def run_pose_lbfgs(
     context: PoseOptimizationContext,
 ) -> PoseLbfgsResult:
     """Run Optax L-BFGS on active alignment variables only."""
-
     active_cols = context.active_cols_np
     if active_cols.size == 0:
         message = "L-BFGS has no active alignment DOFs"
@@ -482,7 +484,9 @@ def run_pose_lbfgs(
 
     active_cols_jnp, bounds_transform = context.active_bound_transform(int(params5_in.shape[0]))
     motion_model = context.motion_model
-    smooth_unbounded_coefficients = motion_model is not None and not bounds_transform.has_finite_bounds
+    smooth_unbounded_coefficients = (
+        motion_model is not None and not bounds_transform.has_finite_bounds
+    )
 
     def _failure_result(
         message: str,

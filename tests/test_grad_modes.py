@@ -1,8 +1,8 @@
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon.fista_tv import grad_data_term
 
 
@@ -18,6 +18,7 @@ def make_case(n_views=5, nx=12, ny=12, nz=12):
     # Build them by calling projector through grad_data_term's path (batched)
     # so that both modes see identical y.
     from tomojax.core.projector import forward_project_view
+
     projs = []
     for i in range(n_views):
         projs.append(forward_project_view(geom, grid, det, vol, view_index=i))

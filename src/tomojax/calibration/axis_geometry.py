@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry.lamino import laminography_axis_unit
-
 
 AXIS_DIRECTION_DOFS: tuple[str, ...] = ("axis_rot_x_deg", "axis_rot_y_deg")
 
@@ -35,10 +34,14 @@ def nominal_axis_unit_from_inputs(geometry_inputs: Mapping[str, object]) -> np.n
 
 
 def default_active_axis_dofs(geometry_inputs: Mapping[str, object]) -> tuple[str, ...]:
-    if str(geometry_inputs.get("geometry_type", "parallel")).lower() in {
-        "lamino",
-        "laminography",
-    } and str(geometry_inputs.get("tilt_about", "x")) == "x":
+    if (
+        str(geometry_inputs.get("geometry_type", "parallel")).lower()
+        in {
+            "lamino",
+            "laminography",
+        }
+        and str(geometry_inputs.get("tilt_about", "x")) == "x"
+    ):
         return ("axis_rot_x_deg",)
     return AXIS_DIRECTION_DOFS
 
@@ -136,9 +139,14 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
         # at the nominal parallel-CT axis, where axis calibration starts.
         cross = jnp.cross(ez, axis)
         K = _skew(cross)
-        return jnp.eye(3, dtype=jnp.float32) + K + (K @ K) / jnp.maximum(
-            jnp.float32(1.0) + cos_theta,
-            jnp.float32(1e-8),
+        return (
+            jnp.eye(3, dtype=jnp.float32)
+            + K
+            + (K @ K)
+            / jnp.maximum(
+                jnp.float32(1.0) + cos_theta,
+                jnp.float32(1e-8),
+            )
         )
 
     def near_parallel() -> jnp.ndarray:

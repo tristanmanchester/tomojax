@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 from tomojax.align.model.dof_specs import ActiveParameterView, optimizer_step_stats
 from tomojax.align.model.dofs import normalize_bounds
@@ -100,9 +100,7 @@ def test_calibration_state_exports_axis_unit_from_axis_rotations():
     )
     state = AlignmentState(setup=setup, pose=PoseState.zeros(1))
 
-    calibration = state.to_calibration_state(
-        active_dofs=("axis_rot_x_deg", "axis_rot_y_deg")
-    )
+    calibration = state.to_calibration_state(active_dofs=("axis_rot_x_deg", "axis_rot_y_deg"))
     variables = calibration.variables_by_name()
     expected_axis = axis_unit_from_rotations(
         (0.0, 0.0, 1.0),

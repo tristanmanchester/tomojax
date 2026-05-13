@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.align.geometry.geometry_applier import (
     BaseGeometryArrays,
@@ -58,8 +58,12 @@ def test_detector_roll_rotates_about_detector_center_without_changing_mean_offse
     unrolled_grid = apply_setup_to_detector_grid(detector, setup)
     rolled_grid = apply_setup_to_detector_grid(detector, rolled)
 
-    np.testing.assert_allclose(np.mean(np.asarray(rolled_grid[0])), np.mean(np.asarray(unrolled_grid[0])))
-    np.testing.assert_allclose(np.mean(np.asarray(rolled_grid[1])), np.mean(np.asarray(unrolled_grid[1])))
+    np.testing.assert_allclose(
+        np.mean(np.asarray(rolled_grid[0])), np.mean(np.asarray(unrolled_grid[0]))
+    )
+    np.testing.assert_allclose(
+        np.mean(np.asarray(rolled_grid[1])), np.mean(np.asarray(unrolled_grid[1]))
+    )
 
 
 def test_axis_pitch_yaw_have_nonzero_local_sensitivity():

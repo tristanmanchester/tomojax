@@ -368,9 +368,7 @@ def _evaluate_family(
                 "det_u_px": float(det_u),
                 "loss": float(loss),
                 "fista_iterations": (
-                    "not_applicable_fixed_volume"
-                    if family.mode == "fixed"
-                    else fista_iterations
+                    "not_applicable_fixed_volume" if family.mode == "fixed" else fista_iterations
                 ),
                 "fista_step_size": (
                     "not_applicable_fixed_volume"
@@ -688,12 +686,8 @@ def _inner_solve_quality_payload(rows: list[dict[str, object]]) -> dict[str, obj
                 "gauge_projection_transfer_ratio_after": row[
                     "gauge_projection_transfer_ratio_after"
                 ],
-                "gauge_projection_coefficient_before": row[
-                    "gauge_projection_coefficient_before"
-                ],
-                "gauge_projection_coefficient_after": row[
-                    "gauge_projection_coefficient_after"
-                ],
+                "gauge_projection_coefficient_before": row["gauge_projection_coefficient_before"],
+                "gauge_projection_coefficient_after": row["gauge_projection_coefficient_after"],
                 "support_mass_fraction": row["support_mass_fraction"],
                 "reduced_initialization": row["reduced_initialization"],
             }
@@ -731,9 +725,7 @@ def _mask_provenance_payload(family: ObjectiveFamily) -> dict[str, object]:
         "schema": "tomojax.variable_projection_mask_provenance.v1",
         "objective_family": family.name,
         "reconstruction_mask_role": (
-            "not_applicable_fixed_volume"
-            if family.mode == "fixed"
-            else "projection_valid_mask"
+            "not_applicable_fixed_volume" if family.mode == "fixed" else "projection_valid_mask"
         ),
         "objective_loss_mask_role": "alignment_loss_mask",
     }

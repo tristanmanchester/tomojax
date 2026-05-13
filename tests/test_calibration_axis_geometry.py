@@ -5,14 +5,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.align.geometry.geometry_blocks import GeometryCalibrationState
+from tomojax.align.pipeline import AlignConfig
 from tomojax.calibration.axis_geometry import (
     axis_pose_stack,
     axis_unit_from_rotations,
     default_active_axis_dofs,
     nominal_axis_unit_from_inputs,
 )
-from tomojax.align.geometry.geometry_blocks import GeometryCalibrationState
-from tomojax.align.pipeline import AlignConfig
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, RotationAxisGeometry
 
 

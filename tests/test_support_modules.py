@@ -3,11 +3,10 @@ from __future__ import annotations
 from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
-from types import SimpleNamespace
 import sys
+from types import SimpleNamespace
 
 import numpy as np
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -134,6 +133,7 @@ def test_perf_harness_main_writes_json_and_prints_summary(monkeypatch, tmp_path,
     assert len(saved) == 4
     assert all(row["algo"] == "fbp" for row in saved)
     assert "fbp   dt=fp32" in captured.out
+
 
 def test_visualize_helpers_cover_empty_and_filtered_cases():
     viz_mod = _load_module("bench_visualize_test", "bench/visualize.py")

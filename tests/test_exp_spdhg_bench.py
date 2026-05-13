@@ -12,7 +12,6 @@ import pytest
 
 from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -130,7 +129,9 @@ def test_prepare_or_load_dataset_falls_back_only_for_expected_resource_errors(
 
 
 def test_prepare_or_load_dataset_reraises_unexpected_errors(monkeypatch, tmp_path: Path) -> None:
-    bench_mod = _load_module("exp_spdhg_bench_fallback_unexpected_test", "scripts/exp_spdhg_bench.py")
+    bench_mod = _load_module(
+        "exp_spdhg_bench_fallback_unexpected_test", "scripts/exp_spdhg_bench.py"
+    )
     args = bench_mod.parse_args(
         [
             "--outdir",
@@ -334,7 +335,6 @@ def test_main_reuses_dataset_and_writes_benchmark_artifacts(
                 "/entry/processing/tomojax/volume",
                 data=np.full(gt_volume.shape, 2.0, dtype=np.float32),
             )
-        return None
 
     def fake_fista_tv(*_args, **_kwargs):
         return np.full(gt_volume.shape, 3.0, dtype=np.float32), {"solver": "fista"}

@@ -1,10 +1,11 @@
-import numpy as np
-import jax
-import jax.numpy as jnp
-import pytest
 from importlib import import_module
 
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view, get_detector_grid_device
@@ -42,21 +43,17 @@ def make_case(
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
     if asymmetric:
         vol = (
-            vol.at[1 : max(2, nx // 2), 2 : max(3, ny - 2), 0 : max(1, nz // 3)].set(0.8)
+            vol.at[1 : max(2, nx // 2), 2 : max(3, ny - 2), 0 : max(1, nz // 3)]
+            .set(0.8)
             .at[max(0, nx - 4) : nx - 1, 1 : max(2, ny // 2), max(1, nz // 2) : nz - 1]
             .set(1.7)
             .at[nx // 2, max(0, ny - 3), nz // 2]
             .set(2.3)
         )
     else:
-        vol = vol.at[
-            nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4
-        ].set(1.0)
+        vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
     projs = jnp.stack(
-        [
-            forward_project_view(geom, grid, det, vol, view_index=i)
-            for i in range(n_views)
-        ],
+        [forward_project_view(geom, grid, det, vol, view_index=i) for i in range(n_views)],
         axis=0,
     )
     return grid, det, geom, vol, projs
@@ -198,9 +195,7 @@ def test_direct_parallel_fbp_backprojects_asymmetric_sinogram_like_generic(monke
     grid = Grid(nx=5, ny=5, nz=3, vx=1.0, vy=1.0, vz=1.0)
     det = Detector(nu=7, nv=3, du=1.0, dv=1.0, det_center=(0.25, -0.5))
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=[0.0, 90.0])
-    projs = jnp.arange(2 * det.nv * det.nu, dtype=jnp.float32).reshape(
-        (2, det.nv, det.nu)
-    )
+    projs = jnp.arange(2 * det.nv * det.nu, dtype=jnp.float32).reshape((2, det.nv, det.nu))
 
     monkeypatch.setattr(fbp_mod, "_fft_filter_rows_jit", lambda rows, du, filter_name: rows)
 
@@ -386,10 +381,7 @@ def test_pallas_parallel_fbp_helper_matches_generic_on_guard_geometry():
     )
     volume = jnp.asarray(make_phantom(cfg), dtype=jnp.float32)
     projs = jnp.stack(
-        [
-            forward_project_view(geom, grid, det, volume, view_index=i)
-            for i in range(views)
-        ],
+        [forward_project_view(geom, grid, det, volume, view_index=i) for i in range(views)],
         axis=0,
     )
     poses = stack_view_poses(geom, views)

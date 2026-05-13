@@ -9,6 +9,7 @@ from tomojax.align._profiles import (
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
 )
+
 # check-public-imports: allow-private
 from tomojax.align._quality_policy import (
     normalize_quality_tier,

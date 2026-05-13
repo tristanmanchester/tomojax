@@ -15,7 +15,6 @@ def extract_central_slice(volume: np.ndarray) -> np.ndarray:
     Reconstruction volumes use internal ``xyz`` order. PNG images use row/column
     order, so the returned slice is transposed to display as ``y, x``.
     """
-
     arr = np.asarray(volume)
     if arr.ndim == 2:
         return arr.T
@@ -31,13 +30,11 @@ def scale_to_uint8(
     upper_percentile: float = 99.0,
 ) -> np.ndarray:
     """Scale a 2D image to uint8 using finite-value percentile limits."""
-
     lower = float(lower_percentile)
     upper = float(upper_percentile)
     if not (0.0 <= lower < upper <= 100.0):
         raise ValueError(
-            "percentile bounds must satisfy 0 <= lower_percentile < "
-            "upper_percentile <= 100"
+            "percentile bounds must satisfy 0 <= lower_percentile < upper_percentile <= 100"
         )
 
     arr = np.asarray(image, dtype=np.float32)
@@ -61,7 +58,6 @@ def scale_to_uint8(
 
 def save_quicklook_png(path: PathLike, volume: np.ndarray) -> Path:
     """Write a percentile-scaled central reconstruction slice as a PNG."""
-
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     image = scale_to_uint8(extract_central_slice(volume))

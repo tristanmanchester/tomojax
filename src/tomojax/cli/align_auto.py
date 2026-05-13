@@ -364,9 +364,7 @@ def _apply_synthetic_case(args: argparse.Namespace) -> None:
     if case == "pose-random":
         args.synthetic_dataset = "synth128_pose_random_extreme"
         args.geometry_update_active_setup_parameters = "none"
-        args.geometry_update_active_pose_dofs = (
-            "alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px"
-        )
+        args.geometry_update_active_pose_dofs = "alpha_rad,beta_rad,phi_residual_rad,dx_px,dz_px"
         args.geometry_update_alpha_beta_activate_at_level_factor = 1
         args.geometry_update_pose_trust_radius = -1.0
         args.geometry_update_final_pose_polish_updates = 64
@@ -491,9 +489,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             preview_residual_filter_mode=preview_residual_filter_mode,
             preview_center_l2_weight=float(args.preview_center_l2_weight),
             preview_support_outside_weight=float(args.preview_support_outside_weight),
-            preview_low_frequency_anchor_weight=float(
-                args.preview_low_frequency_anchor_weight
-            ),
+            preview_low_frequency_anchor_weight=float(args.preview_low_frequency_anchor_weight),
             preview_det_u_gauge_mode_weight=float(args.preview_det_u_gauge_mode_weight),
             stopped_preview_policy=stopped_preview_policy,
             fit_gain_offset_nuisance=bool(args.fit_gain_offset_nuisance),

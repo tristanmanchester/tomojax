@@ -67,7 +67,9 @@ def test_alignment_objective_suite_compares_checkpoint_modes_and_batches_all_vie
     calls: list[tuple[bool, int, str]] = []
 
     def fake_benchmark(name, config, *, implementation="stacked"):
-        calls.append((bool(config.checkpoint_projector), int(config.views_per_batch), implementation))
+        calls.append(
+            (bool(config.checkpoint_projector), int(config.views_per_batch), implementation)
+        )
         return {
             "benchmark": "alignment_objective_value_and_grad",
             "case_name": name,
@@ -82,7 +84,7 @@ def test_alignment_objective_suite_compares_checkpoint_modes_and_batches_all_vie
         "tomojax.bench.alignment_objective.benchmark_alignment_objective_variant",
         fake_benchmark,
     )
-    monkeypatch.setattr("tomojax.bench.alignment_objective._device_metadata", lambda: {})
+    monkeypatch.setattr("tomojax.bench.alignment_objective._device_metadata", dict)
 
     metrics = run_alignment_objective_suite(overrides={"warm_runs": 3})
 

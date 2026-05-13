@@ -215,18 +215,14 @@ def test_centered_volume_support_generates_cylinder_and_sphere() -> None:
         ),
         (
             ReferenceFISTAConfig(
-                residual_filters=(
-                    ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=0.8),
-                ),
+                residual_filters=(ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=0.8),),
                 non_negative=False,
             ),
             None,
         ),
         (
             ReferenceFISTAConfig(
-                residual_filters=(
-                    ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=0.8),
-                ),
+                residual_filters=(ResidualFilterConfig(kind="lowpass_gaussian", sigma_px=0.8),),
                 tv_weight=1.0e-3,
                 center_l2_weight=0.2,
                 non_negative=False,
@@ -244,12 +240,8 @@ def test_reference_fista_explicit_gradient_matches_finite_difference(
     observed = project_parallel_reference(truth, geometry)
     volume: jnp.ndarray = truth * 0.7 + jnp.linspace(
         0.0, 0.2, truth.size, dtype=jnp.float32
-    ).reshape(
-        truth.shape
-    )
-    direction: jnp.ndarray = jnp.cos(jnp.arange(truth.size, dtype=jnp.float32)).reshape(
-        truth.shape
-    )
+    ).reshape(truth.shape)
+    direction: jnp.ndarray = jnp.cos(jnp.arange(truth.size, dtype=jnp.float32)).reshape(truth.shape)
     direction = cast("jnp.ndarray", direction / jnp.linalg.norm(direction))
     volume_shape = (
         int(volume.shape[0]),
@@ -309,15 +301,14 @@ def test_reference_fista_diagnostics_lock_scalar_gradient_contract(tmp_path: Pat
         "dog_tv_center",
     }
     assert all(case["passed"] is True for case in gradient_cases)
-    assert cast("dict[str, object]", diagnostics.fista_gradient_checks["support_check"])[
-        "passed"
-    ] is True
+    assert (
+        cast("dict[str, object]", diagnostics.fista_gradient_checks["support_check"])["passed"]
+        is True
+    )
 
     assert diagnostics.adjoint_checks["schema"] == "tomojax.adjoint_checks.v1"
     assert diagnostics.adjoint_checks["status"] == "passed"
-    assert diagnostics.geometry_jvp_vjp_checks["schema"] == (
-        "tomojax.geometry_jvp_vjp_checks.v1"
-    )
+    assert diagnostics.geometry_jvp_vjp_checks["schema"] == ("tomojax.geometry_jvp_vjp_checks.v1")
     assert diagnostics.geometry_jvp_vjp_checks["status"] == "passed"
     assert diagnostics.loss_normalisation_report["schema"] == (
         "tomojax.loss_normalisation_report.v1"
@@ -325,9 +316,9 @@ def test_reference_fista_diagnostics_lock_scalar_gradient_contract(tmp_path: Pat
     assert diagnostics.loss_normalisation_report["current_contract"] == (
         "full_projection_array_size"
     )
-    assert diagnostics.loss_normalisation_report[
-        "reference_matches_array_pixel_normalisation"
-    ] is True
+    assert (
+        diagnostics.loss_normalisation_report["reference_matches_array_pixel_normalisation"] is True
+    )
 
     trace_path = write_fista_trace_recomputed_csv(
         diagnostics.fista_trace_recomputed_rows,

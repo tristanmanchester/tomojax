@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
+from tomojax.align.geometry.geometry_blocks import GeometryCalibrationState, level_detector_grid
 from tomojax.align.geometry.initializers import (
     projection_com_det_u_seed,
     train_heldout_view_indices,
 )
-from tomojax.align.geometry.geometry_blocks import GeometryCalibrationState, level_detector_grid
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import L2OtsuLossSpec
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry

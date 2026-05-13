@@ -26,7 +26,9 @@ def sphere(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0) -> 
     return X
 
 
-def cube(nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed: int | None = None) -> np.ndarray:
+def cube(
+    nx: int, ny: int, nz: int, size: float = 0.5, value: float = 1.0, seed: int | None = None
+) -> np.ndarray:
     """Axis-aligned cube in a zero background with side length = size * min(nx,ny,nz).
 
     Centered in the volume. Returns float32 array of shape (nx, ny, nz).
@@ -62,7 +64,9 @@ def rotated_centered_cube(
     if angles is None:
         rng = np.random.default_rng(seed)
         angles = tuple(rng.uniform(-np.pi, np.pi, size=3).tolist())  # type: ignore
-    _add_rotated_cube_soft(vol, (cx, cy, cz), float(side), float(value), angles, edge_softness=edge_softness)
+    _add_rotated_cube_soft(
+        vol, (cx, cy, cz), float(side), float(value), angles, edge_softness=edge_softness
+    )
     return vol.astype(np.float32)
 
 
@@ -100,18 +104,16 @@ def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
     """
     X = np.zeros((nx, ny, nz), dtype=np.float32)
     cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
+
     def add_ellipsoid(axes, center, value):
         ax, ay, az = axes
         ox, oy, oz = center
         xs = (np.arange(nx) - (cx + ox)) / ax
         ys = (np.arange(ny) - (cy + oy)) / ay
         zs = (np.arange(nz) - (cz + oz)) / az
-        E = (
-            (xs[:, None, None] ** 2)
-            + (ys[None, :, None] ** 2)
-            + (zs[None, None, :] ** 2)
-        ) <= 1.0
+        E = ((xs[:, None, None] ** 2) + (ys[None, :, None] ** 2) + (zs[None, None, :] ** 2)) <= 1.0
         X[E] += value
+
     add_ellipsoid((0.69 * nx / 2, 0.92 * ny / 2, 0.9 * nz / 2), (0, 0, 0), 1.0)
     add_ellipsoid((0.6624 * nx / 2, 0.8740 * ny / 2, 0.88 * nz / 2), (0, 0, 0), -0.2)
     add_ellipsoid((0.21 * nx / 2, 0.25 * ny / 2, 0.2 * nz / 2), (0.22 * nx / 4, 0, 0), -0.15)
@@ -126,25 +128,40 @@ def shepp_logan_3d(nx: int, ny: int, nz: int) -> np.ndarray:
 # ----------------------------
 def _rotation_matrix_3d(angles):
     rx, ry, rz = angles
-    Rx = np.array([[1, 0, 0], [0, np.cos(rx), -np.sin(rx)], [0, np.sin(rx), np.cos(rx)]], dtype=np.float64)
-    Ry = np.array([[np.cos(ry), 0, np.sin(ry)], [0, 1, 0], [-np.sin(ry), 0, np.cos(ry)]], dtype=np.float64)
-    Rz = np.array([[np.cos(rz), -np.sin(rz), 0], [np.sin(rz), np.cos(rz), 0], [0, 0, 1]], dtype=np.float64)
+    Rx = np.array(
+        [[1, 0, 0], [0, np.cos(rx), -np.sin(rx)], [0, np.sin(rx), np.cos(rx)]], dtype=np.float64
+    )
+    Ry = np.array(
+        [[np.cos(ry), 0, np.sin(ry)], [0, 1, 0], [-np.sin(ry), 0, np.cos(ry)]], dtype=np.float64
+    )
+    Rz = np.array(
+        [[np.cos(rz), -np.sin(rz), 0], [np.sin(rz), np.cos(rz), 0], [0, 0, 1]], dtype=np.float64
+    )
     return (Rz @ Ry @ Rx).astype(np.float64)
 
 
-def _add_rotated_cube_soft(vol: np.ndarray, center, size: float, value: float, angles, edge_softness: float = 1.0):
+def _add_rotated_cube_soft(
+    vol: np.ndarray, center, size: float, value: float, angles, edge_softness: float = 1.0
+):
     """Add a softly edged rotated cube into vol by ROI evaluation (no SciPy)."""
     nx, ny, nz = vol.shape
     cx, cy, cz = center
     R = _rotation_matrix_3d(angles)
     half = size / 2.0
     # Cube corners for ROI bounds
-    corners = np.array([
-        [-half, -half, -half], [half, -half, -half],
-        [-half, half, -half],  [half, half, -half],
-        [-half, -half, half],  [half, -half, half],
-        [-half, half, half],   [half, half, half]
-    ], dtype=np.float64)
+    corners = np.array(
+        [
+            [-half, -half, -half],
+            [half, -half, -half],
+            [-half, half, -half],
+            [half, half, -half],
+            [-half, -half, half],
+            [half, -half, half],
+            [-half, half, half],
+            [half, half, half],
+        ],
+        dtype=np.float64,
+    )
     rot = (R @ corners.T).T
     bb_min = np.floor(np.min(rot, axis=0) + np.array([cx, cy, cz])).astype(int)
     bb_max = np.ceil(np.max(rot, axis=0) + np.array([cx, cy, cz])).astype(int)
@@ -155,7 +172,7 @@ def _add_rotated_cube_soft(vol: np.ndarray, center, size: float, value: float, a
     xs = np.arange(bb_min[0], bb_max[0] + 1)
     ys = np.arange(bb_min[1], bb_max[1] + 1)
     zs = np.arange(bb_min[2], bb_max[2] + 1)
-    X, Y, Z = np.meshgrid(xs, ys, zs, indexing='ij')
+    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
     P = np.stack([(X - cx), (Y - cy), (Z - cz)], axis=0).reshape(3, -1)
     Q = (R.T @ P).reshape(3, *X.shape)
     # Soft inside mask via distance to faces
@@ -164,7 +181,7 @@ def _add_rotated_cube_soft(vol: np.ndarray, center, size: float, value: float, a
     dz = np.maximum(0.0, np.abs(Q[2]) - (half - 0.5))
     dist = np.sqrt(dx * dx + dy * dy + dz * dz)
     alpha = np.clip(1.0 - dist / max(edge_softness, 1e-6), 0.0, 1.0).astype(np.float32)
-    sub = vol[xs.min():xs.max()+1, ys.min():ys.max()+1, zs.min():zs.max()+1]
+    sub = vol[xs.min() : xs.max() + 1, ys.min() : ys.max() + 1, zs.min() : zs.max() + 1]
     np.maximum(sub, (value * alpha).astype(np.float32), out=sub)
 
 
@@ -314,7 +331,7 @@ def random_cubes_spheres(
     rng = np.random.default_rng(seed)
 
     cx0, cy0 = nx / 2.0, ny / 2.0
-    fov_r = min(nx, ny) / 2.0 if use_inscribed_fov else float('inf')
+    fov_r = min(nx, ny) / 2.0 if use_inscribed_fov else float("inf")
 
     # Cubes
     for _ in range(max(0, int(n_cubes))):
@@ -395,7 +412,6 @@ def lamino_disk(
     coordinates, and the nominal rotation axis is the +z axis. The thin slab is
     therefore orthogonal to +z, i.e., confined to the central few z-slices.
     """
-
     ratio = float(np.clip(thickness_ratio, 0.0, 1.0))
     nz_thin = int(round(ratio * nz))
     nz_thin = max(1, min(nz, nz_thin))
@@ -447,7 +463,6 @@ def lamino_disk_legacy(
     tilt_about: str = "x",
 ) -> np.ndarray:
     """Compatibility wrapper for callers that still pass ignored tilt options."""
-
     del tilt_deg, tilt_about
     return lamino_disk(
         nx,

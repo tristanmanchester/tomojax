@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
 import math
+from pathlib import Path
 from typing import Any, TypeAlias, TypedDict
 
 import h5py
@@ -78,6 +78,7 @@ class InspectionReport(TypedDict):
     flats_darks: dict[str, Any]
     alignment: AlignmentReport
     memory_estimates: dict[str, Any]
+
 
 _PROJECTION_PATHS = (
     "/entry/instrument/detector/data",
@@ -306,7 +307,9 @@ def _geometry_report(file: h5py.File) -> dict[str, Any]:
         meta = _json_attr_to_mapping(geom.attrs.get("geometry_meta_json"))
     return {
         "found": bool(found),
-        "type": _attr_to_str(geom.attrs.get("type")) if found and isinstance(geom, h5py.Group) else None,
+        "type": _attr_to_str(geom.attrs.get("type"))
+        if found and isinstance(geom, h5py.Group)
+        else None,
         "meta_found": meta is not None,
         "meta_keys": sorted(str(k) for k in meta.keys()) if meta is not None else [],
     }
@@ -384,10 +387,7 @@ def _alignment_report(file: h5py.File) -> AlignmentReport:
     angle_offset_found = isinstance(angle_offset, h5py.Dataset)
     return {
         "found": bool(
-            params_found
-            or angle_offset_found
-            or misalign_spec is not None
-            or gauge_fix is not None
+            params_found or angle_offset_found or misalign_spec is not None or gauge_fix is not None
         ),
         "params_found": bool(params_found),
         "params_shape": [int(v) for v in params.shape] if params_found else None,
@@ -465,7 +465,6 @@ def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> dict[str
 
 def inspect_nxtomo(path: PathLike) -> InspectionReport:
     """Inspect an HDF5/NXtomo file without materializing TomoJAX/JAX objects."""
-
     input_path = Path(path)
     with h5py.File(input_path, "r") as file:
         projection_path, projection_dataset = _find_projection_dataset(file)
@@ -500,7 +499,6 @@ def _fmt_bool_presence(found: bool) -> str:
 
 def format_inspection_report(report: InspectionReport) -> str:
     """Format an inspection report for terminal output."""
-
     projection = report["projection"]
     angles = report["angles"]
     geometry = report["geometry"]
@@ -566,8 +564,7 @@ def format_inspection_report(report: InspectionReport) -> str:
 
     if flats_darks["flats_present"] or flats_darks["darks_present"]:
         lines.append(
-            "Flats/darks: "
-            f"flats={flats_darks['flat_count']}, darks={flats_darks['dark_count']}"
+            f"Flats/darks: flats={flats_darks['flat_count']}, darks={flats_darks['dark_count']}"
         )
     elif flats_darks["image_key_found"]:
         lines.append("Flats/darks: not found (image_key present; no flat/dark frames)")
@@ -604,7 +601,6 @@ def format_inspection_report(report: InspectionReport) -> str:
 
 def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Path:
     """Save a percentile-scaled central projection PNG."""
-
     in_path = Path(input_path)
     out_path = Path(output_path)
     with h5py.File(in_path, "r") as file:
@@ -612,7 +608,9 @@ def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Pa
         if dataset is None:
             raise KeyError("Could not find projections dataset under /entry")
         if dataset.ndim != 3:
-            raise ValueError(f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}")
+            raise ValueError(
+                f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}"
+            )
         central = np.asarray(dataset[int(dataset.shape[0]) // 2])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     iio.imwrite(out_path, scale_to_uint8(central))

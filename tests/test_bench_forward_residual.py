@@ -7,9 +7,9 @@ import jax.numpy as jnp
 import pytest
 
 from tomojax.bench.forward_residual import (
-    ForwardResidualBenchmarkConfig,
     PALLAS_DISPATCH_RAY_STEP_THRESHOLD,
     RESIDUAL_SUITE_NAMES,
+    ForwardResidualBenchmarkConfig,
     _geomean,
     benchmark_residual_mode,
     make_forward_residual_fixture,

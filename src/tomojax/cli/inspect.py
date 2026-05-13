@@ -6,13 +6,16 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import Sequence
+from typing import TYPE_CHECKING
 
-from ..data.inspection import (
+from tomojax.io import (
     format_inspection_report,
-    inspect_nxtomo,
+    inspect_dataset,
     save_projection_quicklook,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -36,6 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the dataset inspection command."""
     args = _build_parser().parse_args(argv)
     path = Path(args.input)
 
@@ -47,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     try:
-        report = inspect_nxtomo(path)
+        report = inspect_dataset(path)
     except Exception as exc:
         print(f"ERROR: could not inspect {path}: {exc}", file=sys.stderr)
         return 1
@@ -66,7 +70,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             save_projection_quicklook(path, args.quicklook)
         except Exception as exc:
-            print(f"ERROR: could not write quicklook {args.quicklook}: {exc}", file=sys.stderr)
+            print(
+                f"ERROR: could not write quicklook {args.quicklook}: {exc}",
+                file=sys.stderr,
+            )
             return 1
 
     return 0

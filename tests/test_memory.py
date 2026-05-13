@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # pyright: reportPrivateUsage=false, reportUnknownMemberType=false
 # pyright: reportUnknownArgumentType=false, reportAny=false
-
 import sys
 from types import SimpleNamespace
 

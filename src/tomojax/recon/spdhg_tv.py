@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from ..core.geometry.base import Geometry, Grid, Detector
+from ..core.geometry.base import Detector, Geometry, Grid
 from ..core.geometry.views import stack_view_poses
 from ..core.projector import (
     forward_project_view_T,
@@ -68,7 +67,7 @@ def _estimate_norm_A2(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections_shape: Tuple[int, int, int],
+    projections_shape: tuple[int, int, int],
     T_all: jnp.ndarray,
     *,
     views_per_batch: int,
@@ -183,8 +182,7 @@ def spdhg_tv(
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
-    """
-    SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
+    """SPDHG (stochastic Chambolle-Pock) with weighted L2 data term and TV-like regularization.
 
     If ``callback`` is provided, it fires on the first logged objective sample and
     on the final logged objective sample. The callback arguments are ``(step,
@@ -371,8 +369,7 @@ def spdhg_tv(
         else:
             norm = jnp.maximum(
                 1.0,
-                jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u)
-                / jnp.maximum(lam, 1e-12),
+                jnp.sqrt(p1_u * p1_u + p2_u * p2_u + p3_u * p3_u) / jnp.maximum(lam, 1e-12),
             )
             p1_new = p1_u / norm
             p2_new = p2_u / norm

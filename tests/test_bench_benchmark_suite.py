@@ -67,7 +67,12 @@ def test_case_summary_includes_cold_and_direct_generic_metrics() -> None:
     summary = benchmark_suite._case_summary(
         {"name": "case", "size": 8, "detector": 8, "views": 4, "warmup": 1, "repeat": 1},
         _case_report(),
-        {"json": "case.json", "markdown": "case.md", "summary_csv": "case.csv", "quality_csv": "quality.csv"},
+        {
+            "json": "case.json",
+            "markdown": "case.md",
+            "summary_csv": "case.csv",
+            "quality_csv": "quality.csv",
+        },
     )
 
     assert summary["evidence_class"] == "guard_invalid_for_claims"
@@ -137,7 +142,7 @@ def test_suite_summary_marks_guard_as_not_publication_evidence(tmp_path) -> None
                     "family": "alignment_smoke",
                     "seed": 789,
                     "config": {"size": 24, "views": 24},
-                }
+                },
             ],
         },
         "benchmark_targets": {

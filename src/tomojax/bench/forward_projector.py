@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 import importlib
 import json
+from pathlib import Path
 import statistics
 import time
-from dataclasses import asdict, dataclass, replace
-from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
-from tomojax.core.projector import _resolve_n_steps, forward_project_view_T, get_detector_grid_device
+from tomojax.core.projector import (
+    _resolve_n_steps,
+    forward_project_view_T,
+    get_detector_grid_device,
+)
 
 BackendName = Literal["jax", "pallas"]
 SinogramModeName = Literal[
@@ -198,7 +203,9 @@ def preset_config(name: str) -> ForwardProjectorBenchmarkConfig:
 def suite_cases(name: str) -> tuple[ForwardProjectorSuiteCase, ...]:
     """Return the named benchmark suite as concrete per-case configs."""
     if name == "quick":
-        return (ForwardProjectorSuiteCase("high-ray-count-128", preset_config("high-ray-count-128")),)
+        return (
+            ForwardProjectorSuiteCase("high-ray-count-128", preset_config("high-ray-count-128")),
+        )
     if name == "confirm":
         return (
             ForwardProjectorSuiteCase(
@@ -384,7 +391,7 @@ def make_forward_sinogram_fixture(
 
 def _general_5d_pose_stack(thetas_deg: np.ndarray, *, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed + 137)
-    n = int(len(thetas_deg))
+    n = len(thetas_deg)
     alpha = rng.uniform(-5.0, 5.0, size=n).astype(np.float32) * np.float32(np.pi / 180.0)
     beta = rng.uniform(-5.0, 5.0, size=n).astype(np.float32) * np.float32(np.pi / 180.0)
     phi = thetas_deg.astype(np.float32) * np.float32(np.pi / 180.0)
@@ -768,6 +775,7 @@ def _make_backend_callable(
                     interpret=False,
                     unroll=config.unroll,
                 )
+
         setup_seconds = time.perf_counter() - setup_start
 
         def call_cached_pallas() -> jnp.ndarray:
@@ -829,8 +837,14 @@ def _make_sinogram_callable(
     pallas_fn, fallback_reason = _resolve_pallas_callable()
     pallas_module, module_reason = _resolve_pallas_module()
     if requested_mode in {"pallas_batched", "pallas_dispatch"}:
-        pallas_fn = getattr(pallas_module, "forward_project_views_T_pallas", None) if pallas_module else None
-        fallback_reason = module_reason if pallas_module is None else "pallas_batched_callable_missing"
+        pallas_fn = (
+            getattr(pallas_module, "forward_project_views_T_pallas", None)
+            if pallas_module
+            else None
+        )
+        fallback_reason = (
+            module_reason if pallas_module is None else "pallas_batched_callable_missing"
+        )
     if pallas_fn is None:
         return lambda: _call_jax_sinogram_loop(fixture, config), "jax_loop", fallback_reason
     unsupported_reason = (
@@ -1002,10 +1016,7 @@ def _detector_tile_shape(
                 break
     if best_area > 1:
         return best
-    if (
-        config.pallas_state_mode == "cached"
-        and config.pallas_layout_variant == "detector_vu"
-    ):
+    if config.pallas_state_mode == "cached" and config.pallas_layout_variant == "detector_vu":
         remainder = (max(1, min(int(config.nv), max_v)), max(1, min(int(config.nu), max_u)))
         area = int(remainder[0]) * int(remainder[1])
         if area > 0 and area & (area - 1) == 0:
@@ -1352,7 +1363,9 @@ def _suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "cases_total": len(cases),
         "cases_with_requested_pallas": len(pallas_rows),
-        "cases_pallas_eligible": sum(1 for row in pallas_rows if row.get("eligible_for_speed_claim")),
+        "cases_pallas_eligible": sum(
+            1 for row in pallas_rows if row.get("eligible_for_speed_claim")
+        ),
         "cases_parity_passed": sum(1 for row in pallas_rows if _parity_passed(row)),
         "geomean_speedup_vs_jax_warm_median": _geomean(speedups),
         "worst_case_speedup_vs_jax_warm_median": min(speedups) if speedups else None,
@@ -1395,7 +1408,9 @@ def _sinogram_suite_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "cases_total": len(cases),
         "cases_with_requested_pallas": len(pallas_rows),
-        "cases_pallas_eligible": sum(1 for row in pallas_rows if row.get("eligible_for_speed_claim")),
+        "cases_pallas_eligible": sum(
+            1 for row in pallas_rows if row.get("eligible_for_speed_claim")
+        ),
         "cases_parity_passed": sum(1 for row in pallas_rows if _parity_passed(row)),
         "pallas_modes": mode_summaries,
         "primary_pallas_mode": "pallas_dispatch",

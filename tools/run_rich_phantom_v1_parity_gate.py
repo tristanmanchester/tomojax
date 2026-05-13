@@ -259,9 +259,7 @@ def _write_downsampled_sidecar(
     manifest["views"] = int(projections.shape[0])
     manifest["multires_factor"] = int(factor)
     manifest["multires_source_dataset"] = str(source_dir)
-    manifest["artifact_contract"] = (
-        "tomojax-v2.synthetic-dataset.multires-forward-consistent.v1"
-    )
+    manifest["artifact_contract"] = "tomojax-v2.synthetic-dataset.multires-forward-consistent.v1"
     manifest["coarse_projection_policy"] = (
         "project_binned_volume_with_level_true_geometry; do not use binned full-resolution "
         "projections as oracle evidence"

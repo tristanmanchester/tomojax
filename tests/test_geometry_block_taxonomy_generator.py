@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import sys
 from pathlib import Path
+import sys
 
 import imageio.v3 as iio
 import numpy as np
-
 
 SCRIPT_PATH = Path("scripts/generate_alignment_before_after_128.py")
 
@@ -112,7 +111,9 @@ def test_dry_run_catalog_metadata_includes_suite_category_and_expectation(tmp_pa
     generator = _load_generator()
     out = tmp_path / "catalog"
 
-    generator.main(["--out", str(out), "--dry-run", "--profile", "docs", "--scenario-set", "capability"])
+    generator.main(
+        ["--out", str(out), "--dry-run", "--profile", "docs", "--scenario-set", "capability"]
+    )
 
     scenarios = json.loads((out / "artifacts" / "scenario_catalog.json").read_text())
     first = scenarios[0]
@@ -142,7 +143,9 @@ def test_comprehensive_dry_run_marks_diagnostics_non_headline(tmp_path):
     )
 
     scenarios = json.loads((out / "artifacts" / "scenario_catalog.json").read_text())
-    diagnostics = [scenario for scenario in scenarios if scenario["scenario_category"] == "diagnostic"]
+    diagnostics = [
+        scenario for scenario in scenarios if scenario["scenario_category"] == "diagnostic"
+    ]
 
     assert diagnostics
     assert all(scenario["headline_eligible"] is False for scenario in diagnostics)
@@ -152,7 +155,9 @@ def test_stress_dry_run_writes_only_stress_scenarios(tmp_path):
     generator = _load_generator()
     out = tmp_path / "stress"
 
-    generator.main(["--out", str(out), "--dry-run", "--profile", "docs", "--scenario-set", "stress"])
+    generator.main(
+        ["--out", str(out), "--dry-run", "--profile", "docs", "--scenario-set", "stress"]
+    )
 
     scenarios = json.loads((out / "artifacts" / "scenario_catalog.json").read_text())
 

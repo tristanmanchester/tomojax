@@ -1,17 +1,17 @@
 import os
+
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 
-import numpy as np
-import pytest
 import jax.numpy as jnp
+import numpy as np
 
-from tomojax.data.simulate import SimConfig, simulate
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
+from tomojax.align.pipeline import AlignConfig, align
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
+from tomojax.data.simulate import SimConfig, simulate
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-from tomojax.align.pipeline import align, AlignConfig
-from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 
 
 def psnr(x, y):
@@ -28,8 +28,21 @@ def test_integration_parallel_fbp_psnr_from_sim():
     cfg = SimConfig(nx=16, ny=16, nz=16, nu=16, nv=16, n_views=16, phantom="shepp", seed=0)
     data = simulate(cfg)
     grid_d, det_d = data["grid"], data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
     rec = fbp(geom, grid, det, jnp.asarray(data["projections"]))
     assert psnr(rec, data["volume"]) > 9.0
@@ -50,8 +63,21 @@ def test_integration_lamino_fbp_psnr_from_sim():
     )
     data = simulate(cfg)
     grid_d, det_d = data["grid"], data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     geom = LaminographyGeometry(
         grid=grid,
         detector=det,
@@ -67,8 +93,21 @@ def test_integration_parallel_fista_decreases_from_sim():
     cfg = SimConfig(nx=12, ny=12, nz=12, nu=12, nv=12, n_views=12, phantom="blobs", seed=1)
     data = simulate(cfg)
     grid_d, det_d = data["grid"], data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
     x, info = fista_tv(
         geom,
@@ -81,13 +120,40 @@ def test_integration_parallel_fista_decreases_from_sim():
 
 
 def test_integration_lamino_fista_decreases():
-    cfg = SimConfig(nx=12, ny=12, nz=12, nu=12, nv=12, n_views=12, phantom="cube", geometry="lamino", tilt_deg=30.0, seed=2)
+    cfg = SimConfig(
+        nx=12,
+        ny=12,
+        nz=12,
+        nu=12,
+        nv=12,
+        n_views=12,
+        phantom="cube",
+        geometry="lamino",
+        tilt_deg=30.0,
+        seed=2,
+    )
     data = simulate(cfg)
     grid_d, det_d = data["grid"], data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     from tomojax.core.geometry import LaminographyGeometry
-    geom = LaminographyGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"], tilt_deg=30.0, tilt_about="x")
+
+    geom = LaminographyGeometry(
+        grid=grid, detector=det, thetas_deg=data["thetas_deg"], tilt_deg=30.0, tilt_about="x"
+    )
     x, info = fista_tv(
         geom,
         grid,
@@ -103,9 +169,22 @@ def test_integration_align_parallel_improves_rmse():
     cfg = SimConfig(nx=12, ny=12, nz=12, nu=12, nv=12, n_views=8, phantom="cube", seed=3)
     data = simulate(cfg)
     grid_d, det_d = data["grid"], data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
-    geom_nom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"]) 
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
+    geom_nom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
 
     # Apply small random per-view misalignments to generate projections
     rng = np.random.default_rng(0)
@@ -130,7 +209,13 @@ def test_integration_align_parallel_improves_rmse():
     projs = jnp.stack(projs, axis=0)
 
     # Run quick alignment
-    x, est_params, info = align(geom_nom, grid, det, projs, cfg=AlignConfig(outer_iters=1, recon_iters=3, lambda_tv=0.001, lr_rot=5e-3, lr_trans=1e-1))
+    x, est_params, info = align(
+        geom_nom,
+        grid,
+        det,
+        projs,
+        cfg=AlignConfig(outer_iters=1, recon_iters=3, lambda_tv=0.001, lr_rot=5e-3, lr_trans=1e-1),
+    )
     # Compute RMSEs
     rot_rmse_deg = np.rad2deg(np.sqrt(np.mean((est_params[:, :3] - true_params[:, :3]) ** 2)))
     trans_rmse = float(np.sqrt(np.mean((est_params[:, 3:] - true_params[:, 3:]) ** 2)))

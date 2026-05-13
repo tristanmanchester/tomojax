@@ -19,7 +19,6 @@ from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_stat
 from ..geometry.parametrizations import se3_from_5d
 from ..model.state import AlignmentState
 
-
 ReconDifferentiationMode = Literal["unrolled", "implicit"]
 
 
@@ -81,9 +80,7 @@ class ReconLayer:
         view_weights: jnp.ndarray | None = None,
     ) -> ReconLayerResult:
         if self.config.regulariser != "huber_tv" and self.config.lambda_tv != 0.0:
-            raise ValueError(
-                "ReconLayer differentiable modes require huber_tv or lambda_tv=0"
-            )
+            raise ValueError("ReconLayer differentiable modes require huber_tv or lambda_tv=0")
         effective = apply_alignment_state(self.base, state)
         x0 = (
             jnp.zeros((self.grid.nx, self.grid.ny, self.grid.nz), dtype=jnp.float32)
@@ -229,11 +226,14 @@ def _implicit_reconstruct_arrays(
         grad_x = jax.grad(objective_x, argnums=0)
 
         def hvp(direction: jnp.ndarray) -> jnp.ndarray:
-            return jax.jvp(
-                lambda x: grad_x(x, T, u, v),
-                (x_star,),
-                (direction,),
-            )[1] + jnp.asarray(damping, dtype=jnp.float32) * direction
+            return (
+                jax.jvp(
+                    lambda x: grad_x(x, T, u, v),
+                    (x_star,),
+                    (direction,),
+                )[1]
+                + jnp.asarray(damping, dtype=jnp.float32) * direction
+            )
 
         adjoint, _ = jsp.sparse.linalg.cg(
             hvp,

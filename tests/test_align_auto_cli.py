@@ -58,11 +58,12 @@ def test_align_auto_smoke_help_documents_outputs(capsys: pytest.CaptureFixture[s
         assert forbidden not in captured.out.lower()
 
 
-def test_public_cli_scripts_use_production_auto_name() -> None:
+def test_public_cli_scripts_use_single_grouped_entrypoint() -> None:
     pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
     scripts = cast("dict[str, str]", pyproject["project"]["scripts"])
 
-    assert scripts["tomojax-align-auto"] == "tomojax.cli.align_auto:main"
+    assert scripts == {"tomojax": "tomojax.cli.main:main"}
+    assert "tomojax-align-auto" not in scripts
     assert "tomojax-align-auto-smoke" not in scripts
     assert "tomojax-alignment-smoke-bench" not in scripts
 
@@ -757,7 +758,10 @@ def test_align_auto_smoke_command_ingests_existing_synthetic_dataset_dir(  # noq
     )
     object_motion = cast("dict[str, object]", benchmark_result["object_motion_suspicion"])
     assert object_motion["suspected"] is True
-    assert object_motion["evidence_sources"] == ["synthetic_sidecar_unsupported_dof"]
+    assert object_motion["evidence_sources"] == [
+        "synthetic_sidecar_unsupported_dof",
+        "smooth_pose_drift",
+    ]
     object_recovery = cast("dict[str, object]", benchmark_result["object_motion_recovery"])
     assert object_recovery["enabled"] is False
     assert object_recovery["tx_rmse_px"] == true_object_motion["tx_zero_model_rmse_px"]

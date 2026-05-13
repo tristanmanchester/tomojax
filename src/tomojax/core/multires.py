@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Tuple
+from collections.abc import Iterable
 import math
 
 import jax.image as jimage
@@ -125,7 +125,9 @@ def bin_volume(vol: jnp.ndarray, factor: int) -> jnp.ndarray:
     return v.mean(axis=(1, 3, 5))
 
 
-def upsample_volume(vol: jnp.ndarray, factor: int, target_shape: Tuple[int, int, int]) -> jnp.ndarray:
+def upsample_volume(
+    vol: jnp.ndarray, factor: int, target_shape: tuple[int, int, int]
+) -> jnp.ndarray:
     """Resize `vol` to `target_shape`, regardless of the nominal scale factor."""
     validate_scale_factor(factor)
     out_shape = tuple(int(s) for s in target_shape)
@@ -140,7 +142,7 @@ def upsample_volume(vol: jnp.ndarray, factor: int, target_shape: Tuple[int, int,
 def create_resolution_pyramid(
     grid: Grid, detector: Detector, projections: jnp.ndarray, factors: Iterable[int]
 ):
-    levels: List[dict] = []
+    levels: list[dict] = []
     for f in factors:
         factor = validate_scale_factor(f)
         levels.append(

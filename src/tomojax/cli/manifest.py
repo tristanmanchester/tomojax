@@ -1,16 +1,20 @@
+"""Reproducibility manifest helpers for CLI commands."""
+
 from __future__ import annotations
 
-import argparse
-from collections.abc import Mapping
 from datetime import UTC, datetime
 import json
-import os
 from pathlib import Path
 import platform
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tomojax.io import normalize_json
+
+if TYPE_CHECKING:
+    import argparse
+    from collections.abc import Mapping
+    import os
 
 SCHEMA_VERSION = 1
 

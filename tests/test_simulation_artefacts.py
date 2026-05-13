@@ -204,6 +204,4 @@ def test_simulation_artefact_metadata_roundtrips_through_nxtomo(tmp_path) -> Non
 
     loaded = load_nxtomo(str(path))
     assert loaded.simulation_artefacts is not None
-    assert loaded.simulation_artefacts["dropped_view_count"] == artefact_meta[
-        "dropped_view_count"
-    ]
+    assert loaded.simulation_artefacts["dropped_view_count"] == artefact_meta["dropped_view_count"]

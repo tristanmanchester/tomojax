@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
+import importlib
 import io
 import json
 import logging
 import math
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import h5py
@@ -23,10 +24,7 @@ import matplotlib.pyplot as plt
 
 from tomojax.align.verification import verification_from_manifest
 
-
-_LOSS_RE = re.compile(
-    r"Loss\s+([0-9.+\-eE]+)\s+->\s+([0-9.+\-eE]+)\s+\(.*?([-+][0-9.]+)%\)"
-)
+_LOSS_RE = re.compile(r"Loss\s+([0-9.+\-eE]+)\s+->\s+([0-9.+\-eE]+)\s+\(.*?([-+][0-9.]+)%\)")
 _ALIGN_RE = re.compile(
     r"Align\s+\|\s+time\s+([0-9.+\-eE]+)s.*?"
     r"loss\s+([0-9.+\-eE]+)->([0-9.+\-eE]+).*?([-+][0-9.]+)%"
@@ -50,7 +48,7 @@ def _run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Comple
 
 def _run_align_in_process(argv: list[str]) -> subprocess.CompletedProcess[str]:
     """Run tomojax-align in this process while preserving CLI outputs."""
-    from tomojax.cli import align as align_cli
+    align_cli = importlib.import_module("tomojax.cli.align")
 
     old_argv = sys.argv
     sys.argv = ["tomojax-align", *argv]
@@ -182,7 +180,9 @@ def _params_json_array(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
         )
     arr = np.asarray(rows, dtype=np.float32)
     if arr.ndim != 2 or arr.shape[1] != 5:
-        raise ValueError(f"alignment parameter JSON must resolve to shape (n_views, 5), got {arr.shape}")
+        raise ValueError(
+            f"alignment parameter JSON must resolve to shape (n_views, 5), got {arr.shape}"
+        )
     return arr, payload
 
 
@@ -354,7 +354,9 @@ def _write_png(
 
     z_index = int(np.argmax(truth.sum(axis=(1, 2))))
     shared_vmax = float(np.percentile(truth, 99.7))
-    fig, axes = plt.subplots(2, len(volumes), figsize=(3.2 * len(volumes), 6.4), constrained_layout=True)
+    fig, axes = plt.subplots(
+        2, len(volumes), figsize=(3.2 * len(volumes), 6.4), constrained_layout=True
+    )
     if len(volumes) == 1:
         axes = np.asarray([[axes[0]], [axes[1]]])
 
@@ -616,7 +618,7 @@ def main() -> None:
     loss_kind = run_info.get("loss_kind")
     report = {
         "benchmark": "tomojax_alignment_smoke",
-        "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "created_at": datetime.now(UTC).astimezone().isoformat(timespec="seconds"),
         "experiment": {
             "note": args.note,
             "git_branch": args.git_branch,

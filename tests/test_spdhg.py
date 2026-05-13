@@ -1,11 +1,11 @@
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
 from tomojax.data.simulate import SimConfig, simulate
+from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 
 def make_simple_case(nx=12, ny=12, nz=12, n_views=12):
@@ -14,7 +14,7 @@ def make_simple_case(nx=12, ny=12, nz=12, n_views=12):
     thetas = np.linspace(0, 180, n_views, endpoint=False)
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=thetas)
     vol = jnp.zeros((nx, ny, nz), dtype=jnp.float32)
-    vol = vol.at[nx//4:3*nx//4, ny//4:3*ny//4, nz//4:3*nz//4].set(1.0)
+    vol = vol.at[nx // 4 : 3 * nx // 4, ny // 4 : 3 * ny // 4, nz // 4 : 3 * nz // 4].set(1.0)
     projs = []
     for i in range(n_views):
         p = forward_project_view(geom, grid, det, vol, view_index=i)
@@ -37,10 +37,29 @@ def test_spdhg_from_sim_decreases():
     cfg_sim = SimConfig(nx=12, ny=12, nz=12, nu=12, nv=12, n_views=12, phantom="blobs", seed=123)
     data = simulate(cfg_sim)
     grid_d, det_d = data["grid"], data["detector"]
-    grid = Grid(nx=grid_d["nx"], ny=grid_d["ny"], nz=grid_d["nz"], vx=grid_d["vx"], vy=grid_d["vy"], vz=grid_d["vz"])
-    det = Detector(nu=det_d["nu"], nv=det_d["nv"], du=det_d["du"], dv=det_d["dv"], det_center=tuple(det_d.get("det_center", (0.0,0.0))))
+    grid = Grid(
+        nx=grid_d["nx"],
+        ny=grid_d["ny"],
+        nz=grid_d["nz"],
+        vx=grid_d["vx"],
+        vy=grid_d["vy"],
+        vz=grid_d["vz"],
+    )
+    det = Detector(
+        nu=det_d["nu"],
+        nv=det_d["nv"],
+        du=det_d["du"],
+        dv=det_d["dv"],
+        det_center=tuple(det_d.get("det_center", (0.0, 0.0))),
+    )
     geom = ParallelGeometry(grid=grid, detector=det, thetas_deg=data["thetas_deg"])
-    x, info = spdhg_tv(geom, grid, det, jnp.asarray(data["projections"]), config=SPDHGConfig(iters=4, lambda_tv=1e-3, views_per_batch=4, log_every=1))
+    x, info = spdhg_tv(
+        geom,
+        grid,
+        det,
+        jnp.asarray(data["projections"]),
+        config=SPDHGConfig(iters=4, lambda_tv=1e-3, views_per_batch=4, log_every=1),
+    )
     loss = info["loss"]
     assert len(loss) == 4
     assert loss[-1] <= loss[0]

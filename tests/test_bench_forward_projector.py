@@ -8,27 +8,26 @@ import pytest
 
 from tomojax.bench.forward_projector import (
     FORWARD_SUITE_NAMES,
-    ForwardProjectorBenchmarkConfig,
-    ForwardSinogramBenchmarkConfig,
     PALLAS_GENERAL_POSE_DISPATCH_RAY_STEP_THRESHOLD,
     PALLAS_GENERAL_POSE_DISPATCH_TILE_SHAPE,
     PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD,
     PRESET_NAMES,
     SINOGRAM_SUITE_NAMES,
     SUITE_NAMES,
-    _block_tree_ready,
+    ForwardProjectorBenchmarkConfig,
+    ForwardSinogramBenchmarkConfig,
     _geomean,
     _time_blocked_call,
     benchmark_backend,
     benchmark_sinogram_mode,
     make_forward_projector_fixture,
     preset_config,
-    run_forward_sinogram_suite,
     run_forward_projector_benchmark,
     run_forward_projector_suite,
-    sinogram_dispatch_ray_step_threshold,
+    run_forward_sinogram_suite,
     sinogram_dispatch_estimated_ray_steps,
     sinogram_dispatch_pallas_tile_shape,
+    sinogram_dispatch_ray_step_threshold,
     sinogram_dispatch_selected_mode,
     sinogram_suite_cases,
     suite_cases,
@@ -177,9 +176,12 @@ def test_benchmark_backend_records_pallas_variant_metadata(
     fixture = make_forward_projector_fixture(config)
 
     def fake_make_callable(_requested_backend, _fixture, _config):
-        return lambda: jnp.ones((2, 2), dtype=jnp.float32), "pallas", None, {
-            "pallas_state_timing_mode": "inline"
-        }
+        return (
+            lambda: jnp.ones((2, 2), dtype=jnp.float32),
+            "pallas",
+            None,
+            {"pallas_state_timing_mode": "inline"},
+        )
 
     monkeypatch.setattr(
         "tomojax.bench.forward_projector._make_backend_callable",
@@ -229,10 +231,15 @@ def test_benchmark_backend_records_cached_state_setup_metadata(
     fixture = make_forward_projector_fixture(config)
 
     def fake_make_callable(_requested_backend, _fixture, _config):
-        return lambda: jnp.ones((2, 2), dtype=jnp.float32), "pallas", None, {
-            "pallas_state_setup_seconds": 0.125,
-            "pallas_state_timing_mode": "cached",
-        }
+        return (
+            lambda: jnp.ones((2, 2), dtype=jnp.float32),
+            "pallas",
+            None,
+            {
+                "pallas_state_setup_seconds": 0.125,
+                "pallas_state_timing_mode": "cached",
+            },
+        )
 
     monkeypatch.setattr(
         "tomojax.bench.forward_projector._make_backend_callable",
@@ -373,7 +380,9 @@ def test_sinogram_dispatch_selects_only_high_ray_batched_workloads() -> None:
     assert sinogram_dispatch_selected_mode(high) == "pallas_batched"
     assert sinogram_dispatch_ray_step_threshold(low) == PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
     assert sinogram_dispatch_estimated_ray_steps(low) < PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
-    assert sinogram_dispatch_estimated_ray_steps(high) >= PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
+    assert (
+        sinogram_dispatch_estimated_ray_steps(high) >= PALLAS_SINOGRAM_DISPATCH_RAY_STEP_THRESHOLD
+    )
 
 
 def test_sinogram_dispatch_uses_lower_threshold_for_general_pose_workloads() -> None:

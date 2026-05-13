@@ -1,13 +1,14 @@
 import os
 import sys
-import numpy as np
+
 import h5py
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from tomojax.core.geometry import Grid, Detector
-from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.cli.misalign import _apply_box
+from tomojax.core.geometry import Detector, Grid
+from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
 
 
 def _make_gt(path, nx=16, ny=16, nz=16, n_views=8, *, include_grid=True):
@@ -167,13 +168,13 @@ def test_misalign_cli_uses_shared_geometry_builder_for_volume_fallback(
     from tomojax.cli import misalign as cli
 
     calls = []
-    real_builder = cli.build_geometry_from_meta
+    real_builder = cli.build_geometry_from_dataset_metadata
 
     def _tracked_builder(meta, **kwargs):
         calls.append(kwargs.copy())
         return real_builder(meta, **kwargs)
 
-    monkeypatch.setattr(cli, "build_geometry_from_meta", _tracked_builder)
+    monkeypatch.setattr(cli, "build_geometry_from_dataset_metadata", _tracked_builder)
 
     _run_cli(tmp_path, in_path, out_path, ["--pert", "angle:linear:delta=1deg"])
 

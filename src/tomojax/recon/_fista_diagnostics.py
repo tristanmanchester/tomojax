@@ -264,6 +264,7 @@ def _geometry_jvp_vjp_checks(volume: jax.Array, geometry: GeometryState) -> dict
         jnp.asarray(2.0, dtype=jnp.float32) * epsilon
     )
     residual = jnp.cos(jnp.arange(base.size, dtype=jnp.float32)).reshape(base.shape)
+
     def scalar(u: jax.Array) -> jax.Array:
         return jnp.vdot(project_at_det_u(u), residual).real
 

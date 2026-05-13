@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import json
 import math
-import time
-from datetime import datetime, timezone
 from pathlib import Path
+import time
 from typing import Any
 
 import jax
@@ -14,8 +14,8 @@ import numpy as np
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.core.pallas_projector import forward_project_views_T_pallas
+from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 
 
 def _rel_l2(a: jnp.ndarray, b: jnp.ndarray) -> float:
@@ -129,7 +129,7 @@ def main() -> None:
 
     report: dict[str, Any] = {
         "benchmark": "tomojax_pallas_changed_input_sanity",
-        "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "created_at": datetime.now(UTC).astimezone().isoformat(timespec="seconds"),
         "experiment": {
             "note": args.note,
             "git_branch": args.git_branch,

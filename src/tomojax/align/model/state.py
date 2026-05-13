@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping
 
 import jax
 import jax.numpy as jnp
@@ -58,7 +58,7 @@ class SetupGeometryState:
         axis_rot_y_deg: object = 0.0,
         tilt_deg: object = 0.0,
         nominal_axis_unit: object = (0.0, 0.0, 1.0),
-    ) -> "SetupGeometryState":
+    ) -> SetupGeometryState:
         return cls(
             det_u_px=_scalar(det_u_px),
             det_v_px=_scalar(det_v_px),
@@ -85,7 +85,7 @@ class SetupGeometryState:
             axis_rot_y_deg=deg["axis_rot_y_deg"],
         )
 
-    def replace(self, **updates: object) -> "SetupGeometryState":
+    def replace(self, **updates: object) -> SetupGeometryState:
         values = {
             "det_u_px": self.det_u_px,
             "det_v_px": self.det_v_px,
@@ -125,10 +125,10 @@ class PoseState:
     motion_coeffs: jnp.ndarray | None = None
 
     @classmethod
-    def zeros(cls, n_views: int) -> "PoseState":
+    def zeros(cls, n_views: int) -> PoseState:
         return cls(jnp.zeros((int(n_views), 5), dtype=jnp.float32))
 
-    def replace(self, **updates: object) -> "PoseState":
+    def replace(self, **updates: object) -> PoseState:
         values = {"params5": self.params5, "motion_coeffs": self.motion_coeffs}
         values.update(updates)
         return PoseState(**values)
@@ -158,7 +158,7 @@ class AlignmentState:
         *,
         n_views: int,
         volume_shape: tuple[int, int, int] | None = None,
-    ) -> "AlignmentState":
+    ) -> AlignmentState:
         volume = (
             None
             if volume_shape is None
@@ -166,7 +166,7 @@ class AlignmentState:
         )
         return cls(setup=SetupGeometryState(), pose=PoseState.zeros(n_views), volume=volume)
 
-    def replace(self, **updates: object) -> "AlignmentState":
+    def replace(self, **updates: object) -> AlignmentState:
         values = {"setup": self.setup, "pose": self.pose, "volume": self.volume}
         values.update(updates)
         return AlignmentState(**values)

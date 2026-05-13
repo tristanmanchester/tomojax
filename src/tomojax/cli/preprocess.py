@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
 from tomojax.core import setup_logging
+from tomojax.io import PreprocessConfig, preprocess_nxtomo
 
-from ..data.preprocess import PreprocessConfig, preprocess_nxtomo
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -90,18 +92,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--select-views-file",
         default=None,
-        help="File containing sample-view indices/ranges to keep; commas, whitespace, and # comments allowed",
+        help=(
+            "File containing sample-view indices/ranges to keep; commas, "
+            "whitespace, and # comments allowed"
+        ),
     )
     parser.add_argument(
         "--reject-views-file",
         default=None,
-        help="File containing sample-view indices/ranges to reject; commas, whitespace, and # comments allowed",
+        help=(
+            "File containing sample-view indices/ranges to reject; commas, "
+            "whitespace, and # comments allowed"
+        ),
     )
     parser.add_argument(
         "--auto-reject",
         choices=["off", "nonfinite", "outliers", "both"],
         default="off",
-        help="Optionally reject corrected sample views with non-finite values and/or robust intensity outliers",
+        help=(
+            "Optionally reject corrected sample views with non-finite values "
+            "and/or robust intensity outliers"
+        ),
     )
     parser.add_argument(
         "--outlier-z-threshold",
@@ -118,6 +129,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the raw NXtomo preprocessing command."""
     args = _build_parser().parse_args(argv)
     input_path = Path(args.input)
     output_path = Path(args.output)

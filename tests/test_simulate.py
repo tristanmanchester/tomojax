@@ -1,6 +1,5 @@
 from contextlib import nullcontext
 import os
-import sys
 
 import jax.numpy as jnp
 import numpy as np

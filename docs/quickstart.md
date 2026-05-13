@@ -24,29 +24,38 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 Verify the selected backend:
 
 ```bash
-uv run tomojax-test-gpu
+uv run tomojax test-gpu
 ```
 
 ## Real Laminography
 
 ```bash
-uv run python scripts/real_laminography/run_real_lamino_staged.py \
-  --input /path/to/scan.nxs \
-  --out runs/real_lamino_staged_run \
-  --profile staged-lamino \
-  --overwrite
+uv run tomojax inspect /path/to/scan.nxs
+uv run tomojax align /path/to/scan.nxs \
+  --out runs/real_lamino_aligned.nxs \
+  --schedule cor
 ```
 
-The workflow writes `real_lamino_report/real_lamino_summary.json`,
-`real_lamino_report/real_lamino_summary.md`, residual and geometry traces, and
-publication PNGs.
+The dedicated staged laminography evidence runner still exists for the current
+k11 report. The package-facing path should route through `tomojax inspect`,
+`tomojax preprocess`, `tomojax recon`, and `tomojax align`.
+
+For TIFF projection stacks, ingest into the standard dataset contract first:
+
+```bash
+uv run tomojax ingest ./projections \
+  --angles angles.csv \
+  --du 0.65 \
+  --dv 0.65 \
+  --out scan.nxs
+```
 
 ## Synthetic Tomography
 
 Setup-global gate:
 
 ```bash
-uv run tomojax-align-auto \
+uv run tomojax dev align-auto \
   --out-dir .artifacts/synthetic/setup_global_128 \
   --synthetic-case setup-global \
   --size 128 \
@@ -56,7 +65,7 @@ uv run tomojax-align-auto \
 Pose-random gate:
 
 ```bash
-uv run tomojax-align-auto \
+uv run tomojax dev align-auto \
   --out-dir .artifacts/synthetic/pose_random_128 \
   --synthetic-case pose-random \
   --size 128 \

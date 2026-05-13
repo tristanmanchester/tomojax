@@ -1,5 +1,5 @@
-import sys
 from pathlib import Path
+import sys
 
 # Ensure package imports work from repo checkout: add src to sys.path
 ROOT = Path(__file__).resolve().parents[1]

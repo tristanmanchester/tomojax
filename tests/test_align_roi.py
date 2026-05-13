@@ -5,8 +5,8 @@ import pytest
 # check-public-imports: allow-private
 import tomojax.align._pose_stage as pose_stage
 import tomojax.cli.align as align_cli
-import tomojax.cli.recon as recon_cli
 from tomojax.cli.align import _resolve_recon_grid_and_mask
+import tomojax.cli.recon as recon_cli
 from tomojax.core.geometry import Detector, Grid
 
 

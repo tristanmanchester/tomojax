@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import jax.numpy as jnp
-
+from tomojax.align.model.dof_specs import ActiveParameterView
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
-from tomojax.align.model.dof_specs import ActiveParameterView
 from tomojax.align.optimizers import (
     ActiveLbfgsConfig,
     BoundTransform,
@@ -21,7 +21,6 @@ from tomojax.align.optimizers import (
     run_active_validation_lm,
     run_pose_lbfgs,
 )
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 
 
 def _lbfgs_config(**kwargs) -> PoseLbfgsConfig:
@@ -252,7 +251,9 @@ def test_pose_lbfgs_rejects_non_improving_candidate():
 
 
 def test_active_lbfgs_updates_setup_state_without_pose_special_case():
-    state = AlignmentState(setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1))
+    state = AlignmentState(
+        setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1)
+    )
     view = ActiveParameterView.from_dofs(("det_u_px",))
 
     def objective(candidate):
@@ -271,7 +272,9 @@ def test_active_lbfgs_updates_setup_state_without_pose_special_case():
 
 
 def test_active_validation_lm_updates_setup_state_from_normal_equation():
-    state = AlignmentState(setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1))
+    state = AlignmentState(
+        setup=SetupGeometryState(det_u_px=jnp.asarray(0.0)), pose=PoseState.zeros(1)
+    )
     view = ActiveParameterView.from_dofs(("det_u_px",))
     grad = jnp.asarray([-4.0], dtype=jnp.float32)
     hess = jnp.asarray([[2.0]], dtype=jnp.float32)

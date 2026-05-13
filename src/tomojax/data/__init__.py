@@ -2,58 +2,38 @@
 
 from __future__ import annotations
 
-from types import ModuleType
-from typing import Any
-
-from . import simulate as _simulate_module
-from .artefacts import SimulationArtefacts, apply_simulation_artefacts
-from .contrast import (
-    absorption_to_transmission,
-    flat_dark_to_absorption,
-    transmission_to_absorption,
-)
-from .io_hdf5 import (
+from tomojax.data.api import (
     LoadedNXTomo,
     NXTomoMetadata,
+    SimConfig,
+    SimulatedData,
+    SimulationArtefacts,
     ValidationReport,
-    load_nxtomo,
-    save_nxtomo,
-    validate_nxtomo,
-)
-from .phantoms import (
+    absorption_to_transmission,
+    apply_simulation_artefacts,
     blobs,
     cube,
+    flat_dark_to_absorption,
     lamino_disk,
     lamino_disk_legacy,
+    load_nxtomo,
     random_cubes_spheres,
     rotated_centered_cube,
+    save_nxtomo,
     shepp_logan_3d,
+    simulate,
+    simulate_to_file,
     sphere,
+    transmission_to_absorption,
+    validate_nxtomo,
 )
-
-
-class _CallableDataModule(ModuleType):
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        function_name = self.__name__.rsplit(".", 1)[-1]
-        return getattr(self, function_name)(*args, **kwargs)
-
-
-def _make_callable_module(module: ModuleType) -> ModuleType:
-    module.__class__ = _CallableDataModule
-    return module
-
-
-simulate = _make_callable_module(_simulate_module)
-SimConfig = _simulate_module.SimConfig
-SimulatedData = _simulate_module.SimulatedData
-simulate_to_file = _simulate_module.simulate_to_file
 
 __all__ = [
     "LoadedNXTomo",
     "NXTomoMetadata",
     "SimConfig",
-    "SimulationArtefacts",
     "SimulatedData",
+    "SimulationArtefacts",
     "ValidationReport",
     "absorption_to_transmission",
     "apply_simulation_artefacts",

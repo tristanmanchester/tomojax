@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Tuple
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 
-
-_FILTER_CACHE: "OrderedDict[Tuple[str, int, float], np.ndarray]" = OrderedDict()
+_FILTER_CACHE: OrderedDict[tuple[str, int, float], np.ndarray] = OrderedDict()
 _FILTER_CACHE_CAP = 8
 
 

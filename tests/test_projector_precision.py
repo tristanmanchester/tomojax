@@ -1,5 +1,6 @@
 import jax.numpy as jnp
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 
 
@@ -14,4 +15,3 @@ def test_bf16_gather_reasonable_accuracy():
     num = jnp.linalg.norm((p32 - pb).ravel())
     den = jnp.linalg.norm(p32.ravel()) + 1e-6
     assert float(num / den) < 1e-3
-

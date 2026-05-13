@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """User-facing loss-benchmark CLI.
 
 This entry point owns experiment-directory orchestration and user-visible outputs for
@@ -8,21 +6,22 @@ while fixed controller-profile policy stays in ``bench/`` and ad hoc exploration
 under ``scripts/``.
 """
 
+from __future__ import annotations
+
 import argparse
+from contextlib import suppress
 import csv
 import json
 import logging
-import os
+from pathlib import Path
 import time
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core import log_jax_env, setup_logging
-
-from ..align.objectives.loss_specs import parse_loss_spec
-from ..align.pipeline import AlignConfig, align
-from ..bench.loss_experiment import (
+from tomojax.align.objectives.loss_specs import parse_loss_spec
+from tomojax.align.pipeline import AlignConfig, align
+from tomojax.bench.loss_experiment import (
     make_gt_dataset as _make_gt_dataset,
     make_misaligned_dataset as _make_misaligned_dataset,
     metrics_abs as _metrics_abs,
@@ -30,17 +29,24 @@ from ..bench.loss_experiment import (
     metrics_relative as _metrics_relative,
     project_gt_with_estimated_poses as _project_gt_with_estimated_poses,
 )
-from ..data.geometry_meta import build_geometry_from_meta
-from ..data.io_hdf5 import load_nxtomo, save_nxtomo
+from tomojax.core import log_jax_env, setup_logging
+from tomojax.io import (
+    build_geometry_from_dataset_metadata,
+    load_projection_payload,
+    save_projection_payload,
+)
 
 type BenchmarkResultValue = str | float | None
 
 
 def _ensure_dir(p: str) -> None:
-    os.makedirs(p, exist_ok=True)
+    Path(p).mkdir(parents=True, exist_ok=True)
 
 
-def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, BenchmarkResultValue]]:
+def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
+    args: argparse.Namespace,
+) -> list[dict[str, BenchmarkResultValue]]:
+    expdir = Path(args.expdir)
     gt = _make_gt_dataset(
         args.expdir,
         nx=args.nx,
@@ -59,20 +65,21 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
         trans_px=args.trans_px,
         seed=args.seed + 1,
     )
-    meta_mis = load_nxtomo(mis)
-    if meta_mis.align_params is None:
+    dataset_mis = load_projection_payload(mis)
+    metadata_mis = dataset_mis.copy_metadata()
+    if metadata_mis.align_params is None:
         raise ValueError("Misaligned benchmark dataset is missing align_params")
-    true_params = np.asarray(meta_mis.align_params, dtype=np.float32)
-    volume = meta_mis.volume
+    true_params = np.asarray(metadata_mis.align_params, dtype=np.float32)
+    volume = metadata_mis.volume
 
-    grid, det, geom = build_geometry_from_meta(
-        meta_mis.geometry_inputs(),
+    grid, det, geom = build_geometry_from_dataset_metadata(
+        dataset_mis.geometry_inputs(),
         apply_saved_alignment=False,
         volume_shape=(np.asarray(volume).shape if volume is not None else None),
     )
     du, dv = float(det.du), float(det.dv)
-    thetas = np.asarray(meta_mis.thetas_deg, dtype=np.float32)
-    projections = jnp.asarray(meta_mis.projections, jnp.float32)
+    thetas = np.asarray(dataset_mis.angles_deg, dtype=np.float32)
+    projections = jnp.asarray(dataset_mis.projections, jnp.float32)
 
     gn_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
     high_iter_losses = {"l2", "l2_otsu", "pwls", "edge_l2"}
@@ -98,8 +105,8 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
     results: list[dict[str, BenchmarkResultValue]] = []
     for loss in args.losses:
         run_name = str(loss).lower()
-        out_path = os.path.join(args.expdir, f"align_{run_name}.nxs")
-        log_path = os.path.join(args.expdir, "logs", f"{run_name}.log")
+        out_path = expdir / f"align_{run_name}.nxs"
+        log_path = expdir / "logs" / f"{run_name}.log"
         fh = logging.FileHandler(log_path)
         fh.setLevel(logging.INFO)
         fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
@@ -118,16 +125,19 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
         try:
             p_est_np: np.ndarray
             x_est_np: np.ndarray | None = None
-            if os.path.exists(out_path):
+            if out_path.exists():
                 logging.info(
                     "[%s] output exists; skipping alignment and recomputing metrics",
                     run_name,
                 )
-                meta_out = load_nxtomo(out_path)
-                if meta_out.align_params is None:
+                dataset_out = load_projection_payload(str(out_path))
+                metadata_out = dataset_out.copy_metadata()
+                if metadata_out.align_params is None:
                     raise ValueError(f"{out_path} is missing align_params")
-                p_est_np = np.asarray(meta_out.align_params, dtype=np.float32)
-                x_est_np = np.asarray(meta_out.volume) if meta_out.volume is not None else None
+                p_est_np = np.asarray(metadata_out.align_params, dtype=np.float32)
+                x_est_np = (
+                    np.asarray(metadata_out.volume) if metadata_out.volume is not None else None
+                )
             elif args.metrics_only:
                 logging.warning(
                     "[%s] metrics-only set and output missing; skipping (status=missing)",
@@ -175,7 +185,7 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
                     loss=parse_loss_spec(run_name),
                 )
                 if levels is not None:
-                    from ..align.pipeline import align_multires
+                    from tomojax.align.pipeline import align_multires
 
                     x_est, p_est, info = align_multires(
                         geom, grid, det, projections, factors=levels, cfg=cfg
@@ -184,14 +194,14 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
                     x_est, p_est, info = align(geom, grid, det, projections, cfg=cfg)
                 p_est_np = np.asarray(p_est)
                 x_est_np = np.asarray(x_est)
-                save_meta = meta_mis.copy_metadata()
+                save_meta = dataset_mis.copy_metadata()
                 save_meta.thetas_deg = np.asarray(thetas)
                 save_meta.volume = x_est_np
                 save_meta.align_params = p_est_np
-                save_meta.frame = str(meta_mis.frame or "sample")
-                save_nxtomo(
-                    out_path,
-                    projections=np.asarray(meta_mis.projections),
+                save_meta.frame = str(metadata_mis.frame or "sample")
+                save_projection_payload(
+                    str(out_path),
+                    projections=np.asarray(dataset_mis.projections),
                     metadata=save_meta,
                 )
 
@@ -204,13 +214,13 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
                 metrics.update(gf_m)
                 if args.gt_metric != "none":
                     y_hat = _project_gt_with_estimated_poses(
-                        jnp.asarray(meta_mis.volume, jnp.float32),
+                        jnp.asarray(metadata_mis.volume, jnp.float32),
                         grid,
                         det,
                         geom,
                         p_est_np,
                     )
-                    y = jnp.asarray(meta_mis.projections, jnp.float32)
+                    y = jnp.asarray(dataset_mis.projections, jnp.float32)
                     gt_mse = float(jnp.mean((y_hat - y) ** 2).item())
                     metrics["gt_mse"] = gt_mse
         except Exception as e:
@@ -219,12 +229,12 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
             logging.exception("Loss %s failed", run_name)
         elapsed = time.perf_counter() - start
         logging.getLogger().removeHandler(fh)
-        try:
+        with suppress(Exception):
             fh.close()
-        except Exception:
-            pass
         logging.info(
-            "[%s] status=%s time=%.2fs | abs: rot_rmse=%.3f° trans_rmse=%.3fpx | rel(k=%d): rot=%.3f° trans=%.3fpx | gf: rot=%.3f° trans=%.3fpx | gt_mse=%.3e",
+            "[%s] status=%s time=%.2fs | abs: rot_rmse=%.3f° trans_rmse=%.3fpx | "
+            "rel(k=%d): rot=%.3f° trans=%.3fpx | gf: rot=%.3f° trans=%.3fpx | "
+            "gt_mse=%.3e",
             run_name,
             status,
             elapsed,
@@ -243,8 +253,8 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
                 "status": status,
                 "seconds": elapsed,
                 **metrics,
-                "log": os.path.relpath(log_path, args.expdir),
-                "output": os.path.relpath(out_path, args.expdir) if status == "ok" else None,
+                "log": str(log_path.relative_to(expdir)),
+                "output": str(out_path.relative_to(expdir)) if status == "ok" else None,
                 "error": err_msg,
             }
         )
@@ -253,7 +263,7 @@ def _run_benchmark_workflow(args: argparse.Namespace) -> list[dict[str, Benchmar
             run_name,
             status,
             elapsed,
-            {k: v for k, v in metrics.items()},
+            dict(metrics),
         )
     return results
 
@@ -263,13 +273,14 @@ def _write_results_summary(
     args: argparse.Namespace,
     results: list[dict[str, BenchmarkResultValue]],
 ) -> None:
-    with open(os.path.join(expdir, "results.json"), "w", encoding="utf-8") as f:
+    expdir_path = Path(expdir)
+    with (expdir_path / "results.json").open("w", encoding="utf-8") as f:
         json.dump(
             {"results": results, "config": {k: getattr(args, k) for k in vars(args)}},
             f,
             indent=2,
         )
-    csv_path = os.path.join(expdir, "results.csv")
+    csv_path = expdir_path / "results.csv"
     keys = [
         "loss",
         "status",
@@ -289,7 +300,7 @@ def _write_results_summary(
         "output",
         "error",
     ]
-    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+    with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         writer.writeheader()
         for result in results:
@@ -313,6 +324,7 @@ def _has_failed_result(results: list[dict[str, BenchmarkResultValue]]) -> bool:
 
 
 def main() -> None:
+    """Run the developer loss benchmark."""
     p = argparse.ArgumentParser(
         description="Benchmark multiple alignment losses on a small misaligned phantom."
     )
@@ -377,11 +389,13 @@ def main() -> None:
     args = p.parse_args()
 
     _ensure_dir(args.expdir)
-    _ensure_dir(os.path.join(args.expdir, "logs"))
+    _ensure_dir(str(Path(args.expdir) / "logs"))
     setup_logging()
     log_jax_env()
     if args.progress:
-        os.environ["TOMOJAX_PROGRESS"] = "1"
+        from os import environ
+
+        environ["TOMOJAX_PROGRESS"] = "1"
     results = _run_benchmark_workflow(args)
     _write_results_summary(args.expdir, args, results)
     best = _best_result(results)

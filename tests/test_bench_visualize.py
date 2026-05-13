@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
@@ -81,7 +81,9 @@ def test_visualize_helpers_handle_nonfinite_and_invalid_trace_rows() -> None:
     limits = visualize._display_limits(np.asarray([[np.nan, 2.0], [1.0, np.inf]], dtype=np.float32))
     assert limits == (1.0, 2.0)
 
-    error_limit = visualize._error_limit(np.asarray([[np.nan, np.inf], [0.0, 3.0]], dtype=np.float32))
+    error_limit = visualize._error_limit(
+        np.asarray([[np.nan, np.inf], [0.0, 3.0]], dtype=np.float32)
+    )
     assert error_limit >= 1e-6
 
     xs, ys, levels = visualize._trace_points(

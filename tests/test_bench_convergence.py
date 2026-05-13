@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import importlib
 import json
-import sys
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -329,7 +329,9 @@ def test_convergence_config_coerces_supported_fields() -> None:
 def test_profile_reference_uses_nested_section_reference_file(tmp_path: Path) -> None:
     reference_path = tmp_path / "ref.json"
     reference_path.write_text(
-        json.dumps({"memory_caps": {"soft_cap_mb": 111.0, "metric_preference": ["peak_gpu_memory_mb"]}}),
+        json.dumps(
+            {"memory_caps": {"soft_cap_mb": 111.0, "metric_preference": ["peak_gpu_memory_mb"]}}
+        ),
         encoding="utf-8",
     )
     profile = {
@@ -466,9 +468,12 @@ def test_apply_time_memguard_objective_uses_reference_caps_and_soft_penalty(tmp_
 def test_should_render_alignment_summary_only_for_align_profiles() -> None:
     assert fitness._should_render_alignment_summary({"task": "recon"}) is False
     assert fitness._should_render_alignment_summary({"task": "align"}) is True
-    assert fitness._should_render_alignment_summary(
-        {"task": "align", "visualization": {"enabled": False}}
-    ) is False
+    assert (
+        fitness._should_render_alignment_summary(
+            {"task": "align", "visualization": {"enabled": False}}
+        )
+        is False
+    )
 
 
 def test_align_profile_uses_unscored_primer_when_warmup_is_incomplete(tmp_path: Path) -> None:

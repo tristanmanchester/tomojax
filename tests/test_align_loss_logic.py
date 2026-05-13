@@ -1,16 +1,9 @@
 import jax.numpy as jnp
 import pytest
 
+# check-public-imports: allow-private
+from tomojax.align._pose_stage import _should_prefer_gn_candidate
 from tomojax.align.objectives.loss_adapters import build_loss
-from tomojax.align.objectives.loss_state import LossState
-from tomojax.align.objectives.loss_specs import (
-    loss_is_within_relative_tolerance,
-    loss_spec_name,
-    parse_loss_schedule,
-    parse_loss_spec,
-    resolve_loss_for_level,
-    validate_loss_schedule_levels,
-)
 from tomojax.align.objectives.loss_kernels import (
     _loss_cauchy,
     _loss_chamfer_edge,
@@ -21,8 +14,15 @@ from tomojax.align.objectives.loss_kernels import (
     _loss_tversky,
     _loss_welsch,
 )
-# check-public-imports: allow-private
-from tomojax.align._pose_stage import _should_prefer_gn_candidate
+from tomojax.align.objectives.loss_specs import (
+    loss_is_within_relative_tolerance,
+    loss_spec_name,
+    parse_loss_schedule,
+    parse_loss_spec,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
+)
+from tomojax.align.objectives.loss_state import LossState
 
 
 def test_loss_is_within_relative_tolerance_allows_small_increase():
@@ -83,7 +83,7 @@ def test_cauchy_matches_log1p_form():
     st = LossState(kind="cauchy", params={"c": 2.0})
 
     r = (pred - tar).astype(jnp.float32)
-    expected = jnp.sum(0.5 * (2.0 ** 2) * jnp.log1p((r / 2.0) ** 2))
+    expected = jnp.sum(0.5 * (2.0**2) * jnp.log1p((r / 2.0) ** 2))
 
     assert float(_loss_cauchy(pred, tar, st)) == pytest.approx(float(expected), rel=1e-6)
 
@@ -94,7 +94,7 @@ def test_welsch_preserves_exponential_form():
     st = LossState(kind="welsch", params={"c": 2.0})
 
     r = (pred - tar).astype(jnp.float32)
-    expected = jnp.sum(0.5 * (2.0 ** 2) * (1.0 - jnp.exp(-((r / 2.0) ** 2))))
+    expected = jnp.sum(0.5 * (2.0**2) * (1.0 - jnp.exp(-((r / 2.0) ** 2))))
 
     assert float(_loss_welsch(pred, tar, st)) == pytest.approx(float(expected), rel=1e-6)
 
@@ -175,9 +175,9 @@ def _reference_renyi_mi_loss(pred: jnp.ndarray, tar: jnp.ndarray, st: LossState)
     assert st.bw_y is not None
     a = float(st.params["alpha"])
     Px, Py, Pxy = _reference_kde_probabilities(pred, tar, st.bins_x, st.bins_y, st.bw_x, st.bw_y)
-    Hx = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Px ** a))
-    Hy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Py ** a))
-    Hxy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Pxy ** a))
+    Hx = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Px**a))
+    Hy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Py**a))
+    Hxy = (1.0 / (1.0 - a)) * jnp.log(jnp.sum(Pxy**a))
     return float((-(Hx + Hy - Hxy)) * jnp.float32(pred.size))
 
 
@@ -246,7 +246,6 @@ def test_build_loss_rejects_alpha_equal_one_for_renyi_family(kind):
 def test_gn_candidate_must_improve_current_best_loss():
     assert not _should_prefer_gn_candidate(100.0, 100.5, 100.8, 0.01)
     assert _should_prefer_gn_candidate(100.0, 100.5, 100.4, 0.01)
-
 
 
 def test_per_view_loss_uses_global_view_indices_for_precomputes():

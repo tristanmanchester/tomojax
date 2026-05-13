@@ -16,14 +16,15 @@ from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
 from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from ..model.state import AlignmentState
 from .loss_adapters import LossAdapter, build_loss_adapter
 from .loss_specs import AlignmentLossSpec
-from ..model.state import AlignmentState
-
 
 ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
 DifferentiationMode = Literal["none", "unrolled", "implicit"]
-InnerInitPolicy = Literal["zeros", "current_level_volume", "previous_fold_volume", "previous_stage_volume"]
+InnerInitPolicy = Literal[
+    "zeros", "current_level_volume", "previous_fold_volume", "previous_stage_volume"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +90,7 @@ class FixedVolumeProjectionObjective(AlignmentObjective):
         volume: jnp.ndarray,
         loss_spec: AlignmentLossSpec,
         **kwargs,
-    ) -> "FixedVolumeProjectionObjective":
+    ) -> FixedVolumeProjectionObjective:
         adapter = build_loss_adapter(loss_spec, projections)
         return cls(
             base=base,
@@ -258,11 +259,7 @@ def project_and_score_stack(
         if view_mask is None
         else jnp.asarray(view_mask, dtype=jnp.float32).reshape((n_views,))
     )
-    use_plain_l2_fast_path = (
-        loss_adapter.name == "l2"
-        and view_mask is None
-        and loss_mask is None
-    )
+    use_plain_l2_fast_path = loss_adapter.name == "l2" and view_mask is None and loss_mask is None
     if backend == "pallas" and use_plain_l2_fast_path and not require_differentiable_projector:
         try:
             from tomojax.core.pallas_projector import forward_project_residual_sse_T_pallas
@@ -294,9 +291,7 @@ def project_and_score_stack(
         return jnp.sum(losses * per_view_weight, dtype=jnp.float32)
 
     def body(loss_acc, i):
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
         idx_chunk = jax.lax.dynamic_slice(local_indices, (start_shifted,), (b,))
@@ -315,9 +310,7 @@ def project_and_score_stack(
         return loss_acc + jnp.sum(losses * valid_mask * weight_chunk), None
 
     def body_l2(loss_acc, i):
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(pose_stack, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, nv, nu))
         pred = vm_project(T_chunk)
@@ -385,7 +378,11 @@ def alignment_projector_backend_provenance(
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else int(n_views)
+    b = (
+        int(views_per_batch)
+        if views_per_batch is not None and int(views_per_batch) > 0
+        else int(n_views)
+    )
     return max(1, min(int(b), int(n_views)))
 
 

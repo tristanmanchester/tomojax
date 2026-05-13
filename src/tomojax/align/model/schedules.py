@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Mapping, cast
+from typing import Literal, cast
 
-from .dof_specs import ActiveParameterView
 from .diagnostics import GaugeDecision, GaugePolicyError, validate_active_gauge_policy
+from .dof_specs import ActiveParameterView
 from .dofs import (
     DOF_NAMES,
     GEOMETRY_DOF_NAMES,
@@ -12,7 +13,6 @@ from .dofs import (
     normalize_alignment_dofs,
     resolve_scoped_alignment_dofs,
 )
-
 
 ObjectiveKind = Literal["fixed_volume", "bilevel_cv", "all_data_bilevel"]
 OptimizerKind = Literal["lbfgs", "adam", "gd", "gn", "validation_lm"]
@@ -61,7 +61,7 @@ class AlignmentSchedule:
     stages: tuple[AlignmentStage, ...]
     metadata: dict[str, object] = field(default_factory=dict)
 
-    def validate(self) -> "AlignmentSchedule":
+    def validate(self) -> AlignmentSchedule:
         if not self.stages:
             raise ValueError("alignment schedule must contain at least one stage")
         for stage in self.stages:
@@ -573,4 +573,4 @@ def _normalize_pose_optimizer(value: str) -> OptimizerKind:
         key = "lbfgs"
     if key not in {"gd", "gn", "lbfgs"}:
         raise ValueError("pose optimizer must be one of 'gd', 'gn', or 'lbfgs'")
-    return cast(OptimizerKind, key)
+    return cast("OptimizerKind", key)

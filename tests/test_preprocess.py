@@ -8,8 +8,8 @@ import pytest
 
 from tomojax.cli import preprocess as preprocess_cli
 from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from tomojax.data.preprocess import PreprocessConfig, _coverage_changed, preprocess_nxtomo
 import tomojax.data.preprocess as preprocess_mod
+from tomojax.data.preprocess import PreprocessConfig, _coverage_changed, preprocess_nxtomo
 
 
 def _attr_to_str(value) -> str:

@@ -159,10 +159,9 @@ def _rigid_detector_grid_transform(
         return None
     x_fit = design @ x_coeffs
     z_fit = design @ z_coeffs
-    if (
-        float(np.max(np.abs(x_fit - X_host), initial=0.0)) > float(atol)
-        or float(np.max(np.abs(z_fit - Z_host), initial=0.0)) > float(atol)
-    ):
+    if float(np.max(np.abs(x_fit - X_host), initial=0.0)) > float(atol) or float(
+        np.max(np.abs(z_fit - Z_host), initial=0.0)
+    ) > float(atol):
         return None
 
     a, b, c = (float(v) for v in x_coeffs)
@@ -196,11 +195,7 @@ def _fold_rigid_detector_grid_into_pose_stack(
     col0 = Rinv[:, :, 0] * jnp.float32(a) + Rinv[:, :, 2] * jnp.float32(d)
     col1 = Rinv[:, :, 1]
     col2 = Rinv[:, :, 0] * jnp.float32(b) + Rinv[:, :, 2] * jnp.float32(e)
-    tinv_folded = (
-        tinv
-        + Rinv[:, :, 0] * jnp.float32(c)
-        + Rinv[:, :, 2] * jnp.float32(f)
-    )
+    tinv_folded = tinv + Rinv[:, :, 0] * jnp.float32(c) + Rinv[:, :, 2] * jnp.float32(f)
     Rinv_folded = jnp.stack([col0, col1, col2], axis=2)
     R_folded = jnp.swapaxes(Rinv_folded, 1, 2)
     t_folded = -jnp.einsum("nij,nj->ni", R_folded, tinv_folded)
@@ -309,6 +304,7 @@ def _retry_info_after_nonfinite_core(
     core_finite_fraction: float,
     cfg: object,
 ) -> Mapping[str, object]:
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     return {
         **dict(retry_info),
         "recon_nonfinite_retry": True,
@@ -323,8 +319,10 @@ def _retry_info_after_nonfinite_core(
         "actual_backend": "jax",
         "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
         "regulariser": str(getattr(cfg, "regulariser", "")),
-        "data_loss_computed": True,
-        "regulariser_value_computed": True,
+        "loss_alias_only": not bool(quality_policy.compute_iteration_loss),
+        "data_loss_computed": bool(quality_policy.compute_final_data_loss),
+        "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
+        "quality_policy": quality_policy.to_dict(),
     }
 
 
@@ -334,6 +332,7 @@ def _public_fista_info_after_core_bypass(
     fallback_reason: str,
     cfg: object,
 ) -> Mapping[str, object]:
+    quality_policy = reconstruction_quality_policy(str(getattr(cfg, "quality_tier", "fast")))
     return {
         **dict(public_info),
         "recon_public_fista_fallback": True,
@@ -341,6 +340,10 @@ def _public_fista_info_after_core_bypass(
         "actual_backend": "jax",
         "requested_backend": str(getattr(cfg, "projector_backend", "jax")),
         "regulariser": str(getattr(cfg, "regulariser", "")),
+        "loss_alias_only": not bool(quality_policy.compute_iteration_loss),
+        "data_loss_computed": bool(quality_policy.compute_final_data_loss),
+        "regulariser_value_computed": bool(quality_policy.compute_final_regulariser_value),
+        "quality_policy": quality_policy.to_dict(),
     }
 
 

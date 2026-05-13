@@ -1,25 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Mapping
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from ._json import JsonValue, drop_none, normalize_json
 from .conventions import ConventionAudit
 from .objectives import ObjectiveCard
 from .state import CalibrationState
 
-
 CALIBRATION_MANIFEST_SCHEMA_VERSION = 1
 
 
 def _timestamp_utc(timestamp: datetime | str | None) -> str:
     if timestamp is None:
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
     if isinstance(timestamp, str):
         return timestamp
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _tomojax_version() -> str | None:

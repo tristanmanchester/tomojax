@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Literal, NamedTuple, Optional, Tuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -52,9 +52,7 @@ class FistaScanState(NamedTuple):
 
 def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
     requested = (
-        int(views_per_batch)
-        if (views_per_batch is not None and int(views_per_batch) > 0)
-        else 1
+        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
     )
     return max(1, min(requested, int(n_views)))
 
@@ -112,9 +110,9 @@ def grad_data_term(
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
-    vol_mask: Optional[jnp.ndarray] = None,
+    vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> Tuple[jnp.ndarray, float]:
+) -> tuple[jnp.ndarray, float]:
     """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
 
     Two execution modes:
@@ -244,9 +242,7 @@ def grad_data_term(
 
     # Select execution mode
     eff_b = (
-        int(views_per_batch)
-        if (views_per_batch is not None and int(views_per_batch) > 0)
-        else 1
+        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
     )
     mode = grad_mode
     if grad_mode == "auto":
@@ -255,9 +251,8 @@ def grad_data_term(
     if mode == "stream":
         loss_val, grad = stream_loss_and_grad(x)
         return grad, loss_val
-    else:
-        loss_val, grad = batched_loss_and_grad(x)
-        return grad, loss_val
+    loss_val, grad = batched_loss_and_grad(x)
+    return grad, loss_val
 
 
 def data_term_value(
@@ -273,7 +268,7 @@ def data_term_value(
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
-    vol_mask: Optional[jnp.ndarray] = None,
+    vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
@@ -361,9 +356,7 @@ def data_term_value(
         return loss_tot
 
     eff_b = (
-        int(views_per_batch)
-        if (views_per_batch is not None and int(views_per_batch) > 0)
-        else 1
+        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
     )
     mode = grad_mode
     if grad_mode == "auto":
@@ -378,7 +371,7 @@ def power_method_L(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections_shape: Tuple[int, int, int],
+    projections_shape: tuple[int, int, int],
     *,
     iters: int = 10,
     views_per_batch: int | None = None,
@@ -387,7 +380,7 @@ def power_method_L(
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
-    vol_mask: Optional[jnp.ndarray] = None,
+    vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
     """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""

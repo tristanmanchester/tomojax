@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """Helpers for materializing geometry objects from persisted NXtomo metadata."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence, TypedDict
+from typing import TypedDict
 
 import numpy as np
 
@@ -17,7 +18,6 @@ from ..core.geometry import (
     normalize_axis_unit,
 )
 from ..core.geometry.base import DetectorDict, GridDict, PoseMatrix, RayPair
-
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -296,7 +296,6 @@ def build_geometry_from_meta(
     `angle_offset_deg` is applied unless it is known to have already been baked
     into `thetas_deg`.
     """
-
     detector = _detector_from_meta(meta)
     grid = _grid_from_meta(meta, detector, grid_override, volume_shape)
     thetas_deg = _resolve_thetas_deg(

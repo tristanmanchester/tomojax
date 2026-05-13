@@ -1,5 +1,47 @@
-"""Public IO helpers for TomoJAX artifacts and metadata."""
+"""Public IO helpers for TomoJAX datasets, artifacts, and metadata."""
 
-from tomojax.io.api import JsonValue, drop_none, normalize_json
+from tomojax.io.api import (
+    InspectionReport,
+    JsonValue,
+    PreprocessConfig,
+    PreprocessResult,
+    ProjectionDataset,
+    ValidationReport,
+    build_geometry_from_dataset_metadata,
+    convert_dataset,
+    drop_none,
+    format_inspection_report,
+    inspect_dataset,
+    load_dataset,
+    load_projection_payload,
+    load_tiff_stack,
+    normalize_json,
+    preprocess_nxtomo,
+    save_dataset,
+    save_projection_payload,
+    save_projection_quicklook,
+    validate_dataset,
+)
 
-__all__ = ["JsonValue", "drop_none", "normalize_json"]
+__all__ = [
+    "InspectionReport",
+    "JsonValue",
+    "PreprocessConfig",
+    "PreprocessResult",
+    "ProjectionDataset",
+    "ValidationReport",
+    "build_geometry_from_dataset_metadata",
+    "convert_dataset",
+    "drop_none",
+    "format_inspection_report",
+    "inspect_dataset",
+    "load_dataset",
+    "load_projection_payload",
+    "load_tiff_stack",
+    "normalize_json",
+    "preprocess_nxtomo",
+    "save_dataset",
+    "save_projection_payload",
+    "save_projection_quicklook",
+    "validate_dataset",
+]

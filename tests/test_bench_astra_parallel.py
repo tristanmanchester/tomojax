@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,16 +9,43 @@ from tomojax.bench import astra_parallel
 
 def _sample_report() -> dict:
     timings = {
-        "tomojax_forward": {"runs": 1, "median_sec": 1.0, "mean_sec": 1.0, "min_sec": 1.0, "max_sec": 1.0},
-        "tomojax_pallas_forward": {"runs": 1, "median_sec": 0.5, "mean_sec": 0.5, "min_sec": 0.5, "max_sec": 0.5},
-        "astra_parallel3d_forward": {"runs": 1, "median_sec": 0.25, "mean_sec": 0.25, "min_sec": 0.25, "max_sec": 0.25},
-        "tomojax_fbp": {"runs": 1, "median_sec": 0.2, "mean_sec": 0.2, "min_sec": 0.2, "max_sec": 0.2},
-        "astra_slice_fbp": {"runs": 1, "median_sec": 0.4, "mean_sec": 0.4, "min_sec": 0.4, "max_sec": 0.4},
+        "tomojax_forward": {
+            "runs": 1,
+            "median_sec": 1.0,
+            "mean_sec": 1.0,
+            "min_sec": 1.0,
+            "max_sec": 1.0,
+        },
+        "tomojax_pallas_forward": {
+            "runs": 1,
+            "median_sec": 0.5,
+            "mean_sec": 0.5,
+            "min_sec": 0.5,
+            "max_sec": 0.5,
+        },
+        "astra_parallel3d_forward": {
+            "runs": 1,
+            "median_sec": 0.25,
+            "mean_sec": 0.25,
+            "min_sec": 0.25,
+            "max_sec": 0.25,
+        },
+        "tomojax_fbp": {
+            "runs": 1,
+            "median_sec": 0.2,
+            "mean_sec": 0.2,
+            "min_sec": 0.2,
+            "max_sec": 0.2,
+        },
+        "astra_slice_fbp": {
+            "runs": 1,
+            "median_sec": 0.4,
+            "mean_sec": 0.4,
+            "min_sec": 0.4,
+            "max_sec": 0.4,
+        },
     }
-    memory = {
-        key: {"peak_process_mb": 10.0, "peak_delta_process_mb": 1.0}
-        for key in timings
-    }
+    memory = {key: {"peak_process_mb": 10.0, "peak_delta_process_mb": 1.0} for key in timings}
     return {
         "config": {"size": 8, "detector": 8, "views": 4, "warmup": 1, "repeat": 1},
         "timing_summary": timings,

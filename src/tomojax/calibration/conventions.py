@@ -5,7 +5,6 @@ from typing import Literal
 
 from ._json import JsonValue, drop_none
 
-
 ThetaSign = Literal[-1, 1]
 
 

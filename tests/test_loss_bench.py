@@ -11,6 +11,7 @@ import pytest
 
 from tomojax.cli import loss_bench
 from tomojax.data.io_hdf5 import LoadedNXTomo, load_nxtomo, save_nxtomo
+from tomojax.io import ProjectionDataset
 
 
 def _write_nxtomo(path: Path, payload: LoadedNXTomo) -> None:
@@ -44,8 +45,8 @@ def test_loss_bench_skipped_loss_does_not_compute_metrics_or_emit_output(
     )
     monkeypatch.setattr(
         loss_bench,
-        "load_nxtomo",
-        lambda path: LoadedNXTomo.from_dataset(meta_mis),
+        "load_projection_payload",
+        lambda path: ProjectionDataset.from_nxtomo(LoadedNXTomo.from_dataset(meta_mis)),
     )
     monkeypatch.setattr(loss_bench, "setup_logging", lambda: None)
     monkeypatch.setattr(loss_bench, "log_jax_env", lambda: None)

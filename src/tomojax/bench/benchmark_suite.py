@@ -2,27 +2,40 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import UTC, datetime
 import json
 import os
+from pathlib import Path
 import platform
 import subprocess
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-
 
 CASE_PRESETS: dict[str, list[dict[str, Any]]] = {
     "quick": [
         {"name": "quick_64", "size": 64, "detector": 64, "views": 90, "warmup": 1, "repeat": 1},
     ],
     "guard": [
-        {"name": "headline_128", "size": 128, "detector": 128, "views": 180, "warmup": 1, "repeat": 7},
+        {
+            "name": "headline_128",
+            "size": 128,
+            "detector": 128,
+            "views": 180,
+            "warmup": 1,
+            "repeat": 7,
+        },
         {"name": "sanity_64", "size": 64, "detector": 64, "views": 90, "warmup": 1, "repeat": 7},
     ],
     "publication": [
         {"name": "scale_64", "size": 64, "detector": 64, "views": 90, "warmup": 3, "repeat": 10},
-        {"name": "scale_128", "size": 128, "detector": 128, "views": 180, "warmup": 3, "repeat": 10},
+        {
+            "name": "scale_128",
+            "size": 128,
+            "detector": 128,
+            "views": 180,
+            "warmup": 3,
+            "repeat": 10,
+        },
         {"name": "scale_192", "size": 192, "detector": 192, "views": 270, "warmup": 2, "repeat": 7},
     ],
 }
@@ -34,7 +47,9 @@ EVIDENCE_CLASS = {
 }
 
 
-def _run(cmd: list[str], *, cwd: Path, env: dict[str, str], log: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str], *, cwd: Path, env: dict[str, str], log: Path
+) -> subprocess.CompletedProcess[str]:
     start = time.perf_counter()
     proc = subprocess.run(
         cmd,
@@ -49,8 +64,7 @@ def _run(cmd: list[str], *, cwd: Path, env: dict[str, str], log: Path) -> subpro
     log.parent.mkdir(parents=True, exist_ok=True)
     log.write_text(
         "$ " + " ".join(cmd) + "\n"
-        f"# exit={proc.returncode} wall_sec={duration:.6f}\n\n"
-        + proc.stdout,
+        f"# exit={proc.returncode} wall_sec={duration:.6f}\n\n" + proc.stdout,
         encoding="utf-8",
     )
     if proc.returncode != 0:
@@ -96,7 +110,9 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
-def _case_summary(case: dict[str, Any], report: dict[str, Any], artifact_rel: dict[str, str]) -> dict[str, Any]:
+def _case_summary(
+    case: dict[str, Any], report: dict[str, Any], artifact_rel: dict[str, str]
+) -> dict[str, Any]:
     timing = report["timing_summary"]
     cold = report.get("cold_timing_summary", {})
     memory = report["gpu_memory_summary_mb"]
@@ -131,18 +147,18 @@ def _case_summary(case: dict[str, Any], report: dict[str, Any], artifact_rel: di
         "pallas_forward_vs_tomojax_forward": speedups["pallas_forward_vs_tomojax_forward_median"],
         "astra_forward_vs_pallas_forward": speedups["astra_forward_vs_pallas_forward_median"],
         "astra_slice_fbp_vs_tomojax_fbp": speedups["astra_slice_fbp_vs_tomojax_fbp_median"],
-        "pallas_rel_l2_vs_jax": (
-            forward.get("tomojax_pallas_vs_tomojax") or {}
-        ).get("relative_l2_vs_tomojax"),
+        "pallas_rel_l2_vs_jax": (forward.get("tomojax_pallas_vs_tomojax") or {}).get(
+            "relative_l2_vs_tomojax"
+        ),
         "astra_rel_l2_vs_jax": forward["astra_parallel3d_vs_tomojax"]["relative_l2_vs_tomojax"],
         "tomojax_fbp_mse": recon["tomojax_fbp_vs_truth"]["mse"],
         "tomojax_fbp_psnr_db": recon["tomojax_fbp_vs_truth"]["psnr_db"],
-        "tomojax_direct_vs_generic_fbp_rel_l2": recon[
-            "tomojax_direct_fbp_vs_generic_fbp"
-        ]["relative_l2_vs_tomojax"],
-        "tomojax_direct_vs_generic_fbp_max_abs": recon[
-            "tomojax_direct_fbp_vs_generic_fbp"
-        ]["max_abs_vs_tomojax"],
+        "tomojax_direct_vs_generic_fbp_rel_l2": recon["tomojax_direct_fbp_vs_generic_fbp"][
+            "relative_l2_vs_tomojax"
+        ],
+        "tomojax_direct_vs_generic_fbp_max_abs": recon["tomojax_direct_fbp_vs_generic_fbp"][
+            "max_abs_vs_tomojax"
+        ],
         "tomojax_pallas_peak_delta_mb": memory["tomojax_pallas_forward"]["peak_delta_process_mb"],
         "tomojax_fbp_peak_delta_mb": memory["tomojax_fbp"]["peak_delta_process_mb"],
         "json": artifact_rel["json"],
@@ -419,9 +435,7 @@ def main() -> None:
     env["PATH"] = f"{Path.home() / '.local/bin'}:{env.get('PATH', '')}"
     env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     src_path = str(args.tomojax_dir / "src")
-    env["PYTHONPATH"] = (
-        src_path if not env.get("PYTHONPATH") else f"{src_path}:{env['PYTHONPATH']}"
-    )
+    env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}:{env['PYTHONPATH']}"
     python_cmd = env.get("TOMOJAX_BENCH_PYTHON")
     python_prefix = [python_cmd] if python_cmd else ["uv", "run", "python"]
 
@@ -607,7 +621,7 @@ def main() -> None:
         "benchmark": "tomojax_benchmark_suite",
         "mode": args.mode,
         "evidence_class": EVIDENCE_CLASS[args.mode],
-        "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "created_at": datetime.now(UTC).astimezone().isoformat(timespec="seconds"),
         "note": args.note,
         "git_branch": args.git_branch,
         "git_commit": args.git_commit,

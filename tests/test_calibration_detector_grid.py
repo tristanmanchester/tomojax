@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax.calibration.detector_grid import (
     detector_grid_from_calibration,

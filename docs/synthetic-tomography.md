@@ -3,13 +3,13 @@
 The production-shaped synthetic entrypoint is:
 
 ```bash
-uv run tomojax-align-auto --synthetic-case <case> --size 128 --out-dir <run-dir>
+uv run tomojax dev align-auto --synthetic-case <case> --size 128 --out-dir <run-dir>
 ```
 
 ## Setup-Global
 
 ```bash
-uv run tomojax-align-auto \
+uv run tomojax dev align-auto \
   --out-dir .artifacts/synthetic/setup_global_128 \
   --synthetic-case setup-global \
   --size 128 \
@@ -22,7 +22,7 @@ offset recovery for `synth128_setup_global_tomo`.
 ## Pose-Random
 
 ```bash
-uv run tomojax-align-auto \
+uv run tomojax dev align-auto \
   --out-dir .artifacts/synthetic/pose_random_128 \
   --synthetic-case pose-random \
   --size 128 \

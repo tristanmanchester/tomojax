@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Mapping
+from typing import Literal
 
 from ._json import JsonValue, drop_none, normalize_json
-
 
 VariableStatus = Literal["estimated", "supplied", "frozen", "derived"]
 CalibrationFrame = Literal[
@@ -63,7 +63,7 @@ class CalibrationVariable:
         )
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "CalibrationVariable":
+    def from_dict(cls, payload: Mapping[str, object]) -> CalibrationVariable:
         return cls(
             name=str(payload["name"]),
             value=normalize_json(payload.get("value")),
@@ -74,9 +74,7 @@ class CalibrationVariable:
             uncertainty=normalize_json(payload.get("uncertainty"))
             if "uncertainty" in payload
             else None,
-            description=None
-            if payload.get("description") is None
-            else str(payload["description"]),
+            description=None if payload.get("description") is None else str(payload["description"]),
         )
 
 
@@ -126,7 +124,7 @@ class CalibrationState:
         }
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "CalibrationState":
+    def from_dict(cls, payload: Mapping[str, object]) -> CalibrationState:
         sections = {}
         for field_name in _SECTION_NAMES:
             values = payload.get(field_name, [])

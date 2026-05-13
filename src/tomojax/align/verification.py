@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Literal, Mapping
+from typing import Literal
 
 import numpy as np
-
 
 VerificationStatus = Literal[
     "accepted",
@@ -44,7 +44,6 @@ def verify_alignment_metrics(
     model_sufficient: bool = True,
 ) -> AlignmentVerificationResult:
     """Classify common alignment metrics into a workflow acceptance status."""
-
     metrics: dict[str, object] = {
         "loss_before": loss_before,
         "loss_after": loss_after,
@@ -96,13 +95,14 @@ def verify_alignment_metrics(
         passed=not final_quality_required,
         reasons=tuple(reasons),
         metrics=metrics,
-        recommended_next="run_tortoise_verification" if final_quality_required else "inspect_result",
+        recommended_next="run_tortoise_verification"
+        if final_quality_required
+        else "inspect_result",
     )
 
 
 def verification_from_manifest(payload: Mapping[str, object]) -> AlignmentVerificationResult:
     """Build a verification result from a manifest-like mapping when fields exist."""
-
     loss = payload.get("loss")
     quality = payload.get("quality")
     pose_recovery = payload.get("pose_recovery")

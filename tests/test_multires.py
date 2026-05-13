@@ -1,8 +1,8 @@
+import jax.numpy as jnp
 import numpy as np
 import pytest
-import jax.numpy as jnp
 
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.multires import (
     bin_projections,
     bin_volume,

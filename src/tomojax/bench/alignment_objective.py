@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 import json
 import math
+from pathlib import Path
 import statistics
 import time
-from dataclasses import asdict, dataclass, replace
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -239,7 +240,9 @@ def benchmark_alignment_objective_variant(
     elif implementation == "manual_per_view":
         call = _make_manual_value_and_grad_callable(fixture, config)
     else:
-        raise ValueError("alignment objective implementation must be 'stacked' or 'manual_per_view'")
+        raise ValueError(
+            "alignment objective implementation must be 'stacked' or 'manual_per_view'"
+        )
     first_seconds, first_output = _time_blocked_call(call)
     warm_seconds: list[float] = []
     warm_output = first_output

@@ -8,10 +8,14 @@ import jax.numpy as jnp
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.projector import forward_project_view_T
 
-from .loss_adapters import LossAdapter
+from ..geometry.geometry_applier import (
+    BaseGeometryArrays,
+    apply_alignment_state,
+    subset_base_geometry,
+)
 from ..model.dof_specs import ActiveParameterView
-from ..geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state, subset_base_geometry
 from ..model.state import AlignmentState
+from .loss_adapters import LossAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,9 +76,7 @@ def accumulate_validation_normals(
 
     def residual_chunk(z_candidate: jnp.ndarray, i: jnp.ndarray) -> jnp.ndarray:
         state = active_view.unpack(frozen_state, z_candidate)
-        val_state = state.replace(
-            pose=state.pose.replace(params5=state.pose.params5[val_idx])
-        )
+        val_state = state.replace(pose=state.pose.replace(params5=state.pose.params5[val_idx]))
         effective = apply_alignment_state(val_base, val_state)
         start_shifted, valid_mask, _view_idx = _chunk_schedule(
             i,
@@ -82,7 +84,9 @@ def accumulate_validation_normals(
             chunk_size=b,
         )
         T_chunk = jax.lax.dynamic_slice(effective.pose_stack, (start_shifted, 0, 0), (b, 4, 4))
-        y_chunk = jax.lax.dynamic_slice(targets, (start_shifted, 0, 0), (b, detector.nv, detector.nu))
+        y_chunk = jax.lax.dynamic_slice(
+            targets, (start_shifted, 0, 0), (b, detector.nv, detector.nu)
+        )
         global_idx = jax.lax.dynamic_slice(val_idx, (start_shifted,), (b,))
         local_idx = jax.lax.dynamic_slice(local_indices, (start_shifted,), (b,))
         view_weight = jax.lax.dynamic_slice(val_mask, (start_shifted,), (b,))
@@ -188,7 +192,11 @@ def score_validation_fixed_volume(
 
 
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else int(n_views)
+    b = (
+        int(views_per_batch)
+        if views_per_batch is not None and int(views_per_batch) > 0
+        else int(n_views)
+    )
     return max(1, min(int(b), int(n_views)))
 
 

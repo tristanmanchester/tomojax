@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pytest
 import jax.numpy as jnp
+import pytest
 
 from tomojax.align.diagnostics import (
     GaugePolicyError,

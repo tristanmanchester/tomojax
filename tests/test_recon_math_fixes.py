@@ -418,13 +418,15 @@ def _reference_estimate_norm_A2(
         w = AtranA(v)
         v = w / (jnp.linalg.norm(w) + 1e-12)
     Aw = AtranA(v)
-    return max(float(jnp.vdot(v, Aw).real) * float(safety ** 2), 1e-6)
+    return max(float(jnp.vdot(v, Aw).real) * float(safety**2), 1e-6)
 
 
 def test_grad_data_term_matches_vjp_under_bf16():
     geometry, grid, detector, T_all = _make_small_parallel_case(nx=8, ny=8, nz=8, n_views=4)
     det_grid = get_detector_grid_device(detector)
-    truth = jax.random.normal(jax.random.key(11), (grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * 0.1
+    truth = (
+        jax.random.normal(jax.random.key(11), (grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * 0.1
+    )
     x = jax.random.normal(jax.random.key(12), (grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * 0.1
 
     project = jax.vmap(

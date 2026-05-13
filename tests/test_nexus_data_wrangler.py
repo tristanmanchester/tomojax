@@ -9,7 +9,6 @@ import h5py
 import numpy as np
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -32,7 +31,9 @@ def _axes_attr_values(value) -> list[str]:
 
 
 def test_spatial_bin_and_padding_helpers() -> None:
-    wrangler_mod = _load_module("nexus_data_wrangler_helpers_test", "scripts/nexus_data_wrangler.py")
+    wrangler_mod = _load_module(
+        "nexus_data_wrangler_helpers_test", "scripts/nexus_data_wrangler.py"
+    )
 
     arr3d = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
     arr2d = np.arange(15, dtype=np.float32).reshape(3, 5)
@@ -176,9 +177,7 @@ def test_write_nexus_h5_writes_expected_structure(tmp_path: Path, capsys) -> Non
         assert volume.chunks == (3, 4, 4)
         assert np.allclose(volume[...], np.zeros((3, 4, 4), dtype=np.float32))
         assert volume.attrs["long_name"] == "ground_truth_volume"
-        assert _axes_attr_values(entry["processing/tomojax"].attrs["volume_axes_order"]) == [
-            "zyx"
-        ]
+        assert _axes_attr_values(entry["processing/tomojax"].attrs["volume_axes_order"]) == ["zyx"]
 
 
 def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
@@ -203,9 +202,7 @@ def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
         write_calls.append(kwargs)
 
     monkeypatch.setattr(wrangler_mod, "load_raw", fake_load_raw)
-    monkeypatch.setattr(
-        wrangler_mod, "flat_dark_correct_to_absorption", fake_correct_to_absorption
-    )
+    monkeypatch.setattr(wrangler_mod, "flat_dark_correct_to_absorption", fake_correct_to_absorption)
     monkeypatch.setattr(wrangler_mod, "write_nexus_h5", fake_write_nexus_h5)
     monkeypatch.setattr(
         sys,
@@ -243,9 +240,7 @@ def test_main_derives_detector_grid_and_voxels_after_binning_and_padding(
     assert write_kwargs["pixel_size_pixels_x"] == 4.5
     assert write_kwargs["pixel_size_pixels_y"] == 3.0
     assert np.allclose(write_kwargs["angles_deg"], np.array([0.0, 270.0], dtype=np.float32))
-    assert np.allclose(
-        write_kwargs["image_key"], np.zeros((2,), dtype=np.int32)
-    )
+    assert np.allclose(write_kwargs["image_key"], np.zeros((2,), dtype=np.int32))
     assert np.asarray(write_kwargs["projections"]).shape == (2, 3, 4)
 
 

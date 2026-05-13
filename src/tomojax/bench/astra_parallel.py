@@ -7,10 +7,10 @@ import gc
 import json
 import math
 import os
+from pathlib import Path
 import statistics
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 import jax
@@ -289,7 +289,9 @@ def _make_volume(args: argparse.Namespace) -> np.ndarray:
     return np.asarray(make_phantom(cfg), dtype=np.float32)
 
 
-def _make_geometry(size: int, detector: int, views: int) -> tuple[Grid, Detector, ParallelGeometry, np.ndarray]:
+def _make_geometry(
+    size: int, detector: int, views: int
+) -> tuple[Grid, Detector, ParallelGeometry, np.ndarray]:
     grid = Grid(size, size, size, 1.0, 1.0, 1.0)
     det = Detector(detector, detector, 1.0, 1.0, det_center=(0.0, 0.0))
     angles = np.linspace(0.0, 180.0, int(views), endpoint=False).astype(np.float32)
@@ -470,9 +472,7 @@ def _use_specialized_pallas_fbp(grid: Grid, det: Detector) -> bool:
 def _fbp_path_metadata(grid: Grid, det: Detector) -> dict[str, Any]:
     specialized = _use_specialized_pallas_fbp(grid, det)
     return {
-        "timed_fbp_path": (
-            "specialized_pallas_parallel_z_helper" if specialized else "public_fbp"
-        ),
+        "timed_fbp_path": ("specialized_pallas_parallel_z_helper" if specialized else "public_fbp"),
         "public_fbp_timed": not specialized,
         "specialized_pallas_fbp_timed": specialized,
         "differentiability_required_for_timed_fbp": False,
@@ -505,8 +505,12 @@ def _differentiability_guard(size: int = 24) -> dict[str, Any]:
     detector = Detector(size, size, 1.0, 1.0, det_center=(0.0, 0.0))
     det_grid = get_detector_grid_device(detector)
     volume = jnp.zeros((size, size, size), dtype=jnp.float32)
-    volume = volume.at[size // 5 : size // 5 + 5, size // 3 : size // 3 + 4, size // 2 : size // 2 + 3].set(1.0)
-    volume = volume.at[size // 2 + 2 : size // 2 + 6, size // 5 : size // 5 + 3, size // 4 : size // 4 + 4].set(0.65)
+    volume = volume.at[
+        size // 5 : size // 5 + 5, size // 3 : size // 3 + 4, size // 2 : size // 2 + 3
+    ].set(1.0)
+    volume = volume.at[
+        size // 2 + 2 : size // 2 + 6, size // 5 : size // 5 + 3, size // 4 : size // 4 + 4
+    ].set(0.65)
     target_theta = jnp.float32(0.08)
 
     def project(theta: jnp.ndarray) -> jnp.ndarray:
@@ -552,8 +556,10 @@ def _differentiability_guard(size: int = 24) -> dict[str, Any]:
             best_theta = float(theta_next)
             best_loss = stepped_loss_f
 
-    finite = math.isfinite(initial_loss_f) and math.isfinite(grad_f) and (
-        best_loss is not None and math.isfinite(best_loss)
+    finite = (
+        math.isfinite(initial_loss_f)
+        and math.isfinite(grad_f)
+        and (best_loss is not None and math.isfinite(best_loss))
     )
     grad_abs = abs(grad_f)
     reduced = best_loss is not None and best_loss < initial_loss_f
@@ -730,9 +736,7 @@ def _quality_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "mse": recon["tomojax_direct_fbp_vs_generic_fbp"]["mse_vs_tomojax"],
             "rmse": recon["tomojax_direct_fbp_vs_generic_fbp"]["rmse_vs_tomojax"],
             "psnr_db": None,
-            "relative_l2": recon["tomojax_direct_fbp_vs_generic_fbp"][
-                "relative_l2_vs_tomojax"
-            ],
+            "relative_l2": recon["tomojax_direct_fbp_vs_generic_fbp"]["relative_l2_vs_tomojax"],
             "max_abs": recon["tomojax_direct_fbp_vs_generic_fbp"]["max_abs_vs_tomojax"],
         },
     ]
@@ -777,11 +781,11 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Views: `{config['views']}` over `180 deg`",
         f"- Warmup runs: `{config['warmup']}`",
         f"- Measured repeats: `{config['repeat']}`",
-        f"- ASTRA forward: `parallel3d` CUDA",
-        f"- ASTRA FBP: slice-wise `FBP_CUDA`",
+        "- ASTRA forward: `parallel3d` CUDA",
+        "- ASTRA FBP: slice-wise `FBP_CUDA`",
         f"- Timed TomoJAX FBP path: `{report['fbp_path']['timed_fbp_path']}`",
         f"- Public `fbp()` timed: `{report['fbp_path']['public_fbp_timed']}`",
-        f"- FDK: intentionally unused",
+        "- FDK: intentionally unused",
         "",
         "## Speedups",
         "",
@@ -902,7 +906,9 @@ def main() -> None:
         "jax_devices": [str(device) for device in jax.devices()],
         "astra_version": getattr(astra, "__version__", "unknown"),
         "astra_cuda": astra_cuda,
-        "astra_gpu_info": astra.get_gpu_info() if astra_cuda and hasattr(astra, "get_gpu_info") else None,
+        "astra_gpu_info": astra.get_gpu_info()
+        if astra_cuda and hasattr(astra, "get_gpu_info")
+        else None,
     }
 
     differentiability_guard = (
@@ -910,16 +916,15 @@ def main() -> None:
     )
     if differentiability_guard is not None and differentiability_guard["status"] != "pass":
         raise RuntimeError(
-            "Differentiability guard failed: "
-            + json.dumps(differentiability_guard, sort_keys=True)
+            "Differentiability guard failed: " + json.dumps(differentiability_guard, sort_keys=True)
         )
 
     tomojax_volume = jnp.asarray(volume, dtype=jnp.float32)
     tomojax_proj, tomojax_forward_cold, tomojax_forward_times, tomojax_forward_memory = (
         _time_call_with_cold(
-        lambda: _tomojax_forward(tomojax_volume, grid, det, geom, args.views),
-        warmup=args.warmup,
-        repeat=args.repeat,
+            lambda: _tomojax_forward(tomojax_volume, grid, det, geom, args.views),
+            warmup=args.warmup,
+            repeat=args.repeat,
         )
     )
     if args.no_pallas:
@@ -928,20 +933,20 @@ def main() -> None:
         pallas_forward_times: list[float] = []
         pallas_forward_memory: list[dict[str, Any]] = []
     else:
-        tomojax_pallas_forward = _make_tomojax_pallas_forward_runner(
-            grid, det, geom, args.views
-        )
+        tomojax_pallas_forward = _make_tomojax_pallas_forward_runner(grid, det, geom, args.views)
         pallas_proj, pallas_forward_cold, pallas_forward_times, pallas_forward_memory = (
             _time_call_with_cold(
-            lambda: tomojax_pallas_forward(tomojax_volume),
-            warmup=args.warmup,
-            repeat=args.repeat,
+                lambda: tomojax_pallas_forward(tomojax_volume),
+                warmup=args.warmup,
+                repeat=args.repeat,
             )
         )
-    astra_proj, astra_forward_cold, astra_forward_times, astra_forward_memory = _time_call_with_cold(
-        lambda: _astra_forward_3d(volume, angles_rad),
-        warmup=args.warmup,
-        repeat=args.repeat,
+    astra_proj, astra_forward_cold, astra_forward_times, astra_forward_memory = (
+        _time_call_with_cold(
+            lambda: _astra_forward_3d(volume, angles_rad),
+            warmup=args.warmup,
+            repeat=args.repeat,
+        )
     )
 
     tomojax_recon, tomojax_fbp_cold, tomojax_fbp_times, tomojax_fbp_memory = _time_call_with_cold(
@@ -970,9 +975,9 @@ def main() -> None:
     )
     (astra_sino, astra_recon), astra_fbp_cold, astra_fbp_times, astra_fbp_memory = (
         _time_call_with_cold(
-        lambda: _astra_fbp_slice(volume, angles_rad),
-        warmup=args.warmup,
-        repeat=args.repeat,
+            lambda: _astra_fbp_slice(volume, angles_rad),
+            warmup=args.warmup,
+            repeat=args.repeat,
         )
     )
 
@@ -1056,9 +1061,7 @@ def main() -> None:
         "forward_projection": {
             "tomojax": _projection_metrics(tomojax_proj, tomojax_proj),
             "tomojax_pallas_vs_tomojax": (
-                _projection_metrics(pallas_proj, tomojax_proj)
-                if pallas_proj is not None
-                else None
+                _projection_metrics(pallas_proj, tomojax_proj) if pallas_proj is not None else None
             ),
             "astra_parallel3d_vs_tomojax": _projection_metrics(astra_proj, tomojax_proj),
         },

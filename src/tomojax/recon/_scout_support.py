@@ -93,11 +93,14 @@ def _box_blur3d(volume: jax.Array, *, radius: int) -> jax.Array:
     for dx in range(2 * radius + 1):
         for dy in range(2 * radius + 1):
             for dz in range(2 * radius + 1):
-                acc = acc + padded[
-                    dx : dx + vol.shape[0],
-                    dy : dy + vol.shape[1],
-                    dz : dz + vol.shape[2],
-                ]
+                acc = (
+                    acc
+                    + padded[
+                        dx : dx + vol.shape[0],
+                        dy : dy + vol.shape[1],
+                        dz : dz + vol.shape[2],
+                    ]
+                )
                 count += 1
     return acc / jnp.asarray(count, dtype=jnp.float32)
 

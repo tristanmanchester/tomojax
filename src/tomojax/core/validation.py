@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 import math
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
@@ -83,7 +84,7 @@ def _geometry_view_count(geometry: Geometry | None) -> int | None:
     if thetas is None:
         return None
     try:
-        return int(len(thetas))
+        return len(thetas)
     except Exception:
         return None
 

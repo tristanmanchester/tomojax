@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
+from tomojax.bench.forward_projector import (
+    ForwardSinogramBenchmarkConfig,
+    make_forward_sinogram_fixture,
+)
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.pallas_projector import (
@@ -13,12 +17,12 @@ from tomojax.core.pallas_projector import (
     bind_forward_project_residual_sse_T_pallas,
     bind_forward_project_view_T_pallas,
     bind_forward_project_views_T_pallas,
-    forward_project_parallel_z_views_pallas,
     forward_project_loss_and_grad_T_pallas,
+    forward_project_parallel_z_views_pallas,
     forward_project_residual_sse_T_pallas,
     forward_project_residual_sse_T_pallas_with_state,
-    forward_project_view_T_pallas_with_state,
     forward_project_view_T_pallas,
+    forward_project_view_T_pallas_with_state,
     forward_project_views_T_pallas,
     pallas_projector_actual_sinogram_variant_metadata,
     pallas_projector_actual_variant_metadata,
@@ -33,10 +37,6 @@ from tomojax.core.projector import (
     forward_project_view_T,
     get_detector_grid_device,
     sum_backproject_views_T,
-)
-from tomojax.bench.forward_projector import (
-    ForwardSinogramBenchmarkConfig,
-    make_forward_sinogram_fixture,
 )
 
 
@@ -670,9 +670,10 @@ def test_pallas_backproject_view_matches_jax_on_general_geometry() -> None:
     grid = Grid(nx=6, ny=5, nz=4, vx=1.2, vy=0.9, vz=1.1)
     detector = Detector(nu=7, nv=5, du=0.8, dv=1.3, det_center=(0.4, -0.2))
     T = _pose(17.0, grid=grid, detector=detector)
-    image = jnp.arange(detector.nv * detector.nu, dtype=jnp.float32).reshape(
-        detector.nv, detector.nu
-    ) / 10.0
+    image = (
+        jnp.arange(detector.nv * detector.nu, dtype=jnp.float32).reshape(detector.nv, detector.nu)
+        / 10.0
+    )
 
     oracle = backproject_view_T(T, grid, detector, image, step_size=0.45)
     candidate = backproject_view_T_pallas(
@@ -694,14 +695,14 @@ def test_pallas_forward_loss_grad_matches_jax_explicit_adjoint() -> None:
     grid = Grid(nx=6, ny=5, nz=4, vx=1.2, vy=0.9, vz=1.1)
     detector = Detector(nu=7, nv=5, du=0.8, dv=1.3, det_center=(0.4, -0.2))
     poses = jnp.stack([_pose(theta, grid=grid, detector=detector) for theta in (0.0, 17.0, 41.0)])
-    volume = jnp.arange(grid.nx * grid.ny * grid.nz, dtype=jnp.float32).reshape(
-        grid.nx, grid.ny, grid.nz
-    ) / 100.0
+    volume = (
+        jnp.arange(grid.nx * grid.ny * grid.nz, dtype=jnp.float32).reshape(
+            grid.nx, grid.ny, grid.nz
+        )
+        / 100.0
+    )
     target = jnp.stack(
-        [
-            forward_project_view_T(T, grid, detector, volume * 1.1, step_size=0.45)
-            for T in poses
-        ],
+        [forward_project_view_T(T, grid, detector, volume * 1.1, step_size=0.45) for T in poses],
         axis=0,
     )
     pred = jnp.stack(
@@ -838,7 +839,9 @@ def test_pallas_forward_loss_grad_can_skip_loss_without_changing_gradient() -> N
 
     assert float(np.asarray(loss_with)) > 0.0
     np.testing.assert_allclose(np.asarray(loss_without), np.asarray(0.0, dtype=np.float32))
-    np.testing.assert_allclose(np.asarray(grad_without), np.asarray(grad_with), atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(
+        np.asarray(grad_without), np.asarray(grad_with), atol=1e-5, rtol=1e-5
+    )
 
 
 @pytest.mark.parametrize(

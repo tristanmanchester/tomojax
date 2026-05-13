@@ -80,30 +80,22 @@ def flat_dark_to_absorption(
     flats_arr = _ensure_array(flats, backend=backend)
     darks_arr = None if darks is None else _ensure_array(darks, backend=backend)
 
-    flat_avg = (
-        backend.mean(flats_arr, axis=0)
-        if getattr(flats_arr, "ndim", 0) >= 3
-        else flats_arr
-    )
+    flat_avg = backend.mean(flats_arr, axis=0) if getattr(flats_arr, "ndim", 0) >= 3 else flats_arr
     if darks_arr is None:
         dark_avg = backend.zeros_like(flat_avg)
     else:
         dark_avg = (
-            backend.mean(darks_arr, axis=0)
-            if getattr(darks_arr, "ndim", 0) >= 3
-            else darks_arr
+            backend.mean(darks_arr, axis=0) if getattr(darks_arr, "ndim", 0) >= 3 else darks_arr
         )
 
-    denom = backend.maximum(
-        flat_avg - dark_avg, backend.asarray(min_intensity, dtype=proj.dtype)
-    )
+    denom = backend.maximum(flat_avg - dark_avg, backend.asarray(min_intensity, dtype=proj.dtype))
     norm = (proj - dark_avg) / denom
     norm = backend.maximum(norm, backend.asarray(min_intensity, dtype=proj.dtype))
     return transmission_to_absorption(norm, min_intensity=min_intensity)
 
 
 __all__ = [
-    "transmission_to_absorption",
     "absorption_to_transmission",
     "flat_dark_to_absorption",
+    "transmission_to_absorption",
 ]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from .geometry.base import Grid, Detector, Geometry
+from .geometry.base import Detector, Geometry, Grid
 from .projector import backproject_view, forward_project_view
 
 

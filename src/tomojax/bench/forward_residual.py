@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 import importlib
 import json
+from pathlib import Path
 import statistics
 import time
-from dataclasses import asdict, dataclass, replace
-from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -431,7 +432,10 @@ def residual_dispatch_estimated_ray_steps(config: ForwardResidualBenchmarkConfig
 
 def residual_dispatch_selected_mode(config: ForwardResidualBenchmarkConfig) -> str:
     """Select the residual backend for the benchmark-only high-ray dispatch probe."""
-    if config.pose_mode == "general_5d" and sinogram_dispatch_selected_mode(config) != "pallas_batched":
+    if (
+        config.pose_mode == "general_5d"
+        and sinogram_dispatch_selected_mode(config) != "pallas_batched"
+    ):
         return "jax_materialized"
     return (
         "pallas_materialized"

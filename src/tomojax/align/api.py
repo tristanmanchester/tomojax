@@ -35,12 +35,34 @@ from tomojax.align._joint_schur_lm import (
     write_joint_schur_normal_eq_summary,
 )
 from tomojax.align._pose_lm import PoseOnlyLMConfig, PoseOnlyLMResult, solve_pose_only_lm
+from tomojax.align._profiles import (
+    AlignmentProfile,
+    AlignmentProfileInput,
+    AlignmentProfilePolicy,
+    FallbackPolicy,
+    QualityTier,
+    alignment_profile_policy,
+    normalize_alignment_profile,
+    profile_policy_from_config,
+    resolve_profiled_cli_defaults,
+)
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
 from tomojax.align._smoke import AlignmentSmokeReport, run_alignment_smoke
-from tomojax.align.pipeline import AlignConfig, align, align_multires
+from tomojax.align.pipeline import (
+    AlignConfig,
+    AlignMultiresResumeState,
+    AlignResumeState,
+    align,
+    align_multires,
+)
 
 __all__ = [
     "AlignConfig",
+    "AlignMultiresResumeState",
+    "AlignResumeState",
+    "AlignmentProfile",
+    "AlignmentProfileInput",
+    "AlignmentProfilePolicy",
     "AlignmentSmokeReport",
     "AlternatingAlignmentSolver",
     "AlternatingLevelSummary",
@@ -49,6 +71,7 @@ __all__ = [
     "ContinuationLevel",
     "ContinuationSchedule",
     "ContinuationScheduleName",
+    "FallbackPolicy",
     "GeometryUpdateSolver",
     "GeometryUpdateVolumeSource",
     "JointSchurDiagnostics",
@@ -61,6 +84,7 @@ __all__ = [
     "PreviewResidualFilterMode",
     "PreviewVolumeSupport",
     "ProjectionLossMode",
+    "QualityTier",
     "SetupOnlyLMConfig",
     "SetupOnlyLMResult",
     "StoppedPreviewPolicy",
@@ -68,8 +92,12 @@ __all__ = [
     "adapt_joint_schur_trust_radius",
     "align",
     "align_multires",
+    "alignment_profile_policy",
     "joint_schur_normal_eq_summary",
+    "normalize_alignment_profile",
+    "profile_policy_from_config",
     "reference_continuation_schedule",
+    "resolve_profiled_cli_defaults",
     "run_alignment_smoke",
     "run_alternating_solver_smoke",
     "schur_step_from_jacobian",

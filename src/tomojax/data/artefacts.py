@@ -7,7 +7,6 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
 
@@ -69,10 +68,7 @@ class SimulationArtefacts:
             or (self.stripe_fraction > 0.0 and self.stripe_gain_sigma > 0.0)
             or self.dropped_view_fraction > 0.0
             or self.detector_blur_sigma > 0.0
-            or (
-                self.intensity_drift_amplitude != 0.0
-                and self.intensity_drift_mode != "none"
-            )
+            or (self.intensity_drift_amplitude != 0.0 and self.intensity_drift_mode != "none")
         )
 
 
@@ -101,7 +97,6 @@ _RNG_OFFSETS = {
 
 def artefacts_from_legacy_noise(noise: str, noise_level: float) -> SimulationArtefacts:
     """Map the legacy ``noise`` / ``noise_level`` pair to artefact config."""
-
     level = float(noise_level)
     if level <= 0.0:
         return SimulationArtefacts()
@@ -119,7 +114,6 @@ def normalise_simulation_artefacts(
     noise_level: float,
 ) -> SimulationArtefacts:
     """Return explicit artefacts, or legacy noise mapped into artefact fields."""
-
     if artefacts is not None:
         validate_simulation_artefacts(artefacts)
         return artefacts
@@ -128,7 +122,6 @@ def normalise_simulation_artefacts(
 
 def validate_simulation_artefacts(artefacts: SimulationArtefacts | None) -> None:
     """Raise if an artefact configuration contains invalid parameter values."""
-
     _validate_config(artefacts or SimulationArtefacts())
 
 
@@ -144,7 +137,6 @@ def apply_simulation_artefacts(
     as a host-side post-processing step, matching the existing simulator noise
     path while keeping all randomness explicit and reproducible.
     """
-
     cfg = artefacts or SimulationArtefacts()
     validate_simulation_artefacts(cfg)
     metadata: ArtefactMetadata = {
@@ -224,9 +216,7 @@ def apply_simulation_artefacts(
     if cfg.zinger_fraction > 0.0:
         count = _fraction_count(n_views * nv * nu, cfg.zinger_fraction)
         rng = _rng(seed, "zingers")
-        indices = np.sort(
-            rng.choice(n_views * nv * nu, size=count, replace=False).astype(np.int32)
-        )
+        indices = np.sort(rng.choice(n_views * nv * nu, size=count, replace=False).astype(np.int32))
         out.reshape(-1)[indices] += float(cfg.zinger_value)
         metadata["zinger_indices"] = [int(v) for v in indices.tolist()]
         metadata["zinger_count"] = int(count)
@@ -265,9 +255,7 @@ def _validate_config(cfg: SimulationArtefacts) -> None:
             raise ValueError(f"{name} must be non-negative, got {value}")
 
     if cfg.intensity_drift_mode not in {"none", "linear", "sinusoidal"}:
-        raise ValueError(
-            "intensity_drift_mode must be one of 'none', 'linear', or 'sinusoidal'"
-        )
+        raise ValueError("intensity_drift_mode must be one of 'none', 'linear', or 'sinusoidal'")
 
 
 def _rng(seed: int, artefact_name: str) -> np.random.Generator:

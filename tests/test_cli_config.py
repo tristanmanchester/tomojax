@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import tomojax.cli.align as align_cli
 from tomojax.align.model.dofs import normalize_bounds
 from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align.pipeline import AlignConfig
+import tomojax.cli.align as align_cli
 from tomojax.cli.config import parse_args_with_config
 import tomojax.cli.recon as recon_cli
 
@@ -488,9 +488,7 @@ def test_normalize_bounds_preserves_tilt_alias_without_geometry():
         option_name="--bounds",
     )
 
-    assert bounds == (
-        ("tilt_deg", math.radians(-2.0), math.radians(2.0)),
-    )
+    assert bounds == (("tilt_deg", math.radians(-2.0), math.radians(2.0)),)
 
 
 def test_normalize_bounds_resolves_tilt_alias_with_geometry():
@@ -500,9 +498,7 @@ def test_normalize_bounds_resolves_tilt_alias_with_geometry():
         geometry=SimpleNamespace(tilt_about="z"),
     )
 
-    assert bounds == (
-        ("axis_rot_y_deg", math.radians(-2.0), math.radians(2.0)),
-    )
+    assert bounds == (("axis_rot_y_deg", math.radians(-2.0), math.radians(2.0)),)
 
 
 def test_normalize_bounds_accepts_toml_style_mapping():

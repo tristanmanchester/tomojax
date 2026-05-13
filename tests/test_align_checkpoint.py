@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import jax.numpy as jnp
-
+from test_align_quick import make_misaligned_case
 from tomojax.align.checkpoint import (
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
@@ -28,8 +29,6 @@ from tomojax.align.pipeline import (
 )
 from tomojax.core.geometry import Detector, Grid
 from tomojax.core.multires import scale_detector, scale_grid
-
-from test_align_quick import make_misaligned_case
 
 
 def _metadata(

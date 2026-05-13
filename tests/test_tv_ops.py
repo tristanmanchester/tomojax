@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 # check-public-imports: allow-private
 from tomojax.recon._tv_ops import (

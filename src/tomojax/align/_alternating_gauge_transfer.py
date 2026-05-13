@@ -167,10 +167,14 @@ def _normal_matvec(
         geometry,
         detector_shape=(int(mask.shape[1]), int(mask.shape[2])),
     )
-    return sum_backproject_views_chunked(core, projected) + jnp.asarray(
-        regularisation,
-        dtype=jnp.float32,
-    ) * volume
+    return (
+        sum_backproject_views_chunked(core, projected)
+        + jnp.asarray(
+            regularisation,
+            dtype=jnp.float32,
+        )
+        * volume
+    )
 
 
 def _cg_solve(
@@ -231,9 +235,7 @@ def _summary(rows: list[dict[str, object]]) -> dict[str, object]:
     return {
         "final_geometry_interpretation": str(final_row["interpretation"]),
         "final_transfer_ratio": float(cast("float", final_row["transfer_ratio"])),
-        "final_reduced_to_fixed_ratio": float(
-            cast("float", final_row["reduced_to_fixed_ratio"])
-        ),
+        "final_reduced_to_fixed_ratio": float(cast("float", final_row["reduced_to_fixed_ratio"])),
     }
 
 

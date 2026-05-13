@@ -28,9 +28,7 @@ def _load_gate_module():
 
 def _load_variable_projection_module():
     path = (
-        Path(__file__).resolve().parents[1]
-        / "tools"
-        / "run_detu_variable_projection_diagnostic.py"
+        Path(__file__).resolve().parents[1] / "tools" / "run_detu_variable_projection_diagnostic.py"
     )
     spec = importlib.util.spec_from_file_location("run_detu_variable_projection_diagnostic", path)
     if spec is None or spec.loader is None:
@@ -129,9 +127,7 @@ def test_multires_summary_collates_carried_detu_curves(tmp_path: Path) -> None:
     curve = summary["curves"][0]
     assert curve["volume_source"] == "multires_carried_f4_final_volume"
     assert curve["argmin_det_u_px"] == 2.0
-    csv_rows = (tmp_path / "multires_carried_detu_loss_curves.csv").read_text(
-        encoding="utf-8"
-    )
+    csv_rows = (tmp_path / "multires_carried_detu_loss_curves.csv").read_text(encoding="utf-8")
     assert "multires_carried_f4_final_volume" in csv_rows
     assert (tmp_path / "multires_carried_detu_summary.md").exists()
 

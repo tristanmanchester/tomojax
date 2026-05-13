@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import jax
 import jax.numpy as jnp
@@ -72,7 +72,6 @@ def score_pose_stack_candidates(
     intentionally performance-oriented and records provenance so downstream
     verification can decide whether the candidate is acceptable.
     """
-
     if not candidates:
         raise ValueError("proposal scoring requires at least one candidate")
     values: list[float] = []

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
-from datetime import datetime, timezone
 
 import pytest
 
@@ -117,7 +117,7 @@ def test_calibration_manifest_contains_schema_objective_conventions_and_units():
         convention_audit=convention,
         calibrated_geometry={"detector": {"det_center": [-4.0, 0.0]}},
         source={"dataset": "k11-54014"},
-        timestamp=datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 24, 10, 0, tzinfo=UTC),
     )
 
     json.dumps(manifest, allow_nan=False)

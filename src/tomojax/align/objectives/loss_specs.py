@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, Literal, Mapping, TypeAlias, cast
-
+from typing import Literal, TypeAlias, cast
 
 RobustLossKind: TypeAlias = Literal[
     "charbonnier",
@@ -139,7 +139,7 @@ AlignmentLossConfig: TypeAlias = AlignmentLossSpec | AlignmentLossSchedule
 LossBuilder: TypeAlias = Callable[[Mapping[str, float]], AlignmentLossSpec]
 LossMatcher: TypeAlias = Callable[[AlignmentLossSpec], bool]
 LossNameEmitter: TypeAlias = Callable[[AlignmentLossSpec], str]
-LossParamEmitter: TypeAlias = Callable[[AlignmentLossSpec], Dict[str, float]]
+LossParamEmitter: TypeAlias = Callable[[AlignmentLossSpec], dict[str, float]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +156,7 @@ class LossSpecDescriptor:
     params: LossParamEmitter
 
 
-def _empty_params(_: AlignmentLossSpec) -> Dict[str, float]:
+def _empty_params(_: AlignmentLossSpec) -> dict[str, float]:
     return {}
 
 
@@ -384,8 +384,8 @@ _LOSS_ALIASES: dict[str, str] = {
 _SETUP_VALIDATION_LM_LOSSES = frozenset({"l2", "l2_otsu", "pwls", "edge_l2"})
 
 
-def _robust_params(spec: RobustLossSpec) -> Dict[str, float]:
-    params: Dict[str, float] = {}
+def _robust_params(spec: RobustLossSpec) -> dict[str, float]:
+    params: dict[str, float] = {}
     if spec.kind == "charbonnier":
         params["eps"] = float(spec.eps)
     elif spec.kind == "huber":
@@ -403,7 +403,7 @@ def _robust_params(spec: RobustLossSpec) -> Dict[str, float]:
     return params
 
 
-def _correlation_params(spec: CorrelationLossSpec) -> Dict[str, float]:
+def _correlation_params(spec: CorrelationLossSpec) -> dict[str, float]:
     if spec.kind == "zncc":
         return {"eps": float(spec.eps)}
     if spec.kind == "phasecorr":
@@ -417,7 +417,7 @@ def _ssim_name(spec: SSIMLossSpec) -> str:
     return "ms_ssim" if spec.multiscale else "ssim"
 
 
-def _ssim_params(spec: SSIMLossSpec) -> Dict[str, float]:
+def _ssim_params(spec: SSIMLossSpec) -> dict[str, float]:
     params = {
         "K1": float(spec.K1),
         "K2": float(spec.K2),
@@ -428,7 +428,7 @@ def _ssim_params(spec: SSIMLossSpec) -> Dict[str, float]:
     return params
 
 
-def _tversky_params(spec: TverskyLossSpec) -> Dict[str, float]:
+def _tversky_params(spec: TverskyLossSpec) -> dict[str, float]:
     return {
         "temp": float(spec.temp),
         "alpha": float(spec.alpha),
@@ -437,7 +437,7 @@ def _tversky_params(spec: TverskyLossSpec) -> Dict[str, float]:
     }
 
 
-def _gradient_params(spec: GradientLossSpec) -> Dict[str, float]:
+def _gradient_params(spec: GradientLossSpec) -> dict[str, float]:
     return {"eps": float(spec.eps)} if spec.kind in {"ngf", "grad_orient"} else {}
 
 
@@ -447,7 +447,7 @@ def _information_name(spec: InformationLossSpec) -> str:
     return "nmi" if spec.normalized else "mi"
 
 
-def _information_params(spec: InformationLossSpec) -> Dict[str, float]:
+def _information_params(spec: InformationLossSpec) -> dict[str, float]:
     params = {"bins": float(spec.bins)}
     if spec.bw_x is not None:
         params["bw_x"] = float(spec.bw_x)
@@ -465,14 +465,14 @@ _LOSS_SPEC_DESCRIPTORS: tuple[LossSpecDescriptor, ...] = (
     LossSpecDescriptor(
         lambda spec: isinstance(spec, L2OtsuLossSpec),
         lambda _: "l2_otsu",
-        lambda spec: {"temp": float(cast(L2OtsuLossSpec, spec).temp)},
+        lambda spec: {"temp": float(cast("L2OtsuLossSpec", spec).temp)},
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, PWLSLossSpec),
         lambda _: "pwls",
         lambda spec: {
-            "a": float(cast(PWLSLossSpec, spec).a),
-            "b": float(cast(PWLSLossSpec, spec).b),
+            "a": float(cast("PWLSLossSpec", spec).a),
+            "b": float(cast("PWLSLossSpec", spec).b),
         },
     ),
     LossSpecDescriptor(
@@ -480,40 +480,40 @@ _LOSS_SPEC_DESCRIPTORS: tuple[LossSpecDescriptor, ...] = (
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, RobustLossSpec),
-        lambda spec: cast(RobustLossSpec, spec).kind,
-        lambda spec: _robust_params(cast(RobustLossSpec, spec)),
+        lambda spec: cast("RobustLossSpec", spec).kind,
+        lambda spec: _robust_params(cast("RobustLossSpec", spec)),
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, CorrelationLossSpec),
-        lambda spec: cast(CorrelationLossSpec, spec).kind,
-        lambda spec: _correlation_params(cast(CorrelationLossSpec, spec)),
+        lambda spec: cast("CorrelationLossSpec", spec).kind,
+        lambda spec: _correlation_params(cast("CorrelationLossSpec", spec)),
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, SSIMLossSpec),
-        lambda spec: _ssim_name(cast(SSIMLossSpec, spec)),
-        lambda spec: _ssim_params(cast(SSIMLossSpec, spec)),
+        lambda spec: _ssim_name(cast("SSIMLossSpec", spec)),
+        lambda spec: _ssim_params(cast("SSIMLossSpec", spec)),
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, TverskyLossSpec),
         lambda _: "tversky",
-        lambda spec: _tversky_params(cast(TverskyLossSpec, spec)),
+        lambda spec: _tversky_params(cast("TverskyLossSpec", spec)),
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, GradientLossSpec),
-        lambda spec: cast(GradientLossSpec, spec).kind,
-        lambda spec: _gradient_params(cast(GradientLossSpec, spec)),
+        lambda spec: cast("GradientLossSpec", spec).kind,
+        lambda spec: _gradient_params(cast("GradientLossSpec", spec)),
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, InformationLossSpec),
-        lambda spec: _information_name(cast(InformationLossSpec, spec)),
-        lambda spec: _information_params(cast(InformationLossSpec, spec)),
+        lambda spec: _information_name(cast("InformationLossSpec", spec)),
+        lambda spec: _information_params(cast("InformationLossSpec", spec)),
     ),
     LossSpecDescriptor(
         lambda spec: isinstance(spec, SWDLossSpec),
         lambda _: "swd",
         lambda spec: {
-            "n_samples": float(cast(SWDLossSpec, spec).n_samples),
-            "p": float(cast(SWDLossSpec, spec).p),
+            "n_samples": float(cast("SWDLossSpec", spec).n_samples),
+            "p": float(cast("SWDLossSpec", spec).p),
         },
     ),
     LossSpecDescriptor(
@@ -537,7 +537,7 @@ def loss_spec_name(spec: AlignmentLossSpec) -> str:
     raise TypeError(f"Unsupported loss spec: {type(spec)!r}")
 
 
-def loss_spec_params(spec: AlignmentLossSpec) -> Dict[str, float]:
+def loss_spec_params(spec: AlignmentLossSpec) -> dict[str, float]:
     for descriptor in _LOSS_SPEC_DESCRIPTORS:
         if descriptor.matches(spec):
             return descriptor.params(spec)
