@@ -1254,6 +1254,12 @@ and proposed next fix before stopping.
   `tomojax.align.api`, diagnostic alternating-smoke helpers route through
   `tomojax.bench.api`/developer surfaces, and import-linter/public-surface tests
   enforce the split.
+- [x] Real laminography product workflow report regenerated from the completed
+  full 256-detector staged run. The production-facing report bundle is under
+  `runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_spline_all_20260512/real_lamino_report/`,
+  with final staged FISTA loss `6517.55712890625` versus COR-only
+  `7411.73046875` and matching output shape. Recorded in
+  `docs/benchmark_runs/2026-05-13-real-lamino-product-workflow.md`.
 
 ### Risks
 

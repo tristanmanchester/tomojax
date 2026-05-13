@@ -15648,3 +15648,22 @@ Validation:
 - `just check` passed: Ruff format/lint, Basedpyright, import-linter, public
   import checks, and `pytest -m "not slow and not gpu and not pallas"` with
   1253 passed and 12 expected skips.
+
+### Real laminography product workflow report regenerated
+
+- Regenerated the production-facing staged real-laminography report for the
+  full 256-detector k11 run using
+  `scripts/real_laminography/summarize_real_lamino_report.py`.
+- Recorded the result in
+  `docs/benchmark_runs/2026-05-13-real-lamino-product-workflow.md`: final
+  staged FISTA loss `6517.55712890625` versus COR-only comparator
+  `7411.73046875`, a `12.064299202646986%` relative improvement at matching
+  output volume shape.
+- Kept the benchmark boundary explicit: truth metrics are not applicable to
+  real data, and the report records no COR-grid search, sinogram/correlation,
+  sharpness/autofocus, or benchmark-only knob promotion.
+
+Validation:
+
+- `uv run python scripts/real_laminography/summarize_real_lamino_report.py --run-dir runs/real_lamino_v2_full_mvp_full256_multires_oneouter_40iter_spline_all_20260512 --require-success`
+  passed and wrote the `real_lamino_report/` artifact bundle.
