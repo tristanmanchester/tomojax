@@ -1123,6 +1123,14 @@ and proposed next fix before stopping.
 - [x] Active Schur DOFs in observability committed: `7ab5013`.
 - [x] Smoke expectation cleanup committed: `44dda7e`.
 - [x] Nuisance-corrected failure gate committed: `f374d58`.
+- [x] Public alignment smoke diagnostics quarantined: production
+  `tomojax.align.api` no longer exports `run_alignment_smoke`,
+  `run_alternating_solver_smoke`, or `AlternatingSmokeConfig`. Synthetic smoke
+  runners remain available through `tomojax.align.smoke_diagnostics` and the
+  developer-facing `tomojax.bench` facade, and `tomojax dev align-auto` imports
+  them through the benchmark boundary. `just production-surface-check`,
+  focused Basedpyright on the touched API/CLI files, and the smoke artifact
+  regression set passed.
 
 ### Risks
 

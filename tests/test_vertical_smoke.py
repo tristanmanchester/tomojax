@@ -6,7 +6,7 @@ from dataclasses import replace
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align import run_alignment_smoke
+from tomojax.bench import run_alignment_smoke
 from tomojax.forward import project_parallel_reference
 from tomojax.geometry import GeometryState
 from tomojax.recon import reconstruct_average_reference

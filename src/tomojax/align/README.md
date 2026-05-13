@@ -13,11 +13,6 @@ are explicitly re-exported below.
 ## Public API
 
 - `AlignConfig`
-- `AlignmentSmokeReport`
-- `AlternatingAlignmentSolver`
-- `AlternatingLevelSummary`
-- `AlternatingSmokeConfig`
-- `AlternatingSmokeResult`
 - `ContinuationLevel`
 - `ContinuationSchedule`
 - `ContinuationScheduleName`
@@ -35,8 +30,6 @@ are explicitly re-exported below.
 - `align_multires`
 - `joint_schur_normal_eq_summary`
 - `reference_continuation_schedule`
-- `run_alternating_solver_smoke`
-- `run_alignment_smoke`
 - `schur_step_from_jacobian`
 - `solve_joint_schur_lm`
 - `solve_pose_only_lm`
@@ -68,8 +61,6 @@ Forbidden dependencies:
 - Default geometry optimisation must be gradient-first LM/GN, not grid search.
 - Geometry updates must emit artifact/provenance data.
 - Public imports should come through this package facade.
-- `run_alignment_smoke` is a tiny v2 wiring check. It is not the final
-  optimiser.
 - `solve_pose_only_lm` defaults to `phi_residual_rad`, `dx_px`, and `dz_px`;
   `alpha_rad` and `beta_rad` are supported opt-in pose DOFs for focused stages.
 - `solve_setup_only_lm` defaults to `theta_offset_rad`, `det_u_px`, active
@@ -84,10 +75,14 @@ Forbidden dependencies:
   so affine acquisition drift is modelled as nuisance rather than geometry.
 - `write_joint_schur_normal_eq_summary` writes the current Phase 6
   `normal_eq_summary.json` artifact.
-- `run_alternating_solver_smoke` is the first Phase 7 vertical slice. It runs a
-  deterministic 32^3 stopped-volume alternating smoke path and writes the
-  initial/final geometry, pose CSVs, FISTA trace, alignment summary,
-  verification report, and artifact index.
+
+## Developer Diagnostics
+
+- `tomojax.align.smoke_diagnostics` owns synthetic alignment smoke runners that are
+  useful for development and verification but are deliberately excluded from
+  `tomojax.align.api`.
+- `tomojax.bench` re-exports those diagnostic runners for benchmark-facing
+  tests and developer CLI commands.
 
 ## Tests
 

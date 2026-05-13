@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 from tomojax.align._alternating import (
-    AlternatingAlignmentSolver,
-    AlternatingLevelSummary,
-    AlternatingSmokeConfig,
-    AlternatingSmokeResult,
     GeometryUpdateSolver,
     GeometryUpdateVolumeSource,
     PreviewInitialization,
@@ -15,7 +11,6 @@ from tomojax.align._alternating import (
     PreviewVolumeSupport,
     ProjectionLossMode,
     StoppedPreviewPolicy,
-    run_alternating_solver_smoke,
 )
 from tomojax.align._continuation import (
     ContinuationLevel,
@@ -47,7 +42,6 @@ from tomojax.align._profiles import (
     resolve_profiled_cli_defaults,
 )
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
-from tomojax.align._smoke import AlignmentSmokeReport, run_alignment_smoke
 from tomojax.align.pipeline import (
     AlignConfig,
     AlignMultiresResumeState,
@@ -63,11 +57,6 @@ __all__ = [
     "AlignmentProfile",
     "AlignmentProfileInput",
     "AlignmentProfilePolicy",
-    "AlignmentSmokeReport",
-    "AlternatingAlignmentSolver",
-    "AlternatingLevelSummary",
-    "AlternatingSmokeConfig",
-    "AlternatingSmokeResult",
     "ContinuationLevel",
     "ContinuationSchedule",
     "ContinuationScheduleName",
@@ -98,8 +87,6 @@ __all__ = [
     "profile_policy_from_config",
     "reference_continuation_schedule",
     "resolve_profiled_cli_defaults",
-    "run_alignment_smoke",
-    "run_alternating_solver_smoke",
     "schur_step_from_jacobian",
     "solve_joint_schur_lm",
     "solve_pose_only_lm",

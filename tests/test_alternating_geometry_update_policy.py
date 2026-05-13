@@ -37,11 +37,11 @@ from tomojax.align._alternating_orchestration import (
 # check-public-imports: allow-private
 from tomojax.align._alternating_verification import _geometry_recovery_payload
 from tomojax.align.api import (
-    AlternatingSmokeConfig,
     JointSchurLMConfig,
     reference_continuation_schedule,
     solve_joint_schur_lm,
 )
+from tomojax.bench import AlternatingSmokeConfig
 from tomojax.forward import project_parallel_reference
 from tomojax.geometry import AcquisitionParameters, GaugeReport, GeometryState
 

@@ -23,10 +23,10 @@ from tomojax.align._alternating_reduced_objective import _summary_payload
 
 # check-public-imports: allow-private
 from tomojax.align._alternating_schur_scalar import schur_scalar_diagnostics_payload
-from tomojax.align.api import (
+from tomojax.align.api import reference_continuation_schedule
+from tomojax.bench import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
-    reference_continuation_schedule,
     run_alternating_solver_smoke,
 )
 from tomojax.datasets import (
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
     # check-public-imports: allow-private
     from tomojax.align._joint_schur_lm import JointSchurLMResult
-    from tomojax.align.api import AlternatingSmokeResult
+    from tomojax.bench import AlternatingSmokeResult
 
 
 def test_alternating_solver_smoke_writes_artifacts(tmp_path: Path) -> None:

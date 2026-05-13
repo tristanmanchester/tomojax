@@ -1,5 +1,14 @@
 """Public API for developer benchmark helpers."""
 
+from tomojax.align.smoke_diagnostics import (
+    AlignmentSmokeReport,
+    AlternatingAlignmentSolver,
+    AlternatingLevelSummary,
+    AlternatingSmokeConfig,
+    AlternatingSmokeResult,
+    run_alignment_smoke,
+    run_alternating_solver_smoke,
+)
 from tomojax.bench.alignment_scenarios import (
     AcquisitionSpec,
     AlignmentScenario,
@@ -47,6 +56,11 @@ from tomojax.bench.synthetic_results import (
 __all__ = [
     "AcquisitionSpec",
     "AlignmentScenario",
+    "AlignmentSmokeReport",
+    "AlternatingAlignmentSolver",
+    "AlternatingLevelSummary",
+    "AlternatingSmokeConfig",
+    "AlternatingSmokeResult",
     "ForwardProjectorBenchmarkConfig",
     "ForwardProjectorSuiteCase",
     "ForwardSinogramBenchmarkConfig",
@@ -66,6 +80,8 @@ __all__ = [
     "make_forward_sinogram_fixture",
     "phantom_spec",
     "preset_config",
+    "run_alignment_smoke",
+    "run_alternating_solver_smoke",
     "run_forward_projector_benchmark",
     "run_forward_projector_suite",
     "run_forward_sinogram_benchmark",

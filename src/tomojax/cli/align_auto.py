@@ -16,8 +16,6 @@ from tomojax.cli._jax_allocator import configure_jax_allocator_defaults
 configure_jax_allocator_defaults()
 
 from tomojax.align.api import (
-    AlternatingAlignmentSolver,
-    AlternatingSmokeConfig,
     ContinuationScheduleName,
     GeometryUpdateSolver,
     GeometryUpdateVolumeSource,
@@ -28,6 +26,10 @@ from tomojax.align.api import (
     ProjectionLossMode,
     StoppedPreviewPolicy,
     reference_continuation_schedule,
+)
+from tomojax.bench import (
+    AlternatingAlignmentSolver,
+    AlternatingSmokeConfig,
 )
 from tomojax.datasets import (
     SyntheticDatasetSidecars,

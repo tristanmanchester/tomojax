@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomojax.align as align_api
+import tomojax.align.api as align_full_api
 import tomojax.bench as bench_api
 import tomojax.calibration as calibration_api
 import tomojax.io as io_api
@@ -11,6 +12,9 @@ def test_alignment_facade_exports_documented_api() -> None:
     assert align_api.AlignConfig.__name__ == "AlignConfig"
     assert callable(align_api.align)
     assert callable(align_api.align_multires)
+    assert not hasattr(align_full_api, "run_alignment_smoke")
+    assert not hasattr(align_full_api, "run_alternating_solver_smoke")
+    assert not hasattr(align_full_api, "AlternatingSmokeConfig")
 
 
 def test_reconstruction_facade_exports_documented_api() -> None:
@@ -49,6 +53,9 @@ def test_calibration_facade_exports_only_schema_value_types() -> None:
 
 def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.AlignmentScenario.__name__ == "AlignmentScenario"
+    assert bench_api.AlternatingSmokeConfig.__name__ == "AlternatingSmokeConfig"
     assert bench_api.SyntheticBenchmarkResult.__name__ == "SyntheticBenchmarkResult"
+    assert callable(bench_api.run_alignment_smoke)
+    assert callable(bench_api.run_alternating_solver_smoke)
     assert callable(bench_api.scenario_catalog)
     assert callable(bench_api.load_synthetic_benchmark_result)

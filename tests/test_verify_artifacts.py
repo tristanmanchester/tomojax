@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tomojax.align.api import (
+from tomojax.bench import (
     AlternatingAlignmentSolver,
     AlternatingSmokeConfig,
     run_alternating_solver_smoke,

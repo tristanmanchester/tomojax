@@ -15307,3 +15307,28 @@ Validation:
 
 - `uv run lint-imports --config .importlinter` passed with 2 contracts kept.
 - `just production-surface-check` passed with 73 focused tests.
+
+### Alignment smoke diagnostics moved behind developer facade
+
+- Removed synthetic smoke runner exports from the production
+  `tomojax.align.api` facade: `run_alignment_smoke`,
+  `run_alternating_solver_smoke`, `AlignmentSmokeReport`,
+  `AlternatingAlignmentSolver`, `AlternatingLevelSummary`,
+  `AlternatingSmokeConfig`, and `AlternatingSmokeResult` no longer appear as
+  production alignment API.
+- Added `tomojax.align.smoke_diagnostics` as the owner-local developer surface
+  for those smoke runners, avoiding the existing compatibility alias at
+  `tomojax.align.diagnostics`.
+- Re-exported the smoke runner types/functions from `tomojax.bench` so
+  benchmark tests and `tomojax dev align-auto` can keep using a stable
+  developer-facing boundary without importing alignment private modules.
+- Updated the align module README and public facade tests to make the
+  production-vs-diagnostic split executable.
+
+Validation:
+
+- `just production-surface-check` passed with 73 focused tests.
+- `uv run basedpyright src/tomojax/align/api.py src/tomojax/align/smoke_diagnostics.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/cli/align_auto.py tests/test_public_facades.py tests/test_vertical_smoke.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py`
+  passed with 0 errors and 0 warnings.
+- `uv run pytest tests/test_public_facades.py tests/test_vertical_smoke.py tests/test_verify_artifacts.py tests/test_alternating_solver_smoke.py -q`
+  passed with 28 tests.
