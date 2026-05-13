@@ -15104,3 +15104,21 @@ Validation:
   passed.
 - `just production-surface-check` passed after the refactor; full CLI
   Basedpyright remains at 0 errors, with warning count reduced from 550 to 364.
+
+### Alignment CLI parser-helper typing cleanup
+
+- Reduced the remaining `tomojax align` CLI type surface by keeping
+  parser-builder unused-call noise suppressed at the file boundary and
+  tightening the DOF/loss parser helpers around typed local values instead of
+  repeated raw `argparse.Namespace` access.
+- Switched CLI wrapper `asarray` dtype arguments from JAX dtype members to
+  NumPy dtype members to avoid leaking untyped JAX module attributes through
+  the public CLI type gate. This is a boundary cleanup only; alignment runtime
+  behavior is unchanged.
+
+Validation:
+
+- `uv run ruff check src/tomojax/cli/align.py` passed.
+- `just production-surface-check` passed after the refactor; full CLI
+  Basedpyright remains at 0 errors, with warning count reduced from 364 to 266,
+  all still isolated to `src/tomojax/cli/align.py`.

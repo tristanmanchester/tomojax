@@ -1,6 +1,6 @@
 """Run geometry alignment workflows from the public TomoJAX CLI."""
 
-# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
+# pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnusedCallResult=false
 # ruff: noqa: E402
 
 from __future__ import annotations
@@ -197,13 +197,15 @@ def _parse_dof_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
+    optimise_dofs_arg = cast("list[str] | None", args.optimise_dofs)
+    freeze_dofs_arg = cast("list[str] | None", args.freeze_dofs)
     try:
         optimise_dofs = (
             None
-            if args.optimise_dofs is None
-            else normalize_alignment_dofs(args.optimise_dofs, option_name="--optimise-dofs")
+            if optimise_dofs_arg is None
+            else normalize_alignment_dofs(optimise_dofs_arg, option_name="--optimise-dofs")
         )
-        freeze_dofs = normalize_alignment_dofs(args.freeze_dofs, option_name="--freeze-dofs")
+        freeze_dofs = normalize_alignment_dofs(freeze_dofs_arg, option_name="--freeze-dofs")
     except ValueError as exc:
         parser.error(str(exc))
     return optimise_dofs, freeze_dofs
@@ -220,8 +222,11 @@ def _parse_loss_config(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> tuple[AlignmentLossConfig, dict[str, float]]:
+    loss_name = cast("str", args.loss)
+    loss_schedule = cast("str | None", args.loss_schedule)
+    loss_param_items = cast("list[str]", args.loss_param)
     loss_params: dict[str, float] = {}
-    for kv in args.loss_param:
+    for kv in loss_param_items:
         if "=" not in kv:
             parser.error(f"--loss-param must be k=v, got: {kv}")
         k, v = kv.split("=", 1)
@@ -231,10 +236,10 @@ def _parse_loss_config(
             parser.error(f"--loss-param value must be numeric: {kv}")
 
     try:
-        loss_spec = parse_loss_spec(str(args.loss), loss_params if loss_params else None)
-        if args.loss_schedule is None:
+        loss_spec = parse_loss_spec(loss_name, loss_params if loss_params else None)
+        if loss_schedule is None:
             return loss_spec, loss_params
-        return parse_loss_schedule(args.loss_schedule, default=loss_spec), loss_params
+        return parse_loss_schedule(loss_schedule, default=loss_spec), loss_params
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
@@ -768,12 +773,12 @@ def _resume_state_from_checkpoint(
         prev_factor_value = metadata.get("prev_factor")
         geometry_calibration_state = metadata.get("geometry_calibration_state")
         return AlignMultiresResumeState(
-            x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
-            params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
+            x=jnp.asarray(checkpoint.x, dtype=np.float32),
+            params5=jnp.asarray(checkpoint.params5, dtype=np.float32),
             motion_coeffs=(
                 None
                 if checkpoint.motion_coeffs is None
-                else jnp.asarray(checkpoint.motion_coeffs, dtype=jnp.float32)
+                else jnp.asarray(checkpoint.motion_coeffs, dtype=np.float32)
             ),
             level_index=int(metadata.get("level_index", 0)),
             level_factor=int(metadata.get("level_factor", 1)),
@@ -804,12 +809,12 @@ def _resume_state_from_checkpoint(
             ),
         )
     return AlignResumeState(
-        x=jnp.asarray(checkpoint.x, dtype=jnp.float32),
-        params5=jnp.asarray(checkpoint.params5, dtype=jnp.float32),
+        x=jnp.asarray(checkpoint.x, dtype=np.float32),
+        params5=jnp.asarray(checkpoint.params5, dtype=np.float32),
         motion_coeffs=(
             None
             if checkpoint.motion_coeffs is None
-            else jnp.asarray(checkpoint.motion_coeffs, dtype=jnp.float32)
+            else jnp.asarray(checkpoint.motion_coeffs, dtype=np.float32)
         ),
         start_outer_iter=int(metadata.get("completed_outer_iters_in_level", 0)),
         loss=list(checkpoint.loss_history),
@@ -934,7 +939,7 @@ def _build_align_cli_run_plan(  # noqa: PLR0912, PLR0915
         grid_override=initial_grid_override,
         apply_saved_alignment=False,
     )
-    projections = jnp.asarray(meta.projections, dtype=jnp.float32)
+    projections = jnp.asarray(meta.projections, dtype=np.float32)
     try:
         resolved_schedule = resolve_alignment_schedule(
             schedule=args.schedule,
@@ -1268,7 +1273,7 @@ def _execute_alignment_plan(
     if plan.checkpoint_path is not None:
         motion_coeffs = info_dict.get("motion_coeffs")
         motion_coeffs_array = (
-            jnp.asarray(motion_coeffs, dtype=jnp.float32)
+            jnp.asarray(motion_coeffs, dtype=np.float32)
             if isinstance(motion_coeffs, np.ndarray)
             else None
         )

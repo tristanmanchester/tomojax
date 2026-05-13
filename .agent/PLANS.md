@@ -95,6 +95,11 @@ Tasks:
       manifest sidecar regression coverage, Ruff, single-file Basedpyright with
       0 warnings, and `just production-surface-check` passed. Full CLI
       Basedpyright warnings are now 364 with 0 errors, all in `align.py`.
+- [x] Alignment parser-helper cleanup: `tomojax align` now keeps parser-builder
+      unused-call noise suppressed at the file boundary, casts DOF/loss parser
+      inputs locally, and avoids untyped JAX dtype members in CLI wrapper
+      conversions. Ruff and `just production-surface-check` passed. Full CLI
+      Basedpyright warnings are now 266 with 0 errors, all still in `align.py`.
 
 Historical productionization plan follows for context.
 
