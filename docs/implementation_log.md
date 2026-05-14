@@ -15737,3 +15737,41 @@ Validation:
   `synth128_thermal_object_drift`, `synth128_combined_nuisance_jumps`, and
   `stopped_detu_scout_tangent`; the laminography rerun completed and produced
   `benchmark_result.json`.
+
+### Priority 1 laminography axis/roll failure diagnosed
+
+- Added
+  `docs/benchmark_runs/2026-05-14-priority1-lamino-axis-roll-diagnosis.md`
+  with the focused diagnosis for the clean `128^3`
+  `synth128_lamino_axis_roll_pose` gate.
+- Reran targeted CUDA diagnostics on `vivobook-ts` under
+  `.artifacts/priority1_lamino_axis_roll/` and synced the artifacts locally.
+- The original joint all-DOF oracle path remains red: it can lower projection
+  loss while assigning the correction to the wrong mixture of global
+  axis/roll/theta and per-view pose.
+- Delaying or removing `alpha/beta` reduces the catastrophic pose/setup
+  absorption but does not make axis/roll pass, showing `alpha/beta` is a
+  symptom rather than the whole blocker.
+- The decisive isolation run copied the generated dataset and replaced only
+  `v2_corrupted_pose_params.csv` with `v2_true_pose_params.csv`. With true pose
+  fixed and setup still corrupted, the setup-only oracle gate passed:
+  `det_u_realized_rmse_px = 3.8144876872911455e-06`,
+  `det_v_realized_rmse_px = 5.338959359154227e-05`,
+  `axis_error_rad = 6.781190837978561e-05`,
+  `detector_roll_error_rad = 5.506761664133414e-06`, and
+  `theta_realized_rmse_rad = 7.2271731676580605e-06`.
+- This exonerates the fixed-volume setup Jacobian/operator path and identifies
+  the remaining blocker as joint setup/pose identifiability/staging for
+  laminography, not a detector-u issue, stopped-volume issue, or projector sign
+  bug.
+
+Validation:
+
+- `uv run pytest tests/test_joint_schur_lm.py tests/test_geometry_gauges.py -q`
+  passed with 27 tests.
+- CUDA diagnostics completed for:
+  `.artifacts/priority1_lamino_axis_roll/joint_32_20260514a/`,
+  `.artifacts/priority1_lamino_axis_roll/alpha_beta_at_1_128_20260514a/`,
+  `.artifacts/priority1_lamino_axis_roll/no_alpha_beta_128_20260514a/`,
+  `.artifacts/priority1_lamino_axis_roll/pose_frozen_128_20260514a/`, and
+  `.artifacts/priority1_lamino_axis_roll/true_pose_setup_only_128_20260514a/`.
