@@ -6,10 +6,12 @@ import pytest
 
 from tomojax.core.geometry import Detector, Grid
 from tomojax.io import (
+    PreprocessConfig,
     ProjectionDataset,
     load_dataset,
     load_projection_payload,
     load_tiff_stack,
+    preprocess_tiff_stack,
     save_dataset,
     save_projection_payload,
     validate_dataset,
@@ -176,3 +178,57 @@ def test_public_io_rejects_tiff_stack_without_angles(tmp_path):
 
     with pytest.raises(ValueError, match="does not match projection count"):
         load_tiff_stack(stack_dir, angles_deg=[0.0, 90.0])
+
+
+def test_public_io_preprocesses_tiff_stack_to_absorption_nxtomo(tmp_path):
+    projections = tmp_path / "projections"
+    flats = tmp_path / "flats"
+    darks = tmp_path / "darks"
+    for path in (projections, flats, darks):
+        path.mkdir()
+    iio.imwrite(projections / "0001.tif", np.full((2, 2), 5.0, dtype=np.float32))
+    iio.imwrite(projections / "0002.tif", np.full((2, 2), 9.0, dtype=np.float32))
+    iio.imwrite(flats / "0001.tif", np.full((2, 2), 11.0, dtype=np.float32))
+    iio.imwrite(darks / "0001.tif", np.full((2, 2), 1.0, dtype=np.float32))
+    angles = tmp_path / "angles.csv"
+    angles.write_text("angle\n0\n90\n", encoding="utf-8")
+    out_path = tmp_path / "corrected.nxs"
+
+    result = preprocess_tiff_stack(projections, flats, darks, angles, out_path)
+
+    assert result.output_domain == "absorption"
+    loaded = load_dataset(out_path)
+    np.testing.assert_allclose(
+        loaded.projections[:, 0, 0],
+        -np.log(np.array([0.4, 0.8], dtype=np.float32)),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(loaded.angles_deg, [0.0, 90.0])
+    assert loaded.detector == Detector(nu=2, nv=2, du=1.0, dv=1.0)
+
+
+def test_public_io_preprocesses_tiff_stack_can_write_transmission(tmp_path):
+    projections = tmp_path / "projections"
+    flats = tmp_path / "flats"
+    darks = tmp_path / "darks"
+    for path in (projections, flats, darks):
+        path.mkdir()
+    iio.imwrite(projections / "0001.tif", np.full((1, 2), 5.0, dtype=np.float32))
+    iio.imwrite(flats / "0001.tif", np.full((1, 2), 11.0, dtype=np.float32))
+    iio.imwrite(darks / "0001.tif", np.full((1, 2), 1.0, dtype=np.float32))
+    angles = tmp_path / "angles.csv"
+    angles.write_text("0\n", encoding="utf-8")
+    out_path = tmp_path / "transmission.nxs"
+
+    preprocess_tiff_stack(
+        projections,
+        flats,
+        darks,
+        angles,
+        out_path,
+        PreprocessConfig(output_domain="transmission"),
+    )
+
+    loaded = load_dataset(out_path)
+    np.testing.assert_allclose(loaded.projections, np.full((1, 1, 2), 0.4))

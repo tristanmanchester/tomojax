@@ -8,10 +8,15 @@ The package-facing CLI is the grouped `tomojax` command:
 ```bash
 uv run tomojax inspect scan.nxs
 uv run tomojax ingest ./projections --angles angles.csv --out scan.nxs
-uv run tomojax preprocess raw.nxs corrected.nxs --log
+uv run tomojax preprocess raw.nxs corrected.nxs
+uv run tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv
 uv run tomojax recon corrected.nxs --out recon.nxs
 uv run tomojax align corrected.nxs --out aligned.nxs --mode cor
 ```
+
+`tomojax preprocess` writes reconstruction-ready absorption/log-attenuation
+projections by default. Use `--transmission` only when you intentionally need
+normalized transmission output.
 
 The installed package exposes a single `tomojax` console script. Developer
 diagnostics and benchmark probes live under `tomojax dev ...`.

@@ -296,6 +296,9 @@ def test_preprocess_help_documents_safeguards(monkeypatch, capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "--log" in captured.out
+    assert "--domain" in captured.out
+    assert "--transmission" in captured.out
+    assert "--flats" in captured.out
     assert "--epsilon" in captured.out
     assert "--clip-min" in captured.out
     assert "output" in captured.out

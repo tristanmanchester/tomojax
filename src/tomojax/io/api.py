@@ -19,7 +19,12 @@ from tomojax.io._inspection import (
     save_projection_quicklook,
 )
 from tomojax.io._json import JsonValue, drop_none, normalize_json
-from tomojax.io._preprocess import PreprocessConfig, PreprocessResult, preprocess_nxtomo
+from tomojax.io._preprocess import (
+    PreprocessConfig,
+    PreprocessResult,
+    preprocess_nxtomo,
+    preprocess_tiff_stack,
+)
 
 __all__ = [
     "InspectionReport",
@@ -38,6 +43,7 @@ __all__ = [
     "load_tiff_stack",
     "normalize_json",
     "preprocess_nxtomo",
+    "preprocess_tiff_stack",
     "save_dataset",
     "save_projection_payload",
     "save_projection_quicklook",

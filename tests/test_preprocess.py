@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import h5py
+import imageio.v3 as iio
 import numpy as np
 import pytest
 
@@ -45,7 +46,7 @@ def _raw_path(tmp_path, *, frames: np.ndarray, image_key: np.ndarray) -> str:
     return str(path)
 
 
-def test_preprocess_known_values_writes_transmission_and_provenance(tmp_path):
+def test_preprocess_known_values_writes_default_absorption_and_provenance(tmp_path):
     frames = np.array(
         [
             [[1.0, 1.0], [1.0, 1.0]],  # dark
@@ -60,7 +61,7 @@ def test_preprocess_known_values_writes_transmission_and_provenance(tmp_path):
 
     result = preprocess_nxtomo(raw_path, out_path)
 
-    assert result.output_domain == "transmission"
+    assert result.output_domain == "absorption"
     assert result.output_shape == (2, 2, 2)
     corrected = load_nxtomo(str(out_path))
     expected = np.array(
@@ -70,7 +71,7 @@ def test_preprocess_known_values_writes_transmission_and_provenance(tmp_path):
         ],
         dtype=np.float32,
     )
-    np.testing.assert_allclose(corrected.projections, expected, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(corrected.projections, -np.log(expected), rtol=1e-6, atol=1e-6)
     np.testing.assert_array_equal(corrected.image_key, np.zeros((2,), dtype=np.int32))
     np.testing.assert_allclose(corrected.thetas_deg, np.array([30.0, 90.0], dtype=np.float32))
     assert corrected.detector == {
@@ -89,7 +90,7 @@ def test_preprocess_known_values_writes_transmission_and_provenance(tmp_path):
         preprocess = handle["/entry/processing/tomojax/preprocess"]
         assert preprocess.attrs["NX_class"] == "NXcollection"
         assert int(preprocess.attrs["schema_version"]) == 1
-        assert _attr_to_str(preprocess.attrs["output_domain"]) == "transmission"
+        assert _attr_to_str(preprocess.attrs["output_domain"]) == "absorption"
         assert json.loads(preprocess.attrs["frame_counts"]) == {
             "dark": 1,
             "flat": 1,
@@ -147,7 +148,7 @@ def test_preprocess_missing_flats_requires_explicit_override(tmp_path):
     preprocess_nxtomo(
         raw_path,
         tmp_path / "override_flat.nxs",
-        PreprocessConfig(assume_flat_field=10.0),
+        PreprocessConfig(output_domain="transmission", assume_flat_field=10.0),
     )
     corrected = load_nxtomo(str(tmp_path / "override_flat.nxs"))
     np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), 0.5))
@@ -169,7 +170,7 @@ def test_preprocess_missing_darks_requires_explicit_override(tmp_path):
     preprocess_nxtomo(
         raw_path,
         tmp_path / "override_dark.nxs",
-        PreprocessConfig(assume_dark_field=0.0),
+        PreprocessConfig(output_domain="transmission", assume_dark_field=0.0),
     )
     corrected = load_nxtomo(str(tmp_path / "override_dark.nxs"))
     np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), 0.5))
@@ -249,7 +250,7 @@ def test_preprocess_finds_unique_nonstandard_image_key(tmp_path):
         )
 
     out_path = tmp_path / "corrected_equivalent_key.nxs"
-    preprocess_nxtomo(str(raw_path), out_path)
+    preprocess_nxtomo(str(raw_path), out_path, PreprocessConfig(output_domain="transmission"))
 
     corrected = load_nxtomo(str(out_path))
     np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), 0.5))
@@ -292,9 +293,47 @@ def test_preprocess_cli_smoke(tmp_path, capsys):
     status = preprocess_cli.main([raw_path, str(out_path), "--epsilon", "1e-6"])
 
     assert status == 0
-    assert "Wrote corrected transmission projections" in capsys.readouterr().out
+    assert "Wrote corrected absorption projections" in capsys.readouterr().out
     corrected = load_nxtomo(str(out_path))
-    np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), 0.5))
+    np.testing.assert_allclose(corrected.projections, np.full((1, 1, 2), -np.log(0.5)))
+
+
+def test_preprocess_cli_tiff_stack_smoke_with_quicklook(tmp_path, capsys):
+    projections = tmp_path / "projections"
+    flats = tmp_path / "flats"
+    darks = tmp_path / "darks"
+    for path in (projections, flats, darks):
+        path.mkdir()
+    iio.imwrite(projections / "0001.tif", np.full((2, 2), 5.0, dtype=np.float32))
+    iio.imwrite(flats / "0001.tif", np.full((2, 2), 11.0, dtype=np.float32))
+    iio.imwrite(darks / "0001.tif", np.full((2, 2), 1.0, dtype=np.float32))
+    angles = tmp_path / "angles.csv"
+    angles.write_text("0\n", encoding="utf-8")
+    out_path = tmp_path / "tiff_cli.nxs"
+    quicklook_path = tmp_path / "quicklook.png"
+
+    status = preprocess_cli.main(
+        [
+            str(projections),
+            str(out_path),
+            "--format",
+            "tiff-stack",
+            "--flats",
+            str(flats),
+            "--darks",
+            str(darks),
+            "--angles",
+            str(angles),
+            "--quicklook",
+            str(quicklook_path),
+        ]
+    )
+
+    assert status == 0
+    assert "Wrote corrected absorption projections" in capsys.readouterr().out
+    corrected = load_nxtomo(str(out_path))
+    np.testing.assert_allclose(corrected.projections, np.full((1, 2, 2), -np.log(0.4)))
+    assert quicklook_path.exists()
 
 
 def test_preprocess_reject_views_keeps_projections_angles_and_metadata_aligned(tmp_path):
@@ -312,7 +351,11 @@ def test_preprocess_reject_views_keeps_projections_angles_and_metadata_aligned(t
     raw_path = _raw_path(tmp_path, frames=frames, image_key=np.array([2, 0, 0, 1, 0, 0]))
     out_path = tmp_path / "reject.nxs"
 
-    result = preprocess_nxtomo(raw_path, out_path, PreprocessConfig(reject_views="1:3"))
+    result = preprocess_nxtomo(
+        raw_path,
+        out_path,
+        PreprocessConfig(output_domain="transmission", reject_views="1:3"),
+    )
 
     assert result.sample_count == 2
     corrected = load_nxtomo(str(out_path))
@@ -353,7 +396,11 @@ def test_preprocess_select_and_reject_files_are_deduped_in_sample_view_order(tmp
     preprocess_nxtomo(
         raw_path,
         out_path,
-        PreprocessConfig(select_views_file=select_file, reject_views_file=reject_file),
+        PreprocessConfig(
+            output_domain="transmission",
+            select_views_file=select_file,
+            reject_views_file=reject_file,
+        ),
     )
 
     corrected = load_nxtomo(str(out_path))
@@ -375,7 +422,11 @@ def test_preprocess_crop_updates_output_shape_and_detector_metadata(tmp_path):
     )
     out_path = tmp_path / "crop.nxs"
 
-    preprocess_nxtomo(raw_path, out_path, PreprocessConfig(crop="1:3,2:5"))
+    preprocess_nxtomo(
+        raw_path,
+        out_path,
+        PreprocessConfig(output_domain="transmission", crop="1:3,2:5"),
+    )
 
     corrected = load_nxtomo(str(out_path))
     assert corrected.projections.shape == (1, 2, 3)
@@ -418,7 +469,11 @@ def test_preprocess_filters_optional_sample_length_alignment_metadata(tmp_path):
 
     out_path = tmp_path / "optional_metadata.nxs"
 
-    preprocess_nxtomo(raw_path, out_path, PreprocessConfig(reject_views="1"))
+    preprocess_nxtomo(
+        raw_path,
+        out_path,
+        PreprocessConfig(output_domain="transmission", reject_views="1"),
+    )
 
     corrected = load_nxtomo(str(out_path))
     np.testing.assert_allclose(corrected.align_params, align_params[[0, 2]])
@@ -448,7 +503,7 @@ def test_preprocess_auto_reject_nonfinite_drops_bad_corrected_view(tmp_path):
     result = preprocess_nxtomo(
         raw_path,
         out_path,
-        PreprocessConfig(auto_reject="nonfinite"),
+        PreprocessConfig(output_domain="transmission", auto_reject="nonfinite"),
     )
 
     assert result.sample_count == 1
@@ -476,7 +531,9 @@ def test_preprocess_auto_reject_outliers_uses_robust_view_medians(tmp_path):
     preprocess_nxtomo(
         raw_path,
         out_path,
-        PreprocessConfig(auto_reject="outliers", outlier_z_threshold=6.0),
+        PreprocessConfig(
+            output_domain="transmission", auto_reject="outliers", outlier_z_threshold=6.0
+        ),
     )
 
     corrected = load_nxtomo(str(out_path))

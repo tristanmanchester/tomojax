@@ -85,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "Examples:\n"
         "  tomojax inspect scan.nxs\n"
         "  tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs\n"
-        "  tomojax preprocess raw.nxs corrected.nxs --log\n"
+        "  tomojax preprocess raw.nxs corrected.nxs\n"
         "  tomojax recon corrected.nxs --out recon.nxs\n"
         "  tomojax align corrected.nxs --out aligned.nxs --mode cor\n"
         "\n"

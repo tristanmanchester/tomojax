@@ -12,6 +12,10 @@ research plan. The detailed status table is in
 - Truth-free stopped detector-centre recovery remains a research blocker: a
   wrong-geometry preview reconstruction can absorb the detector-centre error
   into the volume.
+- Detector-v offsets in parallel tomography are a weak article/demo target:
+  a constant detector-v shift mostly changes the reconstructed sample height
+  in the volume instead of producing a visibly bad reconstruction. Treat it as
+  an observability/gauge policy item, not as a headline correction scenario.
 - Laminography axis/roll/theta recovery, object-frame drift, nuisance fitting,
   and combined bad-view/jump handling remain diagnostic or research surfaces
   until their dedicated reports contain production evidence.

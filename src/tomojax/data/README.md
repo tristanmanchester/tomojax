@@ -17,8 +17,18 @@ for user data loading.
 ## Current Responsibilities
 
 This package still owns lower-level NXtomo/HDF5 persistence, retained phantom
-helpers, raw preprocessing internals, and simulation helpers used by existing
-tests and developer commands.
+helpers, contrast-correction math, raw preprocessing internals retained behind
+the IO facade, and simulation helpers used by existing tests and developer
+commands.
+
+Dark/flat correction math lives in `tomojax.data.contrast`:
+
+- `flat_dark_to_transmission(...)`
+- `flat_dark_to_absorption(...)`
+
+Production file-format loading, provenance, inspection, quicklooks, and CLI
+preprocessing are exposed through `tomojax.io`, not by importing this package
+directly.
 
 ## Boundary Rule
 

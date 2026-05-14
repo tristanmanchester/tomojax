@@ -69,6 +69,7 @@ def test_inspect_cli_writes_stable_json_for_minimal_file(tmp_path):
         "geometry",
         "detector_metadata",
         "flats_darks",
+        "preprocess",
         "alignment",
         "memory_estimates",
     }
@@ -123,12 +124,37 @@ def test_inspect_cli_reports_optional_metadata(tmp_path):
     }
     assert payload["flats_darks"]["flats_present"] is True
     assert payload["flats_darks"]["darks_present"] is True
+    assert payload["flats_darks"]["sample_count"] == 1
     assert payload["flats_darks"]["flat_count"] == 1
     assert payload["flats_darks"]["dark_count"] == 1
     assert payload["alignment"]["found"] is True
     assert payload["alignment"]["params_found"] is True
     assert payload["alignment"]["params_shape"] == [3, 5]
     assert payload["memory_estimates"]["reconstruction_grid_shape"] == [5, 6, 7]
+
+
+def test_inspect_cli_reports_preprocess_domain_and_paths(tmp_path, capsys):
+    path = tmp_path / "preprocessed.nxs"
+    _write_minimal_nxtomo(path)
+    with h5py.File(path, "r+") as f:
+        group = f.require_group("/entry/processing/tomojax/preprocess")
+        group.attrs["output_domain"] = "absorption"
+        group.attrs["epsilon"] = 1e-6
+        group.attrs["clip_min"] = "null"
+        group.attrs["correction_formula"] = "formula"
+        group.attrs["data_path"] = "/entry/instrument/detector/data"
+        group.attrs["image_key_path"] = "/entry/instrument/detector/image_key"
+    json_path = tmp_path / "preprocessed.json"
+
+    status = inspect_cli.main([str(path), "--json", str(json_path)])
+
+    assert status == 0
+    captured = capsys.readouterr()
+    assert "Preprocess output: domain=absorption" in captured.out
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["preprocess"]["found"] is True
+    assert payload["preprocess"]["output_domain"] == "absorption"
+    assert payload["preprocess"]["paths"]["data_path"] == "/entry/instrument/detector/data"
 
 
 def test_inspect_cli_tolerates_missing_optional_metadata(tmp_path):

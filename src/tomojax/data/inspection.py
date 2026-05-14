@@ -92,6 +92,7 @@ class InspectionReport(TypedDict):
     geometry: dict[str, Any]
     detector_metadata: DetectorMetadataReport
     flats_darks: dict[str, Any]
+    preprocess: dict[str, Any]
     alignment: AlignmentReport
     memory_estimates: dict[str, Any]
 
@@ -362,7 +363,9 @@ def _flats_darks_report(file: h5py.File) -> dict[str, Any]:
     if dataset is None:
         return {
             "image_key_found": False,
+            "image_key_path": None,
             "image_key_counts": {},
+            "sample_count": 0,
             "flats_present": False,
             "darks_present": False,
             "flat_count": 0,
@@ -371,15 +374,63 @@ def _flats_darks_report(file: h5py.File) -> dict[str, Any]:
     keys = np.asarray(dataset[...], dtype=np.int64).ravel()
     unique, counts = np.unique(keys, return_counts=True)
     count_map = {str(int(k)): int(v) for k, v in zip(unique, counts, strict=True)}
+    sample_count = int(count_map.get("0", 0))
     flat_count = int(count_map.get("1", 0))
     dark_count = int(count_map.get("2", 0))
     return {
         "image_key_found": True,
+        "image_key_path": _IMAGE_KEY_PATH,
         "image_key_counts": count_map,
+        "sample_count": sample_count,
         "flats_present": flat_count > 0,
         "darks_present": dark_count > 0,
         "flat_count": flat_count,
         "dark_count": dark_count,
+    }
+
+
+def _preprocess_report(file: h5py.File) -> dict[str, Any]:
+    group = file.get("/entry/processing/tomojax/preprocess")
+    if not isinstance(group, h5py.Group):
+        return {
+            "found": False,
+            "output_domain": None,
+            "formula": None,
+            "epsilon": None,
+            "clip_min": None,
+            "paths": {},
+            "overrides": {},
+            "crop_bounds": None,
+        }
+    attrs = group.attrs
+    paths: dict[str, Any] = {}
+    for key in (
+        "input_path",
+        "data_path",
+        "projection_path",
+        "flat_path",
+        "dark_path",
+        "angles_path",
+        "image_key_path",
+    ):
+        value = _attr_to_str(attrs.get(key))
+        if value and value != "null":
+            paths[key] = value
+    overrides = {
+        "dark_override_used": _attr_to_str(attrs.get("dark_override_used")),
+        "flat_override_used": _attr_to_str(attrs.get("flat_override_used")),
+        "assume_dark_field": _attr_to_str(attrs.get("assume_dark_field")),
+        "assume_flat_field": _attr_to_str(attrs.get("assume_flat_field")),
+    }
+    return {
+        "found": True,
+        "output_domain": _attr_to_str(attrs.get("output_domain")),
+        "formula": _attr_to_str(attrs.get("correction_formula")),
+        "epsilon": _attr_to_str(attrs.get("epsilon")),
+        "clip_min": _attr_to_str(attrs.get("clip_min")),
+        "paths": paths,
+        "overrides": overrides,
+        "crop_bounds": _json_attr_to_mapping(attrs.get("crop_bounds")),
     }
 
 
@@ -495,6 +546,7 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
             "geometry": _geometry_report(file),
             "detector_metadata": _detector_metadata_report(file),
             "flats_darks": _flats_darks_report(file),
+            "preprocess": _preprocess_report(file),
             "alignment": _alignment_report(file),
             "memory_estimates": _memory_estimates(file, projection),
         }
@@ -513,13 +565,14 @@ def _fmt_bool_presence(found: bool) -> str:
     return "present" if found else "not found"
 
 
-def format_inspection_report(report: InspectionReport) -> str:
+def format_inspection_report(report: InspectionReport) -> str:  # noqa: PLR0915
     """Format an inspection report for terminal output."""
     projection = report["projection"]
     angles = report["angles"]
     geometry = report["geometry"]
     detector_metadata = report["detector_metadata"]
     flats_darks = report["flats_darks"]
+    preprocess = report["preprocess"]
     alignment = report["alignment"]
     memory = report["memory_estimates"]
 
@@ -580,12 +633,29 @@ def format_inspection_report(report: InspectionReport) -> str:
 
     if flats_darks["flats_present"] or flats_darks["darks_present"]:
         lines.append(
-            f"Flats/darks: flats={flats_darks['flat_count']}, darks={flats_darks['dark_count']}"
+            "Flats/darks: "
+            f"samples={flats_darks['sample_count']}, "
+            f"flats={flats_darks['flat_count']}, "
+            f"darks={flats_darks['dark_count']}, "
+            f"image_key={_fmt_value(flats_darks['image_key_path'])}"
         )
     elif flats_darks["image_key_found"]:
-        lines.append("Flats/darks: not found (image_key present; no flat/dark frames)")
+        lines.append(
+            "Flats/darks: not found "
+            f"(image_key={_fmt_value(flats_darks['image_key_path'])}; no flat/dark frames)"
+        )
     else:
         lines.append("Flats/darks: not found")
+
+    if preprocess["found"]:
+        lines.append(
+            "Preprocess output: "
+            f"domain={_fmt_value(preprocess['output_domain'])}, "
+            f"epsilon={_fmt_value(preprocess['epsilon'])}, "
+            f"clip_min={_fmt_value(preprocess['clip_min'])}"
+        )
+    else:
+        lines.append("Preprocess output: not found")
 
     if alignment["found"]:
         parts = []

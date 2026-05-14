@@ -3,6 +3,60 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-14 - Production preprocessing for NXtomo and TIFF stacks
+
+### Scope
+
+Hardened the real-data preprocessing boundary without changing alignment,
+reconstruction, projector, FBP/FISTA, or benchmark internals.
+
+Changes:
+
+- Made `tomojax preprocess` write reconstruction-ready absorption/log-attenuation
+  projections by default. `--transmission` and
+  `PreprocessConfig(output_domain="transmission")` remain explicit escape
+  hatches for normalized transmission output.
+- Added `flat_dark_to_transmission(...)` to `tomojax.data.contrast` and routed
+  NXtomo/TIFF correction through the contrast module so the correction math is
+  not duplicated in CLI or reconstruction code.
+- Added explicit TIFF-stack preprocessing through `tomojax.io.preprocess_tiff_stack`
+  and `tomojax preprocess --format tiff-stack --flats ... --darks ... --angles ...`.
+- Extended preprocessing provenance to keep the formula, epsilon/clip policy,
+  frame counts, selected/rejected views, crop, output domain, source paths, and
+  dark/flat override status visible.
+- Extended inspection reports with `image_key` path/sample counts and persisted
+  preprocessing domain/path metadata when present.
+- Added preprocessing quicklook support to the CLI through `--quicklook`.
+- Demoted `scripts/nexus_data_wrangler.py` in script docs so production docs
+  point at `tomojax preprocess`.
+
+### Validation
+
+- `uv run pytest tests/test_contrast.py tests/test_preprocess.py
+  tests/test_io_public_dataset.py tests/test_cli_entrypoints.py
+  tests/test_inspect_cli.py -q` passed: 74 tests in 1.60 seconds after the
+  final formatting pass.
+- `uv run ruff check src/tomojax/data/contrast.py
+  src/tomojax/data/preprocess.py src/tomojax/data/api.py
+  src/tomojax/data/__init__.py src/tomojax/data/inspection.py
+  src/tomojax/io/_preprocess.py src/tomojax/io/api.py
+  src/tomojax/io/__init__.py src/tomojax/cli/preprocess.py
+  src/tomojax/cli/main.py tests/test_contrast.py tests/test_preprocess.py
+  tests/test_io_public_dataset.py tests/test_cli_entrypoints.py
+  tests/test_inspect_cli.py` passed.
+- `uv run basedpyright src/tomojax/io/_preprocess.py
+  src/tomojax/io/api.py src/tomojax/io/__init__.py
+  src/tomojax/cli/preprocess.py src/tomojax/data/contrast.py` passed with 0
+  errors.
+- `uv run basedpyright src/tomojax/data src/tomojax/io src/tomojax/cli`
+  failed with the existing broad data-package type backlog: 320 errors and 716
+  warnings across retained data surfaces such as `geometry_meta.py`,
+  `inspection.py`, `preprocess.py`, `simulate.py`, and `phantoms.py`.
+- `just check` completed formatting, repo-wide ruff, configured repo
+  basedpyright, import-linter, and public import checks successfully. Its broad
+  non-slow pytest phase was stopped after several minutes at about 2% progress,
+  so the full test suite was not completed in this turn.
+
 ## 2026-05-12 - Pose-only Schur gauge carry and pose-random gate
 
 ### Scope
@@ -15775,3 +15829,14 @@ Validation:
   `.artifacts/priority1_lamino_axis_roll/no_alpha_beta_128_20260514a/`,
   `.artifacts/priority1_lamino_axis_roll/pose_frozen_128_20260514a/`, and
   `.artifacts/priority1_lamino_axis_roll/true_pose_setup_only_128_20260514a/`.
+
+### Article visual scenario note: detector-v offset
+
+- Generated PHANTOM94 naive-FBP article visuals under
+  `runs/article_visuals/phantom94_misaligned_naive_fbp_20260514/`.
+- The detector-v-only offset is not useful as a headline misalignment visual:
+  it mostly shifts the sample vertically in the reconstructed volume rather
+  than making the reconstruction visibly bad.
+- Treat constant detector-v offset as an observability/gauge policy issue for
+  production reporting, not as a correction scenario to showcase beside COR,
+  smooth dx/dz motion, phi wobble, or combined motion.

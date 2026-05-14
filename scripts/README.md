@@ -11,8 +11,10 @@ installed as package entry points.
 
 ## Data preparation
 
-- `nexus_data_wrangler.py`: practical NeXus/HDF5 conversion utility for raw
-  laminography-style data. This script has focused contract tests.
+- `nexus_data_wrangler.py`: historical NeXus/HDF5 conversion utility for raw
+  laminography-style data. Production preprocessing now goes through
+  `tomojax preprocess` and the public `tomojax.io` APIs; keep this script for
+  comparison/regression work only.
 
 ## Manual experiments
 

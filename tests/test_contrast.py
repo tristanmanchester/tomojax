@@ -4,6 +4,7 @@ import pytest
 from tomojax.data.contrast import (
     absorption_to_transmission,
     flat_dark_to_absorption,
+    flat_dark_to_transmission,
     transmission_to_absorption,
 )
 
@@ -36,6 +37,23 @@ def test_flat_dark_to_absorption_matches_manual():
     assert absorption.dtype == np.float32
     assert np.isfinite(absorption).all()
     np.testing.assert_allclose(absorption, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_flat_dark_to_transmission_matches_manual_with_separate_clip():
+    projections = np.array([[[1.0, 3.0], [5.0, 7.0]]], dtype=np.float32)
+    flats = np.array([[[9.0, 9.0], [9.0, 9.0]]], dtype=np.float32)
+    darks = np.array([[[1.0, 1.0], [1.0, 1.0]]], dtype=np.float32)
+
+    transmission = flat_dark_to_transmission(
+        projections,
+        flats,
+        darks,
+        denominator_min=1e-6,
+        clip_min=0.25,
+    )
+
+    expected = np.maximum((projections - darks) / (flats - darks), 0.25)
+    np.testing.assert_allclose(transmission, expected, rtol=1e-6, atol=1e-6)
 
 
 def test_transmission_absorption_with_jax():

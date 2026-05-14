@@ -13,6 +13,7 @@ from typing import Any
 import h5py
 import numpy as np
 
+from .contrast import flat_dark_to_absorption, flat_dark_to_transmission
 from .io_hdf5 import NXTomoMetadata, save_nxtomo
 
 LOG = logging.getLogger(__name__)
@@ -33,7 +34,8 @@ _OUTPUT_DTYPES = {"float32": np.float32, "float64": np.float64}
 class PreprocessConfig:
     """Configuration for raw NXtomo flat/dark correction."""
 
-    log: bool = False
+    output_domain: str = "absorption"
+    log: bool | None = None
     epsilon: float = 1e-6
     clip_min: float | None = None
     output_dtype: str = "float32"
@@ -276,7 +278,17 @@ def _metadata_from_raw(
     )
 
 
-def _validate_config(config: PreprocessConfig) -> np.dtype:
+def _output_domain_from_config(config: PreprocessConfig) -> str:
+    """Resolve the production output domain, keeping the old log knob explicit."""
+    if config.log is not None:
+        return "absorption" if config.log else "transmission"
+    return str(config.output_domain).strip().lower()
+
+
+def _validate_config(config: PreprocessConfig) -> tuple[np.dtype, str]:
+    output_domain = _output_domain_from_config(config)
+    if output_domain not in {"absorption", "transmission"}:
+        raise ValueError("output_domain must be one of: absorption, transmission")
     if not np.isfinite(config.epsilon) or config.epsilon <= 0:
         raise ValueError("epsilon must be a positive finite value")
     if config.clip_min is not None and (not np.isfinite(config.clip_min) or config.clip_min <= 0):
@@ -289,7 +301,7 @@ def _validate_config(config: PreprocessConfig) -> np.dtype:
         raise ValueError("auto_reject must be one of: off, nonfinite, outliers, both")
     if not np.isfinite(config.outlier_z_threshold) or config.outlier_z_threshold <= 0:
         raise ValueError("outlier_z_threshold must be a positive finite value")
-    return np.dtype(_OUTPUT_DTYPES[config.output_dtype])
+    return np.dtype(_OUTPUT_DTYPES[config.output_dtype]), output_domain
 
 
 def _view_tokens_from_text(text: str) -> list[str]:
@@ -508,6 +520,7 @@ def _correct_frames(
     image_key: np.ndarray,
     *,
     config: PreprocessConfig,
+    output_domain: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, int], dict[str, Any]]:
     sample_mask = image_key == 0
     flat_mask = image_key == 1
@@ -520,7 +533,7 @@ def _correct_frames(
     if samples.size == 0:
         raise ValueError("No sample frames found (image_key==0)")
 
-    field_shape = tuple(int(v) for v in frames.shape[1:])
+    field_shape = (int(frames.shape[1]), int(frames.shape[2]))
     flat_override_used = False
     dark_override_used = False
     if flats.size == 0:
@@ -564,17 +577,29 @@ def _correct_frames(
         int(np.count_nonzero(transmission_raw <= 0.0)),
     )
 
-    transmission = transmission_raw
-    if config.clip_min is not None:
-        transmission = np.maximum(transmission, float(config.clip_min))
-
-    if config.log:
-        log_min = max(float(config.epsilon), float(config.clip_min or config.epsilon))
-        output = -np.log(np.maximum(transmission, log_min))
-        output_domain = "absorption"
+    if output_domain == "absorption":
+        output = np.asarray(
+            flat_dark_to_absorption(
+                samples,
+                flat_mean,
+                dark_mean,
+                min_intensity=float(config.epsilon),
+                transmission_min=max(
+                    float(config.epsilon),
+                    float(config.clip_min or config.epsilon),
+                ),
+            )
+        )
     else:
-        output = transmission
-        output_domain = "transmission"
+        output = np.asarray(
+            flat_dark_to_transmission(
+                samples,
+                flat_mean,
+                dark_mean,
+                denominator_min=float(config.epsilon),
+                clip_min=None if config.clip_min is None else float(config.clip_min),
+            )
+        )
 
     correction_meta = {
         "flat_override_used": flat_override_used,
@@ -760,7 +785,7 @@ def preprocess_nxtomo(
 ) -> PreprocessResult:
     """Preprocess raw NXtomo sample/flat/dark frames into corrected projections."""
     cfg = config or PreprocessConfig()
-    output_dtype = _validate_config(cfg)
+    output_dtype, output_domain = _validate_config(cfg)
 
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -842,6 +867,7 @@ def preprocess_nxtomo(
             reduced_frames,
             reduced_image_key,
             config=cfg,
+            output_domain=output_domain,
         )
 
         auto_keep, auto_reject_meta = _auto_reject_views(
@@ -906,9 +932,10 @@ def preprocess_nxtomo(
         "output_dtype": str(output_dtype),
         "correction_formula": (
             "transmission=(sample-mean(dark))/max(mean(flat)-mean(dark),epsilon); "
-            "absorption=-log(max(transmission,log_min)) when log=true"
+            "absorption=-log(max(transmission,log_min)) when output_domain=absorption"
         ),
-        "log": bool(cfg.log),
+        "log": bool(output_domain == "absorption"),
+        "output_domain_policy": "absorption is the default reconstruction-ready domain",
         "assume_dark_field": cfg.assume_dark_field,
         "assume_flat_field": cfg.assume_flat_field,
         "dark_override_used": bool(correction_meta["dark_override_used"]),
@@ -949,7 +976,7 @@ def preprocess_nxtomo(
         sample_count=int(output.shape[0]),
         flat_count=int(correction_meta["flat_count"]),
         dark_count=int(correction_meta["dark_count"]),
-        output_shape=tuple(int(v) for v in output.shape),
+        output_shape=(int(output.shape[0]), int(output.shape[1]), int(output.shape[2])),
         output_domain=str(correction_meta["output_domain"]),
         warning_counts=dict(warning_counts),
         provenance=provenance,
