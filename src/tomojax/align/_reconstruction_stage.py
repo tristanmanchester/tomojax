@@ -293,6 +293,36 @@ def _nonfinite_initial_reconstruction_result(
     return x, L_next, stat
 
 
+def _skipped_fixed_volume_reconstruction_result(
+    *,
+    x: jnp.ndarray,
+    recon_start: float,
+    recon_algo: str,
+    cfg: object,
+    outer_idx: int,
+    L_prev: float | None,
+    finite_fraction: float,
+) -> tuple[jnp.ndarray, float | None, OuterStat]:
+    stat, L_next = _reconstruction_step_stat(
+        recon_start=recon_start,
+        recon_retry=False,
+        info_rec={
+            "loss": [],
+            "effective_iters": 0,
+            "early_stop": False,
+            "regulariser": str(getattr(cfg, "regulariser", "")),
+            "fixed_volume_reconstruction_skipped": True,
+        },
+        recon_algo=recon_algo,
+        cfg=cfg,
+        outer_idx=outer_idx,
+        L_prev=L_prev,
+    )
+    stat["fixed_volume_reconstruction_skipped"] = True
+    stat["reconstruction_finite_fraction"] = float(finite_fraction)
+    return x, L_next, stat
+
+
 def _retry_info_after_nonfinite_core(
     *,
     retry_info: Mapping[str, object],
@@ -581,6 +611,16 @@ def _run_reconstruction_step(  # noqa: PLR0912, PLR0915
     x_finite_fraction = _finite_fraction(x)
     if x_finite_fraction < 1.0:
         return _nonfinite_initial_reconstruction_result(
+            x=x,
+            recon_start=recon_start,
+            recon_algo=recon_algo,
+            cfg=cfg,
+            outer_idx=outer_idx,
+            L_prev=L_prev,
+            finite_fraction=x_finite_fraction,
+        )
+    if int(getattr(cfg, "recon_iters", 0)) <= 0:
+        return _skipped_fixed_volume_reconstruction_result(
             x=x,
             recon_start=recon_start,
             recon_algo=recon_algo,

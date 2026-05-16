@@ -15840,3 +15840,46 @@ Validation:
 - Treat constant detector-v offset as an observability/gauge policy issue for
   production reporting, not as a correction scenario to showcase beside COR,
   smooth dx/dz motion, phi wobble, or combined motion.
+
+### Setup-safe article visual NaN path hardened
+
+- Diagnosed the failed `parallel_setup_safe` and `lamino_setup_safe` article
+  runs as a fail-open handoff rather than a visualization-only bug: non-finite
+  reconstruction output could reach the PNG writer, and the writer then hid the
+  first scientific failure behind `ValueError('cannot convert float NaN to
+  integer')`.
+- Made `scripts/alignment_visuals.py` finite-safe for article visuals. Shared
+  grayscale limits, diverging difference panels, and geometry-loss plots now
+  ignore non-finite samples and sanitize image arrays before `uint8` conversion.
+- Made `scripts/generate_alignment_before_after_128.py` preserve first-failure
+  diagnostics before visual rendering. Each scenario now writes
+  `finite_report.json` and `alignment_metadata.pre_visual.json` before PNG
+  generation; non-finite result volumes are recorded as diagnostic `nonfinite`
+  rows instead of being collapsed into a generic visualization exception.
+- Restricted preset schedules by the scenario's declared active DOFs when the
+  article runner uses named presets. This keeps `lamino_setup_safe` from
+  silently activating generic setup-safe DOFs that the scenario did not request.
+- Restored fixed-volume pose-polish semantics in staged multires runs by passing
+  `recon_iters=0` for pose stages whose objective is `fixed_volume`; the
+  reconstruction stage now has an explicit finite-checked skip path for this
+  case.
+
+Validation:
+
+- On `vivobook-ts`,
+  `/home/tristan/.local/bin/uv run pytest tests/test_article_alignment_visuals.py
+  tests/test_pose_reconstruction_fail_closed.py tests/test_alignment_schedules.py
+  -q` passed with 24 tests.
+- On `vivobook-ts`, `ruff check --select E,F,I` passed for the edited article
+  visual, runner, staged alignment, reconstruction, and focused test files.
+- Full `128^3` docs-profile rerun for `parallel_setup_safe` and
+  `lamino_setup_safe` completed on `vivobook-ts` under
+  `runs/article_visuals/phantom94_setup_safe_fix_128_20260516_detached/` and
+  was synced locally.
+- `parallel_setup_safe` completed with finite visual inputs, pre-visual
+  metadata, and PNG panels. Naive FBP NMSE was `0.33691591024398804`, calibrated
+  FBP NMSE was `0.06667692959308624`, and aligned TV NMSE was
+  `0.010717653669416904`.
+- `lamino_setup_safe` completed with finite visual inputs, pre-visual metadata,
+  and PNG panels. Naive FBP NMSE was `0.3975634276866913`, calibrated FBP NMSE
+  was `0.20368780195713043`, and aligned TV NMSE was `0.029141291975975037`.

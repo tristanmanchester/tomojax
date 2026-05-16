@@ -110,6 +110,45 @@ def test_huber_fista_core_nonfinite_output_retries_public_streamed_fista(monkeyp
     assert stat["recon_fallback_reason"] == "huber_fista_core_nonfinite_retry_public_stream"
 
 
+def test_fixed_volume_pose_stage_skips_reconstruction_work(monkeypatch):
+    grid, detector, geometry, _volume, projections, det_grid = _case()
+    x0 = jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32) * jnp.float32(0.5)
+
+    def fail_public_fista(*_args, **_kwargs):
+        raise AssertionError("fixed-volume pose stages must not call FISTA")
+
+    monkeypatch.setattr(reconstruction_stage_module, "fista_tv", fail_public_fista)
+
+    x_out, l_next, stat = _run_reconstruction_step(
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=projections,
+        det_grid=det_grid,
+        params5=jnp.zeros((projections.shape[0], 5), dtype=jnp.float32),
+        x=x0,
+        cfg=AlignConfig(
+            align_profile="lightning",
+            outer_iters=1,
+            recon_iters=0,
+            regulariser="huber_tv",
+            lambda_tv=0.0,
+            views_per_batch=0,
+            projector_backend="jax",
+            gather_dtype="fp32",
+        ),
+        L_prev=17.0,
+        outer_idx=1,
+        recon_algo="fista",
+    )
+
+    np.testing.assert_allclose(np.asarray(x_out), np.asarray(x0))
+    assert l_next == 17.0
+    assert stat["fixed_volume_reconstruction_skipped"] is True
+    assert stat["reconstruction_finite_fraction"] == 1.0
+    assert stat.get("reconstruction_failed") is not True
+
+
 def test_huber_fista_calibrated_grid_fallback_uses_public_measured_l(monkeypatch):
     grid, detector, geometry, _volume, projections, det_grid = _case()
     x0 = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)

@@ -75,7 +75,8 @@ def ortho_slices(volume: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def scale_gray(image: np.ndarray) -> np.ndarray:
-    return scale_to_uint8(image, lower_percentile=1.0, upper_percentile=99.7)
+    arr = _finite_image(image)
+    return scale_to_uint8(arr, lower_percentile=1.0, upper_percentile=99.7)
 
 
 def to_rgb(image: np.ndarray) -> np.ndarray:
@@ -86,20 +87,22 @@ def to_rgb(image: np.ndarray) -> np.ndarray:
 
 
 def scale_shared_gray(image: np.ndarray, lower: float, upper: float) -> np.ndarray:
+    image = _finite_image(image)
     if not np.isfinite(lower) or not np.isfinite(upper) or upper <= lower:
-        lower = float(np.nanmin(image))
-        upper = float(np.nanmax(image))
+        lower, upper = shared_intensity_limits([image])
     if upper <= lower:
         return np.zeros((*image.shape, 3), dtype=np.uint8)
     scaled = np.clip((np.asarray(image, dtype=np.float32) - lower) / (upper - lower), 0.0, 1.0)
-    gray = np.rint(scaled * 255.0).astype(np.uint8)
+    gray = np.rint(np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0) * 255.0).astype(
+        np.uint8
+    )
     return to_rgb(gray)
 
 
 def scale_diverging(image: np.ndarray, clip: float) -> np.ndarray:
-    arr = np.asarray(image, dtype=np.float32)
+    arr = _finite_image(image)
     if not np.isfinite(clip) or clip <= 1e-12:
-        clip = float(np.nanpercentile(np.abs(arr), 99.0))
+        clip = _finite_percentile(np.abs(arr), 99.0, default=0.0)
     if not np.isfinite(clip) or clip <= 1e-12:
         return np.full((*arr.shape, 3), 245, dtype=np.uint8)
     x = np.clip(arr / clip, -1.0, 1.0)
@@ -112,7 +115,7 @@ def scale_diverging(image: np.ndarray, clip: float) -> np.ndarray:
     rgb[neg, 0] = 255.0 * (1.0 + x[neg])
     rgb[neg, 1] = 255.0 * (1.0 + x[neg])
     rgb[neg, 2] = 255.0
-    return np.rint(rgb).astype(np.uint8)
+    return np.rint(np.nan_to_num(rgb, nan=245.0, posinf=255.0, neginf=0.0)).astype(np.uint8)
 
 
 def pad_to_height(image: np.ndarray, height: int) -> np.ndarray:
@@ -242,7 +245,10 @@ def diagnostics_panel(
         "estimated",
         f"det_u={estimates.get('det_u_px', 0.0):.3g} det_v={estimates.get('det_v_px', 0.0):.3g}",
         f"roll={estimates.get('detector_roll_deg', 0.0):.3g}",
-        f"axis=({estimates.get('axis_rot_x_deg', 0.0):.3g},{estimates.get('axis_rot_y_deg', 0.0):.3g})",
+        (
+            f"axis=({estimates.get('axis_rot_x_deg', 0.0):.3g},"
+            f"{estimates.get('axis_rot_y_deg', 0.0):.3g})"
+        ),
         "",
         "NMSE",
         f"naive={_metric_text(metrics.get('naive_volume_nmse'))}",
@@ -252,7 +258,12 @@ def diagnostics_panel(
     return text_panel(width, height, lines, title=scenario.slug)
 
 
-def loss_panel(outer_stats: Sequence[Mapping[str, Any]], *, width: int = 360, height: int = 220) -> np.ndarray:
+def loss_panel(
+    outer_stats: Sequence[Mapping[str, Any]],
+    *,
+    width: int = 360,
+    height: int = 220,
+) -> np.ndarray:
     from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (width, height), (245, 245, 245))
@@ -289,12 +300,21 @@ def loss_panel(outer_stats: Sequence[Mapping[str, Any]], *, width: int = 360, he
     legend_y = height - 28
     for idx, ((level, block), items) in enumerate(sorted(groups.items(), reverse=True)):
         color = colors[idx % len(colors)]
-        first = float(items[0].get("geometry_loss_before", items[0].get("geometry_loss_after", 1.0)))
+        first = float(
+            items[0].get("geometry_loss_before", items[0].get("geometry_loss_after", 1.0))
+        )
         if not np.isfinite(first) or abs(first) < 1e-12:
             first = 1.0
         points: list[tuple[int, int]] = []
         for j, stat in enumerate(items):
-            loss = float(stat.get("geometry_loss_after", stat.get("geometry_loss_before", first)))
+            try:
+                loss = float(
+                    stat.get("geometry_loss_after", stat.get("geometry_loss_before", first))
+                )
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not np.isfinite(loss):
+                continue
             y_norm = np.clip(loss / first, 0.0, 1.2)
             x = int(left + (right - left) * (j / max(1, max_len - 1)))
             y = int(bottom - (bottom - top) * min(float(y_norm), 1.0))
@@ -317,15 +337,43 @@ def loss_panel(outer_stats: Sequence[Mapping[str, Any]], *, width: int = 360, he
 
 
 def shared_intensity_limits(volumes: Sequence[np.ndarray]) -> tuple[float, float]:
-    samples = np.concatenate([np.asarray(v, dtype=np.float32).reshape(-1) for v in volumes])
-    lower = float(np.nanpercentile(samples, 1.0))
-    upper = float(np.nanpercentile(samples, 99.7))
+    samples = np.concatenate([_finite_values(v) for v in volumes])
+    if samples.size == 0:
+        return 0.0, 1.0
+    lower = float(np.percentile(samples, 1.0))
+    upper = float(np.percentile(samples, 99.7))
+    if not np.isfinite(lower) or not np.isfinite(upper) or upper <= lower:
+        center = float(samples[0]) if samples.size else 0.0
+        return center, center + 1.0
     return lower, upper
 
 
 def difference_clip(images: Sequence[np.ndarray]) -> float:
-    samples = np.concatenate([np.abs(np.asarray(v, dtype=np.float32)).reshape(-1) for v in images])
-    return float(np.nanpercentile(samples, 99.0))
+    samples = np.concatenate([np.abs(_finite_values(v)) for v in images])
+    if samples.size == 0:
+        return 1.0
+    clip = float(np.percentile(samples, 99.0))
+    return clip if np.isfinite(clip) and clip > 1e-12 else 1.0
+
+
+def _finite_values(value: np.ndarray) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.float32).reshape(-1)
+    return arr[np.isfinite(arr)]
+
+
+def _finite_percentile(value: np.ndarray, percentile: float, *, default: float) -> float:
+    finite = _finite_values(value)
+    if finite.size == 0:
+        return float(default)
+    out = float(np.percentile(finite, percentile))
+    return out if np.isfinite(out) else float(default)
+
+
+def _finite_image(value: np.ndarray) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.float32)
+    finite = arr[np.isfinite(arr)]
+    fill = float(np.median(finite)) if finite.size else 0.0
+    return np.nan_to_num(arr, nan=fill, posinf=fill, neginf=fill)
 
 
 def image_grid(
@@ -370,7 +418,14 @@ def image_grid(
     col_label_px = int(round(col_font * 2.1))
     gutter_px = max(4, int(pad))
     fig_w = ncols * cell_px + (ncols - 1) * gutter_px
-    fig_h = title_px + gutter_px + col_label_px + gutter_px + nrows * cell_px + (nrows - 1) * gutter_px
+    fig_h = (
+        title_px
+        + gutter_px
+        + col_label_px
+        + gutter_px
+        + nrows * cell_px
+        + (nrows - 1) * gutter_px
+    )
     dpi = 100
     fig = Figure(figsize=(fig_w / dpi, fig_h / dpi), dpi=dpi, facecolor=(0.045, 0.045, 0.045))
     canvas = FigureCanvasAgg(fig)
@@ -465,7 +520,14 @@ def _pil_image_grid(
     col_label_px = 24
     gutter_px = max(4, int(pad))
     width = ncols * cell_px + (ncols - 1) * gutter_px
-    height = title_px + gutter_px + col_label_px + gutter_px + nrows * cell_px + (nrows - 1) * gutter_px
+    height = (
+        title_px
+        + gutter_px
+        + col_label_px
+        + gutter_px
+        + nrows * cell_px
+        + (nrows - 1) * gutter_px
+    )
     canvas = Image.new("RGB", (width, height), (12, 12, 12))
     draw = ImageDraw.Draw(canvas)
     draw.text((0, 7), title[:120], fill=(230, 230, 230))
@@ -542,7 +604,10 @@ def write_alignment_visuals(
             [scale_shared_gray(truth_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
             [scale_shared_gray(naive_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
             [scale_shared_gray(aligned_s[name], lower, upper) for name in ("XY", "XZ", "YZ")],
-            [scale_diverging((naive_s[name] - truth_s[name]), diff_clip) for name in ("XY", "XZ", "YZ")],
+            [
+                scale_diverging((naive_s[name] - truth_s[name]), diff_clip)
+                for name in ("XY", "XZ", "YZ")
+            ],
             [
                 scale_diverging((aligned_s[name] - truth_s[name]), diff_clip)
                 for name in ("XY", "XZ", "YZ")
@@ -592,13 +657,17 @@ def write_alignment_visuals(
         "truth_orthos": str(out_dir / "truth_orthos.png"),
         "calibrated_orthos": str(out_dir / "calibrated_fbp_orthos.png"),
         "absolute_difference_xy": str(out_dir / "absolute_difference_xy.png"),
-        "difference_calibrated_truth_orthos": str(out_dir / "difference_calibrated_truth_orthos.png"),
+        "difference_calibrated_truth_orthos": str(
+            out_dir / "difference_calibrated_truth_orthos.png"
+        ),
         "difference_aligned_truth_orthos": str(out_dir / "difference_aligned_truth_orthos.png"),
         "difference_aligned_naive_orthos": str(out_dir / "difference_aligned_naive_orthos.png"),
     }
     paths.update(save_ortho_slices(out_dir, "truth", truth_s, lower=lower, upper=upper))
     paths.update(save_ortho_slices(out_dir, "naive_fbp", naive_s, lower=lower, upper=upper))
-    paths.update(save_ortho_slices(out_dir, "calibrated_fbp", calibrated_s, lower=lower, upper=upper))
+    paths.update(
+        save_ortho_slices(out_dir, "calibrated_fbp", calibrated_s, lower=lower, upper=upper)
+    )
     paths.update(save_ortho_slices(out_dir, "aligned_tv", aligned_s, lower=lower, upper=upper))
     paths.update(
         save_ortho_slices(
@@ -691,7 +760,9 @@ def write_naive_visuals(
     naive_xy = scale_gray(slice_xy(naive_fbp))
     truth_orthos = hstack_rgb([scale_gray(truth_s[name]) for name in ("XY", "XZ", "YZ")])
     naive_orthos = hstack_rgb([scale_gray(naive_s[name]) for name in ("XY", "XZ", "YZ")])
-    diff_panel = hstack_rgb([scale_diverging(diff_s[name], diff_clip) for name in ("XY", "XZ", "YZ")])
+    diff_panel = hstack_rgb(
+        [scale_diverging(diff_s[name], diff_clip) for name in ("XY", "XZ", "YZ")]
+    )
     paths = {
         "truth_xy": str(out_dir / "truth_xy.png"),
         "naive_fbp_xy": str(out_dir / "naive_fbp_xy.png"),

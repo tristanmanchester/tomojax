@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import asdict, dataclass
 import importlib.util
 import json
+from pathlib import Path
 import sys
 import time
-from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import imageio.v3 as iio
@@ -32,9 +32,9 @@ from tomojax.bench.alignment_scenarios import (
 from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.data.phantoms import random_cubes_spheres
+from tomojax.io import normalize_json
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-from tomojax.io import normalize_json
 
 try:
     from scripts.alignment_visuals import (
@@ -511,6 +511,19 @@ def _run_geometry_alignment(
 ) -> tuple[np.ndarray, GeometryCalibrationState, dict[str, Any]]:
     geometry_dofs = normalize_geometry_dofs(scenario.geometry_dofs, geometry=nominal_geometry)
     active_dofs = tuple(scenario.active_dofs or geometry_dofs)
+    all_known_dofs = {
+        "det_u_px",
+        "det_v_px",
+        "detector_roll_deg",
+        "axis_rot_x_deg",
+        "axis_rot_y_deg",
+        "alpha",
+        "beta",
+        "phi",
+        "dx",
+        "dz",
+    }
+    freeze_dofs: tuple[str, ...] = ()
     if scenario.schedule == "expert_coupled":
         schedule: object | None = schedule_preset(
             "expert_coupled",
@@ -521,6 +534,7 @@ def _run_geometry_alignment(
     elif scenario.schedule:
         schedule = scenario.schedule
         optimise_dofs = None
+        freeze_dofs = tuple(sorted(all_known_dofs.difference(active_dofs)))
     else:
         schedule = None
         optimise_dofs = active_dofs
@@ -537,7 +551,7 @@ def _run_geometry_alignment(
             tv_prox_iters=int(profile.tv_prox_iters),
             schedule=schedule,
             optimise_dofs=optimise_dofs,
-            freeze_dofs=(),
+            freeze_dofs=freeze_dofs,
             early_stop=bool(profile.early_stop),
             early_stop_rel_impr=float(profile.early_stop_rel_impr),
             early_stop_patience=int(profile.early_stop_patience),
@@ -738,11 +752,105 @@ def build_run_manifest(
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _json_safe(value: Any) -> Any:
     return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
+
+
+def _array_finite_summary(name: str, value: np.ndarray | None) -> dict[str, Any]:
+    if value is None:
+        return {
+            "name": name,
+            "present": False,
+            "all_finite": False,
+            "finite_fraction": 0.0,
+        }
+    arr = np.asarray(value)
+    finite = np.isfinite(arr)
+    total = int(arr.size)
+    summary: dict[str, Any] = {
+        "name": name,
+        "present": True,
+        "shape": [int(v) for v in arr.shape],
+        "dtype": str(arr.dtype),
+        "size": total,
+        "finite_count": int(finite.sum()),
+        "finite_fraction": float(finite.mean()) if total else 1.0,
+        "nan_count": int(np.isnan(arr).sum()),
+        "posinf_count": int(np.isposinf(arr).sum()),
+        "neginf_count": int(np.isneginf(arr).sum()),
+        "all_finite": bool(finite.all()),
+    }
+    if total and not bool(finite.all()):
+        first = np.argwhere(~finite)[0]
+        summary["first_nonfinite_index"] = [int(v) for v in first]
+        summary["first_nonfinite_value"] = repr(arr[tuple(first)])
+    if bool(finite.any()):
+        vals = arr[finite].astype(np.float64, copy=False)
+        summary.update(
+            {
+                "min": float(np.min(vals)),
+                "max": float(np.max(vals)),
+                "mean": float(np.mean(vals)),
+                "rms": float(np.sqrt(np.mean(vals * vals))),
+            }
+        )
+    return summary
+
+
+def _scalar_finite_summary(name: str, value: Any) -> dict[str, Any]:
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return {
+            "name": name,
+            "present": value is not None,
+            "all_finite": False,
+            "value": repr(value),
+        }
+    return {"name": name, "present": True, "all_finite": bool(np.isfinite(scalar)), "value": scalar}
+
+
+def _scenario_finite_report(result: ScenarioComputationResult) -> dict[str, Any]:
+    volume_summaries = [
+        _array_finite_summary("naive_fbp", result.naive_fbp),
+        _array_finite_summary("calibrated_fbp", result.calibrated_fbp),
+        _array_finite_summary("aligned_tv", result.aligned_tv),
+    ]
+    metric_summaries = [
+        _scalar_finite_summary(name, value) for name, value in sorted(result.metrics.items())
+    ]
+    if result.provenance == "naive_only":
+        required = ["naive_fbp"]
+    else:
+        required = ["naive_fbp", "calibrated_fbp", "aligned_tv"]
+    required_by_name = {
+        summary["name"]: bool(summary.get("all_finite", False)) for summary in volume_summaries
+    }
+    all_required_finite = all(required_by_name.get(name, False) for name in required) and all(
+        bool(summary.get("all_finite", False)) for summary in metric_summaries
+    )
+    first_nonfinite = next(
+        (
+            summary
+            for summary in volume_summaries + metric_summaries
+            if not bool(summary.get("all_finite", False))
+        ),
+        None,
+    )
+    return {
+        "schema_version": 1,
+        "all_required_finite": bool(all_required_finite),
+        "required_arrays": required,
+        "first_nonfinite": first_nonfinite,
+        "volumes": volume_summaries,
+        "metrics": metric_summaries,
+    }
 
 
 def _execute_scenario_computation(
@@ -813,7 +921,12 @@ def _execute_scenario_computation(
         provenance = "estimated"
     elif supplied:
         state = _supplied_state(scenario, nominal_geometry)
-        calibrated_geometry_for_tv = geometry_with_axis_state(nominal_geometry, grid, detector, state)
+        calibrated_geometry_for_tv = geometry_with_axis_state(
+            nominal_geometry,
+            grid,
+            detector,
+            state,
+        )
         supplied_grid = level_detector_grid(detector, state=state, factor=1)
         aligned_tv = _run_tv_recon(
             calibrated_geometry_for_tv,
@@ -1226,6 +1339,103 @@ def _build_scenario_run_result(
     )
 
 
+def _build_nonfinite_run_result(
+    scenario: Scenario,
+    *,
+    profile: RunProfile,
+    result: ScenarioComputationResult,
+    alignment_metadata: dict[str, Any] | None,
+    finite_report: dict[str, Any],
+    elapsed: float,
+    out_dir: Path,
+) -> ScenarioRunResult:
+    report_path = out_dir / "finite_report.json"
+    metadata_path = out_dir / "alignment_metadata.pre_visual.json"
+    visual_paths = {
+        "finite_report_json": str(report_path),
+        "alignment_metadata_json": str(metadata_path) if alignment_metadata is not None else "",
+    }
+    first_nonfinite = finite_report.get("first_nonfinite")
+    reason = "nonfinite_visual_inputs"
+    if isinstance(first_nonfinite, Mapping):
+        reason = f"nonfinite_{first_nonfinite.get('name', 'visual_inputs')}"
+    row: dict[str, Any] = {
+        "slug": scenario.slug,
+        "title": scenario.title,
+        "scenario_category": scenario.scenario_category,
+        "scenario_family": scenario.scenario_family,
+        "expectation": scenario.expectation,
+        "headline_eligible": bool(scenario.headline_eligible),
+        "phantom_key": scenario.phantom_key,
+        "schedule": scenario.schedule,
+        "schedule_name": str(result.info.get("schedule_name", "")),
+        "schedule_stages_json": json.dumps(result.executed_stages, sort_keys=True),
+        "last_schedule_stage_name": str(
+            (result.executed_stages[-1].get("stage_name", "") if result.executed_stages else "")
+        ),
+        "expected_objective": scenario.expected_objective,
+        "expected_optimizer": scenario.expected_optimizer,
+        "expected_loss": scenario.expected_loss,
+        "geometry_type": scenario.geometry_type,
+        "geometry_dofs": ",".join(scenario.geometry_dofs),
+        "active_dofs": ",".join(
+            str(v) for v in result.info.get("active_dofs", scenario.active_dofs)
+        ),
+        "active_pose_dofs": ",".join(str(v) for v in result.info.get("active_pose_dofs", [])),
+        "active_geometry_dofs": ",".join(
+            str(v) for v in result.info.get("active_geometry_dofs", scenario.geometry_dofs)
+        ),
+        "loss_kind": str(result.info.get("loss_kind", "")),
+        "geometry_objectives": ",".join(result.geometry_objectives),
+        "solver_metadata_json": json.dumps(result.solver_metadata, sort_keys=True),
+        "theta_span_deg": result.theta_span,
+        "n_views": int(profile.views),
+        "parameter_provenance": result.provenance,
+        "hidden_truth_json": json.dumps(_scenario_truth_payload(scenario), sort_keys=True),
+        "supplied_corrections_json": json.dumps(result.supplied, sort_keys=True),
+        "estimates_json": json.dumps(result.estimates, sort_keys=True),
+        "geometry_diagnostics_json": json.dumps(result.diagnostics, sort_keys=True),
+        "geometry_status": _geometry_status_label(result.diagnostics),
+        "naive_volume_nmse": result.metrics.get("naive_volume_nmse", np.nan),
+        "calibrated_volume_nmse": result.metrics.get("calibrated_volume_nmse", np.nan),
+        "aligned_tv_volume_nmse": result.metrics.get("aligned_tv_volume_nmse", np.nan),
+        "total_outer_iters": int(result.info.get("total_outer_iters", 0)),
+        "elapsed_sec": elapsed,
+        "error": reason,
+        "truth_xy": "",
+        "naive_fbp_xy": "",
+        "calibrated_fbp_xy": "",
+        "aligned_tv_xy": "",
+        "before_after_panel": "",
+        "inspection_panel": "",
+        "loss_panel": "",
+        "diagnostics_panel": "",
+        "truth_orthos": "",
+        "calibrated_orthos": "",
+        "absolute_difference_xy": "",
+        "status": "nonfinite",
+        **visual_paths,
+    }
+    manifest = {
+        "schema_version": 1,
+        "scenario": asdict(scenario),
+        "scenario_catalog": _scenario_catalog_payload(scenario),
+        "phantom": _phantom_metadata(),
+        "profile": asdict(profile),
+        "status": "nonfinite",
+        "error": reason,
+        "finite_report": finite_report,
+        "alignment_metadata": alignment_metadata,
+        "metrics": result.metrics,
+        "elapsed_sec": elapsed,
+    }
+    return ScenarioRunResult(
+        row=row,
+        case_manifest=manifest,
+        alignment_metadata=alignment_metadata,
+    )
+
+
 def _run_scenario(
     scenario: Scenario,
     *,
@@ -1250,6 +1460,24 @@ def _run_scenario(
         profile=profile,
         result=computation,
     )
+    finite_report = _scenario_finite_report(computation)
+    _write_json(out_dir / "finite_report.json", finite_report)
+    if alignment_metadata is not None:
+        _write_json(out_dir / "alignment_metadata.pre_visual.json", alignment_metadata)
+    elapsed_before_visual = time.time() - start_time
+    if not bool(finite_report.get("all_required_finite", False)):
+        run_result = _build_nonfinite_run_result(
+            scenario,
+            profile=profile,
+            result=computation,
+            alignment_metadata=alignment_metadata,
+            finite_report=finite_report,
+            elapsed=elapsed_before_visual,
+            out_dir=out_dir,
+        )
+        _write_json(out_dir / "case_manifest.json", run_result.case_manifest)
+        jax.clear_caches()
+        return run_result.row
     artifacts = _write_scenario_artifacts(
         scenario,
         out_dir=out_dir,
@@ -1361,7 +1589,7 @@ def run(args: argparse.Namespace) -> None:
                 truth=truth,
                 naive_only=bool(args.naive_only),
             )
-            row["status"] = "completed"
+            row.setdefault("status", "completed")
         except Exception as exc:
             row = {
                 "slug": scenario.slug,

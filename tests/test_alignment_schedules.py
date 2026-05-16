@@ -94,6 +94,20 @@ def test_resolved_setup_safe_executes_as_separate_stages():
     assert resolved.to_dict()["stages"][0]["gauge_decision"]["status"] == "ok"
 
 
+def test_resolved_setup_safe_can_be_restricted_by_scenario_freeze_dofs():
+    resolved = resolve_alignment_schedule(
+        schedule="setup_safe",
+        freeze_dofs=("detector_roll_deg", "axis_rot_y_deg"),
+        outer_iters=3,
+    )
+
+    assert [stage.name for stage in resolved.stages] == ["cor", "axis_direction", "pose_polish"]
+    assert resolved.stages[0].active_geometry_dofs == ("det_u_px",)
+    assert resolved.stages[1].active_geometry_dofs == ("axis_rot_x_deg",)
+    assert resolved.stages[2].active_pose_dofs == ("alpha", "beta", "phi", "dx", "dz")
+    assert set(resolved.frozen_dofs) == {"axis_rot_y_deg", "detector_roll_deg"}
+
+
 def test_lamino_tilt_schedule_uses_observable_axis_dof():
     schedule = schedule_preset("lamino_tilt")
 
