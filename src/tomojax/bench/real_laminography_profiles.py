@@ -52,3 +52,69 @@ REAL_LAMINO_PROFILE_CHOICES = (
 )
 
 STAGED_LAMINO_CONTRACT: dict[str, Any] = dict(REFERENCE_REGRESSION_CONTRACT)
+
+REAL_LAMINO_STAGED_PATH: tuple[dict[str, Any], ...] = (
+    {"label": "baseline", "stage": "00_baseline", "active_dofs": [], "status": "required"},
+    {
+        "label": "cor_detu",
+        "stage": "01_setup_geometry/01_cor",
+        "active_dofs": ["det_u_px"],
+        "status": "required",
+    },
+    {
+        "label": "detector_roll",
+        "stage": "01_setup_geometry/02_detector_roll",
+        "active_dofs": ["detector_roll_deg"],
+        "status": "planned",
+    },
+    {
+        "label": "axis_direction",
+        "stage": "01_setup_geometry/03_axis_direction",
+        "active_dofs": ["axis_rot_x_deg", "axis_rot_y_deg"],
+        "status": "planned",
+    },
+    {"label": "pose_phi", "stage": "02_pose_phi", "active_dofs": ["phi"], "status": "planned"},
+    {
+        "label": "pose_dx_dz",
+        "stage": "03_pose_dx_dz",
+        "active_dofs": ["dx", "dz"],
+        "status": "planned",
+    },
+    {
+        "label": "pose_5dof_polish",
+        "stage": "04_pose_polish",
+        "active_dofs": ["alpha", "beta", "phi", "dx", "dz"],
+        "status": "planned",
+    },
+    {
+        "label": "final_reconstruction",
+        "stage": "05_final",
+        "active_dofs": ["detector_roll", "axis_direction", "pose_5dof"],
+        "status": "planned",
+    },
+    {
+        "label": "cor_only_comparator",
+        "stage": "06_cor_only_fista",
+        "active_dofs": ["det_u_px"],
+        "status": "required",
+    },
+)
+
+REFERENCE_REGRESSION_STAGE_MAP: tuple[tuple[str, str], ...] = (
+    ("01_setup_geometry/01_cor", "01_setup_geometry/01_cor"),
+    ("01_setup_geometry/02_detector_roll", "01_setup_geometry/02_detector_roll"),
+    ("01_setup_geometry/03_axis_direction", "01_setup_geometry/03_axis_direction"),
+    ("02_pose_phi", "02_pose_phi"),
+    ("03_pose_dx_dz", "03_pose_dx_dz"),
+    ("04_pose_polish", "04_pose_polish"),
+    ("05_final", "05_final"),
+    ("06_cor_only_fista", "06_cor_only_fista"),
+)
+
+__all__ = [
+    "REAL_LAMINO_PROFILE_CHOICES",
+    "REAL_LAMINO_STAGED_PATH",
+    "REFERENCE_REGRESSION_CONTRACT",
+    "REFERENCE_REGRESSION_STAGE_MAP",
+    "STAGED_LAMINO_CONTRACT",
+]

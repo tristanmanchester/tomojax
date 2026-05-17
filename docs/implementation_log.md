@@ -16054,3 +16054,15 @@ Validation:
   and `artifacts/status.json`.
 - `uv run ruff check --select I,F,RUF022 src/tomojax/bench/article_alignment_runs.py scripts/generate_alignment_before_after_128.py tests/test_article_alignment_visuals.py`
   passed.
+
+### Real-laminography staged contracts moved to bench
+
+- Moved the real-laminography staged path and reference-regression stage map
+  from `scripts/real_laminography/run_real_lamino_staged.py` into
+  `tomojax.bench.real_laminography_profiles`, next to the existing profile
+  contracts.
+- The staged script now imports those contracts from the benchmark owner module
+  and keeps only a local `STAGED_PATH` alias for existing internal references.
+- Updated the real-laminography scripts README and contract test so future
+  staged-run contract changes happen in the bench module rather than in script
+  top-level constants.

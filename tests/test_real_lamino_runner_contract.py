@@ -379,6 +379,16 @@ def test_staged_profile_choices_do_not_keep_removed_aliases() -> None:
     assert not hasattr(staged_runner, "INTERNAL_REAL_LAMINO_PROFILE_ALIASES")
 
 
+def test_staged_path_contract_lives_in_bench_profile_module() -> None:
+    assert staged_runner.STAGED_PATH is staged_runner.REAL_LAMINO_STAGED_PATH
+    labels = [record["label"] for record in staged_runner.STAGED_PATH]
+
+    assert labels[0] == "baseline"
+    assert "cor_detu" in labels
+    assert labels[-1] == "cor_only_comparator"
+    assert ("05_final", "05_final") in staged_runner.REFERENCE_REGRESSION_STAGE_MAP
+
+
 def test_staged_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
