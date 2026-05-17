@@ -49,8 +49,10 @@ benchmark, or CLI implementation modules.
 Current implementation dependencies:
 
 - retained `tomojax.data.io_hdf5`, `tomojax.data.preprocess`,
-  `tomojax.data.contrast`, and `tomojax.data.inspection` helpers behind the
-  `tomojax.io` public facade
+  and `tomojax.data.inspection` helpers behind the `tomojax.io` public facade
+- IO-owned private contrast conversion helpers in `tomojax.io._contrast`
+- HDF5/NXtomo inspection and quicklook generation live in `tomojax.io._inspection`;
+  `tomojax.data.inspection` is only a compatibility shim for older callers.
 
 ## Invariants
 

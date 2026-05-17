@@ -17710,3 +17710,33 @@ Validation:
   passed.
 - `uv run python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Dataset inspection assimilated into IO
+
+- Moved the HDF5/NXtomo inspection implementation into
+  `tomojax.io._inspection`, keeping `tomojax.io.inspect_dataset`,
+  `format_inspection_report`, and `save_projection_quicklook` as the public
+  facade used by the CLI.
+- Replaced `tomojax.data.inspection` with a compatibility shim that re-exports
+  the IO-owned implementation for older callers during the data-package
+  migration.
+- Updated inspection regression tests to exercise the IO-owned private module
+  for the targeted helper edge cases instead of importing through
+  `tomojax.data`.
+
+Validation:
+
+- `uv run pytest tests/test_inspect_cli.py tests/test_io_public_dataset.py
+  tests/test_public_facades.py::test_io_facade_exports_dataset_boundary -q`
+  passed with 19 tests.
+- `uv run pytest
+  tests/test_cli_public_surface.py::test_cli_modules_do_not_import_transitional_data_package
+  tests/test_cli_public_surface.py::test_production_modules_do_not_import_lower_level_data_package
+  tests/test_cli_entrypoints.py::test_inspect_help_documents_json_and_quicklook
+  tests/test_golden_path_cli.py::test_golden_path_tiff_ingest_validate_inspect_recon_align
+  -q` passed.
+- `uv run ruff check src/tomojax/io/_inspection.py src/tomojax/io/api.py
+  src/tomojax/io/__init__.py src/tomojax/data/inspection.py
+  tests/test_inspect_cli.py` passed.
+- `uv run python - <<'PY' ...` verified `tomojax.io` and
+  `tomojax.data.inspection` compatibility imports.
