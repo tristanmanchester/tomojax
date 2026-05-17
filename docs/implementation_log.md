@@ -16066,3 +16066,21 @@ Validation:
 - Updated the real-laminography scripts README and contract test so future
   staged-run contract changes happen in the bench module rather than in script
   top-level constants.
+
+### Real-laminography report helpers moved to bench
+
+- Added `tomojax.bench.real_laminography_report` for reusable real-data report
+  semantics: success payload construction, method constraints, residual trace
+  writing, and geometry trace writing.
+- Updated `scripts/real_laminography/run_real_lamino_staged.py` to import the
+  report helpers from the bench owner module instead of keeping those
+  contracts in the script body.
+- Updated the real-laminography script README to point report/report-trace
+  ownership at the bench module.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_v2_cor_real_lamino_report_preserves_partial_contract tests/test_real_lamino_runner_contract.py::test_v2_full_real_lamino_report_fails_when_final_is_worse_than_cor_only tests/test_real_lamino_runner_contract.py::test_v2_report_records_failed_pose_stage_and_valid_final_candidate -q`
+  passed with 3 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/real_laminography_report.py scripts/real_laminography/run_real_lamino_staged.py tests/test_real_lamino_runner_contract.py`
+  passed.

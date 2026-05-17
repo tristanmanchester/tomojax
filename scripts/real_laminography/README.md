@@ -14,5 +14,7 @@ output directories such as `runs/`.
 - `render_tem_grid_pose_3d.py`: 3D pose-correction diagnostic rendering.
 
 Shared staged-run profile, stage-path, and reference-comparison contracts live
-in `tomojax.bench.real_laminography_profiles`; scripts should import that
-module rather than another file from this directory.
+in `tomojax.bench.real_laminography_profiles`. Shared report success criteria,
+method constraints, and residual/geometry trace writers live in
+`tomojax.bench.real_laminography_report`. Scripts should import those modules
+rather than another file from this directory.
