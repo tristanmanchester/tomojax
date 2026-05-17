@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import math
-from typing import Protocol
+from typing import Any, Protocol
 
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -63,6 +64,111 @@ def view_indices_for_smoke_shape(
         return np.arange(int(n_views), dtype=np.int64)
     target = max(1, int(smoke_shape[0]))
     return np.unique(np.rint(np.linspace(0, int(n_views) - 1, target)).astype(np.int64))
+
+
+def map_real_lamino_global_z_to_binned(
+    native: Any,
+    global_z: int,
+    *,
+    original_full_nz: int,
+    binned_full_nz: int,
+    binned_grid: Any,
+) -> int:
+    """Map a native global z coordinate into a binned real-lamino coordinate frame."""
+    phys_z = native._global_z_to_phys(int(global_z), full_nz=int(original_full_nz))
+    local_z = native._phys_z_to_local_index(phys_z, binned_grid)
+    local_z = int(np.clip(local_z, 0, int(binned_grid.nz) - 1))
+    mapped = native._local_z_to_global_index(
+        local_z,
+        full_nz=int(binned_full_nz),
+        grid=binned_grid,
+    )
+    return int(np.clip(mapped, 0, int(binned_full_nz) - 1))
+
+
+def prepare_real_lamino_binned_fixture(
+    args: argparse.Namespace,
+    *,
+    native: Any,
+    raw_projections: np.ndarray,
+    thetas: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, Any]]:
+    """Derive the optional binned real-data fixture and mutate working args."""
+    original_shape = tuple(int(v) for v in raw_projections.shape)
+    original_full_nz = int(original_shape[1])
+    view_indices = view_indices_for_smoke_shape(original_shape[0], args.smoke_shape)
+    raw_selected = np.asarray(raw_projections[view_indices], dtype=np.float32)
+    thetas_selected = np.asarray(thetas[view_indices], dtype=np.float32)
+    bin_factor = resolve_fixture_bin_factor(
+        projection_shape=tuple(int(v) for v in raw_selected.shape),
+        slab_nz=int(args.slab_nz),
+        requested_bin_factor=int(args.bin_factor),
+        smoke_shape=args.smoke_shape,
+    )
+
+    center_phys_z = native._global_z_to_phys(int(args.slab_center_z), full_nz=original_full_nz)
+    base_grid = native.Grid(
+        nx=int(original_shape[2]),
+        ny=int(original_shape[2]),
+        nz=int(args.slab_nz),
+        vx=1.0,
+        vy=1.0,
+        vz=1.0,
+        vol_center=(0.0, 0.0, center_phys_z),
+    )
+    base_detector = native.Detector(
+        nu=int(original_shape[2]),
+        nv=int(original_shape[1]),
+        du=1.0,
+        dv=1.0,
+        det_center=(0.0, 0.0),
+    )
+    if bin_factor > 1:
+        working_raw = np.asarray(
+            native.bin_projections(jnp.asarray(raw_selected, dtype=jnp.float32), bin_factor),
+            dtype=np.float32,
+        )
+        grid = native.scale_grid(base_grid, bin_factor)
+        detector = native.scale_detector(base_detector, bin_factor)
+    else:
+        working_raw = raw_selected
+        grid = base_grid
+        detector = base_detector
+
+    binned_detector_nz = int(detector.nv)
+    original_preview_z = int(args.preview_z)
+    original_slab_center_z = int(args.slab_center_z)
+    original_stack_z_range = tuple(native._parse_range(str(args.stack_z_range)))
+    args.slab_nz = int(grid.nz)
+    args.effective_bin_factor = int(bin_factor)
+    args.effective_view_indices = [int(v) for v in view_indices.tolist()]
+
+    provenance = {
+        "enabled": bool(bin_factor > 1 or len(view_indices) != original_shape[0]),
+        "requested_bin_factor": int(args.bin_factor),
+        "effective_bin_factor": int(bin_factor),
+        "requested_smoke_shape": None if args.smoke_shape is None else list(args.smoke_shape),
+        "original_projection_shape": list(original_shape),
+        "selected_projection_shape_before_binning": list(raw_selected.shape),
+        "working_projection_shape": list(working_raw.shape),
+        "view_indices": [int(v) for v in view_indices.tolist()],
+        "original_slab_nz": int(base_grid.nz),
+        "working_slab_nz": int(grid.nz),
+        "coordinate_full_nz": int(original_full_nz),
+        "working_detector_nz": int(binned_detector_nz),
+        "original_preview_global_z": int(original_preview_z),
+        "working_preview_global_z": int(original_preview_z),
+        "original_slab_center_global_z": int(original_slab_center_z),
+        "working_slab_center_global_z": int(original_slab_center_z),
+        "original_stack_z_range": list(original_stack_z_range),
+        "working_stack_z_range": list(original_stack_z_range),
+        "grid": grid.to_dict(),
+        "detector": detector.to_dict(),
+        "detector_shift_bound_scale": float(binned_pixel_scale(args)),
+        "pose_dx_dz_bound_scale": float(binned_pixel_scale(args)),
+    }
+    geometry_inputs = {"grid": grid, "detector": detector, "full_nz": int(original_full_nz)}
+    return working_raw, thetas_selected, geometry_inputs, provenance
 
 
 def binned_pixel_scale(args: BinningArgs) -> float:
@@ -131,10 +237,12 @@ def parse_shape3(text: str) -> tuple[int, int, int]:
 
 __all__ = [
     "binned_pixel_scale",
+    "map_real_lamino_global_z_to_binned",
     "parse_shape3",
     "pose_dx_dz_bounds",
     "pose_phi_bounds",
     "pose_polish_bounds",
+    "prepare_real_lamino_binned_fixture",
     "resolve_fixture_bin_factor",
     "scaled_symmetric_bound",
     "setup_det_u_bounds",

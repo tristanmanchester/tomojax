@@ -69,10 +69,12 @@ from tomojax.bench.forward_projector import (
 )
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
+    map_real_lamino_global_z_to_binned,
     parse_shape3,
     pose_dx_dz_bounds,
     pose_phi_bounds,
     pose_polish_bounds,
+    prepare_real_lamino_binned_fixture,
     resolve_fixture_bin_factor,
     scaled_symmetric_bound,
     setup_det_u_bounds,
@@ -207,6 +209,7 @@ __all__ = [
     "make_article_phantom",
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
+    "map_real_lamino_global_z_to_binned",
     "normalize_real_lamino_runtime_args",
     "optimize_reference_setup_geometry_bilevel_for_level",
     "parse_shape3",
@@ -214,6 +217,7 @@ __all__ = [
     "pose_dx_dz_bounds",
     "pose_phi_bounds",
     "pose_polish_bounds",
+    "prepare_real_lamino_binned_fixture",
     "preset_config",
     "psnr3d",
     "real_lamino_artifact_validation_failures",

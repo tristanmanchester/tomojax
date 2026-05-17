@@ -16670,3 +16670,28 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography binned fixture preparation moved behind bench facade
+
+- Extended `tomojax.bench.real_laminography_planning` so it owns the staged
+  real-laminography binned fixture preparation contract: deterministic smoke
+  view selection, effective bin-factor resolution, geometry/detector scaling,
+  coordinate provenance, and working-argument mutation.
+- Exported `prepare_real_lamino_binned_fixture` and
+  `map_real_lamino_global_z_to_binned` through the bench facade.
+- Thinned `scripts/real_laminography/run_real_lamino_staged.py` by deleting its
+  duplicate binned fixture implementation and keeping private compatibility
+  aliases for existing runner-contract tests.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_v2_binned_fixture_scales_geometry_and_records_provenance tests/test_real_lamino_runner_contract.py::test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 3 tests.
+- `uv run pytest tests/test_real_laminography_planning.py -q` passed with 4
+  tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_lamino_runner_contract.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

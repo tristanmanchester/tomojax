@@ -42,6 +42,8 @@ Completed checkpoints in this pass:
 - [x] Move staged real-laminography validation helpers into `tomojax.bench`.
 - [x] Move staged real-laminography profile/contract helpers into
       `tomojax.bench`.
+- [x] Move staged real-laminography binned fixture preparation into
+      `tomojax.bench`.
 
 Next candidates:
 
