@@ -1,9 +1,9 @@
-"""User-facing loss-benchmark CLI.
+"""Developer loss-benchmark CLI.
 
-This entry point owns experiment-directory orchestration and user-visible outputs for
-the loss benchmark. Shared benchmark building blocks belong under ``tomojax.bench``,
-while fixed controller-profile policy stays in ``bench/`` and ad hoc exploration stays
-under ``scripts/``.
+This entry point owns experiment-directory orchestration and dev-visible outputs for
+``tomojax dev loss-bench``. Shared benchmark building blocks belong under
+``tomojax.bench``, while fixed controller-profile policy stays in ``bench/`` and
+ad hoc exploration stays under ``scripts/``.
 """
 
 from __future__ import annotations
