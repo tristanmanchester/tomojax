@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import psutil
-from tomojax.backends._subprocesses import run_command
+
+from tomojax.backends import run_command
 
 MB = 1024.0 * 1024.0
 

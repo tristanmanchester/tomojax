@@ -17813,3 +17813,26 @@ Validation:
   src/tomojax/io/api.py tests/test_contrast.py tests/test_simulate.py
   src/tomojax/io/README.md src/tomojax/data/README.md
   docs/implementation_log.md` passed.
+
+### Top-level benchmark alignment facade cleanup
+
+- Audited direct imports into `tomojax.align.geometry`, `tomojax.align.model`,
+  and `tomojax.align.objectives` from product, benchmark, and CLI surfaces.
+- Moved the fixed-profile benchmark harness off nested alignment imports and
+  through `tomojax.align.api` for `parse_loss_spec` and `se3_from_5d`.
+- Confirmed the public-import guard covers `scripts/`, `tomojax.bench`, and
+  `tomojax.cli`, but not top-level `bench/`; top-level `bench/` still has
+  older non-alignment public-boundary debt, so this change keeps the guard scope
+  unchanged and records that blind spot explicitly.
+
+Validation:
+
+- `uv run pytest -q tests/test_bench_fitness_imports.py
+  tests/test_public_import_guard.py` passed with 5 tests.
+- `python tools/check_public_imports.py scripts src/tomojax/bench
+  src/tomojax/cli` passed.
+- `uv run ruff check --select F bench/fitness.py bench/memory.py
+  tests/test_bench_fitness_imports.py` passed.
+- `git diff --check -- bench/fitness.py bench/memory.py
+  tests/test_bench_fitness_imports.py docs/implementation_log.md` passed.
+- Full `python tools/check_public_imports.py` passed.

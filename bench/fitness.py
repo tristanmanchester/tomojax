@@ -750,25 +750,29 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
 
     _configure_jax_cache(profile, jax)
 
-    from tomojax.core.geometry import (
-        Grid,
-        Detector,
-        ParallelGeometry,
-        LaminographyGeometry,
+    from tomojax.align.api import (
+        AlignConfig,
+        align,
+        align_multires,
+        parse_loss_spec,
+        se3_from_5d,
     )
-    from tomojax.datasets import SimConfig, simulate
-    from tomojax.align.objectives.loss_specs import parse_loss_spec
-    from tomojax.recon.fbp import fbp
-    from tomojax.recon.fista_tv import fista_tv
-    from tomojax.align.pipeline import AlignConfig, align, align_multires
-    from tomojax.align.geometry.parametrizations import se3_from_5d
-    from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
     from tomojax.bench.loss_experiment import (
         metrics_abs,
-        metrics_relative,
         metrics_gauge_fixed,
+        metrics_relative,
         project_gt_with_estimated_poses,
     )
+    from tomojax.core.geometry import (
+        Detector,
+        Grid,
+        LaminographyGeometry,
+        ParallelGeometry,
+    )
+    from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+    from tomojax.datasets import SimConfig, simulate
+    from tomojax.recon.fbp import fbp
+    from tomojax.recon.fista_tv import fista_tv
 
     return ImportedModules(
         jax=jax,
