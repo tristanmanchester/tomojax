@@ -6,6 +6,7 @@ from pathlib import Path
 from tomojax.bench import (
     mark_real_lamino_stage_failed,
     real_lamino_loss_summary,
+    write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
 
@@ -83,4 +84,48 @@ def test_real_lamino_report_writes_skipped_stage_manifests_without_overwrite(
         "stage": "03_pose_dx_dz",
         "passed": False,
         "failures": ["upstream stage failed validation"],
+    }
+
+
+def test_real_lamino_report_writes_planned_stage_manifests_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    staged_path = (
+        {"label": "baseline", "stage": "00_baseline", "active_dofs": [], "status": "required"},
+        {
+            "label": "pose_phi",
+            "stage": "02_pose_phi",
+            "active_dofs": ["phi"],
+            "status": "planned",
+        },
+        {
+            "label": "final",
+            "stage": "05_final",
+            "active_dofs": ["pose"],
+            "status": "planned",
+        },
+    )
+    existing = tmp_path / "02_pose_phi"
+    existing.mkdir()
+    (existing / "stage_manifest.json").write_text(
+        json.dumps({"stage": "02_pose_phi", "status": "completed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    write_real_lamino_planned_stage_manifests(
+        tmp_path,
+        staged_path=staged_path,
+        planned_after="after cor",
+    )
+
+    preserved = _read_json(existing / "stage_manifest.json")
+    planned = _read_json(tmp_path / "05_final" / "stage_manifest.json")
+    assert not (tmp_path / "00_baseline" / "stage_manifest.json").exists()
+    assert preserved["status"] == "completed"
+    assert planned == {
+        "stage": "05_final",
+        "label": "final",
+        "status": "planned",
+        "active_dofs": ["pose"],
+        "planned_after": "after cor",
     }

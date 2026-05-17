@@ -65,6 +65,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move real-laminography reconstruction loss summarization into
       `tomojax.bench`.
+- [x] Move real-laminography planned-stage manifest writing into
+      `tomojax.bench`.
 
 Next candidates:
 

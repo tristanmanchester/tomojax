@@ -405,6 +405,32 @@ def write_real_lamino_skipped_stage_manifests(
         )
 
 
+def write_real_lamino_planned_stage_manifests(
+    root: Path,
+    *,
+    staged_path: tuple[Mapping[str, Any], ...] = REAL_LAMINO_STAGED_PATH,
+    planned_after: str = "v2 COR-only path works",
+) -> None:
+    """Write planned-stage manifests for stages not yet executed by the staged runner."""
+    for spec in staged_path:
+        if spec.get("status") != "planned":
+            continue
+        stage_dir = root / str(spec["stage"])
+        manifest_path = stage_dir / "stage_manifest.json"
+        if manifest_path.exists():
+            continue
+        _write_json(
+            manifest_path,
+            {
+                "stage": spec["stage"],
+                "label": spec["label"],
+                "status": "planned",
+                "active_dofs": spec["active_dofs"],
+                "planned_after": planned_after,
+            },
+        )
+
+
 def build_real_lamino_report(
     run_dir: Path,
     *,
@@ -1120,6 +1146,7 @@ __all__ = [
     "real_lamino_success_payload",
     "validate_real_lamino_stage_output",
     "write_real_lamino_geometry_trace",
+    "write_real_lamino_planned_stage_manifests",
     "write_real_lamino_residual_trace",
     "write_real_lamino_skipped_stage_manifests",
 ]

@@ -52,6 +52,7 @@ from tomojax.bench.real_laminography_report import (
     real_lamino_method_constraints,
     real_lamino_stat_validation_failures,
     validate_real_lamino_stage_output,
+    write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
 
@@ -324,7 +325,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
                 }
             )
         else:
-            _write_planned_stage_manifests(run_root, native=native)
+            write_real_lamino_planned_stage_manifests(run_root)
         completed = datetime.now().isoformat(timespec="seconds")
         final_payload = {
             "status": "completed",
@@ -867,24 +868,6 @@ def _load_native_runner() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _write_planned_stage_manifests(root: Path, *, native: Any) -> None:
-    for spec in STAGED_PATH:
-        if spec["status"] != "planned":
-            continue
-        stage_dir = root / str(spec["stage"])
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        native._write_json(
-            stage_dir / "stage_manifest.json",
-            {
-                "stage": spec["stage"],
-                "label": spec["label"],
-                "status": "planned",
-                "active_dofs": spec["active_dofs"],
-                "planned_after": "v2 COR-only path works",
-            },
-        )
 
 
 def _read_json(path: Path) -> dict[str, Any]:

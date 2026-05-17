@@ -139,6 +139,7 @@ from tomojax.bench.real_laminography_report import (
     real_lamino_success_payload,
     validate_real_lamino_stage_output,
     write_real_lamino_geometry_trace,
+    write_real_lamino_planned_stage_manifests,
     write_real_lamino_residual_trace,
     write_real_lamino_skipped_stage_manifests,
 )
@@ -329,6 +330,7 @@ __all__ = [
     "write_current_baseline_artifacts",
     "write_real_lamino_geometry_trace",
     "write_real_lamino_json",
+    "write_real_lamino_planned_stage_manifests",
     "write_real_lamino_residual_trace",
     "write_real_lamino_skipped_stage_manifests",
     "write_spdhg_benchmark_report",
