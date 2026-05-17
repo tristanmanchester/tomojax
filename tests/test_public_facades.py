@@ -54,8 +54,13 @@ def test_calibration_facade_exports_only_schema_value_types() -> None:
 def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.AlignmentScenario.__name__ == "AlignmentScenario"
     assert bench_api.AlternatingSmokeConfig.__name__ == "AlternatingSmokeConfig"
+    assert bench_api.ArticleScenario.__name__ == "ArticleScenario"
     assert bench_api.SyntheticBenchmarkResult.__name__ == "SyntheticBenchmarkResult"
+    assert bench_api.REAL_LAMINO_PROFILE_CHOICES
+    assert bench_api.REAL_LAMINO_STAGED_PATH
     assert callable(bench_api.run_alignment_smoke)
     assert callable(bench_api.run_alternating_solver_smoke)
     assert callable(bench_api.scenario_catalog)
+    assert callable(bench_api.make_article_phantom)
+    assert callable(bench_api.real_lamino_success_payload)
     assert callable(bench_api.load_synthetic_benchmark_result)

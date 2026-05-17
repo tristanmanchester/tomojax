@@ -21,6 +21,13 @@ from tomojax.bench.alignment_scenarios import (
     scenario_suite,
     validate_scenario_catalog,
 )
+from tomojax.bench.article_alignment_runs import (
+    ArticleRunProfile,
+    ArticleScenario,
+    article_phantom_metadata,
+    article_scenario_catalog_for_kind,
+    make_article_phantom,
+)
 from tomojax.bench.current_baseline import (
     current_baseline_payload,
     write_current_baseline_artifacts,
@@ -43,6 +50,21 @@ from tomojax.bench.forward_projector import (
     suite_cases,
     write_benchmark_json,
 )
+from tomojax.bench.real_laminography_profiles import (
+    REAL_LAMINO_PROFILE_CHOICES,
+    REAL_LAMINO_STAGED_PATH,
+    REFERENCE_REGRESSION_CONTRACT,
+    REFERENCE_REGRESSION_STAGE_MAP,
+    STAGED_LAMINO_CONTRACT,
+)
+from tomojax.bench.real_laminography_report import (
+    FULL_REQUIRED_STAGES,
+    PARTIAL_REQUIRED_STAGES,
+    real_lamino_method_constraints,
+    real_lamino_success_payload,
+    write_real_lamino_geometry_trace,
+    write_real_lamino_residual_trace,
+)
 from tomojax.bench.synthetic_results import (
     SyntheticBenchmarkResult,
     SyntheticComparisonArtifact,
@@ -54,6 +76,13 @@ from tomojax.bench.synthetic_results import (
 )
 
 __all__ = [
+    "FULL_REQUIRED_STAGES",
+    "PARTIAL_REQUIRED_STAGES",
+    "REAL_LAMINO_PROFILE_CHOICES",
+    "REAL_LAMINO_STAGED_PATH",
+    "REFERENCE_REGRESSION_CONTRACT",
+    "REFERENCE_REGRESSION_STAGE_MAP",
+    "STAGED_LAMINO_CONTRACT",
     "AcquisitionSpec",
     "AlignmentScenario",
     "AlignmentSmokeReport",
@@ -61,6 +90,8 @@ __all__ = [
     "AlternatingLevelSummary",
     "AlternatingSmokeConfig",
     "AlternatingSmokeResult",
+    "ArticleRunProfile",
+    "ArticleScenario",
     "ForwardProjectorBenchmarkConfig",
     "ForwardProjectorSuiteCase",
     "ForwardSinogramBenchmarkConfig",
@@ -70,16 +101,21 @@ __all__ = [
     "ScenarioSuite",
     "SyntheticBenchmarkResult",
     "SyntheticComparisonArtifact",
+    "article_phantom_metadata",
+    "article_scenario_catalog_for_kind",
     "benchmark_backend",
     "benchmark_sinogram_mode",
     "current_baseline_payload",
     "load_current_baseline_artifact",
     "load_synthetic_benchmark_result",
     "load_synthetic_benchmark_results",
+    "make_article_phantom",
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
     "phantom_spec",
     "preset_config",
+    "real_lamino_method_constraints",
+    "real_lamino_success_payload",
     "run_alignment_smoke",
     "run_alternating_solver_smoke",
     "run_forward_projector_benchmark",
@@ -95,5 +131,7 @@ __all__ = [
     "validate_scenario_catalog",
     "write_benchmark_json",
     "write_current_baseline_artifacts",
+    "write_real_lamino_geometry_trace",
+    "write_real_lamino_residual_trace",
     "write_synthetic_benchmark_comparison_markdown",
 ]

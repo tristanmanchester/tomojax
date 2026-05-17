@@ -16072,6 +16072,9 @@ Validation:
 - Added `tomojax.bench.real_laminography_report` for reusable real-data report
   semantics: success payload construction, method constraints, residual trace
   writing, and geometry trace writing.
+- Exported the article and real-laminography benchmark/report contracts through
+  `tomojax.bench.api` and the package facade so developer callers can import
+  them from the bench deep-module boundary.
 - Updated `scripts/real_laminography/run_real_lamino_staged.py` to import the
   report helpers from the bench owner module instead of keeping those
   contracts in the script body.
@@ -16084,3 +16087,4 @@ Validation:
   passed with 3 tests.
 - `uv run ruff check --select I,F,RUF022 src/tomojax/bench/real_laminography_report.py scripts/real_laminography/run_real_lamino_staged.py tests/test_real_lamino_runner_contract.py`
   passed.
+- `uv run pytest tests/test_public_facades.py -q` passed with 5 tests.
