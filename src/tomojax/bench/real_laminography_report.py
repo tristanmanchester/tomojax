@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import csv
 import json
 from pathlib import Path
@@ -235,6 +235,18 @@ def real_lamino_finite_fraction(value: Any | None) -> float:
     if arr.size == 0:
         return 0.0
     return float(np.isfinite(arr).mean())
+
+
+def real_lamino_safe_params_summary(
+    params5: Any,
+    *,
+    summarize: Callable[[np.ndarray], Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Summarize pose parameters only when every value is finite."""
+    params = np.asarray(params5, dtype=np.float32)
+    if real_lamino_finite_fraction(params) != 1.0:
+        return None
+    return dict(summarize(params))
 
 
 def real_lamino_checkpoint_validation_failures(stage_dir: Path) -> list[str]:
@@ -1142,6 +1154,7 @@ __all__ = [
     "real_lamino_finite_fraction",
     "real_lamino_loss_summary",
     "real_lamino_method_constraints",
+    "real_lamino_safe_params_summary",
     "real_lamino_stat_validation_failures",
     "real_lamino_success_payload",
     "validate_real_lamino_stage_output",

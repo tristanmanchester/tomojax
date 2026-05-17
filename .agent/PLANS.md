@@ -67,6 +67,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move real-laminography planned-stage manifest writing into
       `tomojax.bench`.
+- [x] Move real-laminography finite-safe pose-parameter summary into
+      `tomojax.bench`.
 
 Next candidates:
 

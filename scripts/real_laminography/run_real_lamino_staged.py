@@ -47,9 +47,9 @@ from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
     mark_real_lamino_stage_failed,
     real_lamino_artifact_validation_failures,
-    real_lamino_finite_fraction,
     real_lamino_loss_summary,
     real_lamino_method_constraints,
+    real_lamino_safe_params_summary,
     real_lamino_stat_validation_failures,
     validate_real_lamino_stage_output,
     write_real_lamino_planned_stage_manifests,
@@ -59,7 +59,6 @@ from tomojax.bench.real_laminography_report import (
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
 REFERENCE_REGRESSION_STAGE_MAP = _REFERENCE_REGRESSION_STAGE_MAP
 _artifact_validation_failures = real_lamino_artifact_validation_failures
-_finite_fraction = real_lamino_finite_fraction
 _stat_validation_failures = real_lamino_stat_validation_failures
 _validate_stage_output = validate_real_lamino_stage_output
 _apply_profile_contract_args = apply_real_lamino_profile_contract_args
@@ -575,7 +574,10 @@ def run_remaining_stages(
                     "stage": stage_name,
                     "status": "failed",
                     "stats_count": len(stats),
-                    "params_summary": _safe_params_summary(native, params5),
+                    "params_summary": real_lamino_safe_params_summary(
+                        params5,
+                        summarize=native._params_summary,
+                    ),
                     "failure_provenance": validation,
                 }
             )
@@ -702,12 +704,6 @@ def run_best_final_reconstruction(
     }
     native._write_json(final_dir / "stage_manifest.json", manifest)
     return np.asarray(best["volume"], dtype=np.float32), best
-
-
-def _safe_params_summary(native: Any, params5: np.ndarray) -> dict[str, Any] | None:
-    if _finite_fraction(params5) != 1.0:
-        return None
-    return native._params_summary(params5)
 
 
 def build_real_lamino_staged_report(

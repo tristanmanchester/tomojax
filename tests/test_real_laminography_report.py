@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+
 from tomojax.bench import (
     mark_real_lamino_stage_failed,
     real_lamino_loss_summary,
+    real_lamino_safe_params_summary,
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
@@ -129,3 +132,25 @@ def test_real_lamino_report_writes_planned_stage_manifests_without_overwrite(
         "active_dofs": ["pose"],
         "planned_after": "after cor",
     }
+
+
+def test_real_lamino_safe_params_summary_rejects_nonfinite_values() -> None:
+    calls = 0
+
+    def summarize(params: np.ndarray) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"shape": list(params.shape), "dtype": str(params.dtype)}
+
+    assert real_lamino_safe_params_summary(
+        np.array([[1.0, np.nan, 0.0, 0.0, 0.0]], dtype=np.float32),
+        summarize=summarize,
+    ) is None
+    assert calls == 0
+
+    summary = real_lamino_safe_params_summary(
+        np.zeros((2, 5), dtype=np.float64),
+        summarize=summarize,
+    )
+    assert summary == {"shape": [2, 5], "dtype": "float32"}
+    assert calls == 1
