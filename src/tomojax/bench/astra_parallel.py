@@ -20,7 +20,7 @@ import numpy as np
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
-from tomojax.data.simulate import SimConfig, make_phantom
+from tomojax.datasets import SimConfig, make_phantom
 from tomojax.recon.fbp import (
     _default_fbp_scale,
     _run_parallel_fbp_direct_pallas,

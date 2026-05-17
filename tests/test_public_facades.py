@@ -6,6 +6,7 @@ import tomojax.backends as backends_api
 import tomojax.bench as bench_api
 import tomojax.calibration as calibration_api
 import tomojax.cli as cli_api
+import tomojax.datasets as datasets_api
 import tomojax.io as io_api
 import tomojax.recon as recon_api
 
@@ -43,19 +44,33 @@ def test_reconstruction_facade_exports_documented_api() -> None:
 
 
 def test_io_facade_exports_dataset_boundary() -> None:
+    assert io_api.LoadedNXTomo.__name__ == "LoadedNXTomo"
+    assert io_api.NXTomoMetadata.__name__ == "NXTomoMetadata"
     assert io_api.PreprocessConfig.__name__ == "PreprocessConfig"
     assert io_api.PreprocessResult.__name__ == "PreprocessResult"
     assert io_api.ProjectionDataset.__name__ == "ProjectionDataset"
     assert io_api.ValidationReport.__name__ == "ValidationReport"
     assert callable(io_api.build_geometry_from_dataset_metadata)
     assert callable(io_api.load_dataset)
+    assert callable(io_api.load_nxtomo)
     assert callable(io_api.load_projection_payload)
     assert callable(io_api.load_tiff_stack)
     assert callable(io_api.preprocess_nxtomo)
     assert callable(io_api.save_dataset)
+    assert callable(io_api.save_nxtomo)
     assert callable(io_api.save_projection_payload)
     assert callable(io_api.validate_dataset)
+    assert callable(io_api.validate_nxtomo)
     assert callable(io_api.normalize_json)
+
+
+def test_datasets_facade_exports_simulation_boundary() -> None:
+    assert datasets_api.SimConfig.__name__ == "SimConfig"
+    assert datasets_api.SimulatedData.__name__ == "SimulatedData"
+    assert callable(datasets_api.make_benchmark_phantom)
+    assert callable(datasets_api.make_phantom)
+    assert callable(datasets_api.simulate)
+    assert callable(datasets_api.simulate_to_file)
 
 
 def test_calibration_facade_exports_only_schema_value_types() -> None:

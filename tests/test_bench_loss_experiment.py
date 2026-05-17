@@ -14,8 +14,8 @@ from tomojax.bench.loss_experiment import (
     project_gt_with_estimated_poses,
 )
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
-from tomojax.data.io_hdf5 import NXTomoMetadata, load_nxtomo, save_nxtomo
-from tomojax.data.simulate import SimConfig
+from tomojax.datasets import SimConfig
+from tomojax.io import NXTomoMetadata, load_nxtomo, save_nxtomo
 
 
 def _write_tiny_gt(

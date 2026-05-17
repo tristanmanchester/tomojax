@@ -16250,3 +16250,29 @@ Validation:
 - `python tools/check_public_imports.py scripts src tests` passed.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### Dataset and NXtomo helpers promoted to v2 facades
+
+- Added `make_phantom` to the `tomojax.datasets` facade so benchmark and support
+  scripts can generate configured synthetic volumes without importing
+  `tomojax.data.simulate` directly.
+- Added typed NXtomo helpers (`LoadedNXTomo`, `NXTomoMetadata`, `load_nxtomo`,
+  `save_nxtomo`, `validate_nxtomo`) to the `tomojax.io` facade for retained
+  NXtomo/HDF5 workflows that still need the typed lower-level payload.
+- Updated ASTRA/SPDHG/loss benchmark code and its focused tests to use
+  `tomojax.datasets` and `tomojax.io` instead of old `tomojax.data.simulate`
+  and `tomojax.data.io_hdf5` imports.
+- Updated dataset/IO READMEs and public facade tests so the exposed boundary is
+  documented and executable.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_bench_loss_experiment.py tests/test_exp_spdhg_bench.py::test_prepare_or_load_dataset_falls_back_only_for_expected_resource_errors tests/test_exp_spdhg_bench.py::test_main_reuses_dataset_and_writes_benchmark_artifacts -q`
+  passed with 18 tests.
+- `uv run python -m py_compile scripts/exp_spdhg_bench.py` passed.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/datasets/_simulate.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py src/tomojax/io/_datasets.py src/tomojax/io/api.py src/tomojax/io/__init__.py src/tomojax/bench/astra_parallel.py src/tomojax/bench/loss_experiment.py scripts/exp_spdhg_bench.py tests/test_public_facades.py tests/test_exp_spdhg_bench.py tests/test_bench_loss_experiment.py`
+  passed.
+- `rg -n "from tomojax\\.data\\.(simulate|io_hdf5)|import tomojax\\.data\\.(simulate|io_hdf5)" scripts src/tomojax/bench tests/test_exp_spdhg_bench.py tests/test_bench_loss_experiment.py`
+  returned no matches.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.

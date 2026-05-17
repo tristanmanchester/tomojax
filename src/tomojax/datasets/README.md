@@ -24,6 +24,7 @@ data generation, while production forward modelling belongs to
 - `load_synthetic_dataset_sidecars`
 - `load_synthetic128_specs`
 - `make_benchmark_phantom`
+- `make_phantom`
 - `simulate`
 - `simulate_to_file`
 - `synthetic128_spec`

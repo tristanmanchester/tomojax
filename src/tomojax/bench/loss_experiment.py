@@ -21,8 +21,8 @@ from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, Parallel
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.data.geometry_meta import build_geometry_from_meta
-from tomojax.data.io_hdf5 import load_nxtomo, save_nxtomo
-from tomojax.data.simulate import SimConfig, simulate_to_file
+from tomojax.datasets import SimConfig, simulate_to_file
+from tomojax.io import load_nxtomo, save_nxtomo
 
 _PROVENANCE_KEY = "loss_experiment_provenance"
 _PROVENANCE_VERSION = 1

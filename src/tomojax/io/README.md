@@ -9,10 +9,14 @@ artifact schemas.
 ## Public API
 
 - `JsonValue`
+- `LoadedNXTomo`
+- `NXTomoMetadata`
 - `ProjectionDataset`
 - `ValidationReport`
 - `load_projection_payload(path)`
+- `load_nxtomo(path)`
 - `save_projection_payload(path, projections=..., metadata=...)`
+- `save_nxtomo(path, projections=..., metadata=...)`
 - `build_geometry_from_dataset_metadata(...)`
 - `convert_dataset(input_path, output_path)`
 - `inspect_dataset(path)`
@@ -26,6 +30,7 @@ artifact schemas.
 - `preprocess_tiff_stack(projections_path, flats_path, darks_path, angles_path, output_path, config=None)`
 - `save_dataset(path, dataset)`
 - `validate_dataset(path)`
+- `validate_nxtomo(path)`
 - `normalize_json(...)`
 - `drop_none(...)`
 

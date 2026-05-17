@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 import pytest
 
-from tomojax.data.io_hdf5 import LoadedNXTomo, NXTomoMetadata, load_nxtomo
+from tomojax.io import LoadedNXTomo, NXTomoMetadata, load_nxtomo
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -343,7 +343,7 @@ def test_main_reuses_dataset_and_writes_benchmark_artifacts(
         spdhg_configs.append(config)
         return np.full(gt_volume.shape, 4.0, dtype=np.float32), {"solver": "spdhg"}
 
-    monkeypatch.setattr("tomojax.data.io_hdf5.load_nxtomo", fake_load_nxtomo)
+    monkeypatch.setattr(bench_mod, "load_nxtomo", fake_load_nxtomo)
     monkeypatch.setattr(bench_mod, "run_command", fake_run_command)
     monkeypatch.setattr(bench_mod, "fista_tv", fake_fista_tv)
     monkeypatch.setattr(bench_mod, "spdhg_tv", fake_spdhg_tv)

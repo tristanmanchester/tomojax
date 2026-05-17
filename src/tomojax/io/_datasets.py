@@ -23,6 +23,24 @@ from tomojax.data.io_hdf5 import (
     validate_nxtomo,
 )
 
+__all__ = [
+    "LoadedNXTomo",
+    "NXTomoMetadata",
+    "ProjectionDataset",
+    "ValidationReport",
+    "build_geometry_from_dataset_metadata",
+    "convert_dataset",
+    "load_dataset",
+    "load_nxtomo",
+    "load_projection_payload",
+    "load_tiff_stack",
+    "save_dataset",
+    "save_nxtomo",
+    "save_projection_payload",
+    "validate_dataset",
+    "validate_nxtomo",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 

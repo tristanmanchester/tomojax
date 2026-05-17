@@ -54,9 +54,9 @@ except ModuleNotFoundError:
 from tomojax.backends import run_command
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
-from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
-from tomojax.data.simulate import SimConfig, make_phantom
+from tomojax.datasets import SimConfig, make_phantom
 from tomojax.geometry import cylindrical_mask_xy
+from tomojax.io import NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
@@ -490,8 +490,6 @@ def prepare_or_load_dataset(args: argparse.Namespace) -> str:
 
 
 def load_geometry_bundle(sim_path: str) -> GeometryBundle:
-    from tomojax.data.io_hdf5 import load_nxtomo
-
     data = load_nxtomo(sim_path)
     proj = jnp.asarray(data["projections"], dtype=jnp.float32)
     grid_d = data["grid"]

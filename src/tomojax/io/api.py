@@ -1,16 +1,21 @@
 """Public API for dataset IO and metadata normalization."""
 
 from tomojax.io._datasets import (
+    LoadedNXTomo,
+    NXTomoMetadata,
     ProjectionDataset,
     ValidationReport,
     build_geometry_from_dataset_metadata,
     convert_dataset,
     load_dataset,
+    load_nxtomo,
     load_projection_payload,
     load_tiff_stack,
     save_dataset,
+    save_nxtomo,
     save_projection_payload,
     validate_dataset,
+    validate_nxtomo,
 )
 from tomojax.io._inspection import (
     InspectionReport,
@@ -29,6 +34,8 @@ from tomojax.io._preprocess import (
 __all__ = [
     "InspectionReport",
     "JsonValue",
+    "LoadedNXTomo",
+    "NXTomoMetadata",
     "PreprocessConfig",
     "PreprocessResult",
     "ProjectionDataset",
@@ -39,13 +46,16 @@ __all__ = [
     "format_inspection_report",
     "inspect_dataset",
     "load_dataset",
+    "load_nxtomo",
     "load_projection_payload",
     "load_tiff_stack",
     "normalize_json",
     "preprocess_nxtomo",
     "preprocess_tiff_stack",
     "save_dataset",
+    "save_nxtomo",
     "save_projection_payload",
     "save_projection_quicklook",
     "validate_dataset",
+    "validate_nxtomo",
 ]
