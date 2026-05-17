@@ -11,15 +11,19 @@ should import calibration-facing detector and axis concepts through
 `tomojax.geometry` unless the v2 plan promotes calibration into a first-class
 production deep module.
 
-## Public API
+## Retained Developer Facade
 
 `tomojax.calibration.api` and the package root intentionally export only
-schema/value types:
+retained schema/value types for internal geometry support and migration tests:
 
 - `CalibrationState`
 - `CalibrationVariable`
 - `DetectorPixelScale`
 - `DetectorPixelValue`
+
+This is not a production user-facing API. New production code should reach these
+concepts through `tomojax.geometry` unless calibration becomes a first-class
+deep module in the canonical v2 plan.
 
 ## Owned Concepts
 
