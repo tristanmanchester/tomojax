@@ -69,13 +69,20 @@ Useful commands:
 
 ```bash
 just --list
+just production-surface-check
+just test
+just test-numerical
+just test-all-cpu
 just imports
 just typecheck
 just check
 ```
 
-`just check` is the target milestone gate. It may fail while retained internal
-implementation code is being migrated; do not weaken the guardrails to make
-that code pass. Instead, remove or migrate retained code into the v2 deep
-module architecture and record temporary failures in
-`docs/implementation_log.md`.
+`just check` is the bounded product/architecture feedback loop: formatting,
+linting, type checking, import-boundary checks, and the non-numerical CPU test
+set. Numerical reconstruction/alignment coverage is intentionally separate:
+use `just test-numerical` for CPU JAX/FISTA/Schur coverage and
+`just test-all-cpu` for the broad non-slow CPU suite. Do not weaken the
+guardrails to make retained internal implementation code pass. Instead, remove
+or migrate retained code into the v2 deep module architecture and record
+temporary failures in `docs/implementation_log.md`.

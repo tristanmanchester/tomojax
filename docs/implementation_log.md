@@ -16015,3 +16015,17 @@ Validation:
   passed with 77 tests.
 - `just production-surface-check` passed with formatting checks, CLI typecheck,
   import-linter, private-import guard, and 80 focused tests.
+
+### Fast feedback loop split from numerical coverage
+
+- Added `surface` and `numerical` pytest markers. `tests/conftest.py`
+  auto-marks product/API surface tests and CPU numerical alignment,
+  reconstruction, calibration, phantom, projector, and benchmark tests by file
+  ownership.
+- Changed the default `just test` / `just check` loop to exclude numerical
+  tests, so architecture and public-surface cleanup has a bounded feedback loop.
+- Added explicit `just test-surface`, `just test-numerical`, and
+  `just test-all-cpu` recipes. The previous broad non-slow CPU command is now
+  still available as `just test-all-cpu` instead of being hidden behind
+  `just test`.
+- Updated the README to describe the split and when to use each gate.

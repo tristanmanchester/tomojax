@@ -204,7 +204,9 @@ addopts = [
 ]
 markers = [
     "unit: fast CPU-only tests",
+    "surface: public API/CLI/import-boundary tests for the production feedback loop",
     "integration: multi-module tests",
+    "numerical: CPU numerical reconstruction/alignment tests that may compile JAX kernels",
     "gpu: requires GPU",
     "pallas: requires Pallas-capable backend",
     "slow: slow tests",

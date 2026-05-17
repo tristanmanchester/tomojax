@@ -81,7 +81,7 @@ Forbidden dependencies:
 - Default geometry optimisation must be gradient-first LM/GN, not grid search.
 - Geometry updates must emit artifact/provenance data.
 - Product code should import alignment helpers from `tomojax.align.api` or the
-  package-root product facade, not transitional nested aliases.
+  package-root product facade, not nested compatibility aliases.
 - `tomojax.align.checkpoint`, `tomojax.align.diagnostics`,
   `tomojax.align.motion_models`, `tomojax.align.params_export`, and
   `tomojax.align.losses` are intentionally not registered compatibility
@@ -104,6 +104,6 @@ Forbidden dependencies:
 ## Tests
 
 - Existing alignment tests cover retained staged behavior.
-- `tests/test_alternating_solver_smoke.py` covers the Phase 7 deterministic
-  diagnostic artifact run.
+- `tests/test_alternating_solver_smoke.py` covers the deterministic diagnostic
+  artifact run.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.

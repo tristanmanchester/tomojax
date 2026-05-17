@@ -18,15 +18,24 @@ imports:
     uv run python tools/check_public_imports.py
 
 test:
-    uv run pytest -m "not slow and not gpu and not pallas"
+    uv run pytest -m "not slow and not gpu and not pallas and not numerical"
 
 test-unit:
-    uv run pytest -m "not slow and not gpu and not pallas"
+    uv run pytest -m "not slow and not gpu and not pallas and not numerical"
 
 test-integration:
     uv run pytest -m "not gpu and not pallas"
 
 test-synthetic-smoke:
+    uv run pytest -m "not slow and not gpu and not pallas"
+
+test-surface:
+    uv run pytest -m "surface" -q
+
+test-numerical:
+    uv run pytest -m "numerical and not slow and not gpu and not pallas"
+
+test-all-cpu:
     uv run pytest -m "not slow and not gpu and not pallas"
 
 check: format lint typecheck imports test
