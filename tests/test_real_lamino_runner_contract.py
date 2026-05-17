@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -20,9 +21,13 @@ from tomojax.bench import (
     prepare_real_lamino_binned_fixture,
     real_lamino_artifact_validation_failures,
     real_lamino_stat_validation_failures,
+    real_laminography_recon as recon_stage,
+    real_laminography_setup as setup_helpers,
     reference_regression_level_outer_counts,
+    run_real_lamino_setup_stage,
     setup_det_u_bounds,
 )
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
@@ -569,6 +574,126 @@ def test_reference_regression_level_outer_counts_replay_reference_stage_summary(
     ) == {8: 2, 4: 1}
 
 
+def test_bench_setup_stage_writes_artifacts_and_applies_bounds(monkeypatch, tmp_path) -> None:
+    class FakeContext:
+        def __init__(self, root: Path) -> None:
+            self.run_root = root
+            self.status_path = root / "status.json"
+            self.preview_global_z = 1
+            self.stack_z_range = (0, 1)
+            self.naive_slice = None
+            self.args = SimpleNamespace(
+                align_profile="lightning",
+                recon_iters=1,
+                lambda_tv=0.01,
+                regulariser="huber_tv",
+                tv_prox_iters=1,
+                views_per_batch=1,
+                gather_dtype="fp32",
+                projector_backend="jax",
+                quality_tier="reference",
+                fallback_policy="fallback",
+                fold_rigid_detector_grid=True,
+                gn_damping=1e-3,
+                pose_model="per_view",
+                knot_spacing=8,
+                pose_degree=3,
+                recon_positivity=True,
+                early_stop=False,
+                early_stop_rel=1e-3,
+                early_stop_patience=2,
+                outer_iters=1,
+                snapshot_max_cols=2,
+            )
+
+        def stage_dir(self, name: str) -> Path:
+            return self.run_root / name
+
+        def save_stage_products(self, *, stage_dir: Path, **_kwargs) -> dict[str, str]:
+            _write_stage_images(stage_dir)
+            return {
+                "orthos": "orthos.png",
+                "aligned_xy": "aligned_xy_global_z209.png",
+                "delta_xy": "delta_xy_global_z209.png",
+                "z_stack": "z_stack_global_z198_220.png",
+            }
+
+    def fake_optimize(**kwargs):
+        state = kwargs["state"]
+        updated_state = setup_helpers.AlignmentState(
+            setup=setup_helpers.SetupGeometryState.from_degrees(
+                det_u_px=5.0,
+                det_v_px=float(state.setup.det_v_px),
+                detector_roll_deg=0.0,
+                axis_rot_x_deg=0.0,
+                axis_rot_y_deg=0.0,
+                nominal_axis_unit=state.setup.nominal_axis_unit,
+            ),
+            pose=state.pose,
+            volume=jnp.ones((2, 2, 2), dtype=jnp.float32),
+        )
+        return SimpleNamespace(
+            x=jnp.ones((2, 2, 2), dtype=jnp.float32),
+            state=updated_state,
+            checkpoint_outer_stats=[
+                {
+                    "geometry_loss_before": 2.0,
+                    "geometry_loss_after": 1.0,
+                    "geometry_accepted": True,
+                }
+            ],
+        )
+
+    monkeypatch.setattr(
+        setup_helpers,
+        "optimize_reference_setup_geometry_bilevel_for_level",
+        fake_optimize,
+    )
+    grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)
+    detector = Detector(nu=2, nv=2, du=1.0, dv=1.0)
+    geometry = LaminographyGeometry(
+        grid=grid,
+        detector=detector,
+        thetas_deg=np.asarray([0.0], dtype=np.float32),
+        tilt_deg=30.0,
+    )
+    ctx = FakeContext(tmp_path / "run")
+    ctx.run_root.mkdir()
+    setup_state = runner.GeometryCalibrationState.from_geometry(
+        geometry,
+        active_geometry_dofs=(),
+    )
+
+    volume, updated_setup, stats = run_real_lamino_setup_stage(
+        ctx,
+        stage_dir=ctx.stage_dir("01_setup_geometry/01_cor"),
+        stage_name="01_setup_geometry/01_cor",
+        active_setup=("det_u_px",),
+        geometry=geometry,
+        grid=grid,
+        detector=detector,
+        projections=np.zeros((1, 2, 2), dtype=np.float32),
+        full_nz=2,
+        setup_state=setup_state,
+        params5=np.zeros((1, 5), dtype=np.float32),
+        levels=(1,),
+        bounds="det_u_px=0:1",
+    )
+
+    stage_dir = ctx.stage_dir("01_setup_geometry/01_cor")
+    manifest = json.loads((stage_dir / "stage_manifest.json").read_text())
+    assert volume.shape == (2, 2, 2)
+    assert updated_setup.det_u_px == 1.0
+    assert stats[0]["setup_bounds_clipped"]["det_u_px"]["clipped"] is True
+    assert manifest["stats_count"] == 1
+    detector_params = {
+        item["name"]: item["value"] for item in manifest["geometry_calibration_state"]["detector"]
+    }
+    assert detector_params["det_u_px"] == 1.0
+    assert (stage_dir / "stage_summary.csv").exists()
+    assert (stage_dir / "checkpoints" / "latest.npz").exists()
+
+
 def test_staged_diagnostic_fast_profile_uses_bounded_smoke(
     monkeypatch,
     tmp_path,
@@ -637,13 +762,11 @@ def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:
     raw = np.arange(5 * 8 * 8, dtype=np.float32).reshape(5, 8, 8)
     thetas = np.linspace(0.0, 180.0, 5, endpoint=False, dtype=np.float32)
 
-    working_raw, working_thetas, geometry_inputs, provenance = (
-        prepare_real_lamino_binned_fixture(
-            args,
-            native=runner,
-            raw_projections=raw,
-            thetas=thetas,
-        )
+    working_raw, working_thetas, geometry_inputs, provenance = prepare_real_lamino_binned_fixture(
+        args,
+        native=runner,
+        raw_projections=raw,
+        thetas=thetas,
     )
 
     grid = geometry_inputs["grid"]
@@ -681,13 +804,11 @@ def test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor() -> N
     raw = np.zeros((7, 16, 16), dtype=np.float32)
     thetas = np.arange(7, dtype=np.float32)
 
-    working_raw, working_thetas, _geometry_inputs, provenance = (
-        prepare_real_lamino_binned_fixture(
-            args,
-            native=runner,
-            raw_projections=raw,
-            thetas=thetas,
-        )
+    working_raw, working_thetas, _geometry_inputs, provenance = prepare_real_lamino_binned_fixture(
+        args,
+        native=runner,
+        raw_projections=raw,
+        thetas=thetas,
     )
 
     assert working_raw.shape == (3, 4, 4)
@@ -853,33 +974,34 @@ def test_v2_full_real_lamino_report_fails_when_final_is_worse_than_cor_only(tmp_
     assert (tmp_path / "v2_full_report" / "publication" / "full_orthos.png").exists()
 
 
-def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None:
+def test_v2_final_reconstruction_selects_lowest_loss_candidate(monkeypatch, tmp_path) -> None:
     class FakeContext:
         def __init__(self, root: Path) -> None:
             self.run_root = root
             self.stage_dir = lambda name: root / name
 
-    class FakeNative:
-        def _final_reconstruct(self, ctx, **kwargs):
-            stage_dir = ctx.stage_dir("05_final")
-            stage_dir.mkdir(parents=True, exist_ok=True)
-            loss = float(np.asarray(kwargs["params5"])[0, 0])
-            volume = np.full((2, 2, 1), loss, dtype=np.float32)
-            _write_json(
-                stage_dir / "stage_manifest.json",
-                {
-                    "stage": "05_final",
-                    "status": "completed",
-                    "recon_info": {"loss": [loss]},
-                },
-            )
-            return volume
-
-        def _write_json(self, path: Path, payload: dict[str, object]) -> None:
-            _write_json(path, payload)
+    def fake_final_reconstruction(ctx, **kwargs):
+        stage_dir = ctx.stage_dir("05_final")
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        loss = float(np.asarray(kwargs["params5"])[0, 0])
+        volume = np.full((2, 2, 1), loss, dtype=np.float32)
+        _write_json(
+            stage_dir / "stage_manifest.json",
+            {
+                "stage": "05_final",
+                "status": "completed",
+                "recon_info": {"loss": [loss]},
+            },
+        )
+        return volume
 
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()
+    monkeypatch.setattr(
+        recon_stage,
+        "run_final_reconstruction_stage",
+        fake_final_reconstruction,
+    )
     candidates = [
         {
             "label": "worse",
@@ -897,7 +1019,6 @@ def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None
 
     volume, choice = staged_runner.run_best_final_reconstruction(
         ctx,
-        native=FakeNative(),
         geometry=None,
         grid=None,
         detector=None,
@@ -918,39 +1039,41 @@ def test_v2_final_reconstruction_selects_lowest_loss_candidate(tmp_path) -> None
     assert manifest["selected_final_candidate"]["candidate_policy"] == "all"
 
 
-def test_v2_final_reconstruction_can_score_only_last_valid_candidate(tmp_path) -> None:
+def test_v2_final_reconstruction_can_score_only_last_valid_candidate(
+    monkeypatch,
+    tmp_path,
+) -> None:
     class FakeContext:
         def __init__(self, root: Path) -> None:
             self.run_root = root
             self.args = SimpleNamespace(final_candidate_policy="last_valid")
             self.stage_dir = lambda name: root / name
 
-    class FakeNative:
-        def __init__(self) -> None:
-            self.calls: list[float] = []
+    calls: list[float] = []
 
-        def _final_reconstruct(self, ctx, **kwargs):
-            stage_dir = ctx.stage_dir("05_final")
-            stage_dir.mkdir(parents=True, exist_ok=True)
-            loss = float(np.asarray(kwargs["params5"])[0, 0])
-            self.calls.append(loss)
-            volume = np.full((2, 2, 1), loss, dtype=np.float32)
-            _write_json(
-                stage_dir / "stage_manifest.json",
-                {
-                    "stage": "05_final",
-                    "status": "completed",
-                    "recon_info": {"loss": [loss]},
-                },
-            )
-            return volume
-
-        def _write_json(self, path: Path, payload: dict[str, object]) -> None:
-            _write_json(path, payload)
+    def fake_final_reconstruction(ctx, **kwargs):
+        stage_dir = ctx.stage_dir("05_final")
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        loss = float(np.asarray(kwargs["params5"])[0, 0])
+        calls.append(loss)
+        volume = np.full((2, 2, 1), loss, dtype=np.float32)
+        _write_json(
+            stage_dir / "stage_manifest.json",
+            {
+                "stage": "05_final",
+                "status": "completed",
+                "recon_info": {"loss": [loss]},
+            },
+        )
+        return volume
 
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()
-    native = FakeNative()
+    monkeypatch.setattr(
+        recon_stage,
+        "run_final_reconstruction_stage",
+        fake_final_reconstruction,
+    )
     candidates = [
         {
             "label": "early",
@@ -968,7 +1091,6 @@ def test_v2_final_reconstruction_can_score_only_last_valid_candidate(tmp_path) -
 
     volume, choice = staged_runner.run_best_final_reconstruction(
         ctx,
-        native=native,
         geometry=None,
         grid=None,
         detector=None,
@@ -978,7 +1100,7 @@ def test_v2_final_reconstruction_can_score_only_last_valid_candidate(tmp_path) -
     )
 
     manifest = json.loads((ctx.run_root / "05_final" / "stage_manifest.json").read_text())
-    assert native.calls == [9.0]
+    assert calls == [9.0]
     assert choice["label"] == "last"
     assert float(volume[0, 0, 0]) == 9.0
     assert manifest["selected_final_candidate"]["candidate_policy"] == "last_valid"
@@ -987,7 +1109,7 @@ def test_v2_final_reconstruction_can_score_only_last_valid_candidate(tmp_path) -
     ]
 
 
-def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
+def test_v2_pose_stage_validation_fails_closed_on_nan_volume(monkeypatch, tmp_path) -> None:
     class FakeCalibrationState:
         def __init__(self, label: str) -> None:
             self.label = label
@@ -1012,6 +1134,30 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
         def stage_dir(self, name: str) -> Path:
             return self.run_root / name
 
+    def fake_setup_stage(_ctx, *, stage_dir: Path, stage_name: str, **_kwargs):
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        _write_stage_images(stage_dir)
+        _write_json(
+            stage_dir / "stage_manifest.json",
+            {
+                "stage": stage_name,
+                "status": "completed",
+                "active_dofs": [],
+                "artifacts": {
+                    "orthos": "orthos.png",
+                    "aligned_xy": "aligned_xy_global_z209.png",
+                    "delta_xy": "delta_xy_global_z209.png",
+                    "z_stack": "z_stack_global_z198_220.png",
+                },
+            },
+        )
+        x = np.ones((2, 2, 1), dtype=np.float32)
+        return (
+            x,
+            FakeCalibrationState(stage_name),
+            [{"geometry_loss_before": 2.0, "geometry_loss_after": 1.0}],
+        )
+
     class FakeNative:
         def _write_json(self, path: Path, payload: dict[str, object]) -> None:
             _write_json(path, payload)
@@ -1019,29 +1165,8 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
         def _params_summary(self, params: np.ndarray) -> dict[str, object]:
             return {"phi": {"std": float(np.std(params[:, 2]))}}
 
-        def run_setup_stage(self, _ctx, *, stage_dir: Path, stage_name: str, **_kwargs):
-            stage_dir.mkdir(parents=True, exist_ok=True)
-            _write_stage_images(stage_dir)
-            _write_json(
-                stage_dir / "stage_manifest.json",
-                {
-                    "stage": stage_name,
-                    "status": "completed",
-                    "active_dofs": [],
-                    "artifacts": {
-                        "orthos": "orthos.png",
-                        "aligned_xy": "aligned_xy_global_z209.png",
-                        "delta_xy": "delta_xy_global_z209.png",
-                        "z_stack": "z_stack_global_z198_220.png",
-                    },
-                },
-            )
-            x = np.ones((2, 2, 1), dtype=np.float32)
-            return (
-                x,
-                FakeCalibrationState(stage_name),
-                [{"geometry_loss_before": 2.0, "geometry_loss_after": 1.0}],
-            )
+        def run_setup_stage(self, *_args, **_kwargs):
+            raise AssertionError("setup stages should use tomojax.bench integration")
 
         def run_pose_stage(self, _ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
             stage_dir.mkdir(parents=True, exist_ok=True)
@@ -1077,6 +1202,7 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(tmp_path) -> None:
 
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()
+    monkeypatch.setattr(staged_runner, "run_real_lamino_setup_stage", fake_setup_stage)
     setup_state, params5, records, candidates = staged_runner.run_remaining_stages(
         ctx,
         native=FakeNative(),

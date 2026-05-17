@@ -135,7 +135,11 @@ from tomojax.bench.real_laminography_profiles import (
     real_lamino_reference_regression_contract_payload,
     reference_regression_level_outer_counts,
 )
-from tomojax.bench.real_laminography_recon import run_cor_only_fista_stage
+from tomojax.bench.real_laminography_recon import (
+    run_baseline_stage,
+    run_best_final_reconstruction_stage,
+    run_cor_only_fista_stage,
+)
 from tomojax.bench.real_laminography_report import (
     FULL_REQUIRED_STAGES,
     PARTIAL_REQUIRED_STAGES,
@@ -176,6 +180,7 @@ from tomojax.bench.real_laminography_runtime import (
 )
 from tomojax.bench.real_laminography_setup import (
     optimize_reference_setup_geometry_bilevel_for_level,
+    run_real_lamino_setup_stage,
 )
 from tomojax.bench.spdhg_benchmark import (
     SpdhgDatasetSimulationPlan,
@@ -322,11 +327,14 @@ __all__ = [
     "resolve_fixture_bin_factor",
     "run_alignment_smoke",
     "run_alternating_solver_smoke",
+    "run_baseline_stage",
+    "run_best_final_reconstruction_stage",
     "run_cor_only_fista_stage",
     "run_forward_projector_benchmark",
     "run_forward_projector_suite",
     "run_forward_sinogram_benchmark",
     "run_forward_sinogram_suite",
+    "run_real_lamino_setup_stage",
     "save_real_lamino_z_stack",
     "save_slice_png",
     "save_uint8_png",

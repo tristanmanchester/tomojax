@@ -3,6 +3,58 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography stage engines moved behind bench
+
+### Scope
+
+Reduced the staged real-laminography runner's dependency on the
+reference-regression script by moving the baseline, setup, and final
+reconstruction stage engines behind the `tomojax.bench` developer facade.
+
+Changes:
+
+- Added `run_baseline_stage` to `tomojax.bench.real_laminography_recon`,
+  preserving the raw-projection FBP baseline artifact contract.
+- Added `run_real_lamino_setup_stage` to
+  `tomojax.bench.real_laminography_setup`, including setup bounds clipping,
+  multires setup optimization, timeline/checkpoint artifacts, and manifest
+  output.
+- Added `run_final_reconstruction_stage` and
+  `run_best_final_reconstruction_stage` to
+  `tomojax.bench.real_laminography_recon`, preserving final candidate scoring,
+  pose-augmented final reconstruction, canonical detector-grid policy, and
+  selected-candidate provenance.
+- Updated `run_real_lamino_staged.py` to call the bench-owned baseline,
+  setup, COR-only, and final reconstruction helpers directly. The staged runner
+  now retains the reference-regression script only for the still-unextracted
+  pose stage.
+- Kept compatibility aliases in the reference-regression script where needed
+  so existing benchmark contracts continue to work during the staged migration.
+- Expanded focused tests for the bench stage helpers and public bench facade.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022
+  src/tomojax/bench/real_laminography_recon.py
+  src/tomojax/bench/real_laminography_setup.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_bench_real_laminography_recon.py
+  tests/test_real_lamino_runner_contract.py tests/test_public_facades.py`
+  passed.
+- `uv run pytest tests/test_bench_real_laminography_recon.py
+  tests/test_real_lamino_runner_contract.py::test_bench_setup_stage_writes_artifacts_and_applies_bounds
+  tests/test_real_lamino_runner_contract.py::test_staged_runtime_default_streams_fista
+  tests/test_public_facades.py -q` passed.
+- `uv run python -m py_compile
+  src/tomojax/bench/real_laminography_recon.py
+  src/tomojax/bench/real_laminography_setup.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py` passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Real-laminography run context moved into bench
 
 ### Scope

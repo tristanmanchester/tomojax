@@ -51,6 +51,7 @@ from tomojax.bench import (
     real_lamino_projection_stats,
     real_lamino_xy_at_global_z,
     resize_nearest_2d,
+    run_baseline_stage,
     save_real_lamino_z_stack,
     save_uint8_png,
     update_real_lamino_status,
@@ -60,7 +61,6 @@ from tomojax.bench import (
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import load_real_laminography_input
-from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume
 
@@ -108,7 +108,13 @@ def _apply_setup_bounds(
         before = float(getattr(state, name))
         after = float(np.clip(before, lo, hi))
         updates[name] = after
-        clipped[name] = {"before": before, "after": after, "lo": lo, "hi": hi, "clipped": before != after}
+        clipped[name] = {
+            "before": before,
+            "after": after,
+            "lo": lo,
+            "hi": hi,
+            "clipped": before != after,
+        }
     return replace(state, **updates), clipped
 
 
@@ -156,13 +162,16 @@ def _parse_shape3(text: str) -> tuple[int, int, int]:
     try:
         shape = (int(parts[0]), int(parts[1]), int(parts[2]))
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("expected three positive integers as n_views,nv,nu") from exc
+        raise argparse.ArgumentTypeError(
+            "expected three positive integers as n_views,nv,nu"
+        ) from exc
     if any(dim <= 0 for dim in shape):
         raise argparse.ArgumentTypeError("expected three positive integers as n_views,nv,nu")
     return shape
 
 
 RunContext = RealLaminoRunContext
+run_baseline = run_baseline_stage
 
 
 def _schedule_dict(schedule: AlignmentSchedule) -> dict[str, Any]:
@@ -236,71 +245,22 @@ def _make_cfg(
     )
 
 
-def run_baseline(
-    ctx: RunContext,
+def _save_checkpoint(
+    path: Path,
     *,
-    geometry: LaminographyGeometry,
-    grid: Grid,
-    detector: Detector,
-    projections: np.ndarray,
-    full_nz: int,
-) -> np.ndarray:
-    stage_dir = ctx.stage_dir("00_baseline")
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    _status(ctx.status_path, state="running", stage="00_baseline", message="baseline_fbp")
-    t0 = time.perf_counter()
-    vol = np.asarray(
-        fbp(
-            geometry,
-            grid,
-            detector,
-            jnp.asarray(projections, dtype=jnp.float32),
-            filter_name=str(ctx.args.filter_name),
-            views_per_batch=int(ctx.args.views_per_batch),
-            checkpoint_projector=True,
-            gather_dtype=str(ctx.args.gather_dtype),
-        ),
-        dtype=np.float32,
-    )
-    jax.block_until_ready(vol)
-    elapsed = time.perf_counter() - t0
-    np.save(stage_dir / "naive_fbp.npy", vol)
-    ctx.naive_slice = real_lamino_xy_at_global_z(vol, grid=grid, full_nz=full_nz, global_z=ctx.preview_global_z)
-    _save_png(stage_dir / f"naive_or_input_xy_global_z{ctx.preview_global_z:03d}.png", ctx.naive_slice)
-    ctx.save_stage_products(
-        stage_dir=stage_dir,
-        volume=vol,
-        grid=grid,
-        full_nz=full_nz,
-        input_reference=ctx.naive_slice,
-        suffix="aligned",
-    )
-    _save_png(stage_dir / "measured_sinogram.png", projections[:, projections.shape[1] // 2, :])
-    manifest = {
-        "stage": "00_baseline",
-        "status": "completed",
-        "elapsed_seconds": elapsed,
-        "volume_shape": list(vol.shape),
-        "preview_z": int(ctx.preview_global_z),
-        "z_stack_range": list(ctx.stack_z_range),
-    }
-    _write_json(stage_dir / "stage_manifest.json", manifest)
-    _write_json(stage_dir / "align_info.json", {"stage": "baseline", "outer_stats": []})
-    _append_csv(
-        stage_dir / "stage_summary.csv",
-        {"stage": "00_baseline", "status": "completed", "elapsed_seconds": elapsed},
-        ["stage", "status", "elapsed_seconds"],
-    )
-    return vol
-
-
-def _save_checkpoint(path: Path, *, x: np.ndarray, params: np.ndarray, setup: GeometryCalibrationState, stat: Mapping[str, Any]) -> str:
+    x: np.ndarray,
+    params: np.ndarray,
+    setup: GeometryCalibrationState,
+    stat: Mapping[str, Any],
+) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         path,
         x=np.asarray(x, dtype=np.float32),
         params5=np.asarray(params, dtype=np.float32),
-        geometry_calibration_state=json.dumps(_json_safe(setup.to_calibration_state().to_dict()), sort_keys=True),
+        geometry_calibration_state=json.dumps(
+            _json_safe(setup.to_calibration_state().to_dict()), sort_keys=True
+        ),
         stat=json.dumps(_json_safe(stat), sort_keys=True),
     )
     latest = path.parent / "latest.npz"
@@ -339,7 +299,9 @@ def run_setup_stage(
         d = scale_detector(detector, factor)
         y = bin_projections(jnp.asarray(projections, dtype=jnp.float32), factor)
         if x_init is not None and prev_factor is not None and prev_factor > factor:
-            x_level = upsample_volume(jnp.asarray(x_init), prev_factor // factor, (g.nx, g.ny, g.nz))
+            x_level = upsample_volume(
+                jnp.asarray(x_init), prev_factor // factor, (g.nx, g.ny, g.nz)
+            )
         else:
             x_level = None
         last_loss = math.inf
@@ -408,13 +370,21 @@ def run_setup_stage(
             stem = f"outer_{len(stage_stats):03d}_level{factor:02d}_iter{outer:02d}"
             preview_dir = stage_dir / "timeline_z"
             preview_grid = g
-            xy = real_lamino_xy_at_global_z(x_np, grid=preview_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
-            ref = _resize_nearest_2d(ctx.naive_slice, xy.shape) if ctx.naive_slice is not None else None
+            xy = real_lamino_xy_at_global_z(
+                x_np, grid=preview_grid, full_nz=full_nz, global_z=ctx.preview_global_z
+            )
+            ref = (
+                _resize_nearest_2d(ctx.naive_slice, xy.shape)
+                if ctx.naive_slice is not None
+                else None
+            )
             _save_png(preview_dir / "slices" / f"{stem}_global_z{ctx.preview_global_z:03d}.png", xy)
             if ref is not None:
                 _save_png(preview_dir / "delta_vs_naive" / f"{stem}_delta.png", xy - ref)
             _save_z_stack(
-                preview_dir / "z_stacks" / f"{stem}_global_z{ctx.stack_z_range[0]:03d}_{ctx.stack_z_range[1]:03d}.png",
+                preview_dir
+                / "z_stacks"
+                / f"{stem}_global_z{ctx.stack_z_range[0]:03d}_{ctx.stack_z_range[1]:03d}.png",
                 x_np,
                 grid=preview_grid,
                 full_nz=full_nz,
@@ -442,7 +412,11 @@ def run_setup_stage(
             ]
             _append_csv(stage_dir / "stage_summary.csv", stat, fields)
             loss_after = float(stat.get("geometry_loss_after", last_loss))
-            rel = (last_loss - loss_after) / max(abs(last_loss), 1e-6) if math.isfinite(last_loss) else math.inf
+            rel = (
+                (last_loss - loss_after) / max(abs(last_loss), 1e-6)
+                if math.isfinite(last_loss)
+                else math.inf
+            )
             stale = stale + 1 if rel < float(ctx.args.early_stop_rel) else 0
             last_loss = loss_after
             if (
@@ -454,8 +428,13 @@ def run_setup_stage(
         x_init = np.asarray(x_level, dtype=np.float32)
         prev_factor = int(factor)
     setup_state = replace(setup_state, active_geometry_dofs=active_setup)
-    _write_json(stage_dir / "align_info.json", {"outer_stats": stage_stats, "active_geometry_dofs": list(active_setup)})
-    _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
+    _write_json(
+        stage_dir / "align_info.json",
+        {"outer_stats": stage_stats, "active_geometry_dofs": list(active_setup)},
+    )
+    _write_json(
+        stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict()
+    )
     products = ctx.save_stage_products(
         stage_dir=stage_dir,
         volume=np.asarray(x_init, dtype=np.float32),
@@ -502,7 +481,9 @@ def run_pose_stage(
     prev_factor: int | None = None
     params_current = jnp.asarray(params5, dtype=jnp.float32)
 
-    def make_observer(level_grid: Grid, level_factor: int) -> Callable[[Any, Any, dict[str, Any]], str]:
+    def make_observer(
+        level_grid: Grid, level_factor: int
+    ) -> Callable[[Any, Any, dict[str, Any]], str]:
         def observer(x_obs: Any, params_obs: Any, stat_obs: dict[str, Any]) -> str:
             stat = dict(stat_obs)
             stat["stage"] = stage_name
@@ -533,18 +514,26 @@ def run_pose_stage(
             if checkpoint_failures:
                 stat["checkpoint_validation_failed"] = True
                 stat["checkpoint_validation_failures"] = checkpoint_failures
-            xy = real_lamino_xy_at_global_z(x_np, grid=level_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
-            ref = _resize_nearest_2d(ctx.naive_slice, xy.shape) if ctx.naive_slice is not None else None
+            xy = real_lamino_xy_at_global_z(
+                x_np, grid=level_grid, full_nz=full_nz, global_z=ctx.preview_global_z
+            )
+            ref = (
+                _resize_nearest_2d(ctx.naive_slice, xy.shape)
+                if ctx.naive_slice is not None
+                else None
+            )
             stem = (
-                f"outer_{len(stage_stats)+1:03d}_level{level_factor:02d}_"
-                f"iter{int(stat.get('outer_idx', len(stage_stats)+1)):02d}"
+                f"outer_{len(stage_stats) + 1:03d}_level{level_factor:02d}_"
+                f"iter{int(stat.get('outer_idx', len(stage_stats) + 1)):02d}"
             )
             preview_dir = stage_dir / "timeline_z"
             _save_png(preview_dir / "slices" / f"{stem}_global_z{ctx.preview_global_z:03d}.png", xy)
             if ref is not None:
                 _save_png(preview_dir / "delta_vs_naive" / f"{stem}_delta.png", xy - ref)
             _save_z_stack(
-                preview_dir / "z_stacks" / f"{stem}_global_z{ctx.stack_z_range[0]:03d}_{ctx.stack_z_range[1]:03d}.png",
+                preview_dir
+                / "z_stacks"
+                / f"{stem}_global_z{ctx.stack_z_range[0]:03d}_{ctx.stack_z_range[1]:03d}.png",
                 x_np,
                 grid=level_grid,
                 full_nz=full_nz,
@@ -601,7 +590,9 @@ def run_pose_stage(
             if bool(ctx.args.canonical_det_grid)
             else level_detector_grid(d, state=setup_state, factor=int(factor))
         )
-        cfg_level = replace(cfg_base, recon_L=None, loss=resolve_loss_for_level(cfg_base.loss, int(factor)))
+        cfg_level = replace(
+            cfg_base, recon_L=None, loss=resolve_loss_for_level(cfg_base.loss, int(factor))
+        )
         t0 = time.perf_counter()
         x_lvl, params_current, info = align(
             geom_eff,
@@ -632,8 +623,13 @@ def run_pose_stage(
             )
     params_np = np.asarray(params_current, dtype=np.float32)
     _write_params_csv(stage_dir / "params.csv", params_np)
-    _write_json(stage_dir / "align_info.json", {"outer_stats": stage_stats, "params_summary": real_lamino_pose_params_summary(params_np)})
-    _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
+    _write_json(
+        stage_dir / "align_info.json",
+        {"outer_stats": stage_stats, "params_summary": real_lamino_pose_params_summary(params_np)},
+    )
+    _write_json(
+        stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict()
+    )
     products = ctx.save_stage_products(
         stage_dir=stage_dir,
         volume=np.asarray(x_init, dtype=np.float32),
@@ -673,7 +669,11 @@ def _final_reconstruct(
     stage_dir.mkdir(parents=True, exist_ok=True)
     _status(ctx.status_path, state="running", stage="05_final", message="final_fista_tv")
     geom_eff = geometry_with_axis_state(geometry, grid, detector, setup_state)
-    det_grid = None if bool(ctx.args.canonical_det_grid) else level_detector_grid(detector, state=setup_state, factor=1)
+    det_grid = (
+        None
+        if bool(ctx.args.canonical_det_grid)
+        else level_detector_grid(detector, state=setup_state, factor=1)
+    )
     params_jax = jnp.asarray(params5, dtype=jnp.float32)
 
     class _PoseAugmentedGeometry:
@@ -695,7 +695,9 @@ def _final_reconstruct(
             lambda_tv=float(ctx.args.lambda_tv),
             regulariser=str(ctx.args.regulariser),
             tv_prox_iters=int(ctx.args.tv_prox_iters),
-            views_per_batch=None if int(ctx.args.views_per_batch) == 0 else max(1, int(ctx.args.views_per_batch)),
+            views_per_batch=None
+            if int(ctx.args.views_per_batch) == 0
+            else max(1, int(ctx.args.views_per_batch)),
             checkpoint_projector=True,
             gather_dtype=str(ctx.args.gather_dtype),
             positivity=bool(ctx.args.recon_positivity),
@@ -725,14 +727,23 @@ def _final_reconstruct(
             "artifacts": products,
         },
     )
-    _write_json(stage_dir / "align_info.json", {"recon_info": info, "params_summary": real_lamino_pose_params_summary(params5)})
-    _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
+    _write_json(
+        stage_dir / "align_info.json",
+        {"recon_info": info, "params_summary": real_lamino_pose_params_summary(params5)},
+    )
+    _write_json(
+        stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict()
+    )
     return vol_np
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Native staged setup+pose alignment for real k11-54014 laminography.")
-    parser.add_argument("--input", required=True, help="Input NXtomo/HDF5 file with entry/imaging/data projections.")
+    parser = argparse.ArgumentParser(
+        description="Native staged setup+pose alignment for real k11-54014 laminography."
+    )
+    parser.add_argument(
+        "--input", required=True, help="Input NXtomo/HDF5 file with entry/imaging/data projections."
+    )
     parser.add_argument(
         "--expected-projection-shape",
         type=_parse_shape3,
@@ -748,7 +759,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
     parser.add_argument("--flip-u", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--flip-v", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--transpose-detector", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--transpose-detector", action=argparse.BooleanOptionalAction, default=False
+    )
     parser.add_argument("--preview-z", type=int, default=209)
     parser.add_argument("--slab-center-z", type=int, default=209)
     parser.add_argument("--slab-nz", type=int, default=96)
@@ -782,7 +795,11 @@ def _parse_args() -> argparse.Namespace:
             "mode: it can ignore calibrated detector-grid offsets/roll in those stages."
         ),
     )
-    parser.add_argument("--projection-background", choices=["none", "view_median", "edge_median"], default="edge_median")
+    parser.add_argument(
+        "--projection-background",
+        choices=["none", "view_median", "edge_median"],
+        default="edge_median",
+    )
     parser.add_argument("--background-edge-px", type=int, default=16)
     parser.add_argument("--recon-positivity", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--views-per-batch", type=int, default=0)
@@ -847,29 +864,85 @@ def main() -> int:
             mode=str(args.projection_background),
             edge_px=int(args.background_edge_px),
         )
-        np.save(run_root / "projection_background_offsets.npy", background_offsets.astype(np.float32))
+        np.save(
+            run_root / "projection_background_offsets.npy", background_offsets.astype(np.float32)
+        )
         n_views, nv, nu = projections.shape
         full_nz = int(nv)
         center_phys_z = real_lamino_global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
-        grid = Grid(nx=int(nu), ny=int(nu), nz=int(args.slab_nz), vx=1.0, vy=1.0, vz=1.0, vol_center=(0.0, 0.0, center_phys_z))
+        grid = Grid(
+            nx=int(nu),
+            ny=int(nu),
+            nz=int(args.slab_nz),
+            vx=1.0,
+            vy=1.0,
+            vz=1.0,
+            vol_center=(0.0, 0.0, center_phys_z),
+        )
         detector = Detector(nu=int(nu), nv=int(nv), du=1.0, dv=1.0, det_center=(0.0, 0.0))
-        preview_local_z = real_lamino_global_z_to_local_index(int(args.preview_z), full_nz=full_nz, grid=grid)
+        preview_local_z = real_lamino_global_z_to_local_index(
+            int(args.preview_z), full_nz=full_nz, grid=grid
+        )
         if not 0 <= preview_local_z < int(grid.nz):
-            raise ValueError(f"preview z {args.preview_z} maps outside slab local z={preview_local_z}")
-        geometry = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=float(args.tilt_deg), tilt_about=str(args.tilt_about))
+            raise ValueError(
+                f"preview z {args.preview_z} maps outside slab local z={preview_local_z}"
+            )
+        geometry = LaminographyGeometry(
+            grid=grid,
+            detector=detector,
+            thetas_deg=thetas,
+            tilt_deg=float(args.tilt_deg),
+            tilt_about=str(args.tilt_about),
+        )
 
         setup_schedule = AlignmentSchedule(
             name="real_lamino_setup_geometry",
             stages=(
-                AlignmentStage("cor", ("det_u_px",), "bilevel_cv", "validation_lm", maxiter=int(args.outer_iters), early_stop=bool(args.early_stop)),
-                AlignmentStage("detector_roll", ("detector_roll_deg",), "bilevel_cv", "validation_lm", maxiter=int(args.outer_iters), early_stop=bool(args.early_stop)),
-                AlignmentStage("axis_direction", ("axis_rot_x_deg", "axis_rot_y_deg"), "bilevel_cv", "validation_lm", gauge_policy="diagnose_only", maxiter=int(args.outer_iters), early_stop=bool(args.early_stop)),
+                AlignmentStage(
+                    "cor",
+                    ("det_u_px",),
+                    "bilevel_cv",
+                    "validation_lm",
+                    maxiter=int(args.outer_iters),
+                    early_stop=bool(args.early_stop),
+                ),
+                AlignmentStage(
+                    "detector_roll",
+                    ("detector_roll_deg",),
+                    "bilevel_cv",
+                    "validation_lm",
+                    maxiter=int(args.outer_iters),
+                    early_stop=bool(args.early_stop),
+                ),
+                AlignmentStage(
+                    "axis_direction",
+                    ("axis_rot_x_deg", "axis_rot_y_deg"),
+                    "bilevel_cv",
+                    "validation_lm",
+                    gauge_policy="diagnose_only",
+                    maxiter=int(args.outer_iters),
+                    early_stop=bool(args.early_stop),
+                ),
             ),
-            metadata={"real_data": True, "slab_nz": int(args.slab_nz), "preview_z": int(args.preview_z)},
+            metadata={
+                "real_data": True,
+                "slab_nz": int(args.slab_nz),
+                "preview_z": int(args.preview_z),
+            },
         ).validate()
         pose_schedule = [
-            {"name": "02_pose_phi", "active": ("phi",), "levels": tuple(args.levels_phi), "bounds": "phi=-0.0872665:0.0872665"},
-            {"name": "03_pose_dx_dz", "active": ("dx", "dz"), "levels": tuple(args.levels_dx_dz), "bounds": "dx=-16:16,dz=-16:16"},
+            {
+                "name": "02_pose_phi",
+                "active": ("phi",),
+                "levels": tuple(args.levels_phi),
+                "bounds": "phi=-0.0872665:0.0872665",
+            },
+            {
+                "name": "03_pose_dx_dz",
+                "active": ("dx", "dz"),
+                "levels": tuple(args.levels_dx_dz),
+                "bounds": "dx=-16:16,dz=-16:16",
+            },
             {
                 "name": "04_pose_polish",
                 "active": ("alpha", "beta", "phi", "dx", "dz"),
@@ -951,7 +1024,14 @@ def main() -> int:
                 },
             },
         )
-        run_baseline(ctx, geometry=geometry, grid=grid, detector=detector, projections=raw_projections, full_nz=full_nz)
+        run_baseline(
+            ctx,
+            geometry=geometry,
+            grid=grid,
+            detector=detector,
+            projections=raw_projections,
+            full_nz=full_nz,
+        )
         params5 = np.zeros((n_views, 5), dtype=np.float32)
         setup_state = GeometryCalibrationState.from_geometry(geometry, active_geometry_dofs=())
 
@@ -976,7 +1056,13 @@ def main() -> int:
                 levels=tuple(int(v) for v in args.levels_setup),
                 bounds=setup_bounds.get(tuple(stage.active_dofs), ""),
             )
-            ctx.stage_records.append({"stage": stage.name, "stats_count": len(stats), "geometry_calibration_state": setup_state.to_calibration_state().to_dict()})
+            ctx.stage_records.append(
+                {
+                    "stage": stage.name,
+                    "stats_count": len(stats),
+                    "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
+                }
+            )
 
         if not bool(args.skip_pose):
             for stage in pose_schedule:
@@ -995,7 +1081,13 @@ def main() -> int:
                     levels=tuple(int(v) for v in stage["levels"]),
                     bounds=str(stage["bounds"]),
                 )
-                ctx.stage_records.append({"stage": stage["name"], "stats_count": len(stats), "params_summary": real_lamino_pose_params_summary(params5)})
+                ctx.stage_records.append(
+                    {
+                        "stage": stage["name"],
+                        "stats_count": len(stats),
+                        "params_summary": real_lamino_pose_params_summary(params5),
+                    }
+                )
 
         final_volume = _final_reconstruct(
             ctx,
@@ -1016,7 +1108,10 @@ def main() -> int:
             "final_pose_summary": real_lamino_pose_params_summary(params5),
             "final_volume_shape": list(final_volume.shape),
         }
-        _write_json(run_root / "run_manifest.json", {**json.loads((run_root / "run_manifest.json").read_text()), **final_payload})
+        _write_json(
+            run_root / "run_manifest.json",
+            {**json.loads((run_root / "run_manifest.json").read_text()), **final_payload},
+        )
         _status(ctx.status_path, state="completed", stage="complete", **final_payload)
         return 0
     except Exception as exc:

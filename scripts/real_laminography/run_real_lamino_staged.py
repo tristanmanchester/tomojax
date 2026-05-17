@@ -9,7 +9,6 @@ from datetime import datetime
 import importlib.util
 import os
 from pathlib import Path
-import shutil
 from typing import Any
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
@@ -29,7 +28,6 @@ from tomojax.bench.real_laminography_planning import (
     pose_polish_bounds,
     prepare_real_lamino_binned_fixture,
     real_lamino_global_z_to_local_index,
-    select_real_lamino_final_candidates,
     setup_det_u_bounds,
 )
 from tomojax.bench.real_laminography_profiles import (
@@ -41,11 +39,14 @@ from tomojax.bench.real_laminography_profiles import (
     real_lamino_reference_regression_contract_payload,
     reference_regression_level_outer_counts,
 )
-from tomojax.bench.real_laminography_recon import run_cor_only_fista_stage
+from tomojax.bench.real_laminography_recon import (
+    run_baseline_stage,
+    run_best_final_reconstruction_stage as run_best_final_reconstruction,
+    run_cor_only_fista_stage,
+)
 from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
     mark_real_lamino_stage_failed,
-    real_lamino_loss_summary,
     real_lamino_method_constraints,
     real_lamino_pose_params_summary,
     real_lamino_safe_params_summary,
@@ -62,8 +63,9 @@ from tomojax.bench.real_laminography_runtime import (
     write_real_lamino_json,
     write_real_lamino_params_csv,
 )
+from tomojax.bench.real_laminography_setup import run_real_lamino_setup_stage
 from tomojax.core.geometry import LaminographyGeometry
-from tomojax.io import load_real_laminography_input, read_json_object
+from tomojax.io import load_real_laminography_input
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
 REFERENCE_REGRESSION_STAGE_MAP = _REFERENCE_REGRESSION_STAGE_MAP
@@ -241,7 +243,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
         }
         write_real_lamino_json(run_root / "run_manifest.json", run_manifest)
 
-        baseline = native.run_baseline(
+        baseline = run_baseline_stage(
             ctx,
             geometry=geometry,
             grid=grid,
@@ -254,7 +256,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             geometry,
             active_geometry_dofs=(),
         )
-        _, setup_state, stats = native.run_setup_stage(
+        _, setup_state, stats = run_real_lamino_setup_stage(
             ctx,
             stage_dir=ctx.stage_dir("01_setup_geometry/01_cor"),
             stage_name="01_setup_geometry/01_cor",
@@ -309,7 +311,6 @@ def run_real_lamino_staged(  # noqa: PLR0915
             stage_records.extend(staged_records)
             final_volume, final_choice = run_best_final_reconstruction(
                 ctx,
-                native=native,
                 geometry=geometry,
                 grid=grid,
                 detector=detector,
@@ -343,7 +344,12 @@ def run_real_lamino_staged(  # noqa: PLR0915
             ),
         }
         write_real_lamino_json(run_root / "run_manifest.json", {**run_manifest, **final_payload})
-        update_real_lamino_status(ctx.status_path, state="completed", stage="complete", **final_payload)
+        update_real_lamino_status(
+            ctx.status_path,
+            state="completed",
+            stage="complete",
+            **final_payload,
+        )
         return build_real_lamino_report(
             run_root,
             out_dir=run_root / "real_lamino_report",
@@ -413,7 +419,7 @@ def run_remaining_stages(
         ),
     )
     for idx, (stage_name, active_setup, bounds) in enumerate(setup_plan):
-        x_stage, setup_state, stats = native.run_setup_stage(
+        x_stage, setup_state, stats = run_real_lamino_setup_stage(
             ctx,
             stage_dir=ctx.stage_dir(stage_name),
             stage_name=stage_name,
@@ -551,112 +557,8 @@ def run_remaining_stages(
     return setup_state, params5, records, final_candidates
 
 
-def run_best_final_reconstruction(
-    ctx: Any,
-    *,
-    native: Any,
-    geometry: Any,
-    grid: Any,
-    detector: Any,
-    projections: np.ndarray,
-    full_nz: int,
-    candidates: list[dict[str, Any]],
-) -> tuple[np.ndarray, dict[str, Any]]:
-    """Run final FISTA candidates and publish the lowest-loss final artifact."""
-    if not candidates:
-        raise ValueError("at least one final reconstruction candidate is required")
-    candidate_policy = str(
-        getattr(getattr(ctx, "args", object()), "final_candidate_policy", "all")
-    )
-    candidates_to_score = select_real_lamino_final_candidates(
-        candidates,
-        policy=candidate_policy,
-    )
-    root = Path(ctx.run_root)
-    scratch_root = root / "05_final_candidates"
-    if scratch_root.exists():
-        shutil.rmtree(scratch_root)
-    scored: list[dict[str, Any]] = []
-    original_stage_dir = ctx.stage_dir
-    try:
-        for idx, candidate in enumerate(candidates_to_score):
-            label = str(candidate["label"]).replace("/", "__")
-            candidate_root = scratch_root / f"{idx:02d}_{label}"
-            ctx.stage_dir = lambda name, candidate_root=candidate_root: candidate_root / name
-            volume = native._final_reconstruct(
-                ctx,
-                geometry=geometry,
-                grid=grid,
-                detector=detector,
-                projections=projections,
-                full_nz=full_nz,
-                setup_state=candidate["setup_state"],
-                params5=np.asarray(candidate["params5"], dtype=np.float32),
-            )
-            manifest = dict(
-                read_json_object(candidate_root / "05_final" / "stage_manifest.json")
-            )
-            loss_last = real_lamino_loss_summary(manifest.get("recon_info", {})).get("last")
-            validation = validate_real_lamino_stage_output(
-                candidate_root / "05_final",
-                stage_name=f"05_final:{candidate['source_stage']}",
-                volume=volume,
-                params5=np.asarray(candidate["params5"], dtype=np.float32),
-                stats=[],
-                require_data_loss=False,
-            )
-            if loss_last is None:
-                validation["passed"] = False
-                validation["failures"].append("final candidate loss is missing or non-finite")
-            if not validation["passed"]:
-                mark_real_lamino_stage_failed(
-                    candidate_root / "05_final",
-                    stage_name="05_final",
-                    validation=validation,
-                )
-                continue
-            scored.append(
-                {
-                    **candidate,
-                    "candidate_dir": candidate_root / "05_final",
-                    "volume": volume,
-                    "loss_last": float(loss_last),
-                }
-            )
-    finally:
-        ctx.stage_dir = original_stage_dir
-    if not scored:
-        raise RuntimeError("no finite final reconstruction candidates passed validation")
-    best = min(scored, key=lambda item: float(item["loss_last"]))
-    final_dir = root / "05_final"
-    if final_dir.exists():
-        shutil.rmtree(final_dir)
-    shutil.copytree(best["candidate_dir"], final_dir)
-    manifest = dict(read_json_object(final_dir / "stage_manifest.json"))
-    manifest["volume_shape"] = list(np.asarray(best["volume"]).shape)
-    manifest["selected_final_candidate"] = {
-        "label": best["label"],
-        "source_stage": best["source_stage"],
-        "loss_last": best["loss_last"],
-        "candidate_policy": candidate_policy,
-        "candidates": [
-            {
-                "label": item["label"],
-                "source_stage": item["source_stage"],
-                "loss_last": item["loss_last"],
-                "candidate_dir": str(item["candidate_dir"]),
-            }
-            for item in scored
-        ],
-    }
-    write_real_lamino_json(final_dir / "stage_manifest.json", manifest)
-    return np.asarray(best["volume"], dtype=np.float32), best
-
-
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: PLR0915
-    parser = argparse.ArgumentParser(
-        description="Run the v2 staged real-laminography workflow."
-    )
+    parser = argparse.ArgumentParser(description="Run the v2 staged real-laminography workflow.")
     parser.add_argument("--input", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--reference-report", type=Path)
