@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomojax.align as align_api
 import tomojax.align.api as align_full_api
+import tomojax.backends as backends_api
 import tomojax.bench as bench_api
 import tomojax.calibration as calibration_api
 import tomojax.cli as cli_api
@@ -72,6 +73,16 @@ def test_cli_facade_exports_command_catalog() -> None:
     assert "align-auto" not in cli_api.product_command_names()
     assert "align-auto" in cli_api.developer_command_names()
     assert "test-gpu" in cli_api.developer_command_names()
+
+
+def test_backend_facade_exports_runtime_helpers() -> None:
+    assert backends_api.ViewsPerBatchEstimate.__name__ == "ViewsPerBatchEstimate"
+    assert callable(backends_api.default_gather_dtype)
+    assert callable(backends_api.device_free_memory_bytes)
+    assert callable(backends_api.estimate_views_per_batch)
+    assert callable(backends_api.estimate_views_per_batch_info)
+    assert callable(backends_api.run_command)
+    assert callable(backends_api.check_output_command)
 
 
 def test_bench_facade_exports_developer_benchmark_helpers() -> None:

@@ -3,16 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import subprocess
 import time
-from pathlib import Path
 
 try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional
     psutil = None
 
-from tomojax.backends._subprocesses import run_command
+from tomojax.backends import run_command
 
 
 def _sample_child_rss(child) -> int | None:

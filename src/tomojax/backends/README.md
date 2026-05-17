@@ -13,6 +13,8 @@ memory and gather-dtype helpers out of the forbidden `tomojax.utils` namespace.
 - `estimate_views_per_batch(...)`
 - `estimate_views_per_batch_info(...)`
 - `default_gather_dtype()`
+- `run_command(...)`
+- `check_output_command(...)`
 
 ## Dependencies
 

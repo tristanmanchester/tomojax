@@ -8,19 +8,19 @@ multiple stable callers, and keep fixed profile policy in ``bench/`` instead of 
 """
 
 import argparse
+from dataclasses import asdict, dataclass
 import json
 import os
-import time
-from dataclasses import asdict, dataclass
-from typing import Dict, Any
 import sys
+import time
+from typing import Any, Dict
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 try:
-    from skimage.metrics import peak_signal_noise_ratio, structural_similarity, mean_squared_error
+    from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
 except ModuleNotFoundError:
 
     def mean_squared_error(image_true: np.ndarray, image_test: np.ndarray) -> float:
@@ -51,15 +51,15 @@ except ModuleNotFoundError:
         return float(np.clip(1.0 - mse / denom, -1.0, 1.0))
 
 
-from tomojax.data.simulate import SimConfig, make_phantom
-from tomojax.core.geometry import Grid, Detector, ParallelGeometry, LaminographyGeometry
+from tomojax.backends import run_command
+from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
+from tomojax.data.simulate import SimConfig, make_phantom
 from tomojax.geometry import cylindrical_mask_xy
-from tomojax.backends._subprocesses import run_command
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv
-from tomojax.recon.spdhg_tv import spdhg_tv, SPDHGConfig
+from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 
 @dataclass(frozen=True)

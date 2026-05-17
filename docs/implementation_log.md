@@ -16177,3 +16177,25 @@ Validation:
   passed.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### Backend subprocess helpers exposed through facade
+
+- Added `run_command` and `check_output_command` to `tomojax.backends.api` and
+  the package facade so benchmark/support scripts no longer import
+  `tomojax.backends._subprocesses` directly.
+- Updated `scripts/exp_spdhg_bench.py` and `scripts/perf_harness.py` to use the
+  backend public API for shell-disabled command execution.
+- Updated the backends README and public facade test to document the runtime
+  helper surface.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_support_modules.py::test_perf_harness_run_sets_progress_env_and_truncates_stdout tests/test_exp_spdhg_bench.py -q`
+  passed with 14 tests.
+- `uv run python -m py_compile scripts/exp_spdhg_bench.py scripts/perf_harness.py`
+  passed.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/backends/api.py src/tomojax/backends/__init__.py scripts/exp_spdhg_bench.py scripts/perf_harness.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py src tests` passed.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.
