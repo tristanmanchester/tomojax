@@ -32,9 +32,10 @@ Treat `docs/tomojax-v2/04_phased_implementation_plan.md` as the canonical phased
 
 Use deep modules.
 
-Each top-level package under src/tomojax is a deep module with a small public API and hidden implementation.
+Each top-level production package under `src/tomojax` is a deep module with a
+small public API and hidden implementation.
 
-Allowed:
+Production deep modules:
 - tomojax.core
 - tomojax.geometry
 - tomojax.motion
@@ -47,6 +48,18 @@ Allowed:
 - tomojax.backends
 - tomojax.io
 - tomojax.cli
+
+Retained/developer support packages:
+- tomojax.bench: developer/evidence runners and article artifacts exposed
+  through `tomojax dev`, never through product modules.
+- tomojax.data: retained lower-level IO/simulation internals behind
+  `tomojax.io` and `tomojax.datasets`.
+- tomojax.calibration: retained value-type/calibration internals behind
+  `tomojax.geometry`.
+
+These support packages must stay explicit in `.importlinter`; production modules
+must not depend on `tomojax.bench`, and new production code must not import
+`tomojax.data` or `tomojax.calibration` directly.
 
 Forbidden across module boundaries:
 - importing tomojax.geometry._anything from outside tomojax.geometry

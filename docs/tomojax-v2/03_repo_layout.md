@@ -231,11 +231,29 @@ src/tomojax/
     _commands.py
     _formatting.py
     README.md
+
+  # Retained/developer support packages tracked by import-linter:
+  bench/          # developer/evidence runners behind tomojax dev
+  data/           # retained lower-level IO/simulation internals
+  calibration/    # retained calibration value types behind geometry
 ```
+
+The production deep modules are `core`, `geometry`, `motion`, `nuisance`,
+`forward`, `recon`, `align`, `verify`, `datasets`, `backends`, `io`, and `cli`.
+The retained/developer support packages `bench`, `data`, and `calibration` are
+allowed to exist only because the current implementation still needs them:
+`bench` owns developer evidence workflows, `data` is a lower-level implementation
+source behind `io` and `datasets`, and `calibration` is a lower-level
+implementation source behind `geometry`. `.importlinter` must keep these support
+packages visible in the dependency graph so product modules cannot accidentally
+start depending on them.
 
 ## Deep module rule
 
-A deep module is a directory such as `tomojax.geometry`, `tomojax.forward`, or `tomojax.align`.
+A deep module is a directory such as `tomojax.geometry`, `tomojax.forward`, or
+`tomojax.align`. Retained/developer support packages follow the same README and
+boundary-test discipline, but their READMEs must label them as developer,
+evidence, or retained implementation surfaces rather than product APIs.
 
 Each deep module has:
 
@@ -285,6 +303,11 @@ One paragraph explaining what this module owns.
 ## Public API
 
 List the names re-exported by `__init__.py` and defined in `api.py`.
+
+For broad developer or retained support facades, replace `Public API` with a
+more precise heading such as `Developer Facade`, `Retained Developer Facade`, or
+`Retained Lower-Level Surface`. The README must make clear which production
+facade owns the normal user workflow.
 
 ## Owned concepts
 

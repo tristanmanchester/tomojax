@@ -18098,3 +18098,23 @@ Validation:
   passed.
 - `uv run ruff check --select I,F
   scripts/real_laminography/run_real_lamino_reference_regression.py` passed.
+
+### Canonical module inventory cleanup
+
+- Updated `AGENTS.md` and `docs/tomojax-v2/03_repo_layout.md` so the canonical
+  architecture docs match the enforced package graph.
+- Split the package inventory into production deep modules and retained/developer
+  support packages:
+  - `tomojax.bench` for developer/evidence workflows behind `tomojax dev`
+  - `tomojax.data` for lower-level implementation internals behind
+    `tomojax.io` and `tomojax.datasets`
+  - `tomojax.calibration` for lower-level calibration value types behind
+    `tomojax.geometry`
+- Clarified that broad retained/developer facades should use precise README
+  headings such as `Developer Facade` or `Retained Developer Facade` rather than
+  claiming to be production public APIs.
+
+Validation:
+
+- `python tools/check_public_imports.py` passed.
+- `uv run lint-imports --config .importlinter` passed with all 7 contracts kept.
