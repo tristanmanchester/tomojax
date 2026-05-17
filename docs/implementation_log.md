@@ -15939,3 +15939,13 @@ Validation:
   `volume` field so reconstructed containers can be loaded through
   `tomojax.io.load_dataset()` without falling back to lower-level HDF5 helpers.
 - Added the golden-path test to `just production-surface-check`.
+
+### Alignment observer compatibility naming removed
+
+- Renamed the internal observer adapter from legacy terminology to
+  `adapt_observer_callback` and `BoolCompatibleObserverCallback`.
+- Removed the observer adapter from the public `tomojax.align.pipeline`
+  compatibility surface; the product facade remains `AlignConfig`, `align`,
+  and `align_multires`.
+- Updated alignment stage internals and tests to use the explicit observer
+  naming.

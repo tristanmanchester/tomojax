@@ -5,7 +5,7 @@ import pytest
 # check-public-imports: allow-private
 from tomojax.align._observer import (
     _normalize_observer_action,
-    adapt_legacy_observer,
+    adapt_observer_callback,
 )
 
 # check-public-imports: allow-private
@@ -112,11 +112,11 @@ def test_observer_action_contract_uses_none_for_continue():
         _normalize_observer_action(True)
 
 
-def test_adapt_legacy_observer_preserves_bool_callbacks():
-    def legacy_observer(_x, _params, stat):
+def test_adapt_observer_callback_supports_bool_callbacks():
+    def bool_observer(_x, _params, stat):
         return bool(stat["stop"])
 
-    observer = adapt_legacy_observer(legacy_observer)
+    observer = adapt_observer_callback(bool_observer)
 
     assert observer is not None
     assert observer(jnp.zeros((1,)), jnp.zeros((1, 5)), {"stop": False}) is None

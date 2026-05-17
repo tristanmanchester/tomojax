@@ -31,7 +31,7 @@ from ._config import (
 )
 from ._observer import (
     _normalize_observer_action,
-    adapt_legacy_observer,
+    adapt_observer_callback,
 )
 from ._pose_stage import align
 from ._profiles import profile_policy_from_config
@@ -1260,7 +1260,7 @@ def _build_multires_context(
     factors: Iterable[int],
 ) -> MultiresContext:
     cfg = cfg if cfg is not None else AlignConfig()
-    observer_fn = adapt_legacy_observer(observer) if observer is not None else None
+    observer_fn = adapt_observer_callback(observer) if observer is not None else None
     resolved_schedule = _resolved_schedule_for_cfg(cfg, geometry=geometry)
     setup_base = BaseGeometryArrays.from_geometry(geometry, detector)
     setup_alignment_state = alignment_state_from_checkpoint(

@@ -31,7 +31,6 @@ def test_alignment_public_facade_stays_narrow() -> None:
         "AlignMultiresCheckpointCallback",
         "align",
         "align_multires",
-        "adapt_legacy_observer",
         "ObserverAction",
         "ObserverCallback",
         "OuterStat",

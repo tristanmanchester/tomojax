@@ -30,7 +30,7 @@ from ._observer import (
     ObserverCallback,
     OuterStat,
     _normalize_observer_action,
-    adapt_legacy_observer,
+    adapt_observer_callback,
 )
 from ._profiles import profile_policy_from_config
 from ._reconstruction_stage import _run_reconstruction_step
@@ -1536,7 +1536,7 @@ def _prepare_align_setup(
 ) -> _AlignSetupState:
     if cfg is None:
         cfg = AlignConfig()
-    observer_fn = adapt_legacy_observer(observer) if observer is not None else None
+    observer_fn = adapt_observer_callback(observer) if observer is not None else None
     validate_grid(grid, "align grid")
     n_views, _, _ = validate_projection_stack(
         projections,

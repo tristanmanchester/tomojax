@@ -12,12 +12,10 @@ from typing import TYPE_CHECKING
 from . import _pose_stage as _pose_stage_mod, _stage_loop as _stage_loop_mod
 from ._config import AlignConfig
 from ._observer import (
-    LegacyObserverCallback,
     ObserverAction,
     ObserverCallback,
     OuterStat,
     OuterStatValue,
-    adapt_legacy_observer,
 )
 from ._results import (
     AlignCheckpointCallback,
@@ -101,13 +99,11 @@ __all__ = [
     "AlignMultiresInfo",
     "AlignMultiresResumeState",
     "AlignResumeState",
-    "LegacyObserverCallback",
     "MultiresLevel",
     "ObserverAction",
     "ObserverCallback",
     "OuterStat",
     "OuterStatValue",
-    "adapt_legacy_observer",
     "align",
     "align_multires",
 ]
