@@ -144,10 +144,13 @@ def test_real_lamino_safe_params_summary_rejects_nonfinite_values() -> None:
         calls += 1
         return {"shape": list(params.shape), "dtype": str(params.dtype)}
 
-    assert real_lamino_safe_params_summary(
-        np.array([[1.0, np.nan, 0.0, 0.0, 0.0]], dtype=np.float32),
-        summarize=summarize,
-    ) is None
+    assert (
+        real_lamino_safe_params_summary(
+            np.array([[1.0, np.nan, 0.0, 0.0, 0.0]], dtype=np.float32),
+            summarize=summarize,
+        )
+        is None
+    )
     assert calls == 0
 
     summary = real_lamino_safe_params_summary(

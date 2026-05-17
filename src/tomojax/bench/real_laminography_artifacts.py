@@ -59,7 +59,9 @@ def save_real_lamino_z_stack(
     for z in range(int(z0), int(z1) + 1):
         local = real_lamino_global_z_to_local_index(z, full_nz=full_nz, grid=grid)
         if 0 <= local < np.asarray(volume).shape[2]:
-            images.append((z, real_lamino_xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=z)))
+            images.append(
+                (z, real_lamino_xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=z))
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     if not images:
         iio.imwrite(path, np.zeros((16, 16), dtype=np.uint8))
@@ -71,7 +73,9 @@ def save_real_lamino_z_stack(
     fig, axes = plt.subplots(rows, cols, figsize=(2.3 * cols, 2.5 * rows), dpi=140)
     axes_arr = np.ravel(np.asarray(axes))
     for ax, (z, img) in zip(axes_arr, images, strict=False):
-        ax.imshow(scale_uint8(img, lo=float(lo), hi=float(hi)), cmap="gray", interpolation="nearest")
+        ax.imshow(
+            scale_uint8(img, lo=float(lo), hi=float(hi)), cmap="gray", interpolation="nearest"
+        )
         ax.set_title(f"z={z}", fontsize=8)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -112,8 +116,12 @@ def write_real_lamino_stage_products(
     else:
         diff = np.zeros_like(xy)
     artifacts = {
-        "aligned_xy": save_uint8_png(stage_dir / f"{suffix}_xy_global_z{preview_global_z:03d}.png", xy),
-        "delta_xy": save_uint8_png(stage_dir / f"delta_xy_global_z{preview_global_z:03d}.png", diff),
+        "aligned_xy": save_uint8_png(
+            stage_dir / f"{suffix}_xy_global_z{preview_global_z:03d}.png", xy
+        ),
+        "delta_xy": save_uint8_png(
+            stage_dir / f"delta_xy_global_z{preview_global_z:03d}.png", diff
+        ),
         "orthos": str(stage_dir / "orthos.png"),
         "z_stack": save_real_lamino_z_stack(
             stage_dir / f"z_stack_global_z{stack_z_range[0]:03d}_{stack_z_range[1]:03d}.png",

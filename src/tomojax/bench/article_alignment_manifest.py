@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict
-from typing import Any, Sequence
+from typing import Any
 
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile,
@@ -99,9 +100,7 @@ def build_article_run_manifest(
                 "geometry_type": s.geometry_type,
                 "geometry_dofs": list(s.geometry_dofs),
                 "active_dofs": list(s.active_dofs or s.geometry_dofs),
-                "active_pose_dofs": [
-                    dof for dof in (s.active_dofs or ()) if dof in _POSE_DOFS
-                ],
+                "active_pose_dofs": [dof for dof in (s.active_dofs or ()) if dof in _POSE_DOFS],
                 "active_geometry_dofs": list(s.geometry_dofs),
                 "theta_span_deg": article_theta_span_deg(s),
                 "n_views": int(profile.views),

@@ -94,7 +94,9 @@ def test_helpers_compute_metrics_and_write_outputs(tmp_path: Path) -> None:
 
 def test_spdhg_benchmark_contracts_live_behind_bench_module() -> None:
     volume = np.linspace(0.0, 1.0, 8 * 8 * 8, dtype=np.float32).reshape(8, 8, 8)
-    args = _load_module("exp_spdhg_bench_contract_args_test", "scripts/exp_spdhg_bench.py").parse_args(
+    args = _load_module(
+        "exp_spdhg_bench_contract_args_test", "scripts/exp_spdhg_bench.py"
+    ).parse_args(
         [
             "--nx",
             "8",

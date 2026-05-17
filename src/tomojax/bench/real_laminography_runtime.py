@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 import csv
 import json
 from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 import jax
 import numpy as np
@@ -173,7 +174,10 @@ def validate_real_lamino_loaded_input(
             "input projections must be a 3-D array with shape (n_views, nv, nu); "
             f"got shape {projections.shape}"
         )
-    if expected_projection_shape is not None and tuple(projections.shape) != expected_projection_shape:
+    if (
+        expected_projection_shape is not None
+        and tuple(projections.shape) != expected_projection_shape
+    ):
         raise ValueError(
             "input projections shape mismatch: expected "
             f"{expected_projection_shape} from --expected-projection-shape, got {projections.shape}"

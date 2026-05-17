@@ -40,6 +40,7 @@ except ModuleNotFoundError:
         denom = max(float(data_range) ** 2, 1e-6)
         return float(np.clip(1.0 - mse / denom, -1.0, 1.0))
 
+
 from tomojax.datasets import SimConfig
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.io import NXTomoMetadata, save_nxtomo
@@ -248,7 +249,7 @@ def write_spdhg_benchmark_report(
             zc = gt.shape[2] // 2
             gt_slice = gt[:, :, zc].T
             fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-            for ax, name in zip(axs, ["fbp", "fista", "spdhg"]):
+            for ax, name in zip(axs, ["fbp", "fista", "spdhg"], strict=False):
                 sl = results.volumes[name][:, :, zc].T
                 im = ax.imshow(sl - gt_slice, cmap="coolwarm", vmin=-0.3, vmax=0.3, origin="lower")
                 ax.set_title(f"{name} - GT (z={zc})")

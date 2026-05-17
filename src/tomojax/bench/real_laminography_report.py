@@ -70,23 +70,17 @@ def real_lamino_success_payload(
     records: list[dict[str, Any]],
 ) -> dict[str, Any]:
     completed = {
-        str(record.get("stage"))
-        for record in records
-        if str(record.get("status")) == "completed"
+        str(record.get("stage")) for record in records if str(record.get("status")) == "completed"
     }
     planned = {
-        str(record.get("stage"))
-        for record in records
-        if str(record.get("status")) == "planned"
+        str(record.get("stage")) for record in records if str(record.get("status")) == "planned"
     }
     failed_or_skipped = [
-        record
-        for record in records
-        if str(record.get("status")) in {"failed", "skipped"}
+        record for record in records if str(record.get("status")) in {"failed", "skipped"}
     ]
     final_loss = reconstruction["final"]["loss"]["last"]
     cor_loss = reconstruction["cor_only"]["loss"]["last"]
-    full_complete = FULL_REQUIRED_STAGES <= completed
+    full_complete = completed >= FULL_REQUIRED_STAGES
     full_improved = (
         full_complete
         and final_loss is not None
@@ -101,7 +95,7 @@ def real_lamino_success_payload(
         if full_complete
         else "v2_cor_only_partial"
     )
-    partial_complete = PARTIAL_REQUIRED_STAGES <= completed and cor_loss is not None
+    partial_complete = completed >= PARTIAL_REQUIRED_STAGES and cor_loss is not None
     validation_failed = bool(failed_or_skipped)
     passed = bool((full_improved if full_complete else partial_complete) and not validation_failed)
     reason = (
@@ -366,7 +360,9 @@ def validate_real_lamino_stage_output(
         failures.append(f"pose/setup params finite fraction is {params_fraction:.6g}")
     checkpoint_failures = real_lamino_checkpoint_validation_failures(stage_dir)
     failures.extend(checkpoint_failures)
-    failures.extend(real_lamino_stat_validation_failures(stats, require_data_loss=require_data_loss))
+    failures.extend(
+        real_lamino_stat_validation_failures(stats, require_data_loss=require_data_loss)
+    )
     artifact_failures = real_lamino_artifact_validation_failures(stage_dir)
     failures.extend(artifact_failures)
     return {
@@ -639,7 +635,9 @@ def _staged_reconstruction_comparison(root: Path) -> dict[str, Any]:
     }
 
 
-def _copy_staged_publication_images(root: Path, out_dir: Path, *, full_completed: bool) -> dict[str, str]:
+def _copy_staged_publication_images(
+    root: Path, out_dir: Path, *, full_completed: bool
+) -> dict[str, str]:
     pub_dir = out_dir / "publication"
     pub_dir.mkdir(parents=True, exist_ok=True)
     images = [
@@ -708,14 +706,10 @@ def _write_reference_regression_audit(
         and row["status"] == "loss_scale_mismatch"
     ]
     row_shape_failures = [
-        row
-        for row in rows
-        if row["status"] in {"missing_reference_row", "missing_current_row"}
+        row for row in rows if row["status"] in {"missing_reference_row", "missing_current_row"}
     ]
     contract = (
-        workflow.get("reference_regression_contract", {})
-        if isinstance(workflow, Mapping)
-        else {}
+        workflow.get("reference_regression_contract", {}) if isinstance(workflow, Mapping) else {}
     )
     payload = {
         "schema": "tomojax.real_lamino_reference_regression.v2",

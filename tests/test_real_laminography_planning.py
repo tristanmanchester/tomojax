@@ -71,7 +71,9 @@ def test_real_laminography_planning_validates_bin_factor_and_shapes() -> None:
             requested_bin_factor=1,
             smoke_shape=(4, 0, 64),
         )
-    with pytest.raises(argparse.ArgumentTypeError, match="projection shape dimensions must be positive"):
+    with pytest.raises(
+        argparse.ArgumentTypeError, match="projection shape dimensions must be positive"
+    ):
         parse_shape3("8x0x64")
     with pytest.raises(argparse.ArgumentTypeError, match="END must be >= START"):
         parse_real_lamino_z_range("6:2")
@@ -85,12 +87,8 @@ def test_real_laminography_planning_selects_final_candidates() -> None:
     ]
 
     assert select_real_lamino_final_candidates(candidates, policy="all") == candidates
-    assert select_real_lamino_final_candidates(candidates, policy="last-valid") == [
-        candidates[-1]
-    ]
-    assert select_real_lamino_final_candidates(candidates, policy="setup_only") == [
-        candidates[0]
-    ]
+    assert select_real_lamino_final_candidates(candidates, policy="last-valid") == [candidates[-1]]
+    assert select_real_lamino_final_candidates(candidates, policy="setup_only") == [candidates[0]]
 
     with pytest.raises(ValueError, match="final candidate policy"):
         select_real_lamino_final_candidates(candidates, policy="sharpest")

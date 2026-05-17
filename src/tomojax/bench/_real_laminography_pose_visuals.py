@@ -38,7 +38,11 @@ def _build_pose_geometry(
     dz = params["dz"]
     phi_deg = params["phi_deg"]
     nominal = radius * radial
-    corrected = nominal + correction_scale * dx[:, None] * radial + correction_scale * dz[:, None] * vertical
+    corrected = (
+        nominal
+        + correction_scale * dx[:, None] * radial
+        + correction_scale * dz[:, None] * vertical
+    )
 
     return {
         "view": view,
@@ -110,7 +114,9 @@ def _project(
     return projected
 
 
-def _draw_static_pose_png(geom: dict[str, np.ndarray], path: Path, *, yaw_deg: float, pitch_deg: float) -> None:
+def _draw_static_pose_png(
+    geom: dict[str, np.ndarray], path: Path, *, yaw_deg: float, pitch_deg: float
+) -> None:
     width, height = 1400, 960
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
@@ -121,8 +127,12 @@ def _draw_static_pose_png(geom: dict[str, np.ndarray], path: Path, *, yaw_deg: f
     extent = float(np.nanmax(np.linalg.norm(all_points[:, :2], axis=1)))
     z_extent = float(np.nanmax(np.abs(all_points[:, 2])))
     scale = min(width, height) * 0.36 / max(extent, z_extent, 1.0)
-    nominal_2d = _project(nominal, width=width, height=height, scale=scale, yaw_deg=yaw_deg, pitch_deg=pitch_deg)
-    corrected_2d = _project(corrected, width=width, height=height, scale=scale, yaw_deg=yaw_deg, pitch_deg=pitch_deg)
+    nominal_2d = _project(
+        nominal, width=width, height=height, scale=scale, yaw_deg=yaw_deg, pitch_deg=pitch_deg
+    )
+    corrected_2d = _project(
+        corrected, width=width, height=height, scale=scale, yaw_deg=yaw_deg, pitch_deg=pitch_deg
+    )
     colors = _color_map(phi_deg)
 
     draw.text((34, 24), "Per-projection pose correction in acquisition space", fill=(20, 20, 20))
@@ -131,13 +141,19 @@ def _draw_static_pose_png(geom: dict[str, np.ndarray], path: Path, *, yaw_deg: f
         f"Grey ring = nominal view orbit; colored points/arrows = corrected poses; color = phi; camera = yaw {yaw_deg:g}, pitch {pitch_deg:g}",
         fill=(80, 80, 80),
     )
-    draw.line([tuple(p) for p in nominal_2d] + [tuple(nominal_2d[0])], fill=(190, 190, 190), width=2)
+    draw.line(
+        [tuple(p) for p in nominal_2d] + [tuple(nominal_2d[0])], fill=(190, 190, 190), width=2
+    )
     for idx in range(0, nominal.shape[0], 8):
         draw.line([tuple(nominal_2d[idx]), tuple(corrected_2d[idx])], fill=(80, 80, 80), width=1)
     for idx, point in enumerate(corrected_2d):
         color = colors[idx]
         r = 4
-        draw.ellipse((point[0] - r, point[1] - r, point[0] + r, point[1] + r), fill=color, outline=(30, 30, 30))
+        draw.ellipse(
+            (point[0] - r, point[1] - r, point[0] + r, point[1] + r),
+            fill=color,
+            outline=(30, 30, 30),
+        )
 
     legend_x, legend_y = width - 270, 40
     draw.text((legend_x, legend_y), "phi_deg", fill=(20, 20, 20))
@@ -344,7 +360,9 @@ def render_tem_grid_pose_artifacts(
     pitch_deg: float = 46.0,
 ) -> dict[str, Any]:
     params = _read_pose_params(params_path)
-    geom = _build_pose_geometry(params, radius=float(radius), correction_scale=float(correction_scale))
+    geom = _build_pose_geometry(
+        params, radius=float(radius), correction_scale=float(correction_scale)
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     png_path = out_dir / "projection_pose_corrections_3d.png"
     html_path = out_dir / "projection_pose_corrections_3d.html"

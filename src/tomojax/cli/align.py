@@ -294,9 +294,7 @@ def _alignment_quality_argument(value: str) -> str:
     try:
         return normalize_alignment_profile(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "quality must be 'fast' or 'reference'"
-        ) from exc
+        raise argparse.ArgumentTypeError("quality must be 'fast' or 'reference'") from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915

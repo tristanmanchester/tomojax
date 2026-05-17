@@ -145,7 +145,7 @@ def _simulate(
     true_geometry = geometry_with_axis_state(nominal_geometry, grid, detector, true_state)
     true_det_grid = level_detector_grid(detector, state=true_state, factor=1)
     chunks = []
-    n_views = len(getattr(nominal_geometry, "thetas_deg"))
+    n_views = len(nominal_geometry.thetas_deg)
     for start in range(0, n_views, max(1, int(views_per_batch))):
         stop = min(start + max(1, int(views_per_batch)), n_views)
         chunk = [

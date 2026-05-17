@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 
 from tomojax.align.model.dof_specs import ActiveParameterView
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.model.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.optimizers import (
     ActiveLbfgsConfig,
     BoundTransform,

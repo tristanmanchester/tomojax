@@ -101,8 +101,7 @@ def test_product_docs_do_not_promote_evidence_runners_as_public_entrypoints() ->
         re.IGNORECASE,
     )
     leaks = {
-        str(path): leaky_phrases.findall(path.read_text(encoding="utf-8"))
-        for path in product_docs
+        str(path): leaky_phrases.findall(path.read_text(encoding="utf-8")) for path in product_docs
     }
 
     assert {path: matches for path, matches in leaks.items() if matches} == {}

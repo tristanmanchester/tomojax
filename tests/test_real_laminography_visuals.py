@@ -38,7 +38,9 @@ def test_real_lamino_visuals_load_crop_and_scale(tmp_path: Path) -> None:
     np.testing.assert_array_equal(loaded_npy, volume)
     np.testing.assert_array_equal(loaded_npz, volume)
     assert crop == (slice(6, 14), slice(2, 10))
-    assert rotated_crop[0].stop - rotated_crop[0].start == rotated_crop[1].stop - rotated_crop[1].start
+    assert (
+        rotated_crop[0].stop - rotated_crop[0].start == rotated_crop[1].stop - rotated_crop[1].start
+    )
     assert scaled.dtype == np.uint8
     assert scaled[0, 0] == 0
     assert scaled[1, 0] == 255
@@ -67,10 +69,7 @@ def test_real_lamino_visuals_grid_aligned_xy_respects_crop() -> None:
 def test_real_lamino_pose_visual_artifacts_write_manifest(tmp_path: Path) -> None:
     params_path = tmp_path / "params.csv"
     params_path.write_text(
-        "view,dx,dz,phi_deg\n"
-        "0,0.0,0.0,0.0\n"
-        "1,1.0,-0.5,0.1\n"
-        "2,-1.0,0.5,-0.1\n",
+        "view,dx,dz,phi_deg\n0,0.0,0.0,0.0\n1,1.0,-0.5,0.1\n2,-1.0,0.5,-0.1\n",
         encoding="utf-8",
     )
 

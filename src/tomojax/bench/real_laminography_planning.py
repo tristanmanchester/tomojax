@@ -257,8 +257,7 @@ def pose_polish_bounds(args: PoseBoundsArgs) -> str:
     dx_dz = pose_dx_dz_bounds(args)
     if str(args.pose_bounds_profile) == "wide":
         return (
-            "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
-            f"phi=-0.0872665:0.0872665,{dx_dz}"
+            f"alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,phi=-0.0872665:0.0872665,{dx_dz}"
         )
     return (
         "alpha=-0.00872665:0.00872665,beta=-0.00872665:0.00872665,"
@@ -297,9 +296,7 @@ def parse_real_lamino_z_range(text: str) -> tuple[int, int]:
         left, right = str(text).split(":", 1)
         z0, z1 = int(left), int(right)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"expected z range as START:END, got {text!r}"
-        ) from exc
+        raise argparse.ArgumentTypeError(f"expected z range as START:END, got {text!r}") from exc
     if z1 < z0:
         raise argparse.ArgumentTypeError(f"invalid z range {text!r}: END must be >= START")
     return z0, z1

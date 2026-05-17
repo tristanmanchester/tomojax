@@ -294,7 +294,7 @@ def build_article_full_run_result(
         "schedule_name": str(info.get("schedule_name", "")),
         "schedule_stages_json": json.dumps(result.executed_stages, sort_keys=True),
         "last_schedule_stage_name": str(
-            (result.executed_stages[-1].get("stage_name", "") if result.executed_stages else "")
+            result.executed_stages[-1].get("stage_name", "") if result.executed_stages else ""
         ),
         "gauge_status": str(
             (info.get("gauge_decision") or {}).get("status", "")
@@ -443,7 +443,7 @@ def build_article_nonfinite_run_result(
         "schedule_name": str(result.info.get("schedule_name", "")),
         "schedule_stages_json": json.dumps(result.executed_stages, sort_keys=True),
         "last_schedule_stage_name": str(
-            (result.executed_stages[-1].get("stage_name", "") if result.executed_stages else "")
+            result.executed_stages[-1].get("stage_name", "") if result.executed_stages else ""
         ),
         "expected_objective": scenario.expected_objective,
         "expected_optimizer": scenario.expected_optimizer,
