@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import sys
 from typing import TYPE_CHECKING
 
-from tomojax.cli.api import developer_command_names, product_command_names
+from tomojax.cli.api import product_command_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
@@ -53,9 +53,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911
         from tomojax.cli import simulate
 
         return _run_sysargv_cli(simulate.main, "tomojax simulate", tail)
-    if command == "dev":
-        return _run_dev_command(tail)
-
     parser = _build_parser()
     parser.error(f"unknown command {command!r}")
     return 2
@@ -80,86 +77,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "  tomojax preprocess raw.nxs corrected.nxs\n"
         "  tomojax recon corrected.nxs --out recon.nxs\n"
         "  tomojax align corrected.nxs --out aligned.nxs --mode cor\n"
-    )
-    return parser
-
-
-def _run_dev_command(argv: list[str]) -> int:  # noqa: PLR0911
-    if not argv or argv[0] in {"-h", "--help"}:
-        _dev_parser().print_help()
-        return 0
-
-    command, *tail = argv
-    if command == "loss-bench":
-        from tomojax.cli import loss_bench
-
-        return _run_sysargv_cli(loss_bench.main, "tomojax dev loss-bench", tail)
-    if command == "misalign":
-        from tomojax.cli import misalign
-
-        return _run_sysargv_cli(misalign.main, "tomojax dev misalign", tail)
-    if command == "align-auto":
-        from tomojax.cli import align_auto
-
-        return _run_positional_cli(align_auto.main, "tomojax dev align-auto", tail)
-    if command == "astra-parallel-bench":
-        from tomojax.bench import astra_parallel
-
-        return _run_sysargv_cli(astra_parallel.main, "tomojax dev astra-parallel-bench", tail)
-    if command == "benchmark-suite":
-        from tomojax.bench import benchmark_suite
-
-        return _run_sysargv_cli(benchmark_suite.main, "tomojax dev benchmark-suite", tail)
-    if command == "alignment-diagnostic-bench":
-        from tomojax.bench import alignment_smoke
-
-        return _run_sysargv_cli(
-            alignment_smoke.main, "tomojax dev alignment-diagnostic-bench", tail
-        )
-    if command == "pallas-sanity":
-        from tomojax.bench import pallas_sanity
-
-        return _run_sysargv_cli(pallas_sanity.main, "tomojax dev pallas-sanity", tail)
-    if command == "synthetic-benchmark-compare":
-        from tomojax.bench import synthetic_results
-
-        return _run_positional_cli(
-            synthetic_results.main,
-            "tomojax dev synthetic-benchmark-compare",
-            tail,
-        )
-    if command == "current-baseline-normalize":
-        from tomojax.bench import current_baseline
-
-        return _run_positional_cli(
-            current_baseline.main,
-            "tomojax dev current-baseline-normalize",
-            tail,
-        )
-    if command == "test-gpu":
-        from tomojax.cli.runtime_checks import test_gpu_main
-
-        return _run_sysargv_cli(test_gpu_main, "tomojax dev test-gpu", tail)
-    if command == "test-cpu":
-        from tomojax.cli.runtime_checks import test_cpu_main
-
-        return _run_sysargv_cli(test_cpu_main, "tomojax dev test-cpu", tail)
-
-    parser = _dev_parser()
-    parser.error(f"unknown dev command {command!r}")
-    return 2
-
-
-def _dev_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="tomojax dev",
-        description="Advanced verification and benchmark tools.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    _ = parser.add_argument(
-        "command",
-        nargs="?",
-        choices=developer_command_names(),
     )
     return parser
 

@@ -1,56 +1,26 @@
-# Synthetic Tomography Workflows
+# Synthetic Tomography Workflow
 
-The package-facing synthetic path is:
+The product-facing synthetic workflow is small and reproducible: generate a
+standard projection dataset with `tomojax simulate`, then reconstruct it with
+`tomojax recon`.
 
 ```bash
 uv run tomojax simulate \
   --out synthetic_scan.nxs \
-  --nx 128 --ny 128 --nz 128 \
-  --nu 128 --nv 128 \
-  --n-views 128 \
+  --nx 64 --ny 64 --nz 64 \
+  --nu 64 --nv 64 \
+  --n-views 64 \
   --phantom random_shapes
+
 uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
-The original `128^3` setup and pose gates are evidence-reproduction runs, not
-the normal user workflow. They remain useful for reproducing solver evidence
-and checking regressions.
+The equivalent public-Python path is kept in
+[`examples/simulate_and_reconstruct.py`](../examples/simulate_and_reconstruct.py).
+It imports only from package facades such as `tomojax.geometry`,
+`tomojax.forward`, and `tomojax.recon`.
 
-## Setup-Global
-
-```bash
-uv run tomojax dev align-auto \
-  --out-dir .artifacts/synthetic/setup_global_128 \
-  --synthetic-case setup-global \
-  --size 128 \
-  --views 16
-```
-
-This evidence case exercises detector center, detector roll, axis direction,
-and theta offset recovery for `synth128_setup_global_tomo`.
-
-## Pose-Random
-
-```bash
-uv run tomojax dev align-auto \
-  --out-dir .artifacts/synthetic/pose_random_128 \
-  --synthetic-case pose-random \
-  --size 128 \
-  --views 16
-```
-
-This evidence case exercises per-view dx/dz/phi/alpha/beta recovery for
-`synth128_pose_random_extreme`.
-
-## Artifacts
-
-Each run writes:
-
-- `benchmark_result.json`
-- `benchmark_report.md`
-- `final_geometry.json`
-- recovered reconstruction arrays,
-- verification and Schur checks.
-
-Current `128^3` evidence is in
-[`docs/benchmark_runs/2026-05-13-synthetic128-production-gates.md`](benchmark_runs/2026-05-13-synthetic128-production-gates.md).
+Historical synthetic gates that fixed the volume to truth, swept hard geometry
+cases, or generated article diagnostics were removed from the product spine and
+kept in the development archive. They are useful research evidence, but they are
+not part of the supported user workflow.

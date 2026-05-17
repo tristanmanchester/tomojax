@@ -26,7 +26,6 @@ def _normalize_command(cmd: Sequence[str]) -> list[str]:
 def run_command(cmd: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
     """Run a resolved command with shell disabled."""
     normalized = _normalize_command(cmd)
-    kwargs.setdefault("check", False)
     return subprocess.run(normalized, shell=False, **kwargs)  # noqa: PLW1510  # nosec B603
 
 

@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
 
 from ._model.dof_specs import ActiveParameterView, optimizer_step_stats
 from ._model.motion_models import (
@@ -17,6 +16,19 @@ from ._model.motion_models import (
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
+
+
+def _optax_module() -> Any:
+    """Import Optax only when an L-BFGS optimizer path is used."""
+    try:
+        import optax
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "Optax is required for alignment L-BFGS optimizers. "
+            "Install TomoJAX with its runtime dependencies or choose opt_method='gn' or 'gd'."
+        ) from exc
+    return optax
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -274,6 +286,7 @@ def _run_pose_lbfgs_optax_loop(  # noqa: PLR0912, PLR0915
     cfg: PoseLbfgsConfig,
     is_expected_failure: Callable[[Exception], bool],
 ) -> PoseLbfgsLoopResult:
+    optax = _optax_module()
     best_value = math.inf
     best_z: jnp.ndarray | None = None
     eval_count = 0
@@ -838,6 +851,7 @@ def run_active_lbfgs(  # noqa: PLR0915
         grad_u = jnp.where(jnp.isfinite(grad_u), grad_u, jnp.zeros_like(grad_u))
         return value, grad_u
 
+    optax = _optax_module()
     value_and_grad = _value_and_grad
     initial_value, initial_grad = value_and_grad(u)
     initial_loss = float(initial_value)

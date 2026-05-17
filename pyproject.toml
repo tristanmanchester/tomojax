@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "tomojax"
 version = "0.2.0"
-description = "TomoJAX — CT projector, reconstruction, and alignment (v2)"
+description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "GPL-3.0-only"
@@ -21,14 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bench = [
-    "astra-toolbox>=2.4.1,<3",
-    "matplotlib>=3.10.5,<4",
-    "nvidia-ml-py>=13.580.82,<14",
-    "psutil>=7.0.0,<8",
-    "pyyaml>=6.0.2,<7",
-    "scikit-image>=0.25.2,<0.26",
-]
 cpu = [
     "jax>=0.10,<0.11",
 ]
@@ -43,18 +35,15 @@ tomojax = "tomojax.cli.main:main"
 dev = [
     "basedpyright>=1.34,<2",
     "import-linter>=2,<3",
-    "matplotlib>=3.10.5,<4",
     "pre-commit>=4,<5",
-    "psutil>=7.0.0,<8",
     "pytest>=8,<9",
-    "pyyaml>=6.0.2,<7",
     "ruff>=0.11,<0.12",
 ]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["src", "tests"]
+src = ["src", "tests", "tools", "examples"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -64,45 +53,40 @@ line-ending = "lf"
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # import sorting
-    "UP",     # pyupgrade
-    "B",      # bugbear
-    "SIM",    # simplification
-    "C4",     # comprehensions
-    "PIE",    # misc cleanup
-    "RET",    # return statements
-    "ARG",    # unused arguments
-    "PTH",    # pathlib
-    "PL",     # pylint subset
-    "RUF",    # ruff-specific
-    "NPY",    # numpy
-    "PERF",   # performance
-    "PT",     # pytest style
-    "TID",    # tidy imports
-    "TC",     # type-checking imports
-    "ANN",    # annotations
-    "D",      # docstrings
-    "ERA",    # commented-out code
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "C4",
+    "PIE",
+    "RET",
+    "ARG",
+    "PTH",
+    "PL",
+    "RUF",
+    "NPY",
+    "PERF",
+    "PT",
+    "TID",
+    "TC",
+    "ANN",
+    "D",
 ]
-
 ignore = [
-    "ANN401",   # allow Any at explicit backend/plugin boundaries only
-    "D105",     # magic method docstrings are noise
-    "D107",     # __init__ docstrings are noise
-    "PLR0913",  # numerical kernels sometimes need many parameters
-    "PLR2004",  # numerical thresholds are often clearer inline
-    "TRY003",   # scientific error messages benefit from explicit text
+    "ANN401",
+    "D105",
+    "D107",
+    "PLR0913",
+    "PLR2004",
+    "TRY003",
     "EM101",
     "EM102",
+    "PLC0415",
 ]
-
 fixable = ["ALL"]
-unfixable = [
-    "ERA001",   # do not auto-delete commented code; force agent to decide
-]
 
 [tool.ruff.lint.isort]
 known-first-party = ["tomojax"]
@@ -122,51 +106,43 @@ ban-relative-imports = "parents"
     "ARG",
     "C408",
     "E501",
-    "E731",
-    "E741",
-    "PERF",
-    "PLR0915",
     "PLR2004",
     "PTH",
     "PT011",
-    "PT017",
     "PT018",
-    "RUF005",
-    "RUF012",
-    "RUF046",
     "TC",
-    "UP038",
 ]
-"benchmarks/**" = [
+"examples/**" = [
     "D",
-    "ANN",
-]
-"src/tomojax/bench/**" = [
-    "D",      # developer diagnostics, not production API docs
-    "ANN",    # benchmark callbacks often wrap JAX/ASTRA/Pallas callables
-    "PL",     # reporting/CLI runners are intentionally orchestration-heavy
-    "PERF",   # benchmark reporting clarity is preferred over micro-style rewrites
-    "E501",   # markdown table literals are easier to audit inline
-]
-"src/tomojax/backends/pallas/**" = [
-    "PLR0913",
+    "T201",
 ]
 "src/tomojax/**/_*.py" = [
+    "ANN001",
+    "ANN202",
     "D100",
     "D101",
     "D102",
     "D103",
     "D104",
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+    "TC",
 ]
 
 [tool.basedpyright]
 include = [
-    "src/tomojax/cli",
-    "src/tomojax/io",
     "src/tomojax/align/api.py",
-    "src/tomojax/bench/api.py",
-    "src/tomojax/calibration/api.py",
+    "src/tomojax/align/__init__.py",
+    "src/tomojax/backends/api.py",
+    "src/tomojax/cli",
+    "src/tomojax/core/api.py",
+    "src/tomojax/datasets/api.py",
+    "src/tomojax/forward/api.py",
     "src/tomojax/geometry/api.py",
+    "src/tomojax/io",
+    "src/tomojax/motion/api.py",
+    "src/tomojax/nuisance/api.py",
     "src/tomojax/recon/api.py",
 ]
 exclude = [
@@ -177,16 +153,6 @@ exclude = [
 ]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
-strict = [
-    "src/tomojax/cli",
-    "src/tomojax/io",
-    "src/tomojax/align/api.py",
-    "src/tomojax/bench/api.py",
-    "src/tomojax/calibration/api.py",
-    "src/tomojax/geometry/api.py",
-    "src/tomojax/recon/api.py",
-]
-
 reportMissingTypeStubs = "warning"
 reportUnknownMemberType = "warning"
 reportUnknownArgumentType = "warning"
@@ -203,12 +169,9 @@ addopts = [
     "--strict-config",
 ]
 markers = [
-    "unit: fast CPU-only tests",
     "surface: public API/CLI/import-boundary tests for the production feedback loop",
-    "integration: multi-module tests",
     "numerical: CPU numerical reconstruction/alignment tests that may compile JAX kernels",
     "gpu: requires GPU",
     "pallas: requires Pallas-capable backend",
     "slow: slow tests",
-    "benchmark: benchmark/regression tests",
 ]

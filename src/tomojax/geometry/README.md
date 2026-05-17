@@ -1,63 +1,25 @@
 # tomojax.geometry
 
-## Purpose
-
-`tomojax.geometry` owns public geometry metadata, v2 setup/pose state, gauge
+`tomojax.geometry` owns public geometry metadata, setup/pose state, gauge
 canonicalisation, calibration-derived detector/axis primitives, and detector
-field-of-view helpers that are shared by datasets, CLI entrypoints,
-reconstruction, and alignment.
+field-of-view helpers shared by datasets, CLI entrypoints, reconstruction, and
+alignment.
 
 ## Public API
 
-- Axis order constants: `INTERNAL_VOLUME_AXES`, `DISK_VOLUME_AXES`,
-  `VOLUME_AXES_ATTR`
-- Axis helpers: `axes_to_perm`, `transpose_volume`, `infer_disk_axes`,
-  `is_shape_xyz`, `is_shape_zyx`
+- Axis order constants and helpers.
 - Concrete geometry metadata: `Grid`, `Detector`, `Geometry`,
-  `ParallelGeometry`, `LaminographyGeometry`, `RotationAxisGeometry`,
-  `normalize_axis_unit`, `stack_view_poses`
-- FOV helpers: `RoiInfo`, `compute_roi`, `grid_from_detector_fov`,
-  `grid_from_detector_fov_cube`, `grid_from_detector_fov_slices`,
-  `cylindrical_mask_xy`
+  `ParallelGeometry`, `LaminographyGeometry`, and `RotationAxisGeometry`.
+- FOV helpers such as `compute_roi`, `grid_from_detector_fov`, and
+  `cylindrical_mask_xy`.
 - State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
-  `AcquisitionParameters`, `GeometryState`
-- Calibration state and materialisation helpers: `CalibrationState`,
-  `CalibrationVariable`, `DetectorPixelScale`, `DetectorPixelValue`,
-  `detector_grid_from_calibration`,
-  `detector_grid_from_geometry_inputs`, `axis_pose_stack`,
-  `axis_unit_from_rotations`, `nominal_axis_unit_from_inputs`,
-  `build_calibrated_geometry_metadata_patch`
-- Gauge helpers: `canonicalize_geometry_gauges`, `CanonicalizedGeometry`,
-  `GaugeReport`, `GaugeTransfer`
-- Artifact helpers: `geometry_state_to_dict`, `geometry_state_from_dict`,
-  `write_geometry_json`, `read_geometry_json`, `write_pose_params_csv`,
-  `read_pose_params_csv`, `write_pose_decomposition_csv`
+  `AcquisitionParameters`, and `GeometryState`.
+- Calibration/gauge helpers for detector grids, axis state, and calibrated
+  metadata patches.
+- JSON/CSV artifact helpers for geometry and pose state.
 
-## Dependencies
+## Dependency policy
 
-This module currently depends on `tomojax.core.geometry` for the existing
-concrete geometry metadata and owns the detector-grid, axis-direction, and
-calibration metadata helpers used by production modules. It must not depend on
-alignment, reconstruction, datasets, or CLI modules.
-
-## Invariants
-
-- Public imports go through `tomojax.geometry`, not private `_axes` or `_fov`
-  modules.
-- Product CLI and benchmark surfaces import concrete geometry types through
-  `tomojax.geometry`, not through `tomojax.core.geometry`.
-- Production modules import detector-grid, axis-direction, and calibration
-  metadata helpers through `tomojax.geometry`.
-- Axis helpers preserve NumPy/JAX array type where practical.
-- FOV helpers keep the centered-origin grid convention used by existing
-  reconstruction tests.
-- Gauge canonicalisation transfers mean residual pose components into setup
-  parameters while preserving realised setup-plus-pose channels.
-- Geometry JSON payloads include a `schema_version`, acquisition metadata, and
-  setup parameter metadata. Pose arrays are carried by CSV artifacts.
-
-## Tests
-
-Covered by `tests/test_axes_io.py`, `tests/test_regression_geometry_io.py`,
-`tests/test_issue_fix_pr.py`, `tests/test_geometry_gauges.py`,
-`tests/test_geometry_serialization.py`, and CLI geometry-build tests.
+Product code imports geometry through `tomojax.geometry`. Private geometry
+implementation files and `tomojax.core.geometry` remain implementation details
+except where an owning package deliberately wraps them.

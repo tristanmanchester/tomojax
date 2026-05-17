@@ -12,9 +12,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-
 ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
-DEFAULT_SCAN_PATHS = [Path("bench"), Path("scripts"), Path("src/tomojax"), Path("tests")]
+DEFAULT_SCAN_PATHS = [Path("src/tomojax"), Path("tests"), Path("examples")]
 ALIGNMENT_FACADE_REASON = "nested alignment namespace must be reached through tomojax.align.api"
 LEGACY_ALIGN_NAMESPACES = (
     "tomojax.align._geometry",
@@ -25,37 +24,22 @@ LEGACY_ALIGN_NAMESPACES = (
     "tomojax.align.model",
     "tomojax.align.objectives",
     "tomojax.align.pipeline",
-    "tomojax.align.verification",
 )
 LEGACY_PUBLIC_SURFACE_RULES = (
     (
         "tomojax.data",
-        "legacy data namespace must be reached through tomojax.io or tomojax.datasets",
+        "removed data namespace must be reached through tomojax.io or tomojax.datasets",
     ),
     (
-        "tomojax.calibration",
-        "legacy calibration namespace must be reached through tomojax.geometry",
+        "tomojax._data",
+        "private data implementation must be reached through tomojax.io or tomojax.datasets",
     ),
     (
         "tomojax.core.geometry",
         "core geometry namespace must be reached through tomojax.geometry",
     ),
 )
-ALLOWED_PRODUCT_SURFACE_IMPORTS = {
-    # Current CLI alignment sidecar adapters. Keep these narrow until the
-    # public alignment facade grows an owned export path.
-    ("tomojax.cli.align", "tomojax.align.io.checkpoint"),
-    ("tomojax.cli.align", "tomojax.align.io.params_export"),
-    # The top-level dispatcher owns the tomojax dev benchmark bridge.
-    ("tomojax.cli.main", "tomojax.bench"),
-    # Developer CLI commands may depend on benchmark implementations; product
-    # CLI modules may not.
-    ("tomojax.cli.align_auto", "tomojax.bench"),
-    ("tomojax.cli.loss_bench", "tomojax.bench.loss_experiment"),
-    # Current benchmark diagnostic bridge while verification ownership is
-    # productionized.
-    ("tomojax.bench.alignment_smoke", "tomojax.align.verification"),
-}
+ALLOWED_PRODUCT_SURFACE_IMPORTS: set[tuple[str, str]] = set()
 
 
 @dataclass(frozen=True)
@@ -70,7 +54,10 @@ class Violation:
 
     def format(self, root: Path) -> str:
         """Format a violation for terminal output."""
-        relative_path = self.path.relative_to(root)
+        try:
+            relative_path = self.path.relative_to(root)
+        except ValueError:
+            relative_path = self.path
         return (
             f"{relative_path}:{self.line}: {self.reason}: "
             f"{self.importing_module} imports {self.imported_module}"
@@ -82,9 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Reject imports of tomojax.<owner>._private modules from outside tomojax.<owner>. "
-            "Also reject old/transitional TomoJAX namespaces from product-facing scripts, "
-            "benchmarks, and CLI modules. "
-            "Tests and benchmark diagnostics may allow a specific white-box import with "
+            "Also reject removed or private TomoJAX namespaces from product-facing modules. "
+            "Tests may allow a specific white-box import with "
             f"'# {ALLOW_PRIVATE_MARKER}'."
         )
     )
@@ -105,10 +91,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(violation.format(root), file=sys.stderr)
         print(
             "\nPrivate implementation modules must be imported through their owner's public API. "
-            "For a deliberate white-box test or benchmark diagnostic, keep the import local "
-            "and add "
-            f"'# {ALLOW_PRIVATE_MARKER}' "
-            "on or directly above the import line.",
+            "For a deliberate white-box test, keep the import local and add "
+            f"'# {ALLOW_PRIVATE_MARKER}' on or directly above the import line.",
             file=sys.stderr,
         )
         return 1
@@ -157,7 +141,7 @@ def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
                             line=node.lineno,
                             imported_module=imported_module,
                             importing_module=importing_module,
-                            reason=(f"private import crosses tomojax.{owner} boundary"),
+                            reason=f"private import crosses tomojax.{owner} boundary",
                         )
                     )
                     continue
@@ -175,7 +159,11 @@ def iter_python_files(paths: Iterable[Path]) -> Iterable[Path]:
 
 def module_name_for_path(path: Path, root: Path) -> str:
     """Return a dotted module name for source and test files."""
-    relative_path = path.relative_to(root)
+    try:
+        relative_path = path.relative_to(root)
+    except ValueError:
+        prefix = "tests" if path.name.startswith("test_") else "external"
+        return f"{prefix}.{path.with_suffix('').name}"
     if relative_path.parts[:2] == ("src", "tomojax"):
         module_parts = relative_path.with_suffix("").parts[1:]
     else:
@@ -221,7 +209,7 @@ def module_is_inside_owner(module: str, owner: str) -> bool:
 
 
 def legacy_public_surface_reason(imported_module: str, importing_module: str) -> str | None:
-    """Return a violation reason for old namespaces leaking into public surfaces."""
+    """Return a violation reason for old namespaces leaking into product surfaces."""
     if not is_product_surface_module(importing_module):
         return None
     for namespace, reason in LEGACY_PUBLIC_SURFACE_RULES:
@@ -230,7 +218,7 @@ def legacy_public_surface_reason(imported_module: str, importing_module: str) ->
     if importing_module.startswith("tomojax.cli.") and module_matches_namespace(
         imported_module, "tomojax.bench"
     ):
-        return "production CLI modules must not import developer benchmark helpers"
+        return "production CLI modules must not import benchmark helpers"
     for legacy_align_namespace in LEGACY_ALIGN_NAMESPACES:
         if module_matches_namespace(imported_module, legacy_align_namespace):
             return ALIGNMENT_FACADE_REASON
@@ -243,33 +231,25 @@ def module_matches_namespace(module: str, namespace: str) -> bool:
 
 
 def is_product_surface_module(module: str) -> bool:
-    """Return whether a module belongs to the product/developer entrypoint surface."""
-    return module.startswith(("bench.", "scripts.", "tomojax.bench.", "tomojax.cli."))
+    """Return whether a module belongs to user-facing code, tests, or examples."""
+    return module.startswith(("tomojax.cli.", "tests.", "examples."))
 
 
 def product_surface_import_is_allowed(importing_module: str, imported_module: str) -> bool:
     """Return whether a product-surface import has a narrow transitional exception."""
     return any(
         importing_module == allowed_importer
-        and (
-            imported_module == allowed_import
-            or imported_module.startswith(f"{allowed_import}.")
-        )
+        and (imported_module == allowed_import or imported_module.startswith(f"{allowed_import}."))
         for allowed_importer, allowed_import in ALLOWED_PRODUCT_SURFACE_IMPORTS
     )
 
 
-def line_has_allowed_test_marker(
-    lines: Sequence[str],
-    line_number: int,
-    importing_module: str,
-) -> bool:
-    """Return whether an allowed white-box import has an explicit exception."""
-    if not importing_module.startswith(("bench.", "tests.", "tomojax.bench.")):
+def line_has_allowed_test_marker(lines: list[str], lineno: int, importing_module: str) -> bool:
+    """Return whether an import line has the explicit private-import allow marker."""
+    if not importing_module.startswith("tests."):
         return False
-    current_line = lines[line_number - 1]
-    previous_line = lines[line_number - 2] if line_number > 1 else ""
-    return ALLOW_PRIVATE_MARKER in current_line or ALLOW_PRIVATE_MARKER in previous_line
+    candidates = [lineno - 1, lineno - 2]
+    return any(0 <= idx < len(lines) and ALLOW_PRIVATE_MARKER in lines[idx] for idx in candidates)
 
 
 if __name__ == "__main__":

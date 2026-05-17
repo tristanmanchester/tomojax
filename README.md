@@ -1,88 +1,46 @@
-# TomoJAX v2 Rewrite
+# TomoJAX
 
-This branch is reimagining TomoJAX as a fast, differentiable tomography and
-laminography alignment/reconstruction toolbox.
+TomoJAX is a compact tomography and laminography toolbox for projection IO, preprocessing, reconstruction, and alignment.
 
-The package-facing CLI is the grouped `tomojax` command:
+The supported command-line surface is the grouped `tomojax` command:
 
 ```bash
-uv run tomojax inspect scan.nxs
-uv run tomojax ingest ./projections --angles angles.csv --out scan.nxs
-uv run tomojax preprocess raw.nxs corrected.nxs
-uv run tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv
-uv run tomojax recon corrected.nxs --out recon.nxs
-uv run tomojax align corrected.nxs --out aligned.nxs --mode cor
+tomojax inspect scan.nxs
+tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs
+tomojax preprocess raw.nxs corrected.nxs
+tomojax recon corrected.nxs --out recon.nxs
+tomojax align corrected.nxs --out aligned.nxs --mode cor
+tomojax simulate --out synthetic.nxs --nx 64 --ny 64 --nz 64 --nu 64 --nv 64 --n-views 64
 ```
 
-`tomojax preprocess` writes reconstruction-ready absorption/log-attenuation
-projections by default. Use `--transmission` only when you intentionally need
-normalized transmission output.
+`tomojax preprocess` writes reconstruction-ready absorption/log-attenuation projections by default. Use `--transmission` only when you intentionally need normalized transmission output.
 
-The installed package exposes a single `tomojax` console script. Developer
-diagnostics and benchmark probes live under `tomojax dev ...`.
+## Public package surface
 
-The canonical v2 design docs live in [`docs/tomojax-v2/`](docs/tomojax-v2/):
+The product-facing imports are:
 
-- [`01_high_level_architecture.md`](docs/tomojax-v2/01_high_level_architecture.md)
-- [`02_loss_and_optimiser_spec.md`](docs/tomojax-v2/02_loss_and_optimiser_spec.md)
-- [`03_repo_layout.md`](docs/tomojax-v2/03_repo_layout.md)
-- [`04_phased_implementation_plan.md`](docs/tomojax-v2/04_phased_implementation_plan.md)
-- [`05_synthetic_128_benchmark_suite.md`](docs/tomojax-v2/05_synthetic_128_benchmark_suite.md)
-- [`06_verification_and_artifact_contract.md`](docs/tomojax-v2/06_verification_and_artifact_contract.md)
-- [`07_synthetic_generator_pseudocode.md`](docs/tomojax-v2/07_synthetic_generator_pseudocode.md)
+- `tomojax.io` for projection payloads, NXtomo IO, validation, preprocessing, and quicklooks.
+- `tomojax.geometry` for geometry metadata, axes, calibration state, and field-of-view helpers.
+- `tomojax.forward` for differentiable forward projection and residual helpers.
+- `tomojax.recon` for FBP, FISTA-TV, and SPDHG-TV reconstruction.
+- `tomojax.align` for `AlignConfig`, `align`, and `align_multires`.
+- `tomojax.datasets` for deterministic synthetic datasets.
 
-Current user-facing workflow docs:
+Historical benchmark harnesses, development logs, v1-parity gates, diagnostic runners, article artifact builders, and one-off scripts have been removed from the publishable tree. The retained tests prove the supported public API, CLI routing, import boundaries, IO/preprocessing workflows, deterministic simulation contracts, and tiny numerical reconstruction workflows.
+
+## Workflow docs
 
 - [`docs/quickstart.md`](docs/quickstart.md)
-- [`docs/real-laminography.md`](docs/real-laminography.md)
 - [`docs/synthetic-tomography.md`](docs/synthetic-tomography.md)
+- [`docs/real-laminography.md`](docs/real-laminography.md)
 - [`docs/support-matrix.md`](docs/support-matrix.md)
 - [`docs/known-limitations.md`](docs/known-limitations.md)
-- [`docs/benchmark_runs/2026-05-13-production-readiness.md`](docs/benchmark_runs/2026-05-13-production-readiness.md)
 
-This is not a backwards-compatible refactor. The v2 work should prefer deep
-modules, small public APIs, typed boundaries, executable architecture checks,
-and deletion of obsolete staged-alignment compatibility code.
-
-## Agent Workflow
-
-Read [`AGENTS.md`](AGENTS.md) before making changes. Use
-[`docs/tomojax-v2/04_phased_implementation_plan.md`](docs/tomojax-v2/04_phased_implementation_plan.md)
-as the canonical phased plan and keep [`.agent/PLANS.md`](.agent/PLANS.md)
-updated for the active milestone.
-
-Record milestone decisions, validation commands, known failures, and design
-deviations in [`docs/implementation_log.md`](docs/implementation_log.md).
-
-## Guardrails
-
-The branch has guardrails for the rewrite:
-
-- Ruff formatting and linting
-- basedpyright type checking
-- import-linter dependency contracts
-- `tools/check_public_imports.py` for private-module boundary checks
-- pre-commit configuration
-- `just` command recipes
-
-Useful commands:
+## Development checks
 
 ```bash
-just --list
-just production-surface-check
-just test
-just test-numerical
-just test-all-cpu
-just imports
-just typecheck
+just surface-check
 just check
 ```
 
-`just check` is the bounded product/architecture feedback loop: formatting,
-linting, type checking, import-boundary checks, and the non-numerical CPU test
-set. Numerical reconstruction/alignment coverage is intentionally separate:
-use `just test-numerical` for CPU JAX/FISTA/Schur coverage and
-`just test-all-cpu` for the broad non-slow CPU suite. Do not weaken the
-guardrails to make retained internal implementation code pass. Instead, remove
-or migrate retained code into the v2 deep module architecture and record
-temporary failures in `docs/implementation_log.md`.
+`just surface-check` is the bounded product feedback loop. It checks formatting/lint configuration, private-import guardrails, and the retained product tests.

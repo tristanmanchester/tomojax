@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Run reconstruction workflows from the public TomoJAX CLI."""
 
 # ruff: noqa: E402

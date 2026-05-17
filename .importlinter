@@ -6,12 +6,10 @@ name = Layer direction
 type = layers
 layers =
     tomojax.cli
-    tomojax.bench
     tomojax.align
-    tomojax.verify
     tomojax.datasets
     tomojax.io
-    tomojax.data
+    tomojax._data
     tomojax.recon
     tomojax.forward
     tomojax.backends
@@ -19,44 +17,6 @@ layers =
     tomojax.motion
     tomojax.geometry
     tomojax.core
-
-[importlinter:contract:production-no-data]
-name = Production modules avoid lower-level data package
-type = forbidden
-allow_indirect_imports = True
-source_modules =
-    tomojax.align
-    tomojax.backends
-    tomojax.cli
-    tomojax.core
-    tomojax.forward
-    tomojax.geometry
-    tomojax.motion
-    tomojax.nuisance
-    tomojax.recon
-    tomojax.verify
-forbidden_modules =
-    tomojax.data
-
-[importlinter:contract:production-no-bench]
-name = Production modules do not depend on developer benchmark helpers
-type = forbidden
-allow_indirect_imports = True
-source_modules =
-    tomojax.align
-    tomojax.backends
-    tomojax.core
-    tomojax.data
-    tomojax.datasets
-    tomojax.forward
-    tomojax.geometry
-    tomojax.io
-    tomojax.motion
-    tomojax.nuisance
-    tomojax.recon
-    tomojax.verify
-forbidden_modules =
-    tomojax.bench
 
 [importlinter:contract:cli-uses-align-facade]
 name = CLI uses alignment facade instead of nested alignment internals
@@ -73,10 +33,6 @@ forbidden_modules =
     tomojax.align.model
     tomojax.align.objectives
     tomojax.align.pipeline
-    tomojax.align.verification
-ignore_imports =
-    tomojax.cli.align -> tomojax.align.io.checkpoint
-    tomojax.cli.align -> tomojax.align.io.params_export
 
 [importlinter:contract:cli-no-core-geometry]
 name = CLI uses geometry facade instead of core geometry internals
@@ -86,21 +42,3 @@ source_modules =
     tomojax.cli
 forbidden_modules =
     tomojax.core.geometry
-
-[importlinter:contract:cli-no-bench-except-dev-dispatch]
-name = CLI modules do not import benchmark helpers outside dev dispatch
-type = forbidden
-allow_indirect_imports = True
-source_modules =
-    tomojax.cli
-forbidden_modules =
-    tomojax.bench
-ignore_imports =
-    tomojax.cli.align_auto -> tomojax.bench
-    tomojax.cli.loss_bench -> tomojax.bench.loss_experiment
-    tomojax.cli.main -> tomojax.bench.alignment_smoke
-    tomojax.cli.main -> tomojax.bench.astra_parallel
-    tomojax.cli.main -> tomojax.bench.benchmark_suite
-    tomojax.cli.main -> tomojax.bench.current_baseline
-    tomojax.cli.main -> tomojax.bench.pallas_sanity
-    tomojax.cli.main -> tomojax.bench.synthetic_results

@@ -1,76 +1,31 @@
 # tomojax.datasets
 
-## Purpose
-
-`tomojax.datasets` owns deterministic synthetic benchmark specifications,
-phantom generation, dataset manifests, masks, and recovery tolerances.
-
-The current implementation emits deterministic small synthetic artifacts for
-fast development checks and can configure 128^3 benchmark artifacts from the v2
-manifest. Its projection writer is a CPU reference projector used for synthetic
-data generation, while production forward modelling belongs to
-`tomojax.forward`.
+`tomojax.datasets` owns deterministic synthetic generation for the supported
+`tomojax simulate` workflow. It exposes the simulation config/results,
+validated simulation artefact settings, simple procedural phantoms, and sidecar
+loaders used by examples and tests.
 
 ## Public API
 
-- `SyntheticArtifactPaths`
-- `SyntheticArrayMetadata`
-- `SyntheticDatasetConsistency`
-- `SyntheticDatasetSidecars`
-- `SyntheticDatasetSpec`
 - `SimConfig`
 - `SimMetadata`
 - `SimulatedData`
 - `SimulationArtefacts`
 - `apply_simulation_artefacts`
-- `blobs`
-- `cube`
-- `generate_synthetic_dataset`
-- `lamino_disk`
-- `load_synthetic_dataset_sidecars`
-- `load_synthetic128_specs`
-- `make_benchmark_phantom`
 - `make_phantom`
-- `random_cubes_spheres`
-- `rotated_centered_cube`
-- `shepp_logan_3d`
 - `simulate`
 - `simulate_to_file`
-- `sphere`
-- `synthetic128_spec`
 - `validate_simulation_artefacts`
+- simple phantom helpers such as `shepp_logan_3d`, `cube`, `sphere`, `blobs`,
+  `random_cubes_spheres`, and `lamino_disk`
+- sidecar metadata loaders for generated datasets
 
-## Dependencies
+Historical synthetic benchmark manifests, synthetic128 spec loaders, recovery
+criteria tables, and article artifact writers are not part of the product
+facade. They were moved to the development archive.
 
-Allowed future dependencies:
+## Dependency policy
 
-- `tomojax.core`
-- `tomojax.geometry`
-- `tomojax.motion`
-- `tomojax.nuisance`
-- `tomojax.forward`
-- `tomojax.io`
-
-Retained implementation dependencies:
-
-- retained `tomojax.data` simulation helpers behind the
-  `tomojax.datasets` public facade
-
-Forbidden dependencies:
-
-- private implementation files from other deep modules
-- old staged alignment engines
-- nondeterministic generation paths
-
-## Invariants
-
-- Every synthetic recovery path must be deterministic from a seed.
-- Dataset manifests must include true and corrupted geometry metadata.
-- Generated data should be written outside the source tree unless explicitly
-  requested.
-
-## Tests
-
-- `tests/test_v2_module_skeleton.py` verifies this facade exists and imports.
-- `tests/test_synthetic_datasets.py` verifies manifest loading, deterministic
-  phantom generation, and artifact emission.
+This package may depend on low-level retained data-generation helpers and public
+geometry/forward/IO surfaces. Product code should import from
+`tomojax.datasets`, not from historical benchmark modules.

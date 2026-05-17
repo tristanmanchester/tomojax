@@ -1,4 +1,4 @@
-"""Dataset and benchmark fixture public facade."""
+"""Deterministic synthetic dataset public facade."""
 
 from __future__ import annotations
 
@@ -9,18 +9,13 @@ from tomojax.datasets.api import (
     SimulatedData,
     SimulationArtefacts,
     SyntheticArrayMetadata,
-    SyntheticArtifactPaths,
     SyntheticDatasetConsistency,
     SyntheticDatasetSidecars,
-    SyntheticDatasetSpec,
     apply_simulation_artefacts,
     blobs,
     cube,
-    generate_synthetic_dataset,
     lamino_disk,
-    load_synthetic128_specs,
     load_synthetic_dataset_sidecars,
-    make_benchmark_phantom,
     make_phantom,
     random_cubes_spheres,
     rotated_centered_cube,
@@ -28,7 +23,6 @@ from tomojax.datasets.api import (
     simulate,
     simulate_to_file,
     sphere,
-    synthetic128_spec,
     validate_simulation_artefacts,
 )
 
@@ -39,18 +33,13 @@ __all__ = [
     "SimulatedData",
     "SimulationArtefacts",
     "SyntheticArrayMetadata",
-    "SyntheticArtifactPaths",
     "SyntheticDatasetConsistency",
     "SyntheticDatasetSidecars",
-    "SyntheticDatasetSpec",
     "apply_simulation_artefacts",
     "blobs",
     "cube",
-    "generate_synthetic_dataset",
     "lamino_disk",
-    "load_synthetic128_specs",
     "load_synthetic_dataset_sidecars",
-    "make_benchmark_phantom",
     "make_phantom",
     "random_cubes_spheres",
     "rotated_centered_cube",
@@ -58,6 +47,5 @@ __all__ = [
     "simulate",
     "simulate_to_file",
     "sphere",
-    "synthetic128_spec",
     "validate_simulation_artefacts",
 ]

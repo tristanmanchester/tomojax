@@ -1,44 +1,34 @@
 # TomoJAX v2 Quickstart
 
-TomoJAX v2 is a tomography and laminography reconstruction package with one
-public CLI: `tomojax`. The normal path is to inspect data, preprocess it when
-needed, reconstruct, and optionally run alignment through the package CLI. The
-current support matrix is in [`support-matrix.md`](support-matrix.md).
+TomoJAX v2 is published around one public CLI, `tomojax`, and public Python
+facades under `tomojax.*`. The normal workflow is to inspect data, optionally
+preprocess or ingest it into the standard dataset contract, reconstruct, and run
+alignment only through the supported CLI/profile path.
 
-## GPU Setup
-
-The JAX CUDA wheel on this laptop needs the bundled NVIDIA libraries on
-`LD_LIBRARY_PATH`.
+## Install and check the CLI
 
 ```bash
-CUDA_LIBS=$(python3 - <<'PY'
-from pathlib import Path
-base = Path('.venv/lib/python3.12/site-packages/nvidia')
-print(':'.join(str(p / 'lib') for p in base.iterdir() if (p / 'lib').is_dir()))
-PY
-)
-export LD_LIBRARY_PATH="$CUDA_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export JAX_PLATFORM_NAME=cuda
-export JAX_PLATFORMS=cuda,cpu
-export XLA_PYTHON_CLIENT_PREALLOCATE=false
+uv sync --extra cpu --dev
+uv run tomojax --help
 ```
 
-Verify the selected backend from Python:
+For CUDA hosts, install the CUDA extra instead of the CPU extra and ensure JAX
+can see the selected device:
 
 ```bash
+uv sync --extra cuda12 --dev
 uv run python - <<'PY'
 import jax
 print(jax.default_backend())
 PY
 ```
 
-## Real Laminography
+## Inspect, validate, and preprocess data
 
 ```bash
 uv run tomojax inspect /path/to/scan.nxs
-uv run tomojax align /path/to/scan.nxs \
-  --out runs/real_lamino_aligned.nxs \
-  --mode cor
+uv run tomojax validate /path/to/scan.nxs
+uv run tomojax preprocess raw.nxs corrected.nxs
 ```
 
 For TIFF projection stacks, ingest into the standard dataset contract first:
@@ -51,20 +41,36 @@ uv run tomojax ingest ./projections \
   --out scan.nxs
 ```
 
-## Synthetic Tomography
+## Reconstruct
+
+```bash
+uv run tomojax recon corrected.nxs --out recon.nxs
+```
+
+## Align and reconstruct
+
+```bash
+uv run tomojax align corrected.nxs \
+  --out aligned.nxs \
+  --mode cor
+```
+
+Alignment is intentionally routed through the product command and its public
+profile/schedule API. Removed developer gates, article runners, and benchmark
+harnesses are not part of the shipped quickstart.
+
+## Synthetic smoke workflow
 
 ```bash
 uv run tomojax simulate \
   --out synthetic_scan.nxs \
-  --nx 128 --ny 128 --nz 128 \
-  --nu 128 --nv 128 \
-  --n-views 128 \
+  --nx 64 --ny 64 --nz 64 \
+  --nu 64 --nv 64 \
+  --n-views 64 \
   --phantom random_shapes
 
 uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
-The original synthetic alignment evidence commands are kept out of the normal
-quickstart. See the current production-readiness report for what passes, what
-fails, and which run artifacts back those claims:
-[`docs/benchmark_runs/2026-05-13-production-readiness.md`](benchmark_runs/2026-05-13-production-readiness.md).
+For a minimal public-Python example, see
+[`examples/simulate_and_reconstruct.py`](../examples/simulate_and_reconstruct.py).

@@ -57,7 +57,7 @@ def _host_available_memory_bytes() -> int | None:
         return None
 
 
-def _free_bytes_from_memory_info(info: object) -> int | None:  # noqa: PLR0911
+def _free_bytes_from_memory_info(info: object) -> int | None:
     """Extract free bytes from JAX/XLA memory-info shapes."""
     if isinstance(info, Mapping):
         mapping = cast("Mapping[str, object]", info)

@@ -418,7 +418,7 @@ def schedule_preset(
     raise ValueError(f"Unknown alignment schedule preset {name!r}")
 
 
-def resolve_alignment_schedule(  # noqa: PLR0912
+def resolve_alignment_schedule(
     *,
     schedule: str | AlignmentSchedule | None = None,
     optimise_dofs: str | Iterable[str] | None = None,

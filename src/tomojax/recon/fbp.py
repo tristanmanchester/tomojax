@@ -395,6 +395,7 @@ def _cached_parallel_fbp_z_integer_pallas_call(
 
 
 def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
+    """Return whether the detector rows align with z-slices for direct Pallas FBP."""
     tol = 1e-5
     origin_z = float(_grid_volume_origin(grid)[2])
     first = (origin_z - float(detector.det_center[1])) / float(detector.dv)
@@ -411,6 +412,7 @@ def run_parallel_fbp_direct_pallas(
     detector: Detector,
     filter_name: str,
 ) -> jnp.ndarray:
+    """Run the direct z-parallel Pallas FBP path for integer-aligned detector rows."""
     n_views, nv, nu = map(int, proj.shape)
     rows = proj.reshape((n_views * nv, nu))
     rows_f = _fft_filter_rows_jit(rows, du=float(detector.du), filter_name=filter_name)

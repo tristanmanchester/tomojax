@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax.core.geometry import Detector, Geometry, Grid
-from tomojax.data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta
-from tomojax.data.io_hdf5 import (
+from tomojax._data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta
+from tomojax._data.io_hdf5 import (
     LoadedNXTomo,
     NXTomoMetadata,
     convert as _convert_dataset,
@@ -22,6 +21,7 @@ from tomojax.data.io_hdf5 import (
     save_nxtomo,
     validate_nxtomo,
 )
+from tomojax.core.geometry import Detector, Geometry, Grid
 
 __all__ = [
     "LoadedNXTomo",

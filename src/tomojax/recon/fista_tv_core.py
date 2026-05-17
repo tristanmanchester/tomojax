@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -15,6 +14,8 @@ from tomojax.core.projector import forward_project_view_T, sum_backproject_views
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tomojax.core.geometry import Detector, Grid
     from tomojax.recon.types import Regulariser
 
@@ -159,7 +160,7 @@ def fista_tv_core_arrays(
         carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
         k: jnp.ndarray,
     ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
-        x_prev, z_prev, t_prev, loss_arr, last_data_loss = carry
+        x_prev, z_prev, t_prev, loss_arr, _last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
         if cfg.regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta))

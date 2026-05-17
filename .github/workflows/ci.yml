@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  product-spine:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,13 +19,18 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
-            uv.lock
 
       - name: Sync dependencies
-        run: uv sync --extra cpu --extra bench --group dev
+        run: uv sync --extra cpu --dev
+
+      - name: Format check
+        run: uv run ruff format --check src tests tools examples
 
       - name: Lint
-        run: uv run ruff check src/tomojax tests
+        run: uv run ruff check src tests tools examples
 
-      - name: Test
+      - name: Import boundaries
+        run: uv run python tools/check_public_imports.py
+
+      - name: Tests
         run: uv run pytest -q tests

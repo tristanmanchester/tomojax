@@ -1,30 +1,7 @@
-"""Developer and advanced API for alignment orchestration.
-
-Production callers should prefer the small package-root facade
-``tomojax.align``. This module is intentionally broader: it collects typed
-schedule, loss, profile, geometry-state, objective, and solver helpers used by
-the CLI, benchmarks, focused tests, and advanced integrations while the align
-module is being productionized into deeper owners.
-"""
+"""Public alignment API for configuration, schedules, losses, and execution."""
 
 from __future__ import annotations
 
-from tomojax.align._alternating import (
-    GeometryUpdateSolver,
-    GeometryUpdateVolumeSource,
-    PreviewInitialization,
-    PreviewReconstructionMaskSource,
-    PreviewResidualFilterMode,
-    PreviewVolumeSupport,
-    ProjectionLossMode,
-    StoppedPreviewPolicy,
-)
-from tomojax.align._continuation import (
-    ContinuationLevel,
-    ContinuationSchedule,
-    ContinuationScheduleName,
-    reference_continuation_schedule,
-)
 from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align._geometry.geometry_blocks import (
     GeometryCalibrationState,
@@ -34,20 +11,8 @@ from tomojax.align._geometry.geometry_blocks import (
     summarize_geometry_calibration_stats,
 )
 from tomojax.align._geometry.parametrizations import se3_from_5d
-from tomojax.align._joint_schur_lm import (
-    JointSchurLMConfig,
-    JointSchurLMResult,
-    adapt_joint_schur_damping,
-    adapt_joint_schur_trust_radius,
-    schur_step_from_jacobian,
-    solve_joint_schur_lm,
-)
 from tomojax.align._model.dof_specs import DofSpec, dof_spec
-from tomojax.align._model.dofs import (
-    DofBounds,
-    normalize_alignment_dofs,
-    normalize_bounds,
-)
+from tomojax.align._model.dofs import DofBounds, normalize_alignment_dofs, normalize_bounds
 from tomojax.align._model.gauge import GaugeFixMode
 from tomojax.align._model.schedules import (
     PUBLIC_SCHEDULE_PRESETS,
@@ -60,13 +25,6 @@ from tomojax.align._model.schedules import (
     schedule_preset,
 )
 from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align._objectives.fixed_volume import (
-    FixedVolumeProjectionObjective,
-    ObjectiveProvenance,
-    ObjectiveResult,
-    project_and_score_stack,
-    project_stack,
-)
 from tomojax.align._objectives.loss_adapters import LossAdapter, build_loss_adapter
 from tomojax.align._objectives.loss_specs import (
     AlignmentLossConfig,
@@ -83,7 +41,6 @@ from tomojax.align._objectives.loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from tomojax.align._pose_lm import PoseOnlyLMConfig, PoseOnlyLMResult, solve_pose_only_lm
 from tomojax.align._profiles import (
     AlignmentProfile,
     AlignmentProfileInput,
@@ -95,10 +52,19 @@ from tomojax.align._profiles import (
     profile_policy_from_config,
     resolve_profiled_cli_defaults,
 )
-from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
-from tomojax.align._setup_stage import (
-    _optimize_setup_geometry_bilevel_for_level as optimize_setup_geometry_bilevel_for_level,
+from tomojax.align.io.checkpoint import (
+    AlignmentCheckpointGeometrySnapshot,
+    AlignmentCheckpointMetadataInput,
+    AlignmentCheckpointProgress,
+    AlignmentProjectionIdentity,
+    CheckpointError,
+    CheckpointMetadata,
+    build_alignment_checkpoint_metadata_from_input,
+    load_alignment_checkpoint,
+    save_alignment_checkpoint,
+    validate_alignment_checkpoint,
 )
+from tomojax.align.io.params_export import save_alignment_params_csv, save_alignment_params_json
 from tomojax.align.pipeline import (
     AlignConfig,
     AlignMultiresResumeState,
@@ -112,84 +78,66 @@ __all__ = [
     "AlignConfig",
     "AlignMultiresResumeState",
     "AlignResumeState",
+    "AlignmentCheckpointGeometrySnapshot",
+    "AlignmentCheckpointMetadataInput",
+    "AlignmentCheckpointProgress",
     "AlignmentLossConfig",
     "AlignmentLossSchedule",
     "AlignmentLossSpec",
     "AlignmentProfile",
     "AlignmentProfileInput",
     "AlignmentProfilePolicy",
+    "AlignmentProjectionIdentity",
     "AlignmentSchedule",
     "AlignmentStage",
     "AlignmentState",
     "BaseGeometryArrays",
-    "ContinuationLevel",
-    "ContinuationSchedule",
-    "ContinuationScheduleName",
+    "CheckpointError",
+    "CheckpointMetadata",
     "DofBounds",
     "DofSpec",
     "EdgeL2LossSpec",
     "FallbackPolicy",
-    "FixedVolumeProjectionObjective",
     "GaugeFixMode",
     "GaugePolicy",
     "GeometryCalibrationState",
-    "GeometryUpdateSolver",
-    "GeometryUpdateVolumeSource",
-    "JointSchurLMConfig",
-    "JointSchurLMResult",
     "L2LossSpec",
     "L2OtsuLossSpec",
     "LossAdapter",
     "LossScheduleEntry",
-    "ObjectiveProvenance",
-    "ObjectiveResult",
     "PWLSLossSpec",
-    "PoseOnlyLMConfig",
-    "PoseOnlyLMResult",
     "PoseState",
-    "PreviewInitialization",
-    "PreviewReconstructionMaskSource",
-    "PreviewResidualFilterMode",
-    "PreviewVolumeSupport",
-    "ProjectionLossMode",
     "QualityTier",
     "ResolvedAlignmentSchedule",
     "ResolvedAlignmentStage",
     "SetupGeometryState",
-    "SetupOnlyLMConfig",
-    "SetupOnlyLMResult",
-    "StoppedPreviewPolicy",
-    "adapt_joint_schur_damping",
-    "adapt_joint_schur_trust_radius",
     "align",
     "align_multires",
     "alignment_profile_policy",
     "apply_alignment_state",
+    "build_alignment_checkpoint_metadata_from_input",
     "build_loss_adapter",
     "dof_spec",
     "geometry_with_axis_state",
     "level_detector_grid",
+    "load_alignment_checkpoint",
     "loss_spec_name",
     "normalize_alignment_dofs",
     "normalize_alignment_profile",
     "normalize_bounds",
     "normalize_geometry_dofs",
-    "optimize_setup_geometry_bilevel_for_level",
     "parse_loss_schedule",
     "parse_loss_spec",
     "profile_policy_from_config",
-    "project_and_score_stack",
-    "project_stack",
-    "reference_continuation_schedule",
     "resolve_alignment_schedule",
     "resolve_loss_for_level",
     "resolve_profiled_cli_defaults",
+    "save_alignment_checkpoint",
+    "save_alignment_params_csv",
+    "save_alignment_params_json",
     "schedule_preset",
-    "schur_step_from_jacobian",
     "se3_from_5d",
-    "solve_joint_schur_lm",
-    "solve_pose_only_lm",
-    "solve_setup_only_lm",
     "summarize_geometry_calibration_stats",
+    "validate_alignment_checkpoint",
     "validate_loss_schedule_levels",
 ]

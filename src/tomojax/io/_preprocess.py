@@ -13,8 +13,8 @@ import h5py
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
-from tomojax.data.preprocess import (
+from tomojax._data.io_hdf5 import NXTomoMetadata, save_nxtomo
+from tomojax._data.preprocess import (
     PreprocessConfig,
     PreprocessResult,
     preprocess_nxtomo,

@@ -24,35 +24,14 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("simulate", "Generate deterministic synthetic datasets."),
 )
 
-DEVELOPER_COMMANDS: tuple[CliCommand, ...] = (
-    CliCommand("loss-bench", "Compare projection-domain loss functions."),
-    CliCommand("misalign", "Generate controlled misalignment datasets."),
-    CliCommand("align-auto", "Run staged synthetic alignment evidence cases."),
-    CliCommand("astra-parallel-bench", "Compare ASTRA and TomoJAX parallel projectors."),
-    CliCommand("benchmark-suite", "Run benchmark-suite checks."),
-    CliCommand("alignment-diagnostic-bench", "Run alignment verification benchmarks."),
-    CliCommand("pallas-sanity", "Run Pallas backend sanity checks."),
-    CliCommand("synthetic-benchmark-compare", "Compare synthetic benchmark artifacts."),
-    CliCommand("current-baseline-normalize", "Normalize current baseline artifacts."),
-    CliCommand("test-gpu", "Check JAX GPU runtime availability."),
-    CliCommand("test-cpu", "Check JAX CPU runtime availability."),
-)
-
 
 def product_command_names() -> tuple[str, ...]:
     """Return product-facing grouped command names."""
     return tuple(command.name for command in PRODUCT_COMMANDS)
 
 
-def developer_command_names() -> tuple[str, ...]:
-    """Return advanced grouped command names."""
-    return tuple(command.name for command in DEVELOPER_COMMANDS)
-
-
 __all__ = [
-    "DEVELOPER_COMMANDS",
     "PRODUCT_COMMANDS",
     "CliCommand",
-    "developer_command_names",
     "product_command_names",
 ]

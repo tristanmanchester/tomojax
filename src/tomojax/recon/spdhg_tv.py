@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 
 
 # --------- config ----------
+
+
 @dataclass
 class SPDHGConfig:
     """Configuration for stochastic primal-dual TV reconstruction."""
@@ -72,6 +74,8 @@ class SPDHGConfig:
 
 
 # --------- helpers ----------
+
+
 def _estimate_norm_A2(
     geometry: Geometry,
     grid: Grid,
@@ -90,7 +94,7 @@ def _estimate_norm_A2(
 ) -> float:
     """Estimate the squared projection-operator norm by power iteration."""
     del geometry
-    n_views, nv, nu = projections_shape
+    n_views, _nv, _nu = projections_shape
     det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
     def A_apply(vol: jnp.ndarray, T_chunk: jnp.ndarray) -> jnp.ndarray:
@@ -197,6 +201,8 @@ def _prox_fstar_l2(
 
 
 # --------- main algorithm ----------
+
+
 def spdhg_tv(  # noqa: PLR0915
     geometry: Geometry,
     grid: Grid,
@@ -469,7 +475,7 @@ def spdhg_tv(  # noqa: PLR0915
         return (x_new, x_bar_new, y_data_new, p1_new, p2_new, p3_new, s_new, losses_new), None
 
     scan_init = (x, x_bar, y_data, p1, p2, p3, s, losses)
-    (x_f, xbar_f, ydata_f, p1_f, p2_f, p3_f, s_f, losses_f), _ = jax.jit(
+    (x_f, _xbar_f, _ydata_f, _p1_f, _p2_f, _p3_f, _s_f, losses_f), _ = jax.jit(
         lambda carry: jax.lax.scan(one_step, carry, jnp.arange(config.iters)), donate_argnums=(0,)
     )(scan_init)
 

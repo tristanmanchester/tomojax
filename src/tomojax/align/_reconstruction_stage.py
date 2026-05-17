@@ -126,7 +126,7 @@ def _is_oom_error_message(message: str) -> bool:
     return any(term in message for term in ("RESOURCE_EXHAUSTED", "Out of memory", "Allocator"))
 
 
-def _rigid_detector_grid_transform(  # noqa: PLR0911
+def _rigid_detector_grid_transform(
     detector: Detector,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
@@ -407,7 +407,7 @@ def _run_huber_fista_core_jit(
     )
 
 
-def _run_reconstruction_step(  # noqa: PLR0912, PLR0915
+def _run_reconstruction_step(
     *,
     geometry: Geometry,
     grid: Grid,
@@ -567,7 +567,7 @@ def _run_reconstruction_step(  # noqa: PLR0912, PLR0915
         )
 
         det_grid_for_core = None if actual_backend == "pallas" else det_grid
-        x_core, loss, data_loss, regulariser_value, effective_iters = _run_huber_fista_core_jit(
+        x_core, loss, _data_loss, _regulariser_value, effective_iters = _run_huber_fista_core_jit(
             x,
             T_all,
             None if det_grid_for_core is None else det_grid_for_core[0],

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 
-def normalize_json(  # noqa: PLR0911
+def normalize_json(
     value: object,
     *,
     namespace: bool = False,

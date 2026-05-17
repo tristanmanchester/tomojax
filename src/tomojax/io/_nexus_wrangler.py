@@ -109,10 +109,7 @@ def pad_to_multiples(
     py1 = pad_y - py0
     px0 = pad_x // 2
     px1 = pad_x - px0
-    if arr.ndim == 3:
-        pad_width = [(0, 0), (py0, py1), (px0, px1)]
-    else:
-        pad_width = [(py0, py1), (px0, px1)]
+    pad_width = [(0, 0), (py0, py1), (px0, px1)] if arr.ndim == 3 else [(py0, py1), (px0, px1)]
     return np.pad(arr, pad_width, mode=mode)
 
 

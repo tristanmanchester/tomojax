@@ -20,7 +20,7 @@ def _warn_transfer_guard_demotion(mode: str, reason: str) -> None:
     )
 
 
-def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[object]:  # noqa: PLR0911
+def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[object]:
     """Return the configured JAX transfer-guard context, if available."""
     if mode is None:
         mode = os.environ.get("TOMOJAX_TRANSFER_GUARD", "log")

@@ -75,7 +75,7 @@ def progress_iter[T](
                 yield x
 
 
-def format_duration(seconds: float | None) -> str:  # noqa: PLR0911
+def format_duration(seconds: float | None) -> str:
     """Render a wall-clock duration as a compact human-readable string."""
     if seconds is None:
         return "-"

@@ -1,6 +1,5 @@
 """Lightweight HDF5/NXtomo inspection helpers owned by the IO boundary."""
 
-# ruff: noqa: PLR0912
 
 from __future__ import annotations
 
@@ -570,7 +569,7 @@ def _fmt_bool_presence(found: bool) -> str:
     return "present" if found else "not found"
 
 
-def format_inspection_report(report: InspectionReport) -> str:  # noqa: PLR0915
+def format_inspection_report(report: InspectionReport) -> str:
     """Format an inspection report for terminal output."""
     projection = report["projection"]
     angles = report["angles"]
