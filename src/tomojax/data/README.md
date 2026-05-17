@@ -35,14 +35,16 @@ This is not the preferred production import path for new features.
 ## Owned Concepts
 
 This package still owns lower-level NXtomo/HDF5 persistence, retained phantom
-helpers, contrast-correction math, raw preprocessing internals retained behind
-the IO facade, and simulation helpers used by existing tests and developer
-commands.
+helpers, raw preprocessing internals retained behind the IO facade, and
+simulation helpers used by existing tests and developer commands.
 
-Dark/flat correction math lives in `tomojax.data.contrast`:
+Dark/flat correction math now lives behind the `tomojax.io` public facade:
 
 - `flat_dark_to_transmission(...)`
 - `flat_dark_to_absorption(...)`
+
+`tomojax.data.contrast` remains only as a compatibility shim for retained
+migration callers.
 
 Production file-format loading, provenance, inspection, quicklooks, and CLI
 preprocessing are exposed through `tomojax.io`, not by importing this package

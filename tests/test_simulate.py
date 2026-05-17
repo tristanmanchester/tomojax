@@ -9,14 +9,13 @@ from tomojax.cli import simulate as simulate_cli
 from tomojax.data import (
     SimConfig,
     SimulationArtefacts,
-    absorption_to_transmission,
     apply_simulation_artefacts,
     random_cubes_spheres,
     simulate as simulate_mod,
-    transmission_to_absorption,
 )
 from tomojax.data.io_hdf5 import validate_nxtomo
 from tomojax.data.simulate import simulate, simulate_to_file
+from tomojax.io import absorption_to_transmission, transmission_to_absorption
 
 
 def test_simulate_deterministic_seed():

@@ -17783,3 +17783,33 @@ Validation:
   tests/test_inspect_cli.py` passed.
 - `uv run python - <<'PY' ...` verified `tomojax.io` and
   `tomojax.data.inspection` compatibility imports.
+
+### Contrast conversion assimilated into IO
+
+- Moved the Beer-Lambert transmission/absorption and flat/dark correction
+  implementation into `tomojax.io._contrast`, with the public contract exposed
+  through `tomojax.io`.
+- Updated IO preprocessing internals to use the IO-owned implementation instead
+  of importing `tomojax.data.contrast`.
+- Replaced `tomojax.data.contrast` with a compatibility shim for retained
+  migration callers and updated contrast/simulation tests to exercise the IO
+  public facade for contrast helpers.
+
+Validation:
+
+- `uv run pytest tests/test_contrast.py tests/test_preprocess.py
+  tests/test_io_public_dataset.py
+  tests/test_public_facades.py::test_io_facade_exports_dataset_boundary
+  tests/test_public_import_guard.py -q` passed with 46 tests.
+- `uv run ruff check src/tomojax/io/_contrast.py
+  src/tomojax/data/contrast.py src/tomojax/data/preprocess.py
+  src/tomojax/io/_preprocess.py src/tomojax/io/api.py
+  src/tomojax/io/__init__.py tests/test_contrast.py tests/test_preprocess.py
+  tests/test_io_public_dataset.py tests/test_public_facades.py
+  tests/test_public_import_guard.py tests/test_simulate.py` passed.
+- `uv run basedpyright src/tomojax/io/_contrast.py` passed.
+- `git diff --check -- src/tomojax/io/_contrast.py
+  src/tomojax/data/contrast.py src/tomojax/io/_preprocess.py
+  src/tomojax/io/api.py tests/test_contrast.py tests/test_simulate.py
+  src/tomojax/io/README.md src/tomojax/data/README.md
+  docs/implementation_log.md` passed.

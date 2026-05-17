@@ -1,5 +1,11 @@
 """Public API for dataset IO and metadata normalization."""
 
+from tomojax.io._contrast import (
+    absorption_to_transmission,
+    flat_dark_to_absorption,
+    flat_dark_to_transmission,
+    transmission_to_absorption,
+)
 from tomojax.io._datasets import (
     LoadedNXTomo,
     NXTomoMetadata,
@@ -41,12 +47,8 @@ from tomojax.io._nexus_wrangler import (
 from tomojax.io._preprocess import (
     PreprocessConfig,
     PreprocessResult,
-    absorption_to_transmission,
-    flat_dark_to_absorption,
-    flat_dark_to_transmission,
     preprocess_nxtomo,
     preprocess_tiff_stack,
-    transmission_to_absorption,
 )
 from tomojax.io._real_laminography import RealLaminographyInput, load_real_laminography_input
 

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tomojax.data.contrast import (
+from tomojax.io import (
     absorption_to_transmission,
     flat_dark_to_absorption,
     flat_dark_to_transmission,
