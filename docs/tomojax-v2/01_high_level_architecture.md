@@ -11,16 +11,21 @@ It should not be a collection of traditional alignment algorithms.
 The public product should feel like this:
 
 ```bash
-tomojax recon scan.nxs --align auto
+tomojax preprocess raw.nxs corrected.nxs
+tomojax align corrected.nxs --mode auto --quality fast --out aligned.nxs
+tomojax recon aligned.nxs --out recon.nxs
 ```
 
 Optional high-level profiles:
 
 ```text
---align off          # use provided geometry only
---align pose         # solve per-view pose using current setup
---align auto         # default: setup + pose + verification
---align max          # slower, verification-triggered full-resolution polish
+--mode cor           # solve detector-centre/setup bootstrap
+--mode pose          # solve per-view pose using current setup
+--mode auto          # setup + pose + verification
+--mode max           # slower, verification-triggered full-resolution polish
+
+--quality fast       # quick product default
+--quality reference  # slower, conservative evidence run
 ```
 
 Avoid exposing method choices such as `--cor-grid`, `--roll-search`, `--phase-correlation`, or `--spsa`.

@@ -10,15 +10,15 @@ machinery part of normal reconstruction or alignment workflows.
 This module is developer/evidence-facing. Its commands are exposed through
 `tomojax dev ...` rather than as installed top-level console scripts.
 
-## Public API
+## Developer Facade
 
 `tomojax.bench.api` and the package root re-export reusable developer benchmark
 helpers. User workflows should reach benchmark commands only through
 `tomojax dev ...`.
 
-The public API is intentionally broad because it supports regression evidence,
-article artifacts, and real-laminography developer workflows. The exported
-surface is grouped as:
+The exported developer surface is intentionally broad because it supports
+regression evidence, article artifacts, and real-laminography developer
+workflows. It is grouped as:
 
 - stage and real-laminography contract constants:
   `FULL_REQUIRED_STAGES`, `PARTIAL_REQUIRED_STAGES`,

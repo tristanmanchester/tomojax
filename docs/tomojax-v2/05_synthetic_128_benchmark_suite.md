@@ -219,24 +219,23 @@ reimagined_max, optional
 Suggested command placeholders:
 
 ```bash
-tomojax synth generate synth128_setup_global_tomo -o data/synthetic128/synth128_setup_global_tomo
+tomojax simulate \
+  --out data/synthetic128/synth128_setup_global_tomo.nxs \
+  --nx 128 --ny 128 --nz 128 --nu 128 --nv 128 --n-views 128
 
-tomojax benchmark run \
-  --dataset data/synthetic128/synth128_setup_global_tomo \
-  --impl current \
-  --profile current-default \
-  -o runs/current/synth128_setup_global_tomo
+tomojax dev align-auto \
+  --synthetic-case setup-global \
+  --out runs/current/synth128_setup_global_tomo
 
-tomojax benchmark run \
-  --dataset data/synthetic128/synth128_setup_global_tomo \
-  --impl reimagined \
-  --profile lightning \
-  -o runs/reimagined/synth128_setup_global_tomo
+tomojax dev align-auto \
+  --synthetic-case setup-global \
+  --profile fast \
+  --out runs/reimagined/synth128_setup_global_tomo
 
-tomojax benchmark compare \
+tomojax dev synthetic-benchmark-compare \
   runs/current/synth128_setup_global_tomo \
   runs/reimagined/synth128_setup_global_tomo \
-  -o reports/synth128_setup_global_tomo.md
+  --out reports/synth128_setup_global_tomo.md
 ```
 
 Adapt command names to current repo conventions.
@@ -756,7 +755,7 @@ current_setup_only:
     current setup / COR / roll / axis path if available
 
 current_full_alignment:
-    current lightning/default/staged setup+pose path
+    current fast/default/staged setup+pose path
 ```
 
 Record:
@@ -791,7 +790,7 @@ final reconstruction metrics
 | Dataset | Impl | Profile | Time to verified | Total time | Vol NMSE | Final residual | Setup error | Pose RMSE | Backend | Status |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|---|
 | synth128_setup_global_tomo | current | default | ... | ... | ... | ... | ... | ... | ... | ... |
-| synth128_setup_global_tomo | reimagined | lightning | ... | ... | ... | ... | ... | ... | ... | ... |
+| synth128_setup_global_tomo | reimagined | fast | ... | ... | ... | ... | ... | ... | ... | ... |
 ```
 
 ## Required success bar for reimagined TomoJAX

@@ -9,7 +9,9 @@ The design goal is:
 The intended public experience is simple:
 
 ```bash
-tomojax recon scan.nxs --align auto
+tomojax preprocess raw.nxs corrected.nxs
+tomojax align corrected.nxs --mode auto --quality fast --out aligned.nxs
+tomojax recon aligned.nxs --out recon.nxs
 ```
 
 The internal engine is sophisticated:

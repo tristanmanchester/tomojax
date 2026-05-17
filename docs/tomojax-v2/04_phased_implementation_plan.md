@@ -20,7 +20,8 @@ baseline report template
 
 ### Tasks
 
-1. Add a `tomojax benchmark` command or standalone script that can run:
+1. Add a developer benchmark runner, exposed through `tomojax dev ...` or a
+   standalone script, that can run:
    - current TomoJAX staged/lightning path;
    - current COR-only or setup-only comparator;
    - future reimagined path.

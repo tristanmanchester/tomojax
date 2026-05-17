@@ -698,10 +698,14 @@ Owns command-line entrypoints and user-facing formatting.
 Public commands:
 
 ```bash
-tomojax recon scan.nxs --align auto --profile lightning -o run_dir
-tomojax verify run_dir
-tomojax synth generate synth128_setup_global_tomo -o data_dir
-tomojax benchmark synthetic128 --impl current --impl reimagined
+tomojax inspect scan.nxs
+tomojax validate scan.nxs
+tomojax ingest ./projections --angles angles.csv --du 0.65 --dv 0.65 --out scan.nxs
+tomojax preprocess raw.nxs corrected.nxs
+tomojax convert raw.nxs standard.nxs
+tomojax recon corrected.nxs --out recon.nxs
+tomojax align corrected.nxs --mode auto --quality fast --out aligned.nxs
+tomojax simulate --out data/synthetic128/setup_global.nxs --nx 128 --ny 128 --nz 128 --nu 128 --nv 128 --n-views 128
 ```
 
 Rules:
@@ -714,14 +718,13 @@ Rules:
 Allowed public strategies:
 
 ```text
---align off
---align pose
---align auto
---align max
+tomojax align --mode cor
+tomojax align --mode pose
+tomojax align --mode auto
+tomojax align --mode max
 
---profile lightning
---profile balanced
---profile reference
+tomojax align --quality fast
+tomojax align --quality reference
 ```
 
 Forbidden public defaults:
@@ -1052,7 +1055,7 @@ from tomojax import recon
 result = recon(
     "scan.nxs",
     align="auto",
-    profile="lightning",
+    quality="fast",
     output_dir="run_dir",
 )
 
