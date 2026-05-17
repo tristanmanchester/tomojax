@@ -6,8 +6,9 @@ installed as package entry points.
 ## Evidence generation
 
 - `generate_alignment_before_after_128.py`: synthetic alignment evidence
-  generator used by docs and tests. Rendering helpers live in
-  `tomojax.bench.article_visuals` so the script remains orchestration-only.
+  generator used by docs and tests. Scenario/profile contracts live in
+  `tomojax.bench.article_alignment_runs`, and rendering helpers live in
+  `tomojax.bench.article_visuals`, so the script remains orchestration-only.
 
 ## Data preparation
 

@@ -16029,3 +16029,25 @@ Validation:
   still available as `just test-all-cpu` instead of being hidden behind
   `just test`.
 - Updated the README to describe the split and when to use each gate.
+
+### Article visual scenario contracts moved to bench
+
+- Moved the article/demo alignment scenario and run-profile contracts out of
+  `scripts/generate_alignment_before_after_128.py` and into
+  `tomojax.bench.article_alignment_runs`.
+- The script now imports `ArticleScenario`, `ArticleRunProfile`, scenario-suite
+  conversion, profile resolution, and theta-span policy from the benchmark
+  owner module, keeping the script closer to file orchestration.
+- Added a focused test that imports the article run contracts from the bench
+  module, verifies the diagnostic profile, and checks the converted scenario
+  catalogue.
+
+Validation:
+
+- `uv run pytest tests/test_article_alignment_visuals.py -q` passed with 3
+  tests.
+- `uv run python scripts/generate_alignment_before_after_128.py --out /tmp/tomojax-article-dry-run --profile diagnostic --scenario-set default --dry-run --limit 1`
+  completed and wrote `run_manifest.json`, `artifacts/scenario_catalog.json`,
+  and `artifacts/status.json`.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/article_alignment_runs.py scripts/generate_alignment_before_after_128.py tests/test_article_alignment_visuals.py`
+  passed.

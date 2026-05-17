@@ -8,6 +8,11 @@ import imageio.v3 as iio
 import numpy as np
 
 from tomojax.bench import article_visuals
+from tomojax.bench.article_alignment_runs import (
+    article_scenario_catalog_for_kind,
+    article_theta_span_deg,
+    diagnostic_profile,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,3 +97,15 @@ def test_scenario_finite_report_marks_nonfinite_alignment_volume() -> None:
     assert report["first_nonfinite"]["name"] == "aligned_tv"
     aligned_summary = next(v for v in report["volumes"] if v["name"] == "aligned_tv")
     assert aligned_summary["finite_fraction"] == 0.0
+
+
+def test_article_alignment_run_contracts_live_behind_bench_module() -> None:
+    profile = diagnostic_profile()
+    scenarios = article_scenario_catalog_for_kind("default")
+
+    assert profile.name == "diagnostic_32"
+    assert profile.levels == (4, 2, 1)
+    assert scenarios
+    assert all(scenario.phantom_key == "phantom94" for scenario in scenarios)
+    assert {scenario.slug for scenario in scenarios}
+    assert all(article_theta_span_deg(scenario) in {180.0, 360.0} for scenario in scenarios)
