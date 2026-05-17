@@ -28,6 +28,9 @@ from tomojax.bench.article_alignment_manifest import (
     article_scenario_truth_payload as _scenario_truth_payload,
     build_article_run_manifest as build_run_manifest,
 )
+from tomojax.bench.article_alignment_results import (
+    article_scenario_finite_report as _scenario_finite_report,
+)
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile as RunProfile,
     ArticleScenario as Scenario,
@@ -404,97 +407,6 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def _json_safe(value: Any) -> Any:
     return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
-
-
-def _array_finite_summary(name: str, value: np.ndarray | None) -> dict[str, Any]:
-    if value is None:
-        return {
-            "name": name,
-            "present": False,
-            "all_finite": False,
-            "finite_fraction": 0.0,
-        }
-    arr = np.asarray(value)
-    finite = np.isfinite(arr)
-    total = int(arr.size)
-    summary: dict[str, Any] = {
-        "name": name,
-        "present": True,
-        "shape": [int(v) for v in arr.shape],
-        "dtype": str(arr.dtype),
-        "size": total,
-        "finite_count": int(finite.sum()),
-        "finite_fraction": float(finite.mean()) if total else 1.0,
-        "nan_count": int(np.isnan(arr).sum()),
-        "posinf_count": int(np.isposinf(arr).sum()),
-        "neginf_count": int(np.isneginf(arr).sum()),
-        "all_finite": bool(finite.all()),
-    }
-    if total and not bool(finite.all()):
-        first = np.argwhere(~finite)[0]
-        summary["first_nonfinite_index"] = [int(v) for v in first]
-        summary["first_nonfinite_value"] = repr(arr[tuple(first)])
-    if bool(finite.any()):
-        vals = arr[finite].astype(np.float64, copy=False)
-        summary.update(
-            {
-                "min": float(np.min(vals)),
-                "max": float(np.max(vals)),
-                "mean": float(np.mean(vals)),
-                "rms": float(np.sqrt(np.mean(vals * vals))),
-            }
-        )
-    return summary
-
-
-def _scalar_finite_summary(name: str, value: Any) -> dict[str, Any]:
-    try:
-        scalar = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return {
-            "name": name,
-            "present": value is not None,
-            "all_finite": False,
-            "value": repr(value),
-        }
-    return {"name": name, "present": True, "all_finite": bool(np.isfinite(scalar)), "value": scalar}
-
-
-def _scenario_finite_report(result: ScenarioComputationResult) -> dict[str, Any]:
-    volume_summaries = [
-        _array_finite_summary("naive_fbp", result.naive_fbp),
-        _array_finite_summary("calibrated_fbp", result.calibrated_fbp),
-        _array_finite_summary("aligned_tv", result.aligned_tv),
-    ]
-    metric_summaries = [
-        _scalar_finite_summary(name, value) for name, value in sorted(result.metrics.items())
-    ]
-    if result.provenance == "naive_only":
-        required = ["naive_fbp"]
-    else:
-        required = ["naive_fbp", "calibrated_fbp", "aligned_tv"]
-    required_by_name = {
-        summary["name"]: bool(summary.get("all_finite", False)) for summary in volume_summaries
-    }
-    all_required_finite = all(required_by_name.get(name, False) for name in required) and all(
-        bool(summary.get("all_finite", False)) for summary in metric_summaries
-    )
-    first_nonfinite = next(
-        (
-            summary
-            for summary in volume_summaries + metric_summaries
-            if not bool(summary.get("all_finite", False))
-        ),
-        None,
-    )
-    return {
-        "schema_version": 1,
-        "all_required_finite": bool(all_required_finite),
-        "required_arrays": required,
-        "first_nonfinite": first_nonfinite,
-        "volumes": volume_summaries,
-        "metrics": metric_summaries,
-    }
 
 
 def _execute_scenario_computation(

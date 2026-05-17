@@ -38,6 +38,11 @@ from tomojax.bench.article_alignment_manifest import (
     article_scenario_truth_payload,
     build_article_run_manifest,
 )
+from tomojax.bench.article_alignment_results import (
+    array_finite_summary,
+    article_scenario_finite_report,
+    scalar_finite_summary,
+)
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile,
     ArticleScenario,
@@ -186,9 +191,11 @@ __all__ = [
     "append_real_lamino_csv",
     "apply_real_lamino_profile_args",
     "apply_real_lamino_profile_contract_args",
+    "array_finite_summary",
     "article_phantom_metadata",
     "article_scenario_catalog_for_kind",
     "article_scenario_catalog_payload",
+    "article_scenario_finite_report",
     "article_scenario_supplied_payload",
     "article_scenario_truth_payload",
     "benchmark_backend",
@@ -242,6 +249,7 @@ __all__ = [
     "run_forward_sinogram_suite",
     "save_slice_png",
     "save_volume",
+    "scalar_finite_summary",
     "scale_uint8",
     "scaled_symmetric_bound",
     "scenario_by_slug",

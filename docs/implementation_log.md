@@ -16716,3 +16716,25 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Article alignment finite-result reporting moved behind bench facade
+
+- Added `tomojax.bench.article_alignment_results` as the bench-owned home for
+  article alignment array/scalar finite summaries and per-scenario finite
+  reports.
+- Exported `article_scenario_finite_report`, `array_finite_summary`, and
+  `scalar_finite_summary` through the bench facade.
+- Thinned `scripts/generate_alignment_before_after_128.py` by deleting its
+  duplicate finite-report helper stack and using the bench-owned scenario
+  finite-report function.
+
+Validation:
+
+- `uv run pytest tests/test_article_alignment_visuals.py::test_scenario_finite_report_marks_nonfinite_alignment_volume tests/test_article_alignment_visuals.py::test_article_alignment_run_contracts_live_behind_bench_module tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 3 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/generate_alignment_before_after_128.py src/tomojax/bench/article_alignment_results.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_article_alignment_visuals.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/generate_alignment_before_after_128.py src/tomojax/bench/article_alignment_results.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
