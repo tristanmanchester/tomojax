@@ -12,10 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.api import se3_from_5d
+from tomojax.align.api import L2LossSpec, build_loss_adapter, se3_from_5d
 from tomojax.align.objectives.fixed_volume import project_and_score_stack
-from tomojax.align.objectives.loss_adapters import build_loss_adapter
-from tomojax.align.objectives.loss_specs import L2LossSpec
 from tomojax.bench.forward_projector import _device_metadata
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device

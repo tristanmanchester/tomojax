@@ -16154,3 +16154,26 @@ Validation:
   passed.
 - `uv run pytest tests/test_bench_alignment_objective.py tests/test_bench_loss_experiment.py -q`
   passed with 12 tests.
+
+### Alignment loss helpers exposed through facade
+
+- Added the typed alignment loss specs, schedule helpers, loss-name resolver,
+  level resolver, `LossAdapter`, and `build_loss_adapter` to
+  `tomojax.align.api`.
+- Updated benchmark alignment objective and real-laminography diagnostic scripts
+  to import those loss helpers through the alignment facade rather than reaching
+  into nested `tomojax.align.objectives` modules.
+- Removed two dead locals surfaced while linting the real-laminography
+  diagnostics: an unused calibrated detector grid in the Pallas probe and an
+  unused baseline assignment in the reference regression runner.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_bench_alignment_objective.py -q`
+  passed with 10 tests.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_pallas_probe.py scripts/real_laminography/run_real_lamino_reference_regression.py`
+  passed.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align/api.py src/tomojax/bench/alignment_objective.py scripts/real_laminography/run_real_lamino_pallas_probe.py scripts/real_laminography/run_real_lamino_reference_regression.py`
+  passed.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.

@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
+from tomojax.align.api import loss_spec_name, resolve_loss_for_level
 from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
     geometry_with_axis_state,
@@ -37,7 +38,6 @@ from tomojax.align.geometry.geometry_blocks import (
 from tomojax.align.geometry.parametrizations import se3_from_5d
 from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align.pipeline import (
     AlignConfig,
     align,
@@ -1297,7 +1297,7 @@ def main() -> int:
                 },
             },
         )
-        baseline = run_baseline(ctx, geometry=geometry, grid=grid, detector=detector, projections=raw_projections, full_nz=full_nz)
+        run_baseline(ctx, geometry=geometry, grid=grid, detector=detector, projections=raw_projections, full_nz=full_nz)
         params5 = np.zeros((n_views, 5), dtype=np.float32)
         setup_state = GeometryCalibrationState.from_geometry(geometry, active_geometry_dofs=())
 

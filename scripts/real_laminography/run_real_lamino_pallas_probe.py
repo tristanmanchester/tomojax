@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import threading
 import time
-from dataclasses import replace
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
@@ -21,37 +20,35 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import jax.numpy as jnp
 import numpy as np
+from run_real_lamino_reference_regression import (
+    _apply_projection_background,
+    _global_z_to_phys,
+    _load_input,
+    _params_summary,
+    _parse_range,
+    _projection_stats,
+    _save_png,
+    _save_z_stack,
+    _validate_loaded_input,
+)
 
+from tomojax.align.api import L2LossSpec
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
     geometry_with_axis_state,
-    level_detector_grid,
 )
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.objectives.loss_specs import L2LossSpec
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.core.projector import get_detector_grid_device
+from tomojax.io import normalize_json
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     fista_tv_core_arrays,
     projection_loss_arrays,
 )
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid
-from tomojax.io import normalize_json
-
-from run_real_lamino_reference_regression import (
-    _apply_projection_background,
-    _global_z_to_phys,
-    _load_input,
-    _parse_range,
-    _params_summary,
-    _projection_stats,
-    _save_png,
-    _save_z_stack,
-    _validate_loaded_input,
-)
 
 
 def _json_safe(value: Any) -> Any:
@@ -556,7 +553,6 @@ def main() -> int:
             tilt_about=str(args.tilt_about),
         )
         geom_eff = geometry_with_axis_state(geometry_level, g, d, setup_state)
-        calibrated_det_grid = level_detector_grid(d, state=setup_state, factor=factor)
         pallas_det_grid = get_detector_grid_device(d)
         base = BaseGeometryArrays.from_geometry(geometry_level, d, level_factor=factor)
         effective = apply_alignment_state(base, _setup_to_alignment_state(setup_state, n_views))
