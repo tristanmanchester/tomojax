@@ -18,20 +18,20 @@ ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
 
 @dataclass(frozen=True)
 class Violation:
-    """A private module import that crosses a top-level TomoJAX boundary."""
+    """A TomoJAX import that violates a public architecture boundary."""
 
     path: Path
     line: int
     imported_module: str
     importing_module: str
-    owner: str
+    reason: str
 
     def format(self, root: Path) -> str:
         """Format a violation for terminal output."""
         relative_path = self.path.relative_to(root)
         return (
-            f"{relative_path}:{self.line}: private import crosses tomojax.{self.owner} "
-            f"boundary: {self.importing_module} imports {self.imported_module}"
+            f"{relative_path}:{self.line}: {self.reason}: "
+            f"{self.importing_module} imports {self.imported_module}"
         )
 
 
@@ -40,6 +40,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Reject imports of tomojax.<owner>._private modules from outside tomojax.<owner>. "
+            "Also reject old/transitional TomoJAX namespaces from product-facing scripts, "
+            "benchmarks, and CLI modules. "
             "Tests and benchmark diagnostics may allow a specific white-box import with "
             f"'# {ALLOW_PRIVATE_MARKER}'."
         )
@@ -100,7 +102,21 @@ def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
                         line=node.lineno,
                         imported_module=imported_module,
                         importing_module=importing_module,
-                        owner=owner,
+                        reason=(
+                            f"private import crosses tomojax.{owner} boundary"
+                        ),
+                    )
+                )
+                continue
+            legacy_reason = legacy_public_surface_reason(imported_module, importing_module)
+            if legacy_reason is not None:
+                violations.append(
+                    Violation(
+                        path=path,
+                        line=node.lineno,
+                        imported_module=imported_module,
+                        importing_module=importing_module,
+                        reason=legacy_reason,
                     )
                 )
     return violations
@@ -160,6 +176,33 @@ def is_tomojax_owner_module(module: str) -> bool:
 def module_is_inside_owner(module: str, owner: str) -> bool:
     """Return whether a module belongs to the same top-level TomoJAX owner."""
     return module == f"tomojax.{owner}" or module.startswith(f"tomojax.{owner}.")
+
+
+def legacy_public_surface_reason(imported_module: str, importing_module: str) -> str | None:
+    """Return a violation reason for old namespaces leaking into public surfaces."""
+    if not is_product_surface_module(importing_module):
+        return None
+    if imported_module == "tomojax.data" or imported_module.startswith("tomojax.data."):
+        return "legacy data namespace must be reached through tomojax.io or tomojax.datasets"
+    if imported_module == "tomojax.calibration" or imported_module.startswith(
+        "tomojax.calibration."
+    ):
+        return "legacy calibration namespace must be reached through tomojax.geometry"
+    for legacy_align_namespace in (
+        "tomojax.align.geometry",
+        "tomojax.align.model",
+        "tomojax.align.objectives",
+    ):
+        if imported_module == legacy_align_namespace or imported_module.startswith(
+            f"{legacy_align_namespace}."
+        ):
+            return "nested alignment namespace must be reached through tomojax.align.api"
+    return None
+
+
+def is_product_surface_module(module: str) -> bool:
+    """Return whether a module belongs to the product/developer entrypoint surface."""
+    return module.startswith(("scripts.", "tomojax.bench.", "tomojax.cli."))
 
 
 def line_has_allowed_test_marker(

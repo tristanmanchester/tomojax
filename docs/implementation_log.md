@@ -16378,3 +16378,28 @@ Validation:
 - `uv run ruff check tests/test_golden_path_cli.py` passed.
 - `python tools/check_public_imports.py scripts src tests` passed.
 - `git diff --check` passed.
+
+### Public surface import guard rejects legacy namespace leaks
+
+- Extended `tools/check_public_imports.py` beyond private `_module` imports so
+  product/developer entrypoint surfaces cannot import retained transitional
+  namespaces directly.
+- The guard now rejects old `tomojax.data` imports from `scripts`,
+  `tomojax.bench`, and `tomojax.cli`; those surfaces must go through
+  `tomojax.io` or `tomojax.datasets`.
+- The guard also rejects old `tomojax.calibration` imports from those surfaces;
+  geometry calibration must go through `tomojax.geometry`.
+- Nested alignment implementation namespaces
+  `tomojax.align.geometry`, `tomojax.align.model`, and
+  `tomojax.align.objectives` are now rejected from the same surfaces; they must
+  go through `tomojax.align.api`.
+- Added focused tests for the guard and verified that the real repo still
+  passes the stronger rule.
+
+Validation:
+
+- `uv run pytest tests/test_public_import_guard.py -q` passed with 3 tests.
+- `uv run ruff check tools/check_public_imports.py tests/test_public_import_guard.py`
+  passed.
+- `python tools/check_public_imports.py scripts src tests` passed.
+- `git diff --check` passed.
