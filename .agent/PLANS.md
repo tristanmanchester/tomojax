@@ -47,6 +47,8 @@ Completed checkpoints in this pass:
 - [x] Move staged real-laminography reference-regression replay counts into
       `tomojax.bench`.
 - [x] Move article alignment finite-result reporting into `tomojax.bench`.
+- [x] Move article alignment visualization payload construction into
+      `tomojax.bench`.
 
 Next candidates:
 

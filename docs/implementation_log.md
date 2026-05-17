@@ -16738,3 +16738,25 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Article alignment visualization payloads moved behind bench facade
+
+- Extended `tomojax.bench.article_visuals` so it owns translation from article
+  scenario/profile/result contracts into `VisualScenario`, `VisualProfile`,
+  `AlignmentVisualizationPayload`, and `NaiveVisualizationPayload`.
+- Exported the visualization payload builders and payload types through the
+  bench facade.
+- Thinned `scripts/generate_alignment_before_after_128.py` by deleting its
+  duplicate visual scenario/profile/payload construction helpers and delegating
+  visual payload creation to the bench module.
+
+Validation:
+
+- `uv run pytest tests/test_article_alignment_visuals.py tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 5 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/generate_alignment_before_after_128.py src/tomojax/bench/article_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_article_alignment_visuals.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/generate_alignment_before_after_128.py src/tomojax/bench/article_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

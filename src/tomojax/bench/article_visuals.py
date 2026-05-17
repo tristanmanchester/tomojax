@@ -57,6 +57,71 @@ class NaiveVisualizationPayload:
     naive_fbp: np.ndarray
 
 
+def visual_scenario_from_article_scenario(scenario: Any) -> VisualScenario:
+    """Translate an article scenario contract into the visual-rendering contract."""
+    return VisualScenario(
+        slug=scenario.slug,
+        title=scenario.title,
+        geometry_dofs=tuple(scenario.geometry_dofs),
+        hidden_det_u_px=float(scenario.hidden_det_u_px),
+        hidden_det_v_px=float(scenario.hidden_det_v_px),
+        hidden_detector_roll_deg=float(scenario.hidden_detector_roll_deg),
+        hidden_axis_rot_x_deg=float(scenario.hidden_axis_rot_x_deg),
+        hidden_axis_rot_y_deg=float(scenario.hidden_axis_rot_y_deg),
+        nominal_tilt_deg=float(scenario.nominal_tilt_deg),
+        true_tilt_deg=float(scenario.true_tilt_deg),
+    )
+
+
+def visual_profile_from_article_profile(profile: Any) -> VisualProfile:
+    """Translate an article run profile into the visual-rendering contract."""
+    return VisualProfile(
+        views=int(profile.views),
+        levels=tuple(int(v) for v in profile.levels),
+        outer_iters=int(profile.outer_iters),
+        early_stop=bool(profile.early_stop),
+    )
+
+
+def alignment_visualization_payload(
+    scenario: Any,
+    *,
+    profile: Any,
+    truth: np.ndarray,
+    result: Any,
+) -> AlignmentVisualizationPayload:
+    """Build the full before/after visual payload for an aligned article scenario."""
+    if result.calibrated_fbp is None or result.aligned_tv is None:
+        raise ValueError("full scenario visuals require calibrated and aligned volumes")
+    return AlignmentVisualizationPayload(
+        scenario=visual_scenario_from_article_scenario(scenario),
+        profile=visual_profile_from_article_profile(profile),
+        theta_span=float(result.theta_span),
+        truth=truth,
+        naive_fbp=result.naive_fbp,
+        calibrated_fbp=result.calibrated_fbp,
+        aligned_tv=result.aligned_tv,
+        estimates=result.estimates,
+        metrics=result.metrics,
+        diagnostics=result.diagnostics,
+        outer_stats=result.info.get("outer_stats", []),
+    )
+
+
+def naive_visualization_payload(
+    scenario: Any,
+    *,
+    truth: np.ndarray,
+    result: Any,
+) -> NaiveVisualizationPayload:
+    """Build the visual payload for a naive-only article scenario."""
+    return NaiveVisualizationPayload(
+        scenario=visual_scenario_from_article_scenario(scenario),
+        truth=truth,
+        naive_fbp=result.naive_fbp,
+    )
+
+
 def slice_xy(volume: np.ndarray) -> np.ndarray:
     return volume[:, :, volume.shape[2] // 2].T
 

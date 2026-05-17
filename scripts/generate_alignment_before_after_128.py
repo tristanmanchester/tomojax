@@ -41,10 +41,8 @@ from tomojax.bench.article_alignment_runs import (
     profile_from_args,
 )
 from tomojax.bench.article_visuals import (
-    AlignmentVisualizationPayload,
-    NaiveVisualizationPayload,
-    VisualProfile,
-    VisualScenario,
+    alignment_visualization_payload as _visualization_payload,
+    naive_visualization_payload as _naive_visualization_payload,
     resize_for_master,
     vstack_rgb,
     write_alignment_visuals,
@@ -558,72 +556,11 @@ def _execute_scenario_computation(
     )
 
 
-def _visual_scenario(scenario: Scenario) -> VisualScenario:
-    return VisualScenario(
-        slug=scenario.slug,
-        title=scenario.title,
-        geometry_dofs=tuple(scenario.geometry_dofs),
-        hidden_det_u_px=float(scenario.hidden_det_u_px),
-        hidden_det_v_px=float(scenario.hidden_det_v_px),
-        hidden_detector_roll_deg=float(scenario.hidden_detector_roll_deg),
-        hidden_axis_rot_x_deg=float(scenario.hidden_axis_rot_x_deg),
-        hidden_axis_rot_y_deg=float(scenario.hidden_axis_rot_y_deg),
-        nominal_tilt_deg=float(scenario.nominal_tilt_deg),
-        true_tilt_deg=float(scenario.true_tilt_deg),
-    )
-
-
-def _visual_profile(profile: RunProfile) -> VisualProfile:
-    return VisualProfile(
-        views=int(profile.views),
-        levels=tuple(int(v) for v in profile.levels),
-        outer_iters=int(profile.outer_iters),
-        early_stop=bool(profile.early_stop),
-    )
-
-
-def _visualization_payload(
-    scenario: Scenario,
-    *,
-    profile: RunProfile,
-    truth: np.ndarray,
-    result: ScenarioComputationResult,
-) -> AlignmentVisualizationPayload:
-    if result.calibrated_fbp is None or result.aligned_tv is None:
-        raise ValueError("full scenario visuals require calibrated and aligned volumes")
-    return AlignmentVisualizationPayload(
-        scenario=_visual_scenario(scenario),
-        profile=_visual_profile(profile),
-        theta_span=float(result.theta_span),
-        truth=truth,
-        naive_fbp=result.naive_fbp,
-        calibrated_fbp=result.calibrated_fbp,
-        aligned_tv=result.aligned_tv,
-        estimates=result.estimates,
-        metrics=result.metrics,
-        diagnostics=result.diagnostics,
-        outer_stats=result.info.get("outer_stats", []),
-    )
-
-
-def _naive_visualization_payload(
-    scenario: Scenario,
-    *,
-    truth: np.ndarray,
-    result: ScenarioComputationResult,
-) -> NaiveVisualizationPayload:
-    return NaiveVisualizationPayload(
-        scenario=_visual_scenario(scenario),
-        truth=truth,
-        naive_fbp=result.naive_fbp,
-    )
-
-
-def _write_visuals(payload: AlignmentVisualizationPayload, *, out_dir: Path) -> dict[str, str]:
+def _write_visuals(payload: Any, *, out_dir: Path) -> dict[str, str]:
     return write_alignment_visuals(payload, out_dir=out_dir)
 
 
-def _write_naive_visuals(payload: NaiveVisualizationPayload, *, out_dir: Path) -> dict[str, str]:
+def _write_naive_visuals(payload: Any, *, out_dir: Path) -> dict[str, str]:
     return write_naive_visuals(payload, out_dir=out_dir)
 
 

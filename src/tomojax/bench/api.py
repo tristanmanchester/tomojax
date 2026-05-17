@@ -50,6 +50,14 @@ from tomojax.bench.article_alignment_runs import (
     article_scenario_catalog_for_kind,
     make_article_phantom,
 )
+from tomojax.bench.article_visuals import (
+    AlignmentVisualizationPayload,
+    NaiveVisualizationPayload,
+    VisualProfile,
+    VisualScenario,
+    alignment_visualization_payload,
+    naive_visualization_payload,
+)
 from tomojax.bench.current_baseline import (
     current_baseline_payload,
     write_current_baseline_artifacts,
@@ -168,6 +176,7 @@ __all__ = [
     "AcquisitionSpec",
     "AlignmentScenario",
     "AlignmentSmokeReport",
+    "AlignmentVisualizationPayload",
     "AlternatingAlignmentSolver",
     "AlternatingLevelSummary",
     "AlternatingSmokeConfig",
@@ -178,6 +187,7 @@ __all__ = [
     "ForwardProjectorSuiteCase",
     "ForwardSinogramBenchmarkConfig",
     "ForwardSinogramSuiteCase",
+    "NaiveVisualizationPayload",
     "PhantomSpec",
     "RealLaminoGpuMonitor",
     "ScenarioExpectation",
@@ -188,6 +198,9 @@ __all__ = [
     "SpdhgSimulationGeometryBundle",
     "SyntheticBenchmarkResult",
     "SyntheticComparisonArtifact",
+    "VisualProfile",
+    "VisualScenario",
+    "alignment_visualization_payload",
     "append_real_lamino_csv",
     "apply_real_lamino_profile_args",
     "apply_real_lamino_profile_contract_args",
@@ -218,6 +231,7 @@ __all__ = [
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
     "map_real_lamino_global_z_to_binned",
+    "naive_visualization_payload",
     "normalize_real_lamino_runtime_args",
     "optimize_reference_setup_geometry_bilevel_for_level",
     "parse_shape3",
