@@ -21,6 +21,12 @@ from tomojax.bench.alignment_scenarios import (
     scenario_suite,
     validate_scenario_catalog,
 )
+from tomojax.bench.article_alignment_manifest import (
+    article_scenario_catalog_payload,
+    article_scenario_supplied_payload,
+    article_scenario_truth_payload,
+    build_article_run_manifest,
+)
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile,
     ArticleScenario,
@@ -126,9 +132,13 @@ __all__ = [
     "SyntheticComparisonArtifact",
     "article_phantom_metadata",
     "article_scenario_catalog_for_kind",
+    "article_scenario_catalog_payload",
+    "article_scenario_supplied_payload",
+    "article_scenario_truth_payload",
     "benchmark_backend",
     "benchmark_sinogram_mode",
     "binned_pixel_scale",
+    "build_article_run_manifest",
     "build_real_lamino_report",
     "build_spdhg_experiment_report",
     "current_baseline_payload",

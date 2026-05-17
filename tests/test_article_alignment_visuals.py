@@ -8,6 +8,12 @@ import imageio.v3 as iio
 import numpy as np
 
 from tomojax.bench import article_visuals
+from tomojax.bench.article_alignment_manifest import (
+    article_scenario_catalog_payload,
+    article_scenario_supplied_payload,
+    article_scenario_truth_payload,
+    build_article_run_manifest,
+)
 from tomojax.bench.article_alignment_runs import (
     article_scenario_catalog_for_kind,
     article_theta_span_deg,
@@ -109,3 +115,59 @@ def test_article_alignment_run_contracts_live_behind_bench_module() -> None:
     assert all(scenario.phantom_key == "phantom94" for scenario in scenarios)
     assert {scenario.slug for scenario in scenarios}
     assert all(article_theta_span_deg(scenario) in {180.0, 360.0} for scenario in scenarios)
+
+
+def test_article_alignment_manifest_helpers_live_behind_bench_module() -> None:
+    profile = diagnostic_profile()
+    scenario = next(
+        scenario
+        for scenario in article_scenario_catalog_for_kind("default")
+        if scenario.slug == "parallel_cor_u_m004"
+    )
+
+    truth = article_scenario_truth_payload(scenario)
+    supplied = article_scenario_supplied_payload(scenario)
+    catalog = article_scenario_catalog_payload(scenario)
+    manifest = build_article_run_manifest(
+        profile,
+        [scenario],
+        suite_name="article_headliners",
+        generator="test-generator.py",
+    )
+
+    assert truth["det_u_px"] == scenario.hidden_det_u_px
+    assert supplied == {}
+    assert catalog["active_dofs"] == ["det_u_px"]
+    assert catalog["active_geometry_dofs"] == ["det_u_px"]
+    assert manifest["generator"] == "test-generator.py"
+    assert manifest["suite_name"] == "article_headliners"
+    assert manifest["phantom"]["selection"] == (
+        "phantom_picker_128_10x10_center_biased_sphere_slot_94"
+    )
+    assert manifest["scenarios"] == [
+        {
+            "slug": scenario.slug,
+            "title": scenario.title,
+            "description": scenario.description,
+            "scenario_category": scenario.scenario_category,
+            "scenario_family": scenario.scenario_family,
+            "suite_name": "article_headliners",
+            "expectation": scenario.expectation,
+            "expected_status": list(scenario.expected_status),
+            "headline_eligible": scenario.headline_eligible,
+            "phantom_key": scenario.phantom_key,
+            "schedule": scenario.schedule,
+            "expected_objective": scenario.expected_objective,
+            "expected_optimizer": scenario.expected_optimizer,
+            "expected_loss": scenario.expected_loss,
+            "geometry_type": scenario.geometry_type,
+            "geometry_dofs": ["det_u_px"],
+            "active_dofs": ["det_u_px"],
+            "active_pose_dofs": [],
+            "active_geometry_dofs": ["det_u_px"],
+            "theta_span_deg": 180.0,
+            "n_views": profile.views,
+            "hidden_truth": truth,
+            "supplied_corrections": supplied,
+        }
+    ]

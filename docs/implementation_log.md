@@ -16463,3 +16463,24 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Article alignment manifest helpers moved behind bench facade
+
+- Added `tomojax.bench.article_alignment_manifest` to own the stable manifest
+  and scenario payload contract for article before/after alignment runs.
+- Exported `build_article_run_manifest`,
+  `article_scenario_truth_payload`, `article_scenario_supplied_payload`, and
+  `article_scenario_catalog_payload` through `tomojax.bench`.
+- Thinned `scripts/generate_alignment_before_after_128.py` by removing its
+  local manifest/payload builders while preserving the script path and private
+  aliases used by existing developer tests.
+- Added a bench-boundary contract test so article manifest semantics can be
+  verified without depending on the large script as the owner of the logic.
+
+Validation:
+
+- `uv run pytest tests/test_article_alignment_visuals.py::test_article_alignment_manifest_helpers_live_behind_bench_module tests/test_article_alignment_visuals.py::test_article_alignment_run_contracts_live_behind_bench_module tests/test_geometry_block_taxonomy_generator.py::test_geometry_block_taxonomy_docs_profile_matches_historical_run_contract tests/test_geometry_block_taxonomy_generator.py::test_visual_stress_scenarios_record_explicit_acquisition_span tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 5 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/generate_alignment_before_after_128.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/bench/article_alignment_manifest.py tests/test_article_alignment_visuals.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py` passed.

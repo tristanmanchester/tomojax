@@ -22,6 +22,12 @@ from tomojax.align.api import (
     schedule_preset,
     summarize_geometry_calibration_stats,
 )
+from tomojax.bench.article_alignment_manifest import (
+    article_scenario_catalog_payload as _scenario_catalog_payload,
+    article_scenario_supplied_payload as _scenario_supplied_payload,
+    article_scenario_truth_payload as _scenario_truth_payload,
+    build_article_run_manifest as build_run_manifest,
+)
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile as RunProfile,
     ArticleScenario as Scenario,
@@ -320,54 +326,6 @@ def _volume_nmse(candidate: np.ndarray, truth: np.ndarray) -> float:
     return float(np.mean(np.square(candidate - truth)) / denom)
 
 
-def _scenario_truth_payload(scenario: Scenario) -> dict[str, float]:
-    return {
-        "det_u_px": float(scenario.hidden_det_u_px),
-        "det_v_px": float(scenario.hidden_det_v_px),
-        "detector_roll_deg": float(scenario.hidden_detector_roll_deg),
-        "axis_rot_x_deg": float(scenario.hidden_axis_rot_x_deg),
-        "axis_rot_y_deg": float(scenario.hidden_axis_rot_y_deg),
-        "nominal_tilt_deg": float(scenario.nominal_tilt_deg),
-        "true_tilt_deg": float(scenario.true_tilt_deg),
-    }
-
-
-def _scenario_supplied_payload(scenario: Scenario) -> dict[str, float]:
-    supplied: dict[str, float] = {}
-    for name in (
-        "det_u_px",
-        "det_v_px",
-        "detector_roll_deg",
-        "axis_rot_x_deg",
-        "axis_rot_y_deg",
-    ):
-        value = getattr(scenario, f"supplied_{name}")
-        if value is not None:
-            supplied[name] = float(value)
-    return supplied
-
-
-def _scenario_catalog_payload(scenario: Scenario) -> dict[str, Any]:
-    active_dofs = tuple(scenario.active_dofs or scenario.geometry_dofs)
-    return {
-        "scenario_category": scenario.scenario_category,
-        "scenario_family": scenario.scenario_family,
-        "expectation": scenario.expectation,
-        "expected_status": list(scenario.expected_status),
-        "headline_eligible": bool(scenario.headline_eligible),
-        "phantom_key": scenario.phantom_key,
-        "schedule": scenario.schedule,
-        "expected_objective": scenario.expected_objective,
-        "expected_optimizer": scenario.expected_optimizer,
-        "expected_loss": scenario.expected_loss,
-        "active_dofs": list(active_dofs),
-        "active_pose_dofs": [
-            dof for dof in active_dofs if dof in {"alpha", "beta", "phi", "dx", "dz"}
-        ],
-        "active_geometry_dofs": list(scenario.geometry_dofs),
-    }
-
-
 def _geometry_status_label(diagnostics: Any) -> str:
     if not isinstance(diagnostics, dict):
         return ""
@@ -434,61 +392,6 @@ def _last_solver_metadata(outer_stats: Any) -> dict[str, Any]:
         if payload:
             return payload
     return {}
-
-
-def build_run_manifest(
-    profile: RunProfile,
-    scenarios: Sequence[Scenario],
-    *,
-    suite_name: str = "default",
-) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "generator": "scripts/generate_alignment_before_after_128.py",
-        "purpose": "geometry_block_before_after_taxonomy",
-        "phantom": _phantom_metadata(),
-        "profile": asdict(profile),
-        "scenario_set": suite_name,
-        "suite_name": suite_name,
-        "scenarios": [
-            {
-                "slug": s.slug,
-                "title": s.title,
-                "description": s.description,
-                "scenario_category": s.scenario_category,
-                "scenario_family": s.scenario_family,
-                "suite_name": suite_name,
-                "expectation": s.expectation,
-                "expected_status": list(s.expected_status),
-                "headline_eligible": bool(s.headline_eligible),
-                "phantom_key": s.phantom_key,
-                "schedule": s.schedule,
-                "expected_objective": s.expected_objective,
-                "expected_optimizer": s.expected_optimizer,
-                "expected_loss": s.expected_loss,
-                "geometry_type": s.geometry_type,
-                "geometry_dofs": list(s.geometry_dofs),
-                "active_dofs": list(s.active_dofs or s.geometry_dofs),
-                "active_pose_dofs": [
-                    dof
-                    for dof in (s.active_dofs or ())
-                    if dof in {"alpha", "beta", "phi", "dx", "dz"}
-                ],
-                "active_geometry_dofs": list(s.geometry_dofs),
-                "theta_span_deg": _theta_span_deg(s),
-                "n_views": int(profile.views),
-                "hidden_truth": _scenario_truth_payload(s),
-                "supplied_corrections": _scenario_supplied_payload(s),
-            }
-            for s in scenarios
-        ],
-        "gauge_notes": {
-            "det_u_px": (
-                "Canonical detector/ray-grid centre offset in native detector pixels under the "
-                "detector_ray_grid_center gauge; not a standalone physical COR proof."
-            ),
-        },
-    }
 
 
 def _write_json(path: Path, payload: Any) -> None:
