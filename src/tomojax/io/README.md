@@ -13,6 +13,7 @@ artifact schemas.
 - `NXTomoMetadata`
 - `ProjectionDataset`
 - `ValidationReport`
+- `absorption_to_transmission(...)`
 - `load_projection_payload(path)`
 - `load_nxtomo(path)`
 - `save_projection_payload(path, projections=..., metadata=...)`
@@ -21,6 +22,8 @@ artifact schemas.
 - `convert_dataset(input_path, output_path)`
 - `inspect_dataset(path)`
 - `format_inspection_report(report)`
+- `flat_dark_to_absorption(...)`
+- `flat_dark_to_transmission(...)`
 - `save_projection_quicklook(path, output_path)`
 - `load_dataset(path)`
 - `load_tiff_stack(path, angles_deg=...)`
@@ -31,6 +34,7 @@ artifact schemas.
 - `save_dataset(path, dataset)`
 - `validate_dataset(path)`
 - `validate_nxtomo(path)`
+- `transmission_to_absorption(...)`
 - `normalize_json(...)`
 - `drop_none(...)`
 

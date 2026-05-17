@@ -27,8 +27,12 @@ from tomojax.io._json import JsonValue, drop_none, normalize_json
 from tomojax.io._preprocess import (
     PreprocessConfig,
     PreprocessResult,
+    absorption_to_transmission,
+    flat_dark_to_absorption,
+    flat_dark_to_transmission,
     preprocess_nxtomo,
     preprocess_tiff_stack,
+    transmission_to_absorption,
 )
 
 __all__ = [
@@ -40,9 +44,12 @@ __all__ = [
     "PreprocessResult",
     "ProjectionDataset",
     "ValidationReport",
+    "absorption_to_transmission",
     "build_geometry_from_dataset_metadata",
     "convert_dataset",
     "drop_none",
+    "flat_dark_to_absorption",
+    "flat_dark_to_transmission",
     "format_inspection_report",
     "inspect_dataset",
     "load_dataset",
@@ -56,6 +63,7 @@ __all__ = [
     "save_nxtomo",
     "save_projection_payload",
     "save_projection_quicklook",
+    "transmission_to_absorption",
     "validate_dataset",
     "validate_nxtomo",
 ]

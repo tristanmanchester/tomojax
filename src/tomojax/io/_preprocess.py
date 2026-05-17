@@ -13,13 +13,29 @@ import h5py
 import imageio.v3 as iio
 import numpy as np
 
-from tomojax.data.contrast import flat_dark_to_absorption, flat_dark_to_transmission
+from tomojax.data.contrast import (
+    absorption_to_transmission,
+    flat_dark_to_absorption,
+    flat_dark_to_transmission,
+    transmission_to_absorption,
+)
 from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
 from tomojax.data.preprocess import (
     PreprocessConfig,
     PreprocessResult,
     preprocess_nxtomo,
 )
+
+__all__ = [
+    "PreprocessConfig",
+    "PreprocessResult",
+    "absorption_to_transmission",
+    "flat_dark_to_absorption",
+    "flat_dark_to_transmission",
+    "preprocess_nxtomo",
+    "preprocess_tiff_stack",
+    "transmission_to_absorption",
+]
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

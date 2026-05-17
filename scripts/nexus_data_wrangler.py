@@ -31,13 +31,14 @@ Output structure:
         volume (float32, [nz, ny, nx], chunks [16,16,32], compression=lzf, @long_name="ground_truth_volume")
 """
 
-import json
 from dataclasses import dataclass
-import numpy as np
+import json
+
 import h5py
+import numpy as np
 
 from tomojax.geometry import DISK_VOLUME_AXES, VOLUME_AXES_ATTR
-from tomojax.data.contrast import flat_dark_to_absorption
+from tomojax.io import flat_dark_to_absorption
 
 
 def load_raw(input_path, proj_path, ang_path, key_path):

@@ -50,7 +50,10 @@ def test_io_facade_exports_dataset_boundary() -> None:
     assert io_api.PreprocessResult.__name__ == "PreprocessResult"
     assert io_api.ProjectionDataset.__name__ == "ProjectionDataset"
     assert io_api.ValidationReport.__name__ == "ValidationReport"
+    assert callable(io_api.absorption_to_transmission)
     assert callable(io_api.build_geometry_from_dataset_metadata)
+    assert callable(io_api.flat_dark_to_absorption)
+    assert callable(io_api.flat_dark_to_transmission)
     assert callable(io_api.load_dataset)
     assert callable(io_api.load_nxtomo)
     assert callable(io_api.load_projection_payload)
@@ -61,6 +64,7 @@ def test_io_facade_exports_dataset_boundary() -> None:
     assert callable(io_api.save_projection_payload)
     assert callable(io_api.validate_dataset)
     assert callable(io_api.validate_nxtomo)
+    assert callable(io_api.transmission_to_absorption)
     assert callable(io_api.normalize_json)
 
 

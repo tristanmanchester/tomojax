@@ -16312,3 +16312,24 @@ Validation:
   passed.
 - `rg -n "from tomojax\\.data\\.geometry_meta|build_geometry_from_meta" src/tomojax/bench/loss_experiment.py src/tomojax/bench scripts`
   returned no matches.
+
+### Contrast correction helpers exposed through IO facade
+
+- Added Beer-Lambert contrast conversion helpers to `tomojax.io`:
+  `flat_dark_to_absorption`, `flat_dark_to_transmission`,
+  `transmission_to_absorption`, and `absorption_to_transmission`.
+- Updated `scripts/nexus_data_wrangler.py` to import flat/dark absorption
+  correction through the IO facade rather than the retained lower-level
+  `tomojax.data.contrast` module.
+- Updated the IO README and public facade test to document and verify the
+  preprocessing/contrast public surface.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_nexus_data_wrangler.py tests/test_contrast.py -q`
+  passed with 21 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/io/_preprocess.py src/tomojax/io/api.py src/tomojax/io/__init__.py scripts/nexus_data_wrangler.py tests/test_public_facades.py`
+  passed.
+- `rg -n "from tomojax\\.data\\.contrast|import tomojax\\.data\\.contrast" scripts src/tomojax/bench src/tomojax/cli`
+  returned no matches.
+- `python tools/check_public_imports.py scripts src tests` passed.
