@@ -149,7 +149,7 @@ class ScenarioSuite:
 PHANTOM94 = PhantomSpec(
     key="phantom94",
     kind="random_shapes/center_biased_sphere_cubes_spheres",
-    source="tomojax.data.phantoms.random_cubes_spheres",
+    source="tomojax.datasets.random_cubes_spheres",
     seed=20260893,
     n_cubes=22,
     n_spheres=22,

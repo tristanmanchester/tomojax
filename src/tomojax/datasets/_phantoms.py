@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax.data.phantoms import random_cubes_spheres
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+__all__ = ["make_benchmark_phantom", "random_cubes_spheres"]
 
 
 def make_benchmark_phantom(size: int, seed: int) -> NDArray[np.float32]:

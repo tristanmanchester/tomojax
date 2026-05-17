@@ -69,6 +69,7 @@ def test_datasets_facade_exports_simulation_boundary() -> None:
     assert datasets_api.SimulatedData.__name__ == "SimulatedData"
     assert callable(datasets_api.make_benchmark_phantom)
     assert callable(datasets_api.make_phantom)
+    assert callable(datasets_api.random_cubes_spheres)
     assert callable(datasets_api.simulate)
     assert callable(datasets_api.simulate_to_file)
 

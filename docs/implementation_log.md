@@ -16276,3 +16276,23 @@ Validation:
   returned no matches.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### Article phantom generator routed through datasets facade
+
+- Added `random_cubes_spheres` to the `tomojax.datasets` facade so article and
+  benchmark scenario code can use the v2 dataset owner instead of importing
+  retained `tomojax.data.phantoms` helpers directly.
+- Updated `tomojax.bench.article_alignment_runs` to import the article phantom
+  generator through `tomojax.datasets`.
+- Updated the PHANTOM94 scenario metadata source string from
+  `tomojax.data.phantoms.random_cubes_spheres` to
+  `tomojax.datasets.random_cubes_spheres`.
+- Updated dataset README and public facade tests.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_article_alignment_visuals.py tests/test_synthetic_datasets.py::test_benchmark_phantom_is_deterministic_and_structured tests/test_synthetic_datasets.py::test_generate_rich_phantom94_dataset_records_phantom_kind -q`
+  passed with 13 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/datasets/_phantoms.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py src/tomojax/bench/article_alignment_runs.py src/tomojax/bench/alignment_scenarios.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py scripts src tests` passed.

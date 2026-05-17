@@ -25,6 +25,7 @@ data generation, while production forward modelling belongs to
 - `load_synthetic128_specs`
 - `make_benchmark_phantom`
 - `make_phantom`
+- `random_cubes_spheres`
 - `simulate`
 - `simulate_to_file`
 - `synthetic128_spec`

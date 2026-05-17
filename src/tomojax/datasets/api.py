@@ -7,7 +7,7 @@ from tomojax.datasets._loader import (
     SyntheticDatasetSidecars,
     load_synthetic_dataset_sidecars,
 )
-from tomojax.datasets._phantoms import make_benchmark_phantom
+from tomojax.datasets._phantoms import make_benchmark_phantom, random_cubes_spheres
 from tomojax.datasets._simulate import (
     SimConfig,
     SimulatedData,
@@ -33,6 +33,7 @@ __all__ = [
     "load_synthetic_dataset_sidecars",
     "make_benchmark_phantom",
     "make_phantom",
+    "random_cubes_spheres",
     "simulate",
     "simulate_to_file",
     "synthetic128_spec",

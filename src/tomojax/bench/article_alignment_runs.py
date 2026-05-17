@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from tomojax.bench.alignment_scenarios import AlignmentScenario, phantom_spec, scenario_suite
-from tomojax.data.phantoms import random_cubes_spheres
+from tomojax.datasets import random_cubes_spheres
 
 DEFAULT_LEVELS = (8, 4, 2, 1)
 ARTICLE_PHANTOM = phantom_spec("phantom94")
