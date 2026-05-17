@@ -6,16 +6,25 @@
 geometry updates, continuation policy, observability reporting, gauge
 canonicalisation, and solver traces.
 
-This README and `api.py` define the public boundary. Diagnostic runners and
-retained compatibility aliases remain internal/developer surfaces unless they
-are explicitly re-exported below.
+This README and `api.py` define the public boundary. The package root keeps the
+minimal product surface (`AlignConfig`, `align`, `align_multires`). Broader
+typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
+`tomojax.bench` or `tomojax dev ...`, not in the product alignment namespace.
 
 ## Public API
 
 - `AlignConfig`
+- `AlignmentLossConfig`
+- `AlignmentProfile`
+- `AlignmentProfileInput`
+- `AlignmentProfilePolicy`
 - `ContinuationLevel`
 - `ContinuationSchedule`
 - `ContinuationScheduleName`
+- `DofBounds`
+- `FallbackPolicy`
+- `GaugeFixMode`
+- `GaugePolicy`
 - `GeometryUpdateVolumeSource`
 - `JointSchurDiagnostics`
 - `JointSchurLMConfig`
@@ -28,12 +37,23 @@ are explicitly re-exported below.
 - `adapt_joint_schur_trust_radius`
 - `align`
 - `align_multires`
+- `alignment_profile_policy`
 - `joint_schur_normal_eq_summary`
+- `normalize_alignment_dofs`
+- `normalize_alignment_profile`
+- `normalize_bounds`
+- `parse_loss_schedule`
+- `parse_loss_spec`
+- `profile_policy_from_config`
 - `reference_continuation_schedule`
+- `resolve_alignment_schedule`
+- `resolve_profiled_cli_defaults`
 - `schur_step_from_jacobian`
+- `se3_from_5d`
 - `solve_joint_schur_lm`
 - `solve_pose_only_lm`
 - `solve_setup_only_lm`
+- `validate_loss_schedule_levels`
 - `write_joint_schur_normal_eq_summary`
 
 ## Dependencies
@@ -60,7 +80,12 @@ Forbidden dependencies:
 
 - Default geometry optimisation must be gradient-first LM/GN, not grid search.
 - Geometry updates must emit artifact/provenance data.
-- Public imports should come through this package facade.
+- Product code should import alignment helpers from `tomojax.align.api` or the
+  package-root product facade, not transitional nested aliases.
+- `tomojax.align.checkpoint`, `tomojax.align.diagnostics`,
+  `tomojax.align.motion_models`, `tomojax.align.params_export`, and
+  `tomojax.align.losses` are intentionally not registered compatibility
+  modules. Use their owning deep-module paths.
 - `solve_pose_only_lm` defaults to `phi_residual_rad`, `dx_px`, and `dz_px`;
   `alpha_rad` and `beta_rad` are supported opt-in pose DOFs for focused stages.
 - `solve_setup_only_lm` defaults to `theta_offset_rad`, `det_u_px`, active
