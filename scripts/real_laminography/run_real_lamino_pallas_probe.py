@@ -21,7 +21,6 @@ from run_real_lamino_reference_regression import (
     _apply_projection_background,
     _global_z_to_phys,
     _load_input,
-    _params_summary,
     _parse_range,
     _projection_stats,
     _save_png,
@@ -41,6 +40,7 @@ from tomojax.align.api import (
     apply_alignment_state,
     geometry_with_axis_state,
 )
+from tomojax.bench import real_lamino_pose_params_summary
 from tomojax.bench.real_laminography_runtime import (
     RealLaminoGpuMonitor as GpuMonitor,
     append_real_lamino_csv as _append_csv,
@@ -292,7 +292,7 @@ def _run_alignment_probe(
             ),
             "elapsed_seconds": float(elapsed),
             "info": info,
-            "params_summary": _params_summary(params_np),
+            "params_summary": real_lamino_pose_params_summary(params_np),
         }
     except Exception as exc:
         elapsed = time.perf_counter() - t0

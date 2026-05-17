@@ -48,6 +48,7 @@ from tomojax.bench import (
     optimize_reference_setup_geometry_bilevel_for_level,
     real_lamino_commit_info,
     real_lamino_json_safe,
+    real_lamino_pose_params_summary,
     real_lamino_projection_stats,
     resize_nearest_2d,
     save_uint8_png,
@@ -320,28 +321,6 @@ class RunContext:
         }
         iio.imwrite(stage_dir / "orthos.png", _orthos(volume, preview_local_z=local_z))
         return artifacts
-
-
-def _params_summary(params: np.ndarray) -> dict[str, Any]:
-    arr = np.asarray(params, dtype=np.float32)
-    names = ["alpha", "beta", "phi", "dx", "dz"]
-    out: dict[str, Any] = {}
-    for idx, name in enumerate(names):
-        col = arr[:, idx]
-        out[name] = {
-            "min": float(np.min(col)),
-            "max": float(np.max(col)),
-            "mean": float(np.mean(col)),
-            "std": float(np.std(col)),
-        }
-        if name in {"alpha", "beta", "phi"}:
-            out[name + "_deg"] = {
-                "min": float(np.rad2deg(np.min(col))),
-                "max": float(np.rad2deg(np.max(col))),
-                "mean": float(np.rad2deg(np.mean(col))),
-                "std": float(np.rad2deg(np.std(col))),
-            }
-    return out
 
 
 def _schedule_dict(schedule: AlignmentSchedule) -> dict[str, Any]:
@@ -818,7 +797,7 @@ def run_pose_stage(
             )
     params_np = np.asarray(params_current, dtype=np.float32)
     _write_params_csv(stage_dir / "params.csv", params_np)
-    _write_json(stage_dir / "align_info.json", {"outer_stats": stage_stats, "params_summary": _params_summary(params_np)})
+    _write_json(stage_dir / "align_info.json", {"outer_stats": stage_stats, "params_summary": real_lamino_pose_params_summary(params_np)})
     _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
     products = ctx.save_stage_products(
         stage_dir=stage_dir,
@@ -837,7 +816,7 @@ def run_pose_stage(
             "levels": list(levels),
             "bounds": bounds,
             "stats_count": len(stage_stats),
-            "params_summary": _params_summary(params_np),
+            "params_summary": real_lamino_pose_params_summary(params_np),
             "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
             "artifacts": products,
         },
@@ -909,11 +888,11 @@ def _final_reconstruct(
             "elapsed_seconds": float(elapsed),
             "recon_info": info,
             "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
-            "params_summary": _params_summary(params5),
+            "params_summary": real_lamino_pose_params_summary(params5),
             "artifacts": products,
         },
     )
-    _write_json(stage_dir / "align_info.json", {"recon_info": info, "params_summary": _params_summary(params5)})
+    _write_json(stage_dir / "align_info.json", {"recon_info": info, "params_summary": real_lamino_pose_params_summary(params5)})
     _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
     return vol_np
 
@@ -1181,7 +1160,7 @@ def main() -> int:
                     levels=tuple(int(v) for v in stage["levels"]),
                     bounds=str(stage["bounds"]),
                 )
-                ctx.stage_records.append({"stage": stage["name"], "stats_count": len(stats), "params_summary": _params_summary(params5)})
+                ctx.stage_records.append({"stage": stage["name"], "stats_count": len(stats), "params_summary": real_lamino_pose_params_summary(params5)})
 
         final_volume = _final_reconstruct(
             ctx,
@@ -1199,7 +1178,7 @@ def main() -> int:
             "completed_at": datetime.now().isoformat(timespec="seconds"),
             "stage_records": ctx.stage_records,
             "final_setup_estimates": setup_state.to_calibration_state().to_dict(),
-            "final_pose_summary": _params_summary(params5),
+            "final_pose_summary": real_lamino_pose_params_summary(params5),
             "final_volume_shape": list(final_volume.shape),
         }
         _write_json(run_root / "run_manifest.json", {**json.loads((run_root / "run_manifest.json").read_text()), **final_payload})

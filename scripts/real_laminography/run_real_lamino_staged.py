@@ -45,6 +45,7 @@ from tomojax.bench.real_laminography_report import (
     mark_real_lamino_stage_failed,
     real_lamino_loss_summary,
     real_lamino_method_constraints,
+    real_lamino_pose_params_summary,
     real_lamino_safe_params_summary,
     validate_real_lamino_stage_output,
     write_real_lamino_planned_stage_manifests,
@@ -317,7 +318,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             "completed_at": completed,
             "stage_records": stage_records,
             "final_setup_estimates": setup_state.to_calibration_state().to_dict(),
-            "final_pose_summary": native._params_summary(params5),
+            "final_pose_summary": real_lamino_pose_params_summary(params5),
             "final_volume_shape": list(
                 final_volume.shape if final_volume is not None else cor_only.shape
             ),
@@ -560,10 +561,7 @@ def run_remaining_stages(
                     "stage": stage_name,
                     "status": "failed",
                     "stats_count": len(stats),
-                    "params_summary": real_lamino_safe_params_summary(
-                        params5,
-                        summarize=native._params_summary,
-                    ),
+                    "params_summary": real_lamino_safe_params_summary(params5),
                     "failure_provenance": validation,
                 }
             )
@@ -578,7 +576,7 @@ def run_remaining_stages(
                 "stage": stage_name,
                 "status": "completed",
                 "stats_count": len(stats),
-                "params_summary": native._params_summary(params5),
+                "params_summary": real_lamino_pose_params_summary(params5),
             }
         )
         final_candidates.append(

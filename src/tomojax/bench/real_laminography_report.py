@@ -237,10 +237,36 @@ def real_lamino_finite_fraction(value: Any | None) -> float:
     return float(np.isfinite(arr).mean())
 
 
+def real_lamino_pose_params_summary(params5: Any) -> dict[str, Any]:
+    """Summarize per-view 5-DOF pose parameters for real-laminography reports."""
+    arr = np.asarray(params5, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] != 5:
+        raise ValueError(f"expected pose params with shape (views, 5), got {arr.shape}")
+    names = ("alpha", "beta", "phi", "dx", "dz")
+    summary: dict[str, Any] = {}
+    for idx, name in enumerate(names):
+        col = arr[:, idx]
+        summary[name] = {
+            "min": float(np.min(col)),
+            "max": float(np.max(col)),
+            "mean": float(np.mean(col)),
+            "std": float(np.std(col)),
+        }
+        if name in {"alpha", "beta", "phi"}:
+            deg = np.rad2deg(col)
+            summary[f"{name}_deg"] = {
+                "min": float(np.min(deg)),
+                "max": float(np.max(deg)),
+                "mean": float(np.mean(deg)),
+                "std": float(np.std(deg)),
+            }
+    return summary
+
+
 def real_lamino_safe_params_summary(
     params5: Any,
     *,
-    summarize: Callable[[np.ndarray], Mapping[str, Any]],
+    summarize: Callable[[np.ndarray], Mapping[str, Any]] = real_lamino_pose_params_summary,
 ) -> dict[str, Any] | None:
     """Summarize pose parameters only when every value is finite."""
     params = np.asarray(params5, dtype=np.float32)
@@ -1148,6 +1174,7 @@ __all__ = [
     "real_lamino_finite_fraction",
     "real_lamino_loss_summary",
     "real_lamino_method_constraints",
+    "real_lamino_pose_params_summary",
     "real_lamino_safe_params_summary",
     "real_lamino_stat_validation_failures",
     "real_lamino_success_payload",

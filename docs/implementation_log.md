@@ -3,6 +3,48 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography pose-parameter summary moved behind bench facade
+
+### Scope
+
+Continued assimilating real-laminography report schema behavior by moving the
+per-view 5-DOF pose-parameter summary out of the reference-regression script and
+into the bench-owned report module.
+
+Changes:
+
+- Added `real_lamino_pose_params_summary(...)` to
+  `tomojax.bench.real_laminography_report`.
+- Exported the helper through the `tomojax.bench` facade.
+- Updated the reference-regression runner, staged runner, and Pallas probe to
+  use the bench-owned summary helper.
+- Changed `real_lamino_safe_params_summary(...)` to use the bench-owned
+  pose-summary schema by default.
+- Added focused report/facade tests for the shared radians/degrees summary
+  contract.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py
+  src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_laminography_report.py
+  tests/test_public_facades.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py
+  src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_laminography_report.py
+  tests/test_public_facades.py` passed.
+- `uv run pytest tests/test_real_laminography_report.py
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed: 7 tests in 2.90 seconds.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Staged real-laminography bench-helper aliases removed
 
 ### Scope

@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from tomojax.bench import (
     mark_real_lamino_stage_failed,
     real_lamino_loss_summary,
+    real_lamino_pose_params_summary,
     real_lamino_safe_params_summary,
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
@@ -154,3 +156,20 @@ def test_real_lamino_safe_params_summary_rejects_nonfinite_values() -> None:
     )
     assert summary == {"shape": [2, 5], "dtype": "float32"}
     assert calls == 1
+
+
+def test_real_lamino_pose_params_summary_reports_radians_and_degrees() -> None:
+    params = np.array(
+        [
+            [0.0, 0.1, np.pi / 2.0, 1.0, -2.0],
+            [0.2, -0.1, 0.0, 3.0, 2.0],
+        ],
+        dtype=np.float32,
+    )
+
+    summary = real_lamino_pose_params_summary(params)
+
+    assert summary["dx"] == {"min": 1.0, "max": 3.0, "mean": 2.0, "std": 1.0}
+    assert summary["dz"]["min"] == -2.0
+    assert summary["phi_deg"]["max"] == pytest.approx(90.0)
+    assert summary["alpha_deg"]["mean"] == pytest.approx(np.rad2deg(0.1))
