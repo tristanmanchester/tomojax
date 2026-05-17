@@ -60,6 +60,7 @@ Completed checkpoints in this pass:
 - [x] Move article alignment run-result and metadata assembly into
       `tomojax.bench`.
 - [x] Move article alignment scenario computation into `tomojax.bench`.
+- [x] Move real-laminography final-candidate planning into `tomojax.bench`.
 
 Next candidates:
 

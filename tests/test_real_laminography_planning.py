@@ -13,6 +13,7 @@ from tomojax.bench import (
     pose_phi_bounds,
     pose_polish_bounds,
     resolve_fixture_bin_factor,
+    select_real_lamino_final_candidates,
     setup_det_u_bounds,
     validate_bin_factor,
     view_indices_for_smoke_shape,
@@ -65,3 +66,22 @@ def test_real_laminography_planning_validates_bin_factor_and_shapes() -> None:
         )
     with pytest.raises(argparse.ArgumentTypeError, match="projection shape dimensions must be positive"):
         parse_shape3("8x0x64")
+
+
+def test_real_laminography_planning_selects_final_candidates() -> None:
+    candidates = [
+        {"label": "cor", "source_stage": "01_setup_geometry/01_cor"},
+        {"label": "pose", "source_stage": "04_pose_polish"},
+        {"label": "final", "source_stage": "05_final"},
+    ]
+
+    assert select_real_lamino_final_candidates(candidates, policy="all") == candidates
+    assert select_real_lamino_final_candidates(candidates, policy="last-valid") == [
+        candidates[-1]
+    ]
+    assert select_real_lamino_final_candidates(candidates, policy="setup_only") == [
+        candidates[0]
+    ]
+
+    with pytest.raises(ValueError, match="final candidate policy"):
+        select_real_lamino_final_candidates(candidates, policy="sharpest")

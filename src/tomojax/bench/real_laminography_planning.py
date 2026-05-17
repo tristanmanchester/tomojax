@@ -217,6 +217,31 @@ def pose_polish_bounds(args: PoseBoundsArgs) -> str:
     )
 
 
+def select_real_lamino_final_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    policy: str,
+) -> list[dict[str, Any]]:
+    """Select staged geometry candidates to score for final reconstruction."""
+    normalized = str(policy).strip().lower().replace("-", "_")
+    if normalized == "all":
+        return candidates
+    if normalized == "last_valid":
+        return [candidates[-1]]
+    if normalized == "setup_only":
+        setup_candidates = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("source_stage", "")).startswith("01_setup_geometry/")
+            or str(candidate.get("source_stage", "")) == "01_setup_geometry/01_cor"
+        ]
+        return setup_candidates or [candidates[-1]]
+    raise ValueError(
+        "final candidate policy must be one of 'all', 'last_valid', or 'setup_only'; "
+        f"got {policy!r}"
+    )
+
+
 def parse_shape3(text: str) -> tuple[int, int, int]:
     """Parse a three-axis shape accepted by real-laminography CLI options."""
     parts = str(text).lower().replace("x", ",").split(",")
@@ -245,6 +270,7 @@ __all__ = [
     "prepare_real_lamino_binned_fixture",
     "resolve_fixture_bin_factor",
     "scaled_symmetric_bound",
+    "select_real_lamino_final_candidates",
     "setup_det_u_bounds",
     "validate_bin_factor",
     "view_indices_for_smoke_shape",

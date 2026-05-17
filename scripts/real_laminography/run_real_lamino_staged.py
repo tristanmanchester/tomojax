@@ -31,6 +31,7 @@ from tomojax.bench.real_laminography_planning import (
     pose_phi_bounds,
     pose_polish_bounds,
     prepare_real_lamino_binned_fixture,
+    select_real_lamino_final_candidates,
     setup_det_u_bounds,
 )
 from tomojax.bench.real_laminography_profiles import (
@@ -621,7 +622,10 @@ def run_best_final_reconstruction(
     candidate_policy = str(
         getattr(getattr(ctx, "args", object()), "final_candidate_policy", "all")
     )
-    candidates_to_score = _select_final_candidates(candidates, policy=candidate_policy)
+    candidates_to_score = select_real_lamino_final_candidates(
+        candidates,
+        policy=candidate_policy,
+    )
     root = Path(ctx.run_root)
     scratch_root = root / "05_final_candidates"
     if scratch_root.exists():
@@ -700,30 +704,6 @@ def run_best_final_reconstruction(
     }
     native._write_json(final_dir / "stage_manifest.json", manifest)
     return np.asarray(best["volume"], dtype=np.float32), best
-
-
-def _select_final_candidates(
-    candidates: list[dict[str, Any]],
-    *,
-    policy: str,
-) -> list[dict[str, Any]]:
-    normalized = str(policy).strip().lower().replace("-", "_")
-    if normalized == "all":
-        return candidates
-    if normalized == "last_valid":
-        return [candidates[-1]]
-    if normalized == "setup_only":
-        setup_candidates = [
-            candidate
-            for candidate in candidates
-            if str(candidate.get("source_stage", "")).startswith("01_setup_geometry/")
-            or str(candidate.get("source_stage", "")) == "01_setup_geometry/01_cor"
-        ]
-        return setup_candidates or [candidates[-1]]
-    raise ValueError(
-        "final candidate policy must be one of 'all', 'last_valid', or 'setup_only'; "
-        f"got {policy!r}"
-    )
 
 
 def _mark_stage_failed(
@@ -952,13 +932,6 @@ def _write_planned_stage_manifests(root: Path, *, native: Any) -> None:
                 "planned_after": "v2 COR-only path works",
             },
         )
-
-
-def _resolve_artifact_path(stage_dir: Path, raw_path: object) -> Path:
-    candidate = Path(str(raw_path))
-    if candidate.is_absolute() or candidate.exists():
-        return candidate
-    return stage_dir / candidate
 
 
 def _loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:

@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography final-candidate planning moved behind bench facade
+
+### Scope
+
+Continued thinning the staged real-laminography runner by moving a reusable
+planning rule out of `scripts/real_laminography/run_real_lamino_staged.py`.
+
+Changes:
+
+- Added `select_real_lamino_final_candidates(...)` to
+  `tomojax.bench.real_laminography_planning`.
+- Exported the final-candidate selector through the `tomojax.bench` facade.
+- Updated the staged runner to call the bench-owned selector.
+- Deleted an unused script-local artifact-path resolver.
+- Added focused planning/facade tests for the candidate policy behavior.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_laminography_planning.py
+  tests/test_public_facades.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_laminography_planning.py
+  tests/test_public_facades.py` passed.
+- `uv run pytest tests/test_real_laminography_planning.py
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed: 6 tests in 1.88 seconds.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Article alignment computation moved behind bench facade
 
 ### Scope
