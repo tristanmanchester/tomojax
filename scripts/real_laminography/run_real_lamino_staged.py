@@ -648,7 +648,9 @@ def run_best_final_reconstruction(
                 setup_state=candidate["setup_state"],
                 params5=np.asarray(candidate["params5"], dtype=np.float32),
             )
-            manifest = _read_json(candidate_root / "05_final" / "stage_manifest.json")
+            manifest = dict(
+                read_json_object(candidate_root / "05_final" / "stage_manifest.json")
+            )
             loss_last = real_lamino_loss_summary(manifest.get("recon_info", {})).get("last")
             validation = _validate_stage_output(
                 candidate_root / "05_final",
@@ -685,7 +687,7 @@ def run_best_final_reconstruction(
     if final_dir.exists():
         shutil.rmtree(final_dir)
     shutil.copytree(best["candidate_dir"], final_dir)
-    manifest = _read_json(final_dir / "stage_manifest.json")
+    manifest = dict(read_json_object(final_dir / "stage_manifest.json"))
     manifest["volume_shape"] = list(np.asarray(best["volume"]).shape)
     manifest["selected_final_candidate"] = {
         "label": best["label"],
@@ -864,10 +866,6 @@ def _load_native_runner() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    return dict(read_json_object(path))
 
 
 if __name__ == "__main__":

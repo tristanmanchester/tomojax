@@ -3,6 +3,28 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Staged real-laminography JSON wrapper removed
+
+### Scope
+
+Finished the JSON artifact ownership cleanup by deleting the remaining
+script-local JSON object wrapper from
+`scripts/real_laminography/run_real_lamino_staged.py`.
+
+Changes:
+
+- Replaced the final `_read_json(...)` call sites with direct calls to
+  `tomojax.io.read_json_object(...)`.
+- Removed the now-trivial script-local `_read_json(...)` helper.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_staged.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - JSON object artifact helpers moved behind IO facade
 
 ### Scope
