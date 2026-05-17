@@ -18124,6 +18124,30 @@ Validation:
 - Broader `basedpyright src/tomojax/backends` still fails on pre-existing
   `_memory.py`/`_subprocesses.py` strict typing debt; not introduced by this
   backend capability boundary change.
+
+### Real-laminography scripts use developer facade
+
+- Removed direct imports from real-laminography scripts into bench implementation
+  modules where the `tomojax.bench` developer facade already owns the export.
+- `run_real_lamino_staged.py` now imports staging, planning, profile, report,
+  runtime, setup, pose, and reconstruction helpers through `tomojax.bench`
+  instead of wiring itself to the bench package's private layout.
+- `run_real_lamino_pallas_probe.py` now imports the runtime monitor, CSV/status
+  writers, timing helpers, and relative-L2 helper through `tomojax.bench`.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py` passed.
+- `uv run pytest -q
+  tests/test_real_lamino_runner_contract.py::test_staged_public_help_uses_clean_profile_names
+  tests/test_real_lamino_runner_contract.py::test_staged_reference_regression_profile_forces_reference_contract
+  tests/test_real_lamino_runner_contract.py::test_staged_runtime_default_streams_fista
+  tests/test_bench_developer_facade.py` passed with 5 tests.
 - `uv run pytest -q
   tests/test_real_lamino_runner_contract.py::test_bench_setup_stage_writes_artifacts_and_applies_bounds
   tests/test_bench_developer_facade.py

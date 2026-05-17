@@ -18,52 +18,44 @@ import jax
 import numpy as np
 
 from tomojax.align.api import GeometryCalibrationState
-from tomojax.bench.real_laminography_context import RealLaminoRunContext
-from tomojax.bench.real_laminography_planning import (
+from tomojax.bench import (
+    REAL_LAMINO_PROFILE_CHOICES,
+    REAL_LAMINO_STAGED_PATH,
+    REFERENCE_REGRESSION_STAGE_MAP as _REFERENCE_REGRESSION_STAGE_MAP,
+    RealLaminoGpuMonitor,
+    RealLaminoRunContext,
+    apply_real_lamino_profile_args,
+    apply_real_lamino_projection_background,
     binned_pixel_scale,
+    build_real_lamino_report,
+    mark_real_lamino_stage_failed,
+    normalize_real_lamino_runtime_args,
     parse_shape3,
     pose_dx_dz_bounds,
     pose_phi_bounds,
     pose_polish_bounds,
     prepare_real_lamino_binned_fixture,
     real_lamino_global_z_to_local_index,
-    setup_det_u_bounds,
-)
-from tomojax.bench.real_laminography_pose import run_real_lamino_pose_stage
-from tomojax.bench.real_laminography_profiles import (
-    REAL_LAMINO_PROFILE_CHOICES,
-    REAL_LAMINO_STAGED_PATH,
-    REFERENCE_REGRESSION_STAGE_MAP as _REFERENCE_REGRESSION_STAGE_MAP,
-    apply_real_lamino_profile_args,
-    normalize_real_lamino_runtime_args,
+    real_lamino_method_constraints,
+    real_lamino_pose_params_summary,
+    real_lamino_projection_stats,
     real_lamino_reference_regression_contract_payload,
+    real_lamino_safe_params_summary,
     reference_regression_level_outer_counts,
-)
-from tomojax.bench.real_laminography_recon import (
     run_baseline_stage,
     run_best_final_reconstruction_stage as run_best_final_reconstruction,
     run_cor_only_fista_stage,
-)
-from tomojax.bench.real_laminography_report import (
-    build_real_lamino_report,
-    mark_real_lamino_stage_failed,
-    real_lamino_method_constraints,
-    real_lamino_pose_params_summary,
-    real_lamino_safe_params_summary,
+    run_real_lamino_pose_stage,
+    run_real_lamino_setup_stage,
+    setup_det_u_bounds,
+    update_real_lamino_status,
+    validate_real_lamino_loaded_input,
     validate_real_lamino_stage_output,
+    write_real_lamino_json,
+    write_real_lamino_params_csv,
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
-from tomojax.bench.real_laminography_runtime import (
-    RealLaminoGpuMonitor,
-    apply_real_lamino_projection_background,
-    real_lamino_projection_stats,
-    update_real_lamino_status,
-    validate_real_lamino_loaded_input,
-    write_real_lamino_json,
-    write_real_lamino_params_csv,
-)
-from tomojax.bench.real_laminography_setup import run_real_lamino_setup_stage
 from tomojax.geometry import LaminographyGeometry
 from tomojax.io import load_real_laminography_input
 
