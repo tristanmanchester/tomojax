@@ -53,6 +53,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move reference-regression runtime helpers onto shared
       `tomojax.bench` runtime APIs.
+- [x] Move reference-regression projection validation/background helpers into
+      `tomojax.bench`.
 
 Next candidates:
 

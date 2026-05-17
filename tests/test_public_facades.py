@@ -153,6 +153,8 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.render_tem_grid_pose_artifacts)
     assert callable(bench_api.select_real_lamino_views)
     assert callable(bench_api.timed_repeats)
+    assert callable(bench_api.validate_real_lamino_loaded_input)
+    assert callable(bench_api.apply_real_lamino_projection_background)
     assert callable(bench_api.load_volume_array)
     assert callable(bench_api.grid_aligned_xy)
     assert callable(bench_api.largest_centered_square_inside_rotated_frame)

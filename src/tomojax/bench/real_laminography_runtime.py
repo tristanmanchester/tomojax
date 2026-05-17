@@ -128,6 +128,76 @@ def select_real_lamino_views(
     return projections[idx], thetas[idx], idx
 
 
+def validate_real_lamino_loaded_input(
+    projections: np.ndarray,
+    thetas: np.ndarray,
+    *,
+    expected_projection_shape: tuple[int, int, int] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate raw real-laminography projections and theta metadata."""
+    projections = np.asarray(projections, dtype=np.float32)
+    thetas = np.asarray(thetas, dtype=np.float32).reshape(-1)
+    if projections.ndim != 3:
+        raise ValueError(
+            "input projections must be a 3-D array with shape (n_views, nv, nu); "
+            f"got shape {projections.shape}"
+        )
+    if expected_projection_shape is not None and tuple(projections.shape) != expected_projection_shape:
+        raise ValueError(
+            "input projections shape mismatch: expected "
+            f"{expected_projection_shape} from --expected-projection-shape, got {projections.shape}"
+        )
+    if thetas.shape[0] != projections.shape[0]:
+        raise ValueError(
+            "input theta count must match projections n_views; "
+            f"got {thetas.shape[0]} theta values for projections shape {projections.shape}"
+        )
+    return projections, thetas
+
+
+def real_lamino_projection_stats(projections: np.ndarray) -> dict[str, Any]:
+    """Return compact projection intensity statistics for run manifests."""
+    arr = np.asarray(projections, dtype=np.float32)
+    return {
+        "shape": list(arr.shape),
+        "min": float(np.nanmin(arr)),
+        "max": float(np.nanmax(arr)),
+        "percentiles": [float(v) for v in np.nanpercentile(arr, [0.1, 1, 5, 50, 95, 99, 99.9])],
+        "view_median_percentiles": [
+            float(v) for v in np.nanpercentile(np.nanmedian(arr, axis=(1, 2)), [0, 5, 50, 95, 100])
+        ],
+    }
+
+
+def apply_real_lamino_projection_background(
+    projections: np.ndarray,
+    *,
+    mode: str,
+    edge_px: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Subtract a simple per-view projection background estimate."""
+    arr = np.asarray(projections, dtype=np.float32)
+    if mode == "none":
+        return arr, np.zeros((arr.shape[0],), dtype=np.float32)
+    if mode == "view_median":
+        offsets = np.nanmedian(arr, axis=(1, 2)).astype(np.float32)
+        return arr - offsets[:, None, None], offsets
+    if mode == "edge_median":
+        edge = max(1, min(int(edge_px), arr.shape[1] // 2, arr.shape[2] // 2))
+        samples = np.concatenate(
+            [
+                arr[:, :edge, :].reshape(arr.shape[0], -1),
+                arr[:, -edge:, :].reshape(arr.shape[0], -1),
+                arr[:, :, :edge].reshape(arr.shape[0], -1),
+                arr[:, :, -edge:].reshape(arr.shape[0], -1),
+            ],
+            axis=1,
+        )
+        offsets = np.nanmedian(samples, axis=1).astype(np.float32)
+        return arr - offsets[:, None, None], offsets
+    raise ValueError(f"unknown projection background mode: {mode}")
+
+
 def relative_l2(a: Any, b: Any) -> float:
     arr_a = np.asarray(a, dtype=np.float32)
     arr_b = np.asarray(b, dtype=np.float32)
@@ -171,11 +241,14 @@ def timed_repeats(
 __all__ = [
     "RealLaminoGpuMonitor",
     "append_real_lamino_csv",
+    "apply_real_lamino_projection_background",
     "real_lamino_commit_info",
     "real_lamino_json_safe",
+    "real_lamino_projection_stats",
     "relative_l2",
     "select_real_lamino_views",
     "timed_repeats",
     "update_real_lamino_status",
+    "validate_real_lamino_loaded_input",
     "write_real_lamino_json",
 ]

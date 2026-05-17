@@ -16805,3 +16805,26 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography projection prep moved behind bench facade
+
+- Extended `tomojax.bench.real_laminography_runtime` with shared projection
+  input validation, compact projection statistics, and simple per-view
+  background subtraction helpers for real-laminography developer workflows.
+- Exported `validate_real_lamino_loaded_input`,
+  `real_lamino_projection_stats`, and
+  `apply_real_lamino_projection_background` through the bench facade.
+- Thinned `scripts/real_laminography/run_real_lamino_reference_regression.py`
+  by deleting duplicate projection validation/statistics/background helpers and
+  aliasing the bench-owned functions for existing runner-contract tests.
+
+Validation:
+
+- `uv run pytest tests/test_real_laminography_runtime.py tests/test_real_lamino_runner_contract.py::test_validate_loaded_input_accepts_derived_shape_without_expected_contract tests/test_real_lamino_runner_contract.py::test_validate_loaded_input_rejects_configured_shape_mismatch tests/test_real_lamino_runner_contract.py::test_validate_loaded_input_rejects_theta_count_mismatch tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 8 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_reference_regression.py src/tomojax/bench/real_laminography_runtime.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_laminography_runtime.py tests/test_public_facades.py tests/test_real_lamino_runner_contract.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_reference_regression.py src/tomojax/bench/real_laminography_runtime.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
