@@ -1,4 +1,4 @@
-"""Public API for developer benchmark helpers."""
+"""Developer facade for benchmark and evidence helpers."""
 
 from tomojax.bench._real_laminography_pose_visuals import (
     render_tem_grid_pose_artifacts,
