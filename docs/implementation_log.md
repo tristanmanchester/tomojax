@@ -16627,3 +16627,25 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography stage validation moved behind bench facade
+
+- Added bench-owned real-laminography stage validation helpers for finite
+  volume/parameter checks, checkpoint validation, stat loss validation, artifact
+  existence checks, and full stage validation payload construction.
+- Exported the validation helpers through `tomojax.bench` so developer scripts
+  use a shared contract instead of script-local validation logic.
+- Thinned `scripts/real_laminography/run_real_lamino_staged.py` by deleting
+  duplicate finite/stat/artifact validation helpers and aliasing the bench
+  contract for existing private test hooks.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_v2_stage_validation_accepts_repo_relative_artifact_paths tests/test_real_lamino_runner_contract.py::test_v2_pose_stage_validation_accepts_finite_fast_profile_losses tests/test_real_lamino_runner_contract.py::test_v2_cor_real_lamino_report_preserves_partial_contract tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 4 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_lamino_runner_contract.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

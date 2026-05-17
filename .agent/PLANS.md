@@ -39,12 +39,12 @@ Completed checkpoints in this pass:
 - [x] Move TEM-grid 3D pose artifact rendering into `tomojax.bench`.
 - [x] Consolidate staged real-laminography report assembly in
       `tomojax.bench`.
+- [x] Move staged real-laminography validation helpers into `tomojax.bench`.
 
 Next candidates:
 
-- [ ] Thin the real-laminography staged/reference runners by moving
-      artifact-validation, profile-contract, and reference-regression table
-      helpers behind bench-owned APIs.
+- [ ] Thin the real-laminography staged/reference runners by moving remaining
+      profile-contract and run-preparation helpers behind bench-owned APIs.
 - [ ] Continue removing development-era script semantics from user-facing CLI
       surfaces while retaining developer diagnostics under `tomojax dev` or
       bench-owned scripts.

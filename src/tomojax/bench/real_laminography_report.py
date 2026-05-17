@@ -228,6 +228,122 @@ def write_real_lamino_geometry_trace(path: Path, records: list[Mapping[str, Any]
     return path
 
 
+def real_lamino_finite_fraction(value: Any | None) -> float:
+    if value is None:
+        return 0.0
+    arr = np.asarray(value)
+    if arr.size == 0:
+        return 0.0
+    return float(np.isfinite(arr).mean())
+
+
+def real_lamino_checkpoint_validation_failures(stage_dir: Path) -> list[str]:
+    failures: list[str] = []
+    checkpoint_dir = stage_dir / "checkpoints"
+    if not checkpoint_dir.exists():
+        return failures
+    for path in sorted(checkpoint_dir.glob("*.npz")):
+        try:
+            with np.load(path) as payload:
+                if "x" not in payload:
+                    failures.append(f"{path.name} missing x checkpoint array")
+                    continue
+                fraction = real_lamino_finite_fraction(payload["x"])
+        except Exception as exc:
+            failures.append(f"{path.name} could not be read: {type(exc).__name__}: {exc}")
+            continue
+        if fraction != 1.0:
+            failures.append(f"{path.name} x finite fraction is {fraction:.6g}")
+    return failures
+
+
+def real_lamino_stat_validation_failures(
+    stats: list[dict[str, Any]],
+    *,
+    require_data_loss: bool,
+) -> list[str]:
+    failures: list[str] = []
+    for idx, stat in enumerate(stats):
+        finite_reported_losses = [
+            key
+            for key in ("geometry_loss_before", "geometry_loss_after", "loss_before", "loss_after")
+            if key in stat and _is_finite_scalar(stat.get(key))
+        ]
+        failures.extend(
+            f"stat[{idx}] {key} is non-finite: {stat.get(key)!r}"
+            for key in ("geometry_loss_before", "geometry_loss_after", "loss_before", "loss_after")
+            if key in stat and not _is_finite_scalar(stat.get(key))
+        )
+        if (
+            require_data_loss
+            and stat.get("data_loss_computed") is False
+            and not finite_reported_losses
+        ):
+            failures.append(
+                f"stat[{idx}] data_loss_computed is false and no finite objective loss was reported"
+            )
+    return failures
+
+
+def real_lamino_artifact_validation_failures(stage_dir: Path) -> list[str]:
+    manifest_path = stage_dir / "stage_manifest.json"
+    if not manifest_path.exists():
+        return []
+    manifest = _read_json(manifest_path)
+    artifacts = manifest.get("artifacts", {})
+    if not isinstance(artifacts, Mapping):
+        return ["stage artifacts payload is missing or not an object"]
+    failures: list[str] = []
+    for key, raw_path in artifacts.items():
+        path = _resolve_staged_artifact_path(stage_dir, raw_path)
+        if not path.exists():
+            failures.append(f"artifact {key} is missing: {path}")
+        elif path.stat().st_size <= 0:
+            failures.append(f"artifact {key} is empty: {path}")
+    return failures
+
+
+def _is_finite_scalar(value: Any) -> bool:
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
+def validate_real_lamino_stage_output(
+    stage_dir: Path,
+    *,
+    stage_name: str,
+    volume: Any | None,
+    params5: Any | None,
+    stats: list[dict[str, Any]],
+    require_data_loss: bool,
+) -> dict[str, Any]:
+    failures: list[str] = []
+    volume_fraction = real_lamino_finite_fraction(volume)
+    if volume_fraction != 1.0:
+        failures.append(f"reconstruction volume finite fraction is {volume_fraction:.6g}")
+    params_fraction = real_lamino_finite_fraction(params5)
+    if params_fraction != 1.0:
+        failures.append(f"pose/setup params finite fraction is {params_fraction:.6g}")
+    checkpoint_failures = real_lamino_checkpoint_validation_failures(stage_dir)
+    failures.extend(checkpoint_failures)
+    failures.extend(real_lamino_stat_validation_failures(stats, require_data_loss=require_data_loss))
+    artifact_failures = real_lamino_artifact_validation_failures(stage_dir)
+    failures.extend(artifact_failures)
+    return {
+        "schema": "tomojax.real_lamino_stage_validation.v1",
+        "stage": stage_name,
+        "passed": not failures,
+        "failures": failures,
+        "volume_finite_fraction": volume_fraction,
+        "params_finite_fraction": params_fraction,
+        "checkpoint_failures": checkpoint_failures,
+        "artifact_failures": artifact_failures,
+        "require_data_loss": bool(require_data_loss),
+    }
+
+
 def build_real_lamino_report(
     run_dir: Path,
     *,
@@ -953,8 +1069,13 @@ __all__ = [
     "REAL_LAMINO_PUBLICATION_IMAGES",
     "REAL_LAMINO_REPORT_STAGED_PATH",
     "build_real_lamino_report",
+    "real_lamino_artifact_validation_failures",
+    "real_lamino_checkpoint_validation_failures",
+    "real_lamino_finite_fraction",
     "real_lamino_method_constraints",
+    "real_lamino_stat_validation_failures",
     "real_lamino_success_payload",
+    "validate_real_lamino_stage_output",
     "write_real_lamino_geometry_trace",
     "write_real_lamino_residual_trace",
 ]
