@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real laminography reference runner deletion
+
+### Scope
+
+Deleted the duplicate real-laminography reference-regression script as an
+execution surface. The staged runner now owns the real-laminography workflow,
+including the `reference-regression` profile used for retained evidence
+comparison.
+
+Changes:
+
+- Deleted `scripts/real_laminography/run_real_lamino_reference_regression.py`.
+- Moved the remaining real-laminography alignment config helper into
+  `run_real_lamino_staged.py`.
+- Updated the real-laminography contract tests to exercise the staged runner
+  and bench-owned validation/status helpers directly.
+- Updated reference-regression report provenance to name the staged runner.
+- Removed the old script from the real-laminography scripts README.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/summarize_real_lamino_report.py
+  src/tomojax/bench/real_laminography_report.py
+  src/tomojax/bench/real_laminography_profiles.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run pytest -q tests/test_real_lamino_runner_contract.py
+  tests/test_public_facades.py` passed with 52 tests.
+- `python tools/check_public_imports.py` passed.
+
 ## 2026-05-17 - Legacy phantom facade reduction
 
 ### Scope

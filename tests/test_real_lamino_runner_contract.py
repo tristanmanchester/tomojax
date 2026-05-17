@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.align.api import GeometryCalibrationState
 from tomojax.bench import (
     build_real_lamino_report,
     normalize_real_lamino_runtime_args,
@@ -26,6 +27,8 @@ from tomojax.bench import (
     reference_regression_level_outer_counts,
     run_real_lamino_setup_stage,
     setup_det_u_bounds,
+    update_real_lamino_status,
+    validate_real_lamino_loaded_input,
 )
 from tomojax.bench.real_laminography_context import RealLaminoRunContext
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
@@ -33,12 +36,6 @@ from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "real_laminography"
-    / "run_real_lamino_reference_regression.py"
-)
 _REPORT_SCRIPT_PATH = (
     Path(__file__).resolve().parents[1]
     / "scripts"
@@ -51,15 +48,6 @@ _STAGED_SCRIPT_PATH = (
     / "real_laminography"
     / "run_real_lamino_staged.py"
 )
-_SPEC = importlib.util.spec_from_file_location(
-    "run_real_lamino_reference_regression",
-    _SCRIPT_PATH,
-)
-assert _SPEC is not None
-assert _SPEC.loader is not None
-runner = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(runner)
-
 _REPORT_SPEC = importlib.util.spec_from_file_location(
     "summarize_real_lamino_report",
     _REPORT_SCRIPT_PATH,
@@ -83,7 +71,7 @@ def test_runner_input_argument_is_required(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(sys, "argv", ["runner", "--out", str(tmp_path)])
 
     with pytest.raises(SystemExit) as exc_info:
-        runner._parse_args()
+        staged_runner._parse_args()
 
     assert exc_info.value.code == 2
 
@@ -103,7 +91,7 @@ def test_runner_expected_projection_shape_argument_is_configurable(monkeypatch, 
         ],
     )
 
-    args = runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.input == "input.nxs"
     assert args.expected_projection_shape == (3, 4, 5)
@@ -122,8 +110,8 @@ def test_runner_defaults_to_explicit_lightning_policy(monkeypatch, tmp_path) -> 
         ],
     )
 
-    args = runner._parse_args()
-    cfg = runner._make_cfg(args, active_pose=("phi",))
+    args = staged_runner._parse_args()
+    cfg = staged_runner._make_cfg(args, active_pose=("phi",))
 
     assert args.align_profile == "lightning"
     assert args.projector_backend == "pallas"
@@ -164,8 +152,8 @@ def test_runner_accepts_real_pose_model_options(monkeypatch, tmp_path) -> None:
         ],
     )
 
-    args = runner._parse_args()
-    cfg = runner._make_cfg(args, active_pose=("phi",))
+    args = staged_runner._parse_args()
+    cfg = staged_runner._make_cfg(args, active_pose=("phi",))
 
     assert cfg.pose_model == "polynomial"
     assert cfg.knot_spacing == 5
@@ -197,8 +185,8 @@ def test_runner_accepts_tortoise_policy(monkeypatch, tmp_path) -> None:
         ],
     )
 
-    args = runner._parse_args()
-    cfg = runner._make_cfg(args, active_pose=("phi",))
+    args = staged_runner._parse_args()
+    cfg = staged_runner._make_cfg(args, active_pose=("phi",))
 
     assert cfg.align_profile == "tortoise"
     assert cfg.projector_backend == "jax"
@@ -228,7 +216,7 @@ def test_runner_smoke_reduces_real_data_workload(monkeypatch, tmp_path) -> None:
         ],
     )
 
-    args = runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.levels_setup == [8]
     assert args.levels_phi == [8]
@@ -238,7 +226,7 @@ def test_runner_smoke_reduces_real_data_workload(monkeypatch, tmp_path) -> None:
     assert args.outer_iters == 1
     assert args.recon_iters == 3
     assert args.tv_prox_iters == 2
-    assert args.views_per_batch == 16
+    assert args.views_per_batch == 1
 
 
 def test_runner_can_request_canonical_detector_grid_diagnostic(monkeypatch, tmp_path) -> None:
@@ -255,7 +243,7 @@ def test_runner_can_request_canonical_detector_grid_diagnostic(monkeypatch, tmp_
         ],
     )
 
-    args = runner._parse_args()
+    args = staged_runner._parse_args()
 
     assert args.canonical_det_grid is True
 
@@ -263,24 +251,24 @@ def test_runner_can_request_canonical_detector_grid_diagnostic(monkeypatch, tmp_
 def test_status_stage_update_clears_stale_message(tmp_path) -> None:
     path = tmp_path / "status.json"
 
-    runner._status(path, state="running", stage="00_baseline", message="baseline_fbp")
-    runner._status(path, state="running", stage="01_setup_geometry")
+    update_real_lamino_status(path, state="running", stage="00_baseline", message="baseline_fbp")
+    update_real_lamino_status(path, state="running", stage="01_setup_geometry")
 
     payload = json.loads(path.read_text())
     assert payload["stage"] == "01_setup_geometry"
     assert "message" not in payload
 
 
-def test_reference_runner_run_context_is_bench_owned_compatibility_symbol() -> None:
-    assert runner.RunContext is RealLaminoRunContext
-    assert runner.run_baseline is recon_stage.run_baseline_stage
+def test_staged_runner_uses_bench_owned_context_and_stage_helpers() -> None:
+    assert staged_runner.RealLaminoRunContext is RealLaminoRunContext
+    assert staged_runner.run_baseline_stage is recon_stage.run_baseline_stage
 
 
 def test_validate_loaded_input_accepts_derived_shape_without_expected_contract() -> None:
     projections = np.zeros((3, 4, 5), dtype=np.float32)
     thetas = np.arange(3, dtype=np.float32)
 
-    got_projections, got_thetas = runner._validate_loaded_input(
+    got_projections, got_thetas = validate_real_lamino_loaded_input(
         projections,
         thetas,
         expected_projection_shape=None,
@@ -295,7 +283,7 @@ def test_validate_loaded_input_rejects_configured_shape_mismatch() -> None:
     thetas = np.arange(3, dtype=np.float32)
 
     with pytest.raises(ValueError, match=r"expected \(3, 4, 6\).*--expected-projection-shape"):
-        runner._validate_loaded_input(
+        validate_real_lamino_loaded_input(
             projections,
             thetas,
             expected_projection_shape=(3, 4, 6),
@@ -307,7 +295,7 @@ def test_validate_loaded_input_rejects_theta_count_mismatch() -> None:
     thetas = np.arange(2, dtype=np.float32)
 
     with pytest.raises(ValueError, match="theta count must match projections n_views"):
-        runner._validate_loaded_input(
+        validate_real_lamino_loaded_input(
             projections,
             thetas,
             expected_projection_shape=None,
@@ -489,7 +477,7 @@ def test_staged_reference_regression_profile_forces_reference_contract(
     assert args.fold_rigid_detector_grid is False
     assert args.outer_iters == 8
     assert args.levels_phi == [4, 2, 1]
-    cfg = runner._make_cfg(args, active_pose=("phi",))
+    cfg = staged_runner._make_cfg(args, active_pose=("phi",))
     assert cfg.fold_rigid_detector_grid is False
     assert pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
     assert pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
@@ -533,7 +521,7 @@ def test_staged_staged_lamino_profile_forces_winning_contract(
     assert args.levels_phi == [4, 2, 1]
     assert args.levels_dx_dz == [4, 2, 1]
     assert args.levels_polish == [2, 1]
-    cfg = runner._make_cfg(args, active_pose=("phi",))
+    cfg = staged_runner._make_cfg(args, active_pose=("phi",))
     assert cfg.fold_rigid_detector_grid is False
     assert pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
     assert pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
@@ -665,7 +653,7 @@ def test_bench_setup_stage_writes_artifacts_and_applies_bounds(monkeypatch, tmp_
     )
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()
-    setup_state = runner.GeometryCalibrationState.from_geometry(
+    setup_state = GeometryCalibrationState.from_geometry(
         geometry,
         active_geometry_dofs=(),
     )

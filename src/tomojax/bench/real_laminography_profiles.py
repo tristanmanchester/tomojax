@@ -228,7 +228,7 @@ def real_lamino_reference_regression_contract_payload(args: argparse.Namespace) 
     }
     return {
         "schema": "tomojax.real_lamino_reference_regression_contract.v2",
-        "source_script": "scripts/real_laminography/run_real_lamino_reference_regression.py",
+        "source_script": "scripts/real_laminography/run_real_lamino_staged.py",
         "expected": REFERENCE_REGRESSION_CONTRACT,
         "actual": actual,
         "mismatches": mismatches,

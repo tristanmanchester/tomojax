@@ -17,7 +17,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import numpy as np
 
-from tomojax.align.api import GeometryCalibrationState
+from tomojax.align.api import AlignConfig, GeometryCalibrationState
 from tomojax.bench import (
     REAL_LAMINO_PROFILE_CHOICES,
     REAL_LAMINO_STAGED_PATH,
@@ -61,6 +61,51 @@ from tomojax.io import load_real_laminography_input
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
 REFERENCE_REGRESSION_STAGE_MAP = _REFERENCE_REGRESSION_STAGE_MAP
+
+
+def _make_cfg(
+    args: argparse.Namespace,
+    *,
+    active_pose: tuple[str, ...] = (),
+    active_setup: tuple[str, ...] = (),
+    bounds: str = "",
+    outer_iters: int | None = None,
+) -> AlignConfig:
+    """Build the alignment config used by real-laminography staged helpers."""
+    cfg_bounds = "" if active_setup else bounds
+    return AlignConfig(
+        align_profile=str(args.align_profile),
+        outer_iters=int(args.outer_iters if outer_iters is None else outer_iters),
+        recon_iters=int(args.recon_iters),
+        lambda_tv=float(args.lambda_tv),
+        regulariser=str(args.regulariser),
+        tv_prox_iters=int(args.tv_prox_iters),
+        recon_algo="fista",
+        views_per_batch=int(args.views_per_batch),
+        checkpoint_projector=True,
+        gather_dtype=str(args.gather_dtype),
+        projector_backend=str(args.projector_backend),
+        quality_tier=str(args.quality_tier),
+        fallback_policy=str(args.fallback_policy),
+        fold_rigid_detector_grid=bool(getattr(args, "fold_rigid_detector_grid", True)),
+        opt_method="gn",
+        gn_damping=float(args.gn_damping),
+        optimise_dofs=active_pose or None,
+        geometry_dofs=active_setup,
+        bounds=cfg_bounds,
+        pose_model=str(getattr(args, "pose_model", "spline")),
+        knot_spacing=int(getattr(args, "knot_spacing", 8)),
+        degree=int(getattr(args, "pose_degree", 3)),
+        gauge_fix="mean_translation" if {"dx", "dz"} & set(active_pose) else "none",
+        mask_vol="cyl",
+        recon_positivity=bool(args.recon_positivity),
+        seed_translations=False,
+        early_stop=bool(args.early_stop),
+        early_stop_rel_impr=float(args.early_stop_rel),
+        early_stop_patience=int(args.early_stop_patience),
+        log_summary=True,
+        log_compact=True,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

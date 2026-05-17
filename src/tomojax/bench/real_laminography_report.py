@@ -716,7 +716,7 @@ def _write_reference_regression_audit(
         "enabled": True,
         "status": "failed" if pose_scale_failures or row_shape_failures else "recorded",
         "source_reference_run": str(reference_root),
-        "source_script": "scripts/real_laminography/run_real_lamino_reference_regression.py",
+        "source_script": "scripts/real_laminography/run_real_lamino_staged.py",
         "contract": contract,
         "pose_loss_scale_failures": pose_scale_failures,
         "row_shape_failures": row_shape_failures,

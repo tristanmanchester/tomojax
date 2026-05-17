@@ -6,8 +6,6 @@ output directories such as `runs/`.
 
 - `run_real_lamino_staged.py`: clean staged v2 real-laminography workflow.
 - `summarize_real_lamino_report.py`: report builder for an existing staged run.
-- `run_real_lamino_reference_regression.py`: internal reference-regression
-  runner retained for behavior comparison against earlier evidence.
 - `plot_tem_grid_xy_intensity_profiles.py`: line-profile plots for grid-aligned
   TEM XY slices.
 - `render_tem_grid_aligned_orthos.py`: grid-aligned orthogonal slice rendering.
