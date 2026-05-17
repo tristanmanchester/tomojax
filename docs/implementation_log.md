@@ -15927,3 +15927,14 @@ Validation:
 
 - `uv run pytest tests/test_real_lamino_runner_contract.py::test_staged_public_help_uses_clean_profile_names tests/test_real_lamino_runner_contract.py::test_staged_reference_regression_profile_forces_reference_contract tests/test_real_lamino_runner_contract.py::test_staged_accepts_explicit_binned_smoke_shape -q`
   passed with 3 tests.
+
+### Golden-path CLI integration test
+
+- Added a product-path integration test for the smallest useful user workflow:
+  TIFF stack ingestion, dataset validation, inspection, FBP reconstruction,
+  quicklook export, and validation of the reconstructed container.
+- The test reaches the workflow through the grouped `tomojax` dispatcher rather
+  than private modules or script entrypoints.
+- Extended the public `ProjectionDataset` IO boundary with an optional
+  `volume` field so reconstructed containers can be loaded through
+  `tomojax.io.load_dataset()` without falling back to lower-level HDF5 helpers.

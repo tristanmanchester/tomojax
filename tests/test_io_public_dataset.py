@@ -93,9 +93,11 @@ def test_public_io_projection_dataset_preserves_solver_metadata(tmp_path):
 
 def test_public_io_roundtrips_dataset_to_nxtomo(tmp_path):
     path = tmp_path / "roundtrip.nxs"
+    volume = np.arange(48, dtype=np.float32).reshape(4, 4, 3)
     dataset = ProjectionDataset(
         projections=np.ones((2, 3, 4), dtype=np.float32),
         angles_deg=np.asarray([0.0, 180.0], dtype=np.float32),
+        volume=volume,
         detector=Detector(nu=4, nv=3, du=1.0, dv=1.0),
         grid=Grid(nx=4, ny=4, nz=3, vx=1.0, vy=1.0, vz=1.0),
         sample_name="roundtrip",
@@ -106,6 +108,7 @@ def test_public_io_roundtrips_dataset_to_nxtomo(tmp_path):
 
     np.testing.assert_allclose(loaded.projections, dataset.projections)
     np.testing.assert_allclose(loaded.angles_deg, dataset.angles_deg)
+    np.testing.assert_allclose(loaded.volume, volume)
     assert validate_dataset(path)["issues"] == []
 
 

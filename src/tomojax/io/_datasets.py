@@ -75,13 +75,14 @@ def build_geometry_from_dataset_metadata(
 class ProjectionDataset:
     """Standard public in-memory projection dataset.
 
-    This is the clean v2 IO boundary. It intentionally contains only measured
-    projection data and normalized metadata needed by reconstruction/alignment
-    code. Solver state and reconstruction outputs belong to other modules.
+    This is the clean v2 IO boundary. It contains measured projection data,
+    normalized metadata needed by reconstruction/alignment code, and the
+    optional reconstructed volume when a processed container stores one.
     """
 
     projections: np.ndarray
     angles_deg: np.ndarray
+    volume: np.ndarray | None = None
     detector: Detector | None = None
     grid: Grid | None = None
     geometry_type: str = "parallel"
@@ -113,6 +114,7 @@ class ProjectionDataset:
                 else metadata.thetas_deg,
                 dtype=np.float32,
             ),
+            volume=None if metadata.volume is None else np.asarray(metadata.volume),
             detector=detector
             if isinstance(detector, Detector)
             else (_detector_from_mapping(detector) if detector is not None else None),
@@ -141,6 +143,7 @@ class ProjectionDataset:
         if self._metadata is not None:
             metadata = self.copy_metadata()
             metadata.thetas_deg = np.asarray(self.angles_deg, dtype=np.float32)
+            metadata.volume = None if self.volume is None else np.asarray(self.volume)
             metadata.grid = self.grid
             metadata.detector = self.detector
             metadata.geometry_type = self.geometry_type
@@ -158,6 +161,7 @@ class ProjectionDataset:
             return metadata
         return NXTomoMetadata(
             thetas_deg=np.asarray(self.angles_deg, dtype=np.float32),
+            volume=None if self.volume is None else np.asarray(self.volume),
             grid=self.grid,
             detector=self.detector,
             geometry_type=self.geometry_type,
@@ -184,6 +188,7 @@ class ProjectionDataset:
                 ).to_dataset_dict()
             )
         metadata.thetas_deg = np.asarray(self.angles_deg, dtype=np.float32)
+        metadata.volume = None if self.volume is None else np.asarray(self.volume)
         metadata.grid = self.grid
         metadata.detector = self.detector
         metadata.geometry_type = self.geometry_type
