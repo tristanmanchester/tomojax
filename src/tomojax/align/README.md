@@ -27,11 +27,14 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `AlignmentLossSpec`
 - `AlignmentState`
 - `BaseGeometryArrays`
+- `FixedVolumeProjectionObjective`
 - `GeometryCalibrationState`
 - `L2LossSpec`
 - `L2OtsuLossSpec`
 - `LossAdapter`
 - `LossScheduleEntry`
+- `ObjectiveProvenance`
+- `ObjectiveResult`
 - `PoseState`
 - `SetupGeometryState`
 - `FallbackPolicy`
@@ -67,6 +70,8 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `normalize_geometry_dofs`
 - `parse_loss_schedule`
 - `parse_loss_spec`
+- `project_and_score_stack`
+- `project_stack`
 - `profile_policy_from_config`
 - `reference_continuation_schedule`
 - `resolve_alignment_schedule`

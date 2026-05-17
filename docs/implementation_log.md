@@ -16333,3 +16333,27 @@ Validation:
 - `rg -n "from tomojax\\.data\\.contrast|import tomojax\\.data\\.contrast" scripts src/tomojax/bench src/tomojax/cli`
   returned no matches.
 - `python tools/check_public_imports.py scripts src tests` passed.
+
+### Fixed-volume alignment objective helpers exposed through facade
+
+- Added the fixed-volume projection objective and stack projection/scoring
+  helpers to `tomojax.align.api`: `FixedVolumeProjectionObjective`,
+  `ObjectiveProvenance`, `ObjectiveResult`, `project_stack`, and
+  `project_and_score_stack`.
+- Updated `tomojax.bench.alignment_objective` to import the stack scorer through
+  the alignment facade rather than nested `tomojax.align.objectives` modules.
+- Updated the alignment README and public facade test to document and verify the
+  exported objective helper surface.
+- The scripts/bench/CLI boundary scan now has no remaining direct imports from
+  old `tomojax.data`, old `tomojax.calibration`, or nested `tomojax.align`
+  geometry/model/objectives modules.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_bench_alignment_objective.py tests/test_alignment_objectives.py::test_project_and_score_stack_plain_l2_fast_path_matches_generic_path -q`
+  passed with 13 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align/api.py src/tomojax/bench/alignment_objective.py tests/test_public_facades.py`
+  passed.
+- `rg -n "from tomojax\\.data\\.|import tomojax\\.data\\.|from tomojax\\.calibration\\.|import tomojax\\.calibration\\.|from tomojax\\.align\\.(geometry|model|objectives)|import tomojax\\.align\\.(geometry|model|objectives)" scripts src/tomojax/bench src/tomojax/cli`
+  returned no matches.
+- `python tools/check_public_imports.py scripts src tests` passed.

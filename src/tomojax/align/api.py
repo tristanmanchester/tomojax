@@ -69,6 +69,13 @@ from tomojax.align.model.schedules import (
     schedule_preset,
 )
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align.objectives.fixed_volume import (
+    FixedVolumeProjectionObjective,
+    ObjectiveProvenance,
+    ObjectiveResult,
+    project_and_score_stack,
+    project_stack,
+)
 from tomojax.align.objectives.loss_adapters import LossAdapter, build_loss_adapter
 from tomojax.align.objectives.loss_specs import (
     AlignmentLossConfig,
@@ -115,6 +122,7 @@ __all__ = [
     "DofSpec",
     "EdgeL2LossSpec",
     "FallbackPolicy",
+    "FixedVolumeProjectionObjective",
     "GaugeFixMode",
     "GaugePolicy",
     "GeometryCalibrationState",
@@ -127,6 +135,8 @@ __all__ = [
     "L2OtsuLossSpec",
     "LossAdapter",
     "LossScheduleEntry",
+    "ObjectiveProvenance",
+    "ObjectiveResult",
     "PWLSLossSpec",
     "PoseOnlyLMConfig",
     "PoseOnlyLMResult",
@@ -162,6 +172,8 @@ __all__ = [
     "parse_loss_schedule",
     "parse_loss_spec",
     "profile_policy_from_config",
+    "project_and_score_stack",
+    "project_stack",
     "reference_continuation_schedule",
     "resolve_alignment_schedule",
     "resolve_loss_for_level",

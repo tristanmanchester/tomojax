@@ -19,7 +19,10 @@ def test_alignment_facade_exports_documented_api() -> None:
     assert align_full_api.AlignmentSchedule.__name__ == "AlignmentSchedule"
     assert align_full_api.AlignmentState.__name__ == "AlignmentState"
     assert align_full_api.BaseGeometryArrays.__name__ == "BaseGeometryArrays"
+    assert align_full_api.FixedVolumeProjectionObjective.__name__ == "FixedVolumeProjectionObjective"
     assert align_full_api.GeometryCalibrationState.__name__ == "GeometryCalibrationState"
+    assert align_full_api.ObjectiveProvenance.__name__ == "ObjectiveProvenance"
+    assert align_full_api.ObjectiveResult.__name__ == "ObjectiveResult"
     assert align_full_api.PoseState.__name__ == "PoseState"
     assert align_full_api.SetupGeometryState.__name__ == "SetupGeometryState"
     assert callable(align_full_api.apply_alignment_state)
@@ -27,6 +30,8 @@ def test_alignment_facade_exports_documented_api() -> None:
     assert callable(align_full_api.geometry_with_axis_state)
     assert callable(align_full_api.level_detector_grid)
     assert callable(align_full_api.normalize_geometry_dofs)
+    assert callable(align_full_api.project_and_score_stack)
+    assert callable(align_full_api.project_stack)
     assert callable(align_full_api.schedule_preset)
     assert callable(align_full_api.summarize_geometry_calibration_stats)
     assert not hasattr(align_full_api, "run_alignment_smoke")
