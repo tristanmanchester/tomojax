@@ -3,6 +3,47 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography range parsing moved into bench
+
+### Scope
+
+Removed another private script dependency from the real-laminography developer
+workflow by moving inclusive z-range parsing into the `tomojax.bench`
+planning facade.
+
+Changes:
+
+- Added `parse_real_lamino_z_range` to
+  `tomojax.bench.real_laminography_planning` and exported it through the bench
+  facade.
+- Updated `prepare_real_lamino_binned_fixture` so it no longer calls
+  `native._parse_range`.
+- Updated the reference-regression runner to use the bench helper directly for
+  `RunContext.stack_z_range`.
+- Updated the Pallas real-laminography probe to import real-lamino runtime,
+  artifact, and range helpers from `tomojax.bench` instead of importing private
+  symbols from `run_real_lamino_reference_regression.py`.
+- Added focused tests for valid and invalid z-range parsing.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022
+  src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py
+  tests/test_real_laminography_planning.py` passed.
+- `uv run python -m py_compile
+  src/tomojax/bench/real_laminography_planning.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py` passed.
+- `uv run pytest tests/test_real_laminography_planning.py
+  tests/test_real_lamino_runner_contract.py::test_v2_binned_fixture_scales_geometry_and_records_provenance
+  tests/test_real_lamino_runner_contract.py::test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Align CLI quality vocabulary cleaned up
 
 ### Scope

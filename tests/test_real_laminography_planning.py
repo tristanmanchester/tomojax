@@ -8,6 +8,7 @@ import pytest
 
 from tomojax.bench import (
     binned_pixel_scale,
+    parse_real_lamino_z_range,
     parse_shape3,
     pose_dx_dz_bounds,
     pose_phi_bounds,
@@ -59,6 +60,7 @@ def test_real_laminography_planning_scales_binned_bounds() -> None:
 def test_real_laminography_planning_validates_bin_factor_and_shapes() -> None:
     assert validate_bin_factor("4") == 4
     assert parse_shape3("8x64x64") == (8, 64, 64)
+    assert parse_real_lamino_z_range("2:6") == (2, 6)
 
     with pytest.raises(ValueError, match="integer >= 1"):
         validate_bin_factor(0)
@@ -71,6 +73,8 @@ def test_real_laminography_planning_validates_bin_factor_and_shapes() -> None:
         )
     with pytest.raises(argparse.ArgumentTypeError, match="projection shape dimensions must be positive"):
         parse_shape3("8x0x64")
+    with pytest.raises(argparse.ArgumentTypeError, match="END must be >= START"):
+        parse_real_lamino_z_range("6:2")
 
 
 def test_real_laminography_planning_selects_final_candidates() -> None:

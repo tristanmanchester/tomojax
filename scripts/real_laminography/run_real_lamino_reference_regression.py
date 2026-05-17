@@ -43,6 +43,7 @@ from tomojax.bench import (
     append_real_lamino_csv,
     apply_real_lamino_projection_background,
     optimize_reference_setup_geometry_bilevel_for_level,
+    parse_real_lamino_z_range,
     real_lamino_commit_info,
     real_lamino_global_z_to_local_index,
     real_lamino_global_z_to_phys,
@@ -76,14 +77,6 @@ _apply_projection_background = apply_real_lamino_projection_background
 _save_png = save_uint8_png
 _resize_nearest_2d = resize_nearest_2d
 _save_z_stack = save_real_lamino_z_stack
-
-
-def _parse_range(text: str) -> tuple[int, int]:
-    left, right = str(text).split(":", 1)
-    z0, z1 = int(left), int(right)
-    if z1 < z0:
-        raise ValueError(f"invalid z range {text!r}")
-    return z0, z1
 
 
 def _parse_bounds(text: str) -> dict[str, tuple[float, float]]:
@@ -176,7 +169,7 @@ class RunContext:
         self.run_root = Path(args.out)
         self.status_path = self.run_root / "status.json"
         self.preview_global_z = int(args.preview_z)
-        self.stack_z_range = _parse_range(args.stack_z_range)
+        self.stack_z_range = parse_real_lamino_z_range(args.stack_z_range)
         self.stage_records: list[dict[str, Any]] = []
         self.naive_slice: np.ndarray | None = None
         self.final_volume: np.ndarray | None = None

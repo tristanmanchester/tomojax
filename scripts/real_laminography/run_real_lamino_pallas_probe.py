@@ -17,14 +17,6 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import jax.numpy as jnp
 import numpy as np
-from run_real_lamino_reference_regression import (
-    _apply_projection_background,
-    _parse_range,
-    _projection_stats,
-    _save_png,
-    _save_z_stack,
-    _validate_loaded_input,
-)
 
 from tomojax.align.api import (
     AlignConfig,
@@ -38,7 +30,16 @@ from tomojax.align.api import (
     apply_alignment_state,
     geometry_with_axis_state,
 )
-from tomojax.bench import real_lamino_global_z_to_phys, real_lamino_pose_params_summary
+from tomojax.bench import (
+    apply_real_lamino_projection_background,
+    parse_real_lamino_z_range,
+    real_lamino_global_z_to_phys,
+    real_lamino_pose_params_summary,
+    real_lamino_projection_stats,
+    save_real_lamino_z_stack,
+    save_uint8_png,
+    validate_real_lamino_loaded_input,
+)
 from tomojax.bench.real_laminography_runtime import (
     RealLaminoGpuMonitor as GpuMonitor,
     append_real_lamino_csv as _append_csv,
@@ -58,6 +59,12 @@ from tomojax.recon.fista_tv_core import (
     projection_loss_arrays,
 )
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid
+
+_apply_projection_background = apply_real_lamino_projection_background
+_projection_stats = real_lamino_projection_stats
+_save_png = save_uint8_png
+_save_z_stack = save_real_lamino_z_stack
+_validate_loaded_input = validate_real_lamino_loaded_input
 
 
 def _setup_to_alignment_state(setup: GeometryCalibrationState, n_views: int) -> AlignmentState:
@@ -432,7 +439,7 @@ def main() -> int:
         T_all = effective.pose_stack
         params5 = jnp.zeros((int(n_views), 5), dtype=jnp.float32)
         x0 = jnp.zeros((int(g.nx), int(g.ny), int(g.nz)), dtype=jnp.float32)
-        z_range = _parse_range(str(args.stack_z_range))
+        z_range = parse_real_lamino_z_range(str(args.stack_z_range))
 
         _write_json(
             run_root / "run_manifest.json",

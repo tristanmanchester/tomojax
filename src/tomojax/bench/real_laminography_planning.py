@@ -185,7 +185,7 @@ def prepare_real_lamino_binned_fixture(
     binned_detector_nz = int(detector.nv)
     original_preview_z = int(args.preview_z)
     original_slab_center_z = int(args.slab_center_z)
-    original_stack_z_range = tuple(native._parse_range(str(args.stack_z_range)))
+    original_stack_z_range = parse_real_lamino_z_range(str(args.stack_z_range))
     args.slab_nz = int(grid.nz)
     args.effective_bin_factor = int(bin_factor)
     args.effective_view_indices = [int(v) for v in view_indices.tolist()]
@@ -289,6 +289,20 @@ def select_real_lamino_final_candidates(
     )
 
 
+def parse_real_lamino_z_range(text: str) -> tuple[int, int]:
+    """Parse an inclusive global-z range accepted by real-laminography CLIs."""
+    try:
+        left, right = str(text).split(":", 1)
+        z0, z1 = int(left), int(right)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected z range as START:END, got {text!r}"
+        ) from exc
+    if z1 < z0:
+        raise argparse.ArgumentTypeError(f"invalid z range {text!r}: END must be >= START")
+    return z0, z1
+
+
 def parse_shape3(text: str) -> tuple[int, int, int]:
     """Parse a three-axis shape accepted by real-laminography CLI options."""
     parts = str(text).lower().replace("x", ",").split(",")
@@ -310,6 +324,7 @@ def parse_shape3(text: str) -> tuple[int, int, int]:
 __all__ = [
     "binned_pixel_scale",
     "map_real_lamino_global_z_to_binned",
+    "parse_real_lamino_z_range",
     "parse_shape3",
     "pose_dx_dz_bounds",
     "pose_phi_bounds",

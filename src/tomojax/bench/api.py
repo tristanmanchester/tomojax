@@ -103,6 +103,7 @@ from tomojax.bench.real_laminography_artifacts import (
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
     map_real_lamino_global_z_to_binned,
+    parse_real_lamino_z_range,
     parse_shape3,
     pose_dx_dz_bounds,
     pose_phi_bounds,
@@ -282,6 +283,7 @@ __all__ = [
     "naive_visualization_payload",
     "normalize_real_lamino_runtime_args",
     "optimize_reference_setup_geometry_bilevel_for_level",
+    "parse_real_lamino_z_range",
     "parse_shape3",
     "phantom_spec",
     "pose_dx_dz_bounds",
