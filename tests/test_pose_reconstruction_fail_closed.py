@@ -6,6 +6,12 @@ import numpy as np
 from tomojax.align import AlignConfig, align
 
 # check-public-imports: allow-private
+from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+
+# check-public-imports: allow-private
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
+
+# check-public-imports: allow-private
 import tomojax.align._pose_stage as pose_stage_module
 
 # check-public-imports: allow-private
@@ -16,8 +22,6 @@ from tomojax.align._reconstruction_stage import (
     _fold_rigid_detector_grid_into_pose_stack,
     _run_reconstruction_step,
 )
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view, forward_project_view_T
 from tomojax.geometry import detector_grid_from_calibration

@@ -49,7 +49,7 @@ def test_import_guard_rejects_nested_alignment_from_bench_surface(tmp_path: Path
     path = _write(
         tmp_path,
         "src/tomojax/bench/example.py",
-        "from tomojax.align.objectives.loss_specs import parse_loss_spec\n",
+        "from tomojax.align._objectives.loss_specs import parse_loss_spec\n",
     )
 
     violations = find_violations([path], tmp_path)
@@ -62,7 +62,7 @@ def test_import_guard_rejects_nested_alignment_from_top_level_bench(tmp_path: Pa
     path = _write(
         tmp_path,
         "bench/example.py",
-        "from tomojax.align.objectives.loss_specs import parse_loss_spec\n",
+        "from tomojax.align._objectives.loss_specs import parse_loss_spec\n",
     )
 
     violations = find_violations([path], tmp_path)

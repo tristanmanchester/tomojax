@@ -4,14 +4,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.geometry.geometry_applier import (
+# check-public-imports: allow-private
+from tomojax.align._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_alignment_state,
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
     pose_stack_for_setup,
 )
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+
+# check-public-imports: allow-private
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.multires import scale_detector

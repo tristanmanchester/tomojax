@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import jax
 import jax.numpy as jnp
 
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.backends import resolve_pallas_callable
 from tomojax.core.backend_policy import (
     BackendProvenance,
@@ -21,7 +21,7 @@ from tomojax.core.projector import forward_project_view_T
 from .loss_adapters import LossAdapter, build_loss_adapter
 
 if TYPE_CHECKING:
-    from tomojax.align.model.state import AlignmentState
+    from tomojax.align._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Grid
 
     from .loss_specs import AlignmentLossSpec

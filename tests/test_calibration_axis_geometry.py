@@ -5,7 +5,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.geometry.geometry_blocks import GeometryCalibrationState
+# check-public-imports: allow-private
+from tomojax.align._geometry.geometry_blocks import GeometryCalibrationState
 from tomojax.align.pipeline import AlignConfig
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, RotationAxisGeometry
 from tomojax.geometry import (

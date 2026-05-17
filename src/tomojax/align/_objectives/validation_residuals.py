@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from tomojax.align.geometry.geometry_applier import (
+from tomojax.align._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_alignment_state,
     subset_base_geometry,
@@ -16,8 +16,8 @@ from tomojax.align.geometry.geometry_applier import (
 from tomojax.core.projector import forward_project_view_T
 
 if TYPE_CHECKING:
-    from tomojax.align.model.dof_specs import ActiveParameterView
-    from tomojax.align.model.state import AlignmentState
+    from tomojax.align._model.dof_specs import ActiveParameterView
+    from tomojax.align._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Grid
 
     from .loss_adapters import LossAdapter

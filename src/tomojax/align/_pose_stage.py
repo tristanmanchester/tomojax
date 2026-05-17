@@ -25,6 +25,33 @@ from tomojax.core.validation import (
 from tomojax.geometry import cylindrical_mask_xy
 
 from ._config import AlignConfig, _active_dof_mask_for_cfg, _active_dofs_for_cfg
+from ._geometry.parametrizations import se3_from_5d
+from ._model.dofs import bounds_vectors
+from ._model.gauge import (
+    GaugeFixMode,
+    active_gauge_dofs,
+    apply_alignment_gauge,
+    gauge_stats_to_python,
+    normalize_gauge_fix,
+    validate_alignment_gauge_feasible,
+)
+from ._model.motion_models import (
+    build_pose_motion_model,
+    expand_motion_coefficients,
+    fit_motion_coefficients,
+    scan_coordinate_from_geometry,
+)
+from ._objectives.fixed_volume import (
+    ObjectiveProvenance,
+    alignment_projector_backend_provenance,
+    project_and_score_stack,
+)
+from ._objectives.loss_adapters import LossAdapter, build_loss_adapter
+from ._objectives.loss_specs import (
+    loss_is_within_relative_tolerance,
+    loss_spec_name,
+    resolve_loss_for_level,
+)
 from ._observer import (
     ObserverAction,
     ObserverCallback,
@@ -35,33 +62,6 @@ from ._observer import (
 from ._profiles import profile_policy_from_config
 from ._reconstruction_stage import _run_reconstruction_step
 from ._results import AlignCheckpointCallback, AlignInfo, AlignResumeState, _set_float_stat
-from .geometry.parametrizations import se3_from_5d
-from .model.dofs import bounds_vectors
-from .model.gauge import (
-    GaugeFixMode,
-    active_gauge_dofs,
-    apply_alignment_gauge,
-    gauge_stats_to_python,
-    normalize_gauge_fix,
-    validate_alignment_gauge_feasible,
-)
-from .model.motion_models import (
-    build_pose_motion_model,
-    expand_motion_coefficients,
-    fit_motion_coefficients,
-    scan_coordinate_from_geometry,
-)
-from .objectives.fixed_volume import (
-    ObjectiveProvenance,
-    alignment_projector_backend_provenance,
-    project_and_score_stack,
-)
-from .objectives.loss_adapters import LossAdapter, build_loss_adapter
-from .objectives.loss_specs import (
-    loss_is_within_relative_tolerance,
-    loss_spec_name,
-    resolve_loss_for_level,
-)
 from .optimizers import PoseLbfgsConfig, PoseOptimizationContext, run_pose_lbfgs
 
 if TYPE_CHECKING:

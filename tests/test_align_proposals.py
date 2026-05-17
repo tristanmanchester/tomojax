@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from tomojax.align.objectives.loss_adapters import build_loss_adapter
-from tomojax.align.objectives.loss_specs import L2LossSpec
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_adapters import build_loss_adapter
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import L2LossSpec
 from tomojax.align.proposals import ProposalCandidate, score_pose_stack_candidates
 from tomojax.core.geometry import Detector, Grid
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from tomojax.align.model.schedules import (
+# check-public-imports: allow-private
+from tomojax.align._model.schedules import (
     AlignmentSchedule,
     AlignmentStage,
     resolve_alignment_schedule,

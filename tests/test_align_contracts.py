@@ -6,8 +6,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.objectives.loss_adapters import build_loss_adapter
-from tomojax.align.objectives.loss_specs import parse_loss_spec
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_adapters import build_loss_adapter
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import parse_loss_spec
 from tomojax.align.pipeline import AlignConfig
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 
@@ -116,8 +119,8 @@ def test_alignment_legacy_module_aliases_are_not_registered(module_name: str) ->
         "tomojax.align.dof_specs",
         "tomojax.align.dofs",
         "tomojax.align.gauge",
-        "tomojax.align.geometry_applier",
-        "tomojax.align.geometry_blocks",
+        "tomojax.align._geometry_applier",
+        "tomojax.align._geometry_blocks",
         "tomojax.align.initializers",
         "tomojax.align.parametrizations",
         "tomojax.align.schedules",

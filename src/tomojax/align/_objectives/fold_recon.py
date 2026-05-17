@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.geometry.geometry_applier import (
+from tomojax.align._geometry.geometry_applier import (
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
 )
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
 if TYPE_CHECKING:
-    from tomojax.align.model.state import AlignmentState
+    from tomojax.align._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Geometry, Grid
 
 

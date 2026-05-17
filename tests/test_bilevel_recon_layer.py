@@ -5,10 +5,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-import tomojax.align.objectives.recon_layer as recon_layer_module
-from tomojax.align.objectives.recon_layer import ReconLayer, ReconLayerConfig
+# check-public-imports: allow-private
+from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+
+# check-public-imports: allow-private
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
+
+# check-public-imports: allow-private
+import tomojax.align._objectives.recon_layer as recon_layer_module
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.recon_layer import ReconLayer, ReconLayerConfig
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fista_tv import FistaConfig, fista_tv

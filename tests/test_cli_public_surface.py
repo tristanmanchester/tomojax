@@ -190,7 +190,7 @@ def test_production_cli_uses_alignment_facade_for_schedules_and_losses() -> None
             module
             for module in imports
             if module.startswith(
-                ("tomojax.align.geometry", "tomojax.align.model", "tomojax.align.objectives")
+                ("tomojax.align._geometry", "tomojax.align._model", "tomojax.align._objectives")
             )
         ]
         if forbidden:
@@ -205,10 +205,10 @@ def test_cli_modules_use_alignment_facade_with_declared_sidecar_exceptions() -> 
         ("src/tomojax/cli/align.py", "tomojax.align.io.params_export"),
     }
     forbidden_prefixes = (
-        "tomojax.align.geometry",
+        "tomojax.align._geometry",
         "tomojax.align.io",
-        "tomojax.align.model",
-        "tomojax.align.objectives",
+        "tomojax.align._model",
+        "tomojax.align._objectives",
         "tomojax.align.pipeline",
         "tomojax.align.verification",
     )

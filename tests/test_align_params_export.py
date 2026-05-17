@@ -7,6 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+# check-public-imports: allow-private
+from tomojax.align._model.gauge import apply_alignment_gauge
 from tomojax.align.io.params_export import (
     ALIGNMENT_PARAMS_SCHEMA,
     CSV_FIELDNAMES,
@@ -15,7 +17,6 @@ from tomojax.align.io.params_export import (
     save_alignment_params_csv,
     save_alignment_params_json,
 )
-from tomojax.align.model.gauge import apply_alignment_gauge
 
 
 def test_alignment_params_export_writes_named_json_and_csv(tmp_path):

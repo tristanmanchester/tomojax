@@ -3,12 +3,16 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import parse_loss_spec
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
+
+# check-public-imports: allow-private
 import tomojax.align._pose_stage as pose_stage
 
 # check-public-imports: allow-private
 import tomojax.align._reconstruction_stage as reconstruction_stage
-from tomojax.align.objectives.loss_specs import parse_loss_spec
-from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view

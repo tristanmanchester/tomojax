@@ -11,8 +11,8 @@ def test_fitness_harness_uses_alignment_owner_modules() -> None:
     assert "from tomojax.align.api import" in source
     assert "parse_loss_spec" in source
     assert "se3_from_5d" in source
-    assert "tomojax.align.objectives.loss_specs" not in source
-    assert "tomojax.align.objectives.losses" not in source
-    assert "tomojax.align.geometry.parametrizations" not in source
+    assert "tomojax.align._objectives.loss_specs" not in source
+    assert "tomojax.align._objectives.losses" not in source
+    assert "tomojax.align._geometry.parametrizations" not in source
     assert "tomojax.align.losses" not in source
     assert "tomojax.align.parametrizations" not in source

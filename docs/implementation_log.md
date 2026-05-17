@@ -18221,6 +18221,49 @@ Validation:
 - `python tools/check_public_imports.py` passed.
 - `uv run lint-imports --config .importlinter` passed with all 7 contracts kept.
 
+### Private alignment implementation namespaces
+
+- Renamed the nested alignment implementation packages from public-looking
+  namespaces to private deep-module internals:
+  - `tomojax.align.geometry` -> `tomojax.align._geometry`
+  - `tomojax.align.model` -> `tomojax.align._model`
+  - `tomojax.align.objectives` -> `tomojax.align._objectives`
+- Updated alignment internals and white-box tests to use the private names
+  explicitly, while keeping product and CLI access routed through the public
+  `tomojax.align` facade.
+- Tightened `.importlinter` and `tools/check_public_imports.py` so CLI,
+  benchmark, and script surfaces cannot import the new private alignment
+  packages directly.
+- Marked deliberate test-only white-box imports with
+  `check-public-imports: allow-private` instead of weakening the boundary rule.
+- Updated the architecture cleanup audit to record that the nested alignment
+  packages are no longer public-shaped modules.
+
+Validation:
+
+- `python tools/check_public_imports.py` passed.
+- `uv run lint-imports --config .importlinter` passed with all 6 contracts kept.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align src/tomojax/core
+  tests/test_align_chunking.py tests/test_align_contracts.py
+  tests/test_align_gauge.py tests/test_align_loss_logic.py
+  tests/test_align_motion_models.py tests/test_align_optimizers.py
+  tests/test_align_params_export.py tests/test_align_proposals.py
+  tests/test_align_quick.py tests/test_alignment_gauge_registry.py
+  tests/test_alignment_objectives.py tests/test_alignment_schedules.py
+  tests/test_alignment_state.py tests/test_bilevel_recon_layer.py
+  tests/test_bilevel_setup_alignment.py tests/test_calibration_axis_geometry.py
+  tests/test_cli_config.py tests/test_cli_public_surface.py
+  tests/test_detector_center_objective.py tests/test_geometry_applier.py
+  tests/test_integration.py tests/test_pose_reconstruction_fail_closed.py
+  tests/test_public_import_guard.py tools/check_public_imports.py` passed after
+  import-order fixes.
+- `uv run pytest -q tests/test_public_import_guard.py
+  tests/test_cli_public_surface.py tests/test_align_contracts.py
+  tests/test_align_quick.py tests/test_alignment_objectives.py
+  tests/test_bilevel_setup_alignment.py tests/test_geometry_applier.py
+  tests/test_detector_center_objective.py tests/test_cli_config.py` passed with
+  170 tests.
+
 ### Backend capability boundary cleanup
 
 - Promoted optional Pallas projector lookup to the `tomojax.backends` facade as

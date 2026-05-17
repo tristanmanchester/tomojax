@@ -9,8 +9,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align._geometry.parametrizations import se3_from_5d
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     FistaCoreResult,
@@ -19,7 +19,7 @@ from tomojax.recon.fista_tv_core import (
 )
 
 if TYPE_CHECKING:
-    from tomojax.align.model.state import AlignmentState
+    from tomojax.align._model.state import AlignmentState
     from tomojax.core.geometry import Detector, Geometry, Grid
 
 ReconDifferentiationMode = Literal["unrolled", "implicit"]

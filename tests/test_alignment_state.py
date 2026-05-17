@@ -5,9 +5,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.model.dof_specs import ActiveParameterView, optimizer_step_stats
-from tomojax.align.model.dofs import normalize_bounds
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+# check-public-imports: allow-private
+from tomojax.align._model.dof_specs import ActiveParameterView, optimizer_step_stats
+
+# check-public-imports: allow-private
+from tomojax.align._model.dofs import normalize_bounds
+
+# check-public-imports: allow-private
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.geometry import axis_unit_from_rotations
 

@@ -65,6 +65,9 @@ allow_indirect_imports = True
 source_modules =
     tomojax.cli
 forbidden_modules =
+    tomojax.align._geometry
+    tomojax.align._model
+    tomojax.align._objectives
     tomojax.align.geometry
     tomojax.align.io
     tomojax.align.model

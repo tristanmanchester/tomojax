@@ -2,9 +2,10 @@ import jax.numpy as jnp
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.align._pose_stage import _should_prefer_gn_candidate
-from tomojax.align.objectives.loss_adapters import build_loss
-from tomojax.align.objectives.loss_kernels import (
+from tomojax.align._objectives.loss_adapters import build_loss
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_kernels import (
     _loss_cauchy,
     _loss_chamfer_edge,
     _loss_l2_otsu_soft,
@@ -14,7 +15,9 @@ from tomojax.align.objectives.loss_kernels import (
     _loss_tversky,
     _loss_welsch,
 )
-from tomojax.align.objectives.loss_specs import (
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import (
     loss_is_within_relative_tolerance,
     loss_spec_name,
     parse_loss_schedule,
@@ -22,7 +25,12 @@ from tomojax.align.objectives.loss_specs import (
     resolve_loss_for_level,
     validate_loss_schedule_levels,
 )
-from tomojax.align.objectives.loss_state import LossState
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_state import LossState
+
+# check-public-imports: allow-private
+from tomojax.align._pose_stage import _should_prefer_gn_candidate
 
 
 def test_loss_is_within_relative_tolerance_allows_small_increase():

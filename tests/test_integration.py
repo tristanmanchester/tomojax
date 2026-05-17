@@ -5,7 +5,8 @@ os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
+# check-public-imports: allow-private
+from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view

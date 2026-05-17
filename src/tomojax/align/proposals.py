@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from .objectives.fixed_volume import (
+from ._objectives.fixed_volume import (
     alignment_projector_backend_provenance,
     project_and_score_stack,
 )
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from tomojax.core.backend_policy import ProjectorBackendInput
     from tomojax.core.geometry import Detector, Grid
 
-    from .objectives.loss_adapters import LossAdapter
+    from ._objectives.loss_adapters import LossAdapter
 
 
 @dataclass(frozen=True, slots=True)

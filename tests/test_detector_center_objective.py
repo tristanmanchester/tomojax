@@ -4,13 +4,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.geometry.geometry_blocks import GeometryCalibrationState, level_detector_grid
-from tomojax.align.geometry.initializers import (
+# check-public-imports: allow-private
+from tomojax.align._geometry.geometry_blocks import GeometryCalibrationState, level_detector_grid
+
+# check-public-imports: allow-private
+from tomojax.align._geometry.initializers import (
     projection_com_det_u_seed,
     train_heldout_view_indices,
 )
-from tomojax.align.objectives.loss_adapters import build_loss_adapter
-from tomojax.align.objectives.loss_specs import L2OtsuLossSpec
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_adapters import build_loss_adapter
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import L2OtsuLossSpec
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.recon.fbp import fbp

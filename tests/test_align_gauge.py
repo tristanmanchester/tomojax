@@ -4,8 +4,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.model.dofs import DOF_INDEX
-from tomojax.align.model.gauge import (
+# check-public-imports: allow-private
+from tomojax.align._model.dofs import DOF_INDEX
+
+# check-public-imports: allow-private
+from tomojax.align._model.gauge import (
     apply_alignment_gauge,
     normalize_gauge_fix,
     validate_alignment_gauge_feasible,

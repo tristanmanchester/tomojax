@@ -4,13 +4,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.model.dof_specs import ActiveParameterView
-from tomojax.align.model.motion_models import (
+# check-public-imports: allow-private
+from tomojax.align._model.dof_specs import ActiveParameterView
+
+# check-public-imports: allow-private
+from tomojax.align._model.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
 )
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
+
+# check-public-imports: allow-private
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.optimizers import (
     ActiveLbfgsConfig,
     BoundTransform,

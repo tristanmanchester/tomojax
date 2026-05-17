@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
+from tomojax.align._model.dofs import GEOMETRY_DOF_NAMES, normalize_alignment_dofs
 from tomojax.core.geometry import RotationAxisGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry

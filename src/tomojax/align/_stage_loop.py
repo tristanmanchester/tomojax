@@ -29,6 +29,27 @@ from ._config import (
     AlignConfig,
     _resolved_schedule_for_cfg,
 )
+from ._geometry.geometry_applier import (
+    BaseGeometryArrays,
+    apply_alignment_state,
+    apply_setup_to_detector_grid,
+)
+from ._geometry.geometry_blocks import (
+    add_geometry_acquisition_diagnostics,
+    summarize_geometry_calibration_stats,
+)
+from ._model.dofs import DOF_INDEX
+from ._model.gauge import (
+    active_gauge_dofs,
+    normalize_gauge_fix,
+)
+from ._model.state import PoseState, alignment_state_from_checkpoint
+from ._objectives.loss_adapters import build_loss_adapter
+from ._objectives.loss_specs import (
+    loss_spec_name,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
+)
 from ._observer import (
     _normalize_observer_action,
     adapt_observer_callback,
@@ -48,34 +69,13 @@ from ._setup_stage import (
     _geometry_with_setup_state,
     _optimize_setup_geometry_bilevel_for_level,
 )
-from .geometry.geometry_applier import (
-    BaseGeometryArrays,
-    apply_alignment_state,
-    apply_setup_to_detector_grid,
-)
-from .geometry.geometry_blocks import (
-    add_geometry_acquisition_diagnostics,
-    summarize_geometry_calibration_stats,
-)
-from .model.dofs import DOF_INDEX
-from .model.gauge import (
-    active_gauge_dofs,
-    normalize_gauge_fix,
-)
-from .model.state import PoseState, alignment_state_from_checkpoint
-from .objectives.loss_adapters import build_loss_adapter
-from .objectives.loss_specs import (
-    loss_spec_name,
-    resolve_loss_for_level,
-    validate_loss_schedule_levels,
-)
 from .proposals import ProposalCandidate, score_pose_stack_candidates
 
 if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
+    from ._model.schedules import ResolvedAlignmentSchedule, ResolvedAlignmentStage
     from ._observer import ObserverAction, ObserverCallback, OuterStat
-    from .model.schedules import ResolvedAlignmentSchedule, ResolvedAlignmentStage
 
 _SUPPORTED_POSE_STAGE_OPTIMIZERS = frozenset({"gd", "gn", "lbfgs"})
 

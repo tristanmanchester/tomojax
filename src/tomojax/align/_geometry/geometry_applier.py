@@ -24,7 +24,7 @@ from .parametrizations import se3_from_5d
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tomojax.align.model.state import AlignmentState, SetupGeometryState
+    from tomojax.align._model.state import AlignmentState, SetupGeometryState
     from tomojax.core.geometry import Detector, Geometry, Grid
 
 

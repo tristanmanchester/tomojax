@@ -11,8 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from .model.dof_specs import ActiveParameterView, optimizer_step_stats
-from .model.motion_models import (
+from ._model.dof_specs import ActiveParameterView, optimizer_step_stats
+from ._model.motion_models import (
     PoseMotionModel,
     expand_motion_coefficients,
     fit_motion_coefficients,
@@ -21,8 +21,8 @@ from .model.motion_models import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from .model.dofs import DofBounds
-    from .model.state import AlignmentState
+    from ._model.dofs import DofBounds
+    from ._model.state import AlignmentState
 
 type OptimizerStatValue = float | int | bool | str | None
 type OptimizerStats = dict[str, OptimizerStatValue]

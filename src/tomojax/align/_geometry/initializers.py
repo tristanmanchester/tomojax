@@ -10,7 +10,7 @@ import numpy as np
 if TYPE_CHECKING:
     import jax.numpy as jnp
 
-    from tomojax.align.objectives.loss_adapters import LossAdapter
+    from tomojax.align._objectives.loss_adapters import LossAdapter
     from tomojax.core.geometry import Geometry
 
 

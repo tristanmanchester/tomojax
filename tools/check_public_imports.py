@@ -17,6 +17,9 @@ ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
 DEFAULT_SCAN_PATHS = [Path("bench"), Path("scripts"), Path("src/tomojax"), Path("tests")]
 ALIGNMENT_FACADE_REASON = "nested alignment namespace must be reached through tomojax.align.api"
 LEGACY_ALIGN_NAMESPACES = (
+    "tomojax.align._geometry",
+    "tomojax.align._model",
+    "tomojax.align._objectives",
     "tomojax.align.geometry",
     "tomojax.align.io",
     "tomojax.align.model",
@@ -134,6 +137,18 @@ def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
             for imported_module in imported_modules:
                 if product_surface_import_is_allowed(importing_module, imported_module):
                     continue
+                legacy_reason = legacy_public_surface_reason(imported_module, importing_module)
+                if legacy_reason is not None:
+                    violations.append(
+                        Violation(
+                            path=path,
+                            line=node.lineno,
+                            imported_module=imported_module,
+                            importing_module=importing_module,
+                            reason=legacy_reason,
+                        )
+                    )
+                    continue
                 owner = private_owner(imported_module)
                 if owner is not None and not module_is_inside_owner(importing_module, owner):
                     violations.append(
@@ -146,17 +161,6 @@ def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
                         )
                     )
                     continue
-                legacy_reason = legacy_public_surface_reason(imported_module, importing_module)
-                if legacy_reason is not None:
-                    violations.append(
-                        Violation(
-                            path=path,
-                            line=node.lineno,
-                            imported_module=imported_module,
-                            importing_module=importing_module,
-                            reason=legacy_reason,
-                        )
-                    )
     return violations
 
 

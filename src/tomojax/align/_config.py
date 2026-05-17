@@ -5,6 +5,21 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from tomojax.core.backend_policy import normalize_projector_backend
 
+from ._geometry.geometry_blocks import normalize_geometry_dofs
+from ._model.diagnostics import GaugePolicy
+from ._model.dofs import (
+    ScopedAlignmentDofs,
+    bounds_vectors,
+    normalize_alignment_dofs,
+    normalize_bounds,
+)
+from ._model.gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
+from ._model.schedules import (
+    AlignmentSchedule,
+    ResolvedAlignmentSchedule,
+    resolve_alignment_schedule,
+)
+from ._objectives.loss_specs import L2OtsuLossSpec
 from ._profiles import (
     AlignmentProfileInput,
     FallbackPolicy,
@@ -12,21 +27,6 @@ from ._profiles import (
     alignment_profile_policy,
     normalize_alignment_profile,
 )
-from .geometry.geometry_blocks import normalize_geometry_dofs
-from .model.diagnostics import GaugePolicy
-from .model.dofs import (
-    ScopedAlignmentDofs,
-    bounds_vectors,
-    normalize_alignment_dofs,
-    normalize_bounds,
-)
-from .model.gauge import GaugeFixMode, normalize_gauge_fix, validate_alignment_gauge_feasible
-from .model.schedules import (
-    AlignmentSchedule,
-    ResolvedAlignmentSchedule,
-    resolve_alignment_schedule,
-)
-from .objectives.loss_specs import L2OtsuLossSpec
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Geometry
     from tomojax.recon.types import Regulariser
 
-    from .model.dofs import DofBounds
-    from .objectives.loss_specs import AlignmentLossConfig
+    from ._model.dofs import DofBounds
+    from ._objectives.loss_specs import AlignmentLossConfig
 
 type ReconAlgo = Literal["fista", "spdhg"]
 type ReconAlgoInput = Literal[

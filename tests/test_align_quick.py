@@ -3,6 +3,28 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
+from tomojax.align._geometry.geometry_blocks import (
+    add_geometry_acquisition_diagnostics,
+    summarize_geometry_calibration_stats,
+)
+
+# check-public-imports: allow-private
+from tomojax.align._model.dofs import resolve_scoped_alignment_dofs
+
+# check-public-imports: allow-private
+from tomojax.align._model.schedules import AlignmentSchedule, AlignmentStage
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import (
+    loss_spec_name,
+    parse_loss_schedule,
+    parse_loss_spec,
+)
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.recon_layer import PoseAdjustedGeometry
+
+# check-public-imports: allow-private
 from tomojax.align._observer import (
     _normalize_observer_action,
     adapt_observer_callback,
@@ -13,14 +35,6 @@ import tomojax.align._pose_stage as pose_stage
 
 # check-public-imports: allow-private
 import tomojax.align._stage_loop as stage_loop
-from tomojax.align.geometry.geometry_blocks import (
-    add_geometry_acquisition_diagnostics,
-    summarize_geometry_calibration_stats,
-)
-from tomojax.align.model.dofs import resolve_scoped_alignment_dofs
-from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
-from tomojax.align.objectives.loss_specs import loss_spec_name, parse_loss_schedule, parse_loss_spec
-from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 import tomojax.align.pipeline as align_pipeline
 from tomojax.align.pipeline import (
     AlignConfig,

@@ -5,8 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from tomojax.align.model.dofs import normalize_bounds
-from tomojax.align.objectives.loss_specs import loss_spec_name, resolve_loss_for_level
+# check-public-imports: allow-private
+from tomojax.align._model.dofs import normalize_bounds
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import loss_spec_name, resolve_loss_for_level
 from tomojax.align.pipeline import AlignConfig
 import tomojax.cli.align as align_cli
 from tomojax.cli.config import parse_args_with_config

@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, TypedDict
 if TYPE_CHECKING:
     import jax.numpy as jnp
 
+    from ._model.schedules import ResolvedAlignmentStage
     from ._observer import ObserverAction, OuterStat
-    from .model.schedules import ResolvedAlignmentStage
 
 
 type GaugeFixSummary = dict[str, float | str | list[str]]

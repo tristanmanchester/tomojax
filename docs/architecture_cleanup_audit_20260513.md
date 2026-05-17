@@ -30,30 +30,29 @@ production-ready according to the original v2 plan:
 | Import direction checked | `.importlinter` keeps layer direction, production no-data, production no-bench, CLI alignment-facade, CLI core-geometry, and CLI dev-dispatch contracts. | Done |
 | Public docs avoid development-era wording | `tests/test_cli_public_surface.py` guards selected public docs against `legacy`, `transitional`, `pre-v2`, `mvp`, `v1`, `parity`, and `smoke`. | Done |
 | Focused production-surface gate | `just production-surface-check` passed with 74 focused tests after the latest boundary changes. | Done |
-| Whole-repo `just check` | `just check` is still red. It fails in repo-wide Ruff lint, mainly in nested `tomojax.align.model`, `tomojax.align.objectives`, internal alignment modules, scripts, and broad tests. | Not done |
-| Nested non-deep packages cleaned up | `src/tomojax/calibration` has been deleted. `src/tomojax/align/model`, `src/tomojax/align/objectives`, `src/tomojax/align/geometry`, `src/tomojax/data`, and `src/tomojax/bench` still exist. Some are quarantined; the align nested packages still behave like public modules for lint/import purposes. | Incomplete |
+| Whole-repo `just check` | Not rerun after the aggressive align namespace cut. The current focused gate is clean; remaining full-repo debt should be measured in a final sweep rather than used to block every architectural deletion. | Deferred |
+| Nested non-deep packages cleaned up | `src/tomojax/calibration` has been deleted. `src/tomojax/align/model`, `src/tomojax/align/objectives`, and `src/tomojax/align/geometry` were renamed to private implementation namespaces: `src/tomojax/align/_model`, `src/tomojax/align/_objectives`, and `src/tomojax/align/_geometry`. Product surfaces are guarded from importing them directly. | Done |
 | Obsolete/transitional code removed or quarantined | Retired console scripts and public wording are cleaned up; diagnostics are under `tomojax dev`. Some old names remain in developer command internals, historical docs, benchmark docs, and tests. | Partial |
 
 ## Current Blockers
 
-The cleanup cannot be called complete while `just check` is red. The broad Ruff
-failure is not caused by the public CLI surface; it exposes remaining
-architecture debt:
+The biggest public-module ambiguity has been removed: the nested alignment model,
+objective, and geometry packages are no longer named as public packages. The
+remaining cleanup blockers are now narrower:
 
-- nested alignment packages (`tomojax.align.model`, `tomojax.align.objectives`,
-  `tomojax.align.geometry`) are implementation internals but are named and linted
-  like public modules;
-- some CLI code still reaches into those nested implementation packages instead
-  of consuming a compact public `tomojax.align` facade;
-- broad tests and scripts still contain lint debt unrelated to the focused
-  production-surface gate.
+- broader scripts/tests may still have repo-wide lint debt unrelated to the
+  production surface;
+- `tomojax.data` and `tomojax.bench` are still retained/developer packages, but
+  they are now explicitly guarded behind IO/datasets and developer command
+  surfaces;
+- a final whole-repo `just check` pass is still needed after the remaining
+  architectural deletions are batched.
 
 ## Next Work
 
-1. Move production CLI dependencies on alignment schedules/loss parsing behind
-   the public `tomojax.align` facade.
-2. Convert nested alignment implementation packages into private implementation
-   namespaces, or otherwise make their internal status executable and lint-clean.
-3. Continue reducing repo-wide Ruff failures until `just check` either passes or
-   the remaining debt is explicitly quarantined outside production code with
-   tests/import rules.
+1. Continue deleting or assimilating old script/diagnostic surfaces now that the
+   alignment implementation packages are private.
+2. Collapse any remaining product imports onto `tomojax.align`, `tomojax.io`,
+   `tomojax.datasets`, `tomojax.geometry`, and `tomojax.verify`.
+3. Run the final whole-repo `just check` pass after the remaining large cleanup
+   batch, then fix only the failures that survive that sweep.

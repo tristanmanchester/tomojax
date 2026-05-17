@@ -7,21 +7,41 @@ import pytest
 from tomojax.align import pipeline
 
 # check-public-imports: allow-private
-from tomojax.align._setup_stage import (
-    _optimize_setup_geometry_bilevel_for_level,
-)
-from tomojax.align.geometry import detector_center, geometry_blocks
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays
-from tomojax.align.model.diagnostics import GaugeDecision
-from tomojax.align.model.dof_specs import ActiveParameterView
-from tomojax.align.model.schedules import ResolvedAlignmentStage, schedule_preset
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.objectives.folds import FoldSpec
-from tomojax.align.objectives.loss_adapters import build_loss_adapter
-from tomojax.align.objectives.loss_specs import L2OtsuLossSpec
-from tomojax.align.objectives.validation_residuals import (
+from tomojax.align._geometry import detector_center, geometry_blocks
+
+# check-public-imports: allow-private
+from tomojax.align._geometry.geometry_applier import BaseGeometryArrays
+
+# check-public-imports: allow-private
+from tomojax.align._model.diagnostics import GaugeDecision
+
+# check-public-imports: allow-private
+from tomojax.align._model.dof_specs import ActiveParameterView
+
+# check-public-imports: allow-private
+from tomojax.align._model.schedules import ResolvedAlignmentStage, schedule_preset
+
+# check-public-imports: allow-private
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.folds import FoldSpec
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_adapters import build_loss_adapter
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.loss_specs import L2OtsuLossSpec
+
+# check-public-imports: allow-private
+from tomojax.align._objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
+)
+
+# check-public-imports: allow-private
+from tomojax.align._setup_stage import (
+    _optimize_setup_geometry_bilevel_for_level,
 )
 from tomojax.align.pipeline import AlignConfig, align_multires
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry

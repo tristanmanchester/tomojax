@@ -8,18 +8,18 @@ import jax.numpy as jnp
 
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
-from .geometry.geometry_applier import (
+from ._geometry.geometry_applier import (
     BaseGeometryArrays,
     apply_setup_to_detector_grid,
     materialize_setup_geometry,
 )
-from .model.diagnostics import validate_active_gauge_policy
-from .model.dof_specs import ActiveParameterView
-from .model.state import AlignmentState, PoseState, SetupGeometryState
-from .objectives.fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
-from .objectives.folds import FoldSpec
-from .objectives.loss_adapters import build_loss_adapter
-from .objectives.validation_residuals import (
+from ._model.diagnostics import validate_active_gauge_policy
+from ._model.dof_specs import ActiveParameterView
+from ._model.state import AlignmentState, PoseState, SetupGeometryState
+from ._objectives.fold_recon import FoldReconstructionConfig, reconstruct_train_fold_nograd
+from ._objectives.folds import FoldSpec
+from ._objectives.loss_adapters import build_loss_adapter
+from ._objectives.validation_residuals import (
     accumulate_validation_normals,
     score_validation_fixed_volume,
 )
@@ -30,11 +30,11 @@ if TYPE_CHECKING:
 
     from tomojax.core.geometry.base import Detector, Geometry, Grid
 
+    from ._model.schedules import ResolvedAlignmentStage
+    from ._objectives.folds import FoldArrays
+    from ._objectives.loss_adapters import LossAdapter
+    from ._objectives.loss_specs import AlignmentLossSpec
     from ._observer import OuterStat
-    from .model.schedules import ResolvedAlignmentStage
-    from .objectives.folds import FoldArrays
-    from .objectives.loss_adapters import LossAdapter
-    from .objectives.loss_specs import AlignmentLossSpec
 
 
 FoldEvaluation = tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, dict[str, object]]

@@ -25,6 +25,15 @@ from tomojax.align._continuation import (
     ContinuationScheduleName,
     reference_continuation_schedule,
 )
+from tomojax.align._geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align._geometry.geometry_blocks import (
+    GeometryCalibrationState,
+    geometry_with_axis_state,
+    level_detector_grid,
+    normalize_geometry_dofs,
+    summarize_geometry_calibration_stats,
+)
+from tomojax.align._geometry.parametrizations import se3_from_5d
 from tomojax.align._joint_schur_lm import (
     JointSchurLMConfig,
     JointSchurLMResult,
@@ -32,6 +41,47 @@ from tomojax.align._joint_schur_lm import (
     adapt_joint_schur_trust_radius,
     schur_step_from_jacobian,
     solve_joint_schur_lm,
+)
+from tomojax.align._model.dof_specs import DofSpec, dof_spec
+from tomojax.align._model.dofs import (
+    DofBounds,
+    normalize_alignment_dofs,
+    normalize_bounds,
+)
+from tomojax.align._model.gauge import GaugeFixMode
+from tomojax.align._model.schedules import (
+    PUBLIC_SCHEDULE_PRESETS,
+    AlignmentSchedule,
+    AlignmentStage,
+    GaugePolicy,
+    ResolvedAlignmentSchedule,
+    ResolvedAlignmentStage,
+    resolve_alignment_schedule,
+    schedule_preset,
+)
+from tomojax.align._model.state import AlignmentState, PoseState, SetupGeometryState
+from tomojax.align._objectives.fixed_volume import (
+    FixedVolumeProjectionObjective,
+    ObjectiveProvenance,
+    ObjectiveResult,
+    project_and_score_stack,
+    project_stack,
+)
+from tomojax.align._objectives.loss_adapters import LossAdapter, build_loss_adapter
+from tomojax.align._objectives.loss_specs import (
+    AlignmentLossConfig,
+    AlignmentLossSchedule,
+    AlignmentLossSpec,
+    EdgeL2LossSpec,
+    L2LossSpec,
+    L2OtsuLossSpec,
+    LossScheduleEntry,
+    PWLSLossSpec,
+    loss_spec_name,
+    parse_loss_schedule,
+    parse_loss_spec,
+    resolve_loss_for_level,
+    validate_loss_schedule_levels,
 )
 from tomojax.align._pose_lm import PoseOnlyLMConfig, PoseOnlyLMResult, solve_pose_only_lm
 from tomojax.align._profiles import (
@@ -48,56 +98,6 @@ from tomojax.align._profiles import (
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
 from tomojax.align._setup_stage import (
     _optimize_setup_geometry_bilevel_for_level as optimize_setup_geometry_bilevel_for_level,
-)
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align.geometry.geometry_blocks import (
-    GeometryCalibrationState,
-    geometry_with_axis_state,
-    level_detector_grid,
-    normalize_geometry_dofs,
-    summarize_geometry_calibration_stats,
-)
-from tomojax.align.geometry.parametrizations import se3_from_5d
-from tomojax.align.model.dof_specs import DofSpec, dof_spec
-from tomojax.align.model.dofs import (
-    DofBounds,
-    normalize_alignment_dofs,
-    normalize_bounds,
-)
-from tomojax.align.model.gauge import GaugeFixMode
-from tomojax.align.model.schedules import (
-    PUBLIC_SCHEDULE_PRESETS,
-    AlignmentSchedule,
-    AlignmentStage,
-    GaugePolicy,
-    ResolvedAlignmentSchedule,
-    ResolvedAlignmentStage,
-    resolve_alignment_schedule,
-    schedule_preset,
-)
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.objectives.fixed_volume import (
-    FixedVolumeProjectionObjective,
-    ObjectiveProvenance,
-    ObjectiveResult,
-    project_and_score_stack,
-    project_stack,
-)
-from tomojax.align.objectives.loss_adapters import LossAdapter, build_loss_adapter
-from tomojax.align.objectives.loss_specs import (
-    AlignmentLossConfig,
-    AlignmentLossSchedule,
-    AlignmentLossSpec,
-    EdgeL2LossSpec,
-    L2LossSpec,
-    L2OtsuLossSpec,
-    LossScheduleEntry,
-    PWLSLossSpec,
-    loss_spec_name,
-    parse_loss_schedule,
-    parse_loss_spec,
-    resolve_loss_for_level,
-    validate_loss_schedule_levels,
 )
 from tomojax.align.pipeline import (
     AlignConfig,
