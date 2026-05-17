@@ -44,6 +44,18 @@ def test_top_level_cli_help_shows_clean_public_commands(capsys):
     assert "test-cpu" not in captured.out
 
 
+def test_dev_cli_help_uses_advanced_label_without_exposing_it_by_default(capsys):
+    result = main_cli.main(["dev", "--help"])
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Advanced verification and benchmark tools." in captured.out
+    assert "Developer diagnostics" not in captured.out
+    assert "developer" not in captured.out.lower()
+    assert "align-auto" in captured.out
+    assert "test-gpu" in captured.out
+
+
 @pytest.mark.parametrize("command", ["align", "recon", "simulate"])
 def test_product_cli_help_avoids_development_wording(command, capsys):
     with pytest.raises(SystemExit) as exc_info:

@@ -107,6 +107,24 @@ def test_product_docs_do_not_promote_evidence_runners_as_public_entrypoints() ->
     assert {path: matches for path, matches in leaks.items() if matches} == {}
 
 
+def test_current_user_docs_avoid_developer_diagnostic_framing() -> None:
+    user_docs = [
+        Path("docs/quickstart.md"),
+        Path("docs/real-laminography.md"),
+        Path("docs/synthetic-tomography.md"),
+    ]
+    leaky_phrases = re.compile(
+        r"\bdeveloper\b|\bdevelopment\b|\bdiagnostic(?:s)?\b",
+        re.IGNORECASE,
+    )
+    leaks = {
+        str(path): leaky_phrases.findall(path.read_text(encoding="utf-8"))
+        for path in user_docs
+    }
+
+    assert {path: matches for path, matches in leaks.items() if matches} == {}
+
+
 def test_public_cli_docs_avoid_development_era_terms() -> None:
     public_cli_paths = [
         Path("README.md"),

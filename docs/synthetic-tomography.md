@@ -12,9 +12,9 @@ uv run tomojax simulate \
 uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
-The original `128^3` setup and pose gates are developer evidence runs, not the
-normal user workflow. They remain useful for reproducing solver evidence and
-checking regressions.
+The original `128^3` setup and pose gates are evidence-reproduction runs, not
+the normal user workflow. They remain useful for reproducing solver evidence
+and checking regressions.
 
 ## Setup-Global
 
@@ -26,8 +26,8 @@ uv run tomojax dev align-auto \
   --views 16
 ```
 
-This developer evidence case exercises detector center, detector roll, axis
-direction, and theta offset recovery for `synth128_setup_global_tomo`.
+This evidence case exercises detector center, detector roll, axis direction,
+and theta offset recovery for `synth128_setup_global_tomo`.
 
 ## Pose-Random
 
@@ -39,7 +39,7 @@ uv run tomojax dev align-auto \
   --views 16
 ```
 
-This developer evidence case exercises per-view dx/dz/phi/alpha/beta recovery for
+This evidence case exercises per-view dx/dz/phi/alpha/beta recovery for
 `synth128_pose_random_extreme`.
 
 ## Artifacts
@@ -50,7 +50,7 @@ Each run writes:
 - `benchmark_report.md`
 - `final_geometry.json`
 - recovered reconstruction arrays,
-- verification and Schur diagnostics.
+- verification and Schur checks.
 
 Current `128^3` evidence is in
 [`docs/benchmark_runs/2026-05-13-synthetic128-production-gates.md`](benchmark_runs/2026-05-13-synthetic128-production-gates.md).

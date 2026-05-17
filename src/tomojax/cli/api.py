@@ -26,11 +26,11 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
 
 DEVELOPER_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("loss-bench", "Compare projection-domain loss functions."),
-    CliCommand("misalign", "Generate controlled diagnostic misalignment datasets."),
-    CliCommand("align-auto", "Run the staged synthetic alignment benchmark."),
+    CliCommand("misalign", "Generate controlled misalignment datasets."),
+    CliCommand("align-auto", "Run staged synthetic alignment evidence cases."),
     CliCommand("astra-parallel-bench", "Compare ASTRA and TomoJAX parallel projectors."),
-    CliCommand("benchmark-suite", "Run benchmark-suite probes."),
-    CliCommand("alignment-diagnostic-bench", "Run alignment diagnostic benchmarks."),
+    CliCommand("benchmark-suite", "Run benchmark-suite checks."),
+    CliCommand("alignment-diagnostic-bench", "Run alignment verification benchmarks."),
     CliCommand("pallas-sanity", "Run Pallas backend sanity checks."),
     CliCommand("synthetic-benchmark-compare", "Compare synthetic benchmark artifacts."),
     CliCommand("current-baseline-normalize", "Normalize current baseline artifacts."),
@@ -45,7 +45,7 @@ def product_command_names() -> tuple[str, ...]:
 
 
 def developer_command_names() -> tuple[str, ...]:
-    """Return developer diagnostic grouped command names."""
+    """Return advanced grouped command names."""
     return tuple(command.name for command in DEVELOPER_COMMANDS)
 
 

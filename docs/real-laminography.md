@@ -11,8 +11,8 @@ uv run tomojax align /path/to/scan.nxs \
 ```
 
 The retained staged laminography runner is an evidence-reproduction path for
-the current k11 report. It is useful for development and publication evidence,
-but it is not the normal user entrypoint.
+the current k11 report. It is useful for reproducing report artifacts and
+publication evidence, but it is not the normal user entrypoint.
 
 ## Stages
 

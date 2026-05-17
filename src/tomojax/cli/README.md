@@ -16,8 +16,8 @@ modules are not separate public commands.
 - `tomojax.cli.main.main`: grouped console-script dispatcher.
 - `tomojax.cli.api.CliCommand`: command metadata record.
 - `tomojax.cli.api.product_command_names()`: product-facing grouped commands.
-- `tomojax.cli.api.developer_command_names()`: developer diagnostic commands
-  grouped under `tomojax dev`.
+- `tomojax.cli.api.developer_command_names()`: advanced commands grouped under
+  `tomojax dev`.
 
 ## Dependencies
 
@@ -35,8 +35,8 @@ Forbidden dependencies:
 ## Invariants
 
 - Public commands should emit artifact/provenance paths.
-- The top-level `tomojax` command exposes user workflows; diagnostic and
-  benchmark probes should not be promoted there by default.
+- The top-level `tomojax` command exposes user workflows; benchmark and
+  verification tooling should stay under `tomojax dev`.
 - User-facing alignment modes should stay high-level (`cor`, `pose`, `auto`,
   `max`) rather than exposing grid-search internals as the default product.
 
@@ -46,11 +46,11 @@ Forbidden dependencies:
 - `tomojax inspect`, `tomojax validate`, `tomojax ingest`,
   `tomojax preprocess`, `tomojax recon`, `tomojax align`, and
   `tomojax simulate` cover the public workflow.
-- `tomojax dev ...` owns benchmark and diagnostic probes that should stay out
+- `tomojax dev ...` owns benchmark and verification tools that should stay out
   of the product-facing command list.
-- `tomojax dev align-auto` is a staged synthetic tomography benchmark runner,
+- `tomojax dev align-auto` is a staged synthetic tomography evidence runner,
   not the public auto-alignment interface.
-- `tomojax dev misalign` and `tomojax dev loss-bench` are developer
-  diagnostics. They route real-data containers through `tomojax.io`, but they
-  should not be documented as production reconstruction workflows.
+- `tomojax dev misalign` and `tomojax dev loss-bench` route real-data
+  containers through `tomojax.io`, but they should not be documented as
+  production reconstruction workflows.
 - `tests/test_v2_module_skeleton.py` verifies the v2 facade exists and imports.

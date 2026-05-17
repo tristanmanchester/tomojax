@@ -153,7 +153,7 @@ def _run_dev_command(argv: list[str]) -> int:  # noqa: PLR0911
 def _dev_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tomojax dev",
-        description="Developer diagnostics and benchmark probes.",
+        description="Advanced verification and benchmark tools.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _ = parser.add_argument(

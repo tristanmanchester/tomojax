@@ -64,7 +64,7 @@ uv run tomojax simulate \
 uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
-Developer evidence commands for the original synthetic alignment gates are kept
-out of the normal quickstart. See the current production-readiness report for
-what passes, what fails, and which run artifacts back those claims:
+The original synthetic alignment evidence commands are kept out of the normal
+quickstart. See the current production-readiness report for what passes, what
+fails, and which run artifacts back those claims:
 [`docs/benchmark_runs/2026-05-13-production-readiness.md`](benchmark_runs/2026-05-13-production-readiness.md).
