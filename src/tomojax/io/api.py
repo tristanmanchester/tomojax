@@ -48,6 +48,7 @@ from tomojax.io._preprocess import (
     preprocess_tiff_stack,
     transmission_to_absorption,
 )
+from tomojax.io._real_laminography import RealLaminographyInput, load_real_laminography_input
 
 __all__ = [
     "InspectionReport",
@@ -57,6 +58,7 @@ __all__ = [
     "PreprocessConfig",
     "PreprocessResult",
     "ProjectionDataset",
+    "RealLaminographyInput",
     "ValidationReport",
     "absorption_to_transmission",
     "build_geometry_from_dataset_metadata",
@@ -71,6 +73,7 @@ __all__ = [
     "load_dataset",
     "load_nxtomo",
     "load_projection_payload",
+    "load_real_laminography_input",
     "load_tiff_stack",
     "normalize_json",
     "pad_to_multiples",

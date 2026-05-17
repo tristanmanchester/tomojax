@@ -19,7 +19,6 @@ import jax.numpy as jnp
 import numpy as np
 from run_real_lamino_reference_regression import (
     _apply_projection_background,
-    _load_input,
     _parse_range,
     _projection_stats,
     _save_png,
@@ -52,6 +51,7 @@ from tomojax.bench.real_laminography_runtime import (
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.core.projector import get_detector_grid_device
+from tomojax.io import load_real_laminography_input
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     fista_tv_core_arrays,
@@ -368,12 +368,14 @@ def main() -> int:
     started = datetime.now().isoformat(timespec="seconds")
     _status(status_path, state="starting", started_at=started)
     try:
-        raw, thetas = _load_input(
+        loaded = load_real_laminography_input(
             Path(args.input),
             flip_u=bool(args.flip_u),
             flip_v=bool(args.flip_v),
             transpose_detector=bool(args.transpose_detector),
         )
+        raw = loaded.projections
+        thetas = loaded.thetas_deg
         expected = None
         if args.expected_projection_shape:
             parts = [int(part) for part in str(args.expected_projection_shape).replace("x", ",").split(",")]

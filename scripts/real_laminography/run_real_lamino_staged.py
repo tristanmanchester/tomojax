@@ -52,7 +52,7 @@ from tomojax.bench.real_laminography_report import (
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
-from tomojax.io import read_json_object
+from tomojax.io import load_real_laminography_input, read_json_object
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
 REFERENCE_REGRESSION_STAGE_MAP = _REFERENCE_REGRESSION_STAGE_MAP
@@ -95,12 +95,14 @@ def run_real_lamino_staged(  # noqa: PLR0915
     status_path = run_root / "status.json"
     native._status(status_path, state="starting", started_at=started)
     try:
-        raw_projections, thetas = native._load_input(
+        loaded = load_real_laminography_input(
             Path(args.input),
             flip_u=bool(args.flip_u),
             flip_v=bool(args.flip_v),
             transpose_detector=bool(args.transpose_detector),
         )
+        raw_projections = loaded.projections
+        thetas = loaded.thetas_deg
         raw_projections, thetas = native._validate_loaded_input(
             raw_projections,
             thetas,

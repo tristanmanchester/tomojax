@@ -16,7 +16,6 @@ os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
 os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-import h5py
 import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
@@ -61,6 +60,7 @@ from tomojax.bench import (
     write_real_lamino_json,
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
+from tomojax.io import load_real_laminography_input
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume
@@ -215,19 +215,6 @@ def _geometry_state_from_alignment_state(
         nominal_axis_unit=tuple(float(v) for v in np.asarray(state.setup.nominal_axis_unit)),
         active_geometry_dofs=active_geometry_dofs,
     )
-
-
-def _load_input(path: Path, *, flip_u: bool, flip_v: bool, transpose_detector: bool) -> tuple[np.ndarray, np.ndarray]:
-    with h5py.File(path, "r") as f:
-        projections = np.asarray(f["entry/imaging/data"], dtype=np.float32)
-        thetas = np.asarray(f["entry/imaging_sum/smaract_zrot"], dtype=np.float32)
-    if transpose_detector:
-        projections = np.transpose(projections, (0, 2, 1))
-    if flip_v:
-        projections = projections[:, ::-1, :]
-    if flip_u:
-        projections = projections[:, :, ::-1]
-    return projections, thetas
 
 
 def _parse_shape3(text: str) -> tuple[int, int, int]:
@@ -969,12 +956,14 @@ def main() -> int:
     started = datetime.now().isoformat(timespec="seconds")
     _status(ctx.status_path, state="starting", started_at=started)
     try:
-        raw_projections, thetas = _load_input(
+        loaded = load_real_laminography_input(
             Path(args.input),
             flip_u=bool(args.flip_u),
             flip_v=bool(args.flip_v),
             transpose_detector=bool(args.transpose_detector),
         )
+        raw_projections = loaded.projections
+        thetas = loaded.thetas_deg
         raw_projections, thetas = _validate_loaded_input(
             raw_projections,
             thetas,

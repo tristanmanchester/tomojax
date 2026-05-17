@@ -12,6 +12,7 @@ artifact schemas.
 - `LoadedNXTomo`
 - `NXTomoMetadata`
 - `ProjectionDataset`
+- `RealLaminographyInput`
 - `ValidationReport`
 - `absorption_to_transmission(...)`
 - `load_projection_payload(path)`
@@ -26,6 +27,7 @@ artifact schemas.
 - `flat_dark_to_transmission(...)`
 - `save_projection_quicklook(path, output_path)`
 - `load_dataset(path)`
+- `load_real_laminography_input(path, flip_u=False, flip_v=False, transpose_detector=False)`
 - `load_tiff_stack(path, angles_deg=...)`
 - `PreprocessConfig`
 - `PreprocessResult`
@@ -56,6 +58,9 @@ benchmark, or CLI implementation modules.
   producing corrected projection datasets.
 - TIFF stack preprocessing is explicit: callers provide separate projection,
   flat, dark, and angle sidecars rather than relying on broad dispatch magic.
+- Real laminography NX/HDF5 loading is explicit: callers use
+  `load_real_laminography_input(...)` for the measured beamline layout and pass
+  detector orientation transforms at the IO boundary.
 - Preprocessing writes reconstruction-ready absorption/log-attenuation
   projections by default. `PreprocessConfig(output_domain="transmission")` is
   available for workflows that explicitly need normalized transmission.
@@ -69,5 +74,5 @@ benchmark, or CLI implementation modules.
 
 ## Tests
 
-Covered by `tests/test_json_utils.py`, `tests/test_io_public_dataset.py`, and
-downstream manifest/checkpoint tests.
+Covered by `tests/test_json_utils.py`, `tests/test_io_public_dataset.py`,
+`tests/test_real_laminography_io.py`, and downstream manifest/checkpoint tests.
