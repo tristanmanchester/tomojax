@@ -34,6 +34,10 @@ from tomojax.bench.alignment_scenarios import (
     scenario_suite,
     validate_scenario_catalog,
 )
+from tomojax.bench.article_alignment_compute import (
+    ArticleScenarioComputationResult,
+    execute_article_scenario_computation,
+)
 from tomojax.bench.article_alignment_manifest import (
     article_scenario_catalog_payload,
     article_scenario_supplied_payload,
@@ -197,6 +201,7 @@ __all__ = [
     "AlternatingSmokeResult",
     "ArticleRunProfile",
     "ArticleScenario",
+    "ArticleScenarioComputationResult",
     "ArticleScenarioRunArtifacts",
     "ArticleScenarioRunResult",
     "ForwardProjectorBenchmarkConfig",
@@ -242,6 +247,7 @@ __all__ = [
     "center_crop",
     "compute_spdhg_benchmark_metrics",
     "current_baseline_payload",
+    "execute_article_scenario_computation",
     "grid_aligned_xy",
     "is_expected_spdhg_fallback_failure",
     "largest_centered_square_inside_rotated_frame",

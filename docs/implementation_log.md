@@ -3,6 +3,44 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Article alignment computation moved behind bench facade
+
+### Scope
+
+Continued thinning `scripts/generate_alignment_before_after_128.py` by moving
+article scenario compute behavior into a bench-owned module.
+
+Changes:
+
+- Added `tomojax.bench.article_alignment_compute` to own article scenario
+  projection simulation, naive FBP, optional alignment, calibrated FBP, TV
+  reconstruction, NMSE metrics, and solver metadata extraction.
+- Exported `ArticleScenarioComputationResult` and
+  `execute_article_scenario_computation` through the `tomojax.bench` facade.
+- Removed dynamic script importing from article visual tests so contract tests
+  exercise public bench helpers directly.
+- Reduced `scripts/generate_alignment_before_after_128.py` from 810 lines to
+  362 lines; it now mostly handles CLI parsing, file orchestration, artifact
+  writing, and scenario iteration.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/generate_alignment_before_after_128.py
+  src/tomojax/bench/article_alignment_compute.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_article_alignment_visuals.py
+  tests/test_public_facades.py` passed.
+- `uv run python -m py_compile
+  scripts/generate_alignment_before_after_128.py
+  src/tomojax/bench/article_alignment_compute.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_article_alignment_visuals.py
+  tests/test_public_facades.py` passed.
+- `uv run pytest tests/test_article_alignment_visuals.py
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed: 6 tests in 1.89 seconds.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Article alignment run-result assembly moved behind bench facade
 
 ### Scope

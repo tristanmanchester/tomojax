@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
-import sys
 
 import imageio.v3 as iio
 import numpy as np
 
 from tomojax.bench import article_visuals
+from tomojax.bench.article_alignment_compute import ArticleScenarioComputationResult
 from tomojax.bench.article_alignment_manifest import (
     article_scenario_catalog_payload,
     article_scenario_supplied_payload,
@@ -17,30 +16,13 @@ from tomojax.bench.article_alignment_manifest import (
 from tomojax.bench.article_alignment_results import (
     ArticleScenarioRunArtifacts,
     article_alignment_metadata,
+    article_scenario_finite_report,
     build_article_scenario_run_result,
 )
 from tomojax.bench.article_alignment_runs import (
     article_scenario_catalog_for_kind,
     article_theta_span_deg,
     diagnostic_profile,
-)
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-article_runner = _load_module(
-    "generate_alignment_before_after_128_under_test",
-    ROOT / "scripts" / "generate_alignment_before_after_128.py",
 )
 
 
@@ -81,7 +63,7 @@ def test_article_visual_scaling_handles_nonfinite_values(tmp_path: Path) -> None
 
 
 def test_scenario_finite_report_marks_nonfinite_alignment_volume() -> None:
-    result = article_runner.ScenarioComputationResult(
+    result = ArticleScenarioComputationResult(
         theta_span=180.0,
         naive_fbp=np.zeros((2, 2, 2), dtype=np.float32),
         calibrated_fbp=np.ones((2, 2, 2), dtype=np.float32),
@@ -102,7 +84,7 @@ def test_scenario_finite_report_marks_nonfinite_alignment_volume() -> None:
         solver_metadata={},
     )
 
-    report = article_runner._scenario_finite_report(result)
+    report = article_scenario_finite_report(result)
 
     assert report["all_required_finite"] is False
     assert report["first_nonfinite"]["name"] == "aligned_tv"
@@ -185,7 +167,7 @@ def test_article_alignment_run_results_live_behind_bench_module() -> None:
         for scenario in article_scenario_catalog_for_kind("default")
         if scenario.slug == "parallel_cor_u_m004"
     )
-    result = article_runner.ScenarioComputationResult(
+    result = ArticleScenarioComputationResult(
         theta_span=180.0,
         naive_fbp=np.zeros((2, 2, 2), dtype=np.float32),
         calibrated_fbp=None,

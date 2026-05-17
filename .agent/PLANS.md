@@ -59,6 +59,7 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move article alignment run-result and metadata assembly into
       `tomojax.bench`.
+- [x] Move article alignment scenario computation into `tomojax.bench`.
 
 Next candidates:
 
