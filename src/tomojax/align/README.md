@@ -6,89 +6,54 @@
 geometry updates, continuation policy, observability reporting, gauge
 canonicalisation, and solver traces.
 
-This README and `api.py` define the public boundary. The package root keeps the
-minimal product surface (`AlignConfig`, `align`, `align_multires`). Broader
-typed configuration helpers live in `tomojax.align.api`. Diagnostic-only helpers
-may remain directly importable during productionization, but they are not part
-of `tomojax.align.api.__all__`; new diagnostic entrypoints belong in
-`tomojax.verify`, `tomojax.bench`, or `tomojax dev ...`, not in the product
-alignment namespace.
+This README defines the alignment boundary in two tiers:
 
-## Public API
+- `tomojax.align` is the production facade. It is deliberately small and should
+  be the default import for product callers.
+- `tomojax.align.api` is the developer and advanced facade. It is broader so
+  the CLI, benchmarks, focused tests, and advanced integrations can keep using
+  typed schedule, loss, profile, geometry-state, objective, and solver helpers
+  while the implementation is split into deeper owners.
+
+Diagnostic-only helpers may remain directly importable during
+productionization, but they are not part of `tomojax.align.api.__all__`; new
+diagnostic entrypoints belong in `tomojax.verify`, `tomojax.bench`, or
+`tomojax dev ...`, not in the product alignment namespace.
+
+## Production facade
+
+`tomojax.align` exports only:
 
 - `AlignConfig`
-- `AlignmentLossConfig`
-- `AlignmentProfile`
-- `AlignmentProfileInput`
-- `AlignmentProfilePolicy`
-- `ContinuationLevel`
-- `ContinuationSchedule`
-- `ContinuationScheduleName`
-- `DofBounds`
-- `DofSpec`
-- `AlignmentLossSchedule`
-- `AlignmentLossSpec`
-- `AlignmentState`
-- `BaseGeometryArrays`
-- `FixedVolumeProjectionObjective`
-- `GeometryCalibrationState`
-- `L2LossSpec`
-- `L2OtsuLossSpec`
-- `LossAdapter`
-- `LossScheduleEntry`
-- `ObjectiveProvenance`
-- `ObjectiveResult`
-- `PoseState`
-- `SetupGeometryState`
-- `FallbackPolicy`
-- `GaugeFixMode`
-- `GaugePolicy`
-- `GeometryUpdateVolumeSource`
-- `JointSchurLMConfig`
-- `JointSchurLMResult`
-- `PoseOnlyLMConfig`
-- `PoseOnlyLMResult`
-- `ResolvedAlignmentSchedule`
-- `ResolvedAlignmentStage`
-- `AlignmentSchedule`
-- `AlignmentStage`
-- `SetupOnlyLMConfig`
-- `SetupOnlyLMResult`
-- `adapt_joint_schur_damping`
-- `adapt_joint_schur_trust_radius`
 - `align`
 - `align_multires`
-- `alignment_profile_policy`
-- `apply_alignment_state`
-- `build_loss_adapter`
-- `dof_spec`
-- `geometry_with_axis_state`
-- `level_detector_grid`
-- `loss_spec_name`
-- `normalize_alignment_dofs`
-- `normalize_alignment_profile`
-- `normalize_bounds`
-- `normalize_geometry_dofs`
-- `parse_loss_schedule`
-- `parse_loss_spec`
-- `project_and_score_stack`
-- `project_stack`
-- `profile_policy_from_config`
-- `reference_continuation_schedule`
-- `resolve_alignment_schedule`
-- `resolve_loss_for_level`
-- `resolve_profiled_cli_defaults`
-- `schedule_preset`
-- `schur_step_from_jacobian`
-- `se3_from_5d`
-- `solve_joint_schur_lm`
-- `solve_pose_only_lm`
-- `solve_setup_only_lm`
-- `summarize_geometry_calibration_stats`
-- `validate_loss_schedule_levels`
+
+These names are the stable product entrypoints for running single-level or
+multi-resolution alignment.
+
+## Developer facade
+
+`tomojax.align.api` intentionally remains broad, but it is not the product
+namespace. It re-exports:
+
+- product entrypoints and resume/checkpoint callback types;
+- alignment schedules, continuation presets, active-DOF declarations, and gauge
+  policies;
+- loss specifications, loss schedules, profile policy helpers, and normalization
+  helpers used by the CLI;
+- geometry-state, pose-state, calibration-state, projection objective, and
+  detector-grid helpers needed by benchmarks and artifact generation;
+- reference LM/Schur solvers and damping/trust-radius helpers for focused
+  solver tests and advanced integrations.
+
+Prefer adding new user-facing product entrypoints to `tomojax.align` only when
+they are stable enough for general callers. Prefer adding experimental,
+diagnostic, benchmark, or solver-development names to deeper owning modules and
+exposing them through `tomojax.align.api` only when existing callers need a
+temporary typed facade.
 
 Diagnostic compatibility imports remain available for existing tests and
-tooling, but are deliberately not advertised by `__all__`:
+tooling, but are deliberately not advertised by `tomojax.align.api.__all__`:
 
 - `JointSchurDiagnostics`
 - `joint_schur_normal_eq_summary`

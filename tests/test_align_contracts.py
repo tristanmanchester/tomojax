@@ -19,6 +19,33 @@ def test_alignment_public_facade_stays_narrow() -> None:
     assert align_api.AlignConfig is importlib.import_module("tomojax.align.pipeline").AlignConfig
     assert callable(align_api.align)
     assert callable(align_api.align_multires)
+    assert "production facade" in (align_api.__doc__ or "")
+
+
+def test_alignment_public_facade_does_not_advertise_advanced_helpers() -> None:
+    align_api = importlib.import_module("tomojax.align")
+
+    advanced_names = {
+        "AlignmentSchedule",
+        "DofSpec",
+        "GeometryCalibrationState",
+        "JointSchurLMConfig",
+        "schedule_preset",
+        "solve_joint_schur_lm",
+    }
+
+    assert advanced_names.isdisjoint(set(align_api.__all__))
+    for name in advanced_names:
+        assert not hasattr(align_api, name)
+
+
+def test_alignment_api_is_explicitly_advanced_facade() -> None:
+    align_api = importlib.import_module("tomojax.align.api")
+
+    assert "Developer and advanced API" in (align_api.__doc__ or "")
+    assert "tomojax.align" in (align_api.__doc__ or "")
+    assert "AlignmentSchedule" in align_api.__all__
+    assert "solve_joint_schur_lm" in align_api.__all__
 
 
 def test_alignment_api_keeps_diagnostics_out_of_advertised_public_exports() -> None:

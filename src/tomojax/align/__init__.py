@@ -1,9 +1,9 @@
-"""Public alignment API.
+"""Small production facade for alignment.
 
-Only ``AlignConfig``, ``align``, and ``align_multires`` are the public
-alignment extension surface. Production code that needs schedule, loss,
-profile, or geometry-update helpers should import them from ``tomojax.align.api``
-so nested implementation packages can keep moving toward private ownership.
+The package root is intentionally limited to the stable product entrypoints:
+``AlignConfig``, ``align``, and ``align_multires``. Advanced schedule, loss,
+profile, geometry-state, and solver helpers remain available from
+``tomojax.align.api`` while that developer facade is split into deeper owners.
 """
 
 from __future__ import annotations

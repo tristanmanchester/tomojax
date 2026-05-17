@@ -1,4 +1,11 @@
-"""Public API for alignment orchestration."""
+"""Developer and advanced API for alignment orchestration.
+
+Production callers should prefer the small package-root facade
+``tomojax.align``. This module is intentionally broader: it collects typed
+schedule, loss, profile, geometry-state, objective, and solver helpers used by
+the CLI, benchmarks, focused tests, and advanced integrations while the align
+module is being productionized into deeper owners.
+"""
 
 from __future__ import annotations
 
