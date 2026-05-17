@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Align CLI quality vocabulary cleaned up
+
+### Scope
+
+Cleaned the public `tomojax align` quality vocabulary without renaming the
+internal alignment profile literals used by schedules and provenance.
+
+Changes:
+
+- Updated `tomojax align --quality` help to expose `fast` and `reference` as
+  the product-facing quality names.
+- Kept hidden `--align-profile` compatibility aliases accepting the existing
+  internal profile names.
+- Added focused CLI tests proving help omits the legacy profile names, public
+  quality names resolve to the existing pose schedules, and hidden aliases still
+  parse.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 src/tomojax/cli/align.py
+  tests/test_cli_entrypoints.py` passed.
+- `uv run python -m py_compile src/tomojax/cli/align.py
+  tests/test_cli_entrypoints.py` passed.
+- `uv run pytest
+  tests/test_cli_entrypoints.py::test_align_help_keeps_product_surface_small
+  tests/test_cli_entrypoints.py::test_align_public_quality_names_route_to_existing_schedules
+  tests/test_cli_entrypoints.py::test_align_hidden_profile_aliases_remain_accepted
+  tests/test_cli_config.py::test_align_config_accepts_align_profile_from_toml_and_cli_override
+  -q` passed: 4 tests in 1.05 seconds.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Public docs reclassify evidence runners
 
 ### Scope

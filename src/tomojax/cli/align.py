@@ -287,6 +287,16 @@ def _parse_loss_config(
     raise AssertionError("unreachable")
 
 
+def _alignment_quality_argument(value: str) -> str:
+    """Normalize public quality names while accepting legacy profile aliases."""
+    try:
+        return normalize_alignment_profile(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "quality must be 'fast' or 'reference'"
+        ) from exc
+
+
 def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
@@ -304,14 +314,15 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     p.add_argument(
         "--quality",
         dest="align_profile",
-        choices=["lightning", "tortoise"],
+        type=_alignment_quality_argument,
         default="lightning",
-        help="Execution quality posture: lightning is fast; tortoise is slower and conservative.",
+        metavar="{fast,reference}",
+        help="Execution quality posture: fast (default) or reference.",
     )
     p.add_argument(
         "--align-profile",
         dest="align_profile",
-        choices=["lightning", "tortoise"],
+        type=_alignment_quality_argument,
         help=argparse.SUPPRESS,
     )
     p.add_argument("--outer-iters", type=int, default=5)

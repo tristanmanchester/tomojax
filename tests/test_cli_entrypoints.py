@@ -324,6 +324,10 @@ def test_align_help_keeps_product_surface_small(monkeypatch, capsys):
     assert "--checkpoint" in captured.out
     assert "--checkpoint-every" in captured.out
     assert "--resume" in captured.out
+    assert "fast" in captured.out
+    assert "reference" in captured.out
+    assert "lightning" not in captured.out
+    assert "tortoise" not in captured.out
     assert "--schedule" not in captured.out
     assert "--bounds" not in captured.out
     assert "--optimise-dofs" not in captured.out
@@ -341,6 +345,65 @@ def test_align_public_modes_resolve_to_internal_schedules() -> None:
     assert align_cli._schedule_for_public_mode("pose", align_profile="tortoise") == "tortoise_pose"
     assert align_cli._schedule_for_public_mode("auto", align_profile="lightning") == "setup_safe"
     assert align_cli._schedule_for_public_mode("max", align_profile="tortoise") == "setup_safe"
+
+
+def test_align_public_quality_names_route_to_existing_schedules() -> None:
+    parser = align_cli._build_parser()
+
+    fast = parser.parse_args(
+        ["--data", "input.nxs", "--out", "runs/align.nxs", "--mode", "pose", "--quality", "fast"]
+    )
+    reference = parser.parse_args(
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--mode",
+            "pose",
+            "--quality",
+            "reference",
+        ]
+    )
+
+    assert fast.align_profile == "lightning"
+    assert reference.align_profile == "tortoise"
+    assert (
+        align_cli._schedule_for_public_mode("pose", align_profile=fast.align_profile)
+        == "lightning_pose"
+    )
+    assert (
+        align_cli._schedule_for_public_mode("pose", align_profile=reference.align_profile)
+        == "tortoise_pose"
+    )
+
+
+def test_align_hidden_profile_aliases_remain_accepted() -> None:
+    parser = align_cli._build_parser()
+
+    fast_alias = parser.parse_args(
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--align-profile",
+            "lightning",
+        ]
+    )
+    reference_alias = parser.parse_args(
+        [
+            "--data",
+            "input.nxs",
+            "--out",
+            "runs/align.nxs",
+            "--align-profile",
+            "tortoise",
+        ]
+    )
+
+    assert fast_alias.align_profile == "lightning"
+    assert reference_alias.align_profile == "tortoise"
 
 
 def test_align_primary_dof_parser_accepts_geometry_dofs():
