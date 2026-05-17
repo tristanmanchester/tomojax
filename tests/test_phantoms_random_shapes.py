@@ -4,7 +4,7 @@ import os
 import numpy as np
 import pytest
 
-from tomojax.data.phantoms import random_cubes_spheres
+from tomojax.datasets import random_cubes_spheres
 
 _SMALL_CASE = dict(
     nx=32,

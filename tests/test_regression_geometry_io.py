@@ -11,7 +11,7 @@ from tomojax.data.io_hdf5 import (
     load_nxtomo,
     save_npz,
 )
-from tomojax.data.phantoms import random_cubes_spheres
+from tomojax.datasets import random_cubes_spheres
 from tomojax.geometry import grid_from_detector_fov_cube, infer_disk_axes
 
 # check-public-imports: allow-private

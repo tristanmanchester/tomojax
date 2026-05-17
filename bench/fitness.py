@@ -756,7 +756,7 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         ParallelGeometry,
         LaminographyGeometry,
     )
-    from tomojax.data.simulate import SimConfig, simulate
+    from tomojax.datasets import SimConfig, simulate
     from tomojax.align.objectives.loss_specs import parse_loss_spec
     from tomojax.recon.fbp import fbp
     from tomojax.recon.fista_tv import fista_tv

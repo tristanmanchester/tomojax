@@ -205,7 +205,7 @@ staged-lamino result with honest provenance.
 
 Implemented today:
 
-- `tomojax.data.random_cubes_spheres` provides deterministic rich random
+- `tomojax.datasets.random_cubes_spheres` provides deterministic rich random
   cubes+spheres phantoms, including the PHANTOM94-style path used by existing
   synthetic diagnostics.
 - `tomojax.datasets.make_benchmark_phantom` provides the newer benchmark
@@ -218,7 +218,7 @@ Implemented today:
   `tomojax.data.apply_simulation_artefacts` expose deterministic projection
   artefacts/noise through the public data API: Gaussian/Poisson noise, blur,
   stripes, dead/hot pixels, zingers, dropped views, and intensity drift.
-- `tomojax.data.SimConfig` / `tomojax.data.simulate` can generate small
+- `tomojax.datasets.SimConfig` / `tomojax.datasets.simulate` can generate small
   parallel or laminography synthetic projections with the public phantom and
   artefact controls.
 

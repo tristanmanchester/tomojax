@@ -9,7 +9,7 @@ from tomojax.align.objectives.recon_layer import PoseAdjustedGeometry
 from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.data.simulate import SimConfig, simulate
+from tomojax.datasets import SimConfig, simulate
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 

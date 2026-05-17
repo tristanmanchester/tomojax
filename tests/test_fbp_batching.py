@@ -9,7 +9,7 @@ from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view, get_detector_grid_device
-from tomojax.data.simulate import SimConfig, make_phantom
+from tomojax.datasets import SimConfig, make_phantom
 from tomojax.recon.fbp import FBPConfig, _default_fbp_scale, _fft_filter_rows, fbp
 from tomojax.recon.filters import get_filter_np
 

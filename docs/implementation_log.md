@@ -2,6 +2,49 @@
 
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
+## 2026-05-17 - Datasets facade synthetic import cleanup
+
+### Scope
+
+Audited `tomojax.data.phantoms` and `tomojax.data.simulate` usage for the
+datasets-facade productionization pass.
+
+Changes:
+
+- Routed product-facing synthetic tests through `tomojax.datasets` for
+  `SimConfig`, `simulate`, `make_phantom`, and `random_cubes_spheres`.
+- Routed the standalone benchmark fitness loader and synthetic story inventory
+  wording through `tomojax.datasets` for the same public synthetic symbols.
+- Left `tomojax.data.simulate` in place because it still contains the broad
+  projector, artefact, geometry, and NXtomo implementation used behind the
+  public datasets facade.
+- Left low-level data/IO tests on `tomojax.data` where they intentionally cover
+  retained implementation modules.
+
+Remaining data symbols without public `tomojax.datasets` owners:
+
+- `tomojax.data.phantoms.sphere`
+- `tomojax.data.phantoms.cube`
+- `tomojax.data.phantoms.rotated_centered_cube`
+- `tomojax.data.phantoms.blobs`
+- `tomojax.data.phantoms.shepp_logan_3d`
+- `tomojax.data.phantoms.lamino_disk`
+- `tomojax.data.phantoms.lamino_disk_legacy`
+- `tomojax.data.simulate.LaminoGeometryMeta`
+- `tomojax.data.simulate.SimMetadata`
+
+### Validation
+
+- `uv run ruff check --select F,RUF022 bench/fitness.py`
+- `uv run ruff check --select I,F,RUF022 tests/test_fbp_batching.py
+  tests/test_spdhg.py tests/test_integration.py
+  tests/test_phantoms_random_shapes.py tests/test_regression_geometry_io.py
+  src/tomojax/datasets`
+- `uv run pytest -q tests/test_phantoms_random_shapes.py
+  tests/test_public_facades.py tests/test_synthetic_datasets.py`
+- `uv run pytest -q tests/test_fbp_batching.py tests/test_spdhg.py
+  tests/test_integration.py tests/test_regression_geometry_io.py`
+
 
 ## 2026-05-17 - Public facade and diagnostic boundary cleanup
 

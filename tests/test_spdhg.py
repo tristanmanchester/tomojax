@@ -4,7 +4,7 @@ import pytest
 
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.data.simulate import SimConfig, simulate
+from tomojax.datasets import SimConfig, simulate
 from tomojax.recon.spdhg_tv import SPDHGConfig, spdhg_tv
 
 
