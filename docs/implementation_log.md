@@ -16574,3 +16574,28 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### TEM-grid pose visualization moved behind bench facade
+
+- Added `tomojax.bench._real_laminography_pose_visuals` with the reusable
+  artifact writer for TEM-grid per-projection pose correction visualizations:
+  parameter CSV loading, acquisition-space geometry construction, static PNG
+  rendering, interactive Plotly HTML rendering, CSV export, and manifest
+  writing.
+- Exported `render_tem_grid_pose_artifacts` through the public `tomojax.bench`
+  facade.
+- Replaced `scripts/real_laminography/render_tem_grid_pose_3d.py` with a thin
+  CLI wrapper around the bench-owned artifact function.
+- Extended the real-laminography visual helper contract tests to cover the pose
+  artifact manifest and output files.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/render_tem_grid_pose_3d.py src/tomojax/bench/_real_laminography_pose_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_laminography_visuals.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/render_tem_grid_pose_3d.py src/tomojax/bench/_real_laminography_pose_visuals.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- A tiny CLI smoke with a three-row params CSV wrote the PNG, HTML, CSV, and
+  manifest artifacts successfully.
+- `git diff --check` passed.

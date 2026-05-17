@@ -1,5 +1,8 @@
 """Public API for developer benchmark helpers."""
 
+from tomojax.bench._real_laminography_pose_visuals import (
+    render_tem_grid_pose_artifacts,
+)
 from tomojax.bench._real_laminography_visuals import (
     center_crop,
     grid_aligned_xy,
@@ -206,6 +209,7 @@ __all__ = [
     "real_lamino_method_constraints",
     "real_lamino_success_payload",
     "relative_l2",
+    "render_tem_grid_pose_artifacts",
     "resolve_fixture_bin_factor",
     "run_alignment_smoke",
     "run_alternating_solver_smoke",

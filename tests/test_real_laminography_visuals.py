@@ -9,6 +9,7 @@ from tomojax.bench import (
     grid_aligned_xy,
     largest_centered_square_inside_rotated_frame,
     load_volume_array,
+    render_tem_grid_pose_artifacts,
     scale_uint8,
     window_normalize,
 )
@@ -54,3 +55,23 @@ def test_real_lamino_visuals_grid_aligned_xy_respects_crop() -> None:
     assert xy.shape == (4, 4)
     assert float(xy.max()) == 1.0
     assert float(xy.min()) == 0.0
+
+
+def test_real_lamino_pose_visual_artifacts_write_manifest(tmp_path: Path) -> None:
+    params_path = tmp_path / "params.csv"
+    params_path.write_text(
+        "view,dx,dz,phi_deg\n"
+        "0,0.0,0.0,0.0\n"
+        "1,1.0,-0.5,0.1\n"
+        "2,-1.0,0.5,-0.1\n",
+        encoding="utf-8",
+    )
+
+    manifest = render_tem_grid_pose_artifacts(params_path=params_path, out_dir=tmp_path / "out")
+
+    assert manifest["n_views"] == 3
+    assert manifest["summary"]["dx_min"] == -1.0
+    assert Path(manifest["outputs"]["static_png"]).exists()
+    assert Path(manifest["outputs"]["interactive_html"]).exists()
+    assert Path(manifest["outputs"]["csv"]).exists()
+    assert (tmp_path / "out" / "projection_pose_corrections_3d_manifest.json").exists()
