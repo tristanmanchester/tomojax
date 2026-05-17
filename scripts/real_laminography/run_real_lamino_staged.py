@@ -20,6 +20,7 @@ import jax
 import numpy as np
 
 from tomojax.align.api import GeometryCalibrationState
+from tomojax.bench.real_laminography_context import RealLaminoRunContext
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
     parse_shape3,
@@ -129,7 +130,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             raw_projections=raw_projections,
             thetas=thetas,
         )
-        ctx = native.RunContext(args)
+        ctx = RealLaminoRunContext(args)
         projections, background_offsets = apply_real_lamino_projection_background(
             raw_projections,
             mode=str(args.projection_background),

@@ -100,6 +100,7 @@ from tomojax.bench.real_laminography_artifacts import (
     save_real_lamino_z_stack,
     write_real_lamino_stage_products,
 )
+from tomojax.bench.real_laminography_context import RealLaminoRunContext
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
     map_real_lamino_global_z_to_binned,
@@ -232,6 +233,7 @@ __all__ = [
     "NaiveVisualizationPayload",
     "PhantomSpec",
     "RealLaminoGpuMonitor",
+    "RealLaminoRunContext",
     "ScenarioExpectation",
     "ScenarioSuite",
     "SpdhgDatasetSimulationPlan",

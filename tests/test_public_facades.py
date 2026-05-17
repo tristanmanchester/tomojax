@@ -138,6 +138,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.REAL_LAMINO_REPORT_STAGED_PATH
     assert bench_api.REAL_LAMINO_STAGED_PATH
     assert bench_api.RealLaminoGpuMonitor.__name__ == "RealLaminoGpuMonitor"
+    assert bench_api.RealLaminoRunContext.__name__ == "RealLaminoRunContext"
     assert callable(bench_api.build_real_lamino_report)
     assert callable(bench_api.build_article_run_manifest)
     assert callable(bench_api.build_article_scenario_run_result)

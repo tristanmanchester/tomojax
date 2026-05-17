@@ -39,10 +39,10 @@ from tomojax.align.api import (
 )
 from tomojax.bench import (
     RealLaminoGpuMonitor,
+    RealLaminoRunContext,
     append_real_lamino_csv,
     apply_real_lamino_projection_background,
     optimize_reference_setup_geometry_bilevel_for_level,
-    parse_real_lamino_z_range,
     real_lamino_commit_info,
     real_lamino_global_z_to_local_index,
     real_lamino_global_z_to_phys,
@@ -57,7 +57,6 @@ from tomojax.bench import (
     validate_real_lamino_loaded_input,
     write_real_lamino_json,
     write_real_lamino_params_csv,
-    write_real_lamino_stage_products,
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import load_real_laminography_input
@@ -163,43 +162,7 @@ def _parse_shape3(text: str) -> tuple[int, int, int]:
     return shape
 
 
-class RunContext:
-    def __init__(self, args: argparse.Namespace) -> None:
-        self.args = args
-        self.run_root = Path(args.out)
-        self.status_path = self.run_root / "status.json"
-        self.preview_global_z = int(args.preview_z)
-        self.stack_z_range = parse_real_lamino_z_range(args.stack_z_range)
-        self.stage_records: list[dict[str, Any]] = []
-        self.naive_slice: np.ndarray | None = None
-        self.final_volume: np.ndarray | None = None
-        self.final_grid: Grid | None = None
-
-    def stage_dir(self, name: str) -> Path:
-        return self.run_root / name
-
-    def save_stage_products(
-        self,
-        *,
-        stage_dir: Path,
-        volume: np.ndarray,
-        grid: Grid,
-        full_nz: int,
-        input_reference: np.ndarray | None,
-        suffix: str = "aligned",
-    ) -> dict[str, str]:
-        return write_real_lamino_stage_products(
-            stage_dir=stage_dir,
-            volume=volume,
-            grid=grid,
-            full_nz=full_nz,
-            preview_global_z=self.preview_global_z,
-            stack_z_range=self.stack_z_range,
-            snapshot_max_cols=int(self.args.snapshot_max_cols),
-            input_reference=input_reference,
-            fallback_reference=self.naive_slice,
-            suffix=suffix,
-        )
+RunContext = RealLaminoRunContext
 
 
 def _schedule_dict(schedule: AlignmentSchedule) -> dict[str, Any]:

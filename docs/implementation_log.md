@@ -3,6 +3,48 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography run context moved into bench
+
+### Scope
+
+Moved the staged real-laminography run context out of the
+reference-regression script and behind the `tomojax.bench` developer facade.
+
+Changes:
+
+- Added `tomojax.bench.real_laminography_context.RealLaminoRunContext`.
+- Replaced the reference-regression script's local `RunContext` class with a
+  compatibility alias to `RealLaminoRunContext`.
+- Updated the staged real-laminography runner to instantiate
+  `RealLaminoRunContext` directly instead of `native.RunContext`.
+- Exported the context through the bench facade and documented it in the bench
+  README.
+- Added focused context tests covering path resolution, z-range parsing, and
+  forwarding to the standard stage-product writer.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022
+  src/tomojax/bench/real_laminography_context.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_real_laminography_context.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile
+  src/tomojax/bench/real_laminography_context.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_real_laminography_context.py tests/test_public_facades.py`
+  passed.
+- `uv run pytest tests/test_real_laminography_context.py
+  tests/test_real_lamino_runner_contract.py::test_staged_runtime_default_streams_fista
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Staged real-laminography runner uses bench runtime helpers
 
 ### Scope

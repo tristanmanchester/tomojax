@@ -39,7 +39,7 @@ workflows. It is grouped as:
 - benchmark result and configuration types:
   `ForwardProjectorBenchmarkConfig`, `ForwardProjectorSuiteCase`,
   `ForwardSinogramBenchmarkConfig`, `ForwardSinogramSuiteCase`,
-  `RealLaminoGpuMonitor`, `SpdhgDatasetSimulationPlan`,
+  `RealLaminoGpuMonitor`, `RealLaminoRunContext`, `SpdhgDatasetSimulationPlan`,
   `SpdhgGeometryBundle`, `SpdhgReconstructionResults`,
   `SpdhgSimulationGeometryBundle`, `SyntheticBenchmarkResult`,
   `SyntheticComparisonArtifact`
@@ -88,9 +88,9 @@ workflows. It is grouped as:
   `update_real_lamino_status`, `validate_bin_factor`,
   `validate_real_lamino_loaded_input`, `validate_real_lamino_stage_output`,
   `view_indices_for_smoke_shape`, `write_real_lamino_geometry_trace`,
-  `write_real_lamino_json`, `write_real_lamino_planned_stage_manifests`,
-  `write_real_lamino_residual_trace`, `write_real_lamino_stage_products`,
-  `write_real_lamino_skipped_stage_manifests`
+  `write_real_lamino_json`, `write_real_lamino_params_csv`,
+  `write_real_lamino_planned_stage_manifests`, `write_real_lamino_residual_trace`,
+  `write_real_lamino_stage_products`, `write_real_lamino_skipped_stage_manifests`
 - image, visualization, and report utilities:
   `alignment_visualization_payload`, `build_spdhg_experiment_report`,
   `center_crop`, `current_baseline_payload`, `grid_aligned_xy`,
