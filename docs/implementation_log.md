@@ -15912,3 +15912,18 @@ Validation:
   making the fixed-truth nature explicit in the recipe name.
 - Added a public-surface regression test so benchmark recipes cannot drift back
   to removed module entrypoints.
+
+### Real-laminography profile aliases removed
+
+- Removed hidden real-laminography compatibility aliases for removed profile
+  names. The staged runner now accepts only `manual`, `staged-lamino`,
+  `reference-regression`, and `diagnostic-fast`.
+- Removed the hidden reference-regression flag alias; internal audit runs must
+  use the explicit `--profile reference-regression` path.
+- Added a contract test that the staged runner no longer exposes or keeps the
+  removed alias table.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_staged_public_help_uses_clean_profile_names tests/test_real_lamino_runner_contract.py::test_staged_reference_regression_profile_forces_reference_contract tests/test_real_lamino_runner_contract.py::test_staged_accepts_explicit_binned_smoke_shape -q`
+  passed with 3 tests.

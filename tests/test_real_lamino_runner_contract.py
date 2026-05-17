@@ -369,6 +369,16 @@ def test_staged_public_help_uses_clean_profile_names(
         assert forbidden not in captured.out.lower()
 
 
+def test_staged_profile_choices_do_not_keep_removed_aliases() -> None:
+    assert staged_runner.REAL_LAMINO_PROFILE_CHOICES == (
+        "manual",
+        "staged-lamino",
+        "reference-regression",
+        "diagnostic-fast",
+    )
+    assert not hasattr(staged_runner, "INTERNAL_REAL_LAMINO_PROFILE_ALIASES")
+
+
 def test_staged_accepts_explicit_binned_smoke_shape(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         sys,
@@ -493,26 +503,6 @@ def test_staged_staged_lamino_profile_forces_winning_contract(
     assert cfg.fold_rigid_detector_grid is False
     assert staged_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
     assert staged_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
-
-
-def test_staged_legacy_reference_flag_is_hidden_profile_alias(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "runner",
-            "--input",
-            "input.nxs",
-            "--out",
-            str(tmp_path),
-            "--v1-parity-real-lamino",
-        ],
-    )
-
-    args = staged_runner._parse_args()
-
-    assert args.profile == "reference-regression"
-    assert args.reference_regression is True
 
 
 def test_reference_regression_level_outer_counts_replay_reference_stage_summary(

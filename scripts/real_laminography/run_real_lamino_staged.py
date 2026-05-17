@@ -27,7 +27,6 @@ import numpy as np
 
 try:
     from scripts.real_laminography.real_lamino_profiles import (
-        INTERNAL_REAL_LAMINO_PROFILE_ALIASES,
         REAL_LAMINO_PROFILE_CHOICES,
         REFERENCE_REGRESSION_CONTRACT,
         STAGED_LAMINO_CONTRACT,
@@ -43,7 +42,6 @@ except ModuleNotFoundError:
     _PROFILE_SPEC.loader.exec_module(_profiles)
     STAGED_LAMINO_CONTRACT = _profiles.STAGED_LAMINO_CONTRACT
     REAL_LAMINO_PROFILE_CHOICES = _profiles.REAL_LAMINO_PROFILE_CHOICES
-    INTERNAL_REAL_LAMINO_PROFILE_ALIASES = _profiles.INTERNAL_REAL_LAMINO_PROFILE_ALIASES
     REFERENCE_REGRESSION_CONTRACT = _profiles.REFERENCE_REGRESSION_CONTRACT
 
 STAGED_PATH: tuple[dict[str, Any], ...] = (
@@ -1112,12 +1110,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
             "bounded diagnostic workflow."
         ),
     )
-    parser.add_argument(
-        "--v1-parity-real-lamino",
-        dest="reference_regression",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
     parser.add_argument("--smoke", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--full-staged",
@@ -1148,11 +1140,6 @@ def _apply_real_lamino_profile_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> None:
-    if bool(args.reference_regression):
-        if str(args.profile) not in {"manual", "reference-regression"}:
-            parser.error("reference-regression mode cannot be combined with another --profile")
-        args.profile = "reference-regression"
-    args.profile = INTERNAL_REAL_LAMINO_PROFILE_ALIASES.get(str(args.profile), str(args.profile))
     if str(args.profile) == "reference-regression":
         if bool(args.smoke):
             parser.error("--profile reference-regression cannot be combined with diagnostic mode")
@@ -1169,12 +1156,6 @@ def _apply_real_lamino_profile_args(
         args.reference_regression = False
     else:
         args.reference_regression = False
-
-
-def _apply_reference_regression_args(args: argparse.Namespace) -> None:
-    _apply_profile_contract_args(args, REFERENCE_REGRESSION_CONTRACT)
-    args.profile = "reference-regression"
-    args.reference_regression = True
 
 
 def _apply_profile_contract_args(args: argparse.Namespace, contract: Mapping[str, Any]) -> None:

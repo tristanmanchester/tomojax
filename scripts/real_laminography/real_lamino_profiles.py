@@ -52,9 +52,3 @@ REAL_LAMINO_PROFILE_CHOICES = (
 )
 
 STAGED_LAMINO_CONTRACT: dict[str, Any] = dict(REFERENCE_REGRESSION_CONTRACT)
-
-INTERNAL_REAL_LAMINO_PROFILE_ALIASES = {
-    "real_lamino_mvp": "staged-lamino",
-    "v1_parity_audit": "reference-regression",
-    "diagnostic_fast": "diagnostic-fast",
-}
