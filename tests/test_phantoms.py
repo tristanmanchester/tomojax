@@ -2,12 +2,12 @@ import inspect
 
 import numpy as np
 
+from tomojax.data.phantoms import lamino_disk_legacy
 import tomojax.datasets as datasets_api
 from tomojax.datasets import (
     blobs,
     cube,
     lamino_disk,
-    lamino_disk_legacy,
     random_cubes_spheres,
     rotated_centered_cube,
     shepp_logan_3d,
@@ -24,7 +24,6 @@ def test_public_phantom_api_is_reexported_from_package_root():
         "blobs",
         "cube",
         "lamino_disk",
-        "lamino_disk_legacy",
         "random_cubes_spheres",
         "rotated_centered_cube",
         "shepp_logan_3d",
@@ -81,6 +80,8 @@ def test_lamino_disk_primary_api_has_no_ignored_tilt_args():
 
     assert "tilt_deg" not in signature.parameters
     assert "tilt_about" not in signature.parameters
+    assert "lamino_disk_legacy" not in datasets_api.__all__
+    assert not hasattr(datasets_api, "lamino_disk_legacy")
 
 
 def test_lamino_disk_legacy_accepts_ignored_tilt_args():

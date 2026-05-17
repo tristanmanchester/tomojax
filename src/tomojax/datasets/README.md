@@ -27,7 +27,6 @@ data generation, while production forward modelling belongs to
 - `cube`
 - `generate_synthetic_dataset`
 - `lamino_disk`
-- `lamino_disk_legacy`
 - `load_synthetic_dataset_sidecars`
 - `load_synthetic128_specs`
 - `make_benchmark_phantom`

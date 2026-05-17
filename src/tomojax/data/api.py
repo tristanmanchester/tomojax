@@ -8,10 +8,6 @@ moved behind the owning modules.
 
 from __future__ import annotations
 
-from importlib import import_module
-from types import ModuleType
-from typing import Any
-
 from tomojax.data.artefacts import SimulationArtefacts, apply_simulation_artefacts
 from tomojax.data.io_hdf5 import (
     LoadedNXTomo,
@@ -25,31 +21,12 @@ from tomojax.data.phantoms import (
     blobs,
     cube,
     lamino_disk,
-    lamino_disk_legacy,
     random_cubes_spheres,
     rotated_centered_cube,
     shepp_logan_3d,
     sphere,
 )
-
-_simulate_module = import_module("tomojax.data.simulate")
-
-
-class _CallableDataModule(ModuleType):
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        function_name = self.__name__.rsplit(".", 1)[-1]
-        return getattr(self, function_name)(*args, **kwargs)
-
-
-def _make_callable_module(module: ModuleType) -> ModuleType:
-    module.__class__ = _CallableDataModule
-    return module
-
-
-simulate = _make_callable_module(_simulate_module)
-SimConfig = _simulate_module.SimConfig
-SimulatedData = _simulate_module.SimulatedData
-simulate_to_file = _simulate_module.simulate_to_file
+from tomojax.data.simulate import SimConfig, SimulatedData, simulate, simulate_to_file
 
 __all__ = [
     "LoadedNXTomo",
@@ -62,7 +39,6 @@ __all__ = [
     "blobs",
     "cube",
     "lamino_disk",
-    "lamino_disk_legacy",
     "load_nxtomo",
     "random_cubes_spheres",
     "rotated_centered_cube",

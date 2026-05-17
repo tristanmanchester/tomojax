@@ -3,6 +3,42 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Legacy phantom facade reduction
+
+### Scope
+
+Removed the historical `lamino_disk_legacy` helper from public package
+facades. The implementation remains directly available from
+`tomojax.data.phantoms` for regression coverage, but production-facing
+`tomojax.datasets` and retained lower-level `tomojax.data` roots no longer
+advertise the legacy-shaped name.
+
+Changes:
+
+- Removed `lamino_disk_legacy` from `tomojax.datasets`, `tomojax.datasets.api`,
+  and the datasets phantom facade.
+- Removed `lamino_disk_legacy` from `tomojax.data` and `tomojax.data.api`.
+- Removed the callable-module mutation from `tomojax.data.api`; it now exports
+  the typed `simulate` function and simulation types directly.
+- Removed the callable-module mutation from `tomojax.recon`; root reconstruction
+  exports are now plain typed functions/configs instead of module objects with a
+  swapped `__class__`.
+- Made `tomojax.recon.api` the owning public surface and reduced
+  `tomojax.recon` to a package-root re-export so the module no longer carries
+  duplicated facade wiring.
+- Kept the direct implementation test on `tomojax.data.phantoms` so the
+  migration shim remains covered without polluting the product API.
+- Updated module READMEs to describe the smaller public surface.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022 src/tomojax/data src/tomojax/datasets
+  src/tomojax/recon tests/test_phantoms.py` passed.
+- `uv run pytest -q tests/test_phantoms.py tests/test_recon.py
+  tests/test_spdhg.py tests/test_integration.py tests/test_public_facades.py`
+  passed with 34 tests.
+- `python tools/check_public_imports.py` passed.
+
 ## 2026-05-17 - Datasets phantom facade completion
 
 ### Scope

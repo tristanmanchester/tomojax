@@ -24,10 +24,13 @@ surface for tests and migration-only code:
 - simulation functions:
   `apply_simulation_artefacts`, `simulate`, `simulate_to_file`
 - retained phantom helpers:
-  `blobs`, `cube`, `lamino_disk`, `lamino_disk_legacy`,
-  `random_cubes_spheres`, `rotated_centered_cube`, `shepp_logan_3d`, `sphere`
+  `blobs`, `cube`, `lamino_disk`, `random_cubes_spheres`,
+  `rotated_centered_cube`, `shepp_logan_3d`, `sphere`
 
 This is not the preferred production import path for new features.
+The historical `lamino_disk_legacy` shim remains in
+`tomojax.data.phantoms` only for regression coverage and is intentionally not
+re-exported from package facades.
 
 ## Owned Concepts
 
