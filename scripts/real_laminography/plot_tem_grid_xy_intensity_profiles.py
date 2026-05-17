@@ -11,68 +11,13 @@ from typing import Any
 import imageio.v3 as iio
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy import ndimage
 
-
-def _load_volume(path: Path, *, key: str) -> np.ndarray:
-    if path.suffix == ".npy":
-        volume = np.load(path)
-    else:
-        with np.load(path, allow_pickle=False) as data:
-            if key not in data.files:
-                raise KeyError(f"{path} does not contain key {key!r}; keys={data.files}")
-            volume = data[key]
-    if volume.ndim != 3:
-        raise ValueError(f"Expected 3D volume from {path}, got {volume.shape}")
-    return np.asarray(volume, dtype=np.float32)
-
-
-def _center_crop(shape_yx: tuple[int, int], *, size: int) -> tuple[slice, slice]:
-    crop = max(1, min(int(size), int(shape_yx[0]), int(shape_yx[1])))
-    y0 = (int(shape_yx[0]) - crop) // 2
-    x0 = (int(shape_yx[1]) - crop) // 2
-    return slice(y0, y0 + crop), slice(x0, x0 + crop)
-
-
-def _largest_centered_square_inside_rotated_frame(
-    shape_yx: tuple[int, int],
-    *,
-    angle_deg: float,
-    margin: int,
-) -> tuple[slice, slice]:
-    n = min(int(shape_yx[0]), int(shape_yx[1]))
-    theta = abs(float(angle_deg)) % 90.0
-    if theta > 45.0:
-        theta = 90.0 - theta
-    radians = np.deg2rad(theta)
-    side = int(np.floor(n / (abs(np.cos(radians)) + abs(np.sin(radians)))))
-    side = max(1, min(n, side - 2 * max(0, int(margin))))
-    return _center_crop(shape_yx, size=side)
-
-
-def _grid_aligned_xy(
-    volume_xyz: np.ndarray,
-    *,
-    z_index: int,
-    angle_deg: float,
-    crop: tuple[slice, slice],
-) -> np.ndarray:
-    vol_yxz = np.transpose(volume_xyz, (1, 0, 2))
-    rotated = ndimage.rotate(vol_yxz, angle_deg, axes=(1, 0), reshape=False, order=1, mode="nearest")
-    z = int(np.clip(z_index, 0, rotated.shape[2] - 1))
-    return np.asarray(rotated[:, :, z][crop], dtype=np.float32)
-
-
-def _window_normalize(image: np.ndarray) -> np.ndarray:
-    finite = image[np.isfinite(image)]
-    if finite.size == 0:
-        return np.zeros_like(image, dtype=np.float32)
-    lo, hi = np.percentile(finite, [1.0, 99.0])
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        lo, hi = float(np.nanmin(finite)), float(np.nanmax(finite))
-    if hi <= lo:
-        return np.zeros_like(image, dtype=np.float32)
-    return np.asarray(np.clip((image - lo) / (hi - lo), 0.0, 1.0), dtype=np.float32)
+from tomojax.bench import (
+    grid_aligned_xy as _grid_aligned_xy,
+    largest_centered_square_inside_rotated_frame as _largest_centered_square_inside_rotated_frame,
+    load_volume_array as _load_volume,
+    window_normalize as _window_normalize,
+)
 
 
 def _write_csv(

@@ -1,5 +1,13 @@
 """Public API for developer benchmark helpers."""
 
+from tomojax.bench._real_laminography_visuals import (
+    center_crop,
+    grid_aligned_xy,
+    largest_centered_square_inside_rotated_frame,
+    load_volume_array,
+    scale_uint8,
+    window_normalize,
+)
 from tomojax.bench.alignment_diagnostics import (
     AlignmentSmokeReport,
     AlternatingAlignmentSolver,
@@ -172,12 +180,16 @@ __all__ = [
     "build_article_run_manifest",
     "build_real_lamino_report",
     "build_spdhg_experiment_report",
+    "center_crop",
     "compute_spdhg_benchmark_metrics",
     "current_baseline_payload",
+    "grid_aligned_xy",
     "is_expected_spdhg_fallback_failure",
+    "largest_centered_square_inside_rotated_frame",
     "load_current_baseline_artifact",
     "load_synthetic_benchmark_result",
     "load_synthetic_benchmark_results",
+    "load_volume_array",
     "make_article_phantom",
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
@@ -203,6 +215,7 @@ __all__ = [
     "run_forward_sinogram_suite",
     "save_slice_png",
     "save_volume",
+    "scale_uint8",
     "scaled_symmetric_bound",
     "scenario_by_slug",
     "scenario_catalog",
@@ -220,6 +233,7 @@ __all__ = [
     "validate_bin_factor",
     "validate_scenario_catalog",
     "view_indices_for_smoke_shape",
+    "window_normalize",
     "write_benchmark_json",
     "write_current_baseline_artifacts",
     "write_real_lamino_geometry_trace",

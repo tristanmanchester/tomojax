@@ -16551,3 +16551,26 @@ Validation:
 - `uv run python -m py_compile scripts/nexus_data_wrangler.py src/tomojax/io/_nexus_wrangler.py`
   passed.
 - `git diff --check` passed.
+
+### Real-laminography visual helpers moved behind bench facade
+
+- Added `tomojax.bench._real_laminography_visuals` with the shared
+  real-laminography developer visual helpers for volume loading, robust
+  display scaling, centered crops, rotation-safe XY crop sizing, and
+  grid-aligned XY extraction.
+- Exported those helpers through the public `tomojax.bench` facade.
+- Thinned `scripts/real_laminography/render_tem_grid_aligned_orthos.py` and
+  `scripts/real_laminography/plot_tem_grid_xy_intensity_profiles.py` by
+  removing their duplicated local volume/crop/window helpers while preserving
+  the scripts as artifact-oriented developer entrypoints.
+- Added focused bench-boundary tests for volume loading, crop/window helpers,
+  and grid-aligned XY extraction.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/render_tem_grid_aligned_orthos.py scripts/real_laminography/plot_tem_grid_xy_intensity_profiles.py src/tomojax/bench/_real_laminography_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_laminography_visuals.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/render_tem_grid_aligned_orthos.py scripts/real_laminography/plot_tem_grid_xy_intensity_profiles.py src/tomojax/bench/_real_laminography_visuals.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

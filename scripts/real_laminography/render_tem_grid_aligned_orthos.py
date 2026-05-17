@@ -18,36 +18,12 @@ import imageio.v3 as iio
 import numpy as np
 from scipy import ndimage
 
-
-def _scale_uint8(image: np.ndarray, *, lo: float | None = None, hi: float | None = None) -> np.ndarray:
-    arr = np.asarray(image, dtype=np.float32)
-    finite = arr[np.isfinite(arr)]
-    if finite.size == 0:
-        return np.zeros(arr.shape, dtype=np.uint8)
-    if lo is None or hi is None:
-        lo_v, hi_v = np.percentile(finite, [1.0, 99.0])
-    else:
-        lo_v, hi_v = float(lo), float(hi)
-    if not np.isfinite(lo_v) or not np.isfinite(hi_v) or hi_v <= lo_v:
-        lo_v, hi_v = float(np.nanmin(finite)), float(np.nanmax(finite))
-    if hi_v <= lo_v:
-        return np.zeros(arr.shape, dtype=np.uint8)
-    scaled = (np.clip(arr, lo_v, hi_v) - lo_v) / (hi_v - lo_v)
-    scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
-    return np.asarray(np.round(255.0 * scaled), dtype=np.uint8)
-
-
-def _load_volume(path: Path, *, key: str) -> np.ndarray:
-    if path.suffix == ".npy":
-        arr = np.load(path)
-    else:
-        with np.load(path, allow_pickle=False) as data:
-            if key not in data.files:
-                raise KeyError(f"{path} does not contain key {key!r}; keys={data.files}")
-            arr = data[key]
-    if arr.ndim != 3:
-        raise ValueError(f"Expected a 3D volume, got shape {arr.shape}")
-    return np.asarray(arr, dtype=np.float32)
+from tomojax.bench import (
+    center_crop as _center_crop,
+    largest_centered_square_inside_rotated_frame as _largest_centered_square_inside_rotated_frame,
+    load_volume_array as _load_volume,
+    scale_uint8 as _scale_uint8,
+)
 
 
 def _projection_score(image: np.ndarray, *, trim: int) -> float:
@@ -123,36 +99,6 @@ def _orthos_from_yxz(
         canvas[top : top + panel.shape[0], cursor : cursor + panel.shape[1]] = panel
         cursor += panel.shape[1] + gap
     return canvas
-
-
-def _center_crop(shape_yx: tuple[int, int], *, size: int) -> tuple[slice, slice]:
-    crop = max(1, min(int(size), int(shape_yx[0]), int(shape_yx[1])))
-    y0 = (int(shape_yx[0]) - crop) // 2
-    x0 = (int(shape_yx[1]) - crop) // 2
-    return slice(y0, y0 + crop), slice(x0, x0 + crop)
-
-
-def _largest_centered_square_inside_rotated_frame(
-    shape_yx: tuple[int, int],
-    *,
-    angle_deg: float,
-    margin: int,
-) -> tuple[slice, slice]:
-    """Largest centered square guaranteed to avoid same-shape rotation padding.
-
-    For a square image rotated in place, the largest centered axis-aligned square
-    inside the valid rotated field has side n / (cos(theta) + sin(theta)) for
-    theta in [0, 45deg]. The TEM-grid slab is square in XY, so this is the right
-    crop for removing padding without arbitrarily throwing away the useful grid.
-    """
-    n = min(int(shape_yx[0]), int(shape_yx[1]))
-    theta = abs(float(angle_deg)) % 90.0
-    if theta > 45.0:
-        theta = 90.0 - theta
-    radians = np.deg2rad(theta)
-    side = int(np.floor(n / (abs(np.cos(radians)) + abs(np.sin(radians)))))
-    side = max(1, min(n, side - 2 * max(0, int(margin))))
-    return _center_crop(shape_yx, size=side)
 
 
 def _offset_sweep(
