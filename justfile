@@ -49,9 +49,10 @@ production-surface-check:
     uv run pytest tests/test_cli_public_surface.py tests/test_io_public_dataset.py tests/test_public_facades.py tests/test_convert.py tests/test_validate_cli.py tests/test_inspect_cli.py tests/test_simulate.py::test_simulate_cli_builds_config_and_calls_simulate_to_file tests/test_simulate.py::test_simulate_cli_incomplete_explicit_artefacts_preserve_legacy_noise tests/test_simulate.py::test_simulate_cli_rejects_invalid_explicit_artefact tests/test_preprocess.py::test_preprocess_cli_smoke tests/test_preprocess.py::test_preprocess_cli_combines_crop_reject_and_auto_reject tests/test_align_auto_cli.py::test_public_cli_scripts_use_single_grouped_entrypoint tests/test_cli_entrypoints.py tests/test_bench_alignment_smoke.py::test_alignment_smoke_in_process_align_preserves_cli_shape tests/test_small_module_coverage.py::test_convert_main_parses_paths_and_calls_convert tests/test_misalign_schedules.py tests/test_loss_bench.py -q
 
 bench-smoke:
-    uv run python -m tomojax.datasets generate --manifest docs/tomojax-v2/benchmark_manifest.yaml --size 32 --out .artifacts/smoke
-    uv run python -m tomojax.verify synthetic-smoke .artifacts/smoke
+    uv run tomojax dev align-auto --out-dir .artifacts/smoke/setup-global --profile diagnostic-fast --size 32 --views 32 --synthetic-case setup-global --geometry-update-volume-source fixed_synthetic_truth
 
-bench-128:
-    uv run python -m tomojax.datasets generate --manifest docs/tomojax-v2/benchmark_manifest.yaml --size 128 --out .artifacts/bench128
-    uv run python -m tomojax.benchmarks.run .artifacts/bench128
+bench-128: synthetic-oracle-128
+
+synthetic-oracle-128:
+    uv run tomojax dev align-auto --out-dir .artifacts/bench128/setup-global --profile fast --size 128 --views 128 --synthetic-case setup-global --geometry-update-volume-source fixed_synthetic_truth
+    uv run tomojax dev align-auto --out-dir .artifacts/bench128/pose-random --profile fast --size 128 --views 128 --synthetic-case pose-random --geometry-update-volume-source fixed_synthetic_truth

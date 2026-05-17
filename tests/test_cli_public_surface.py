@@ -34,6 +34,16 @@ def test_project_scripts_keep_diagnostics_off_public_surface() -> None:
     assert leaked == []
 
 
+def test_justfile_benchmark_recipes_use_grouped_developer_cli() -> None:
+    justfile = Path("justfile").read_text(encoding="utf-8")
+
+    assert "tomojax.benchmarks" not in justfile
+    assert "python -m tomojax.datasets" not in justfile
+    assert "python -m tomojax.verify" not in justfile
+    assert "tomojax dev align-auto" in justfile
+    assert "synthetic-oracle-128:" in justfile
+
+
 def test_current_docs_use_grouped_cli_commands() -> None:
     current_docs = [
         Path("README.md"),

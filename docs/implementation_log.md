@@ -15899,3 +15899,16 @@ Validation:
 
 - `uv run pytest tests/test_article_alignment_visuals.py tests/test_public_facades.py -q`
   passed with 7 tests.
+
+### Benchmark recipes routed through grouped developer CLI
+
+- Replaced stale `just bench-smoke` / `just bench-128` recipe bodies that
+  targeted non-existent `tomojax.datasets.__main__`, `tomojax.verify.__main__`,
+  and `tomojax.benchmarks.run` modules.
+- `bench-smoke` now runs the current grouped developer CLI,
+  `tomojax dev align-auto`, for a small setup-global diagnostic.
+- `bench-128` delegates to a named `synthetic-oracle-128` recipe that runs the
+  two current 128^3 oracle geometry gates through the grouped developer CLI,
+  making the fixed-truth nature explicit in the recipe name.
+- Added a public-surface regression test so benchmark recipes cannot drift back
+  to removed module entrypoints.
