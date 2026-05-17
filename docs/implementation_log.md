@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Staged real-laminography report wrapper removed
+
+### Scope
+
+Continued thinning `scripts/real_laminography/run_real_lamino_staged.py` by
+removing a script-local report wrapper that only delegated to the bench-owned
+report builder.
+
+Changes:
+
+- Updated the staged runner to call `tomojax.bench.build_real_lamino_report`
+  directly.
+- Updated report contract tests to exercise the bench facade directly instead
+  of the staged-runner alias.
+- Removed the now-redundant `build_real_lamino_staged_report(...)` wrapper from
+  the script.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run pytest tests/test_real_lamino_runner_contract.py -k
+  'report_preserves_partial_contract or report_marks_failed_pose_stage or
+  report_copies_final_pose_summary or reference_regression' -q` passed: 7 tests
+  in 2.57 seconds, 33 deselected.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Staged real-laminography JSON wrapper removed
 
 ### Scope

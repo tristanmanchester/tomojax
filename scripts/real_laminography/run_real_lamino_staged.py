@@ -338,7 +338,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
         }
         native._write_json(run_root / "run_manifest.json", {**run_manifest, **final_payload})
         native._status(ctx.status_path, state="completed", stage="complete", **final_payload)
-        return build_real_lamino_staged_report(
+        return build_real_lamino_report(
             run_root,
             out_dir=run_root / "real_lamino_report",
             reference_report=Path(args.reference_report) if args.reference_report else None,
@@ -706,20 +706,6 @@ def run_best_final_reconstruction(
     }
     native._write_json(final_dir / "stage_manifest.json", manifest)
     return np.asarray(best["volume"], dtype=np.float32), best
-
-
-def build_real_lamino_staged_report(
-    run_dir: Path,
-    *,
-    out_dir: Path | None = None,
-    reference_report: Path | None = None,
-) -> dict[str, Any]:
-    """Write the staged real-laminography report via the bench-owned facade."""
-    return build_real_lamino_report(
-        Path(run_dir),
-        out_dir=out_dir,
-        reference_report=reference_report,
-    )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: PLR0915

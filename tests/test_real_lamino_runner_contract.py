@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from tomojax.bench import (
+    build_real_lamino_report,
     pose_dx_dz_bounds,
     pose_phi_bounds,
     pose_polish_bounds,
@@ -772,7 +773,7 @@ def test_staged_defaults_to_reference_conservative_pose_bounds(monkeypatch, tmp_
 def test_v2_cor_real_lamino_report_preserves_partial_contract(tmp_path) -> None:
     run_dir = _write_minimal_staged_run(tmp_path)
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         run_dir,
         out_dir=tmp_path / "v2_report",
         reference_report=Path("runs/reference/real_lamino_report/real_lamino_summary.json"),
@@ -833,7 +834,7 @@ def test_v2_full_real_lamino_report_fails_when_final_is_worse_than_cor_only(tmp_
         payload["planned_after"] = None
         _write_json(run_dir / rel / "stage_manifest.json", payload)
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         run_dir,
         out_dir=tmp_path / "v2_full_report",
     )
@@ -1146,7 +1147,7 @@ def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path)
         },
     )
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         run_dir,
         out_dir=tmp_path / "failed_pose_report",
     )
@@ -1166,7 +1167,7 @@ def test_v2_report_records_failed_pose_stage_and_valid_final_candidate(tmp_path)
 def test_v2_report_copies_final_pose_summary_from_run_manifest(tmp_path) -> None:
     run_dir = _write_minimal_real_lamino_run(tmp_path, final_last_loss=70.0)
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         run_dir,
         out_dir=tmp_path / "pose_summary_report",
     )
@@ -1198,7 +1199,7 @@ def test_v2_report_emits_reference_regression_table_and_flags_pose_loss_scale(tm
         encoding="utf-8",
     )
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         v2_run,
         out_dir=tmp_path / "reference_regression_report",
         reference_report=reference_report,
@@ -1249,7 +1250,7 @@ def test_reference_regression_phi_level2_loss_scale_on_reference_path_is_recorde
         encoding="utf-8",
     )
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         v2_run,
         out_dir=tmp_path / "reference_phi_report",
         reference_report=reference_report,
@@ -1297,7 +1298,7 @@ def test_reference_regression_table_uses_cor_only_reconstruction_loss_and_flags_
         encoding="utf-8",
     )
 
-    summary = staged_runner.build_real_lamino_staged_report(
+    summary = build_real_lamino_report(
         v2_run,
         out_dir=tmp_path / "reference_shape_report",
         reference_report=reference_report,

@@ -71,6 +71,7 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move JSON object artifact read/write helpers into `tomojax.io`.
 - [x] Remove the staged real-laminography script-local JSON wrapper.
+- [x] Remove the staged real-laminography script-local report wrapper.
 
 Next candidates:
 
