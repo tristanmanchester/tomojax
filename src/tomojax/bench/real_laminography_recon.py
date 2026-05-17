@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -33,9 +33,12 @@ from tomojax.io import read_json_object
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 
+if TYPE_CHECKING:
+    from tomojax.bench.real_laminography_context import RealLaminoRunContext
+
 
 def run_baseline_stage(
-    ctx: Any,
+    ctx: RealLaminoRunContext,
     *,
     geometry: Any,
     grid: Any,
@@ -109,7 +112,7 @@ def run_baseline_stage(
 
 
 def run_cor_only_fista_stage(
-    ctx: Any,
+    ctx: RealLaminoRunContext,
     *,
     geometry: Any,
     grid: Any,

@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from tomojax.bench.real_laminography_context import RealLaminoRunContext
 import tomojax.bench.real_laminography_recon as recon_stage
 
 
@@ -20,29 +21,27 @@ class _SetupState:
         return _CalibrationState()
 
 
-class _Context:
+class _Context(RealLaminoRunContext):
     def __init__(self, root: Path, *, canonical_det_grid: bool) -> None:
-        self.args = Namespace(
+        args = Namespace(
+            out=str(root),
             canonical_det_grid=canonical_det_grid,
             final_candidate_policy="all",
             filter_name="ramp",
             gather_dtype="float32",
             lambda_tv=0.002,
+            preview_z=209,
             recon_iters=7,
             recon_positivity=True,
             regulariser="huber_tv",
+            snapshot_max_cols=6,
+            stack_z_range="203:215",
             tv_prox_iters=3,
             views_per_batch=2,
         )
-        self.run_root = root
-        self.status_path = root / "status.json"
+        super().__init__(args)
         self.naive_slice = np.zeros((2, 2), dtype=np.float32)
-        self.preview_global_z = 209
-        self.stack_z_range = (203, 215)
         self.saved_products: list[dict[str, Any]] = []
-
-    def stage_dir(self, name: str) -> Path:
-        return self.run_root / name
 
     def save_stage_products(self, **kwargs: Any) -> dict[str, str]:
         self.saved_products.append(kwargs)

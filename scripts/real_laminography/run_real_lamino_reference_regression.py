@@ -170,6 +170,7 @@ def _parse_shape3(text: str) -> tuple[int, int, int]:
     return shape
 
 
+# Compatibility symbol for dynamic script users; the implementation lives in tomojax.bench.
 RunContext = RealLaminoRunContext
 run_baseline = run_baseline_stage
 

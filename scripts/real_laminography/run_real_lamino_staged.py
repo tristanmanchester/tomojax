@@ -354,7 +354,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
 
 
 def run_cor_only_fista(
-    ctx: Any,
+    ctx: RealLaminoRunContext,
     *,
     geometry: Any,
     grid: Any,

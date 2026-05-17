@@ -27,6 +27,7 @@ from tomojax.bench import (
     run_real_lamino_setup_stage,
     setup_det_u_bounds,
 )
+from tomojax.bench.real_laminography_context import RealLaminoRunContext
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
@@ -268,6 +269,11 @@ def test_status_stage_update_clears_stale_message(tmp_path) -> None:
     payload = json.loads(path.read_text())
     assert payload["stage"] == "01_setup_geometry"
     assert "message" not in payload
+
+
+def test_reference_runner_run_context_is_bench_owned_compatibility_symbol() -> None:
+    assert runner.RunContext is RealLaminoRunContext
+    assert runner.run_baseline is recon_stage.run_baseline_stage
 
 
 def test_validate_loaded_input_accepts_derived_shape_without_expected_contract() -> None:
