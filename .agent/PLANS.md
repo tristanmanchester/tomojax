@@ -8,6 +8,51 @@ summarise outcomes in `docs/implementation_log.md` before moving on.
 
 ## Active Milestone
 
+### Deep-module productionization cleanup - 2026-05-17
+
+Source goal: active thread objective.
+
+The current objective is to productionize the TomoJAX v2 codebase architecture:
+remove or assimilate transitional code, thin scripts, split product alignment
+from diagnostics, resolve module overlap, improve the public API/CLI boundary,
+organize developer diagnostics behind module facades, maintain golden-path
+coverage, update docs/import boundaries, and commit verified slices.
+
+Current constraints:
+
+- Keep `docs/tomojax-v2/04_phased_implementation_plan.md` canonical.
+- Use deep modules with small public facades.
+- Prefer deleting or assimilating script-local helper logic over preserving
+  duplicate script-owned implementations.
+- Avoid broad slow verification while this cleanup is in progress; use focused
+  checks, cheap syntax/import checks, and the laptop only for GPU-heavy proof
+  when needed.
+- Commit coherent checkpoints rather than accumulating a giant dirty tree.
+
+Completed checkpoints in this pass:
+
+- [x] Move article alignment manifest helpers into `tomojax.bench`.
+- [x] Move SPDHG benchmark helpers into `tomojax.bench`.
+- [x] Move real-laminography runtime helpers into `tomojax.bench`.
+- [x] Move NeXus wrangler preprocessing primitives into `tomojax.io`.
+- [x] Move real-laminography grid visual helpers into `tomojax.bench`.
+- [x] Move TEM-grid 3D pose artifact rendering into `tomojax.bench`.
+
+Next candidates:
+
+- [ ] Consolidate the overlapping real-laminography staged report builders so
+      `scripts/real_laminography/run_real_lamino_staged.py` delegates report
+      assembly to `tomojax.bench` instead of owning a second report stack.
+- [ ] Thin the real-laminography staged/reference runners by moving
+      artifact-validation, profile-contract, and reference-regression table
+      helpers behind bench-owned APIs.
+- [ ] Continue removing development-era script semantics from user-facing CLI
+      surfaces while retaining developer diagnostics under `tomojax dev` or
+      bench-owned scripts.
+- [ ] Re-run the focused production-surface checks when the script/report
+      ownership cleanup is complete, and run broader validation only when the
+      active slice justifies the runtime cost.
+
 ### Overnight Product Truth Push - 2026-05-13
 
 Source goal: `docs/agent_goal_tomojax_v2_overnight_product_truth_20260513.md`.
