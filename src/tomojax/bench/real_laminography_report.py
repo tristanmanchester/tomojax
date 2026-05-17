@@ -344,6 +344,24 @@ def validate_real_lamino_stage_output(
     }
 
 
+def real_lamino_loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
+    """Summarize first/last finite loss values from a staged reconstruction info payload."""
+    losses = info.get("loss", [])
+    if not isinstance(losses, list) or not losses:
+        return {"first": None, "last": None, "iters": 0}
+    first = float(losses[0])
+    last = float(losses[-1])
+    if not np.isfinite(first):
+        first = None
+    if not np.isfinite(last):
+        last = None
+    return {
+        "first": first,
+        "last": last,
+        "iters": int(info.get("effective_iters", len(losses))),
+    }
+
+
 def mark_real_lamino_stage_failed(
     stage_dir: Path,
     *,
@@ -879,20 +897,7 @@ def _staged_reconstruction_loss(manifest: Mapping[str, Any]) -> dict[str, Any] |
 
 
 def _staged_loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
-    losses = info.get("loss", [])
-    if not isinstance(losses, list) or not losses:
-        return {"first": None, "last": None, "iters": 0}
-    first = float(losses[0])
-    last = float(losses[-1])
-    if not np.isfinite(first):
-        first = None
-    if not np.isfinite(last):
-        last = None
-    return {
-        "first": first,
-        "last": last,
-        "iters": int(info.get("effective_iters", len(losses))),
-    }
+    return real_lamino_loss_summary(info)
 
 
 def _collect_real_lamino_stage_records(root: Path) -> list[dict[str, Any]]:
@@ -1065,14 +1070,7 @@ def _real_lamino_stage_reconstruction_loss(manifest: Mapping[str, Any]) -> dict[
 
 
 def _real_lamino_loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
-    losses = info.get("loss", [])
-    if not isinstance(losses, list) or not losses:
-        return {"first": None, "last": None, "iters": 0}
-    return {
-        "first": float(losses[0]),
-        "last": float(losses[-1]),
-        "iters": int(info.get("effective_iters", len(losses))),
-    }
+    return real_lamino_loss_summary(info)
 
 
 def _read_real_lamino_stage_summary(path: Path) -> list[dict[str, Any]]:
@@ -1116,6 +1114,7 @@ __all__ = [
     "real_lamino_artifact_validation_failures",
     "real_lamino_checkpoint_validation_failures",
     "real_lamino_finite_fraction",
+    "real_lamino_loss_summary",
     "real_lamino_method_constraints",
     "real_lamino_stat_validation_failures",
     "real_lamino_success_payload",

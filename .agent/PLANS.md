@@ -63,6 +63,8 @@ Completed checkpoints in this pass:
 - [x] Move real-laminography final-candidate planning into `tomojax.bench`.
 - [x] Move real-laminography fail-closed stage provenance writing into
       `tomojax.bench`.
+- [x] Move real-laminography reconstruction loss summarization into
+      `tomojax.bench`.
 
 Next candidates:
 

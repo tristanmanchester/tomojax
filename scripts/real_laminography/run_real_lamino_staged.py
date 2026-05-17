@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
 from datetime import datetime
 import importlib.util
 import json
@@ -49,6 +48,7 @@ from tomojax.bench.real_laminography_report import (
     mark_real_lamino_stage_failed,
     real_lamino_artifact_validation_failures,
     real_lamino_finite_fraction,
+    real_lamino_loss_summary,
     real_lamino_method_constraints,
     real_lamino_stat_validation_failures,
     validate_real_lamino_stage_output,
@@ -422,8 +422,8 @@ def run_cor_only_fista(
             "stage": "06_cor_only_fista",
             "status": "completed",
             "elapsed_seconds": float(elapsed),
-            "loss_first": _loss_summary(info)["first"],
-            "loss_last": _loss_summary(info)["last"],
+            "loss_first": real_lamino_loss_summary(info)["first"],
+            "loss_last": real_lamino_loss_summary(info)["last"],
         },
         ["stage", "status", "elapsed_seconds", "loss_first", "loss_last"],
     )
@@ -646,7 +646,7 @@ def run_best_final_reconstruction(
                 params5=np.asarray(candidate["params5"], dtype=np.float32),
             )
             manifest = _read_json(candidate_root / "05_final" / "stage_manifest.json")
-            loss_last = _loss_summary(manifest.get("recon_info", {})).get("last")
+            loss_last = real_lamino_loss_summary(manifest.get("recon_info", {})).get("last")
             validation = _validate_stage_output(
                 candidate_root / "05_final",
                 stage_name=f"05_final:{candidate['source_stage']}",
@@ -885,23 +885,6 @@ def _write_planned_stage_manifests(root: Path, *, native: Any) -> None:
                 "planned_after": "v2 COR-only path works",
             },
         )
-
-
-def _loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
-    losses = info.get("loss", [])
-    if not isinstance(losses, list) or not losses:
-        return {"first": None, "last": None, "iters": 0}
-    first = float(losses[0])
-    last = float(losses[-1])
-    if not np.isfinite(first):
-        first = None
-    if not np.isfinite(last):
-        last = None
-    return {
-        "first": first,
-        "last": last,
-        "iters": int(info.get("effective_iters", len(losses))),
-    }
 
 
 def _read_json(path: Path) -> dict[str, Any]:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tomojax.bench import (
     mark_real_lamino_stage_failed,
+    real_lamino_loss_summary,
     write_real_lamino_skipped_stage_manifests,
 )
 
@@ -40,6 +41,20 @@ def test_real_lamino_report_records_stage_failure_provenance(tmp_path: Path) -> 
     assert manifest["status"] == "failed"
     assert manifest["failure_provenance"] == validation
     assert provenance == validation
+
+
+def test_real_lamino_report_summarizes_finite_loss_values() -> None:
+    assert real_lamino_loss_summary({"loss": [3.0, 2.0], "effective_iters": 7}) == {
+        "first": 3.0,
+        "last": 2.0,
+        "iters": 7,
+    }
+    assert real_lamino_loss_summary({"loss": [float("nan"), float("inf")]}) == {
+        "first": None,
+        "last": None,
+        "iters": 2,
+    }
+    assert real_lamino_loss_summary({}) == {"first": None, "last": None, "iters": 0}
 
 
 def test_real_lamino_report_writes_skipped_stage_manifests_without_overwrite(

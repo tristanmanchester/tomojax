@@ -3,6 +3,43 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography loss summarization moved behind bench facade
+
+### Scope
+
+Continued thinning `scripts/real_laminography/run_real_lamino_staged.py` by
+moving staged reconstruction loss summarization into the bench-owned report
+module.
+
+Changes:
+
+- Added `real_lamino_loss_summary(...)` to
+  `tomojax.bench.real_laminography_report`.
+- Routed the staged runner and the two report-internal loss-summary aliases
+  through the shared public helper so finite/non-finite loss handling is
+  consistent.
+- Exported the helper through the `tomojax.bench` facade.
+- Added focused report/facade tests for finite, non-finite, and missing loss
+  payloads.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_laminography_report.py
+  tests/test_public_facades.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_laminography_report.py
+  tests/test_public_facades.py` passed.
+- `uv run pytest tests/test_real_laminography_report.py
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed: 4 tests in 1.82 seconds.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Real-laminography stage provenance writing moved behind bench facade
 
 ### Scope
