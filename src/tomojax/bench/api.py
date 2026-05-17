@@ -133,6 +133,7 @@ from tomojax.bench.real_laminography_profiles import (
     real_lamino_reference_regression_contract_payload,
     reference_regression_level_outer_counts,
 )
+from tomojax.bench.real_laminography_recon import run_cor_only_fista_stage
 from tomojax.bench.real_laminography_report import (
     FULL_REQUIRED_STAGES,
     PARTIAL_REQUIRED_STAGES,
@@ -316,6 +317,7 @@ __all__ = [
     "resolve_fixture_bin_factor",
     "run_alignment_smoke",
     "run_alternating_solver_smoke",
+    "run_cor_only_fista_stage",
     "run_forward_projector_benchmark",
     "run_forward_projector_suite",
     "run_forward_sinogram_benchmark",

@@ -17400,3 +17400,27 @@ Validation:
 - `uv run python -m py_compile src/tomojax/bench/real_laminography_artifacts.py scripts/real_laminography/run_real_lamino_reference_regression.py tests/test_bench_real_laminography_artifacts.py`
   passed.
 - `git diff --check` passed.
+
+### Real-laminography COR-only FISTA stage moved behind bench facade
+
+- Added `tomojax.bench.real_laminography_recon.run_cor_only_fista_stage` as the
+  bench-owned wrapper for the low-risk `06_cor_only_fista` reconstruction stage.
+- Preserved the existing `06_cor_only_fista` filenames, stage manifest keys,
+  calibration-state payloads, loss summary CSV, and standard stage-product
+  artifact contract.
+- Thinned `scripts/real_laminography/run_real_lamino_staged.py` so the script
+  delegates only the COR-only/FISTA stage wrapper while leaving setup/pose loops
+  and final-candidate selection unchanged.
+- Exported the helper through the `tomojax.bench` facade for developer runner
+  reuse.
+
+Validation:
+
+- `uv run pytest -q tests/test_bench_real_laminography_recon.py tests/test_real_lamino_runner_contract.py::test_staged_runtime_default_streams_fista tests/test_real_lamino_runner_contract.py::test_staged_path_contract_lives_in_bench_profile_module tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers`
+  passed with 5 tests.
+- `uv run ruff check src/tomojax/bench/real_laminography_recon.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py scripts/real_laminography/run_real_lamino_staged.py tests/test_bench_real_laminography_recon.py`
+  passed.
+- `uv run python -m py_compile src/tomojax/bench/real_laminography_recon.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py scripts/real_laminography/run_real_lamino_staged.py tests/test_bench_real_laminography_recon.py`
+  passed.
+- `uv run python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

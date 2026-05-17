@@ -10,7 +10,6 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
-import time
 from typing import Any
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
@@ -18,7 +17,6 @@ os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from tomojax.bench.real_laminography_planning import (
@@ -41,6 +39,7 @@ from tomojax.bench.real_laminography_profiles import (
     real_lamino_reference_regression_contract_payload,
     reference_regression_level_outer_counts,
 )
+from tomojax.bench.real_laminography_recon import run_cor_only_fista_stage
 from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
     mark_real_lamino_stage_failed,
@@ -108,7 +107,12 @@ def run_real_lamino_staged(  # noqa: PLR0915
             thetas,
             expected_projection_shape=args.expected_projection_shape,
         )
-        raw_projections, thetas, geometry_inputs, binning_provenance = prepare_real_lamino_binned_fixture(
+        (
+            raw_projections,
+            thetas,
+            geometry_inputs,
+            binning_provenance,
+        ) = prepare_real_lamino_binned_fixture(
             args,
             native=native,
             raw_projections=raw_projections,
@@ -350,74 +354,16 @@ def run_cor_only_fista(
     setup_state: Any,
 ) -> np.ndarray:
     """Run the COR-only final FISTA comparator and write stage artifacts."""
-    stage_dir = ctx.stage_dir("06_cor_only_fista")
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    native._status(ctx.status_path, state="running", stage="06_cor_only_fista")
-    geom_eff = native.geometry_with_axis_state(geometry, grid, detector, setup_state)
-    det_grid = (
-        None
-        if bool(ctx.args.canonical_det_grid)
-        else native.level_detector_grid(detector, state=setup_state, factor=1)
-    )
-    t0 = time.perf_counter()
-    vol, info = native.fista_tv(
-        geom_eff,
-        grid,
-        detector,
-        jnp.asarray(projections, dtype=jnp.float32),
-        config=native.FistaConfig(
-            iters=max(1, int(ctx.args.recon_iters)),
-            lambda_tv=float(ctx.args.lambda_tv),
-            regulariser=str(ctx.args.regulariser),
-            tv_prox_iters=int(ctx.args.tv_prox_iters),
-            views_per_batch=max(1, int(ctx.args.views_per_batch)),
-            checkpoint_projector=True,
-            gather_dtype=str(ctx.args.gather_dtype),
-            positivity=bool(ctx.args.recon_positivity),
-        ),
-        det_grid=det_grid,
-    )
-    vol_np = np.asarray(vol, dtype=np.float32)
-    elapsed = time.perf_counter() - t0
-    np.save(stage_dir / "cor_only_fista_fullres_slab.npy", vol_np)
-    products = ctx.save_stage_products(
-        stage_dir=stage_dir,
-        stage_name="06_cor_only_fista",
-        volume=vol_np,
+    del native
+    return run_cor_only_fista_stage(
+        ctx,
+        geometry=geometry,
         grid=grid,
+        detector=detector,
+        projections=projections,
         full_nz=full_nz,
-        input_reference=ctx.naive_slice,
-        suffix="aligned",
+        setup_state=setup_state,
     )
-    manifest = {
-        "stage": "06_cor_only_fista",
-        "status": "completed",
-        "elapsed_seconds": float(elapsed),
-        "active_dofs": ["det_u_px"],
-        "volume_shape": list(vol_np.shape),
-        "fista_info": info,
-        "geometry_calibration_state": setup_state.to_calibration_state().to_dict(),
-        "setup_state": setup_state.to_calibration_state().to_dict(),
-        "artifacts": products,
-    }
-    native._write_json(stage_dir / "stage_manifest.json", manifest)
-    native._write_json(stage_dir / "align_info.json", {"fista_info": info})
-    native._write_json(
-        stage_dir / "geometry_calibration_state.json",
-        setup_state.to_calibration_state().to_dict(),
-    )
-    native._append_csv(
-        stage_dir / "stage_summary.csv",
-        {
-            "stage": "06_cor_only_fista",
-            "status": "completed",
-            "elapsed_seconds": float(elapsed),
-            "loss_first": real_lamino_loss_summary(info)["first"],
-            "loss_last": real_lamino_loss_summary(info)["last"],
-        },
-        ["stage", "status", "elapsed_seconds", "loss_first", "loss_last"],
-    )
-    return vol_np
 
 
 def run_remaining_stages(
