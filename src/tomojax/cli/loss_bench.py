@@ -21,8 +21,7 @@ from typing import TYPE_CHECKING, cast
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.api import parse_loss_spec
-from tomojax.align.pipeline import AlignConfig, align
+from tomojax.align.api import AlignConfig, align, align_multires, parse_loss_spec
 from tomojax.bench.loss_experiment import (
     make_gt_dataset as _make_gt_dataset,
     make_misaligned_dataset as _make_misaligned_dataset,
@@ -235,8 +234,6 @@ def _run_benchmark_workflow(  # noqa: PLR0912, PLR0915
                     loss=parse_loss_spec(run_name),
                 )
                 if levels is not None:
-                    from tomojax.align.pipeline import align_multires
-
                     x_est, p_est, _info = align_multires(
                         geom, grid, det, projections, factors=levels, cfg=cfg
                     )

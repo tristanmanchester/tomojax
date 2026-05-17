@@ -43,6 +43,7 @@ tomojax = "tomojax.cli.main:main"
 dev = [
     "basedpyright>=1.34,<2",
     "import-linter>=2,<3",
+    "matplotlib>=3.10.5,<4",
     "pre-commit>=4,<5",
     "psutil>=7.0.0,<8",
     "pytest>=8,<9",

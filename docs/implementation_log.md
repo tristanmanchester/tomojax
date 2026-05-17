@@ -15979,3 +15979,21 @@ Validation:
   private-import guard. The final full local pytest phase was stopped after
   about 12 minutes because it was still near the start of the 1,276-test
   non-slow suite on this machine; use the laptop for that full-suite pass.
+
+### Production-surface dependency and facade cleanup
+
+- Added `matplotlib` to the dev dependency group because the focused
+  production-surface test set imports benchmark smoke rendering code. A fresh
+  laptop verification environment caught the undeclared dependency even though
+  the local environment already had it installed.
+- Routed public CLI alignment calls through `tomojax.align.api` instead of
+  importing `tomojax.align.pipeline` directly from user-facing CLI modules.
+- Updated CLI monkeypatch tests to patch the CLI-owned facade bindings, keeping
+  tests aligned with the public import boundary.
+
+Validation:
+
+- `just production-surface-check` passed locally with formatting checks, CLI
+  typecheck, import-linter, private-import guard, and 80 focused tests.
+- `just production-surface-check` passed on `vivobook-ts` from a fresh isolated
+  verification tree at `/home/tristan/projects/tomojax-v2-architecture-check`.

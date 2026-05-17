@@ -264,9 +264,7 @@ def test_loss_bench_exits_nonzero_after_writing_results_when_run_errors(
     def fail_align_multires(*args, **kwargs):
         raise RuntimeError("synthetic align failure")
 
-    import tomojax.align.pipeline as align_pipeline
-
-    monkeypatch.setattr(align_pipeline, "align_multires", fail_align_multires)
+    monkeypatch.setattr(loss_bench, "align_multires", fail_align_multires)
 
     monkeypatch.setattr(
         "sys.argv",

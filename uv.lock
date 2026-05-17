@@ -915,6 +915,7 @@ cuda12 = [
 dev = [
     { name = "basedpyright" },
     { name = "import-linter" },
+    { name = "matplotlib" },
     { name = "pre-commit" },
     { name = "psutil" },
     { name = "pytest" },
@@ -946,6 +947,7 @@ provides-extras = ["bench", "cpu", "cuda12"]
 dev = [
     { name = "basedpyright", specifier = ">=1.34,<2" },
     { name = "import-linter", specifier = ">=2,<3" },
+    { name = "matplotlib", specifier = ">=3.10.5,<4" },
     { name = "pre-commit", specifier = ">=4,<5" },
     { name = "psutil", specifier = ">=7.0.0,<8" },
     { name = "pytest", specifier = ">=8,<9" },

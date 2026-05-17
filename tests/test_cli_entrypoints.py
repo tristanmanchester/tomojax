@@ -772,7 +772,7 @@ def test_align_main_writes_parameter_sidecars_from_returned_params(monkeypatch, 
     )
     monkeypatch.setattr(align_cli, "transfer_guard_context", fake_transfer_guard)
     monkeypatch.setattr(align_cli, "align", fake_align)
-    monkeypatch.setattr("tomojax.align.pipeline.align_multires", fake_align_multires)
+    monkeypatch.setattr(align_cli, "align_multires", fake_align_multires)
     monkeypatch.setattr(align_cli, "save_projection_payload", fake_save_projection_payload)
 
     out_path = tmp_path / "aligned.nxs"

@@ -28,6 +28,7 @@ from tomojax.align.api import (
     AlignResumeState,
     DofBounds,
     align,
+    align_multires,
     normalize_alignment_dofs,
     normalize_alignment_profile,
     normalize_bounds,
@@ -1463,8 +1464,6 @@ def _execute_alignment_plan(
 ) -> AlignCliExecutionResult:
     command = plan.command
     if plan.run_levels is not None and len(plan.run_levels) > 0:
-        from tomojax.align.pipeline import align_multires
-
         with transfer_guard_context(command.transfer_guard):
             x, params5, info = align_multires(
                 plan.geometry,
