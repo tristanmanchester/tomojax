@@ -1,6 +1,6 @@
-# 2026-05-12 Synthetic Tomography MVP Gates
+# 2026-05-12 Synthetic Tomography Production Gates
 
-This is the bounded productionization check for the two required tomography MVP
+This is the bounded productionization check for the two required tomography
 scenarios:
 
 - `synth128_setup_global_tomo`
@@ -17,29 +17,30 @@ Setup-global oracle Schur geometry smoke:
 
 ```bash
 env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu UV_CACHE_DIR=.uv-cache \
-  uv run tomojax-align-auto-smoke \
-    --out-dir .artifacts/production_synthetic_tomo_mvp/runs/synth128_setup_global_tomo_32 \
-    --synthetic-tomo-mvp-case setup_global
+  uv run tomojax dev align-auto \
+    --out-dir .artifacts/production_synthetic_tomo/runs/synth128_setup_global_tomo_32 \
+    --synthetic-case setup-global
 ```
 
 Pose-random fixed-truth Schur smoke:
 
 ```bash
 env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu UV_CACHE_DIR=.uv-cache \
-  uv run tomojax-align-auto-smoke \
-    --out-dir .artifacts/production_synthetic_tomo_mvp/runs/synth128_pose_random_extreme_32 \
-    --synthetic-tomo-mvp-case pose_random_extreme
+  uv run tomojax dev align-auto \
+    --out-dir .artifacts/production_synthetic_tomo/runs/synth128_pose_random_extreme_32 \
+    --synthetic-case pose-random
 ```
 
 The committed runs used the equivalent explicit flags before
-`--synthetic-tomo-mvp-case` existed; the preset now resolves to those bounded
-32^3 / 8-view fixed-truth smoke settings.
+`--synthetic-case` existed; the preset now resolves to those bounded 32^3 /
+8-view fixed-truth staged-synthetic settings. Historical artifact paths below
+retain their original run-directory names.
 
 Comparison report:
 
 ```bash
 env JAX_PLATFORM_NAME=cpu JAX_PLATFORMS=cpu \
-  uv run tomojax-synthetic-benchmark-compare \
+  uv run tomojax dev synthetic-benchmark-compare \
     .artifacts/production_synthetic_tomo_mvp/runs/synth128_setup_global_tomo_32/benchmark_result.json \
     .artifacts/production_synthetic_tomo_mvp/runs/synth128_pose_random_extreme_32/benchmark_result.json \
     --out docs/benchmark_runs/2026-05-12-synthetic-tomo-mvp-comparison.md
@@ -80,7 +81,7 @@ Metrics:
 
 Interpretation: the bounded fixed-truth setup smoke proves that the sidecar
 ingestion, core projector, Schur loop, artifact writer, and criteria evaluation
-are wired for the setup-global MVP. It does not prove the full setup-global
+are wired for the setup-global production gate. It does not prove the full setup-global
 case passes: the current 8-view smoke leaves axis and detector-roll outside the
 manifest tolerances, and final reconstruction quality is poor.
 
@@ -109,7 +110,7 @@ Metrics:
 - `schur_train_loss`: `0.00963222049176693`.
 
 Interpretation: the pose-random smoke proves the fixed-truth pose path can run
-and emit the required artifacts, but it is not a passing MVP gate. The current
+and emit the required artifacts, but it is not a passing production gate. The current
 result still exposes a pose-recovery and/or benchmark-evaluation capability gap:
 alpha/beta fail tolerance, while dx/dz and phi are not evaluated despite the
 run enabling pose DOFs.
@@ -120,7 +121,7 @@ The compare CLI output is recorded at:
 
 - `docs/benchmark_runs/2026-05-12-synthetic-tomo-mvp-comparison.md`
 
-It reports both required MVP scenarios as failed. This is an honest artifact
+It reports both required production scenarios as failed. This is an honest artifact
 gate, not a success claim.
 
 ## Remaining Work
