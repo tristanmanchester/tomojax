@@ -22,7 +22,8 @@ reconstruction, and alignment.
 - State types: `ScalarParameter`, `SetupParameters`, `PoseParameters`,
   `AcquisitionParameters`, `GeometryState`
 - Calibration state and materialisation helpers: `CalibrationState`,
-  `CalibrationVariable`, `detector_grid_from_calibration`,
+  `CalibrationVariable`, `DetectorPixelScale`, `DetectorPixelValue`,
+  `detector_grid_from_calibration`,
   `detector_grid_from_geometry_inputs`, `axis_pose_stack`,
   `axis_unit_from_rotations`, `nominal_axis_unit_from_inputs`,
   `build_calibrated_geometry_metadata_patch`
@@ -35,10 +36,9 @@ reconstruction, and alignment.
 ## Dependencies
 
 This module currently depends on `tomojax.core.geometry` for the existing
-concrete geometry metadata and wraps the provisional `tomojax.calibration`
-implementation so production modules do not import calibration helpers or
-old core geometry namespaces directly. It must not depend on alignment,
-reconstruction, datasets, or CLI modules.
+concrete geometry metadata and owns the detector-grid, axis-direction, and
+calibration metadata helpers used by production modules. It must not depend on
+alignment, reconstruction, datasets, or CLI modules.
 
 ## Invariants
 
@@ -47,8 +47,7 @@ reconstruction, datasets, or CLI modules.
 - Product CLI and benchmark surfaces import concrete geometry types through
   `tomojax.geometry`, not through `tomojax.core.geometry`.
 - Production modules import detector-grid, axis-direction, and calibration
-  metadata helpers through `tomojax.geometry`, not through
-  `tomojax.calibration`.
+  metadata helpers through `tomojax.geometry`.
 - Axis helpers preserve NumPy/JAX array type where practical.
 - FOV helpers keep the centered-origin grid convention used by existing
   reconstruction tests.

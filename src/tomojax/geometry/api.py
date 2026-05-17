@@ -1,27 +1,5 @@
 """Public API for geometry metadata, axes, and field-of-view helpers."""
 
-from tomojax.calibration.axis_geometry import (
-    AXIS_DIRECTION_DOFS,
-    axis_pose_stack,
-    axis_rotations_from_active,
-    axis_unit_from_active,
-    axis_unit_from_rotations,
-    axis_values_from_rotations,
-    default_active_axis_dofs,
-    nominal_axis_unit_from_inputs,
-)
-from tomojax.calibration.detector_grid import (
-    detector_grid_from_calibration,
-    detector_grid_from_center_offset,
-    detector_grid_from_detector_roll,
-    detector_grid_from_geometry_inputs,
-    offset_detector_grid,
-    transform_detector_grid,
-    zero_center_detector_grid,
-)
-from tomojax.calibration.gauge import validate_calibration_gauges
-from tomojax.calibration.manifest import build_calibrated_geometry_metadata_patch
-from tomojax.calibration.state import CalibrationState, CalibrationVariable
 from tomojax.core.geometry import (
     Detector,
     Geometry,
@@ -48,6 +26,34 @@ from tomojax.geometry._axes import (
     is_shape_xyz,
     is_shape_zyx,
     transpose_volume,
+)
+from tomojax.geometry._axis_geometry import (
+    AXIS_DIRECTION_DOFS,
+    axis_pose_stack,
+    axis_rotations_from_active,
+    axis_unit_from_active,
+    axis_unit_from_rotations,
+    axis_values_from_rotations,
+    default_active_axis_dofs,
+    nominal_axis_unit_from_inputs,
+)
+from tomojax.geometry._calibration_conventions import ConventionAudit, ConventionEvidence
+from tomojax.geometry._calibration_gauge import GaugeValidationError, validate_calibration_gauges
+from tomojax.geometry._calibration_manifest import (
+    build_calibrated_geometry_metadata_patch,
+    build_calibration_manifest,
+)
+from tomojax.geometry._calibration_objectives import CandidateScore, MetricSpec, ObjectiveCard
+from tomojax.geometry._calibration_state import CalibrationState, CalibrationVariable
+from tomojax.geometry._calibration_units import DetectorPixelScale, DetectorPixelValue
+from tomojax.geometry._detector_grid import (
+    detector_grid_from_calibration,
+    detector_grid_from_center_offset,
+    detector_grid_from_detector_roll,
+    detector_grid_from_geometry_inputs,
+    offset_detector_grid,
+    transform_detector_grid,
+    zero_center_detector_grid,
 )
 from tomojax.geometry._fov import (
     RoiInfo,
@@ -97,14 +103,22 @@ __all__ = [
     "AcquisitionParameters",
     "CalibrationState",
     "CalibrationVariable",
+    "CandidateScore",
     "CanonicalizedGeometry",
+    "ConventionAudit",
+    "ConventionEvidence",
     "Detector",
+    "DetectorPixelScale",
+    "DetectorPixelValue",
     "GaugeReport",
     "GaugeTransfer",
+    "GaugeValidationError",
     "Geometry",
     "GeometryState",
     "Grid",
     "LaminographyGeometry",
+    "MetricSpec",
+    "ObjectiveCard",
     "ParallelGeometry",
     "PoseParameters",
     "RoiInfo",
@@ -118,6 +132,7 @@ __all__ = [
     "axis_unit_from_rotations",
     "axis_values_from_rotations",
     "build_calibrated_geometry_metadata_patch",
+    "build_calibration_manifest",
     "canonicalize_geometry_gauges",
     "compute_roi",
     "cylindrical_mask_xy",

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from tomojax.calibration.gauge import GaugeValidationError, validate_calibration_gauges
-from tomojax.calibration.state import CalibrationState, CalibrationVariable
+from tomojax.geometry import (
+    CalibrationState,
+    CalibrationVariable,
+    GaugeValidationError,
+    validate_calibration_gauges,
+)
 
 
 def _var(name: str, status: str) -> CalibrationVariable:

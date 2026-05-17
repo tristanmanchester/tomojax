@@ -3,6 +3,45 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Calibration namespace assimilated into geometry
+
+### Scope
+
+Deleted the provisional `tomojax.calibration` top-level package and made
+`tomojax.geometry` the single owner for calibration state, detector-grid,
+axis-direction, gauge-validation, convention, objective-card, and calibration
+manifest helpers.
+
+Changes:
+
+- Moved calibration implementation files into private `tomojax.geometry`
+  modules.
+- Removed `src/tomojax/calibration`.
+- Re-exported the retained public value types through `tomojax.geometry`,
+  including `DetectorPixelScale` and `DetectorPixelValue`.
+- Updated calibration tests to exercise the geometry-owned implementation.
+- Removed the obsolete import-linter calibration layer and
+  production-no-calibration contract.
+- Updated geometry README wording so the module owns, rather than wraps,
+  calibration-derived concepts.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022 src/tomojax/geometry
+  tests/test_calibration_axis_geometry.py
+  tests/test_calibration_conventions_objectives.py
+  tests/test_calibration_detector_grid.py tests/test_calibration_gauge.py
+  tests/test_calibration_state.py tests/test_calibration_units.py
+  tests/test_public_facades.py` passed.
+- `uv run pytest -q tests/test_calibration_axis_geometry.py
+  tests/test_calibration_conventions_objectives.py
+  tests/test_calibration_detector_grid.py tests/test_calibration_gauge.py
+  tests/test_calibration_state.py tests/test_calibration_units.py
+  tests/test_public_facades.py tests/test_geometry_serialization.py
+  tests/test_geometry_gauges.py` passed with 52 tests.
+- `uv run lint-imports --config .importlinter` passed with 6 kept contracts.
+- `python tools/check_public_imports.py` passed.
+
 ## 2026-05-17 - Real laminography reference runner deletion
 
 ### Scope

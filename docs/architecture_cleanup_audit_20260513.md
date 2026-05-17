@@ -25,13 +25,13 @@ production-ready according to the original v2 plan:
 | Developer diagnostics separated | `uv run tomojax dev --help` owns benchmark and diagnostic commands. `tomojax.align.api` no longer exports alignment smoke runners; synthetic alignment diagnostic runners now live under `tomojax.bench`. | Done |
 | Measured data loading owned by IO | `tomojax.io` owns `ProjectionDataset`, load/save/validate/convert/inspect/preprocess facades. Production modules are forbidden from importing lower-level `tomojax.data` directly by `.importlinter`. | Done |
 | Synthetic data owned separately | `tomojax.datasets` owns synthetic benchmark generation and phantom helpers. `tomojax.data` remains a lower-level implementation package used through IO/datasets. | Done |
-| Calibration helper leakage reduced | Detector-grid, axis-direction, calibration-state, and calibrated metadata helpers are re-exported by `tomojax.geometry`; production modules are forbidden from importing `tomojax.calibration` directly by `.importlinter`. | Done |
+| Calibration helper leakage removed | Detector-grid, axis-direction, calibration-state, calibrated metadata, and detector-pixel value helpers are owned and re-exported by `tomojax.geometry`; the old `tomojax.calibration` package has been deleted. | Done |
 | Private implementation boundaries checked | `tools/check_public_imports.py` rejects cross-owner private imports. `just production-surface-check` runs it. | Done |
-| Import direction checked | `.importlinter` now keeps three contracts: layer direction, production no-data, and production no-calibration. | Done |
+| Import direction checked | `.importlinter` keeps layer direction, production no-data, production no-bench, CLI alignment-facade, CLI core-geometry, and CLI dev-dispatch contracts. | Done |
 | Public docs avoid development-era wording | `tests/test_cli_public_surface.py` guards selected public docs against `legacy`, `transitional`, `pre-v2`, `mvp`, `v1`, `parity`, and `smoke`. | Done |
 | Focused production-surface gate | `just production-surface-check` passed with 74 focused tests after the latest boundary changes. | Done |
 | Whole-repo `just check` | `just check` is still red. It fails in repo-wide Ruff lint, mainly in nested `tomojax.align.model`, `tomojax.align.objectives`, internal alignment modules, scripts, and broad tests. | Not done |
-| Nested non-deep packages cleaned up | `src/tomojax/align/model`, `src/tomojax/align/objectives`, `src/tomojax/align/geometry`, `src/tomojax/data`, `src/tomojax/bench`, and `src/tomojax/calibration` still exist. Some are quarantined; the align nested packages still behave like public modules for lint/import purposes. | Incomplete |
+| Nested non-deep packages cleaned up | `src/tomojax/calibration` has been deleted. `src/tomojax/align/model`, `src/tomojax/align/objectives`, `src/tomojax/align/geometry`, `src/tomojax/data`, and `src/tomojax/bench` still exist. Some are quarantined; the align nested packages still behave like public modules for lint/import purposes. | Incomplete |
 | Obsolete/transitional code removed or quarantined | Retired console scripts and public wording are cleaned up; diagnostics are under `tomojax dev`. Some old names remain in developer command internals, historical docs, benchmark docs, and tests. | Partial |
 
 ## Current Blockers

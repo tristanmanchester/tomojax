@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from ._json import JsonValue, drop_none, normalize_json
+from tomojax.geometry._calibration_json import JsonValue, drop_none, normalize_json
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping

@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from ._json import JsonValue, drop_none, normalize_json
-from .state import CalibrationState
+from tomojax.geometry._calibration_json import JsonValue, drop_none, normalize_json
+from tomojax.geometry._calibration_state import CalibrationState
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from .conventions import ConventionAudit
-    from .objectives import ObjectiveCard
+    from tomojax.geometry._calibration_conventions import ConventionAudit
+    from tomojax.geometry._calibration_objectives import ObjectiveCard
 
 CALIBRATION_MANIFEST_SCHEMA_VERSION = 1
 

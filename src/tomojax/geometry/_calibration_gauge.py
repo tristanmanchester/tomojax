@@ -6,10 +6,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .state import CalibrationState, CalibrationVariable
+from tomojax.geometry._calibration_state import CalibrationState, CalibrationVariable
 
 if TYPE_CHECKING:
-    from ._json import JsonValue
+    from tomojax.geometry._calibration_json import JsonValue
 
 
 @dataclass(frozen=True)

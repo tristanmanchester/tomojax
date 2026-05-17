@@ -3,7 +3,6 @@ from __future__ import annotations
 import tomojax.align as align_api
 import tomojax.align.api as align_full_api
 import tomojax.backends as backends_api
-import tomojax.calibration as calibration_api
 import tomojax.cli as cli_api
 import tomojax.core as core_api
 import tomojax.core.api as core_full_api
@@ -152,15 +151,6 @@ def test_datasets_facade_exports_simulation_boundary() -> None:
     assert callable(datasets_api.simulate_to_file)
     assert callable(datasets_api.synthetic128_spec)
     assert callable(datasets_api.validate_simulation_artefacts)
-
-
-def test_calibration_facade_exports_only_schema_value_types() -> None:
-    assert set(calibration_api.__all__) == {
-        "CalibrationState",
-        "CalibrationVariable",
-        "DetectorPixelScale",
-        "DetectorPixelValue",
-    }
 
 
 def test_cli_facade_exports_command_catalog() -> None:

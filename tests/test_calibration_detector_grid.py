@@ -4,7 +4,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.calibration.detector_grid import (
+from tomojax.core.geometry import Detector, Grid, ParallelGeometry
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import backproject_view_T, forward_project_view_T
+from tomojax.geometry import (
     detector_grid_from_calibration,
     detector_grid_from_center_offset,
     detector_grid_from_detector_roll,
@@ -12,9 +15,6 @@ from tomojax.calibration.detector_grid import (
     transform_detector_grid,
     zero_center_detector_grid,
 )
-from tomojax.core.geometry import Detector, Grid, ParallelGeometry
-from tomojax.core.geometry.views import stack_view_poses
-from tomojax.core.projector import backproject_view_T, forward_project_view_T
 
 
 def test_dynamic_detector_grid_matches_static_detector_center_forward_projection():
