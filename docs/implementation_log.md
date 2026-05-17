@@ -3,6 +3,48 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Data package contrast export reduction
+
+### Scope
+
+Audited the retained `tomojax.data` package after contrast and inspection
+assimilation into the v2 public owners.
+
+Changes:
+
+- Removed Beer-Lambert contrast helpers from `tomojax.data.api` and the package
+  root export list. `tomojax.io` remains the public owner for
+  `transmission_to_absorption`, `absorption_to_transmission`,
+  `flat_dark_to_absorption`, and `flat_dark_to_transmission`.
+- Left `tomojax.data.contrast` in place as a retained compatibility shim for
+  lower-level migration callers, without advertising it through the package
+  root.
+- Routed the remaining simulation test import away from `tomojax.data` package
+  root: public synthetic symbols now come from `tomojax.datasets`, NXtomo
+  validation comes from `tomojax.io`, and only the retained artefact helper is
+  imported from `tomojax.data.artefacts`.
+- Kept `io_hdf5`, `preprocess`, and `simulate` implementations unmoved.
+
+Remaining data package responsibilities:
+
+- retained NXtomo/HDF5 persistence and validation internals behind
+  `tomojax.io`
+- raw preprocessing internals retained behind `tomojax.io`
+- synthetic simulation implementation, artefact application, and retained
+  phantom helpers behind `tomojax.datasets`
+- geometry metadata materialization used by IO adapters
+
+### Validation
+
+- `uv run pytest -q tests/test_simulate.py tests/test_contrast.py
+  tests/test_public_facades.py` passed with 23 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/data/api.py
+  src/tomojax/data/__init__.py tests/test_simulate.py` passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check -- src/tomojax/data/api.py src/tomojax/data/__init__.py
+  src/tomojax/data/README.md tests/test_simulate.py
+  docs/implementation_log.md` passed.
+
 ## 2026-05-17 - Staged real-laminography runner detached from reference script
 
 ### Scope

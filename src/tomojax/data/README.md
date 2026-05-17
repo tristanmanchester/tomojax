@@ -23,9 +23,6 @@ surface for tests and migration-only code:
   `load_nxtomo`, `save_nxtomo`, `validate_nxtomo`
 - simulation functions:
   `apply_simulation_artefacts`, `simulate`, `simulate_to_file`
-- contrast conversion functions:
-  `absorption_to_transmission`, `flat_dark_to_absorption`,
-  `flat_dark_to_transmission`, `transmission_to_absorption`
 - retained phantom helpers:
   `blobs`, `cube`, `lamino_disk`, `lamino_disk_legacy`,
   `random_cubes_spheres`, `rotated_centered_cube`, `shepp_logan_3d`, `sphere`
@@ -42,9 +39,11 @@ Dark/flat correction math now lives behind the `tomojax.io` public facade:
 
 - `flat_dark_to_transmission(...)`
 - `flat_dark_to_absorption(...)`
+- `transmission_to_absorption(...)`
+- `absorption_to_transmission(...)`
 
 `tomojax.data.contrast` remains only as a compatibility shim for retained
-migration callers.
+migration callers and is not re-exported from the package root.
 
 Production file-format loading, provenance, inspection, quicklooks, and CLI
 preprocessing are exposed through `tomojax.io`, not by importing this package

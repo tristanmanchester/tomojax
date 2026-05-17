@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from importlib import import_module
 import os
 
 import jax.numpy as jnp
@@ -6,16 +7,17 @@ import numpy as np
 import pytest
 
 from tomojax.cli import simulate as simulate_cli
-from tomojax.data import (
+from tomojax.data.artefacts import apply_simulation_artefacts
+from tomojax.datasets import (
     SimConfig,
     SimulationArtefacts,
-    apply_simulation_artefacts,
     random_cubes_spheres,
-    simulate as simulate_mod,
+    simulate,
+    simulate_to_file,
 )
-from tomojax.data.io_hdf5 import validate_nxtomo
-from tomojax.data.simulate import simulate, simulate_to_file
-from tomojax.io import absorption_to_transmission, transmission_to_absorption
+from tomojax.io import absorption_to_transmission, transmission_to_absorption, validate_nxtomo
+
+simulate_mod = import_module("tomojax.data.simulate")
 
 
 def test_simulate_deterministic_seed():

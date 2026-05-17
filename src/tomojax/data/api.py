@@ -13,12 +13,6 @@ from types import ModuleType
 from typing import Any
 
 from tomojax.data.artefacts import SimulationArtefacts, apply_simulation_artefacts
-from tomojax.data.contrast import (
-    absorption_to_transmission,
-    flat_dark_to_absorption,
-    flat_dark_to_transmission,
-    transmission_to_absorption,
-)
 from tomojax.data.io_hdf5 import (
     LoadedNXTomo,
     NXTomoMetadata,
@@ -64,12 +58,9 @@ __all__ = [
     "SimulatedData",
     "SimulationArtefacts",
     "ValidationReport",
-    "absorption_to_transmission",
     "apply_simulation_artefacts",
     "blobs",
     "cube",
-    "flat_dark_to_absorption",
-    "flat_dark_to_transmission",
     "lamino_disk",
     "lamino_disk_legacy",
     "load_nxtomo",
@@ -80,6 +71,5 @@ __all__ = [
     "simulate",
     "simulate_to_file",
     "sphere",
-    "transmission_to_absorption",
     "validate_nxtomo",
 ]
