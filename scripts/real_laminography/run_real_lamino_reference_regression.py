@@ -9,10 +9,8 @@ import json
 import math
 import os
 from pathlib import Path
-import subprocess
-import threading
 import time
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Mapping
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
 os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
@@ -43,32 +41,26 @@ from tomojax.align.api import (
     resolve_loss_for_level,
     se3_from_5d,
 )
-from tomojax.bench import optimize_reference_setup_geometry_bilevel_for_level
+from tomojax.bench import (
+    RealLaminoGpuMonitor,
+    append_real_lamino_csv,
+    optimize_reference_setup_geometry_bilevel_for_level,
+    real_lamino_commit_info,
+    real_lamino_json_safe,
+    update_real_lamino_status,
+    write_real_lamino_json,
+)
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
-from tomojax.io import normalize_json
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume
 
-
-def _json_safe(value: Any) -> Any:
-    return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n")
-
-
-def _append_csv(path: Path, row: Mapping[str, Any], fieldnames: Iterable[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists()
-    fields = list(fieldnames)
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        if not exists:
-            writer.writeheader()
-        writer.writerow({name: _json_safe(row.get(name)) for name in fields})
+_json_safe = real_lamino_json_safe
+_write_json = write_real_lamino_json
+_append_csv = append_real_lamino_csv
+_status = update_real_lamino_status
+GpuMonitor = RealLaminoGpuMonitor
+_commit_info = real_lamino_commit_info
 
 
 def _scale_uint8(image: np.ndarray, *, lo: float | None = None, hi: float | None = None) -> np.ndarray:
@@ -364,57 +356,6 @@ def _apply_projection_background(
         offsets = np.nanmedian(samples, axis=1).astype(np.float32)
         return arr - offsets[:, None, None], offsets
     raise ValueError(f"unknown projection background mode: {mode}")
-
-
-def _status(path: Path, **updates: Any) -> None:
-    current: dict[str, Any] = {}
-    if path.exists():
-        try:
-            current = json.loads(path.read_text())
-        except Exception:
-            current = {}
-    if "stage" in updates and "message" not in updates:
-        current.pop("message", None)
-    current.update(updates)
-    current["updated_at"] = time.time()
-    _write_json(path, current)
-
-
-class GpuMonitor:
-    def __init__(self, path: Path, interval: float = 5.0) -> None:
-        self.path = path
-        self.interval = float(interval)
-        self.stop = threading.Event()
-        self.thread = threading.Thread(target=self._run, daemon=True)
-
-    def start(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self.path.write_text("timestamp,used_mib,total_mib,util_pct,temp_c\n")
-        self.thread.start()
-
-    def close(self) -> None:
-        self.stop.set()
-        self.thread.join(timeout=2.0)
-
-    def _run(self) -> None:
-        while not self.stop.is_set():
-            try:
-                out = subprocess.check_output(
-                    [
-                        "nvidia-smi",
-                        "--query-gpu=timestamp,memory.used,memory.total,utilization.gpu,temperature.gpu",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    text=True,
-                    stderr=subprocess.DEVNULL,
-                ).strip()
-                if out:
-                    with self.path.open("a", encoding="utf-8") as handle:
-                        handle.write(out.replace(", ", ",") + "\n")
-            except Exception:
-                pass
-            self.stop.wait(self.interval)
 
 
 class RunContext:
@@ -1064,20 +1005,6 @@ def _final_reconstruct(
     _write_json(stage_dir / "align_info.json", {"recon_info": info, "params_summary": _params_summary(params5)})
     _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
     return vol_np
-
-
-def _commit_info(worktree: Path) -> dict[str, Any]:
-    def run(args: list[str]) -> str:
-        try:
-            return subprocess.check_output(args, cwd=worktree, text=True, stderr=subprocess.DEVNULL).strip()
-        except Exception:
-            return ""
-
-    return {
-        "worktree": str(worktree),
-        "commit": run(["git", "rev-parse", "--short", "HEAD"]),
-        "dirty_status": run(["git", "status", "--short"]).splitlines(),
-    }
 
 
 def _parse_args() -> argparse.Namespace:

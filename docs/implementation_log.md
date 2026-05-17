@@ -16781,3 +16781,27 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography reference runtime helpers moved behind bench facade
+
+- Reused `tomojax.bench.real_laminography_runtime` from
+  `scripts/real_laminography/run_real_lamino_reference_regression.py` for JSON
+  normalization/writing, CSV appending, status updates, GPU monitoring, and git
+  commit provenance.
+- Extended the shared runtime status helper so stage updates without a new
+  message clear stale `message` text, preserving the reference-runner contract
+  in one module instead of a script-local copy.
+- Thinned the reference-regression runner by deleting duplicate JSON/CSV/status/
+  GPU monitor/commit helper implementations and aliasing the shared functions
+  for existing runner-contract tests.
+
+Validation:
+
+- `uv run pytest tests/test_real_laminography_runtime.py tests/test_real_lamino_runner_contract.py::test_status_stage_update_clears_stale_message tests/test_real_lamino_runner_contract.py::test_validate_loaded_input_accepts_derived_shape_without_expected_contract -q`
+  passed with 5 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_reference_regression.py src/tomojax/bench/real_laminography_runtime.py tests/test_real_laminography_runtime.py tests/test_real_lamino_runner_contract.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_reference_regression.py src/tomojax/bench/real_laminography_runtime.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

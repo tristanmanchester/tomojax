@@ -25,6 +25,8 @@ def test_real_lamino_runtime_writes_json_csv_and_status(tmp_path: Path) -> None:
     write_real_lamino_json(json_path, {"value": np.float32(1.25)})
     append_real_lamino_csv(csv_path, {"stage": "probe", "loss": np.float32(2.5)}, ["stage", "loss"])
     update_real_lamino_status(status_path, state="running", error="previous")
+    update_real_lamino_status(status_path, state="running", stage="baseline", message="baseline")
+    update_real_lamino_status(status_path, state="running", stage="setup")
     update_real_lamino_status(status_path, state="completed", stage="done")
 
     assert json.loads(json_path.read_text()) == {"value": 1.25}
@@ -33,6 +35,7 @@ def test_real_lamino_runtime_writes_json_csv_and_status(tmp_path: Path) -> None:
     assert status["state"] == "completed"
     assert status["stage"] == "done"
     assert "error" not in status
+    assert "message" not in status
     assert isinstance(status["updated_at"], float)
 
 

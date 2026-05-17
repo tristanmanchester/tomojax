@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import jax
 import numpy as np
@@ -28,15 +28,16 @@ def write_real_lamino_json(path: Path, payload: Any) -> None:
 def append_real_lamino_csv(
     path: Path,
     row: Mapping[str, Any],
-    fieldnames: list[str],
+    fieldnames: Iterable[str],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     exists = path.exists()
+    fields = list(fieldnames)
     with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fields)
         if not exists:
             writer.writeheader()
-        writer.writerow({name: real_lamino_json_safe(row.get(name)) for name in fieldnames})
+        writer.writerow({name: real_lamino_json_safe(row.get(name)) for name in fields})
 
 
 def update_real_lamino_status(path: Path, **updates: Any) -> None:
@@ -48,6 +49,8 @@ def update_real_lamino_status(path: Path, **updates: Any) -> None:
             current = {}
     if updates.get("state") == "completed" and "error" not in updates:
         current.pop("error", None)
+    if "stage" in updates and "message" not in updates:
+        current.pop("message", None)
     current.update(updates)
     current["updated_at"] = time.time()
     write_real_lamino_json(path, current)

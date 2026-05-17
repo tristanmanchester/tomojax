@@ -51,6 +51,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move article alignment summary CSV and master-panel writing into
       `tomojax.bench`.
+- [x] Move reference-regression runtime helpers onto shared
+      `tomojax.bench` runtime APIs.
 
 Next candidates:
 
