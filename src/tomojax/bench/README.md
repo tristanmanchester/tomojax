@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`tomojax.bench` is a developer and verification package, not a production public
-API. It owns benchmark fixtures, diagnostic runners, report builders, and
-evidence adapters that exercise production facades without making benchmark
+`tomojax.bench` is a developer and verification package, not a supported
+product API. It owns benchmark fixtures, diagnostic runners, report builders,
+and evidence adapters that exercise production facades without making benchmark
 machinery part of normal reconstruction or alignment workflows.
 
 This module is developer/evidence-facing. Its commands are exposed through
@@ -13,8 +13,9 @@ This module is developer/evidence-facing. Its commands are exposed through
 ## Developer Facade
 
 `tomojax.bench.api` and the package root re-export reusable developer benchmark
-helpers. User workflows should reach benchmark commands only through
-`tomojax dev ...`.
+and evidence helpers. User workflows should reach benchmark commands only
+through `tomojax dev ...`; imports from this package are for repository
+development, regression evidence, and article artifact generation.
 
 The exported developer surface is intentionally broad because it supports
 regression evidence, article artifacts, and real-laminography developer
@@ -123,7 +124,7 @@ workflows. It is grouped as:
 
 ## Allowed Dependencies
 
-Benchmark code may depend on production public facades when it is exercising or
+Benchmark code may depend on production facades when it is exercising or
 measuring them. The expected dependencies are:
 
 - `tomojax.align`
@@ -147,7 +148,7 @@ production modules.
 ## Forbidden Dependencies
 
 Production modules should not depend on `tomojax.bench`. Benchmark code may
-depend on public production facades to exercise them, but benchmark-only helpers
+depend on production facades to exercise them, but benchmark-only helpers
 must not leak back into `tomojax.io`, `tomojax.recon`, `tomojax.align`,
 `tomojax.forward`, or `tomojax.geometry`.
 
@@ -158,8 +159,8 @@ must not leak back into `tomojax.io`, `tomojax.recon`, `tomojax.align`,
 
 - Benchmark fixtures must keep geometry conventions aligned with the production
   facades they exercise.
-- Reported timings and accuracy metrics must label public API, supported
-  accelerator API, and private helper paths separately.
+- Reported timings and accuracy metrics must label supported product facades,
+  supported accelerator APIs, and private helper paths separately.
 - Reference-regression adapters must preserve enough configuration, seed,
   backend, and artifact metadata for a later rerun to explain the result.
 - Synthetic alignment diagnostics must be deterministic from their declared
@@ -178,8 +179,8 @@ must not leak back into `tomojax.io`, `tomojax.recon`, `tomojax.align`,
 
 ## Testing Strategy
 
-- Public facade/import tests keep `tomojax.bench` importable without making it a
-  production dependency.
+- Developer facade/import tests keep `tomojax.bench` importable without making
+  it a production dependency.
 - Focused benchmark tests cover benchmark suite definitions, current-baseline
   payloads, forward projector measurements, sampled benchmark helpers, synthetic
   result comparison, visualization helpers, and expected fallback handling.

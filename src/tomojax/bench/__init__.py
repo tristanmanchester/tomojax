@@ -1,4 +1,4 @@
-"""Shared benchmark helpers and reusable benchmark-facing utilities."""
+"""Developer/evidence helpers for benchmarks, diagnostics, and artifacts."""
 
 from tomojax.bench.api import (
     FULL_REQUIRED_STAGES,

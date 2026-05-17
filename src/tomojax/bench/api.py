@@ -1,4 +1,4 @@
-"""Developer facade for benchmark and evidence helpers."""
+"""Developer/evidence facade for benchmark helpers."""
 
 from tomojax.bench._real_laminography_pose_visuals import (
     render_tem_grid_pose_artifacts,
