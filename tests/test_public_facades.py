@@ -129,6 +129,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.REAL_LAMINO_REPORT_STAGED_PATH
     assert bench_api.REAL_LAMINO_STAGED_PATH
     assert callable(bench_api.build_real_lamino_report)
+    assert callable(bench_api.build_spdhg_experiment_report)
     assert callable(bench_api.run_alignment_smoke)
     assert callable(bench_api.run_alternating_solver_smoke)
     assert callable(bench_api.scenario_catalog)
@@ -138,3 +139,4 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.resolve_fixture_bin_factor)
     assert callable(bench_api.pose_polish_bounds)
     assert callable(bench_api.load_synthetic_benchmark_result)
+    assert callable(bench_api.spdhg_experiment_markdown)

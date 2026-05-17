@@ -84,6 +84,7 @@ from tomojax.bench.real_laminography_report import (
 from tomojax.bench.real_laminography_setup import (
     optimize_reference_setup_geometry_bilevel_for_level,
 )
+from tomojax.bench.spdhg_report import build_spdhg_experiment_report, spdhg_experiment_markdown
 from tomojax.bench.synthetic_results import (
     SyntheticBenchmarkResult,
     SyntheticComparisonArtifact,
@@ -129,6 +130,7 @@ __all__ = [
     "benchmark_sinogram_mode",
     "binned_pixel_scale",
     "build_real_lamino_report",
+    "build_spdhg_experiment_report",
     "current_baseline_payload",
     "load_current_baseline_artifact",
     "load_synthetic_benchmark_result",
@@ -158,6 +160,7 @@ __all__ = [
     "scenario_suite",
     "setup_det_u_bounds",
     "sinogram_suite_cases",
+    "spdhg_experiment_markdown",
     "suite_cases",
     "synthetic_benchmark_comparison_markdown",
     "validate_bin_factor",

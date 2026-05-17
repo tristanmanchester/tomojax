@@ -16444,3 +16444,22 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### SPDHG experiment report moved behind bench facade
+
+- Added `tomojax.bench.spdhg_report` with
+  `build_spdhg_experiment_report` and `spdhg_experiment_markdown`.
+- Exported those helpers through `tomojax.bench`.
+- Replaced `scripts/exp_spdhg_report.py` with a thin CLI wrapper that parses
+  `--indir`/`--out`, calls the bench report builder, and prints the report path.
+- This keeps reusable benchmark report formatting under the bench deep module
+  rather than in a loose script.
+
+Validation:
+
+- `uv run pytest tests/test_exp_spdhg_report.py tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 3 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/spdhg_report.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py scripts/exp_spdhg_report.py tests/test_public_facades.py tests/test_exp_spdhg_report.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
