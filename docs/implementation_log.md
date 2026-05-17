@@ -16528,3 +16528,26 @@ Validation:
 - `uv run python -m py_compile scripts/real_laminography/run_real_lamino_pallas_probe.py src/tomojax/bench/real_laminography_runtime.py`
   passed.
 - `git diff --check` passed.
+
+### NeXus wrangler preprocessing helpers moved behind IO facade
+
+- Added `tomojax.io._nexus_wrangler` with reusable frame-level NeXus wrangler
+  helpers for constant dark-field overrides, flat/dark-to-absorption
+  conversion from `image_key`, spatial binning, padding to detector multiples,
+  angle summaries, and placeholder-volume chunk policy.
+- Exported those helpers through the public `tomojax.io` facade.
+- Thinned `scripts/nexus_data_wrangler.py` by retaining its CLI/writer role and
+  importing the reusable preprocessing helpers from `tomojax.io`.
+- Preserved the script's private helper names used by existing tests by
+  aliasing the IO-owned helpers at import time.
+
+Validation:
+
+- `uv run pytest tests/test_nexus_data_wrangler.py::test_spatial_bin_and_padding_helpers tests/test_nexus_data_wrangler.py::test_flat_dark_correct_uses_explicit_missing_dark_override tests/test_nexus_data_wrangler.py::test_write_nexus_h5_writes_expected_structure tests/test_public_facades.py::test_io_facade_exports_dataset_boundary -q`
+  passed with 4 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/nexus_data_wrangler.py src/tomojax/io/_nexus_wrangler.py src/tomojax/io/api.py src/tomojax/io/__init__.py tests/test_public_facades.py tests/test_nexus_data_wrangler.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `uv run python -m py_compile scripts/nexus_data_wrangler.py src/tomojax/io/_nexus_wrangler.py`
+  passed.
+- `git diff --check` passed.

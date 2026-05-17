@@ -38,7 +38,13 @@ import h5py
 import numpy as np
 
 from tomojax.geometry import DISK_VOLUME_AXES, VOLUME_AXES_ATTR
-from tomojax.io import flat_dark_to_absorption
+from tomojax.io import (
+    flat_dark_correct_frames_to_absorption,
+    pad_to_multiples as _pad_to_multiples,
+    spatial_bin as _spatial_bin,
+    summarize_angles,
+    volume_chunks as _volume_chunks,
+)
 
 
 def load_raw(input_path, proj_path, ang_path, key_path):
@@ -47,12 +53,6 @@ def load_raw(input_path, proj_path, ang_path, key_path):
         angles_all = f[ang_path][...]       # shape: [N] or [>=N]
         image_key = f[key_path][...]        # 0=proj, 1=flat, 2=dark
     return data, angles_all, image_key
-
-
-def _constant_dark_field(value: float, shape: tuple[int, int]) -> np.ndarray:
-    if not np.isfinite(value):
-        raise ValueError("dark field override must be finite")
-    return np.full(shape, float(value), dtype=np.float32)
 
 
 def flat_dark_correct_to_absorption(
@@ -66,127 +66,12 @@ def flat_dark_correct_to_absorption(
     image_key: [N] with 0=projection, 1=flat, 2=dark
     returns: absorption_projs [P, ny, nx]
     """
-    is_proj = (image_key == 0)
-    is_flat = (image_key == 1)
-    is_dark = (image_key == 2)
-
-    proj = data[is_proj]
-    flats = data[is_flat]
-    darks = data[is_dark]
-
-    if flats.size == 0:
-        raise RuntimeError("No flat fields found (image_key==1). Cannot normalise.")
-    if darks.size == 0:
-        if assume_dark_field is None:
-            raise ValueError(
-                "No dark fields found (image_key==2); pass --assume-dark-field VALUE "
-                "to use an explicit constant dark field"
-            )
-        darks = _constant_dark_field(assume_dark_field, tuple(data.shape[1:]))[None, ...]
-
-    absorption = flat_dark_to_absorption(
-        proj.astype(np.float32, copy=False),
-        flats.astype(np.float32, copy=False),
-        darks.astype(np.float32, copy=False),
+    return flat_dark_correct_frames_to_absorption(
+        data=np.asarray(data),
+        image_key=np.asarray(image_key),
         min_intensity=float(min_intensity),
+        assume_dark_field=assume_dark_field,
     )
-    absorption = np.asarray(absorption, dtype=np.float32)
-    absorption[~np.isfinite(absorption)] = 0.0
-    return absorption
-
-
-def _spatial_bin(arr: np.ndarray, bin_y: int = 1, bin_x: int = 1) -> np.ndarray:
-    """Bin last two spatial dims by (bin_y, bin_x) using mean. Crops remainders.
-
-    - If `arr.ndim == 3`, expects shape [N, ny, nx].
-    - If `arr.ndim == 2`, expects shape [ny, nx].
-    """
-    bin_y = int(max(1, bin_y))
-    bin_x = int(max(1, bin_x))
-    if bin_y == 1 and bin_x == 1:
-        return arr.astype(np.float32, copy=False)
-
-    if arr.ndim == 3:
-        n, ny, nx = arr.shape
-        ny_c = (ny // bin_y) * bin_y
-        nx_c = (nx // bin_x) * bin_x
-        if ny_c != ny or nx_c != nx:
-            arr = arr[:, :ny_c, :nx_c]
-        arr = arr.reshape(n, ny_c // bin_y, bin_y, nx_c // bin_x, bin_x)
-        return arr.mean(axis=(2, 4), dtype=np.float32)
-    elif arr.ndim == 2:
-        ny, nx = arr.shape
-        ny_c = (ny // bin_y) * bin_y
-        nx_c = (nx // bin_x) * bin_x
-        if ny_c != ny or nx_c != nx:
-            arr = arr[:ny_c, :nx_c]
-        arr = arr.reshape(ny_c // bin_y, bin_y, nx_c // bin_x, bin_x)
-        return arr.mean(axis=(1, 3), dtype=np.float32)
-    else:
-        raise ValueError(f"Unsupported array ndim for binning: {arr.ndim}")
-
-
-def _pad_to_multiples(arr: np.ndarray, mult_y: int | None, mult_x: int | None, mode: str = "edge") -> np.ndarray:
-    """Symmetrically pad last two spatial dims to be multiples of (mult_y, mult_x).
-
-    - If multiplier is None or <=1, no padding is applied on that axis.
-    - Uses np.pad with given mode (default 'edge' to avoid introducing zeros in absorption).
-    """
-    if mult_y is None and mult_x is None:
-        return arr
-    if arr.ndim not in (2, 3):
-        raise ValueError("Padding expects 2D or 3D arrays")
-
-    ny = arr.shape[-2]
-    nx = arr.shape[-1]
-    target_ny = ny
-    target_nx = nx
-    if mult_y and int(mult_y) > 1:
-        m = int(mult_y)
-        r = target_ny % m
-        if r != 0:
-            target_ny += (m - r)
-    if mult_x and int(mult_x) > 1:
-        m = int(mult_x)
-        r = target_nx % m
-        if r != 0:
-            target_nx += (m - r)
-    pad_y = max(0, target_ny - ny)
-    pad_x = max(0, target_nx - nx)
-    if pad_y == 0 and pad_x == 0:
-        return arr
-    py0 = pad_y // 2
-    py1 = pad_y - py0
-    px0 = pad_x // 2
-    px1 = pad_x - px0
-    if arr.ndim == 3:
-        pad_width = [(0, 0), (py0, py1), (px0, px1)]
-    else:
-        pad_width = [(py0, py1), (px0, px1)]
-    return np.pad(arr, pad_width, mode=mode)
-
-
-def summarize_angles(angles_deg):
-    """Return a small summary dict like in the example."""
-    out = {
-        "start_deg": float(angles_deg[0]) if angles_deg.size > 0 else 0.0,
-        "count": int(angles_deg.size),
-        "endpoint": False,
-    }
-    if angles_deg.size >= 2:
-        steps = np.diff(angles_deg)
-        # Use median step; declare uniform if spread is tiny
-        step = float(np.median(steps))
-        out["step_deg"] = step
-    else:
-        out["step_deg"] = 0.0
-    return out
-
-
-def _volume_chunks(shape: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Clamp placeholder-volume chunks so small grids remain writable."""
-    target = (16, 16, 32)
-    return tuple(min(dim, chunk) for dim, chunk in zip(shape, target, strict=True))
 
 
 def _write_entry_metadata(f, *, grid, voxels, tilt_deg, tilt_about):
