@@ -12,3 +12,7 @@ output directories such as `runs/`.
   TEM XY slices.
 - `render_tem_grid_aligned_orthos.py`: grid-aligned orthogonal slice rendering.
 - `render_tem_grid_pose_3d.py`: 3D pose-correction diagnostic rendering.
+
+Shared staged-run profile contracts live in
+`tomojax.bench.real_laminography_profiles`; scripts should import that module
+rather than another file from this directory.

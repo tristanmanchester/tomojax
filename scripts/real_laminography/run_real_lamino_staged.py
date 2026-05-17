@@ -25,24 +25,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-try:
-    from scripts.real_laminography.real_lamino_profiles import (
-        REAL_LAMINO_PROFILE_CHOICES,
-        REFERENCE_REGRESSION_CONTRACT,
-        STAGED_LAMINO_CONTRACT,
-    )
-except ModuleNotFoundError:
-    _PROFILE_SPEC = importlib.util.spec_from_file_location(
-        "_real_lamino_profiles",
-        Path(__file__).with_name("real_lamino_profiles.py"),
-    )
-    if _PROFILE_SPEC is None or _PROFILE_SPEC.loader is None:
-        raise
-    _profiles = importlib.util.module_from_spec(_PROFILE_SPEC)
-    _PROFILE_SPEC.loader.exec_module(_profiles)
-    STAGED_LAMINO_CONTRACT = _profiles.STAGED_LAMINO_CONTRACT
-    REAL_LAMINO_PROFILE_CHOICES = _profiles.REAL_LAMINO_PROFILE_CHOICES
-    REFERENCE_REGRESSION_CONTRACT = _profiles.REFERENCE_REGRESSION_CONTRACT
+from tomojax.bench.real_laminography_profiles import (
+    REAL_LAMINO_PROFILE_CHOICES,
+    REFERENCE_REGRESSION_CONTRACT,
+    STAGED_LAMINO_CONTRACT,
+)
 
 STAGED_PATH: tuple[dict[str, Any], ...] = (
     {"label": "baseline", "stage": "00_baseline", "active_dofs": [], "status": "required"},

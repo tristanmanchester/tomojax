@@ -15949,3 +15949,12 @@ Validation:
   and `align_multires`.
 - Updated alignment stage internals and tests to use the explicit observer
   naming.
+
+### Real-laminography profiles moved behind bench module
+
+- Moved reusable real-laminography staged profile contracts out of
+  `scripts/real_laminography/` and into
+  `tomojax.bench.real_laminography_profiles`.
+- Updated the staged runner to import the benchmark module directly and removed
+  the script-local dynamic import fallback.
+- Documented the ownership in `scripts/real_laminography/README.md`.
