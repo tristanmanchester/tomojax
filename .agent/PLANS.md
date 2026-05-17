@@ -37,12 +37,11 @@ Completed checkpoints in this pass:
 - [x] Move NeXus wrangler preprocessing primitives into `tomojax.io`.
 - [x] Move real-laminography grid visual helpers into `tomojax.bench`.
 - [x] Move TEM-grid 3D pose artifact rendering into `tomojax.bench`.
+- [x] Consolidate staged real-laminography report assembly in
+      `tomojax.bench`.
 
 Next candidates:
 
-- [ ] Consolidate the overlapping real-laminography staged report builders so
-      `scripts/real_laminography/run_real_lamino_staged.py` delegates report
-      assembly to `tomojax.bench` instead of owning a second report stack.
 - [ ] Thin the real-laminography staged/reference runners by moving
       artifact-validation, profile-contract, and reference-regression table
       helpers behind bench-owned APIs.

@@ -16599,3 +16599,31 @@ Validation:
 - A tiny CLI smoke with a three-row params CSV wrote the PNG, HTML, CSV, and
   manifest artifacts successfully.
 - `git diff --check` passed.
+
+### Real-laminography staged report assembly consolidated in bench
+
+- Extended `tomojax.bench.real_laminography_report.build_real_lamino_report`
+  so it owns the staged report contract used by both the standalone report
+  summarizer and the staged real-laminography runner.
+- Moved the richer staged report behavior behind the bench facade: partial
+  COR-only reports, deferred full-staged success semantics, optional
+  reference-regression audit tables, reference-regression artifacts, final pose
+  provenance, and stage failure provenance.
+- Thinned `scripts/real_laminography/run_real_lamino_staged.py` by replacing
+  its script-local report assembly with a wrapper around the bench facade and
+  deleting the duplicate report/table/markdown helper stack.
+- Preserved the staged runner's historical `build_real_lamino_staged_report`
+  function as a compatibility wrapper for existing tests and callers.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_real_lamino_summary_uses_final_vs_cor_only_quality_contract tests/test_real_lamino_runner_contract.py::test_real_lamino_summary_can_require_quality_success tests/test_real_lamino_runner_contract.py::test_v2_cor_real_lamino_report_preserves_partial_contract tests/test_real_lamino_runner_contract.py::test_v2_full_real_lamino_report_fails_when_final_is_worse_than_cor_only tests/test_real_lamino_runner_contract.py::test_v2_report_emits_reference_regression_table_and_flags_pose_loss_scale tests/test_real_lamino_runner_contract.py::test_reference_regression_phi_level2_loss_scale_on_reference_path_is_recorded tests/test_real_lamino_runner_contract.py::test_reference_regression_table_uses_cor_only_reconstruction_loss_and_flags_missing_rows -q`
+  passed with 7 tests.
+- `uv run pytest tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_report.py scripts/real_laminography/summarize_real_lamino_report.py tests/test_real_lamino_runner_contract.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_report.py scripts/real_laminography/summarize_real_lamino_report.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
