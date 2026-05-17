@@ -22,6 +22,16 @@ from tomojax.calibration.detector_grid import (
 from tomojax.calibration.gauge import validate_calibration_gauges
 from tomojax.calibration.manifest import build_calibrated_geometry_metadata_patch
 from tomojax.calibration.state import CalibrationState, CalibrationVariable
+from tomojax.core.geometry import (
+    Detector,
+    Geometry,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    RotationAxisGeometry,
+    normalize_axis_unit,
+)
+from tomojax.core.geometry.views import stack_view_poses
 from tomojax.geometry._axes import (
     CORE_X_AXIS,
     CORE_Y_AXIS,
@@ -88,11 +98,17 @@ __all__ = [
     "CalibrationState",
     "CalibrationVariable",
     "CanonicalizedGeometry",
+    "Detector",
     "GaugeReport",
     "GaugeTransfer",
+    "Geometry",
     "GeometryState",
+    "Grid",
+    "LaminographyGeometry",
+    "ParallelGeometry",
     "PoseParameters",
     "RoiInfo",
+    "RotationAxisGeometry",
     "ScalarParameter",
     "SetupParameters",
     "axes_to_perm",
@@ -119,9 +135,11 @@ __all__ = [
     "is_shape_xyz",
     "is_shape_zyx",
     "nominal_axis_unit_from_inputs",
+    "normalize_axis_unit",
     "offset_detector_grid",
     "read_geometry_json",
     "read_pose_params_csv",
+    "stack_view_poses",
     "transform_detector_grid",
     "transpose_volume",
     "validate_calibration_gauges",

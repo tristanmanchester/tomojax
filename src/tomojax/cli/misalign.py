@@ -17,9 +17,14 @@ from numpy.typing import NDArray
 
 from tomojax.align.api import se3_from_5d
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    stack_view_poses,
+)
 from tomojax.io import (
     JsonValue,
     build_geometry_from_dataset_metadata,

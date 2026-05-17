@@ -50,8 +50,8 @@ from tomojax.bench.real_laminography_runtime import (
     update_real_lamino_status as _status,
     write_real_lamino_json as _write_json,
 )
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.core.projector import get_detector_grid_device
+from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import load_real_laminography_input
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,

@@ -55,6 +55,21 @@ def test_import_guard_rejects_nested_alignment_from_bench_surface(tmp_path: Path
     assert violations[0].reason == "nested alignment namespace must be reached through tomojax.align.api"
 
 
+def test_import_guard_rejects_core_geometry_from_cli_surface(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "src/tomojax/cli/example.py",
+        "from tomojax.core.geometry import Detector, Grid\n",
+    )
+
+    violations = find_violations([path], tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].reason == (
+        "core geometry namespace must be reached through tomojax.geometry"
+    )
+
+
 def test_import_guard_allows_legacy_data_behind_io_adapter(tmp_path: Path) -> None:
     path = _write(
         tmp_path,

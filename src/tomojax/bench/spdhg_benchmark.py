@@ -40,8 +40,8 @@ except ModuleNotFoundError:
         denom = max(float(data_range) ** 2, 1e-6)
         return float(np.clip(1.0 - mse / denom, -1.0, 1.0))
 
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.datasets import SimConfig
+from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.io import NXTomoMetadata, save_nxtomo
 
 

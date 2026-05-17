@@ -17,10 +17,15 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align.api import se3_from_5d
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
-from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.datasets import SimConfig, simulate_to_file
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    stack_view_poses,
+)
 from tomojax.io import build_geometry_from_dataset_metadata, load_nxtomo, save_nxtomo
 
 _PROVENANCE_KEY = "loss_experiment_provenance"

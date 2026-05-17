@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from tomojax.datasets import (
+    SyntheticDatasetConsistency,
     generate_synthetic_dataset,
     load_synthetic128_specs,
     load_synthetic_dataset_sidecars,
@@ -222,6 +223,8 @@ def test_load_synthetic_dataset_sidecars_reads_zero_object_motion(tmp_path: Path
 
     sidecars = load_synthetic_dataset_sidecars(paths.dataset_dir)
 
+    assert isinstance(sidecars.consistency, SyntheticDatasetConsistency)
+    assert sidecars.consistency.passed
     assert sidecars.true_motion.n_views == 8
     np.testing.assert_allclose(sidecars.true_motion.tx_obj_px, np.zeros(8))
     np.testing.assert_allclose(sidecars.true_motion.ty_obj_px, np.zeros(8))

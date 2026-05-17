@@ -42,9 +42,7 @@ type BenchmarkResultValue = str | float | None
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tomojax.core.geometry.base import Detector, Grid
-    from tomojax.core.geometry.lamino import LaminographyGeometry
-    from tomojax.core.geometry.parallel import ParallelGeometry
+    from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 
     type BenchmarkGeometry = ParallelGeometry | LaminographyGeometry
 

@@ -15,6 +15,7 @@ data generation, while production forward modelling belongs to
 
 - `SyntheticArtifactPaths`
 - `SyntheticArrayMetadata`
+- `SyntheticDatasetConsistency`
 - `SyntheticDatasetSidecars`
 - `SyntheticDatasetSpec`
 - `SimConfig`
@@ -41,6 +42,11 @@ Allowed future dependencies:
 - `tomojax.nuisance`
 - `tomojax.forward`
 - `tomojax.io`
+
+Current implementation dependencies:
+
+- retained `tomojax.data` simulation/phantom helpers behind the
+  `tomojax.datasets` public facade
 
 Forbidden dependencies:
 

@@ -8,8 +8,11 @@ canonicalisation, and solver traces.
 
 This README and `api.py` define the public boundary. The package root keeps the
 minimal product surface (`AlignConfig`, `align`, `align_multires`). Broader
-typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
-`tomojax.bench` or `tomojax dev ...`, not in the product alignment namespace.
+typed configuration helpers live in `tomojax.align.api`. Diagnostic-only helpers
+may remain directly importable during productionization, but they are not part
+of `tomojax.align.api.__all__`; new diagnostic entrypoints belong in
+`tomojax.verify`, `tomojax.bench`, or `tomojax dev ...`, not in the product
+alignment namespace.
 
 ## Public API
 
@@ -41,7 +44,6 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `GaugeFixMode`
 - `GaugePolicy`
 - `GeometryUpdateVolumeSource`
-- `JointSchurDiagnostics`
 - `JointSchurLMConfig`
 - `JointSchurLMResult`
 - `PoseOnlyLMConfig`
@@ -61,7 +63,6 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `build_loss_adapter`
 - `dof_spec`
 - `geometry_with_axis_state`
-- `joint_schur_normal_eq_summary`
 - `level_detector_grid`
 - `loss_spec_name`
 - `normalize_alignment_dofs`
@@ -85,6 +86,12 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `solve_setup_only_lm`
 - `summarize_geometry_calibration_stats`
 - `validate_loss_schedule_levels`
+
+Diagnostic compatibility imports remain available for existing tests and
+tooling, but are deliberately not advertised by `__all__`:
+
+- `JointSchurDiagnostics`
+- `joint_schur_normal_eq_summary`
 - `write_joint_schur_normal_eq_summary`
 
 ## Dependencies
@@ -129,8 +136,10 @@ Forbidden dependencies:
   engine.
 - `solve_joint_schur_lm` can opt into per-view gain/offset variable projection
   so affine acquisition drift is modelled as nuisance rather than geometry.
-- `write_joint_schur_normal_eq_summary` writes the current Phase 6
-  `normal_eq_summary.json` artifact.
+- `JointSchurDiagnostics`, `joint_schur_normal_eq_summary`, and
+  `write_joint_schur_normal_eq_summary` are transition-only diagnostic imports
+  on this facade. Treat their long-term owner as `tomojax.verify` or
+  `tomojax.bench`.
 
 ## Tests
 

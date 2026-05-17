@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tomojax.align.api import GeometryCalibrationState
-    from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
+    from tomojax.geometry import Detector, Grid, LaminographyGeometry
 
 
 def _make_pose_cfg(

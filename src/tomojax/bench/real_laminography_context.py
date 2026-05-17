@@ -11,7 +11,7 @@ from tomojax.bench.real_laminography_artifacts import write_real_lamino_stage_pr
 from tomojax.bench.real_laminography_planning import parse_real_lamino_z_range
 
 if TYPE_CHECKING:
-    from tomojax.core.geometry import Grid
+    from tomojax.geometry import Grid
 
 
 class RealLaminoRunContext:

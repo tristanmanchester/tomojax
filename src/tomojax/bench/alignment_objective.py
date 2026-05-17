@@ -14,8 +14,8 @@ import numpy as np
 
 from tomojax.align.api import L2LossSpec, build_loss_adapter, project_and_score_stack, se3_from_5d
 from tomojax.bench.forward_projector import _device_metadata
-from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 if TYPE_CHECKING:
     from collections.abc import Callable

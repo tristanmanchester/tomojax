@@ -12,12 +12,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import (
     _resolve_n_steps,
     forward_project_view_T,
     get_detector_grid_device,
 )
+from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 if TYPE_CHECKING:
     from collections.abc import Callable

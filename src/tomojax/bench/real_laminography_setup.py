@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
+    from tomojax.geometry import Detector, Grid, LaminographyGeometry
 
 __all__ = [
     "optimize_reference_setup_geometry_bilevel_for_level",

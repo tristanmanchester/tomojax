@@ -3,8 +3,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import re
+import sys
 import tomllib
 from typing import cast
+
+from tomojax.cli.main import main
 
 
 def test_project_scripts_keep_diagnostics_off_public_surface() -> None:
@@ -177,6 +180,24 @@ def test_production_cli_uses_alignment_facade_for_schedules_and_losses() -> None
             leaks[str(path)] = forbidden
 
     assert leaks == {}
+
+
+def test_production_entrypoint_preserves_documented_data_shorthand(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def capture_sysargv_main() -> None:
+        calls.append(list(sys.argv))
+
+    monkeypatch.setattr("tomojax.cli.recon.main", capture_sysargv_main)
+    monkeypatch.setattr("tomojax.cli.align.main", capture_sysargv_main)
+
+    assert main(["recon", "scan.nxs", "--out", "recon.nxs"]) == 0
+    assert main(["align", "scan.nxs", "--out", "aligned.nxs"]) == 0
+
+    assert calls == [
+        ["tomojax recon", "--data", "scan.nxs", "--out", "recon.nxs"],
+        ["tomojax align", "--data", "scan.nxs", "--out", "aligned.nxs"],
+    ]
 
 
 def test_production_modules_do_not_import_lower_level_data_package() -> None:

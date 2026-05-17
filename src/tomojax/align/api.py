@@ -100,6 +100,15 @@ from tomojax.align.pipeline import (
     align_multires,
 )
 
+# Kept for direct-import compatibility while diagnostic ownership moves out of
+# the product alignment facade. These names are intentionally omitted from
+# __all__.
+_DIAGNOSTIC_COMPATIBILITY_EXPORTS = (
+    JointSchurDiagnostics,
+    joint_schur_normal_eq_summary,
+    write_joint_schur_normal_eq_summary,
+)
+
 __all__ = [
     "PUBLIC_SCHEDULE_PRESETS",
     "AlignConfig",
@@ -128,7 +137,6 @@ __all__ = [
     "GeometryCalibrationState",
     "GeometryUpdateSolver",
     "GeometryUpdateVolumeSource",
-    "JointSchurDiagnostics",
     "JointSchurLMConfig",
     "JointSchurLMResult",
     "L2LossSpec",
@@ -162,7 +170,6 @@ __all__ = [
     "build_loss_adapter",
     "dof_spec",
     "geometry_with_axis_state",
-    "joint_schur_normal_eq_summary",
     "level_detector_grid",
     "loss_spec_name",
     "normalize_alignment_dofs",
@@ -186,5 +193,4 @@ __all__ = [
     "solve_setup_only_lm",
     "summarize_geometry_calibration_stats",
     "validate_loss_schedule_levels",
-    "write_joint_schur_normal_eq_summary",
 ]

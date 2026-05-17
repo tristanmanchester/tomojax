@@ -43,7 +43,7 @@ from tomojax.bench.article_visuals import (
     write_alignment_visuals,
     write_naive_visuals,
 )
-from tomojax.core.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid
 from tomojax.io import normalize_json
 
 

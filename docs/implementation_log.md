@@ -3,6 +3,53 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Public facade and diagnostic boundary cleanup
+
+### Scope
+
+Tightened the production/developer module boundary as part of the v2
+productionization pass.
+
+Changes:
+
+- Re-exported concrete geometry model types and `stack_view_poses` from
+  `tomojax.geometry`, then routed product CLI, script, and bench imports through
+  that facade instead of `tomojax.core.geometry`.
+- Extended `tools/check_public_imports.py` so product/developer surfaces reject
+  direct `tomojax.core.geometry` imports and require `tomojax.geometry`.
+- Kept Schur diagnostic helpers direct-import compatible in `tomojax.align.api`,
+  but removed them from the advertised `__all__` surface and documented them as
+  diagnostic compatibility imports.
+- Moved bench facade coverage out of the public facade test into a dedicated
+  developer-facade test.
+- Re-exported `SyntheticDatasetConsistency` through `tomojax.datasets` because
+  it is already part of the public synthetic sidecar type contract.
+- Cleaned product CLI help wording so `tomojax align`, `tomojax recon`, and
+  `tomojax simulate` avoid development-era terminology.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 scripts/exp_spdhg_bench.py
+  scripts/generate_alignment_before_after_128.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench
+  src/tomojax/cli src/tomojax/align src/tomojax/datasets src/tomojax/geometry
+  src/tomojax/io tests/test_public_facades.py
+  tests/test_bench_developer_facade.py tests/test_public_import_guard.py
+  tests/test_cli_entrypoints.py tests/test_cli_public_surface.py
+  tests/test_align_contracts.py tests/test_synthetic_datasets.py
+  tools/check_public_imports.py` passed.
+- `uv run pytest -q tests/test_public_facades.py
+  tests/test_bench_developer_facade.py tests/test_public_import_guard.py
+  tests/test_cli_entrypoints.py tests/test_cli_public_surface.py
+  tests/test_align_contracts.py tests/test_synthetic_datasets.py
+  tests/test_io_public_dataset.py tests/test_cli_geometry_build.py
+  tests/test_geometry.py tests/test_regression_geometry_io.py tests/test_views.py
+  tests/test_misalign_schedules.py` passed: 169 tests.
+- `python tools/check_public_imports.py` passed.
+- `uv run lint-imports --config .importlinter` passed with all 5 contracts kept.
+
 ## 2026-05-17 - Real-laminography pose stage moved behind bench
 
 ### Scope

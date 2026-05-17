@@ -188,6 +188,10 @@ def legacy_public_surface_reason(imported_module: str, importing_module: str) ->
         "tomojax.calibration."
     ):
         return "legacy calibration namespace must be reached through tomojax.geometry"
+    if imported_module == "tomojax.core.geometry" or imported_module.startswith(
+        "tomojax.core.geometry."
+    ):
+        return "core geometry namespace must be reached through tomojax.geometry"
     for legacy_align_namespace in (
         "tomojax.align.geometry",
         "tomojax.align.model",

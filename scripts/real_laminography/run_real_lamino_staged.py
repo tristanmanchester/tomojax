@@ -65,7 +65,7 @@ from tomojax.bench.real_laminography_runtime import (
     write_real_lamino_params_csv,
 )
 from tomojax.bench.real_laminography_setup import run_real_lamino_setup_stage
-from tomojax.core.geometry import LaminographyGeometry
+from tomojax.geometry import LaminographyGeometry
 from tomojax.io import load_real_laminography_input
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH

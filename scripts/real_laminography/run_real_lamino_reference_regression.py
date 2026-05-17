@@ -59,7 +59,7 @@ from tomojax.bench import (
     write_real_lamino_json,
     write_real_lamino_params_csv,
 )
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
+from tomojax.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import load_real_laminography_input
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid, upsample_volume

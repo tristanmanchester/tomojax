@@ -44,6 +44,18 @@ def test_top_level_cli_help_shows_clean_public_commands(capsys):
     assert "test-cpu" not in captured.out
 
 
+@pytest.mark.parametrize("command", ["align", "recon", "simulate"])
+def test_product_cli_help_avoids_development_wording(command, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _ = main_cli.main([command, "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "diagnostic" not in captured.out.lower()
+    for forbidden in ("mvp", "v1", "parity", "smoke"):
+        assert forbidden not in captured.out.lower()
+
+
 def test_top_level_cli_recon_accepts_positional_input(monkeypatch):
     captured: list[list[str]] = []
 

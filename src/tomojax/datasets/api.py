@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tomojax.datasets._loader import (
     SyntheticArrayMetadata,
+    SyntheticDatasetConsistency,
     SyntheticDatasetSidecars,
     load_synthetic_dataset_sidecars,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "SimulationArtefacts",
     "SyntheticArrayMetadata",
     "SyntheticArtifactPaths",
+    "SyntheticDatasetConsistency",
     "SyntheticDatasetSidecars",
     "SyntheticDatasetSpec",
     "generate_synthetic_dataset",

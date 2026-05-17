@@ -24,9 +24,10 @@ from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import ConfigValue, parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.core.geometry import Detector, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
+    Detector,
+    Grid,
     compute_roi,
     cylindrical_mask_xy,
     detector_grid_from_geometry_inputs,
@@ -409,7 +410,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
         help=(
             "JAX transfer guard mode during compute "
-            "(default: off; use log/disallow for diagnostics)"
+            "(default: off; use log/disallow for strict transfer checks)"
         ),
     )
     p.add_argument(
@@ -574,7 +575,7 @@ def _run_reconstruction(command: ReconCommand, config_metadata: dict[str, Config
                 views_per_batch=int(resolved_vpb),
                 det_grid=det_grid,
             )
-        # For FBP, apply mask post-hoc if requested for parity
+        # For FBP, apply the requested output mask after reconstruction.
         if vol_mask is not None:
             vol = vol * vol_mask
     elif command.algo == "fista":

@@ -33,10 +33,15 @@ from tomojax.bench.spdhg_benchmark import (
     total_variation,
     write_spdhg_benchmark_report as write_report,
 )
-from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.datasets import SimConfig, make_phantom
-from tomojax.geometry import cylindrical_mask_xy
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    cylindrical_mask_xy,
+)
 from tomojax.io import NXTomoMetadata, load_nxtomo, save_nxtomo
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import fista_tv

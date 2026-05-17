@@ -24,8 +24,8 @@ from tomojax.bench.article_alignment_runs import (
     ArticleScenario,
     article_theta_span_deg,
 )
-from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
+from tomojax.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
 

@@ -21,6 +21,20 @@ def test_alignment_public_facade_stays_narrow() -> None:
     assert callable(align_api.align_multires)
 
 
+def test_alignment_api_keeps_diagnostics_out_of_advertised_public_exports() -> None:
+    align_api = importlib.import_module("tomojax.align.api")
+
+    diagnostic_exports = {
+        "JointSchurDiagnostics",
+        "joint_schur_normal_eq_summary",
+        "write_joint_schur_normal_eq_summary",
+    }
+
+    assert diagnostic_exports.isdisjoint(set(align_api.__all__))
+    for name in diagnostic_exports:
+        assert hasattr(align_api, name)
+
+
 @pytest.mark.parametrize(
     "symbol",
     [

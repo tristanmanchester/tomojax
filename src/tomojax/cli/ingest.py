@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from tomojax.core.geometry import Detector, Grid
+from tomojax.geometry import Detector, Grid
 from tomojax.io import load_tiff_stack, save_dataset
 
 if TYPE_CHECKING:

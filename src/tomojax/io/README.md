@@ -46,6 +46,12 @@ This module may depend on `tomojax.core` data structures and low-level dataset
 readers owned by the IO layer. It must not depend on alignment, reconstruction,
 benchmark, or CLI implementation modules.
 
+Current implementation dependencies:
+
+- retained `tomojax.data.io_hdf5`, `tomojax.data.preprocess`,
+  `tomojax.data.contrast`, and `tomojax.data.inspection` helpers behind the
+  `tomojax.io` public facade
+
 ## Invariants
 
 - Public helpers return strict JSON-compatible values.

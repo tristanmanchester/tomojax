@@ -56,9 +56,11 @@ from tomojax.cli._runtime import transfer_guard_context
 from tomojax.cli.config import parse_args_with_config
 from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.core import log_jax_env, setup_logging
-from tomojax.core.geometry import Detector, Geometry, Grid  # noqa: TC001
 from tomojax.geometry import (
     DISK_VOLUME_AXES,
+    Detector,
+    Geometry,
+    Grid,
     build_calibrated_geometry_metadata_patch,
     compute_roi,
     cylindrical_mask_xy,
@@ -665,7 +667,7 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
         default=os.environ.get("TOMOJAX_TRANSFER_GUARD", "off"),
         help=(
             "JAX transfer guard mode during compute "
-            "(default: off; use log/disallow for diagnostics)"
+            "(default: off; use log/disallow for strict transfer checks)"
         ),
     )
     p.add_argument("--out", help="Output .nxs with recon and alignment params")

@@ -13,6 +13,9 @@ reconstruction, and alignment.
   `VOLUME_AXES_ATTR`
 - Axis helpers: `axes_to_perm`, `transpose_volume`, `infer_disk_axes`,
   `is_shape_xyz`, `is_shape_zyx`
+- Concrete geometry metadata: `Grid`, `Detector`, `Geometry`,
+  `ParallelGeometry`, `LaminographyGeometry`, `RotationAxisGeometry`,
+  `normalize_axis_unit`, `stack_view_poses`
 - FOV helpers: `RoiInfo`, `compute_roi`, `grid_from_detector_fov`,
   `grid_from_detector_fov_cube`, `grid_from_detector_fov_slices`,
   `cylindrical_mask_xy`
@@ -31,16 +34,18 @@ reconstruction, and alignment.
 
 ## Dependencies
 
-This module currently depends on `tomojax.core.geometry.base` for the existing
-`Grid` and `Detector` types and wraps the provisional `tomojax.calibration`
-implementation so production modules do not import calibration helpers
-directly. It must not depend on alignment, reconstruction, datasets, or CLI
-modules.
+This module currently depends on `tomojax.core.geometry` for the existing
+concrete geometry metadata and wraps the provisional `tomojax.calibration`
+implementation so production modules do not import calibration helpers or
+old core geometry namespaces directly. It must not depend on alignment,
+reconstruction, datasets, or CLI modules.
 
 ## Invariants
 
 - Public imports go through `tomojax.geometry`, not private `_axes` or `_fov`
   modules.
+- Product CLI and benchmark surfaces import concrete geometry types through
+  `tomojax.geometry`, not through `tomojax.core.geometry`.
 - Production modules import detector-grid, axis-direction, and calibration
   metadata helpers through `tomojax.geometry`, not through
   `tomojax.calibration`.
