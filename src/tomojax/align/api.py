@@ -42,6 +42,14 @@ from tomojax.align._profiles import (
     resolve_profiled_cli_defaults,
 )
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
+from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.align.geometry.geometry_blocks import (
+    GeometryCalibrationState,
+    geometry_with_axis_state,
+    level_detector_grid,
+    normalize_geometry_dofs,
+    summarize_geometry_calibration_stats,
+)
 from tomojax.align.geometry.parametrizations import se3_from_5d
 from tomojax.align.model.dof_specs import DofSpec, dof_spec
 from tomojax.align.model.dofs import (
@@ -60,6 +68,7 @@ from tomojax.align.model.schedules import (
     resolve_alignment_schedule,
     schedule_preset,
 )
+from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
 from tomojax.align.objectives.loss_adapters import LossAdapter, build_loss_adapter
 from tomojax.align.objectives.loss_specs import (
     AlignmentLossConfig,
@@ -97,6 +106,8 @@ __all__ = [
     "AlignmentProfilePolicy",
     "AlignmentSchedule",
     "AlignmentStage",
+    "AlignmentState",
+    "BaseGeometryArrays",
     "ContinuationLevel",
     "ContinuationSchedule",
     "ContinuationScheduleName",
@@ -106,6 +117,7 @@ __all__ = [
     "FallbackPolicy",
     "GaugeFixMode",
     "GaugePolicy",
+    "GeometryCalibrationState",
     "GeometryUpdateSolver",
     "GeometryUpdateVolumeSource",
     "JointSchurDiagnostics",
@@ -118,6 +130,7 @@ __all__ = [
     "PWLSLossSpec",
     "PoseOnlyLMConfig",
     "PoseOnlyLMResult",
+    "PoseState",
     "PreviewInitialization",
     "PreviewReconstructionMaskSource",
     "PreviewResidualFilterMode",
@@ -126,6 +139,7 @@ __all__ = [
     "QualityTier",
     "ResolvedAlignmentSchedule",
     "ResolvedAlignmentStage",
+    "SetupGeometryState",
     "SetupOnlyLMConfig",
     "SetupOnlyLMResult",
     "StoppedPreviewPolicy",
@@ -134,13 +148,17 @@ __all__ = [
     "align",
     "align_multires",
     "alignment_profile_policy",
+    "apply_alignment_state",
     "build_loss_adapter",
     "dof_spec",
+    "geometry_with_axis_state",
     "joint_schur_normal_eq_summary",
+    "level_detector_grid",
     "loss_spec_name",
     "normalize_alignment_dofs",
     "normalize_alignment_profile",
     "normalize_bounds",
+    "normalize_geometry_dofs",
     "parse_loss_schedule",
     "parse_loss_spec",
     "profile_policy_from_config",
@@ -154,6 +172,7 @@ __all__ = [
     "solve_joint_schur_lm",
     "solve_pose_only_lm",
     "solve_setup_only_lm",
+    "summarize_geometry_calibration_stats",
     "validate_loss_schedule_levels",
     "write_joint_schur_normal_eq_summary",
 ]

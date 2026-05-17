@@ -29,18 +29,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
-from tomojax.align.api import loss_spec_name, resolve_loss_for_level
-from tomojax.align.geometry.geometry_blocks import (
+from tomojax.align.api import (
+    AlignConfig,
+    AlignmentSchedule,
+    AlignmentStage,
+    AlignmentState,
     GeometryCalibrationState,
+    PoseState,
+    SetupGeometryState,
+    align,
     geometry_with_axis_state,
     level_detector_grid,
-)
-from tomojax.align.geometry.parametrizations import se3_from_5d
-from tomojax.align.model.schedules import AlignmentSchedule, AlignmentStage
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.pipeline import (
-    AlignConfig,
-    align,
+    loss_spec_name,
+    resolve_loss_for_level,
+    se3_from_5d,
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import normalize_json

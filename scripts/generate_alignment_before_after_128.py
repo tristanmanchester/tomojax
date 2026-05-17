@@ -14,12 +14,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align import AlignConfig, align_multires
-from tomojax.align.api import schedule_preset
-from tomojax.align.geometry.geometry_blocks import (
+from tomojax.align.api import (
     GeometryCalibrationState,
     geometry_with_axis_state,
     level_detector_grid,
     normalize_geometry_dofs,
+    schedule_preset,
     summarize_geometry_calibration_stats,
 )
 from tomojax.bench.article_alignment_runs import (

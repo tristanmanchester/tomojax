@@ -16,8 +16,18 @@ def test_alignment_facade_exports_documented_api() -> None:
     assert callable(align_api.align_multires)
     assert align_full_api.DofSpec.__name__ == "DofSpec"
     assert align_full_api.AlignmentSchedule.__name__ == "AlignmentSchedule"
+    assert align_full_api.AlignmentState.__name__ == "AlignmentState"
+    assert align_full_api.BaseGeometryArrays.__name__ == "BaseGeometryArrays"
+    assert align_full_api.GeometryCalibrationState.__name__ == "GeometryCalibrationState"
+    assert align_full_api.PoseState.__name__ == "PoseState"
+    assert align_full_api.SetupGeometryState.__name__ == "SetupGeometryState"
+    assert callable(align_full_api.apply_alignment_state)
     assert callable(align_full_api.dof_spec)
+    assert callable(align_full_api.geometry_with_axis_state)
+    assert callable(align_full_api.level_detector_grid)
+    assert callable(align_full_api.normalize_geometry_dofs)
     assert callable(align_full_api.schedule_preset)
+    assert callable(align_full_api.summarize_geometry_calibration_stats)
     assert not hasattr(align_full_api, "run_alignment_smoke")
     assert not hasattr(align_full_api, "run_alternating_solver_smoke")
     assert not hasattr(align_full_api, "AlternatingSmokeConfig")

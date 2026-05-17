@@ -16199,3 +16199,30 @@ Validation:
 - `python tools/check_public_imports.py src tests` passed.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### Alignment state and calibration helpers exposed through facade
+
+- Added optimizer-time alignment state containers, geometry array application,
+  setup calibration state, detector-grid materialization, and geometry DOF
+  summary helpers to `tomojax.align.api`.
+- Updated article visual and real-laminography diagnostic scripts to import
+  state/calibration helpers through the alignment facade rather than nested
+  `tomojax.align.geometry` and `tomojax.align.model` modules.
+- Updated the alignment README and public facade test so the broader typed
+  helper surface is documented and executable.
+- The only remaining private script import detected by
+  `tools/check_public_imports.py scripts src tests` is the real-laminography
+  reference-regression script's direct use of `_optimize_setup_geometry_bilevel_for_level`;
+  that is still a diagnostic/reference-runner boundary to resolve separately.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_article_alignment_visuals.py -q`
+  passed with 10 tests.
+- `uv run python -m py_compile scripts/generate_alignment_before_after_128.py scripts/real_laminography/run_real_lamino_pallas_probe.py scripts/real_laminography/run_real_lamino_reference_regression.py`
+  passed.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align/api.py scripts/generate_alignment_before_after_128.py scripts/real_laminography/run_real_lamino_pallas_probe.py scripts/real_laminography/run_real_lamino_reference_regression.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py src tests` passed.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.

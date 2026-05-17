@@ -32,14 +32,18 @@ from run_real_lamino_reference_regression import (
     _validate_loaded_input,
 )
 
-from tomojax.align.api import L2LossSpec
-from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
-from tomojax.align.geometry.geometry_blocks import (
+from tomojax.align.api import (
+    AlignConfig,
+    AlignmentState,
+    BaseGeometryArrays,
     GeometryCalibrationState,
+    L2LossSpec,
+    PoseState,
+    SetupGeometryState,
+    align,
+    apply_alignment_state,
     geometry_with_axis_state,
 )
-from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.align.pipeline import AlignConfig, align
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.core.projector import get_detector_grid_device
 from tomojax.io import normalize_json
