@@ -7,6 +7,8 @@ from contextlib import contextmanager
 import sys
 from typing import TYPE_CHECKING
 
+from tomojax.cli.api import developer_command_names, product_command_names
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
@@ -68,17 +70,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "command",
         nargs="?",
-        choices=[
-            "inspect",
-            "validate",
-            "preprocess",
-            "ingest",
-            "convert",
-            "recon",
-            "align",
-            "simulate",
-            "dev",
-        ],
+        choices=product_command_names(),
         help="Command to run.",
     )
     parser.epilog = (
@@ -169,19 +161,7 @@ def _dev_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "command",
         nargs="?",
-        choices=[
-            "loss-bench",
-            "misalign",
-            "align-auto",
-            "astra-parallel-bench",
-            "benchmark-suite",
-            "alignment-diagnostic-bench",
-            "pallas-sanity",
-            "synthetic-benchmark-compare",
-            "current-baseline-normalize",
-            "test-gpu",
-            "test-cpu",
-        ],
+        choices=developer_command_names(),
     )
     return parser
 

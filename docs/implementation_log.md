@@ -16110,3 +16110,22 @@ Validation:
   passed.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### CLI command catalog exposed through facade
+
+- Added a typed `tomojax.cli.api.CliCommand` catalog for product-facing
+  grouped commands and developer diagnostic commands.
+- Updated `tomojax.cli.main` to derive parser choices from that catalog rather
+  than duplicating command lists inside parser construction.
+- Exposed the command catalog through the `tomojax.cli` package facade and
+  updated the CLI README so the module has a real public API rather than an
+  empty facade.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_cli_entrypoints.py::test_top_level_cli_help_shows_clean_public_commands tests/test_cli_entrypoints.py::test_top_level_cli_recon_accepts_positional_input tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_benchmark_probes tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_align_auto tests/test_align_auto_cli.py::test_public_cli_scripts_use_single_grouped_entrypoint -q`
+  passed with 11 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/cli/api.py src/tomojax/cli/__init__.py src/tomojax/cli/main.py tests/test_public_facades.py tests/test_cli_entrypoints.py tests/test_align_auto_cli.py`
+  passed.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.

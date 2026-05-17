@@ -13,7 +13,11 @@ modules are not separate public commands.
 
 ## Public API
 
-- `tomojax.cli.main`
+- `tomojax.cli.main.main`: grouped console-script dispatcher.
+- `tomojax.cli.api.CliCommand`: command metadata record.
+- `tomojax.cli.api.product_command_names()`: product-facing grouped commands.
+- `tomojax.cli.api.developer_command_names()`: developer diagnostic commands
+  grouped under `tomojax dev`.
 
 ## Dependencies
 

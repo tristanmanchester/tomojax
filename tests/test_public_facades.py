@@ -4,6 +4,7 @@ import tomojax.align as align_api
 import tomojax.align.api as align_full_api
 import tomojax.bench as bench_api
 import tomojax.calibration as calibration_api
+import tomojax.cli as cli_api
 import tomojax.io as io_api
 import tomojax.recon as recon_api
 
@@ -49,6 +50,24 @@ def test_calibration_facade_exports_only_schema_value_types() -> None:
         "DetectorPixelScale",
         "DetectorPixelValue",
     }
+
+
+def test_cli_facade_exports_command_catalog() -> None:
+    assert cli_api.CliCommand.__name__ == "CliCommand"
+    assert cli_api.product_command_names() == (
+        "inspect",
+        "validate",
+        "preprocess",
+        "ingest",
+        "convert",
+        "recon",
+        "align",
+        "simulate",
+        "dev",
+    )
+    assert "align-auto" not in cli_api.product_command_names()
+    assert "align-auto" in cli_api.developer_command_names()
+    assert "test-gpu" in cli_api.developer_command_names()
 
 
 def test_bench_facade_exports_developer_benchmark_helpers() -> None:
