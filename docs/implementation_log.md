@@ -15958,3 +15958,13 @@ Validation:
 - Updated the staged runner to import the benchmark module directly and removed
   the script-local dynamic import fallback.
 - Documented the ownership in `scripts/real_laminography/README.md`.
+
+### Alignment diagnostics moved out of product align module
+
+- Moved the synthetic alignment diagnostic runner facade from
+  `tomojax.align.developer_diagnostics` to
+  `tomojax.bench.alignment_diagnostics`.
+- Updated `tomojax.bench.api` to re-export the diagnostic helpers from the
+  benchmark owner module.
+- Removed the alignment README's now-obsolete diagnostics ownership note and
+  updated the architecture cleanup audit.

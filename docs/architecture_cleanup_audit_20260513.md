@@ -22,7 +22,7 @@ production-ready according to the original v2 plan:
 | Canonical v2 plan exists | `docs/tomojax-v2/01_high_level_architecture.md` through `07_synthetic_generator_pseudocode.md` are present. | Done |
 | Single public CLI entrypoint | `pyproject.toml` exposes only `tomojax = "tomojax.cli.main:main"`. `uv run tomojax --help` shows `inspect`, `validate`, `preprocess`, `ingest`, `convert`, `recon`, `align`, `simulate`, and `dev`. | Done |
 | Public align CLI is product-shaped | `uv run tomojax align --help` shows `--mode {cor,pose,auto,max}` and `--quality`, not schedules, losses, optimizers, or active DOF internals. | Done |
-| Developer diagnostics separated | `uv run tomojax dev --help` owns benchmark and diagnostic commands. `tomojax.align.api` no longer exports alignment smoke runners; they live behind `tomojax.align.developer_diagnostics` and `tomojax.bench`. | Done |
+| Developer diagnostics separated | `uv run tomojax dev --help` owns benchmark and diagnostic commands. `tomojax.align.api` no longer exports alignment smoke runners; synthetic alignment diagnostic runners now live under `tomojax.bench`. | Done |
 | Measured data loading owned by IO | `tomojax.io` owns `ProjectionDataset`, load/save/validate/convert/inspect/preprocess facades. Production modules are forbidden from importing lower-level `tomojax.data` directly by `.importlinter`. | Done |
 | Synthetic data owned separately | `tomojax.datasets` owns synthetic benchmark generation and phantom helpers. `tomojax.data` remains a lower-level implementation package used through IO/datasets. | Done |
 | Calibration helper leakage reduced | Detector-grid, axis-direction, calibration-state, and calibrated metadata helpers are re-exported by `tomojax.geometry`; production modules are forbidden from importing `tomojax.calibration` directly by `.importlinter`. | Done |
@@ -57,4 +57,3 @@ architecture debt:
 3. Continue reducing repo-wide Ruff failures until `just check` either passes or
    the remaining debt is explicitly quarantined outside production code with
    tests/import rules.
-

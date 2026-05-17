@@ -1,8 +1,7 @@
 """Developer-facing alignment diagnostic runners.
 
-This module is intentionally separate from :mod:`tomojax.align.api`: the
-objects here run synthetic benchmark harnesses and are useful for verification,
-but they are not part of the production alignment facade.
+This module owns synthetic alignment benchmark harnesses and keeps them behind
+the benchmark/developer surface instead of the production alignment facade.
 """
 
 from __future__ import annotations

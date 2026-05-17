@@ -10,6 +10,7 @@ top-level console scripts.
 
 - Benchmark fixtures and benchmark result comparison helpers.
 - Diagnostic performance probes.
+- Synthetic alignment diagnostic runners.
 - Synthetic result report helpers used by implementation and regression work.
 
 ## Boundary Rule

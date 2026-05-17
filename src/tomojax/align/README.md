@@ -76,14 +76,6 @@ Forbidden dependencies:
 - `write_joint_schur_normal_eq_summary` writes the current Phase 6
   `normal_eq_summary.json` artifact.
 
-## Developer Diagnostics
-
-- `tomojax.align.developer_diagnostics` owns synthetic alignment benchmark
-  runners that are useful for development and verification but are deliberately
-  excluded from `tomojax.align.api`.
-- `tomojax.bench` re-exports those diagnostic runners for benchmark-facing
-  tests and developer CLI commands.
-
 ## Tests
 
 - Existing alignment tests cover retained staged behavior.
