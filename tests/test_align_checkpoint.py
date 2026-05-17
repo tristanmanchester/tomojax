@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from test_align_quick import make_misaligned_case
-from tomojax.align.checkpoint import (
+from tomojax.align.io.checkpoint import (
     AlignmentCheckpointGeometrySnapshot,
     AlignmentCheckpointMetadataInput,
     AlignmentCheckpointProgress,

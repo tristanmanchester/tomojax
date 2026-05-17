@@ -3,7 +3,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from tomojax.align.diagnostics import (
+from tomojax.align.model.diagnostics import (
     GaugePolicyError,
     conditioning_diagnostics,
     validate_active_gauge_policy,

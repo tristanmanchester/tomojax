@@ -52,41 +52,20 @@ def test_align_config_normalizes_projector_backend() -> None:
 
 
 @pytest.mark.parametrize(
-    "symbol",
-    [
-        "AlignmentLossConfig",
-        "LossState",
-        "LossAdapter",
-        "L2OtsuLossSpec",
-        "parse_loss_spec",
-        "parse_loss_schedule",
-        "resolve_loss_for_level",
-        "validate_loss_schedule_levels",
-        "loss_spec_name",
-        "loss_is_within_relative_tolerance",
-        "build_loss",
-        "build_loss_adapter",
-    ],
-)
-def test_loss_compatibility_symbols_remain_importable(symbol: str) -> None:
-    losses = importlib.import_module("tomojax.align.losses")
-
-    assert hasattr(losses, symbol)
-
-
-@pytest.mark.parametrize(
     "module_name",
     [
         "tomojax.align.checkpoint",
         "tomojax.align.diagnostics",
+        "tomojax.align.losses",
         "tomojax.align.motion_models",
         "tomojax.align.params_export",
     ],
 )
-def test_bounded_alignment_legacy_module_aliases_remain_importable(module_name: str) -> None:
+def test_alignment_legacy_module_aliases_are_not_registered(module_name: str) -> None:
     importlib.import_module("tomojax.align")
 
-    assert importlib.import_module(module_name)
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(module_name)
 
 
 @pytest.mark.parametrize(

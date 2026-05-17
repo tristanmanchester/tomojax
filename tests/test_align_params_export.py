@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tomojax.align.model.gauge import apply_alignment_gauge
-from tomojax.align.params_export import (
+from tomojax.align.io.params_export import (
     ALIGNMENT_PARAMS_SCHEMA,
     CSV_FIELDNAMES,
     PARAMETER_ORDER,

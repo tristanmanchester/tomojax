@@ -15997,3 +15997,21 @@ Validation:
   typecheck, import-linter, private-import guard, and 80 focused tests.
 - `just production-surface-check` passed on `vivobook-ts` from a fresh isolated
   verification tree at `/home/tristan/projects/tomojax-v2-architecture-check`.
+
+### Alignment compatibility aliases removed
+
+- Removed the remaining import-time compatibility aliases from
+  `tomojax.align.__init__`: `checkpoint`, `diagnostics`, `motion_models`,
+  `params_export`, and `losses`.
+- Deleted the old `tomojax.align.objectives.losses` facade. Loss specs and
+  adapters now live only under their owner modules, while the product alignment
+  surface remains `AlignConfig`, `align`, and `align_multires`.
+- Updated alignment tests to import checkpoint, diagnostics, motion models, and
+  parameter export helpers from their owner modules.
+
+Validation:
+
+- `uv run pytest tests/test_align_contracts.py tests/test_align_checkpoint.py tests/test_align_params_export.py tests/test_alignment_gauge_registry.py tests/test_align_motion_models.py tests/test_align_optimizers.py -q`
+  passed with 77 tests.
+- `just production-surface-check` passed with formatting checks, CLI typecheck,
+  import-linter, private-import guard, and 80 focused tests.

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tomojax.align.motion_models import (
+from tomojax.align.model.motion_models import (
     build_pose_motion_model,
     expand_motion_coefficients,
     fit_motion_coefficients,
