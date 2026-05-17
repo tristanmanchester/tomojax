@@ -13,9 +13,14 @@ import pytest
 
 from tomojax.bench import (
     build_real_lamino_report,
+    normalize_real_lamino_runtime_args,
     pose_dx_dz_bounds,
     pose_phi_bounds,
     pose_polish_bounds,
+    prepare_real_lamino_binned_fixture,
+    real_lamino_artifact_validation_failures,
+    real_lamino_stat_validation_failures,
+    reference_regression_level_outer_counts,
     setup_det_u_bounds,
 )
 
@@ -558,7 +563,7 @@ def test_reference_regression_level_outer_counts_replay_reference_stage_summary(
 
     args = staged_runner._parse_args()
 
-    assert staged_runner._reference_regression_level_outer_counts(
+    assert reference_regression_level_outer_counts(
         args,
         stage_name="01_setup_geometry/03_axis_direction",
     ) == {8: 2, 4: 1}
@@ -633,7 +638,7 @@ def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:
     thetas = np.linspace(0.0, 180.0, 5, endpoint=False, dtype=np.float32)
 
     working_raw, working_thetas, geometry_inputs, provenance = (
-        staged_runner._prepare_binned_fixture(
+        prepare_real_lamino_binned_fixture(
             args,
             native=runner,
             raw_projections=raw,
@@ -677,7 +682,7 @@ def test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor() -> N
     thetas = np.arange(7, dtype=np.float32)
 
     working_raw, working_thetas, _geometry_inputs, provenance = (
-        staged_runner._prepare_binned_fixture(
+        prepare_real_lamino_binned_fixture(
             args,
             native=runner,
             raw_projections=raw,
@@ -706,11 +711,11 @@ def test_v2_stage_validation_accepts_repo_relative_artifact_paths(tmp_path) -> N
         },
     )
 
-    assert staged_runner._artifact_validation_failures(stage_dir) == []
+    assert real_lamino_artifact_validation_failures(stage_dir) == []
 
 
 def test_v2_pose_stage_validation_accepts_finite_fast_profile_losses() -> None:
-    failures = staged_runner._stat_validation_failures(
+    failures = real_lamino_stat_validation_failures(
         [
             {
                 "loss_before": 2.0,
@@ -740,7 +745,7 @@ def test_staged_runtime_default_streams_fista(monkeypatch, tmp_path) -> None:
     args = staged_runner._parse_args()
     assert args.views_per_batch == 0
 
-    staged_runner._normalize_runtime_args(args)
+    normalize_real_lamino_runtime_args(args)
 
     assert args.views_per_batch == 1
 

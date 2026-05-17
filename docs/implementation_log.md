@@ -3,6 +3,37 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Staged real-laminography bench-helper aliases removed
+
+### Scope
+
+Continued cleaning the staged real-laminography runner by removing private
+aliases that preserved script-local names for bench-owned helpers.
+
+Changes:
+
+- Updated `scripts/real_laminography/run_real_lamino_staged.py` to call
+  `tomojax.bench` planning/profile/report helpers directly.
+- Updated runner contract tests to import bench-owned helpers from the
+  `tomojax.bench` facade instead of testing through staged-runner private
+  aliases.
+- Removed the corresponding private alias assignments and unused imports from
+  the staged runner.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run pytest tests/test_real_lamino_runner_contract.py -k
+  'reference_regression_level_outer_counts or binned_fixture or
+  stage_validation or runtime_default_streams_fista' -q` passed: 7 tests in
+  3.12 seconds, 33 deselected.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Staged real-laminography report wrapper removed
 
 ### Scope

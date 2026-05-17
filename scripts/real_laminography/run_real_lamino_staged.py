@@ -23,7 +23,6 @@ import numpy as np
 
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
-    map_real_lamino_global_z_to_binned,
     parse_shape3,
     pose_dx_dz_bounds,
     pose_phi_bounds,
@@ -37,7 +36,6 @@ from tomojax.bench.real_laminography_profiles import (
     REAL_LAMINO_STAGED_PATH,
     REFERENCE_REGRESSION_STAGE_MAP as _REFERENCE_REGRESSION_STAGE_MAP,
     apply_real_lamino_profile_args,
-    apply_real_lamino_profile_contract_args,
     normalize_real_lamino_runtime_args,
     real_lamino_reference_regression_contract_payload,
     reference_regression_level_outer_counts,
@@ -45,11 +43,9 @@ from tomojax.bench.real_laminography_profiles import (
 from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
     mark_real_lamino_stage_failed,
-    real_lamino_artifact_validation_failures,
     real_lamino_loss_summary,
     real_lamino_method_constraints,
     real_lamino_safe_params_summary,
-    real_lamino_stat_validation_failures,
     validate_real_lamino_stage_output,
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
@@ -58,16 +54,6 @@ from tomojax.io import read_json_object
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
 REFERENCE_REGRESSION_STAGE_MAP = _REFERENCE_REGRESSION_STAGE_MAP
-_artifact_validation_failures = real_lamino_artifact_validation_failures
-_stat_validation_failures = real_lamino_stat_validation_failures
-_validate_stage_output = validate_real_lamino_stage_output
-_apply_profile_contract_args = apply_real_lamino_profile_contract_args
-_apply_real_lamino_profile_args = apply_real_lamino_profile_args
-_normalize_runtime_args = normalize_real_lamino_runtime_args
-_reference_regression_contract_payload = real_lamino_reference_regression_contract_payload
-_reference_regression_level_outer_counts = reference_regression_level_outer_counts
-_map_global_z_to_binned = map_real_lamino_global_z_to_binned
-_prepare_binned_fixture = prepare_real_lamino_binned_fixture
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,7 +86,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
     """Execute the v2 real-laminography workflow and write the staged report."""
     if native is None:
         native = _load_native_runner()
-    _normalize_runtime_args(args)
+    normalize_real_lamino_runtime_args(args)
     run_root = Path(args.out)
     run_root.mkdir(parents=True, exist_ok=True)
     started = started_at or datetime.now().isoformat(timespec="seconds")
@@ -118,7 +104,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             thetas,
             expected_projection_shape=args.expected_projection_shape,
         )
-        raw_projections, thetas, geometry_inputs, binning_provenance = _prepare_binned_fixture(
+        raw_projections, thetas, geometry_inputs, binning_provenance = prepare_real_lamino_binned_fixture(
             args,
             native=native,
             raw_projections=raw_projections,
@@ -203,7 +189,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
                 "staged_lamino": str(args.profile) == "staged-lamino",
                 "reference_regression": str(args.profile) == "reference-regression",
                 "reference_regression_contract": (
-                    _reference_regression_contract_payload(args)
+                    real_lamino_reference_regression_contract_payload(args)
                     if str(args.profile) == "reference-regression"
                     else None
                 ),
@@ -262,7 +248,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             params5=params5,
             levels=tuple(int(v) for v in args.levels_setup),
             bounds=setup_det_u_bounds(args),
-            level_outer_counts=_reference_regression_level_outer_counts(
+            level_outer_counts=reference_regression_level_outer_counts(
                 args,
                 stage_name="01_setup_geometry/01_cor",
             ),
@@ -479,12 +465,12 @@ def run_remaining_stages(
             params5=params5,
             levels=tuple(int(v) for v in ctx.args.levels_setup),
             bounds=bounds,
-            level_outer_counts=_reference_regression_level_outer_counts(
+            level_outer_counts=reference_regression_level_outer_counts(
                 ctx.args,
                 stage_name=stage_name,
             ),
         )
-        validation = _validate_stage_output(
+        validation = validate_real_lamino_stage_output(
             ctx.stage_dir(stage_name),
             stage_name=stage_name,
             volume=x_stage,
@@ -555,7 +541,7 @@ def run_remaining_stages(
             levels=tuple(int(v) for v in levels),
             bounds=bounds,
         )
-        validation = _validate_stage_output(
+        validation = validate_real_lamino_stage_output(
             ctx.stage_dir(stage_name),
             stage_name=stage_name,
             volume=x_stage,
@@ -652,7 +638,7 @@ def run_best_final_reconstruction(
                 read_json_object(candidate_root / "05_final" / "stage_manifest.json")
             )
             loss_last = real_lamino_loss_summary(manifest.get("recon_info", {})).get("last")
-            validation = _validate_stage_output(
+            validation = validate_real_lamino_stage_output(
                 candidate_root / "05_final",
                 stage_name=f"05_final:{candidate['source_stage']}",
                 volume=volume,
@@ -826,7 +812,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
-    _apply_real_lamino_profile_args(args, parser)
+    apply_real_lamino_profile_args(args, parser)
     if bool(args.smoke):
         if int(args.bin_factor) <= 1 and args.smoke_shape is None:
             args.bin_factor = 4
