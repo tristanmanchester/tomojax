@@ -6,8 +6,8 @@ installed as package entry points.
 ## Evidence generation
 
 - `generate_alignment_before_after_128.py`: synthetic alignment evidence
-  generator used by docs and tests.
-- `alignment_visuals.py`: visualization helper for the evidence generator.
+  generator used by docs and tests. Rendering helpers live in
+  `tomojax.bench.article_visuals` so the script remains orchestration-only.
 
 ## Data preparation
 

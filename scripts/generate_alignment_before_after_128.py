@@ -3,10 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import asdict, dataclass
-import importlib.util
 import json
 from pathlib import Path
-import sys
 import time
 from typing import Any, Mapping, Sequence
 
@@ -29,40 +27,22 @@ from tomojax.bench.alignment_scenarios import (
     phantom_spec,
     scenario_suite,
 )
+from tomojax.bench.article_visuals import (
+    AlignmentVisualizationPayload,
+    NaiveVisualizationPayload,
+    VisualProfile,
+    VisualScenario,
+    resize_for_master,
+    vstack_rgb,
+    write_alignment_visuals,
+    write_naive_visuals,
+)
 from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
 from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.io import normalize_json
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-
-try:
-    from scripts.alignment_visuals import (
-        AlignmentVisualizationPayload,
-        NaiveVisualizationPayload,
-        VisualProfile,
-        VisualScenario,
-        resize_for_master,
-        vstack_rgb,
-        write_alignment_visuals,
-        write_naive_visuals,
-    )
-except ModuleNotFoundError:  # pragma: no cover - supports direct script execution.
-    _visuals_path = Path(__file__).with_name("alignment_visuals.py")
-    _visuals_spec = importlib.util.spec_from_file_location("alignment_visuals", _visuals_path)
-    if _visuals_spec is None or _visuals_spec.loader is None:
-        raise
-    _visuals = importlib.util.module_from_spec(_visuals_spec)
-    sys.modules.setdefault(_visuals_spec.name, _visuals)
-    _visuals_spec.loader.exec_module(_visuals)
-    AlignmentVisualizationPayload = _visuals.AlignmentVisualizationPayload
-    NaiveVisualizationPayload = _visuals.NaiveVisualizationPayload
-    VisualProfile = _visuals.VisualProfile
-    VisualScenario = _visuals.VisualScenario
-    resize_for_master = _visuals.resize_for_master
-    vstack_rgb = _visuals.vstack_rgb
-    write_alignment_visuals = _visuals.write_alignment_visuals
-    write_naive_visuals = _visuals.write_naive_visuals
 
 
 PHANTOM = phantom_spec("phantom94")

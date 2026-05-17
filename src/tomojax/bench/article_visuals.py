@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 import imageio.v3 as iio
 import numpy as np
 
 from tomojax.recon.quicklook import scale_to_uint8
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -414,8 +417,8 @@ def image_grid(
     title_font = max(10.0, min(18.0, cell_px * 0.044))
     col_font = max(9.0, min(15.0, cell_px * 0.036))
     row_font = max(8.5, min(13.0, cell_px * 0.032))
-    title_px = int(round(title_font * 2.2))
-    col_label_px = int(round(col_font * 2.1))
+    title_px = round(title_font * 2.2)
+    col_label_px = round(col_font * 2.1)
     gutter_px = max(4, int(pad))
     fig_w = ncols * cell_px + (ncols - 1) * gutter_px
     fig_h = (
@@ -801,6 +804,6 @@ def resize_for_master(image: np.ndarray, *, width: int) -> np.ndarray:
     if arr.shape[1] <= width:
         return arr
     scale = float(width) / float(arr.shape[1])
-    height = max(1, int(round(arr.shape[0] * scale)))
+    height = max(1, round(arr.shape[0] * scale))
     pil = Image.fromarray(arr)
     return np.asarray(pil.resize((int(width), height), Image.Resampling.LANCZOS), dtype=np.uint8)

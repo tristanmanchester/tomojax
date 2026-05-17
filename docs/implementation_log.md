@@ -15883,3 +15883,19 @@ Validation:
 - `lamino_setup_safe` completed with finite visual inputs, pre-visual metadata,
   and PNG panels. Naive FBP NMSE was `0.3975634276866913`, calibrated FBP NMSE
   was `0.20368780195713043`, and aligned TV NMSE was `0.029141291975975037`.
+
+### Article visual helper assimilated into bench module
+
+- Moved the reusable article visualization rendering code out of `scripts/`
+  and into `tomojax.bench.article_visuals`, so the evidence generator no
+  longer imports another script as a library.
+- Updated `scripts/generate_alignment_before_after_128.py` to import rendering
+  helpers through the benchmark module boundary and removed the direct-script
+  fallback import path.
+- Updated the article visual contract test to exercise the deep-module helper
+  directly.
+
+Validation:
+
+- `uv run pytest tests/test_article_alignment_visuals.py tests/test_public_facades.py -q`
+  passed with 7 tests.

@@ -7,6 +7,8 @@ import sys
 import imageio.v3 as iio
 import numpy as np
 
+from tomojax.bench import article_visuals
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -20,10 +22,6 @@ def _load_module(name: str, path: Path):
     return module
 
 
-alignment_visuals = _load_module(
-    "alignment_visuals_under_test",
-    ROOT / "scripts" / "alignment_visuals.py",
-)
 article_runner = _load_module(
     "generate_alignment_before_after_128_under_test",
     ROOT / "scripts" / "generate_alignment_before_after_128.py",
@@ -33,9 +31,9 @@ article_runner = _load_module(
 def test_article_visual_scaling_handles_nonfinite_values(tmp_path: Path) -> None:
     image = np.asarray([[np.nan, -np.inf], [0.25, np.inf]], dtype=np.float32)
 
-    gray = alignment_visuals.scale_shared_gray(image, np.nan, np.nan)
-    diverging = alignment_visuals.scale_diverging(image, np.nan)
-    loss = alignment_visuals.loss_panel(
+    gray = article_visuals.scale_shared_gray(image, np.nan, np.nan)
+    diverging = article_visuals.scale_diverging(image, np.nan)
+    loss = article_visuals.loss_panel(
         [
             {"geometry_block": "setup", "level_factor": 4, "geometry_loss_before": 1.0},
             {
