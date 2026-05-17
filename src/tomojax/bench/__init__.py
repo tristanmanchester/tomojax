@@ -79,6 +79,7 @@ from tomojax.bench.api import (
     make_forward_projector_fixture,
     make_forward_sinogram_fixture,
     map_real_lamino_global_z_to_binned,
+    mark_real_lamino_stage_failed,
     naive_visualization_payload,
     normalize_real_lamino_runtime_args,
     optimize_reference_setup_geometry_bilevel_for_level,
@@ -144,6 +145,7 @@ from tomojax.bench.api import (
     write_real_lamino_geometry_trace,
     write_real_lamino_json,
     write_real_lamino_residual_trace,
+    write_real_lamino_skipped_stage_manifests,
     write_spdhg_benchmark_report,
     write_synthetic_benchmark_comparison_markdown,
 )
@@ -227,6 +229,7 @@ __all__ = [
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
     "map_real_lamino_global_z_to_binned",
+    "mark_real_lamino_stage_failed",
     "naive_visualization_payload",
     "normalize_real_lamino_runtime_args",
     "optimize_reference_setup_geometry_bilevel_for_level",
@@ -292,6 +295,7 @@ __all__ = [
     "write_real_lamino_geometry_trace",
     "write_real_lamino_json",
     "write_real_lamino_residual_trace",
+    "write_real_lamino_skipped_stage_manifests",
     "write_spdhg_benchmark_report",
     "write_synthetic_benchmark_comparison_markdown",
 ]

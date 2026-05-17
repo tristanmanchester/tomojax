@@ -46,11 +46,13 @@ from tomojax.bench.real_laminography_profiles import (
 )
 from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
+    mark_real_lamino_stage_failed,
     real_lamino_artifact_validation_failures,
     real_lamino_finite_fraction,
     real_lamino_method_constraints,
     real_lamino_stat_validation_failures,
     validate_real_lamino_stage_output,
+    write_real_lamino_skipped_stage_manifests,
 )
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
@@ -491,8 +493,7 @@ def run_remaining_stages(
             require_data_loss=False,
         )
         if not validation["passed"]:
-            _mark_stage_failed(
-                native,
+            mark_real_lamino_stage_failed(
                 ctx.stage_dir(stage_name),
                 stage_name=stage_name,
                 validation=validation,
@@ -505,9 +506,8 @@ def run_remaining_stages(
                     "failure_provenance": validation,
                 }
             )
-            _write_skipped_stage_manifests(
+            write_real_lamino_skipped_stage_manifests(
                 ctx.run_root,
-                native=native,
                 stages=[spec[0] for spec in setup_plan[idx + 1 :]]
                 + ["02_pose_phi", "03_pose_dx_dz", "04_pose_polish"],
                 reason=f"upstream stage {stage_name} failed validation",
@@ -564,8 +564,7 @@ def run_remaining_stages(
             require_data_loss=True,
         )
         if not validation["passed"]:
-            _mark_stage_failed(
-                native,
+            mark_real_lamino_stage_failed(
                 ctx.stage_dir(stage_name),
                 stage_name=stage_name,
                 validation=validation,
@@ -579,9 +578,8 @@ def run_remaining_stages(
                     "failure_provenance": validation,
                 }
             )
-            _write_skipped_stage_manifests(
+            write_real_lamino_skipped_stage_manifests(
                 ctx.run_root,
-                native=native,
                 stages=[spec[0] for spec in pose_plan[idx + 1 :]],
                 reason=f"upstream pose stage {stage_name} failed validation",
             )
@@ -661,8 +659,7 @@ def run_best_final_reconstruction(
                 validation["passed"] = False
                 validation["failures"].append("final candidate loss is missing or non-finite")
             if not validation["passed"]:
-                _mark_stage_failed(
-                    native,
+                mark_real_lamino_stage_failed(
                     candidate_root / "05_final",
                     stage_name="05_final",
                     validation=validation,
@@ -704,50 +701,6 @@ def run_best_final_reconstruction(
     }
     native._write_json(final_dir / "stage_manifest.json", manifest)
     return np.asarray(best["volume"], dtype=np.float32), best
-
-
-def _mark_stage_failed(
-    native: Any,
-    stage_dir: Path,
-    *,
-    stage_name: str,
-    validation: Mapping[str, Any],
-) -> None:
-    manifest_path = stage_dir / "stage_manifest.json"
-    manifest = _read_json(manifest_path) if manifest_path.exists() else {"stage": stage_name}
-    manifest["status"] = "failed"
-    manifest["failure_provenance"] = dict(validation)
-    native._write_json(manifest_path, manifest)
-    native._write_json(stage_dir / "failure_provenance.json", dict(validation))
-
-
-def _write_skipped_stage_manifests(
-    root: Path,
-    *,
-    native: Any,
-    stages: list[str],
-    reason: str,
-) -> None:
-    for stage in stages:
-        stage_dir = Path(root) / stage
-        manifest_path = stage_dir / "stage_manifest.json"
-        if manifest_path.exists():
-            continue
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        native._write_json(
-            manifest_path,
-            {
-                "stage": stage,
-                "status": "skipped",
-                "skip_reason": reason,
-                "failure_provenance": {
-                    "schema": "tomojax.real_lamino_stage_validation.v1",
-                    "stage": stage,
-                    "passed": False,
-                    "failures": [reason],
-                },
-            },
-        )
 
 
 def _safe_params_summary(native: Any, params5: np.ndarray) -> dict[str, Any] | None:

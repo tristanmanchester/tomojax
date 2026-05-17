@@ -61,6 +61,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move article alignment scenario computation into `tomojax.bench`.
 - [x] Move real-laminography final-candidate planning into `tomojax.bench`.
+- [x] Move real-laminography fail-closed stage provenance writing into
+      `tomojax.bench`.
 
 Next candidates:
 

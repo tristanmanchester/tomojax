@@ -344,6 +344,49 @@ def validate_real_lamino_stage_output(
     }
 
 
+def mark_real_lamino_stage_failed(
+    stage_dir: Path,
+    *,
+    stage_name: str,
+    validation: Mapping[str, Any],
+) -> None:
+    """Persist fail-closed stage provenance for a staged real-laminography run."""
+    manifest_path = stage_dir / "stage_manifest.json"
+    manifest = _read_json(manifest_path) if manifest_path.exists() else {"stage": stage_name}
+    manifest["status"] = "failed"
+    manifest["failure_provenance"] = dict(validation)
+    _write_json(manifest_path, manifest)
+    _write_json(stage_dir / "failure_provenance.json", dict(validation))
+
+
+def write_real_lamino_skipped_stage_manifests(
+    root: Path,
+    *,
+    stages: list[str],
+    reason: str,
+) -> None:
+    """Write skipped-stage manifests without overwriting existing stage evidence."""
+    for stage in stages:
+        stage_dir = Path(root) / stage
+        manifest_path = stage_dir / "stage_manifest.json"
+        if manifest_path.exists():
+            continue
+        _write_json(
+            manifest_path,
+            {
+                "stage": stage,
+                "status": "skipped",
+                "skip_reason": reason,
+                "failure_provenance": {
+                    "schema": "tomojax.real_lamino_stage_validation.v1",
+                    "stage": stage,
+                    "passed": False,
+                    "failures": [reason],
+                },
+            },
+        )
+
+
 def build_real_lamino_report(
     run_dir: Path,
     *,
@@ -1069,6 +1112,7 @@ __all__ = [
     "REAL_LAMINO_PUBLICATION_IMAGES",
     "REAL_LAMINO_REPORT_STAGED_PATH",
     "build_real_lamino_report",
+    "mark_real_lamino_stage_failed",
     "real_lamino_artifact_validation_failures",
     "real_lamino_checkpoint_validation_failures",
     "real_lamino_finite_fraction",
@@ -1078,4 +1122,5 @@ __all__ = [
     "validate_real_lamino_stage_output",
     "write_real_lamino_geometry_trace",
     "write_real_lamino_residual_trace",
+    "write_real_lamino_skipped_stage_manifests",
 ]

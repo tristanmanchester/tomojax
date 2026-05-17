@@ -129,6 +129,7 @@ from tomojax.bench.real_laminography_report import (
     REAL_LAMINO_PUBLICATION_IMAGES,
     REAL_LAMINO_REPORT_STAGED_PATH,
     build_real_lamino_report,
+    mark_real_lamino_stage_failed,
     real_lamino_artifact_validation_failures,
     real_lamino_checkpoint_validation_failures,
     real_lamino_finite_fraction,
@@ -138,6 +139,7 @@ from tomojax.bench.real_laminography_report import (
     validate_real_lamino_stage_output,
     write_real_lamino_geometry_trace,
     write_real_lamino_residual_trace,
+    write_real_lamino_skipped_stage_manifests,
 )
 from tomojax.bench.real_laminography_runtime import (
     RealLaminoGpuMonitor,
@@ -260,6 +262,7 @@ __all__ = [
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
     "map_real_lamino_global_z_to_binned",
+    "mark_real_lamino_stage_failed",
     "naive_visualization_payload",
     "normalize_real_lamino_runtime_args",
     "optimize_reference_setup_geometry_bilevel_for_level",
@@ -325,6 +328,7 @@ __all__ = [
     "write_real_lamino_geometry_trace",
     "write_real_lamino_json",
     "write_real_lamino_residual_trace",
+    "write_real_lamino_skipped_stage_manifests",
     "write_spdhg_benchmark_report",
     "write_synthetic_benchmark_comparison_markdown",
 ]
