@@ -2,13 +2,14 @@
 
 ## Status
 
-TomoJAX v2 now has clean public entrypoints for the current staged
-real-laminography workflow and the two mandatory synthetic tomography gates.
-The package surface is production-shaped enough for review. The two mandatory
-128^3 tomography gates are green; the remaining original synthetic scenarios
-are honestly classified as research/Phase 8+ capability work.
+TomoJAX v2 now has a cleaner public package surface for inspection,
+preprocessing, reconstruction, and detector-centre/COR alignment. The staged
+real-laminography runner and the two mandatory synthetic tomography gates remain
+evidence-reproduction commands. The two mandatory 128^3 tomography gates are
+green; the remaining original synthetic scenarios are honestly classified as
+research/Phase 8+ capability work.
 
-## Clean Commands
+## Evidence Reproduction Commands
 
 Real laminography:
 

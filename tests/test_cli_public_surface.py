@@ -84,6 +84,27 @@ def test_current_docs_keep_diagnostics_under_dev_namespace() -> None:
     assert {path: matches for path, matches in leaks.items() if matches} == {}
 
 
+def test_product_docs_do_not_promote_evidence_runners_as_public_entrypoints() -> None:
+    product_docs = [
+        Path("docs/quickstart.md"),
+        Path("docs/real-laminography.md"),
+        Path("docs/synthetic-tomography.md"),
+        Path("docs/support-matrix.md"),
+        Path("docs/benchmark_runs/2026-05-13-production-readiness.md"),
+    ]
+    leaky_phrases = re.compile(
+        r"production-shaped synthetic entrypoint|supported real-data entrypoint|"
+        r"clean public entrypoints|public entrypoint|current evidence runs",
+        re.IGNORECASE,
+    )
+    leaks = {
+        str(path): leaky_phrases.findall(path.read_text(encoding="utf-8"))
+        for path in product_docs
+    }
+
+    assert {path: matches for path, matches in leaks.items() if matches} == {}
+
+
 def test_public_cli_docs_avoid_development_era_terms() -> None:
     public_cli_paths = [
         Path("README.md"),

@@ -76,6 +76,7 @@ Completed checkpoints in this pass:
 - [x] Move real-laminography pose-parameter summary into `tomojax.bench`.
 - [x] Move real-laminography global/local z mapping helpers into
       `tomojax.bench`.
+- [x] Reclassify real/synthetic evidence runners in public-facing docs.
 
 Next candidates:
 

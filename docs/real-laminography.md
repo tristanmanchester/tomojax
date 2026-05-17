@@ -1,18 +1,18 @@
 # Real Laminography Workflow
 
-The supported real-data entrypoint is the staged laminography runner:
+The package-facing real-data path starts with inspection and uses the public
+alignment command for detector-centre/COR correction:
 
 ```bash
-uv run python scripts/real_laminography/run_real_lamino_staged.py \
-  --input /path/to/scan.nxs \
-  --out runs/real_lamino_staged_run \
-  --profile staged-lamino \
-  --overwrite
+uv run tomojax inspect /path/to/scan.nxs
+uv run tomojax align /path/to/scan.nxs \
+  --mode cor \
+  --out aligned.nxs
 ```
 
-Use `--profile diagnostic-fast` for bounded local checks. Use
-`--profile reference-regression` only when comparing a run against the retained
-reference-regression evidence.
+The retained staged laminography runner is an evidence-reproduction path for
+the current k11 report. It is useful for development and publication evidence,
+but it is not the normal user entrypoint.
 
 ## Stages
 
@@ -38,7 +38,8 @@ New runs write:
 - `real_lamino_report/real_lamino_geometry_trace.json`
 - `real_lamino_report/publication/*.png`
 
-The current k11 evidence is summarized in the production-readiness report:
+The current k11 evidence runner and its staged artifacts are summarized in the
+production-readiness report:
 [`docs/benchmark_runs/2026-05-13-production-readiness.md`](benchmark_runs/2026-05-13-production-readiness.md).
 Some retained historical artifacts predate the final script/report renames.
 New runs use the names listed above.

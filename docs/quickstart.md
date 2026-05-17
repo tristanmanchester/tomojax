@@ -1,7 +1,8 @@
 # TomoJAX v2 Quickstart
 
-This branch is the v2 staged tomography and laminography workflow. Use the
-commands below as the clean public entrypoints for current evidence runs. The
+TomoJAX v2 is a tomography and laminography reconstruction package with one
+public CLI: `tomojax`. The normal path is to inspect data, preprocess it when
+needed, reconstruct, and optionally run alignment through the package CLI. The
 current support matrix is in [`support-matrix.md`](support-matrix.md).
 
 ## GPU Setup
@@ -22,10 +23,13 @@ export JAX_PLATFORMS=cuda,cpu
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 ```
 
-Verify the selected backend:
+Verify the selected backend from Python:
 
 ```bash
-uv run tomojax dev test-gpu
+uv run python - <<'PY'
+import jax
+print(jax.default_backend())
+PY
 ```
 
 ## Real Laminography
@@ -36,10 +40,6 @@ uv run tomojax align /path/to/scan.nxs \
   --out runs/real_lamino_aligned.nxs \
   --mode cor
 ```
-
-The dedicated staged laminography evidence runner still exists for the current
-k11 report. The package-facing path should route through `tomojax inspect`,
-`tomojax preprocess`, `tomojax recon`, and `tomojax align`.
 
 For TIFF projection stacks, ingest into the standard dataset contract first:
 
@@ -53,34 +53,18 @@ uv run tomojax ingest ./projections \
 
 ## Synthetic Tomography
 
-The commands below are developer diagnostics for the original synthetic plan,
-not normal user workflows. They are useful for reproducing the current evidence
-and checking whether a change has damaged the geometry solver.
-
-Setup-global gate:
-
 ```bash
-uv run tomojax dev align-auto \
-  --out-dir .artifacts/synthetic/setup_global_128 \
-  --synthetic-case setup-global \
-  --size 128 \
-  --views 16
+uv run tomojax simulate \
+  --out synthetic_scan.nxs \
+  --nx 128 --ny 128 --nz 128 \
+  --nu 128 --nv 128 \
+  --n-views 128 \
+  --phantom random_shapes
+
+uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
 ```
 
-Pose-random gate:
-
-```bash
-uv run tomojax dev align-auto \
-  --out-dir .artifacts/synthetic/pose_random_128 \
-  --synthetic-case pose-random \
-  --size 128 \
-  --views 16
-```
-
-Both commands write `benchmark_result.json`, `benchmark_report.md`, recovered
-geometry, verification summaries, and reconstruction artifacts under the output
-directory.
-
-See the current production-readiness report for what passes, what fails, and
-which run artifacts back those claims:
+Developer evidence commands for the original synthetic alignment gates are kept
+out of the normal quickstart. See the current production-readiness report for
+what passes, what fails, and which run artifacts back those claims:
 [`docs/benchmark_runs/2026-05-13-production-readiness.md`](benchmark_runs/2026-05-13-production-readiness.md).

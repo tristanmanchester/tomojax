@@ -1,10 +1,20 @@
 # Synthetic Tomography Workflows
 
-The production-shaped synthetic entrypoint is:
+The package-facing synthetic path is:
 
 ```bash
-uv run tomojax dev align-auto --synthetic-case <case> --size 128 --out-dir <run-dir>
+uv run tomojax simulate \
+  --out synthetic_scan.nxs \
+  --nx 128 --ny 128 --nz 128 \
+  --nu 128 --nv 128 \
+  --n-views 128 \
+  --phantom random_shapes
+uv run tomojax recon synthetic_scan.nxs --out synthetic_recon.nxs
 ```
+
+The original `128^3` setup and pose gates are developer evidence runs, not the
+normal user workflow. They remain useful for reproducing solver evidence and
+checking regressions.
 
 ## Setup-Global
 
@@ -16,8 +26,8 @@ uv run tomojax dev align-auto \
   --views 16
 ```
 
-This case exercises detector center, detector roll, axis direction, and theta
-offset recovery for `synth128_setup_global_tomo`.
+This developer evidence case exercises detector center, detector roll, axis
+direction, and theta offset recovery for `synth128_setup_global_tomo`.
 
 ## Pose-Random
 
@@ -29,7 +39,7 @@ uv run tomojax dev align-auto \
   --views 16
 ```
 
-This case exercises per-view dx/dz/phi/alpha/beta recovery for
+This developer evidence case exercises per-view dx/dz/phi/alpha/beta recovery for
 `synth128_pose_random_extreme`.
 
 ## Artifacts

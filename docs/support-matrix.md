@@ -8,7 +8,7 @@ projections alone.
 
 ## Production-Facing Workflows
 
-| Workflow | Status | Public entrypoint | Evidence |
+| Workflow | Status | User command / evidence command | Evidence |
 |---|---|---|---|
 | Dataset inspection | `production_pass` | `tomojax inspect scan.nxs` | CLI contract tests and public IO dataset tests |
 | Dataset validation | `production_pass` | `tomojax validate scan.nxs` | CLI validation tests and schema-negative tests |
@@ -16,8 +16,8 @@ projections alone.
 | NX/HDF5 preprocessing | `production_pass` | `tomojax preprocess raw.nxs corrected.nxs` | Mixed-frame NXtomo/image_key preprocessing tests |
 | TIFF flat/dark preprocessing | `production_pass` | `tomojax preprocess ./projections corrected.nxs --format tiff-stack --flats ./flats --darks ./darks --angles angles.csv` | Public IO and CLI tests cover TIFF projections/flats/darks plus angle sidecars |
 | Reconstruction from corrected projections | `production_pass` | `tomojax recon corrected.nxs --out recon.nxs` | Reconstruction, IO, manifest, and quicklook tests |
-| Detector-centre real-data alignment profile | `production_pass` for the retained k11 laminography evidence case | `tomojax align corrected.nxs --mode cor --out aligned.nxs` plus the staged real-laminography evidence runner | Real-laminography reports under `docs/benchmark_runs/` and retained run artifacts |
-| Real laminography staged workflow | `production_pass` for the retained k11 scan, not yet a broad corpus claim | `scripts/real_laminography/run_real_lamino_staged.py` | Current staged real-data reports and PNG/contact-sheet artifacts |
+| Detector-centre real-data alignment profile | `production_pass` for the retained k11 laminography evidence case | User command: `tomojax align corrected.nxs --mode cor --out aligned.nxs`; evidence command: staged real-laminography runner | Real-laminography reports under `docs/benchmark_runs/` and retained run artifacts |
+| Real laminography staged workflow | `production_pass` for the retained k11 scan, not yet a broad corpus claim | Evidence command only: `scripts/real_laminography/run_real_lamino_staged.py` | Current staged real-data reports and PNG/contact-sheet artifacts |
 
 ## Developer Diagnostics
 

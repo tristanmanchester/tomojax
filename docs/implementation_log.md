@@ -3,6 +3,47 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Public docs reclassify evidence runners
+
+### Scope
+
+Continued production-surface cleanup by separating normal package CLI workflows
+from evidence-reproduction and developer diagnostic commands in public-facing
+docs.
+
+Changes:
+
+- Updated `docs/quickstart.md` to lead with `tomojax` product commands and move
+  synthetic gate reproduction out of the normal quickstart.
+- Updated `docs/real-laminography.md` to present `tomojax inspect` and
+  `tomojax align --mode cor` as the package-facing path, with the staged runner
+  described as evidence reproduction.
+- Updated `docs/synthetic-tomography.md` so normal synthetic use starts with
+  `tomojax simulate` and `tomojax recon`, while original 128^3 gates are
+  explicitly developer evidence.
+- Updated `docs/support-matrix.md` and the production-readiness report so
+  script paths and `tomojax dev` commands are evidence commands, not public
+  product entrypoints.
+- Added a public-surface regression test that rejects old phrases such as
+  `production-shaped synthetic entrypoint`, `supported real-data entrypoint`,
+  and `clean public entrypoints` in product-facing docs.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  tests/test_cli_public_surface.py` passed.
+- `uv run python -m py_compile tests/test_cli_public_surface.py` passed.
+- `uv run pytest tests/test_cli_public_surface.py -q` passed: 9 tests in 0.48
+  seconds.
+- `uv run tomojax simulate --help` passed and was used to correct the documented
+  synthetic command shape.
+- `rg -n 'production-shaped synthetic entrypoint|supported real-data
+  entrypoint|clean public entrypoints|public entrypoint|current evidence runs'
+  docs/quickstart.md docs/real-laminography.md docs/synthetic-tomography.md
+  docs/support-matrix.md docs/benchmark_runs/2026-05-13-production-readiness.md`
+  returned no matches.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Real-laminography z-coordinate helpers moved behind bench facade
 
 ### Scope
