@@ -15970,3 +15970,12 @@ Validation:
   benchmark owner module.
 - Removed the alignment README's now-obsolete diagnostics ownership note and
   updated the architecture cleanup audit.
+
+Validation:
+
+- `just production-surface-check` passed with formatting checks, CLI
+  typecheck, import-linter, private-import guard, and 80 focused tests.
+- `just check` passed formatting, Ruff lint, Basedpyright, import-linter, and
+  private-import guard. The final full local pytest phase was stopped after
+  about 12 minutes because it was still near the start of the 1,276-test
+  non-slow suite on this machine; use the laptop for that full-suite pass.
