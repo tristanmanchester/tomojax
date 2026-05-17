@@ -16138,6 +16138,9 @@ Validation:
 - Updated benchmark scenario catalog validation and article visual orchestration
   to import schedule/DOF registry helpers through the alignment facade rather
   than directly from nested `tomojax.align.model` modules.
+- Updated benchmark alignment objective and loss-experiment helpers to import
+  `se3_from_5d` through `tomojax.align.api` rather than directly from
+  `tomojax.align.geometry`.
 - Updated the alignment README and public facade test so the broader typed
   alignment helper surface is documented and executable.
 
@@ -16149,3 +16152,5 @@ Validation:
   passed.
 - `python tools/check_public_imports.py src/tomojax/bench/alignment_scenarios.py scripts/generate_alignment_before_after_128.py tests/test_alignment_scenario_catalog.py tests/test_public_facades.py`
   passed.
+- `uv run pytest tests/test_bench_alignment_objective.py tests/test_bench_loss_experiment.py -q`
+  passed with 12 tests.

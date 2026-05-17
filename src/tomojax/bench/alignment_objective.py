@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.align.api import se3_from_5d
 from tomojax.align.objectives.fixed_volume import project_and_score_stack
 from tomojax.align.objectives.loss_adapters import build_loss_adapter
 from tomojax.align.objectives.loss_specs import L2LossSpec

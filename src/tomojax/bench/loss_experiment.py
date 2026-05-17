@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.align.api import se3_from_5d
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
