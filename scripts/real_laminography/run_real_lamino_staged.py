@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-import csv
 from datetime import datetime
 import importlib.util
 import json
@@ -42,6 +41,7 @@ from tomojax.bench.real_laminography_profiles import (
     apply_real_lamino_profile_contract_args,
     normalize_real_lamino_runtime_args,
     real_lamino_reference_regression_contract_payload,
+    reference_regression_level_outer_counts,
 )
 from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
@@ -62,6 +62,7 @@ _apply_profile_contract_args = apply_real_lamino_profile_contract_args
 _apply_real_lamino_profile_args = apply_real_lamino_profile_args
 _normalize_runtime_args = normalize_real_lamino_runtime_args
 _reference_regression_contract_payload = real_lamino_reference_regression_contract_payload
+_reference_regression_level_outer_counts = reference_regression_level_outer_counts
 _map_global_z_to_binned = map_real_lamino_global_z_to_binned
 _prepare_binned_fixture = prepare_real_lamino_binned_fixture
 
@@ -925,30 +926,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     return args
 
 
-def _reference_regression_level_outer_counts(
-    args: argparse.Namespace,
-    *,
-    stage_name: str,
-) -> dict[int, int] | None:
-    """Return reference-run per-level setup row counts for strict replay."""
-    if str(getattr(args, "profile", "")) != "reference-regression":
-        return None
-    reference_report = getattr(args, "reference_report", None)
-    if not reference_report:
-        return None
-    reference_root = Path(reference_report).resolve().parents[1]
-    summary_path = reference_root / stage_name / "stage_summary.csv"
-    rows = _read_stage_summary(summary_path)
-    counts: dict[int, int] = {}
-    for row in rows:
-        try:
-            level = int(row.get("level_factor", ""))
-        except (TypeError, ValueError):
-            continue
-        counts[level] = counts.get(level, 0) + 1
-    return counts or None
-
-
 def _load_native_runner() -> Any:
     path = Path(__file__).with_name("run_real_lamino_reference_regression.py")
     spec = importlib.util.spec_from_file_location("run_real_lamino_reference_regression", path)
@@ -999,13 +976,6 @@ def _loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
         "last": last,
         "iters": int(info.get("effective_iters", len(losses))),
     }
-
-
-def _read_stage_summary(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with path.open("r", newline="", encoding="utf-8") as handle:
-        return [dict(row) for row in csv.DictReader(handle)]
 
 
 def _read_json(path: Path) -> dict[str, Any]:

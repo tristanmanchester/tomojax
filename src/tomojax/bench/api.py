@@ -91,6 +91,7 @@ from tomojax.bench.real_laminography_profiles import (
     apply_real_lamino_profile_contract_args,
     normalize_real_lamino_runtime_args,
     real_lamino_reference_regression_contract_payload,
+    reference_regression_level_outer_counts,
 )
 from tomojax.bench.real_laminography_report import (
     FULL_REQUIRED_STAGES,
@@ -229,6 +230,7 @@ __all__ = [
     "real_lamino_reference_regression_contract_payload",
     "real_lamino_stat_validation_failures",
     "real_lamino_success_payload",
+    "reference_regression_level_outer_counts",
     "relative_l2",
     "render_tem_grid_pose_artifacts",
     "resolve_fixture_bin_factor",

@@ -155,6 +155,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.largest_centered_square_inside_rotated_frame)
     assert callable(bench_api.resolve_fixture_bin_factor)
     assert callable(bench_api.prepare_real_lamino_binned_fixture)
+    assert callable(bench_api.reference_regression_level_outer_counts)
     assert callable(bench_api.pose_polish_bounds)
     assert callable(bench_api.load_synthetic_benchmark_result)
     assert callable(bench_api.spdhg_experiment_markdown)

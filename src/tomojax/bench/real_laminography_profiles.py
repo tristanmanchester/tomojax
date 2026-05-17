@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+from pathlib import Path
 from typing import Any
 
 from tomojax.bench.real_laminography_planning import (
@@ -234,6 +236,36 @@ def real_lamino_reference_regression_contract_payload(args: argparse.Namespace) 
     }
 
 
+def reference_regression_level_outer_counts(
+    args: argparse.Namespace,
+    *,
+    stage_name: str,
+) -> dict[int, int] | None:
+    """Return reference-run per-level setup row counts for strict replay."""
+    if str(getattr(args, "profile", "")) != "reference-regression":
+        return None
+    reference_report = getattr(args, "reference_report", None)
+    if not reference_report:
+        return None
+    reference_root = Path(reference_report).resolve().parents[1]
+    summary_path = reference_root / stage_name / "stage_summary.csv"
+    counts: dict[int, int] = {}
+    for row in _read_reference_stage_summary(summary_path):
+        try:
+            level = int(row.get("level_factor", ""))
+        except (TypeError, ValueError):
+            continue
+        counts[level] = counts.get(level, 0) + 1
+    return counts or None
+
+
+def _read_reference_stage_summary(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
+
+
 __all__ = [
     "REAL_LAMINO_PROFILE_CHOICES",
     "REAL_LAMINO_STAGED_PATH",
@@ -244,4 +276,5 @@ __all__ = [
     "apply_real_lamino_profile_contract_args",
     "normalize_real_lamino_runtime_args",
     "real_lamino_reference_regression_contract_payload",
+    "reference_regression_level_outer_counts",
 ]

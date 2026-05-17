@@ -44,6 +44,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move staged real-laminography binned fixture preparation into
       `tomojax.bench`.
+- [x] Move staged real-laminography reference-regression replay counts into
+      `tomojax.bench`.
 
 Next candidates:
 

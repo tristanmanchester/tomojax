@@ -16695,3 +16695,24 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography reference replay counts moved behind bench facade
+
+- Extended `tomojax.bench.real_laminography_profiles` so it owns the
+  reference-regression per-level outer-count replay helper used to match
+  reference stage summaries.
+- Exported `reference_regression_level_outer_counts` through the bench facade.
+- Thinned `scripts/real_laminography/run_real_lamino_staged.py` by deleting its
+  script-local reference-summary CSV reader/counting helper and retaining a
+  private compatibility alias for the runner-contract tests.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_reference_regression_level_outer_counts_replay_reference_stage_summary tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 2 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_profiles.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_profiles.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
