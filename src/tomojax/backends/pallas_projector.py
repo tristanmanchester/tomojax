@@ -1,0 +1,40 @@
+"""Optional Pallas projector backend capability lookup."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+import importlib
+from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class PallasModuleCapability:
+    """Result of resolving the optional experimental Pallas projector module."""
+
+    module: Any | None
+    unavailable_reason: str | None
+
+
+def resolve_pallas_module() -> PallasModuleCapability:
+    """Resolve the optional Pallas projector module without import-time failure."""
+    try:
+        module = importlib.import_module("tomojax.core.pallas_projector")
+    except Exception as exc:
+        return PallasModuleCapability(None, f"pallas_module_unavailable: {exc}")
+    return PallasModuleCapability(module, None)
+
+
+def resolve_pallas_callable(
+    name: str,
+    *,
+    missing_reason: str | None = None,
+) -> tuple[Callable[..., Any] | None, str | None]:
+    """Resolve a callable from the optional Pallas projector module."""
+    capability = resolve_pallas_module()
+    if capability.module is None:
+        return None, capability.unavailable_reason
+    fn = getattr(capability.module, name, None)
+    if fn is None:
+        return None, missing_reason or f"{name}_missing"
+    return fn, None

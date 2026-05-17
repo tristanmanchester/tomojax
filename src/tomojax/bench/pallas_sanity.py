@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core.pallas_projector import forward_project_views_T_pallas
+from tomojax.backends import resolve_pallas_callable
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.geometry import Detector, Grid, ParallelGeometry, stack_view_poses
 
@@ -55,9 +55,15 @@ def main() -> None:
     volume = _make_volume(args.size)
     scaled_volume = volume * jnp.float32(1.01)
     shifted_poses = poses.at[:, 0, 3].add(jnp.float32(0.5))
+    pallas_fn, fallback_reason = resolve_pallas_callable(
+        "forward_project_views_T_pallas",
+        missing_reason="pallas_batched_callable_missing",
+    )
+    if pallas_fn is None:
+        raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
 
     def pallas_project(v: jnp.ndarray, p: jnp.ndarray = poses) -> jnp.ndarray:
-        return forward_project_views_T_pallas(
+        return pallas_fn(
             p,
             grid,
             detector,

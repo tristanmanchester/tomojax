@@ -48,7 +48,7 @@ class FBPConfig:
     gather_dtype: str = "fp32"
 
 
-def _default_fbp_scale(n_views: int) -> float:
+def default_fbp_scale(n_views: int) -> float:
     """Return the default angular weighting for the current parallel-ray FBP.
 
     TomoJAX's built-in CT and laminography geometries both use parallel rays,
@@ -394,7 +394,7 @@ def _cached_parallel_fbp_z_integer_pallas_call(
     )
 
 
-def _supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
+def supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     tol = 1e-5
     origin_z = float(_grid_volume_origin(grid)[2])
     first = (origin_z - float(detector.det_center[1])) / float(detector.dv)
@@ -403,7 +403,7 @@ def _supports_parallel_fbp_z_integer(grid: Grid, detector: Detector) -> bool:
     return abs(first - round(first)) <= tol and abs(step - round(step)) <= tol
 
 
-def _run_parallel_fbp_direct_pallas(
+def run_parallel_fbp_direct_pallas(
     T_all: jnp.ndarray,
     proj: jnp.ndarray,
     *,
@@ -689,4 +689,4 @@ def fbp(
     else:
         acc = run_generic_path()
 
-    return acc * _default_fbp_scale(n_views) if cfg.scale is None else acc * float(cfg.scale)
+    return acc * default_fbp_scale(n_views) if cfg.scale is None else acc * float(cfg.scale)

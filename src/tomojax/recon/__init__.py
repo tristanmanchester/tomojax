@@ -56,6 +56,9 @@ fista_tv = _make_callable_module(_fista_tv_module)
 spdhg_tv = _make_callable_module(_spdhg_tv_module)
 
 FBPConfig = _fbp_module.FBPConfig
+default_fbp_scale = _fbp_module.default_fbp_scale
+run_parallel_fbp_direct_pallas = _fbp_module.run_parallel_fbp_direct_pallas
+supports_parallel_fbp_z_integer = _fbp_module.supports_parallel_fbp_z_integer
 FistaConfig = _fista_tv_module.FistaConfig
 SPDHGConfig = _spdhg_tv_module.SPDHGConfig
 
@@ -79,6 +82,7 @@ __all__ = [
     "build_det_u_gauge_mode",
     "build_scout_support",
     "centered_volume_support",
+    "default_fbp_scale",
     "fbp",
     "fista_reconstruct_reference",
     "fista_tv",
@@ -88,8 +92,10 @@ __all__ = [
     "reference_fista_diagnostic_artifacts",
     "reference_fista_returned_quality",
     "reference_fista_schedule",
+    "run_parallel_fbp_direct_pallas",
     "spdhg_tv",
     "sum_backproject_views_chunked",
+    "supports_parallel_fbp_z_integer",
     "write_fista_trace_csv",
     "write_fista_trace_recomputed_csv",
 ]

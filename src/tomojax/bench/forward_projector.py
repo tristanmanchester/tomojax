@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-import importlib
 import json
 from pathlib import Path
 import statistics
@@ -12,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends import resolve_pallas_callable, resolve_pallas_module
 from tomojax.core.projector import (
     _resolve_n_steps,
     forward_project_view_T,
@@ -484,29 +484,12 @@ def _sinogram_fixture_metadata(
     }
 
 
-def _resolve_pallas_module() -> tuple[Any | None, str | None]:
-    try:
-        module = importlib.import_module("tomojax.core.pallas_projector")
-    except Exception as exc:
-        return None, f"pallas_module_unavailable: {exc}"
-    return module, None
-
-
-def _resolve_pallas_callable() -> tuple[Callable[..., jnp.ndarray] | None, str | None]:
-    module, fallback_reason = _resolve_pallas_module()
-    if module is None:
-        return None, fallback_reason
-    fn = getattr(module, "forward_project_view_T_pallas", None)
-    if fn is None:
-        return None, "pallas_callable_missing"
-    return fn, None
-
-
 def _pallas_unsupported_reason(
     fixture: ForwardProjectorFixture | ForwardSinogramFixture,
     config: ForwardProjectorBenchmarkConfig | ForwardSinogramBenchmarkConfig,
 ) -> str | None:
-    module, fallback_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    module, fallback_reason = capability.module, capability.unavailable_reason
     if module is None:
         return fallback_reason
     support_fn = getattr(module, "pallas_projector_unsupported_reason", None)
@@ -537,7 +520,8 @@ def _pallas_sinogram_unsupported_reason(
     fixture: ForwardSinogramFixture,
     config: ForwardSinogramBenchmarkConfig,
 ) -> str | None:
-    module, fallback_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    module, fallback_reason = capability.module, capability.unavailable_reason
     if module is None:
         return fallback_reason
     support_fn = getattr(module, "pallas_projector_sinogram_unsupported_reason", None)
@@ -583,7 +567,8 @@ def _pallas_actual_variant_metadata(
 ) -> dict[str, Any] | None:
     if actual_backend_or_mode not in {"pallas", "pallas_loop", "pallas_batched"}:
         return None
-    module, fallback_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    module, fallback_reason = capability.module, capability.unavailable_reason
     if module is None:
         return {"metadata_error": fallback_reason}
     metadata_fn = (
@@ -710,14 +695,18 @@ def _make_backend_callable(
     if requested_backend == "jax":
         return lambda: _call_jax(fixture, config), "jax", None, {}
 
-    pallas_fn, fallback_reason = _resolve_pallas_callable()
+    pallas_fn, fallback_reason = resolve_pallas_callable(
+        "forward_project_view_T_pallas",
+        missing_reason="pallas_callable_missing",
+    )
     if pallas_fn is None:
         return lambda: _call_jax(fixture, config), "jax", fallback_reason, {}
     unsupported_reason = _pallas_unsupported_reason(fixture, config)
     if unsupported_reason:
         return lambda: _call_jax(fixture, config), "jax", unsupported_reason, {}
 
-    pallas_module, module_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    pallas_module, module_reason = capability.module, capability.unavailable_reason
     if pallas_module is None:
         return lambda: _call_jax(fixture, config), "jax", module_reason, {}
 
@@ -836,8 +825,12 @@ def _make_sinogram_callable(
         return _make_jax_sinogram_vmap_callable(fixture, config), "pallas_dispatch", None
     dispatch_config = _sinogram_dispatch_effective_config(config, requested_mode)
 
-    pallas_fn, fallback_reason = _resolve_pallas_callable()
-    pallas_module, module_reason = _resolve_pallas_module()
+    pallas_fn, fallback_reason = resolve_pallas_callable(
+        "forward_project_view_T_pallas",
+        missing_reason="pallas_callable_missing",
+    )
+    capability = resolve_pallas_module()
+    pallas_module, module_reason = capability.module, capability.unavailable_reason
     if requested_mode in {"pallas_batched", "pallas_dispatch"}:
         pallas_fn = (
             getattr(pallas_module, "forward_project_views_T_pallas", None)

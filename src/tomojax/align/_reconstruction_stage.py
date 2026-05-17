@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.backends import estimate_views_per_batch_info
+from tomojax.backends import estimate_views_per_batch_info, resolve_pallas_callable
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import get_detector_grid_device
@@ -98,22 +98,23 @@ def _resolve_reconstruction_projector_backend(
         if str(fallback_policy) == "strict":
             raise RuntimeError(reason)
         return "jax", reason
-    try:
-        from tomojax.core.pallas_projector import (
-            pallas_projector_sinogram_unsupported_reason,
-        )
-
-        reason = pallas_projector_sinogram_unsupported_reason(
-            T_all,
-            grid,
-            detector,
-            volume,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            state_mode="cached",
-        )
-    except Exception as exc:
-        reason = f"{type(exc).__name__}: {exc}"
+    support_fn, reason = resolve_pallas_callable(
+        "pallas_projector_sinogram_unsupported_reason",
+        missing_reason="pallas_sinogram_support_check_missing",
+    )
+    if support_fn is not None:
+        try:
+            reason = support_fn(
+                T_all,
+                grid,
+                detector,
+                volume,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                state_mode="cached",
+            )
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
     if reason:
         if str(fallback_policy) == "strict":
             raise RuntimeError(reason)

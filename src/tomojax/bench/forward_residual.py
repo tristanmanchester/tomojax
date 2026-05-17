@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-import importlib
 import json
 from pathlib import Path
 import statistics
@@ -12,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends import resolve_pallas_module
 from tomojax.bench.forward_projector import (
     ForwardSinogramBenchmarkConfig,
     ForwardSinogramFixture,
@@ -174,14 +174,6 @@ def make_forward_residual_fixture(
     return ForwardResidualFixture(sinogram_fixture=sinogram_fixture, target=target)
 
 
-def _resolve_pallas_module() -> tuple[Any | None, str | None]:
-    try:
-        module = importlib.import_module("tomojax.core.pallas_projector")
-    except Exception as exc:
-        return None, f"pallas_module_unavailable: {exc}"
-    return module, None
-
-
 def _pallas_actual_variant_metadata(
     fixture: ForwardResidualFixture,
     config: ForwardResidualBenchmarkConfig,
@@ -189,7 +181,8 @@ def _pallas_actual_variant_metadata(
 ) -> dict[str, Any] | None:
     if actual_mode not in {"pallas_materialized", "pallas_fused"}:
         return None
-    module, fallback_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    module, fallback_reason = capability.module, capability.unavailable_reason
     if module is None:
         return {"metadata_error": fallback_reason}
     metadata_fn = getattr(module, "pallas_projector_actual_sinogram_variant_metadata", None)
@@ -231,7 +224,8 @@ def _pallas_residual_unsupported_reason(
     fixture: ForwardResidualFixture,
     config: ForwardResidualBenchmarkConfig,
 ) -> str | None:
-    module, fallback_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    module, fallback_reason = capability.module, capability.unavailable_reason
     if module is None:
         return fallback_reason
     support_fn = getattr(module, "pallas_projector_sinogram_unsupported_reason", None)
@@ -283,7 +277,8 @@ def _make_residual_callable(
             None,
         )
 
-    module, fallback_reason = _resolve_pallas_module()
+    capability = resolve_pallas_module()
+    module, fallback_reason = capability.module, capability.unavailable_reason
     if module is None:
         return (
             lambda: jnp.sum((jax_project() - target) ** 2, dtype=jnp.float32),

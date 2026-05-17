@@ -17,29 +17,21 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.backends import resolve_pallas_callable
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
 from tomojax.datasets import SimConfig, make_phantom
 from tomojax.geometry import Detector, Grid, ParallelGeometry, stack_view_poses
 from tomojax.recon.fbp import (
-    _default_fbp_scale,
-    _run_parallel_fbp_direct_pallas,
-    _supports_parallel_fbp_z_integer,
+    default_fbp_scale,
     fbp,
+    run_parallel_fbp_direct_pallas,
+    supports_parallel_fbp_z_integer,
 )
 
 try:
     import astra
 except Exception:  # pragma: no cover - optional benchmark dependency
     astra = None
-
-try:
-    from tomojax.core.pallas_projector import (
-        forward_project_parallel_z_views_pallas,
-        forward_project_views_T_pallas,
-    )
-except Exception:  # pragma: no cover - optional experimental backend
-    forward_project_parallel_z_views_pallas = None
-    forward_project_views_T_pallas = None
 
 try:
     import pynvml
@@ -349,11 +341,18 @@ def _cached_tomojax_pallas_forward_callable(
     det_grid = get_detector_grid_device(det)
     tile_shape = (64, 4) if max(int(nu), int(nv)) <= 64 else (16, 4)
     num_warps = 8 if tile_shape == (64, 4) else 1
+    specialized_fn, _ = resolve_pallas_callable("forward_project_parallel_z_views_pallas")
+    general_fn, fallback_reason = resolve_pallas_callable(
+        "forward_project_views_T_pallas",
+        missing_reason="pallas_batched_callable_missing",
+    )
+    if general_fn is None:
+        raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
 
     @jax.jit
     def project(vol_in: jnp.ndarray) -> jnp.ndarray:
-        if forward_project_parallel_z_views_pallas is not None:
-            return forward_project_parallel_z_views_pallas(
+        if specialized_fn is not None:
+            return specialized_fn(
                 poses,
                 grid,
                 det,
@@ -363,7 +362,7 @@ def _cached_tomojax_pallas_forward_callable(
                 tile_shape=tile_shape,
                 num_warps=num_warps,
             )
-        return forward_project_views_T_pallas(
+        return general_fn(
             poses,
             grid,
             det,
@@ -387,8 +386,11 @@ def _tomojax_pallas_forward(
     geom: ParallelGeometry,
     views: int,
 ) -> jnp.ndarray:
-    if forward_project_views_T_pallas is None:
-        raise RuntimeError("Pallas projector is not importable in this TomoJAX checkout")
+    pallas_fn, fallback_reason = resolve_pallas_callable("forward_project_views_T_pallas")
+    if pallas_fn is None:
+        raise RuntimeError(
+            fallback_reason or "Pallas projector is not importable in this TomoJAX checkout"
+        )
     vol = jnp.asarray(volume, dtype=jnp.float32)
     project = _cached_tomojax_pallas_forward_callable(
         nx=int(grid.nx),
@@ -413,8 +415,11 @@ def _make_tomojax_pallas_forward_runner(
     geom: ParallelGeometry,
     views: int,
 ):
-    if forward_project_views_T_pallas is None:
-        raise RuntimeError("Pallas projector is not importable in this TomoJAX checkout")
+    pallas_fn, fallback_reason = resolve_pallas_callable("forward_project_views_T_pallas")
+    if pallas_fn is None:
+        raise RuntimeError(
+            fallback_reason or "Pallas projector is not importable in this TomoJAX checkout"
+        )
     project = _cached_tomojax_pallas_forward_callable(
         nx=int(grid.nx),
         ny=int(grid.ny),
@@ -445,13 +450,13 @@ def _tomojax_fbp(
 ) -> jnp.ndarray:
     if _use_specialized_pallas_fbp(grid, det):
         poses = stack_view_poses(geom, int(projections.shape[0]))
-        return _run_parallel_fbp_direct_pallas(
+        return run_parallel_fbp_direct_pallas(
             poses,
             jnp.asarray(projections, dtype=jnp.float32),
             grid=grid,
             detector=det,
             filter_name="ramp",
-        ) * jnp.float32(_default_fbp_scale(int(projections.shape[0])))
+        ) * jnp.float32(default_fbp_scale(int(projections.shape[0])))
     return fbp(
         geom,
         grid,
@@ -464,7 +469,7 @@ def _tomojax_fbp(
 
 
 def _use_specialized_pallas_fbp(grid: Grid, det: Detector) -> bool:
-    return jax.default_backend() == "gpu" and _supports_parallel_fbp_z_integer(grid, det)
+    return jax.default_backend() == "gpu" and supports_parallel_fbp_z_integer(grid, det)
 
 
 def _fbp_path_metadata(grid: Grid, det: Detector) -> dict[str, Any]:

@@ -10,7 +10,7 @@ from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view, get_detector_grid_device
 from tomojax.datasets import SimConfig, make_phantom
-from tomojax.recon.fbp import FBPConfig, _default_fbp_scale, _fft_filter_rows, fbp
+from tomojax.recon.fbp import FBPConfig, _fft_filter_rows, default_fbp_scale, fbp
 from tomojax.recon.filters import get_filter_np
 
 
@@ -386,13 +386,13 @@ def test_pallas_parallel_fbp_helper_matches_generic_on_guard_geometry():
     )
     poses = stack_view_poses(geom, views)
 
-    pallas = fbp_mod._run_parallel_fbp_direct_pallas(
+    pallas = fbp_mod.run_parallel_fbp_direct_pallas(
         poses,
         projs,
         grid=grid,
         detector=det,
         filter_name="ramp",
-    ) * jnp.float32(_default_fbp_scale(views))
+    ) * jnp.float32(default_fbp_scale(views))
     generic = fbp(
         geom,
         grid,
@@ -412,14 +412,14 @@ def test_pallas_parallel_fbp_helper_changes_with_projection_input():
     grid, det, geom, vol, projs = make_case(32, 32, 32, 32, asymmetric=True)
     poses = stack_view_poses(geom, int(projs.shape[0]))
 
-    base = fbp_mod._run_parallel_fbp_direct_pallas(
+    base = fbp_mod.run_parallel_fbp_direct_pallas(
         poses,
         projs,
         grid=grid,
         detector=det,
         filter_name="ramp",
     )
-    changed = fbp_mod._run_parallel_fbp_direct_pallas(
+    changed = fbp_mod.run_parallel_fbp_direct_pallas(
         poses,
         projs.at[:, :, projs.shape[-1] // 2].add(jnp.float32(0.01)),
         grid=grid,

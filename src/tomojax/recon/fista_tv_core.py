@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
+from tomojax.backends import resolve_pallas_callable
 from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
@@ -347,9 +349,13 @@ def _project_chunk(
             )
         )(T_chunk)
     if forward_projector == "pallas":
-        from tomojax.core.pallas_projector import forward_project_views_T_pallas
-
-        return forward_project_views_T_pallas(
+        pallas_project, fallback_reason = resolve_pallas_callable(
+            "forward_project_views_T_pallas",
+            missing_reason="pallas_batched_callable_missing",
+        )
+        if pallas_project is None:
+            raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+        return pallas_project(
             T_chunk,
             grid,
             detector,
@@ -476,9 +482,13 @@ def _projection_loss_and_explicit_grad(
         w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
         valid = valid_mask[:, None, None]
         if forward_projector == "pallas" and backprojector == "pallas":
-            from tomojax.core.pallas_projector import forward_project_loss_and_grad_T_pallas
-
-            loss_batch, grad_batch = forward_project_loss_and_grad_T_pallas(
+            loss_grad_fn, fallback_reason = resolve_pallas_callable(
+                "forward_project_loss_and_grad_T_pallas",
+                missing_reason="pallas_loss_grad_callable_missing",
+            )
+            if loss_grad_fn is None:
+                raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+            loss_batch, grad_batch = loss_grad_fn(
                 T_chunk,
                 grid,
                 detector,
@@ -534,13 +544,17 @@ def _projection_loss_and_explicit_grad(
     return loss, grad
 
 
-def _resolve_sum_backproject_views(backprojector: str) -> object:
+def _resolve_sum_backproject_views(backprojector: str) -> Callable[..., jnp.ndarray]:
     if backprojector == "jax":
         return sum_backproject_views_T
     if backprojector == "pallas":
-        from tomojax.core.pallas_projector import sum_backproject_views_T_pallas
-
-        return sum_backproject_views_T_pallas
+        backproject_fn, fallback_reason = resolve_pallas_callable(
+            "sum_backproject_views_T_pallas",
+            missing_reason="pallas_sum_backproject_callable_missing",
+        )
+        if backproject_fn is None:
+            raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+        return backproject_fn
     raise ValueError("FistaCoreConfig.backprojector must be one of 'jax' or 'pallas'")
 
 

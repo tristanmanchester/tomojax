@@ -18086,6 +18086,44 @@ Validation:
 
 - `python tools/check_public_imports.py` passed.
 - `uv run lint-imports --config .importlinter` passed with all 7 contracts kept.
+
+### Backend capability boundary cleanup
+
+- Promoted optional Pallas projector lookup to the `tomojax.backends` facade as
+  `resolve_pallas_module(...)` and `resolve_pallas_callable(...)`.
+- Removed direct production imports of `tomojax.core.pallas_projector` from
+  alignment and reconstruction internals; those paths now use the backend
+  capability boundary and fail/fall back with explicit reasons.
+- Removed duplicated Pallas module probing from forward-projector and residual
+  benchmark modules.
+- Replaced ASTRA benchmark imports of private FBP helpers with deliberate
+  non-underscore reconstruction helper names:
+  `default_fbp_scale`, `supports_parallel_fbp_z_integer`, and
+  `run_parallel_fbp_direct_pallas`.
+- Routed the Pallas sanity developer probe through the same backend capability
+  boundary so importing the command no longer requires the optional Pallas
+  module to import successfully.
+
+Validation:
+
+- `python tools/check_public_imports.py` passed.
+- `uv run lint-imports --config .importlinter` passed with all 7 contracts kept.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/backends
+  src/tomojax/bench/astra_parallel.py src/tomojax/bench/forward_projector.py
+  src/tomojax/bench/forward_residual.py src/tomojax/bench/pallas_sanity.py
+  src/tomojax/recon/fbp.py src/tomojax/recon/fista_tv_core.py
+  src/tomojax/align/_reconstruction_stage.py
+  src/tomojax/align/objectives/fixed_volume.py tests/test_fbp_batching.py`
+  passed.
+- `uv run pytest -q tests/test_bench_astra_parallel.py
+  tests/test_bench_forward_projector.py tests/test_bench_forward_residual.py
+  tests/test_bench_pallas_sanity.py tests/test_fbp_batching.py
+  tests/test_memory.py` passed with 120 tests and 2 Pallas-lowering skips.
+- `uv run basedpyright src/tomojax/backends/pallas_projector.py` passed with
+  0 errors and 2 existing-style `Any` warnings.
+- Broader `basedpyright src/tomojax/backends` still fails on pre-existing
+  `_memory.py`/`_subprocesses.py` strict typing debt; not introduced by this
+  backend capability boundary change.
 - `uv run pytest -q
   tests/test_real_lamino_runner_contract.py::test_bench_setup_stage_writes_artifacts_and_applies_bounds
   tests/test_bench_developer_facade.py

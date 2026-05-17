@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
+from tomojax.backends import resolve_pallas_callable
 from tomojax.core.backend_policy import (
     BackendProvenance,
     ProjectorBackendInput,
@@ -188,18 +189,21 @@ def project_stack(
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     if backend == "pallas" and not require_differentiable_projector:
+        pallas_project, _fallback_reason = resolve_pallas_callable(
+            "forward_project_views_T_pallas",
+            missing_reason="pallas_batched_callable_missing",
+        )
         try:
-            from tomojax.core.pallas_projector import forward_project_views_T_pallas
-
-            return forward_project_views_T_pallas(
-                pose_stack,
-                grid,
-                detector,
-                volume,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                state_mode="cached",
-            )
+            if pallas_project is not None:
+                return pallas_project(
+                    pose_stack,
+                    grid,
+                    detector,
+                    volume,
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    state_mode="cached",
+                )
         except Exception:
             pass
     b = _chunk_size(n_views, views_per_batch)
@@ -283,19 +287,22 @@ def project_and_score_stack(
     )
     use_plain_l2_fast_path = loss_adapter.name == "l2" and view_mask is None and loss_mask is None
     if backend == "pallas" and use_plain_l2_fast_path and not require_differentiable_projector:
+        pallas_score, _fallback_reason = resolve_pallas_callable(
+            "forward_project_residual_sse_T_pallas",
+            missing_reason="pallas_residual_sse_callable_missing",
+        )
         try:
-            from tomojax.core.pallas_projector import forward_project_residual_sse_T_pallas
-
-            return jnp.float32(0.5) * forward_project_residual_sse_T_pallas(
-                pose_stack,
-                grid,
-                detector,
-                volume,
-                targets,
-                gather_dtype=gather_dtype,
-                det_grid=det_grid,
-                state_mode="cached",
-            )
+            if pallas_score is not None:
+                return jnp.float32(0.5) * pallas_score(
+                    pose_stack,
+                    grid,
+                    detector,
+                    volume,
+                    targets,
+                    gather_dtype=gather_dtype,
+                    det_grid=det_grid,
+                    state_mode="cached",
+                )
         except Exception:
             pass
     if num_chunks == 1:
@@ -383,20 +390,23 @@ def alignment_projector_backend_provenance(
             fallback_reason="alignment objectives require gradient-safe projector semantics",
             differentiability="gradient_safe",
         )
-    try:
-        from tomojax.core.pallas_projector import pallas_projector_sinogram_unsupported_reason
-
-        reason = pallas_projector_sinogram_unsupported_reason(
-            pose_stack,
-            grid,
-            detector,
-            volume,
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-            state_mode="cached",
-        )
-    except Exception as exc:
-        reason = f"{type(exc).__name__}: {exc}"
+    support_fn, reason = resolve_pallas_callable(
+        "pallas_projector_sinogram_unsupported_reason",
+        missing_reason="pallas_sinogram_support_check_missing",
+    )
+    if support_fn is not None:
+        try:
+            reason = support_fn(
+                pose_stack,
+                grid,
+                detector,
+                volume,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                state_mode="cached",
+            )
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
     return backend_provenance(
         requested_backend="pallas",
         actual_backend=("jax" if reason else "pallas"),
