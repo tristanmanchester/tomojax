@@ -10,6 +10,12 @@ import h5py
 import numpy as np
 import pytest
 
+from tomojax.bench.spdhg_benchmark import (
+    SpdhgGeometryBundle,
+    SpdhgReconstructionResults,
+    compute_spdhg_benchmark_metrics,
+    is_expected_spdhg_fallback_failure,
+)
 from tomojax.io import LoadedNXTomo, NXTomoMetadata, load_nxtomo
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +90,51 @@ def test_helpers_compute_metrics_and_write_outputs(tmp_path: Path) -> None:
     assert np.allclose(saved.volume, shifted)
     assert saved.frame == "recon"
     assert np.allclose(saved.projections, np.ones((2, 8, 8), dtype=np.float32))
+
+
+def test_spdhg_benchmark_contracts_live_behind_bench_module() -> None:
+    volume = np.linspace(0.0, 1.0, 8 * 8 * 8, dtype=np.float32).reshape(8, 8, 8)
+    args = _load_module("exp_spdhg_bench_contract_args_test", "scripts/exp_spdhg_bench.py").parse_args(
+        [
+            "--nx",
+            "8",
+            "--ny",
+            "8",
+            "--nz",
+            "8",
+            "--nu",
+            "8",
+            "--nv",
+            "8",
+            "--n-views",
+            "2",
+        ]
+    )
+    dataset = _loaded_dataset(volume)
+    bundle = SpdhgGeometryBundle(
+        data=dataset,
+        projections=dataset.projections,
+        grid=dataset.metadata.grid,
+        detector=dataset.metadata.detector,
+        geometry=None,  # type: ignore[arg-type]
+        ground_truth=volume,
+    )
+    results = SpdhgReconstructionResults(
+        volumes={"fbp": volume * 0.99, "fista": volume * 0.9, "spdhg": volume * 0.8},
+        timing_sec={"fbp": 1.0, "fista": 2.0, "spdhg": 3.0},
+        fista_info={"solver": "fista"},
+        spdhg_info={"solver": "spdhg"},
+    )
+
+    metrics = compute_spdhg_benchmark_metrics(args, bundle, results)
+
+    assert is_expected_spdhg_fallback_failure(MemoryError("oom")) is True
+    assert is_expected_spdhg_fallback_failure(RuntimeError("RESOURCE_EXHAUSTED")) is True
+    assert is_expected_spdhg_fallback_failure(ValueError("bad geometry")) is False
+    assert metrics["dataset"]["n_views"] == 2
+    assert metrics["fbp"]["mse"] > 0.0
+    assert metrics["fista_info"] == {"solver": "fista"}
+    assert metrics["spdhg_info"] == {"solver": "spdhg"}
 
 
 def test_prepare_or_load_dataset_falls_back_only_for_expected_resource_errors(

@@ -16484,3 +16484,24 @@ Validation:
 - `uv run ruff check --select I,F,RUF022 scripts/generate_alignment_before_after_128.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py src/tomojax/bench/article_alignment_manifest.py tests/test_article_alignment_visuals.py tests/test_public_facades.py`
   passed.
 - `python tools/check_public_imports.py` passed.
+
+### SPDHG benchmark helpers moved behind bench facade
+
+- Added `tomojax.bench.spdhg_benchmark` with the reusable SPDHG benchmark
+  dataclasses, metric helpers, artifact writers, report writer, and expected
+  resource-fallback classifier.
+- Exported those helpers through `tomojax.bench`.
+- Thinned `scripts/exp_spdhg_bench.py` by importing the benchmark-owned helper
+  contract while leaving reconstruction orchestration in the script, where
+  existing tests still monkeypatch runtime backends directly.
+- Added a bench-boundary contract test for SPDHG benchmark metrics and fallback
+  classification.
+
+Validation:
+
+- `uv run pytest tests/test_exp_spdhg_bench.py::test_helpers_compute_metrics_and_write_outputs tests/test_exp_spdhg_bench.py::test_spdhg_benchmark_contracts_live_behind_bench_module tests/test_exp_spdhg_bench.py::test_prepare_or_load_dataset_falls_back_only_for_expected_resource_errors tests/test_exp_spdhg_bench.py::test_main_reuses_dataset_and_writes_benchmark_artifacts tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 5 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/exp_spdhg_bench.py src/tomojax/bench/spdhg_benchmark.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_exp_spdhg_bench.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

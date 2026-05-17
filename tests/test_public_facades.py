@@ -125,6 +125,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.AlternatingSmokeConfig.__name__ == "AlternatingSmokeConfig"
     assert bench_api.ArticleScenario.__name__ == "ArticleScenario"
     assert bench_api.SyntheticBenchmarkResult.__name__ == "SyntheticBenchmarkResult"
+    assert bench_api.SpdhgGeometryBundle.__name__ == "SpdhgGeometryBundle"
     assert bench_api.REAL_LAMINO_PROFILE_CHOICES
     assert bench_api.REAL_LAMINO_REPORT_STAGED_PATH
     assert bench_api.REAL_LAMINO_STAGED_PATH
@@ -142,3 +143,5 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.pose_polish_bounds)
     assert callable(bench_api.load_synthetic_benchmark_result)
     assert callable(bench_api.spdhg_experiment_markdown)
+    assert callable(bench_api.compute_spdhg_benchmark_metrics)
+    assert callable(bench_api.write_spdhg_benchmark_report)
