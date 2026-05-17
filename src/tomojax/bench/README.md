@@ -82,18 +82,21 @@ surface is grouped as:
   `real_lamino_safe_params_summary`, `real_lamino_stat_validation_failures`,
   `real_lamino_success_payload`, `real_lamino_xy_at_global_z`,
   `reference_regression_level_outer_counts`, `relative_l2`,
-  `resolve_fixture_bin_factor`, `select_real_lamino_final_candidates`,
-  `select_real_lamino_views`, `setup_det_u_bounds`,
+  `resolve_fixture_bin_factor`, `save_real_lamino_z_stack`,
+  `select_real_lamino_final_candidates`, `select_real_lamino_views`,
+  `setup_det_u_bounds`,
   `update_real_lamino_status`, `validate_bin_factor`,
   `validate_real_lamino_loaded_input`, `validate_real_lamino_stage_output`,
   `view_indices_for_smoke_shape`, `write_real_lamino_geometry_trace`,
   `write_real_lamino_json`, `write_real_lamino_planned_stage_manifests`,
-  `write_real_lamino_residual_trace`, `write_real_lamino_skipped_stage_manifests`
+  `write_real_lamino_residual_trace`, `write_real_lamino_stage_products`,
+  `write_real_lamino_skipped_stage_manifests`
 - image, visualization, and report utilities:
   `alignment_visualization_payload`, `build_spdhg_experiment_report`,
   `center_crop`, `current_baseline_payload`, `grid_aligned_xy`,
   `largest_centered_square_inside_rotated_frame`, `load_volume_array`,
-  `naive_visualization_payload`, `render_tem_grid_pose_artifacts`,
+  `naive_visualization_payload`, `real_lamino_orthos_image`,
+  `render_tem_grid_pose_artifacts`,
   `resize_nearest_2d`, `save_slice_png`, `save_uint8_png`, `save_volume`,
   `scale_uint8`, `spdhg_experiment_markdown`, `window_normalize`,
   `write_current_baseline_artifacts`, `write_spdhg_benchmark_report`

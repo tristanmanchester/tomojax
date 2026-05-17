@@ -95,6 +95,11 @@ from tomojax.bench.forward_projector import (
     suite_cases,
     write_benchmark_json,
 )
+from tomojax.bench.real_laminography_artifacts import (
+    real_lamino_orthos_image,
+    save_real_lamino_z_stack,
+    write_real_lamino_stage_products,
+)
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
     map_real_lamino_global_z_to_binned,
@@ -295,6 +300,7 @@ __all__ = [
     "real_lamino_local_z_to_global_index",
     "real_lamino_loss_summary",
     "real_lamino_method_constraints",
+    "real_lamino_orthos_image",
     "real_lamino_phys_z_to_local_index",
     "real_lamino_pose_params_summary",
     "real_lamino_projection_stats",
@@ -314,6 +320,7 @@ __all__ = [
     "run_forward_projector_suite",
     "run_forward_sinogram_benchmark",
     "run_forward_sinogram_suite",
+    "save_real_lamino_z_stack",
     "save_slice_png",
     "save_uint8_png",
     "save_volume",
@@ -349,6 +356,7 @@ __all__ = [
     "write_real_lamino_planned_stage_manifests",
     "write_real_lamino_residual_trace",
     "write_real_lamino_skipped_stage_manifests",
+    "write_real_lamino_stage_products",
     "write_spdhg_benchmark_report",
     "write_synthetic_benchmark_comparison_markdown",
 ]

@@ -17378,3 +17378,25 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography stage artifact writer moved behind bench facade
+
+- Added `tomojax.bench.real_laminography_artifacts` for the reference runner's
+  orthos image, z-stack preview, and standard stage-product artifact contract.
+- Exported `real_lamino_orthos_image`, `save_real_lamino_z_stack`, and
+  `write_real_lamino_stage_products` through the bench facade.
+- Thinned `scripts/real_laminography/run_real_lamino_reference_regression.py`
+  so `RunContext.save_stage_products` delegates to the bench helper while
+  preserving exact artifact keys and filenames.
+
+Validation:
+
+- `uv run pytest tests/test_bench_real_laminography_artifacts.py` passed with 3
+  tests.
+- `uv run ruff check src/tomojax/bench/real_laminography_artifacts.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_bench_real_laminography_artifacts.py`
+  passed.
+- `uv run ruff check --select I,F401,F821,F841,ARG002 scripts/real_laminography/run_real_lamino_reference_regression.py`
+  passed.
+- `uv run python -m py_compile src/tomojax/bench/real_laminography_artifacts.py scripts/real_laminography/run_real_lamino_reference_regression.py tests/test_bench_real_laminography_artifacts.py`
+  passed.
+- `git diff --check` passed.

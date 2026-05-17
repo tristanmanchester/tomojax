@@ -16,13 +16,11 @@ os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
 os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 
 from tomojax.align.api import (
@@ -53,11 +51,12 @@ from tomojax.bench import (
     real_lamino_projection_stats,
     real_lamino_xy_at_global_z,
     resize_nearest_2d,
+    save_real_lamino_z_stack,
     save_uint8_png,
-    scale_uint8,
     update_real_lamino_status,
     validate_real_lamino_loaded_input,
     write_real_lamino_json,
+    write_real_lamino_stage_products,
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import load_real_laminography_input
@@ -74,68 +73,9 @@ _commit_info = real_lamino_commit_info
 _validate_loaded_input = validate_real_lamino_loaded_input
 _projection_stats = real_lamino_projection_stats
 _apply_projection_background = apply_real_lamino_projection_background
-_scale_uint8 = scale_uint8
 _save_png = save_uint8_png
 _resize_nearest_2d = resize_nearest_2d
-
-
-def _orthos(volume: np.ndarray, *, preview_local_z: int) -> np.ndarray:
-    vol = np.asarray(volume, dtype=np.float32)
-    cx, cy = vol.shape[0] // 2, vol.shape[1] // 2
-    z = int(np.clip(preview_local_z, 0, vol.shape[2] - 1))
-    panels = [
-        _scale_uint8(vol[:, :, z].T),
-        _scale_uint8(vol[:, cy, :].T),
-        _scale_uint8(vol[cx, :, :].T),
-    ]
-    gap = 8
-    h = max(panel.shape[0] for panel in panels)
-    w = sum(panel.shape[1] for panel in panels) + gap * (len(panels) - 1)
-    canvas = np.zeros((h, w), dtype=np.uint8)
-    x = 0
-    for panel in panels:
-        y = (h - panel.shape[0]) // 2
-        canvas[y : y + panel.shape[0], x : x + panel.shape[1]] = panel
-        x += panel.shape[1] + gap
-    return canvas
-
-
-def _save_z_stack(
-    path: Path,
-    volume: np.ndarray,
-    *,
-    grid: Grid,
-    full_nz: int,
-    z_range: tuple[int, int],
-    max_cols: int,
-) -> str:
-    z0, z1 = z_range
-    images: list[tuple[int, np.ndarray]] = []
-    for z in range(int(z0), int(z1) + 1):
-        local = real_lamino_global_z_to_local_index(z, full_nz=full_nz, grid=grid)
-        if 0 <= local < np.asarray(volume).shape[2]:
-            images.append((z, real_lamino_xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=z)))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not images:
-        iio.imwrite(path, np.zeros((16, 16), dtype=np.uint8))
-        return str(path)
-    vals = np.concatenate([np.ravel(img[np.isfinite(img)]) for _, img in images])
-    lo, hi = np.percentile(vals, [1.0, 99.0]) if vals.size else (0.0, 1.0)
-    cols = max(1, min(int(max_cols), len(images)))
-    rows = int(math.ceil(len(images) / cols))
-    fig, axes = plt.subplots(rows, cols, figsize=(2.3 * cols, 2.5 * rows), dpi=140)
-    axes_arr = np.ravel(np.asarray(axes))
-    for ax, (z, img) in zip(axes_arr, images, strict=False):
-        ax.imshow(_scale_uint8(img, lo=float(lo), hi=float(hi)), cmap="gray", interpolation="nearest")
-        ax.set_title(f"z={z}", fontsize=8)
-        ax.set_xticks([])
-        ax.set_yticks([])
-    for ax in axes_arr[len(images) :]:
-        ax.axis("off")
-    fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    return str(path)
+_save_z_stack = save_real_lamino_z_stack
 
 
 def _parse_range(text: str) -> tuple[int, int]:
@@ -249,38 +189,24 @@ class RunContext:
         self,
         *,
         stage_dir: Path,
-        stage_name: str,
         volume: np.ndarray,
         grid: Grid,
         full_nz: int,
         input_reference: np.ndarray | None,
         suffix: str = "aligned",
     ) -> dict[str, str]:
-        local_z = real_lamino_global_z_to_local_index(self.preview_global_z, full_nz=full_nz, grid=grid)
-        xy = real_lamino_xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=self.preview_global_z)
-        ref = input_reference
-        if ref is None:
-            ref = self.naive_slice
-        if ref is not None:
-            ref = _resize_nearest_2d(ref, xy.shape)
-            diff = xy - ref
-        else:
-            diff = np.zeros_like(xy)
-        artifacts = {
-            "aligned_xy": _save_png(stage_dir / f"{suffix}_xy_global_z{self.preview_global_z:03d}.png", xy),
-            "delta_xy": _save_png(stage_dir / f"delta_xy_global_z{self.preview_global_z:03d}.png", diff),
-            "orthos": str(stage_dir / "orthos.png"),
-            "z_stack": _save_z_stack(
-                stage_dir / f"z_stack_global_z{self.stack_z_range[0]:03d}_{self.stack_z_range[1]:03d}.png",
-                volume,
-                grid=grid,
-                full_nz=full_nz,
-                z_range=self.stack_z_range,
-                max_cols=int(self.args.snapshot_max_cols),
-            ),
-        }
-        iio.imwrite(stage_dir / "orthos.png", _orthos(volume, preview_local_z=local_z))
-        return artifacts
+        return write_real_lamino_stage_products(
+            stage_dir=stage_dir,
+            volume=volume,
+            grid=grid,
+            full_nz=full_nz,
+            preview_global_z=self.preview_global_z,
+            stack_z_range=self.stack_z_range,
+            snapshot_max_cols=int(self.args.snapshot_max_cols),
+            input_reference=input_reference,
+            fallback_reference=self.naive_slice,
+            suffix=suffix,
+        )
 
 
 def _schedule_dict(schedule: AlignmentSchedule) -> dict[str, Any]:
@@ -392,7 +318,6 @@ def run_baseline(
     _save_png(stage_dir / f"naive_or_input_xy_global_z{ctx.preview_global_z:03d}.png", ctx.naive_slice)
     ctx.save_stage_products(
         stage_dir=stage_dir,
-        stage_name="00_baseline",
         volume=vol,
         grid=grid,
         full_nz=full_nz,
@@ -582,7 +507,6 @@ def run_setup_stage(
     _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
     products = ctx.save_stage_products(
         stage_dir=stage_dir,
-        stage_name=stage_name,
         volume=np.asarray(x_init, dtype=np.float32),
         grid=scale_grid(grid, int(prev_factor or 1)),
         full_nz=full_nz,
@@ -761,7 +685,6 @@ def run_pose_stage(
     _write_json(stage_dir / "geometry_calibration_state.json", setup_state.to_calibration_state().to_dict())
     products = ctx.save_stage_products(
         stage_dir=stage_dir,
-        stage_name=stage_name,
         volume=np.asarray(x_init, dtype=np.float32),
         grid=scale_grid(grid, int(prev_factor or 1)),
         full_nz=full_nz,
@@ -833,7 +756,6 @@ def _final_reconstruct(
     np.save(stage_dir / "final_setup_aligned_slab.npy", vol_np)
     products = ctx.save_stage_products(
         stage_dir=stage_dir,
-        stage_name="05_final",
         volume=vol_np,
         grid=grid,
         full_nz=full_nz,
