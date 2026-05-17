@@ -19,16 +19,25 @@ data generation, while production forward modelling belongs to
 - `SyntheticDatasetSidecars`
 - `SyntheticDatasetSpec`
 - `SimConfig`
+- `SimMetadata`
 - `SimulatedData`
 - `SimulationArtefacts`
+- `apply_simulation_artefacts`
+- `blobs`
+- `cube`
 - `generate_synthetic_dataset`
+- `lamino_disk`
+- `lamino_disk_legacy`
 - `load_synthetic_dataset_sidecars`
 - `load_synthetic128_specs`
 - `make_benchmark_phantom`
 - `make_phantom`
 - `random_cubes_spheres`
+- `rotated_centered_cube`
+- `shepp_logan_3d`
 - `simulate`
 - `simulate_to_file`
+- `sphere`
 - `synthetic128_spec`
 - `validate_simulation_artefacts`
 
@@ -43,9 +52,9 @@ Allowed future dependencies:
 - `tomojax.forward`
 - `tomojax.io`
 
-Current implementation dependencies:
+Retained implementation dependencies:
 
-- retained `tomojax.data` simulation/phantom helpers behind the
+- retained `tomojax.data` simulation helpers behind the
   `tomojax.datasets` public facade
 
 Forbidden dependencies:

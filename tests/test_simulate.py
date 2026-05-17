@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from tomojax.cli import simulate as simulate_cli
-from tomojax.data.artefacts import apply_simulation_artefacts
 from tomojax.datasets import (
     SimConfig,
     SimulationArtefacts,
+    apply_simulation_artefacts,
     random_cubes_spheres,
     simulate,
     simulate_to_file,

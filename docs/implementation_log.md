@@ -3,6 +3,55 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Datasets phantom facade completion
+
+### Scope
+
+Continued assimilating retained `tomojax.data` synthetic helpers into the
+public `tomojax.datasets` owner for the low-risk phantom and simulation helper
+surface.
+
+Changes:
+
+- Exported the remaining retained phantom constructors through
+  `tomojax.datasets`: `sphere`, `cube`, `rotated_centered_cube`, `blobs`,
+  `shepp_logan_3d`, `lamino_disk`, and `lamino_disk_legacy`.
+- Exported simulation metadata and artefact application helpers through
+  `tomojax.datasets`: `LaminoGeometryMeta`, `SimMetadata`, and
+  `apply_simulation_artefacts`.
+- Routed the owned phantom and simulation tests through `tomojax.datasets`
+  where the public facade now exists.
+- Routed the synthetic dataset writer's `random_cubes_spheres` dependency
+  through the datasets phantom facade.
+- Kept IO contrast/inspection, real-laminography scripts, and retained
+  lower-level implementation modules unchanged.
+
+Remaining data package responsibilities:
+
+- retained NXtomo/HDF5 persistence and validation internals behind
+  `tomojax.io`
+- raw preprocessing internals retained behind `tomojax.io`
+- synthetic simulation implementation and retained artefact implementation
+  behind `tomojax.datasets`
+- retained phantom implementation module behind the now-complete
+  `tomojax.datasets` phantom facade
+- geometry metadata materialization used by IO adapters
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 src/tomojax/datasets
+  tests/test_phantoms.py tests/test_phantoms_random_shapes.py
+  tests/test_synthetic_datasets.py tests/test_simulate.py` passed.
+- `uv run pytest -q tests/test_phantoms.py tests/test_phantoms_random_shapes.py
+  tests/test_synthetic_datasets.py tests/test_simulate.py` passed with
+  36 tests and 1 skipped heavy phantom regression.
+- `python tools/check_public_imports.py src/tomojax/datasets
+  tests/test_phantoms.py tests/test_phantoms_random_shapes.py
+  tests/test_synthetic_datasets.py tests/test_simulate.py` passed.
+- `python tools/check_public_imports.py` was not clean in this dirty checkout:
+  current failures were in out-of-scope CLI/developer-bench import guard
+  surfaces, not in the datasets/phantom slice for this entry.
+
 ## 2026-05-17 - Data package contrast export reduction
 
 ### Scope

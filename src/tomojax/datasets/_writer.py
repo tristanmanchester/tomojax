@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING, Literal
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.data.phantoms import random_cubes_spheres
-from tomojax.datasets._phantoms import make_benchmark_phantom
+from tomojax.datasets._phantoms import make_benchmark_phantom, random_cubes_spheres
 from tomojax.datasets._specs import SyntheticDatasetSpec, synthetic128_spec
 from tomojax.forward import (
     PROJECTION_OPERATOR,

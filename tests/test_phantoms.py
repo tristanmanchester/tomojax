@@ -2,7 +2,53 @@ import inspect
 
 import numpy as np
 
-from tomojax.data.phantoms import lamino_disk, lamino_disk_legacy
+import tomojax.datasets as datasets_api
+from tomojax.datasets import (
+    blobs,
+    cube,
+    lamino_disk,
+    lamino_disk_legacy,
+    random_cubes_spheres,
+    rotated_centered_cube,
+    shepp_logan_3d,
+    sphere,
+)
+import tomojax.datasets.api as datasets_full_api
+
+
+def test_public_phantom_api_is_reexported_from_package_root():
+    for name in (
+        "LaminoGeometryMeta",
+        "SimMetadata",
+        "apply_simulation_artefacts",
+        "blobs",
+        "cube",
+        "lamino_disk",
+        "lamino_disk_legacy",
+        "random_cubes_spheres",
+        "rotated_centered_cube",
+        "shepp_logan_3d",
+        "sphere",
+    ):
+        assert name in datasets_api.__all__
+        assert getattr(datasets_api, name) is getattr(datasets_full_api, name)
+
+
+def test_public_phantom_generators_return_float32_volumes():
+    phantoms = [
+        sphere(16, 16, 16),
+        cube(16, 16, 16),
+        rotated_centered_cube(16, 16, 16, seed=1),
+        blobs(16, 16, 16, seed=1),
+        shepp_logan_3d(16, 16, 16),
+        random_cubes_spheres(16, 16, 16, n_cubes=2, n_spheres=2, min_size=3, max_size=6),
+        lamino_disk(16, 16, 16, seed=1, min_size=4, max_size=8),
+    ]
+
+    for volume in phantoms:
+        assert volume.shape == (16, 16, 16)
+        assert volume.dtype == np.float32
+        assert np.isfinite(volume).all()
 
 
 def test_lamino_disk_thickness_centered():
