@@ -63,4 +63,6 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.scenario_catalog)
     assert callable(bench_api.make_article_phantom)
     assert callable(bench_api.real_lamino_success_payload)
+    assert callable(bench_api.resolve_fixture_bin_factor)
+    assert callable(bench_api.pose_polish_bounds)
     assert callable(bench_api.load_synthetic_benchmark_result)

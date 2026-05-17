@@ -12,6 +12,8 @@ top-level console scripts.
 - Diagnostic performance probes.
 - Synthetic alignment diagnostic runners.
 - Synthetic result report helpers used by implementation and regression work.
+- Real-laminography developer workflow contracts, report semantics, and bounded
+  planning helpers used by scripts under `scripts/real_laminography`.
 
 ## Boundary Rule
 

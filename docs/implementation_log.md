@@ -16088,3 +16088,25 @@ Validation:
 - `uv run ruff check --select I,F,RUF022 src/tomojax/bench/real_laminography_report.py scripts/real_laminography/run_real_lamino_staged.py tests/test_real_lamino_runner_contract.py`
   passed.
 - `uv run pytest tests/test_public_facades.py -q` passed with 5 tests.
+
+### Real-laminography planning helpers moved to bench
+
+- Added `tomojax.bench.real_laminography_planning` for pure staged-run planning
+  helpers: bin-factor validation/resolution, smoke-shape view selection,
+  binned-pixel bound scaling, pose/setup bound formatting, and three-axis CLI
+  shape parsing.
+- Updated `scripts/real_laminography/run_real_lamino_staged.py` to import those
+  planning helpers from the bench owner module rather than carrying pure
+  benchmark planning logic in the script body.
+- Exported the planning helpers through `tomojax.bench.api` and the package
+  facade, and updated real-laminography script docs to keep future workflow
+  contract changes behind the bench deep-module boundary.
+
+Validation:
+
+- `uv run pytest tests/test_real_laminography_planning.py tests/test_public_facades.py tests/test_real_lamino_runner_contract.py::test_staged_defaults_to_reference_conservative_pose_bounds tests/test_real_lamino_runner_contract.py::test_staged_reference_regression_profile_forces_reference_contract tests/test_real_lamino_runner_contract.py::test_staged_staged_lamino_profile_forces_winning_contract -q`
+  passed with 12 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py scripts/real_laminography/run_real_lamino_staged.py tests/test_real_lamino_runner_contract.py tests/test_public_facades.py tests/test_real_laminography_planning.py`
+  passed.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.

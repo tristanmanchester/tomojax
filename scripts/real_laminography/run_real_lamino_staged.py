@@ -10,7 +10,6 @@ import csv
 from datetime import datetime
 import importlib.util
 import json
-import math
 import os
 from pathlib import Path
 import shutil
@@ -25,6 +24,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.bench.real_laminography_planning import (
+    binned_pixel_scale,
+    parse_shape3,
+    pose_dx_dz_bounds,
+    pose_phi_bounds,
+    pose_polish_bounds,
+    resolve_fixture_bin_factor,
+    setup_det_u_bounds,
+    validate_bin_factor,
+    view_indices_for_smoke_shape,
+)
 from tomojax.bench.real_laminography_profiles import (
     REAL_LAMINO_PROFILE_CHOICES,
     REAL_LAMINO_STAGED_PATH,
@@ -179,7 +189,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
                     else None
                 ),
                 "pose_bounds_profile": str(args.pose_bounds_profile),
-                "binned_translation_bounds_scale": float(_binned_pixel_scale(args)),
+                "binned_translation_bounds_scale": float(binned_pixel_scale(args)),
             },
             "reconstruction": {
                 "algorithm": "fista_tv",
@@ -232,7 +242,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             setup_state=setup_state,
             params5=params5,
             levels=tuple(int(v) for v in args.levels_setup),
-            bounds=_setup_det_u_bounds(args),
+            bounds=setup_det_u_bounds(args),
             level_outer_counts=_reference_regression_level_outer_counts(
                 args,
                 stage_name="01_setup_geometry/01_cor",
@@ -503,13 +513,13 @@ def run_remaining_stages(
             }
         )
     pose_plan = (
-        ("02_pose_phi", ("phi",), tuple(ctx.args.levels_phi), _pose_phi_bounds(ctx.args)),
-        ("03_pose_dx_dz", ("dx", "dz"), tuple(ctx.args.levels_dx_dz), _pose_dx_dz_bounds(ctx.args)),
+        ("02_pose_phi", ("phi",), tuple(ctx.args.levels_phi), pose_phi_bounds(ctx.args)),
+        ("03_pose_dx_dz", ("dx", "dz"), tuple(ctx.args.levels_dx_dz), pose_dx_dz_bounds(ctx.args)),
         (
             "04_pose_polish",
             ("alpha", "beta", "phi", "dx", "dz"),
             tuple(ctx.args.levels_polish),
-            _pose_polish_bounds(ctx.args),
+            pose_polish_bounds(ctx.args),
         ),
     )
     for idx, (stage_name, active_pose, levels, bounds) in enumerate(pose_plan):
@@ -950,7 +960,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument("--input", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--reference-report", type=Path)
-    parser.add_argument("--expected-projection-shape", type=_parse_shape3, default=None)
+    parser.add_argument("--expected-projection-shape", type=parse_shape3, default=None)
     parser.add_argument("--tilt-deg", type=float, default=34.4)
     parser.add_argument("--tilt-about", choices=["x", "z"], default="x")
     parser.add_argument("--flip-u", action=argparse.BooleanOptionalAction, default=True)
@@ -973,7 +983,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument(
         "--diagnostic-shape",
         dest="smoke_shape",
-        type=_parse_shape3,
+        type=parse_shape3,
         default=None,
         metavar="N,NV,NU",
         help=(
@@ -984,7 +994,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
     parser.add_argument(
         "--smoke-shape",
         dest="smoke_shape",
-        type=_parse_shape3,
+        type=parse_shape3,
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--levels-setup", nargs="+", type=int, default=[8, 4, 2])
@@ -1134,7 +1144,7 @@ def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
     """Resolve memory-sensitive runtime defaults after CLI parsing."""
     if int(args.views_per_batch) <= 0:
         args.views_per_batch = 1
-    args.bin_factor = _validate_bin_factor(args.bin_factor)
+    args.bin_factor = validate_bin_factor(args.bin_factor)
     return args
 
 
@@ -1171,9 +1181,9 @@ def _reference_regression_contract_payload(args: argparse.Namespace) -> dict[str
         "gather_dtype": str(args.gather_dtype),
         "recon_positivity": bool(args.recon_positivity),
         "setup_outer_count_replay": "reference_stage_summary_counts",
-        "pose_phi_bounds": _pose_phi_bounds(args),
-        "pose_dx_dz_bounds": _pose_dx_dz_bounds(args),
-        "pose_polish_bounds": _pose_polish_bounds(args),
+        "pose_phi_bounds": pose_phi_bounds(args),
+        "pose_dx_dz_bounds": pose_dx_dz_bounds(args),
+        "pose_polish_bounds": pose_polish_bounds(args),
     }
     mismatches = {
         key: {"expected": expected, "actual": actual.get(key)}
@@ -1214,46 +1224,6 @@ def _reference_regression_level_outer_counts(
     return counts or None
 
 
-def _validate_bin_factor(value: object) -> int:
-    try:
-        factor = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"bin factor must be an integer >= 1, got {value!r}") from exc
-    if factor < 1:
-        raise ValueError(f"bin factor must be an integer >= 1, got {value!r}")
-    return factor
-
-
-def _resolve_fixture_bin_factor(
-    *,
-    projection_shape: tuple[int, int, int],
-    slab_nz: int,
-    requested_bin_factor: int,
-    smoke_shape: tuple[int, int, int] | None,
-) -> int:
-    factor = _validate_bin_factor(requested_bin_factor)
-    if smoke_shape is None:
-        return factor
-    _target_views, target_nv, target_nu = smoke_shape
-    if target_nv < 1 or target_nu < 1:
-        raise ValueError(f"diagnostic shape must be positive, got {smoke_shape!r}")
-    _n_views, nv, nu = projection_shape
-    factor = max(factor, math.ceil(float(nv) / float(target_nv)))
-    factor = max(factor, math.ceil(float(nu) / float(target_nu)))
-    factor = max(factor, math.ceil(float(slab_nz) / float(max(1, target_nv))))
-    return _validate_bin_factor(factor)
-
-
-def _view_indices_for_smoke_shape(
-    n_views: int,
-    smoke_shape: tuple[int, int, int] | None,
-) -> np.ndarray:
-    if smoke_shape is None or int(smoke_shape[0]) >= int(n_views):
-        return np.arange(int(n_views), dtype=np.int64)
-    target = max(1, int(smoke_shape[0]))
-    return np.unique(np.rint(np.linspace(0, int(n_views) - 1, target)).astype(np.int64))
-
-
 def _map_global_z_to_binned(
     native: Any,
     global_z: int,
@@ -1283,10 +1253,10 @@ def _prepare_binned_fixture(
     """Derive the optional binned real-data fixture and mutate working args."""
     original_shape = tuple(int(v) for v in raw_projections.shape)
     original_full_nz = int(original_shape[1])
-    view_indices = _view_indices_for_smoke_shape(original_shape[0], args.smoke_shape)
+    view_indices = view_indices_for_smoke_shape(original_shape[0], args.smoke_shape)
     raw_selected = np.asarray(raw_projections[view_indices], dtype=np.float32)
     thetas_selected = np.asarray(thetas[view_indices], dtype=np.float32)
-    bin_factor = _resolve_fixture_bin_factor(
+    bin_factor = resolve_fixture_bin_factor(
         projection_shape=tuple(int(v) for v in raw_selected.shape),
         slab_nz=int(args.slab_nz),
         requested_bin_factor=int(args.bin_factor),
@@ -1351,51 +1321,11 @@ def _prepare_binned_fixture(
         "working_stack_z_range": list(original_stack_z_range),
         "grid": grid.to_dict(),
         "detector": detector.to_dict(),
-        "detector_shift_bound_scale": float(_binned_pixel_scale(args)),
-        "pose_dx_dz_bound_scale": float(_binned_pixel_scale(args)),
+        "detector_shift_bound_scale": float(binned_pixel_scale(args)),
+        "pose_dx_dz_bound_scale": float(binned_pixel_scale(args)),
     }
     geometry_inputs = {"grid": grid, "detector": detector, "full_nz": int(original_full_nz)}
     return working_raw, thetas_selected, geometry_inputs, provenance
-
-
-def _binned_pixel_scale(args: argparse.Namespace) -> float:
-    fallback = getattr(args, "bin_factor", 1)
-    return 1.0 / float(max(1, int(getattr(args, "effective_bin_factor", fallback))))
-
-
-def _scaled_symmetric_bound(name: str, value: float, args: argparse.Namespace) -> str:
-    scaled = float(value) * _binned_pixel_scale(args)
-    return f"{name}={-scaled:.8g}:{scaled:.8g}"
-
-
-def _setup_det_u_bounds(args: argparse.Namespace) -> str:
-    return _scaled_symmetric_bound("det_u_px", 24.0, args)
-
-
-def _pose_phi_bounds(args: argparse.Namespace) -> str:
-    if str(args.pose_bounds_profile) == "wide":
-        return "phi=-0.0872665:0.0872665"
-    return "phi=-0.00872665:0.00872665"
-
-
-def _pose_dx_dz_bounds(args: argparse.Namespace) -> str:
-    value = 16.0 if str(args.pose_bounds_profile) == "wide" else 10.0
-    dx = _scaled_symmetric_bound("dx", value, args)
-    dz = _scaled_symmetric_bound("dz", value, args)
-    return f"{dx},{dz}"
-
-
-def _pose_polish_bounds(args: argparse.Namespace) -> str:
-    dx_dz = _pose_dx_dz_bounds(args)
-    if str(args.pose_bounds_profile) == "wide":
-        return (
-            "alpha=-0.0349066:0.0349066,beta=-0.0349066:0.0349066,"
-            f"phi=-0.0872665:0.0872665,{dx_dz}"
-        )
-    return (
-        "alpha=-0.00872665:0.00872665,beta=-0.00872665:0.00872665,"
-        f"phi=-0.00872665:0.00872665,{dx_dz}"
-    )
 
 
 def _load_native_runner() -> Any:
@@ -1846,23 +1776,6 @@ def _loss_summary(info: Mapping[str, Any]) -> dict[str, Any]:
         "last": last,
         "iters": int(info.get("effective_iters", len(losses))),
     }
-
-
-def _parse_shape3(text: str) -> tuple[int, int, int]:
-    parts = str(text).lower().replace("x", ",").split(",")
-    if len(parts) != 3:
-        raise argparse.ArgumentTypeError(
-            f"expected projection shape as N,NV,NU or NxNVxNU, got {text!r}"
-        )
-    try:
-        shape = tuple(int(part) for part in parts)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"invalid integer projection shape {text!r}") from exc
-    if any(value <= 0 for value in shape):
-        raise argparse.ArgumentTypeError(
-            f"projection shape dimensions must be positive, got {text!r}"
-        )
-    return (shape[0], shape[1], shape[2])
 
 
 def _read_stage_summary(path: Path) -> list[dict[str, Any]]:

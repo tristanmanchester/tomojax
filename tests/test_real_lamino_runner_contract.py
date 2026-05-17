@@ -11,6 +11,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tomojax.bench import (
+    pose_dx_dz_bounds,
+    pose_phi_bounds,
+    pose_polish_bounds,
+    setup_det_u_bounds,
+)
+
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
@@ -467,8 +474,8 @@ def test_staged_reference_regression_profile_forces_reference_contract(
     assert args.levels_phi == [4, 2, 1]
     cfg = runner._make_cfg(args, active_pose=("phi",))
     assert cfg.fold_rigid_detector_grid is False
-    assert staged_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
-    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
+    assert pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
+    assert pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 
 
 def test_staged_staged_lamino_profile_forces_winning_contract(
@@ -511,8 +518,8 @@ def test_staged_staged_lamino_profile_forces_winning_contract(
     assert args.levels_polish == [2, 1]
     cfg = runner._make_cfg(args, active_pose=("phi",))
     assert cfg.fold_rigid_detector_grid is False
-    assert staged_runner._pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
-    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
+    assert pose_phi_bounds(args) == "phi=-0.0872665:0.0872665"
+    assert pose_dx_dz_bounds(args) == "dx=-16:16,dz=-16:16"
 
 
 def test_reference_regression_level_outer_counts_replay_reference_stage_summary(
@@ -753,13 +760,13 @@ def test_staged_defaults_to_reference_conservative_pose_bounds(monkeypatch, tmp_
     args = staged_runner._parse_args()
 
     assert args.pose_bounds_profile == "reference_conservative"
-    assert staged_runner._pose_phi_bounds(args) == "phi=-0.00872665:0.00872665"
-    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-10:10,dz=-10:10"
-    assert "alpha=-0.00872665:0.00872665" in staged_runner._pose_polish_bounds(args)
+    assert pose_phi_bounds(args) == "phi=-0.00872665:0.00872665"
+    assert pose_dx_dz_bounds(args) == "dx=-10:10,dz=-10:10"
+    assert "alpha=-0.00872665:0.00872665" in pose_polish_bounds(args)
 
     args.effective_bin_factor = 4
-    assert staged_runner._setup_det_u_bounds(args) == "det_u_px=-6:6"
-    assert staged_runner._pose_dx_dz_bounds(args) == "dx=-2.5:2.5,dz=-2.5:2.5"
+    assert setup_det_u_bounds(args) == "det_u_px=-6:6"
+    assert pose_dx_dz_bounds(args) == "dx=-2.5:2.5,dz=-2.5:2.5"
 
 
 def test_v2_cor_real_lamino_report_preserves_partial_contract(tmp_path) -> None:

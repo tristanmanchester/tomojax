@@ -16,5 +16,7 @@ output directories such as `runs/`.
 Shared staged-run profile, stage-path, and reference-comparison contracts live
 in `tomojax.bench.real_laminography_profiles`. Shared report success criteria,
 method constraints, and residual/geometry trace writers live in
-`tomojax.bench.real_laminography_report`. Scripts should import those modules
-rather than another file from this directory.
+`tomojax.bench.real_laminography_report`. Shared binning, smoke-shape, and pose
+bound planning helpers live in `tomojax.bench.real_laminography_planning`.
+Scripts should import those modules rather than another file from this
+directory.
