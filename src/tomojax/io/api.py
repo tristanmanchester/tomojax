@@ -23,7 +23,13 @@ from tomojax.io._inspection import (
     inspect_dataset,
     save_projection_quicklook,
 )
-from tomojax.io._json import JsonValue, drop_none, normalize_json
+from tomojax.io._json import (
+    JsonValue,
+    drop_none,
+    normalize_json,
+    read_json_object,
+    write_json_object,
+)
 from tomojax.io._nexus_wrangler import (
     constant_dark_field,
     flat_dark_correct_frames_to_absorption,
@@ -70,6 +76,7 @@ __all__ = [
     "pad_to_multiples",
     "preprocess_nxtomo",
     "preprocess_tiff_stack",
+    "read_json_object",
     "save_dataset",
     "save_nxtomo",
     "save_projection_payload",
@@ -80,4 +87,5 @@ __all__ = [
     "validate_dataset",
     "validate_nxtomo",
     "volume_chunks",
+    "write_json_object",
 ]

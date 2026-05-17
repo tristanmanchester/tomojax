@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
+import json
 import math
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -94,6 +95,25 @@ def drop_none(payload: Mapping[str, object], **normalize_options: bool) -> dict[
     return {
         str(k): normalize_json(v, **normalize_options) for k, v in payload.items() if v is not None
     }
+
+
+def read_json_object(path: Path) -> dict[str, JsonValue]:
+    """Read a JSON file that must contain an object."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"expected JSON object in {path}")
+    return cast("dict[str, JsonValue]", data)
+
+
+def write_json_object(path: Path, payload: object) -> None:
+    """Write a normalized JSON object with deterministic formatting."""
+    normalized = normalize_json(payload, sort_mapping_keys=True)
+    if not isinstance(normalized, dict):
+        raise ValueError("JSON object payload must normalize to a mapping")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _is_argparse_namespace(value: object) -> bool:

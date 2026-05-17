@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import csv
-import json
 from pathlib import Path
 import shutil
 from typing import Any
@@ -15,6 +14,7 @@ from tomojax.bench.real_laminography_profiles import (
     REAL_LAMINO_STAGED_PATH,
     REFERENCE_REGRESSION_STAGE_MAP,
 )
+from tomojax.io import read_json_object, write_json_object
 
 REAL_LAMINO_REPORT_STAGED_PATH: tuple[tuple[str, str], ...] = (
     ("baseline", "00_baseline"),
@@ -1119,17 +1119,11 @@ def _read_real_lamino_stage_summary(path: Path) -> list[dict[str, Any]]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"expected JSON object in {path}")
-    return data
+    return dict(read_json_object(path))
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json_object(path, payload)
 
 
 def _write_csv(path: Path, rows: list[Mapping[str, Any]], fieldnames: tuple[str, ...]) -> None:

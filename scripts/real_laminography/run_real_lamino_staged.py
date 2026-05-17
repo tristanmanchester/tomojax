@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import importlib.util
-import json
 import os
 from pathlib import Path
 import shutil
@@ -55,6 +54,7 @@ from tomojax.bench.real_laminography_report import (
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
+from tomojax.io import read_json_object
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
 REFERENCE_REGRESSION_STAGE_MAP = _REFERENCE_REGRESSION_STAGE_MAP
@@ -867,15 +867,7 @@ def _load_native_runner() -> Any:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"expected JSON object in {path}")
-    return data
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return dict(read_json_object(path))
 
 
 if __name__ == "__main__":

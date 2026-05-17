@@ -69,6 +69,7 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move real-laminography finite-safe pose-parameter summary into
       `tomojax.bench`.
+- [x] Move JSON object artifact read/write helpers into `tomojax.io`.
 
 Next candidates:
 

@@ -3,6 +3,42 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - JSON object artifact helpers moved behind IO facade
+
+### Scope
+
+Continued productionizing artifact IO by moving repeated JSON object read/write
+behavior behind the `tomojax.io` public facade.
+
+Changes:
+
+- Added `read_json_object(...)` and `write_json_object(...)` to
+  `tomojax.io`.
+- Routed `tomojax.bench.real_laminography_report` JSON object reads/writes
+  through the IO facade.
+- Routed the remaining staged real-laminography JSON object read helper through
+  the IO facade and removed the unused script-local writer.
+- Added focused IO tests for deterministic object writing, normalization,
+  trailing newline behavior, non-object read rejection, and non-object write
+  rejection.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_report.py src/tomojax/io/_json.py
+  src/tomojax/io/api.py src/tomojax/io/__init__.py tests/test_json_utils.py`
+  passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_report.py src/tomojax/io/_json.py
+  src/tomojax/io/api.py src/tomojax/io/__init__.py tests/test_json_utils.py`
+  passed.
+- `uv run pytest tests/test_json_utils.py tests/test_real_laminography_report.py
+  -q` passed: 9 tests in 2.21 seconds.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Real-laminography params-summary guard moved behind bench facade
 
 ### Scope
