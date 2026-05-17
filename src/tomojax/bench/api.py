@@ -179,10 +179,7 @@ from tomojax.bench.real_laminography_runtime import (
     write_real_lamino_json,
     write_real_lamino_params_csv,
 )
-from tomojax.bench.real_laminography_setup import (
-    optimize_reference_setup_geometry_bilevel_for_level,
-    run_real_lamino_setup_stage,
-)
+from tomojax.bench.real_laminography_setup import run_real_lamino_setup_stage
 from tomojax.bench.spdhg_benchmark import (
     SpdhgDatasetSimulationPlan,
     SpdhgGeometryBundle,
@@ -291,7 +288,6 @@ __all__ = [
     "mark_real_lamino_stage_failed",
     "naive_visualization_payload",
     "normalize_real_lamino_runtime_args",
-    "optimize_reference_setup_geometry_bilevel_for_level",
     "parse_real_lamino_z_range",
     "parse_shape3",
     "phantom_spec",

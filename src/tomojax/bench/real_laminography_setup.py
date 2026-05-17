@@ -12,10 +12,6 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 import numpy as np
 
-# check-public-imports: allow-private
-from tomojax.align._setup_stage import (
-    _optimize_setup_geometry_bilevel_for_level as optimize_reference_setup_geometry_bilevel_for_level,
-)
 from tomojax.align.api import (
     AlignConfig,
     AlignmentState,
@@ -23,6 +19,7 @@ from tomojax.align.api import (
     PoseState,
     SetupGeometryState,
     loss_spec_name,
+    optimize_setup_geometry_bilevel_for_level,
     resolve_loss_for_level,
 )
 from tomojax.bench._real_laminography_visuals import resize_nearest_2d, save_uint8_png
@@ -43,7 +40,6 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid, LaminographyGeometry
 
 __all__ = [
-    "optimize_reference_setup_geometry_bilevel_for_level",
     "run_real_lamino_setup_stage",
 ]
 
@@ -244,7 +240,7 @@ def run_real_lamino_setup_stage(
             loss_spec = resolve_loss_for_level(cfg_base.loss, int(factor))
             loss_name = loss_spec_name(loss_spec)
             t0 = time.perf_counter()
-            setup_result = optimize_reference_setup_geometry_bilevel_for_level(
+            setup_result = optimize_setup_geometry_bilevel_for_level(
                 geometry=geometry,
                 grid=g,
                 detector=d,

@@ -34,6 +34,7 @@ from tomojax.align.api import (
     geometry_with_axis_state,
     level_detector_grid,
     loss_spec_name,
+    optimize_setup_geometry_bilevel_for_level,
     resolve_loss_for_level,
     se3_from_5d,
 )
@@ -42,7 +43,6 @@ from tomojax.bench import (
     RealLaminoRunContext,
     append_real_lamino_csv,
     apply_real_lamino_projection_background,
-    optimize_reference_setup_geometry_bilevel_for_level,
     real_lamino_commit_info,
     real_lamino_global_z_to_local_index,
     real_lamino_global_z_to_phys,
@@ -323,7 +323,7 @@ def run_setup_stage(
             loss_spec = resolve_loss_for_level(cfg_base.loss, int(factor))
             loss_name = loss_spec_name(loss_spec)
             t0 = time.perf_counter()
-            setup_result = optimize_reference_setup_geometry_bilevel_for_level(
+            setup_result = optimize_setup_geometry_bilevel_for_level(
                 geometry=geometry,
                 grid=g,
                 detector=d,

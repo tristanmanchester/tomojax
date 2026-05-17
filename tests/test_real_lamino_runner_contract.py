@@ -652,7 +652,7 @@ def test_bench_setup_stage_writes_artifacts_and_applies_bounds(monkeypatch, tmp_
 
     monkeypatch.setattr(
         setup_helpers,
-        "optimize_reference_setup_geometry_bilevel_for_level",
+        "optimize_setup_geometry_bilevel_for_level",
         fake_optimize,
     )
     grid = Grid(nx=2, ny=2, nz=2, vx=1.0, vy=1.0, vz=1.0)

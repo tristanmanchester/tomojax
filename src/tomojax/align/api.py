@@ -47,6 +47,9 @@ from tomojax.align._profiles import (
     resolve_profiled_cli_defaults,
 )
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
+from tomojax.align._setup_stage import (
+    _optimize_setup_geometry_bilevel_for_level as optimize_setup_geometry_bilevel_for_level,
+)
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
@@ -182,6 +185,7 @@ __all__ = [
     "normalize_alignment_profile",
     "normalize_bounds",
     "normalize_geometry_dofs",
+    "optimize_setup_geometry_bilevel_for_level",
     "parse_loss_schedule",
     "parse_loss_spec",
     "profile_policy_from_config",

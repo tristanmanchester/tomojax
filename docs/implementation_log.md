@@ -18069,3 +18069,32 @@ Validation:
 
 - Focused public-doc `rg` checks passed after the cleanup.
 - Existing public wording guard in `tests/test_cli_public_surface.py` passed.
+
+### Real-laminography setup bridge facade
+
+- Removed the real-laminography setup-stage private import from
+  `tomojax.bench.real_laminography_setup` to `tomojax.align._setup_stage`.
+- Promoted the existing setup-stage bilevel optimizer through the advanced
+  `tomojax.align.api` facade as `optimize_setup_geometry_bilevel_for_level`.
+- Kept the solver implementation in place; this is a boundary cleanup, not a
+  numerical change.
+- Removed the old `optimize_reference_setup_geometry_bilevel_for_level` bench
+  facade export and updated the reference-regression script to use the advanced
+  align facade directly.
+
+Validation:
+
+- `python tools/check_public_imports.py` passed.
+- `uv run lint-imports --config .importlinter` passed with all 7 contracts kept.
+- `uv run pytest -q
+  tests/test_real_lamino_runner_contract.py::test_bench_setup_stage_writes_artifacts_and_applies_bounds
+  tests/test_bench_developer_facade.py
+  tests/test_align_contracts.py::test_alignment_api_is_explicitly_advanced_facade
+  tests/test_public_import_guard.py tests/test_cli_public_surface.py` passed
+  with 35 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align/api.py
+  src/tomojax/bench/real_laminography_setup.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_real_lamino_runner_contract.py`
+  passed.
+- `uv run ruff check --select I,F
+  scripts/real_laminography/run_real_lamino_reference_regression.py` passed.
