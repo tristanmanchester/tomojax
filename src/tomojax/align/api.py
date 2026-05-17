@@ -26,7 +26,6 @@ from tomojax.align._continuation import (
     reference_continuation_schedule,
 )
 from tomojax.align._joint_schur_lm import (
-    JointSchurDiagnostics,
     JointSchurLMConfig,
     JointSchurLMResult,
     adapt_joint_schur_damping,
@@ -106,16 +105,6 @@ from tomojax.align.pipeline import (
     AlignResumeState,
     align,
     align_multires,
-)
-from tomojax.verify import joint_schur_normal_eq_summary, write_joint_schur_normal_eq_summary
-
-# Kept for direct-import compatibility while diagnostic ownership moves out of
-# the product alignment facade. These names are intentionally omitted from
-# __all__.
-_DIAGNOSTIC_COMPATIBILITY_EXPORTS = (
-    JointSchurDiagnostics,
-    joint_schur_normal_eq_summary,
-    write_joint_schur_normal_eq_summary,
 )
 
 __all__ = [

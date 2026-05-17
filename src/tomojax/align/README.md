@@ -52,12 +52,9 @@ diagnostic, benchmark, or solver-development names to deeper owning modules and
 exposing them through `tomojax.align.api` only when existing callers need a
 temporary typed facade.
 
-Diagnostic compatibility imports remain available for existing tests and
-tooling, but are deliberately not advertised by `tomojax.align.api.__all__`:
-
-- `JointSchurDiagnostics`
-- `joint_schur_normal_eq_summary`
-- `write_joint_schur_normal_eq_summary`
+Schur diagnostic report helpers are owned by `tomojax.verify`, and raw
+`JointSchurDiagnostics` remains an internal solver type rather than an
+alignment facade export.
 
 ## Dependencies
 
@@ -101,10 +98,8 @@ Forbidden dependencies:
   engine.
 - `solve_joint_schur_lm` can opt into per-view gain/offset variable projection
   so affine acquisition drift is modelled as nuisance rather than geometry.
-- `JointSchurDiagnostics` remains a transition-only diagnostic import on this
-  facade. `joint_schur_normal_eq_summary` and
-  `write_joint_schur_normal_eq_summary` are verify-owned report helpers that
-  remain directly importable here only for compatibility.
+- Schur diagnostics should be consumed through `tomojax.verify` artifacts or
+  internal solver result objects, not through `tomojax.align.api`.
 
 ## Tests
 

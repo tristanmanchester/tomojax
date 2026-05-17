@@ -59,7 +59,7 @@ def test_alignment_api_keeps_diagnostics_out_of_advertised_public_exports() -> N
 
     assert diagnostic_exports.isdisjoint(set(align_api.__all__))
     for name in diagnostic_exports:
-        assert hasattr(align_api, name)
+        assert not hasattr(align_api, name)
 
 
 @pytest.mark.parametrize(

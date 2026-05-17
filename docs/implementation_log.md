@@ -3,6 +3,34 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Align diagnostic compatibility exports removed
+
+### Scope
+
+Removed leftover diagnostic compatibility names from `tomojax.align.api`.
+Schur normal-equation report helpers now live only in `tomojax.verify`, and
+`JointSchurDiagnostics` remains an internal solver result type rather than a
+facade attribute.
+
+Changes:
+
+- Removed unadvertised `JointSchurDiagnostics`,
+  `joint_schur_normal_eq_summary`, and
+  `write_joint_schur_normal_eq_summary` attributes from `tomojax.align.api`.
+- Updated alignment contract tests to assert those diagnostics are absent from
+  the advanced alignment facade.
+- Updated `src/tomojax/align/README.md` to direct diagnostic consumers to
+  `tomojax.verify` or internal solver result objects.
+
+Validation:
+
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align/api.py
+  tests/test_align_contracts.py` passed.
+- `uv run pytest -q tests/test_align_contracts.py tests/test_public_facades.py
+  tests/test_joint_schur_lm.py::test_joint_schur_writes_normal_eq_summary_artifact`
+  passed with 51 tests.
+- `python tools/check_public_imports.py` passed.
+
 ## 2026-05-17 - Calibration namespace assimilated into geometry
 
 ### Scope
