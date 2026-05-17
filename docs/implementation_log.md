@@ -16032,12 +16032,15 @@ Validation:
 
 ### Article visual scenario contracts moved to bench
 
-- Moved the article/demo alignment scenario and run-profile contracts out of
+- Moved the article/demo alignment scenario, run-profile, phantom construction,
+  and phantom provenance contracts out of
   `scripts/generate_alignment_before_after_128.py` and into
   `tomojax.bench.article_alignment_runs`.
 - The script now imports `ArticleScenario`, `ArticleRunProfile`, scenario-suite
-  conversion, profile resolution, and theta-span policy from the benchmark
-  owner module, keeping the script closer to file orchestration.
+  conversion, profile resolution, theta-span policy, and article phantom
+  generation from the benchmark owner module, keeping the script closer to file
+  orchestration and avoiding direct imports from lower-level `tomojax.data`
+  phantom internals.
 - Added a focused test that imports the article run contracts from the bench
   module, verifies the diagnostic profile, and checks the converted scenario
   catalogue.

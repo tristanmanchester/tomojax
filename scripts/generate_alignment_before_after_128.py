@@ -22,12 +22,13 @@ from tomojax.align.geometry.geometry_blocks import (
     summarize_geometry_calibration_stats,
 )
 from tomojax.align.model.schedules import schedule_preset
-from tomojax.bench.alignment_scenarios import phantom_spec
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile as RunProfile,
     ArticleScenario as Scenario,
+    article_phantom_metadata as _phantom_metadata,
     article_scenario_catalog_for_kind as scenario_catalog_for_kind,
     article_theta_span_deg as _theta_span_deg,
+    make_article_phantom as _phantom,
     profile_from_args,
 )
 from tomojax.bench.article_visuals import (
@@ -42,12 +43,9 @@ from tomojax.bench.article_visuals import (
 )
 from tomojax.core.geometry import Detector, Geometry, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.projector import forward_project_view
-from tomojax.data.phantoms import random_cubes_spheres
 from tomojax.io import normalize_json
 from tomojax.recon.fbp import fbp
 from tomojax.recon.fista_tv import FistaConfig, fista_tv
-
-PHANTOM = phantom_spec("phantom94")
 
 
 @dataclass(frozen=True)
@@ -79,24 +77,6 @@ class ScenarioRunResult:
     row: dict[str, Any]
     case_manifest: dict[str, Any]
     alignment_metadata: dict[str, Any] | None = None
-
-
-def _phantom(size: int) -> np.ndarray:
-    return random_cubes_spheres(
-        size,
-        size,
-        size,
-        n_cubes=PHANTOM.n_cubes,
-        n_spheres=PHANTOM.n_spheres,
-        min_size=max(5, size // 18),
-        max_size=int(round((size // 8) * 1.5)),
-        min_value=0.45,
-        max_value=1.0,
-        seed=PHANTOM.seed,
-        use_inscribed_fov=True,
-        placement=PHANTOM.placement,
-        radial_exponent=PHANTOM.radial_exponent,
-    ).astype(np.float32)
 
 
 def _build_geometry(
@@ -454,10 +434,6 @@ def _last_solver_metadata(outer_stats: Any) -> dict[str, Any]:
         if payload:
             return payload
     return {}
-
-
-def _phantom_metadata() -> dict[str, Any]:
-    return PHANTOM.to_manifest()
 
 
 def build_run_manifest(

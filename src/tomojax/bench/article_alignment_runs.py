@@ -11,9 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from tomojax.bench.alignment_scenarios import AlignmentScenario, scenario_suite
+import numpy as np
+
+from tomojax.bench.alignment_scenarios import AlignmentScenario, phantom_spec, scenario_suite
+from tomojax.data.phantoms import random_cubes_spheres
 
 DEFAULT_LEVELS = (8, 4, 2, 1)
+ARTICLE_PHANTOM = phantom_spec("phantom94")
 
 
 @dataclass(frozen=True)
@@ -208,6 +212,28 @@ def profile_from_args(args: Any) -> ArticleRunProfile:
     )
 
 
+def make_article_phantom(size: int) -> np.ndarray:
+    return random_cubes_spheres(
+        size,
+        size,
+        size,
+        n_cubes=ARTICLE_PHANTOM.n_cubes,
+        n_spheres=ARTICLE_PHANTOM.n_spheres,
+        min_size=max(5, size // 18),
+        max_size=int(round((size // 8) * 1.5)),
+        min_value=0.45,
+        max_value=1.0,
+        seed=ARTICLE_PHANTOM.seed,
+        use_inscribed_fov=True,
+        placement=ARTICLE_PHANTOM.placement,
+        radial_exponent=ARTICLE_PHANTOM.radial_exponent,
+    )
+
+
+def article_phantom_metadata() -> dict[str, Any]:
+    return ARTICLE_PHANTOM.to_manifest()
+
+
 def article_theta_span_deg(scenario: ArticleScenario) -> float:
     if scenario.theta_span_deg is not None:
         return float(scenario.theta_span_deg)
@@ -233,9 +259,11 @@ def validate_article_visual_stress_acquisition(scenarios: list[ArticleScenario])
 
 
 __all__ = [
+    "ARTICLE_PHANTOM",
     "DEFAULT_LEVELS",
     "ArticleRunProfile",
     "ArticleScenario",
+    "article_phantom_metadata",
     "article_scenario_catalog",
     "article_scenario_catalog_for_kind",
     "article_scenario_from_catalog",
@@ -244,6 +272,7 @@ __all__ = [
     "diagnostic_profile",
     "docs_profile",
     "has_axis_direction_perturbation",
+    "make_article_phantom",
     "profile_from_args",
     "validate_article_visual_stress_acquisition",
 ]
