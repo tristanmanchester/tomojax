@@ -13,6 +13,10 @@ def test_alignment_facade_exports_documented_api() -> None:
     assert align_api.AlignConfig.__name__ == "AlignConfig"
     assert callable(align_api.align)
     assert callable(align_api.align_multires)
+    assert align_full_api.DofSpec.__name__ == "DofSpec"
+    assert align_full_api.AlignmentSchedule.__name__ == "AlignmentSchedule"
+    assert callable(align_full_api.dof_spec)
+    assert callable(align_full_api.schedule_preset)
     assert not hasattr(align_full_api, "run_alignment_smoke")
     assert not hasattr(align_full_api, "run_alternating_solver_smoke")
     assert not hasattr(align_full_api, "AlternatingSmokeConfig")

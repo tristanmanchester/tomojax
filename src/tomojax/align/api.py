@@ -43,6 +43,7 @@ from tomojax.align._profiles import (
 )
 from tomojax.align._setup_lm import SetupOnlyLMConfig, SetupOnlyLMResult, solve_setup_only_lm
 from tomojax.align.geometry.parametrizations import se3_from_5d
+from tomojax.align.model.dof_specs import DofSpec, dof_spec
 from tomojax.align.model.dofs import (
     DofBounds,
     normalize_alignment_dofs,
@@ -51,8 +52,13 @@ from tomojax.align.model.dofs import (
 from tomojax.align.model.gauge import GaugeFixMode
 from tomojax.align.model.schedules import (
     PUBLIC_SCHEDULE_PRESETS,
+    AlignmentSchedule,
+    AlignmentStage,
     GaugePolicy,
+    ResolvedAlignmentSchedule,
+    ResolvedAlignmentStage,
     resolve_alignment_schedule,
+    schedule_preset,
 )
 from tomojax.align.objectives.loss_specs import (
     AlignmentLossConfig,
@@ -77,10 +83,13 @@ __all__ = [
     "AlignmentProfile",
     "AlignmentProfileInput",
     "AlignmentProfilePolicy",
+    "AlignmentSchedule",
+    "AlignmentStage",
     "ContinuationLevel",
     "ContinuationSchedule",
     "ContinuationScheduleName",
     "DofBounds",
+    "DofSpec",
     "FallbackPolicy",
     "GaugeFixMode",
     "GaugePolicy",
@@ -97,6 +106,8 @@ __all__ = [
     "PreviewVolumeSupport",
     "ProjectionLossMode",
     "QualityTier",
+    "ResolvedAlignmentSchedule",
+    "ResolvedAlignmentStage",
     "SetupOnlyLMConfig",
     "SetupOnlyLMResult",
     "StoppedPreviewPolicy",
@@ -105,6 +116,7 @@ __all__ = [
     "align",
     "align_multires",
     "alignment_profile_policy",
+    "dof_spec",
     "joint_schur_normal_eq_summary",
     "normalize_alignment_dofs",
     "normalize_alignment_profile",
@@ -115,6 +127,7 @@ __all__ = [
     "reference_continuation_schedule",
     "resolve_alignment_schedule",
     "resolve_profiled_cli_defaults",
+    "schedule_preset",
     "schur_step_from_jacobian",
     "se3_from_5d",
     "solve_joint_schur_lm",

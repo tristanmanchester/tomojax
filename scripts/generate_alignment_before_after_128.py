@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.align import AlignConfig, align_multires
+from tomojax.align.api import schedule_preset
 from tomojax.align.geometry.geometry_blocks import (
     GeometryCalibrationState,
     geometry_with_axis_state,
@@ -21,7 +22,6 @@ from tomojax.align.geometry.geometry_blocks import (
     normalize_geometry_dofs,
     summarize_geometry_calibration_stats,
 )
-from tomojax.align.model.schedules import schedule_preset
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile as RunProfile,
     ArticleScenario as Scenario,

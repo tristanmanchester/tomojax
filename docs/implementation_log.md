@@ -16129,3 +16129,23 @@ Validation:
   passed.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### Alignment schedule and DOF registry exposed through facade
+
+- Added `DofSpec`, `dof_spec`, `AlignmentSchedule`, `AlignmentStage`,
+  `ResolvedAlignmentSchedule`, `ResolvedAlignmentStage`, and `schedule_preset`
+  to `tomojax.align.api`.
+- Updated benchmark scenario catalog validation and article visual orchestration
+  to import schedule/DOF registry helpers through the alignment facade rather
+  than directly from nested `tomojax.align.model` modules.
+- Updated the alignment README and public facade test so the broader typed
+  alignment helper surface is documented and executable.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py tests/test_alignment_scenario_catalog.py tests/test_article_alignment_visuals.py -q`
+  passed with 19 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/align/api.py src/tomojax/bench/alignment_scenarios.py scripts/generate_alignment_before_after_128.py tests/test_alignment_scenario_catalog.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py src/tomojax/bench/alignment_scenarios.py scripts/generate_alignment_before_after_128.py tests/test_alignment_scenario_catalog.py tests/test_public_facades.py`
+  passed.

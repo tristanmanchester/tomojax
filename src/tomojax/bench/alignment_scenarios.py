@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from tomojax.align.model.dof_specs import dof_spec
-from tomojax.align.model.schedules import schedule_preset
+from tomojax.align.api import dof_spec, schedule_preset
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

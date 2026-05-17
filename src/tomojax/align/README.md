@@ -22,6 +22,7 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `ContinuationSchedule`
 - `ContinuationScheduleName`
 - `DofBounds`
+- `DofSpec`
 - `FallbackPolicy`
 - `GaugeFixMode`
 - `GaugePolicy`
@@ -31,6 +32,10 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `JointSchurLMResult`
 - `PoseOnlyLMConfig`
 - `PoseOnlyLMResult`
+- `ResolvedAlignmentSchedule`
+- `ResolvedAlignmentStage`
+- `AlignmentSchedule`
+- `AlignmentStage`
 - `SetupOnlyLMConfig`
 - `SetupOnlyLMResult`
 - `adapt_joint_schur_damping`
@@ -38,6 +43,7 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `align`
 - `align_multires`
 - `alignment_profile_policy`
+- `dof_spec`
 - `joint_schur_normal_eq_summary`
 - `normalize_alignment_dofs`
 - `normalize_alignment_profile`
@@ -48,6 +54,7 @@ typed configuration helpers live in `tomojax.align.api`. Diagnostics belong in
 - `reference_continuation_schedule`
 - `resolve_alignment_schedule`
 - `resolve_profiled_cli_defaults`
+- `schedule_preset`
 - `schur_step_from_jacobian`
 - `se3_from_5d`
 - `solve_joint_schur_lm`
