@@ -16357,3 +16357,24 @@ Validation:
 - `rg -n "from tomojax\\.data\\.|import tomojax\\.data\\.|from tomojax\\.calibration\\.|import tomojax\\.calibration\\.|from tomojax\\.align\\.(geometry|model|objectives)|import tomojax\\.align\\.(geometry|model|objectives)" scripts src/tomojax/bench src/tomojax/cli`
   returned no matches.
 - `python tools/check_public_imports.py scripts src tests` passed.
+
+### Golden-path CLI workflow covers product alignment
+
+- Expanded the fast golden-path CLI integration test from
+  TIFF ingest -> validate -> inspect -> reconstruction -> validate to also
+  include `tomojax align ... --mode cor` -> validate.
+- The alignment step stubs only the numerical solver; the test still exercises
+  the top-level product dispatcher, align CLI argument parsing, dataset metadata
+  handoff, output NXTomo write, parameter sidecar metadata, manifest write, and
+  validation of the aligned dataset.
+- This keeps diagnostics under developer surfaces while giving the production
+  CLI a stable contract test for the intended public workflow.
+
+Validation:
+
+- `uv run pytest tests/test_golden_path_cli.py -q` passed.
+- `uv run pytest tests/test_golden_path_cli.py tests/test_cli_entrypoints.py::test_top_level_cli_help_shows_clean_public_commands tests/test_cli_entrypoints.py::test_top_level_cli_recon_accepts_positional_input tests/test_cli_entrypoints.py::test_align_help_keeps_product_surface_small tests/test_cli_entrypoints.py::test_align_public_modes_resolve_to_internal_schedules -q`
+  passed with 5 tests.
+- `uv run ruff check tests/test_golden_path_cli.py` passed.
+- `python tools/check_public_imports.py scripts src tests` passed.
+- `git diff --check` passed.
