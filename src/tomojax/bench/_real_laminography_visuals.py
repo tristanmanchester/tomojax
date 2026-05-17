@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import imageio.v3 as iio
 import numpy as np
 from scipy import ndimage
 
@@ -43,6 +44,29 @@ def scale_uint8(
     scaled = (np.clip(arr, lo_v, hi_v) - lo_v) / (hi_v - lo_v)
     scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
     return np.asarray(np.round(255.0 * scaled), dtype=np.uint8)
+
+
+def save_uint8_png(
+    path: Path,
+    image: np.ndarray,
+    *,
+    lo: float | None = None,
+    hi: float | None = None,
+) -> str:
+    """Scale an image to uint8 and write it as a PNG."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    iio.imwrite(path, scale_uint8(image, lo=lo, hi=hi))
+    return str(path)
+
+
+def resize_nearest_2d(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Resize a 2D image by deterministic nearest-neighbor sampling."""
+    arr = np.asarray(image, dtype=np.float32)
+    if tuple(arr.shape) == tuple(shape):
+        return arr
+    y_idx = np.rint(np.linspace(0, arr.shape[0] - 1, int(shape[0]))).astype(np.int64)
+    x_idx = np.rint(np.linspace(0, arr.shape[1] - 1, int(shape[1]))).astype(np.int64)
+    return arr[np.ix_(y_idx, x_idx)]
 
 
 def window_normalize(image: np.ndarray) -> np.ndarray:
@@ -106,6 +130,8 @@ __all__ = [
     "grid_aligned_xy",
     "largest_centered_square_inside_rotated_frame",
     "load_volume_array",
+    "resize_nearest_2d",
+    "save_uint8_png",
     "scale_uint8",
     "window_normalize",
 ]

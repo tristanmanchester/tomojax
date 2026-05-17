@@ -16828,3 +16828,23 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography visual scaling helpers moved behind bench facade
+
+- Extended `tomojax.bench._real_laminography_visuals` with shared uint8 PNG
+  writing and deterministic nearest-neighbor 2D resizing helpers.
+- Exported `save_uint8_png` and `resize_nearest_2d` through the bench facade.
+- Thinned `scripts/real_laminography/run_real_lamino_reference_regression.py`
+  by deleting duplicate PNG scaling/writing and nearest-resize helpers while
+  preserving private aliases for existing runner-internal calls.
+
+Validation:
+
+- `uv run pytest tests/test_real_laminography_visuals.py tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers tests/test_real_lamino_runner_contract.py::test_status_stage_update_clears_stale_message -q`
+  passed with 5 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_reference_regression.py src/tomojax/bench/_real_laminography_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_laminography_visuals.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_reference_regression.py src/tomojax/bench/_real_laminography_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

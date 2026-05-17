@@ -10,6 +10,8 @@ from tomojax.bench import (
     largest_centered_square_inside_rotated_frame,
     load_volume_array,
     render_tem_grid_pose_artifacts,
+    resize_nearest_2d,
+    save_uint8_png,
     scale_uint8,
     window_normalize,
 )
@@ -40,6 +42,11 @@ def test_real_lamino_visuals_load_crop_and_scale(tmp_path: Path) -> None:
     assert scaled.dtype == np.uint8
     assert scaled[0, 0] == 0
     assert scaled[1, 0] == 255
+    np.testing.assert_array_equal(
+        resize_nearest_2d(np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32), (3, 3)),
+        np.asarray([[1.0, 1.0, 2.0], [1.0, 1.0, 2.0], [3.0, 3.0, 4.0]], dtype=np.float32),
+    )
+    assert Path(save_uint8_png(tmp_path / "scaled.png", scaled)).exists()
     assert np.isfinite(normalized).all()
     assert float(normalized.min()) >= 0.0
     assert float(normalized.max()) <= 1.0

@@ -55,6 +55,8 @@ Completed checkpoints in this pass:
       `tomojax.bench` runtime APIs.
 - [x] Move reference-regression projection validation/background helpers into
       `tomojax.bench`.
+- [x] Move reference-regression PNG scaling/nearest-resize helpers into
+      `tomojax.bench`.
 
 Next candidates:
 

@@ -49,6 +49,9 @@ from tomojax.bench import (
     real_lamino_commit_info,
     real_lamino_json_safe,
     real_lamino_projection_stats,
+    resize_nearest_2d,
+    save_uint8_png,
+    scale_uint8,
     update_real_lamino_status,
     validate_real_lamino_loaded_input,
     write_real_lamino_json,
@@ -67,40 +70,9 @@ _commit_info = real_lamino_commit_info
 _validate_loaded_input = validate_real_lamino_loaded_input
 _projection_stats = real_lamino_projection_stats
 _apply_projection_background = apply_real_lamino_projection_background
-
-
-def _scale_uint8(image: np.ndarray, *, lo: float | None = None, hi: float | None = None) -> np.ndarray:
-    arr = np.asarray(image, dtype=np.float32)
-    finite = np.isfinite(arr)
-    out = np.zeros(arr.shape, dtype=np.uint8)
-    if not np.any(finite):
-        return out
-    vals = arr[finite]
-    if lo is None or hi is None:
-        lo, hi = np.percentile(vals, [1.0, 99.0])
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        lo, hi = float(vals.min()), float(vals.max())
-    if hi <= lo:
-        return out
-    out[finite] = np.round(255.0 * np.clip((vals - lo) / (hi - lo), 0.0, 1.0)).astype(
-        np.uint8
-    )
-    return out
-
-
-def _save_png(path: Path, image: np.ndarray, *, lo: float | None = None, hi: float | None = None) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    iio.imwrite(path, _scale_uint8(image, lo=lo, hi=hi))
-    return str(path)
-
-
-def _resize_nearest_2d(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    arr = np.asarray(image, dtype=np.float32)
-    if tuple(arr.shape) == tuple(shape):
-        return arr
-    y_idx = np.rint(np.linspace(0, arr.shape[0] - 1, int(shape[0]))).astype(np.int64)
-    x_idx = np.rint(np.linspace(0, arr.shape[1] - 1, int(shape[1]))).astype(np.int64)
-    return arr[np.ix_(y_idx, x_idx)]
+_scale_uint8 = scale_uint8
+_save_png = save_uint8_png
+_resize_nearest_2d = resize_nearest_2d
 
 
 def _grid_origin_z(grid: Grid) -> float:

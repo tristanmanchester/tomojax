@@ -158,6 +158,8 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.load_volume_array)
     assert callable(bench_api.grid_aligned_xy)
     assert callable(bench_api.largest_centered_square_inside_rotated_frame)
+    assert callable(bench_api.resize_nearest_2d)
+    assert callable(bench_api.save_uint8_png)
     assert callable(bench_api.resolve_fixture_bin_factor)
     assert callable(bench_api.prepare_real_lamino_binned_fixture)
     assert callable(bench_api.reference_regression_level_outer_counts)
