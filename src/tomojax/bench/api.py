@@ -77,6 +77,9 @@ from tomojax.bench.real_laminography_report import (
     write_real_lamino_geometry_trace,
     write_real_lamino_residual_trace,
 )
+from tomojax.bench.real_laminography_setup import (
+    optimize_reference_setup_geometry_bilevel_for_level,
+)
 from tomojax.bench.synthetic_results import (
     SyntheticBenchmarkResult,
     SyntheticComparisonArtifact,
@@ -125,6 +128,7 @@ __all__ = [
     "make_article_phantom",
     "make_forward_projector_fixture",
     "make_forward_sinogram_fixture",
+    "optimize_reference_setup_geometry_bilevel_for_level",
     "parse_shape3",
     "phantom_spec",
     "pose_dx_dz_bounds",

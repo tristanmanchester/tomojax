@@ -14,6 +14,9 @@ top-level console scripts.
 - Synthetic result report helpers used by implementation and regression work.
 - Real-laminography developer workflow contracts, report semantics, and bounded
   planning helpers used by scripts under `scripts/real_laminography`.
+- Reference-regression adapters that intentionally bridge developer diagnostics
+  to private product internals without exposing those internals as production
+  alignment API.
 
 ## Boundary Rule
 

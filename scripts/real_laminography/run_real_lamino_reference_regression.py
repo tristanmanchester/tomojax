@@ -28,7 +28,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tomojax.align._setup_stage import _optimize_setup_geometry_bilevel_for_level
 from tomojax.align.api import (
     AlignConfig,
     AlignmentSchedule,
@@ -44,6 +43,7 @@ from tomojax.align.api import (
     resolve_loss_for_level,
     se3_from_5d,
 )
+from tomojax.bench import optimize_reference_setup_geometry_bilevel_for_level
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.io import normalize_json
 from tomojax.recon.fbp import fbp
@@ -693,7 +693,7 @@ def run_setup_stage(
             loss_spec = resolve_loss_for_level(cfg_base.loss, int(factor))
             loss_name = loss_spec_name(loss_spec)
             t0 = time.perf_counter()
-            setup_result = _optimize_setup_geometry_bilevel_for_level(
+            setup_result = optimize_reference_setup_geometry_bilevel_for_level(
                 geometry=geometry,
                 grid=g,
                 detector=d,

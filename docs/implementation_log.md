@@ -16226,3 +16226,27 @@ Validation:
 - `python tools/check_public_imports.py src tests` passed.
 - `just imports` passed with all import-linter contracts kept and the public
   import guard clean.
+
+### Real-laminography setup diagnostic adapter moved to bench
+
+- Added `tomojax.bench.real_laminography_setup` as the developer-owned adapter
+  for the reference-regression setup-stage optimizer.
+- Updated the real-laminography reference regression script to import that
+  adapter from the bench facade rather than importing `tomojax.align._setup_stage`
+  directly.
+- Documented in the bench README that reference-regression adapters may bridge
+  developer diagnostics to private product internals without promoting those
+  internals to product alignment API.
+- `tools/check_public_imports.py scripts src tests` now passes, so scripts no
+  longer contain unannotated private deep-module imports.
+
+Validation:
+
+- `uv run pytest tests/test_public_facades.py -q` passed with 7 tests.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_reference_regression.py`
+  passed.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/real_laminography_setup.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py scripts/real_laminography/run_real_lamino_reference_regression.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py scripts src tests` passed.
+- `just imports` passed with all import-linter contracts kept and the public
+  import guard clean.
