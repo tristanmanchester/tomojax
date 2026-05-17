@@ -3,6 +3,50 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography z-coordinate helpers moved behind bench facade
+
+### Scope
+
+Continued thinning real-laminography scripts by moving global/local z-coordinate
+mapping and XY slice extraction helpers into the bench-owned planning module.
+
+Changes:
+
+- Added real-laminography z-coordinate helpers to
+  `tomojax.bench.real_laminography_planning`.
+- Updated the reference-regression runner, staged runner, and Pallas probe to
+  call the bench-owned helpers.
+- Removed the duplicate coordinate helpers from
+  `scripts/real_laminography/run_real_lamino_reference_regression.py`.
+- Removed the `native` coordinate-helper dependency from
+  `map_real_lamino_global_z_to_binned(...)`.
+- Added focused planning tests for global/local z mapping and XY slice display
+  orientation.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py
+  tests/test_real_laminography_planning.py` passed.
+- `uv run python -m py_compile
+  src/tomojax/bench/real_laminography_planning.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_pallas_probe.py
+  tests/test_real_laminography_planning.py` passed.
+- `uv run pytest tests/test_real_laminography_planning.py
+  tests/test_real_lamino_runner_contract.py -k
+  'binned_fixture or planning_maps_global or planning_extracts_xy or
+  staged_defaults_to_reference_conservative_pose_bounds' -q` passed: 5 tests
+  in 3.17 seconds, 42 deselected.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Real-laminography pose-parameter summary moved behind bench facade
 
 ### Scope

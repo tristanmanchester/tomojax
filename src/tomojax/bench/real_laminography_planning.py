@@ -66,8 +66,52 @@ def view_indices_for_smoke_shape(
     return np.unique(np.rint(np.linspace(0, int(n_views) - 1, target)).astype(np.int64))
 
 
+def real_lamino_grid_origin_z(grid: Any) -> float:
+    """Return the physical z coordinate of local slice zero."""
+    if grid.vol_origin is not None:
+        return float(grid.vol_origin[2])
+    center_z = 0.0 if grid.vol_center is None else float(grid.vol_center[2])
+    return center_z - ((float(grid.nz) / 2.0) - 0.5) * float(grid.vz)
+
+
+def real_lamino_global_z_to_phys(global_z: int, *, full_nz: int) -> float:
+    """Map a global z index to physical z in the real-lamino frame."""
+    return float(global_z) - ((float(full_nz) / 2.0) - 0.5)
+
+
+def real_lamino_phys_z_to_local_index(phys_z: float, grid: Any) -> int:
+    """Map physical z to the nearest local slab index."""
+    return int(round((float(phys_z) - real_lamino_grid_origin_z(grid)) / float(grid.vz)))
+
+
+def real_lamino_global_z_to_local_index(global_z: int, *, full_nz: int, grid: Any) -> int:
+    """Map a global z index to a local slab index."""
+    return real_lamino_phys_z_to_local_index(
+        real_lamino_global_z_to_phys(global_z, full_nz=full_nz),
+        grid,
+    )
+
+
+def real_lamino_local_z_to_global_index(local_z: int, *, full_nz: int, grid: Any) -> int:
+    """Map a local slab index back to a global z index."""
+    phys_z = real_lamino_grid_origin_z(grid) + float(local_z) * float(grid.vz)
+    return int(round(phys_z + ((float(full_nz) / 2.0) - 0.5)))
+
+
+def real_lamino_xy_at_global_z(
+    volume: np.ndarray,
+    *,
+    grid: Any,
+    full_nz: int,
+    global_z: int,
+) -> np.ndarray:
+    """Return an XY image at a global z coordinate using display orientation."""
+    local_z = real_lamino_global_z_to_local_index(global_z, full_nz=full_nz, grid=grid)
+    local_z = int(np.clip(local_z, 0, np.asarray(volume).shape[2] - 1))
+    return np.asarray(volume, dtype=np.float32)[:, :, local_z].T
+
+
 def map_real_lamino_global_z_to_binned(
-    native: Any,
     global_z: int,
     *,
     original_full_nz: int,
@@ -75,10 +119,10 @@ def map_real_lamino_global_z_to_binned(
     binned_grid: Any,
 ) -> int:
     """Map a native global z coordinate into a binned real-lamino coordinate frame."""
-    phys_z = native._global_z_to_phys(int(global_z), full_nz=int(original_full_nz))
-    local_z = native._phys_z_to_local_index(phys_z, binned_grid)
+    phys_z = real_lamino_global_z_to_phys(int(global_z), full_nz=int(original_full_nz))
+    local_z = real_lamino_phys_z_to_local_index(phys_z, binned_grid)
     local_z = int(np.clip(local_z, 0, int(binned_grid.nz) - 1))
-    mapped = native._local_z_to_global_index(
+    mapped = real_lamino_local_z_to_global_index(
         local_z,
         full_nz=int(binned_full_nz),
         grid=binned_grid,
@@ -106,7 +150,10 @@ def prepare_real_lamino_binned_fixture(
         smoke_shape=args.smoke_shape,
     )
 
-    center_phys_z = native._global_z_to_phys(int(args.slab_center_z), full_nz=original_full_nz)
+    center_phys_z = real_lamino_global_z_to_phys(
+        int(args.slab_center_z),
+        full_nz=original_full_nz,
+    )
     base_grid = native.Grid(
         nx=int(original_shape[2]),
         ny=int(original_shape[2]),
@@ -268,6 +315,12 @@ __all__ = [
     "pose_phi_bounds",
     "pose_polish_bounds",
     "prepare_real_lamino_binned_fixture",
+    "real_lamino_global_z_to_local_index",
+    "real_lamino_global_z_to_phys",
+    "real_lamino_grid_origin_z",
+    "real_lamino_local_z_to_global_index",
+    "real_lamino_phys_z_to_local_index",
+    "real_lamino_xy_at_global_z",
     "resolve_fixture_bin_factor",
     "scaled_symmetric_bound",
     "select_real_lamino_final_candidates",

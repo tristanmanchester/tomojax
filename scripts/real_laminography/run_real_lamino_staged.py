@@ -28,6 +28,7 @@ from tomojax.bench.real_laminography_planning import (
     pose_phi_bounds,
     pose_polish_bounds,
     prepare_real_lamino_binned_fixture,
+    real_lamino_global_z_to_local_index,
     select_real_lamino_final_candidates,
     setup_det_u_bounds,
 )
@@ -125,7 +126,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
         grid = geometry_inputs["grid"]
         detector = geometry_inputs["detector"]
         full_nz = int(geometry_inputs["full_nz"])
-        preview_local_z = native._global_z_to_local_index(
+        preview_local_z = real_lamino_global_z_to_local_index(
             int(args.preview_z),
             full_nz=full_nz,
             grid=grid,

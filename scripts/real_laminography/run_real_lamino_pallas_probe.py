@@ -19,7 +19,6 @@ import jax.numpy as jnp
 import numpy as np
 from run_real_lamino_reference_regression import (
     _apply_projection_background,
-    _global_z_to_phys,
     _load_input,
     _parse_range,
     _projection_stats,
@@ -40,7 +39,7 @@ from tomojax.align.api import (
     apply_alignment_state,
     geometry_with_axis_state,
 )
-from tomojax.bench import real_lamino_pose_params_summary
+from tomojax.bench import real_lamino_global_z_to_phys, real_lamino_pose_params_summary
 from tomojax.bench.real_laminography_runtime import (
     RealLaminoGpuMonitor as GpuMonitor,
     append_real_lamino_csv as _append_csv,
@@ -392,7 +391,7 @@ def main() -> int:
         )
         n_views, nv, nu = projections.shape
         full_nz = int(nv)
-        center_phys_z = _global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
+        center_phys_z = real_lamino_global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
         grid = Grid(
             nx=int(nu),
             ny=int(nu),

@@ -74,6 +74,8 @@ Completed checkpoints in this pass:
 - [x] Remove the staged real-laminography script-local report wrapper.
 - [x] Remove staged real-laminography private aliases for bench-owned helpers.
 - [x] Move real-laminography pose-parameter summary into `tomojax.bench`.
+- [x] Move real-laminography global/local z mapping helpers into
+      `tomojax.bench`.
 
 Next candidates:
 

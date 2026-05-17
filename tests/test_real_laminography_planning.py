@@ -12,6 +12,11 @@ from tomojax.bench import (
     pose_dx_dz_bounds,
     pose_phi_bounds,
     pose_polish_bounds,
+    real_lamino_global_z_to_local_index,
+    real_lamino_global_z_to_phys,
+    real_lamino_grid_origin_z,
+    real_lamino_local_z_to_global_index,
+    real_lamino_xy_at_global_z,
     resolve_fixture_bin_factor,
     select_real_lamino_final_candidates,
     setup_det_u_bounds,
@@ -85,3 +90,21 @@ def test_real_laminography_planning_selects_final_candidates() -> None:
 
     with pytest.raises(ValueError, match="final candidate policy"):
         select_real_lamino_final_candidates(candidates, policy="sharpest")
+
+
+def test_real_laminography_planning_maps_global_and_local_z() -> None:
+    grid = SimpleNamespace(nz=4, vz=2.0, vol_origin=None, vol_center=(0.0, 0.0, 1.0))
+
+    assert real_lamino_grid_origin_z(grid) == -2.0
+    assert real_lamino_global_z_to_phys(5, full_nz=8) == 1.5
+    assert real_lamino_global_z_to_local_index(5, full_nz=8, grid=grid) == 2
+    assert real_lamino_local_z_to_global_index(2, full_nz=8, grid=grid) == 6
+
+
+def test_real_laminography_planning_extracts_xy_at_global_z_in_display_orientation() -> None:
+    grid = SimpleNamespace(nz=3, vz=1.0, vol_origin=(0.0, 0.0, -1.0), vol_center=None)
+    volume = np.arange(2 * 3 * 3, dtype=np.float32).reshape(2, 3, 3)
+
+    xy = real_lamino_xy_at_global_z(volume, grid=grid, full_nz=3, global_z=1)
+
+    np.testing.assert_array_equal(xy, volume[:, :, 1].T)

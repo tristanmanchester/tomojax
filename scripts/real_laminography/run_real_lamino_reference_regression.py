@@ -47,9 +47,12 @@ from tomojax.bench import (
     apply_real_lamino_projection_background,
     optimize_reference_setup_geometry_bilevel_for_level,
     real_lamino_commit_info,
+    real_lamino_global_z_to_local_index,
+    real_lamino_global_z_to_phys,
     real_lamino_json_safe,
     real_lamino_pose_params_summary,
     real_lamino_projection_stats,
+    real_lamino_xy_at_global_z,
     resize_nearest_2d,
     save_uint8_png,
     scale_uint8,
@@ -74,36 +77,6 @@ _apply_projection_background = apply_real_lamino_projection_background
 _scale_uint8 = scale_uint8
 _save_png = save_uint8_png
 _resize_nearest_2d = resize_nearest_2d
-
-
-def _grid_origin_z(grid: Grid) -> float:
-    if grid.vol_origin is not None:
-        return float(grid.vol_origin[2])
-    center_z = 0.0 if grid.vol_center is None else float(grid.vol_center[2])
-    return center_z - ((float(grid.nz) / 2.0) - 0.5) * float(grid.vz)
-
-
-def _global_z_to_phys(global_z: int, *, full_nz: int) -> float:
-    return float(global_z) - ((float(full_nz) / 2.0) - 0.5)
-
-
-def _phys_z_to_local_index(phys_z: float, grid: Grid) -> int:
-    return int(round((float(phys_z) - _grid_origin_z(grid)) / float(grid.vz)))
-
-
-def _global_z_to_local_index(global_z: int, *, full_nz: int, grid: Grid) -> int:
-    return _phys_z_to_local_index(_global_z_to_phys(global_z, full_nz=full_nz), grid)
-
-
-def _local_z_to_global_index(local_z: int, *, full_nz: int, grid: Grid) -> int:
-    phys_z = _grid_origin_z(grid) + float(local_z) * float(grid.vz)
-    return int(round(phys_z + ((float(full_nz) / 2.0) - 0.5)))
-
-
-def _xy_at_global_z(volume: np.ndarray, *, grid: Grid, full_nz: int, global_z: int) -> np.ndarray:
-    local_z = _global_z_to_local_index(global_z, full_nz=full_nz, grid=grid)
-    local_z = int(np.clip(local_z, 0, np.asarray(volume).shape[2] - 1))
-    return np.asarray(volume, dtype=np.float32)[:, :, local_z].T
 
 
 def _orthos(volume: np.ndarray, *, preview_local_z: int) -> np.ndarray:
@@ -139,9 +112,9 @@ def _save_z_stack(
     z0, z1 = z_range
     images: list[tuple[int, np.ndarray]] = []
     for z in range(int(z0), int(z1) + 1):
-        local = _global_z_to_local_index(z, full_nz=full_nz, grid=grid)
+        local = real_lamino_global_z_to_local_index(z, full_nz=full_nz, grid=grid)
         if 0 <= local < np.asarray(volume).shape[2]:
-            images.append((z, _xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=z)))
+            images.append((z, real_lamino_xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=z)))
     path.parent.mkdir(parents=True, exist_ok=True)
     if not images:
         iio.imwrite(path, np.zeros((16, 16), dtype=np.uint8))
@@ -296,8 +269,8 @@ class RunContext:
         input_reference: np.ndarray | None,
         suffix: str = "aligned",
     ) -> dict[str, str]:
-        local_z = _global_z_to_local_index(self.preview_global_z, full_nz=full_nz, grid=grid)
-        xy = _xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=self.preview_global_z)
+        local_z = real_lamino_global_z_to_local_index(self.preview_global_z, full_nz=full_nz, grid=grid)
+        xy = real_lamino_xy_at_global_z(volume, grid=grid, full_nz=full_nz, global_z=self.preview_global_z)
         ref = input_reference
         if ref is None:
             ref = self.naive_slice
@@ -428,7 +401,7 @@ def run_baseline(
     jax.block_until_ready(vol)
     elapsed = time.perf_counter() - t0
     np.save(stage_dir / "naive_fbp.npy", vol)
-    ctx.naive_slice = _xy_at_global_z(vol, grid=grid, full_nz=full_nz, global_z=ctx.preview_global_z)
+    ctx.naive_slice = real_lamino_xy_at_global_z(vol, grid=grid, full_nz=full_nz, global_z=ctx.preview_global_z)
     _save_png(stage_dir / f"naive_or_input_xy_global_z{ctx.preview_global_z:03d}.png", ctx.naive_slice)
     ctx.save_stage_products(
         stage_dir=stage_dir,
@@ -572,7 +545,7 @@ def run_setup_stage(
             stem = f"outer_{len(stage_stats):03d}_level{factor:02d}_iter{outer:02d}"
             preview_dir = stage_dir / "timeline_z"
             preview_grid = g
-            xy = _xy_at_global_z(x_np, grid=preview_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
+            xy = real_lamino_xy_at_global_z(x_np, grid=preview_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
             ref = _resize_nearest_2d(ctx.naive_slice, xy.shape) if ctx.naive_slice is not None else None
             _save_png(preview_dir / "slices" / f"{stem}_global_z{ctx.preview_global_z:03d}.png", xy)
             if ref is not None:
@@ -698,7 +671,7 @@ def run_pose_stage(
             if checkpoint_failures:
                 stat["checkpoint_validation_failed"] = True
                 stat["checkpoint_validation_failures"] = checkpoint_failures
-            xy = _xy_at_global_z(x_np, grid=level_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
+            xy = real_lamino_xy_at_global_z(x_np, grid=level_grid, full_nz=full_nz, global_z=ctx.preview_global_z)
             ref = _resize_nearest_2d(ctx.naive_slice, xy.shape) if ctx.naive_slice is not None else None
             stem = (
                 f"outer_{len(stage_stats)+1:03d}_level{level_factor:02d}_"
@@ -1015,10 +988,10 @@ def main() -> int:
         np.save(run_root / "projection_background_offsets.npy", background_offsets.astype(np.float32))
         n_views, nv, nu = projections.shape
         full_nz = int(nv)
-        center_phys_z = _global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
+        center_phys_z = real_lamino_global_z_to_phys(int(args.slab_center_z), full_nz=full_nz)
         grid = Grid(nx=int(nu), ny=int(nu), nz=int(args.slab_nz), vx=1.0, vy=1.0, vz=1.0, vol_center=(0.0, 0.0, center_phys_z))
         detector = Detector(nu=int(nu), nv=int(nv), du=1.0, dv=1.0, det_center=(0.0, 0.0))
-        preview_local_z = _global_z_to_local_index(int(args.preview_z), full_nz=full_nz, grid=grid)
+        preview_local_z = real_lamino_global_z_to_local_index(int(args.preview_z), full_nz=full_nz, grid=grid)
         if not 0 <= preview_local_z < int(grid.nz):
             raise ValueError(f"preview z {args.preview_z} maps outside slab local z={preview_local_z}")
         geometry = LaminographyGeometry(grid=grid, detector=detector, thetas_deg=thetas, tilt_deg=float(args.tilt_deg), tilt_about=str(args.tilt_about))
