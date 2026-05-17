@@ -32,15 +32,16 @@ from tomojax.bench.real_laminography_planning import (
     pose_polish_bounds,
     resolve_fixture_bin_factor,
     setup_det_u_bounds,
-    validate_bin_factor,
     view_indices_for_smoke_shape,
 )
 from tomojax.bench.real_laminography_profiles import (
     REAL_LAMINO_PROFILE_CHOICES,
     REAL_LAMINO_STAGED_PATH,
-    REFERENCE_REGRESSION_CONTRACT,
     REFERENCE_REGRESSION_STAGE_MAP as _REFERENCE_REGRESSION_STAGE_MAP,
-    STAGED_LAMINO_CONTRACT,
+    apply_real_lamino_profile_args,
+    apply_real_lamino_profile_contract_args,
+    normalize_real_lamino_runtime_args,
+    real_lamino_reference_regression_contract_payload,
 )
 from tomojax.bench.real_laminography_report import (
     build_real_lamino_report,
@@ -57,6 +58,10 @@ _artifact_validation_failures = real_lamino_artifact_validation_failures
 _finite_fraction = real_lamino_finite_fraction
 _stat_validation_failures = real_lamino_stat_validation_failures
 _validate_stage_output = validate_real_lamino_stage_output
+_apply_profile_contract_args = apply_real_lamino_profile_contract_args
+_apply_real_lamino_profile_args = apply_real_lamino_profile_args
+_normalize_runtime_args = normalize_real_lamino_runtime_args
+_reference_regression_contract_payload = real_lamino_reference_regression_contract_payload
 
 def main(argv: list[str] | None = None) -> int:
     """Run the v2 real-laminography staged workflow."""
@@ -915,117 +920,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         if int(args.views_per_batch) <= 0:
             args.views_per_batch = 1
     return args
-
-
-def _apply_real_lamino_profile_args(
-    args: argparse.Namespace,
-    parser: argparse.ArgumentParser,
-) -> None:
-    if str(args.profile) == "reference-regression":
-        if bool(args.smoke):
-            parser.error("--profile reference-regression cannot be combined with diagnostic mode")
-        _apply_profile_contract_args(args, REFERENCE_REGRESSION_CONTRACT)
-        args.reference_regression = True
-    elif str(args.profile) == "staged-lamino":
-        _apply_profile_contract_args(args, STAGED_LAMINO_CONTRACT)
-        args.reference_regression = False
-    elif str(args.profile) == "diagnostic-fast":
-        args.full_staged = True
-        args.smoke = True
-        if str(args.final_candidate_policy) == "all":
-            args.final_candidate_policy = "last_valid"
-        args.reference_regression = False
-    else:
-        args.reference_regression = False
-
-
-def _apply_profile_contract_args(args: argparse.Namespace, contract: Mapping[str, Any]) -> None:
-    args.full_staged = True
-    args.levels_setup = list(contract["levels_setup"])
-    args.levels_phi = list(contract["levels_phi"])
-    args.levels_dx_dz = list(contract["levels_dx_dz"])
-    args.levels_polish = list(contract["levels_polish"])
-    args.outer_iters = int(contract["outer_iters"])
-    args.recon_iters = int(contract["recon_iters"])
-    args.tv_prox_iters = int(contract["tv_prox_iters"])
-    args.lambda_tv = float(contract["lambda_tv"])
-    args.align_profile = str(contract["align_profile"])
-    args.regulariser = str(contract["regulariser"])
-    args.gn_damping = float(contract["gn_damping"])
-    args.quality_tier = str(contract["quality_tier"])
-    args.fallback_policy = str(contract["fallback_policy"])
-    args.fold_rigid_detector_grid = bool(contract["fold_rigid_detector_grid"])
-    args.pose_model = str(contract["pose_model"])
-    args.knot_spacing = int(contract["knot_spacing"])
-    args.pose_degree = int(contract["pose_degree"])
-    args.pose_bounds_profile = str(contract["pose_bounds_profile"])
-    args.canonical_det_grid = bool(contract["canonical_det_grid"])
-    args.projection_background = str(contract["projection_background"])
-    args.background_edge_px = int(contract["background_edge_px"])
-    args.recon_positivity = bool(contract["recon_positivity"])
-    args.views_per_batch = int(contract["views_per_batch"])
-    args.gather_dtype = str(contract["gather_dtype"])
-    args.final_candidate_policy = str(contract["final_candidate_policy"])
-
-
-def _normalize_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
-    """Resolve memory-sensitive runtime defaults after CLI parsing."""
-    if int(args.views_per_batch) <= 0:
-        args.views_per_batch = 1
-    args.bin_factor = validate_bin_factor(args.bin_factor)
-    return args
-
-
-def _reference_regression_contract_payload(args: argparse.Namespace) -> dict[str, Any]:
-    actual = {
-        "projection_background": str(args.projection_background),
-        "background_edge_px": int(args.background_edge_px),
-        "canonical_det_grid": bool(args.canonical_det_grid),
-        "levels_setup": list(args.levels_setup),
-        "levels_phi": list(args.levels_phi),
-        "levels_dx_dz": list(args.levels_dx_dz),
-        "levels_polish": list(args.levels_polish),
-        "outer_iters": int(args.outer_iters),
-        "recon_iters": int(args.recon_iters),
-        "tv_prox_iters": int(args.tv_prox_iters),
-        "lambda_tv": float(args.lambda_tv),
-        "align_profile": str(args.align_profile),
-        "regulariser": str(args.regulariser),
-        "loss_spec": "l2_otsu",
-        "loss_normalization": "align_config_default_l2_otsu_per_level",
-        "mask_vol": "cyl",
-        "optimizer_kind": "gn",
-        "gn_damping": float(args.gn_damping),
-        "quality_tier": str(args.quality_tier),
-        "fallback_policy": str(args.fallback_policy),
-        "fold_rigid_detector_grid": bool(getattr(args, "fold_rigid_detector_grid", True)),
-        "pose_model": str(args.pose_model),
-        "knot_spacing": int(args.knot_spacing),
-        "pose_degree": int(args.pose_degree),
-        "pose_bounds_profile": str(args.pose_bounds_profile),
-        "pose_gauge_policy": "mean_translation_for_dx_dz",
-        "final_candidate_policy": str(args.final_candidate_policy),
-        "views_per_batch": int(args.views_per_batch),
-        "gather_dtype": str(args.gather_dtype),
-        "recon_positivity": bool(args.recon_positivity),
-        "setup_outer_count_replay": "reference_stage_summary_counts",
-        "pose_phi_bounds": pose_phi_bounds(args),
-        "pose_dx_dz_bounds": pose_dx_dz_bounds(args),
-        "pose_polish_bounds": pose_polish_bounds(args),
-    }
-    mismatches = {
-        key: {"expected": expected, "actual": actual.get(key)}
-        for key, expected in REFERENCE_REGRESSION_CONTRACT.items()
-        if actual.get(key) != expected
-    }
-    return {
-        "schema": "tomojax.real_lamino_reference_regression_contract.v2",
-        "source_script": "scripts/real_laminography/run_real_lamino_reference_regression.py",
-        "expected": REFERENCE_REGRESSION_CONTRACT,
-        "actual": actual,
-        "mismatches": mismatches,
-        "passed": not mismatches,
-    }
 
 
 def _reference_regression_level_outer_counts(

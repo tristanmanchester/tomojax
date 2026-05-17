@@ -16649,3 +16649,24 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography profile contracts moved behind bench facade
+
+- Extended `tomojax.bench.real_laminography_profiles` so it owns staged
+  profile argument application, profile-contract application, runtime argument
+  normalization, and reference-regression contract payload generation.
+- Exported the profile helpers through `tomojax.bench`.
+- Thinned `scripts/real_laminography/run_real_lamino_staged.py` by deleting
+  duplicate profile/contract helper implementations and aliasing the
+  bench-owned functions for existing private test hooks.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_staged_reference_regression_profile_forces_reference_contract tests/test_real_lamino_runner_contract.py::test_staged_profile_choices_do_not_keep_removed_aliases tests/test_real_lamino_runner_contract.py::test_staged_public_help_uses_clean_profile_names tests/test_real_lamino_runner_contract.py::test_staged_runtime_default_streams_fista tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 5 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_profiles.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_lamino_runner_contract.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_staged.py src/tomojax/bench/real_laminography_profiles.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
