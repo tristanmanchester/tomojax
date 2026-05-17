@@ -15964,6 +15964,8 @@ Validation:
 - Moved the synthetic alignment diagnostic runner facade from
   `tomojax.align.developer_diagnostics` to
   `tomojax.bench.alignment_diagnostics`.
+- Moved the tiny vertical alignment smoke implementation from `tomojax.align`
+  to the benchmark owner module.
 - Updated `tomojax.bench.api` to re-export the diagnostic helpers from the
   benchmark owner module.
 - Removed the alignment README's now-obsolete diagnostics ownership note and

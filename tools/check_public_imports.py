@@ -40,7 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Reject imports of tomojax.<owner>._private modules from outside tomojax.<owner>. "
-            "Tests may allow a specific white-box import with "
+            "Tests and benchmark diagnostics may allow a specific white-box import with "
             f"'# {ALLOW_PRIVATE_MARKER}'."
         )
     )
@@ -61,7 +61,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(violation.format(root), file=sys.stderr)
         print(
             "\nPrivate implementation modules must be imported through their owner's public API. "
-            "For a deliberate white-box test, keep the import local and add "
+            "For a deliberate white-box test or benchmark diagnostic, keep the import local "
+            "and add "
             f"'# {ALLOW_PRIVATE_MARKER}' "
             "on or directly above the import line.",
             file=sys.stderr,
@@ -166,8 +167,11 @@ def line_has_allowed_test_marker(
     line_number: int,
     importing_module: str,
 ) -> bool:
-    """Return whether a test import line has an explicit private-import exception."""
-    if not importing_module.startswith("tests."):
+    """Return whether an allowed white-box import has an explicit exception."""
+    if not (
+        importing_module.startswith("tests.")
+        or importing_module.startswith("tomojax.bench.")
+    ):
         return False
     current_line = lines[line_number - 1]
     previous_line = lines[line_number - 2] if line_number > 1 else ""

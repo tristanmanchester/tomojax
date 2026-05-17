@@ -6,6 +6,7 @@ the benchmark/developer surface instead of the production alignment facade.
 
 from __future__ import annotations
 
+# check-public-imports: allow-private
 from tomojax.align._alternating import (
     AlternatingAlignmentSolver,
     AlternatingLevelSummary,
@@ -13,7 +14,7 @@ from tomojax.align._alternating import (
     AlternatingSmokeResult,
     run_alternating_solver_smoke,
 )
-from tomojax.align._smoke import AlignmentSmokeReport, run_alignment_smoke
+from tomojax.bench._alignment_smoke_core import AlignmentSmokeReport, run_alignment_smoke
 
 __all__ = [
     "AlignmentSmokeReport",
