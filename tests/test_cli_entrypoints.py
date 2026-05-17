@@ -34,7 +34,12 @@ def test_top_level_cli_help_shows_clean_public_commands(capsys):
     assert "tomojax inspect scan.nxs" in captured.out
     assert "tomojax ingest ./projections" in captured.out
     assert "tomojax recon corrected.nxs --out recon.nxs" in captured.out
-    assert "Developer diagnostics" in captured.out
+    assert "dev" not in captured.out
+    assert "Developer diagnostics" not in captured.out
+    assert "benchmark" not in captured.out
+    assert "diagnostic" not in captured.out
+    assert "loss-bench" not in captured.out
+    assert "align-auto" not in captured.out
     assert "test-gpu" not in captured.out
     assert "test-cpu" not in captured.out
 

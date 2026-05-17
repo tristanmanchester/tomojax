@@ -22,7 +22,6 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("recon", "Reconstruct a volume from a dataset."),
     CliCommand("align", "Run product alignment and reconstruction."),
     CliCommand("simulate", "Generate deterministic synthetic datasets."),
-    CliCommand("dev", "Open developer diagnostics and benchmark probes."),
 )
 
 DEVELOPER_COMMANDS: tuple[CliCommand, ...] = (

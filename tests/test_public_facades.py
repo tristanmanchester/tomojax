@@ -109,7 +109,6 @@ def test_cli_facade_exports_command_catalog() -> None:
         "recon",
         "align",
         "simulate",
-        "dev",
     )
     assert "align-auto" not in cli_api.product_command_names()
     assert "align-auto" in cli_api.developer_command_names()
