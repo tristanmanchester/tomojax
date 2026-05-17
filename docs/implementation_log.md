@@ -15938,3 +15938,4 @@ Validation:
 - Extended the public `ProjectionDataset` IO boundary with an optional
   `volume` field so reconstructed containers can be loaded through
   `tomojax.io.load_dataset()` without falling back to lower-level HDF5 helpers.
+- Added the golden-path test to `just production-surface-check`.
