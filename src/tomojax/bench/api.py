@@ -42,6 +42,8 @@ from tomojax.bench.article_alignment_results import (
     array_finite_summary,
     article_scenario_finite_report,
     scalar_finite_summary,
+    write_article_master_panel,
+    write_article_summary_csv,
 )
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile,
@@ -284,6 +286,8 @@ __all__ = [
     "validate_scenario_catalog",
     "view_indices_for_smoke_shape",
     "window_normalize",
+    "write_article_master_panel",
+    "write_article_summary_csv",
     "write_benchmark_json",
     "write_current_baseline_artifacts",
     "write_real_lamino_geometry_trace",

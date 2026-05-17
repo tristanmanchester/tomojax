@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import time
 from typing import Any, Mapping, Sequence
 
-import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -30,6 +28,8 @@ from tomojax.bench.article_alignment_manifest import (
 )
 from tomojax.bench.article_alignment_results import (
     article_scenario_finite_report as _scenario_finite_report,
+    write_article_master_panel as _write_master_panel,
+    write_article_summary_csv as _write_summary,
 )
 from tomojax.bench.article_alignment_runs import (
     ArticleRunProfile as RunProfile,
@@ -43,8 +43,6 @@ from tomojax.bench.article_alignment_runs import (
 from tomojax.bench.article_visuals import (
     alignment_visualization_payload as _visualization_payload,
     naive_visualization_payload as _naive_visualization_payload,
-    resize_for_master,
-    vstack_rgb,
     write_alignment_visuals,
     write_naive_visuals,
 )
@@ -1004,29 +1002,6 @@ def _select_scenarios(args: argparse.Namespace) -> list[Scenario]:
     if args.limit is not None:
         scenarios = scenarios[: int(args.limit)]
     return scenarios
-
-
-def _write_summary(rows: list[dict[str, Any]], summary_path: Path) -> None:
-    if not rows:
-        return
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    with summary_path.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()), extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _write_master_panel(rows: list[dict[str, Any]], master_path: Path) -> None:
-    panels: list[np.ndarray] = []
-    for row in rows:
-        panel_path = row.get("inspection_panel") or row.get("before_after_panel")
-        if not isinstance(panel_path, str) or not panel_path.strip():
-            continue
-        path = Path(panel_path)
-        if path.is_file():
-            panels.append(resize_for_master(iio.imread(path), width=1200))
-    if panels:
-        iio.imwrite(master_path, vstack_rgb(panels, pad=10))
 
 
 def run(args: argparse.Namespace) -> None:

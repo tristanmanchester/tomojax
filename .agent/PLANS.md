@@ -49,6 +49,8 @@ Completed checkpoints in this pass:
 - [x] Move article alignment finite-result reporting into `tomojax.bench`.
 - [x] Move article alignment visualization payload construction into
       `tomojax.bench`.
+- [x] Move article alignment summary CSV and master-panel writing into
+      `tomojax.bench`.
 
 Next candidates:
 

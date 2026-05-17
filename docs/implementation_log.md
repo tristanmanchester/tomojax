@@ -16760,3 +16760,24 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Article alignment summary artifacts moved behind bench facade
+
+- Extended `tomojax.bench.article_alignment_results` so it owns article
+  alignment summary CSV writing and stacked master-panel artifact generation.
+- Exported `write_article_summary_csv` and `write_article_master_panel` through
+  the bench facade.
+- Thinned `scripts/generate_alignment_before_after_128.py` by deleting its
+  script-local CSV/master-panel writers and removing the script's direct
+  `csv`/`imageio` dependencies.
+
+Validation:
+
+- `uv run pytest tests/test_geometry_block_taxonomy_generator.py::test_master_panel_ignores_failed_rows_without_panel_paths tests/test_article_alignment_visuals.py tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 6 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/generate_alignment_before_after_128.py src/tomojax/bench/article_alignment_results.py src/tomojax/bench/article_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_geometry_block_taxonomy_generator.py tests/test_public_facades.py`
+  passed.
+- `uv run python -m py_compile scripts/generate_alignment_before_after_128.py src/tomojax/bench/article_alignment_results.py src/tomojax/bench/article_visuals.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.

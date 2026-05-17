@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
 from typing import Any
 
+import imageio.v3 as iio
 import numpy as np
+
+from tomojax.bench.article_visuals import resize_for_master, vstack_rgb
 
 
 def array_finite_summary(name: str, value: np.ndarray | None) -> dict[str, Any]:
@@ -101,4 +106,35 @@ def article_scenario_finite_report(result: Any) -> dict[str, Any]:
     }
 
 
-__all__ = ["array_finite_summary", "article_scenario_finite_report", "scalar_finite_summary"]
+def write_article_summary_csv(rows: list[dict[str, Any]], summary_path: Path) -> None:
+    """Write the per-scenario article alignment summary CSV."""
+    if not rows:
+        return
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    with summary_path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_article_master_panel(rows: list[dict[str, Any]], master_path: Path) -> None:
+    """Write the stacked article master panel from per-scenario panels."""
+    panels: list[np.ndarray] = []
+    for row in rows:
+        panel_path = row.get("inspection_panel") or row.get("before_after_panel")
+        if not isinstance(panel_path, str) or not panel_path.strip():
+            continue
+        path = Path(panel_path)
+        if path.is_file():
+            panels.append(resize_for_master(iio.imread(path), width=1200))
+    if panels:
+        iio.imwrite(master_path, vstack_rgb(panels, pad=10))
+
+
+__all__ = [
+    "array_finite_summary",
+    "article_scenario_finite_report",
+    "scalar_finite_summary",
+    "write_article_master_panel",
+    "write_article_summary_csv",
+]
