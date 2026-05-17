@@ -89,5 +89,38 @@ source_modules =
     tomojax.cli
 forbidden_modules =
     tomojax.align.geometry
+    tomojax.align.io
     tomojax.align.model
     tomojax.align.objectives
+    tomojax.align.pipeline
+    tomojax.align.verification
+ignore_imports =
+    tomojax.cli.align -> tomojax.align.io.checkpoint
+    tomojax.cli.align -> tomojax.align.io.params_export
+
+[importlinter:contract:cli-no-core-geometry]
+name = CLI uses geometry facade instead of core geometry internals
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.cli
+forbidden_modules =
+    tomojax.core.geometry
+
+[importlinter:contract:cli-no-bench-except-dev-dispatch]
+name = CLI modules do not import benchmark helpers outside dev dispatch
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.cli
+forbidden_modules =
+    tomojax.bench
+ignore_imports =
+    tomojax.cli.align_auto -> tomojax.bench
+    tomojax.cli.loss_bench -> tomojax.bench.loss_experiment
+    tomojax.cli.main -> tomojax.bench.alignment_smoke
+    tomojax.cli.main -> tomojax.bench.astra_parallel
+    tomojax.cli.main -> tomojax.bench.benchmark_suite
+    tomojax.cli.main -> tomojax.bench.current_baseline
+    tomojax.cli.main -> tomojax.bench.pallas_sanity
+    tomojax.cli.main -> tomojax.bench.synthetic_results

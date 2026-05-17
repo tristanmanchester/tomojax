@@ -199,6 +199,67 @@ def test_production_cli_uses_alignment_facade_for_schedules_and_losses() -> None
     assert leaks == {}
 
 
+def test_cli_modules_use_alignment_facade_with_declared_sidecar_exceptions() -> None:
+    allowed = {
+        ("src/tomojax/cli/align.py", "tomojax.align.io.checkpoint"),
+        ("src/tomojax/cli/align.py", "tomojax.align.io.params_export"),
+    }
+    forbidden_prefixes = (
+        "tomojax.align.geometry",
+        "tomojax.align.io",
+        "tomojax.align.model",
+        "tomojax.align.objectives",
+        "tomojax.align.pipeline",
+        "tomojax.align.verification",
+    )
+    leaks: dict[str, list[str]] = {}
+    for path in sorted(Path("src/tomojax/cli").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imports.append("." * node.level + node.module)
+        forbidden = [
+            module
+            for module in imports
+            if module.startswith(forbidden_prefixes) and (str(path), module) not in allowed
+        ]
+        if forbidden:
+            leaks[str(path)] = forbidden
+
+    assert leaks == {}
+
+
+def test_product_cli_modules_do_not_import_bench_helpers() -> None:
+    allowed_paths = {
+        Path("src/tomojax/cli/align_auto.py"),
+        Path("src/tomojax/cli/loss_bench.py"),
+        Path("src/tomojax/cli/main.py"),
+    }
+    leaks: dict[str, list[str]] = {}
+    for path in sorted(Path("src/tomojax/cli").glob("*.py")):
+        if path in allowed_paths:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imports.append("." * node.level + node.module)
+        forbidden = [
+            module
+            for module in imports
+            if module == "tomojax.bench" or module.startswith("tomojax.bench.")
+        ]
+        if forbidden:
+            leaks[str(path)] = forbidden
+
+    assert leaks == {}
+
+
 def test_production_entrypoint_preserves_documented_data_shorthand(monkeypatch) -> None:
     calls: list[list[str]] = []
 
