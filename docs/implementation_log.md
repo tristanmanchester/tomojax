@@ -17932,3 +17932,21 @@ Validation:
   tests/test_bilevel_setup_alignment.py tests/test_geometry_applier.py
   tests/test_pose_reconstruction_fail_closed.py tests/test_cli_public_surface.py
   tests/test_public_facades.py` passed.
+
+## 2026-05-17 - Public wording audit
+
+### Product docs and README cleanup
+
+- Audited public/product docs and module READMEs for development-era wording:
+  `mvp`, `v1`, `parity`, `smoke`, `legacy`, and `transitional`.
+- Reworded the support matrix's public Pallas status row from
+  "Pallas/parity tests" to "Pallas comparison tests" so the product-facing
+  table describes the evidence without development-era phrasing.
+- Left remaining matches in developer diagnostics, benchmark READMEs,
+  historical reports, tests, schema identifiers, and explicitly
+  developer/evidence-facing retained package notes.
+
+Validation:
+
+- Focused public-doc `rg` checks passed after the cleanup.
+- Existing public wording guard in `tests/test_cli_public_surface.py` passed.

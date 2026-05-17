@@ -39,7 +39,7 @@ workflows.
 | Full laminography axis/roll/theta recovery across the original synthetic plan | `research_blocker` | The original laminography case still needs stronger axis/roll/theta and det-v observability evidence before it can be production-supported. |
 | Object-frame thermal drift recovery | `unsupported_model` | The system can flag object-motion suspicion, but object-frame drift parameters are not a supported production solve path yet. |
 | Combined nuisance, jumps, and laminography setup recovery | `research_blocker` | Bad-view and nuisance diagnostics exist, but hard-case setup/axis/theta recovery under nuisance is not production-supported. |
-| Default Pallas alignment/reconstruction path | `diagnostic_only` | Reference and Pallas/parity tests exist, but the default production solver path is still JAX/reference-oriented for correctness. |
+| Default Pallas alignment/reconstruction path | `diagnostic_only` | Reference and Pallas comparison tests exist, but the default production solver path is still JAX/reference-oriented for correctness. |
 
 ## Claiming Rules
 
