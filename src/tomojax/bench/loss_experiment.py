@@ -20,9 +20,8 @@ from tomojax.align.api import se3_from_5d
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
-from tomojax.data.geometry_meta import build_geometry_from_meta
 from tomojax.datasets import SimConfig, simulate_to_file
-from tomojax.io import load_nxtomo, save_nxtomo
+from tomojax.io import build_geometry_from_dataset_metadata, load_nxtomo, save_nxtomo
 
 _PROVENANCE_KEY = "loss_experiment_provenance"
 _PROVENANCE_VERSION = 1
@@ -91,7 +90,7 @@ def make_misaligned_dataset(
         return str(mis_path)
 
     volume = np.asarray(meta.volume, dtype=np.float32)
-    grid, det, geom = build_geometry_from_meta(
+    grid, det, geom = build_geometry_from_dataset_metadata(
         meta.geometry_inputs(),
         apply_saved_alignment=False,
         volume_shape=volume.shape,

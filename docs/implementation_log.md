@@ -16296,3 +16296,19 @@ Validation:
 - `uv run ruff check --select I,F,RUF022 src/tomojax/datasets/_phantoms.py src/tomojax/datasets/api.py src/tomojax/datasets/__init__.py src/tomojax/bench/article_alignment_runs.py src/tomojax/bench/alignment_scenarios.py tests/test_public_facades.py`
   passed.
 - `python tools/check_public_imports.py scripts src tests` passed.
+
+### Loss experiment geometry metadata routed through IO facade
+
+- Updated `tomojax.bench.loss_experiment` to use
+  `tomojax.io.build_geometry_from_dataset_metadata` instead of importing
+  `tomojax.data.geometry_meta.build_geometry_from_meta` directly.
+- This keeps benchmark dataset interpretation behind the IO owner module while
+  preserving the same metadata handling.
+
+Validation:
+
+- `uv run pytest tests/test_bench_loss_experiment.py -q` passed with 8 tests.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/loss_experiment.py`
+  passed.
+- `rg -n "from tomojax\\.data\\.geometry_meta|build_geometry_from_meta" src/tomojax/bench/loss_experiment.py src/tomojax/bench scripts`
+  returned no matches.
