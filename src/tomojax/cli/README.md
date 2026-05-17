@@ -37,7 +37,7 @@ Forbidden dependencies:
 - Public commands should emit artifact/provenance paths.
 - The top-level `tomojax` command exposes user workflows; diagnostic and
   benchmark probes should not be promoted there by default.
-- User-facing alignment modes should stay high-level (`off`, `pose`, `auto`,
+- User-facing alignment modes should stay high-level (`cor`, `pose`, `auto`,
   `max`) rather than exposing grid-search internals as the default product.
 
 ## Tests

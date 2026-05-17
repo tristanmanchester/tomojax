@@ -50,7 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "paths",
         nargs="*",
         type=Path,
-        default=[Path("src/tomojax"), Path("tests")],
+        default=[Path("scripts"), Path("src/tomojax"), Path("tests")],
         help="Files or directories to scan.",
     )
     args = parser.parse_args(argv)

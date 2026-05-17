@@ -16403,3 +16403,20 @@ Validation:
   passed.
 - `python tools/check_public_imports.py scripts src tests` passed.
 - `git diff --check` passed.
+
+### Import guard wired into the default architecture loop
+
+- Updated `tools/check_public_imports.py` so its default scan includes
+  `scripts` as well as `src/tomojax` and `tests`.
+- Updated `just production-surface-check` so the import-guard tool and its
+  focused tests are part of the production surface feedback loop.
+- Corrected the CLI README alignment mode invariant from stale `off` wording to
+  the current product modes: `cor`, `pose`, `auto`, and `max`.
+
+Validation:
+
+- `python tools/check_public_imports.py` passed.
+- `uv run pytest tests/test_public_import_guard.py -q` passed with 3 tests.
+- `uv run ruff check tools/check_public_imports.py tests/test_public_import_guard.py`
+  passed.
+- `git diff --check` passed.
