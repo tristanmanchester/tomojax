@@ -168,10 +168,7 @@ def line_has_allowed_test_marker(
     importing_module: str,
 ) -> bool:
     """Return whether an allowed white-box import has an explicit exception."""
-    if not (
-        importing_module.startswith("tests.")
-        or importing_module.startswith("tomojax.bench.")
-    ):
+    if not importing_module.startswith(("tests.", "tomojax.bench.")):
         return False
     current_line = lines[line_number - 1]
     previous_line = lines[line_number - 2] if line_number > 1 else ""

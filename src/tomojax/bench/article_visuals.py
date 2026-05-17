@@ -96,9 +96,7 @@ def scale_shared_gray(image: np.ndarray, lower: float, upper: float) -> np.ndarr
     if upper <= lower:
         return np.zeros((*image.shape, 3), dtype=np.uint8)
     scaled = np.clip((np.asarray(image, dtype=np.float32) - lower) / (upper - lower), 0.0, 1.0)
-    gray = np.rint(np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0) * 255.0).astype(
-        np.uint8
-    )
+    gray = np.rint(np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0) * 255.0).astype(np.uint8)
     return to_rgb(gray)
 
 
@@ -422,12 +420,7 @@ def image_grid(
     gutter_px = max(4, int(pad))
     fig_w = ncols * cell_px + (ncols - 1) * gutter_px
     fig_h = (
-        title_px
-        + gutter_px
-        + col_label_px
-        + gutter_px
-        + nrows * cell_px
-        + (nrows - 1) * gutter_px
+        title_px + gutter_px + col_label_px + gutter_px + nrows * cell_px + (nrows - 1) * gutter_px
     )
     dpi = 100
     fig = Figure(figsize=(fig_w / dpi, fig_h / dpi), dpi=dpi, facecolor=(0.045, 0.045, 0.045))
@@ -524,12 +517,7 @@ def _pil_image_grid(
     gutter_px = max(4, int(pad))
     width = ncols * cell_px + (ncols - 1) * gutter_px
     height = (
-        title_px
-        + gutter_px
-        + col_label_px
-        + gutter_px
-        + nrows * cell_px
-        + (nrows - 1) * gutter_px
+        title_px + gutter_px + col_label_px + gutter_px + nrows * cell_px + (nrows - 1) * gutter_px
     )
     canvas = Image.new("RGB", (width, height), (12, 12, 12))
     draw = ImageDraw.Draw(canvas)
