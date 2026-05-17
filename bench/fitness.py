@@ -10,17 +10,17 @@ without pulling one-off script behavior into the fixed profile surface.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, field
 import importlib.util
 import json
 import math
 import os
+from pathlib import Path
 import statistics
 import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import numpy as np
@@ -763,14 +763,14 @@ def _import_modules(profile: dict[str, Any]) -> ImportedModules:
         metrics_relative,
         project_gt_with_estimated_poses,
     )
-    from tomojax.core.geometry import (
+    from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
+    from tomojax.datasets import SimConfig, simulate
+    from tomojax.geometry import (
         Detector,
         Grid,
         LaminographyGeometry,
         ParallelGeometry,
     )
-    from tomojax.core.projector import forward_project_view_T, get_detector_grid_device
-    from tomojax.datasets import SimConfig, simulate
     from tomojax.recon.fbp import fbp
     from tomojax.recon.fista_tv import fista_tv
 

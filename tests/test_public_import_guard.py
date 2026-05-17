@@ -17,7 +17,9 @@ def _load_import_guard() -> ModuleType:
     return module
 
 
-find_violations = _load_import_guard().find_violations
+_import_guard = _load_import_guard()
+find_violations = _import_guard.find_violations
+DEFAULT_SCAN_PATHS = _import_guard.DEFAULT_SCAN_PATHS
 
 
 def _write(root: Path, relative: str, source: str) -> Path:
@@ -52,7 +54,26 @@ def test_import_guard_rejects_nested_alignment_from_bench_surface(tmp_path: Path
     violations = find_violations([path], tmp_path)
 
     assert len(violations) == 1
-    assert violations[0].reason == "nested alignment namespace must be reached through tomojax.align.api"
+    assert (
+        violations[0].reason
+        == "nested alignment namespace must be reached through tomojax.align.api"
+    )
+
+
+def test_import_guard_rejects_nested_alignment_from_top_level_bench(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "bench/example.py",
+        "from tomojax.align.objectives.loss_specs import parse_loss_spec\n",
+    )
+
+    violations = find_violations([path], tmp_path)
+
+    assert len(violations) == 1
+    assert (
+        violations[0].reason
+        == "nested alignment namespace must be reached through tomojax.align.api"
+    )
 
 
 def test_import_guard_rejects_core_geometry_from_cli_surface(tmp_path: Path) -> None:
@@ -68,6 +89,53 @@ def test_import_guard_rejects_core_geometry_from_cli_surface(tmp_path: Path) -> 
     assert violations[0].reason == (
         "core geometry namespace must be reached through tomojax.geometry"
     )
+
+
+def test_import_guard_rejects_core_geometry_from_top_level_bench(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "bench/example.py",
+        "from tomojax.core.geometry import Detector, Grid\n",
+    )
+
+    violations = find_violations([path], tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].reason == (
+        "core geometry namespace must be reached through tomojax.geometry"
+    )
+
+
+def test_import_guard_rejects_legacy_data_from_top_level_bench(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "bench/example.py",
+        "from tomojax.data.io_hdf5 import load_nxtomo\n",
+    )
+
+    violations = find_violations([path], tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].reason == (
+        "legacy data namespace must be reached through tomojax.io or tomojax.datasets"
+    )
+
+
+def test_import_guard_allows_marked_white_box_import_from_top_level_bench(
+    tmp_path: Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        "bench/example.py",
+        "# check-public-imports: allow-private\n"
+        "from tomojax.align._alternating import AlternatingAlignmentSolver\n",
+    )
+
+    assert find_violations([path], tmp_path) == []
+
+
+def test_import_guard_scans_top_level_bench_by_default() -> None:
+    assert Path("bench") in DEFAULT_SCAN_PATHS
 
 
 def test_import_guard_allows_legacy_data_behind_io_adapter(tmp_path: Path) -> None:

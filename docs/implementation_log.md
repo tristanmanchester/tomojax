@@ -33,6 +33,34 @@ Changes:
   tests/test_bench_real_laminography_pose.py` passed with 49 tests.
 - `python tools/check_public_imports.py` passed.
 
+## 2026-05-17 - Top-level bench added to public import guard
+
+### Scope
+
+Audited the top-level `bench/` developer surface and made it part of the
+default public-import boundary check.
+
+Changes:
+
+- Added `bench/` to the default `tools/check_public_imports.py` scan roots.
+- Classified top-level `bench.*` modules as developer surfaces for legacy
+  namespace checks, matching `scripts.*`, `tomojax.bench.*`, and
+  `tomojax.cli.*`.
+- Routed the fixed-profile benchmark harness through `tomojax.geometry` for
+  geometry model types instead of importing `tomojax.core.geometry` directly.
+- Added guard tests that reject top-level bench imports from nested
+  `tomojax.align.objectives`, `tomojax.core.geometry`, and `tomojax.data`,
+  while preserving explicit white-box exceptions with the existing marker.
+
+### Validation
+
+- `python tools/check_public_imports.py` passed.
+- `uv run pytest -q tests/test_public_import_guard.py
+  tests/test_bench_fitness_imports.py` passed with 10 tests.
+- `uv run ruff check --select I,F,RUF022 bench/fitness.py
+  tools/check_public_imports.py tests/test_public_import_guard.py` passed.
+- `uv run lint-imports --config .importlinter` passed with all 5 contracts kept.
+
 ## 2026-05-17 - Schur normal-equation summaries moved behind verify
 
 ### Scope

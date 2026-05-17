@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 
 ALLOW_PRIVATE_MARKER = "check-public-imports: allow-private"
+DEFAULT_SCAN_PATHS = [Path("bench"), Path("scripts"), Path("src/tomojax"), Path("tests")]
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "paths",
         nargs="*",
         type=Path,
-        default=[Path("scripts"), Path("src/tomojax"), Path("tests")],
+        default=DEFAULT_SCAN_PATHS,
         help="Files or directories to scan.",
     )
     args = parser.parse_args(argv)
@@ -102,9 +103,7 @@ def find_violations(paths: Iterable[Path], root: Path) -> list[Violation]:
                         line=node.lineno,
                         imported_module=imported_module,
                         importing_module=importing_module,
-                        reason=(
-                            f"private import crosses tomojax.{owner} boundary"
-                        ),
+                        reason=(f"private import crosses tomojax.{owner} boundary"),
                     )
                 )
                 continue
@@ -206,7 +205,7 @@ def legacy_public_surface_reason(imported_module: str, importing_module: str) ->
 
 def is_product_surface_module(module: str) -> bool:
     """Return whether a module belongs to the product/developer entrypoint surface."""
-    return module.startswith(("scripts.", "tomojax.bench.", "tomojax.cli."))
+    return module.startswith(("bench.", "scripts.", "tomojax.bench.", "tomojax.cli."))
 
 
 def line_has_allowed_test_marker(
@@ -215,7 +214,7 @@ def line_has_allowed_test_marker(
     importing_module: str,
 ) -> bool:
     """Return whether an allowed white-box import has an explicit exception."""
-    if not importing_module.startswith(("tests.", "tomojax.bench.")):
+    if not importing_module.startswith(("bench.", "tests.", "tomojax.bench.")):
         return False
     current_line = lines[line_number - 1]
     previous_line = lines[line_number - 2] if line_number > 1 else ""
