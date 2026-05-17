@@ -136,10 +136,10 @@ Forbidden dependencies:
   engine.
 - `solve_joint_schur_lm` can opt into per-view gain/offset variable projection
   so affine acquisition drift is modelled as nuisance rather than geometry.
-- `JointSchurDiagnostics`, `joint_schur_normal_eq_summary`, and
-  `write_joint_schur_normal_eq_summary` are transition-only diagnostic imports
-  on this facade. Treat their long-term owner as `tomojax.verify` or
-  `tomojax.bench`.
+- `JointSchurDiagnostics` remains a transition-only diagnostic import on this
+  facade. `joint_schur_normal_eq_summary` and
+  `write_joint_schur_normal_eq_summary` are verify-owned report helpers that
+  remain directly importable here only for compatibility.
 
 ## Tests
 

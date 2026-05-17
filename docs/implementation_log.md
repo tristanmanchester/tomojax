@@ -2,6 +2,44 @@
 
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
+
+## 2026-05-17 - Schur normal-equation summaries moved behind verify
+
+### Scope
+
+Moved the Schur normal-equation summary report helpers out of the private align
+solver module and behind the `tomojax.verify` facade without changing solver
+state updates, damping, trust-radius adaptation, or diagnostic construction.
+
+Changes:
+
+- Added `tomojax.verify._schur_summary` with Protocol-based structural inputs
+  so verify can serialize Schur solver results without importing private align
+  internals.
+- Exported `joint_schur_normal_eq_summary` and
+  `write_joint_schur_normal_eq_summary` from `tomojax.verify` and
+  `tomojax.verify.api`.
+- Repointed alternating artifact generation and the normal-equation summary
+  test to the verify-owned helpers.
+- Kept compatibility attributes on `tomojax.align.api`, still omitted from
+  `align.api.__all__`, so existing direct imports continue to work while the
+  ownership boundary moves.
+
+### Validation
+
+- `uv run pytest -q tests/test_joint_schur_lm.py::test_joint_schur_writes_normal_eq_summary_artifact tests/test_public_facades.py::test_product_facades_reexport_their_api_modules tests/test_public_facades.py::test_verify_facade_exports_schur_report_helpers tests/test_align_contracts.py::test_alignment_api_keeps_diagnostics_out_of_advertised_public_exports`
+  passed with 4 tests.
+- `uv run pytest -q tests/test_alternating_solver_smoke.py::test_schur_scalar_diagnostic_compares_detu_normal_equation_to_curve tests/test_alternating_solver_smoke.py::test_rejected_schur_update_does_not_verify_sidecar_level tests/test_alternating_solver_smoke.py::test_alternating_smoke_schur_recovers_supported_dofs_with_truth_volume`
+  passed with 3 tests.
+- `uv run ruff check src/tomojax/verify/_schur_summary.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/_alternating_artifacts.py tests/test_joint_schur_lm.py tests/test_public_facades.py`
+  passed.
+- `uv run basedpyright src/tomojax/verify/_schur_summary.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py src/tomojax/align/api.py src/tomojax/align/_alternating_artifacts.py`
+  passed with 0 errors.
+- `uv run python -m py_compile src/tomojax/verify/_schur_summary.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/_alternating_artifacts.py`
+  passed.
+- `python tools/check_public_imports.py` still fails on pre-existing unrelated
+  IO migration imports in `src/tomojax/data/inspection.py` and
+  `tests/test_inspect_cli.py`.
 ## 2026-05-17 - Datasets facade synthetic import cleanup
 
 ### Scope

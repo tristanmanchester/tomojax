@@ -10,8 +10,10 @@ from tomojax.verify.api import (
     failure_report_from_gates,
     failure_warnings_from_gates,
     inspect_run_artifacts,
+    joint_schur_normal_eq_summary,
     residual_structure_summary,
     validate_run_artifacts,
+    write_joint_schur_normal_eq_summary,
 )
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "failure_report_from_gates",
     "failure_warnings_from_gates",
     "inspect_run_artifacts",
+    "joint_schur_normal_eq_summary",
     "residual_structure_summary",
     "validate_run_artifacts",
+    "write_joint_schur_normal_eq_summary",
 ]

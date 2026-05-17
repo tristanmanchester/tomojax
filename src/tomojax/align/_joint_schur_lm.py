@@ -5,8 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import json
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -23,9 +22,6 @@ from tomojax.forward import (
 )
 from tomojax.geometry import CanonicalizedGeometry, GeometryState, canonicalize_geometry_gauges
 from tomojax.nuisance import estimate_background_offset, estimate_gain_offset
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _POSE_DIM = 5
 PoseSchurDof = Literal["alpha_rad", "beta_rad", "phi_residual_rad", "dx_px", "dz_px"]
@@ -523,36 +519,6 @@ def _can_repack_canonicalized_gauge(
     return not (
         "dz_px" in active_pose and geometry.setup.det_v_px.active and "det_v_px" not in active_setup
     )
-
-
-def joint_schur_normal_eq_summary(result: JointSchurLMResult) -> dict[str, object]:
-    """Return the JSON-serializable normal-equation summary artifact."""
-    return {
-        "solver": "joint_schur_lm_reference",
-        "initial_loss": result.initial_loss,
-        "final_loss": result.final_loss,
-        "iterations": result.iterations,
-        "active_setup_parameters": list(result.active_setup_parameters),
-        "active_pose_dofs": list(result.active_pose_dofs),
-        "frozen_parameters": list(result.frozen_parameters),
-        "diagnostics": result.diagnostics.to_dict(),
-        "iteration_diagnostics": [
-            diagnostics.to_dict() for diagnostics in result.iteration_diagnostics
-        ],
-    }
-
-
-def write_joint_schur_normal_eq_summary(result: JointSchurLMResult, path: str | Path) -> Path:
-    """Write the Phase 6 normal-equation summary artifact as JSON."""
-    from pathlib import Path
-
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _ = output_path.write_text(
-        json.dumps(joint_schur_normal_eq_summary(result), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return output_path
 
 
 @dataclass(frozen=True)

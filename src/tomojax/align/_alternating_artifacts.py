@@ -41,9 +41,6 @@ from tomojax.align._alternating_verification import (
     _recovery_tolerances_payload,
     _summary_payload,
 )
-from tomojax.align._joint_schur_lm import (
-    joint_schur_normal_eq_summary,
-)
 from tomojax.forward import PROJECTION_OPERATOR, project_parallel_reference, residual_loss
 from tomojax.geometry import (
     GaugeReport,
@@ -60,7 +57,7 @@ from tomojax.recon import (
     write_fista_trace_csv,
     write_fista_trace_recomputed_csv,
 )
-from tomojax.verify import validate_run_artifacts
+from tomojax.verify import joint_schur_normal_eq_summary, validate_run_artifacts
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -24,10 +24,8 @@ from tomojax.align._joint_schur_lm import (
     JointSchurLMResult,
     adapt_joint_schur_damping,
     adapt_joint_schur_trust_radius,
-    joint_schur_normal_eq_summary,
     schur_step_from_jacobian,
     solve_joint_schur_lm,
-    write_joint_schur_normal_eq_summary,
 )
 from tomojax.align._pose_lm import PoseOnlyLMConfig, PoseOnlyLMResult, solve_pose_only_lm
 from tomojax.align._profiles import (
@@ -99,6 +97,7 @@ from tomojax.align.pipeline import (
     align,
     align_multires,
 )
+from tomojax.verify import joint_schur_normal_eq_summary, write_joint_schur_normal_eq_summary
 
 # Kept for direct-import compatibility while diagnostic ownership moves out of
 # the product alignment facade. These names are intentionally omitted from

@@ -14,8 +14,10 @@ gauge reports, backend provenance reports, and failure classification.
 - `failure_report_from_gates(gates)`
 - `failure_warnings_from_gates(gates)`
 - `inspect_run_artifacts(run_dir)`
+- `joint_schur_normal_eq_summary(result)`
 - `residual_structure_summary(residual, mask)`
 - `validate_run_artifacts(run_dir)`
+- `write_joint_schur_normal_eq_summary(result, path)`
 
 ## Dependencies
 
@@ -39,6 +41,8 @@ Forbidden dependencies:
 - Required run artifacts must fail loudly when missing or malformed.
 - Residual-structure checks are warning-oriented classifiers, not solver state
   mutations.
+- Schur normal-equation summaries are report-only views over solver results and
+  must not mutate alignment state.
 
 ## Tests
 
@@ -47,3 +51,4 @@ Forbidden dependencies:
   bundle checks.
 - `tests/test_alternating_solver_smoke.py` covers the residual-structure summary
   used by failure reports.
+- `tests/test_joint_schur_lm.py` covers Schur normal-equation summary reports.

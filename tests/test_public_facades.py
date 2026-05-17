@@ -202,3 +202,13 @@ def test_product_facades_reexport_their_api_modules() -> None:
 
     for package, api in facade_pairs:
         _assert_facade_reexports_api(package, api)
+
+
+def test_verify_facade_exports_schur_report_helpers() -> None:
+    assert callable(verify_api.joint_schur_normal_eq_summary)
+    assert callable(verify_api.write_joint_schur_normal_eq_summary)
+    assert verify_api.joint_schur_normal_eq_summary is verify_full_api.joint_schur_normal_eq_summary
+    assert (
+        verify_api.write_joint_schur_normal_eq_summary
+        is verify_full_api.write_joint_schur_normal_eq_summary
+    )

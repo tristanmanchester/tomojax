@@ -21,14 +21,13 @@ from tomojax.align.api import (
     JointSchurLMConfig,
     adapt_joint_schur_damping,
     adapt_joint_schur_trust_radius,
-    joint_schur_normal_eq_summary,
     schur_step_from_jacobian,
     solve_joint_schur_lm,
-    write_joint_schur_normal_eq_summary,
 )
 from tomojax.forward import ResidualFilterConfig, project_parallel_reference
 from tomojax.geometry import AcquisitionParameters, GeometryState
 from tomojax.nuisance import BackgroundOffsetModel, GainOffsetModel
+from tomojax.verify import joint_schur_normal_eq_summary, write_joint_schur_normal_eq_summary
 
 if TYPE_CHECKING:
     from pathlib import Path
