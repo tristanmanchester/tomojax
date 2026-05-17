@@ -212,21 +212,18 @@ def test_synthetic_case_preserves_explicit_profile(tmp_path: Path) -> None:
     assert cast("str", args.synthetic_dataset) == "synth128_setup_global_tomo"
 
 
-def test_legacy_synthetic_tomo_mvp_case_is_hidden_alias(tmp_path: Path) -> None:
+def test_removed_synthetic_tomo_mvp_case_is_rejected(tmp_path: Path) -> None:
     parser = align_auto_cli._build_parser()
-    args = parser.parse_args(
-        [
-            "--out-dir",
-            str(tmp_path),
-            "--synthetic-tomo-mvp-case",
-            "setup_global",
-        ]
-    )
 
-    align_auto_cli._apply_synthetic_case(args)
-
-    assert cast("str", args.profile) == "diagnostic-fast"
-    assert cast("str", args.synthetic_dataset) == "synth128_setup_global_tomo"
+    with pytest.raises(SystemExit):
+        _ = parser.parse_args(
+            [
+                "--out-dir",
+                str(tmp_path),
+                "--synthetic-tomo-mvp-case",
+                "setup_global",
+            ]
+        )
 
 
 def test_pose_random_manifest_criteria_evaluate_supported_pose_metrics() -> None:

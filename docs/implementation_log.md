@@ -3,6 +3,33 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Removed hidden synthetic MVP CLI alias
+
+### Scope
+
+Removed the suppressed `--synthetic-tomo-mvp-case` compatibility alias from the
+developer synthetic alignment command. The supported path is now the explicit
+`--synthetic-case` option.
+
+Changes:
+
+- Deleted the hidden parser option and alias translation from
+  `tomojax.cli.align_auto`.
+- Updated CLI tests to assert the old option is rejected rather than accepted
+  silently.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 src/tomojax/cli/align_auto.py
+  tests/test_align_auto_cli.py` passed.
+- `uv run pytest
+  tests/test_align_auto_cli.py::test_align_auto_smoke_help_documents_outputs
+  tests/test_align_auto_cli.py::test_removed_synthetic_tomo_mvp_case_is_rejected
+  tests/test_cli_entrypoints.py::test_top_level_cli_dev_routes_align_auto -q`
+  passed.
+- `uv run tomojax dev align-auto --help | rg -n
+  "synthetic-tomo-mvp-case|mvp|v1|parity|smoke" || true` produced no matches.
+
 ## 2026-05-17 - Real-laminography stage engines moved behind bench
 
 ### Scope

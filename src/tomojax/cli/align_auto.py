@@ -101,12 +101,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _ = parser.add_argument("--views", type=int, default=4, help="Number of synthetic views.")
     _ = parser.add_argument(
-        "--synthetic-tomo-mvp-case",
-        choices=("none", "setup_global", "pose_random_extreme"),
-        default="none",
-        help=argparse.SUPPRESS,
-    )
-    _ = parser.add_argument(
         "--synthetic-case",
         choices=_SYNTHETIC_CASE_CHOICES,
         default="none",
@@ -347,9 +341,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _apply_synthetic_case(args: argparse.Namespace) -> None:
     case = str(args.synthetic_case)
-    alias_case = str(args.synthetic_tomo_mvp_case)
-    if case == "none" and alias_case != "none":
-        case = alias_case.replace("_", "-").replace("pose-random-extreme", "pose-random")
     if case == "none":
         return
     if int(args.views) == 4:
