@@ -57,6 +57,8 @@ Completed checkpoints in this pass:
       `tomojax.bench`.
 - [x] Move reference-regression PNG scaling/nearest-resize helpers into
       `tomojax.bench`.
+- [x] Move article alignment run-result and metadata assembly into
+      `tomojax.bench`.
 
 Next candidates:
 

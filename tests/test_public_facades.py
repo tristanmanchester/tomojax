@@ -130,6 +130,8 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.AlignmentScenario.__name__ == "AlignmentScenario"
     assert bench_api.AlternatingSmokeConfig.__name__ == "AlternatingSmokeConfig"
     assert bench_api.ArticleScenario.__name__ == "ArticleScenario"
+    assert bench_api.ArticleScenarioRunArtifacts.__name__ == "ArticleScenarioRunArtifacts"
+    assert bench_api.ArticleScenarioRunResult.__name__ == "ArticleScenarioRunResult"
     assert bench_api.SyntheticBenchmarkResult.__name__ == "SyntheticBenchmarkResult"
     assert bench_api.SpdhgGeometryBundle.__name__ == "SpdhgGeometryBundle"
     assert bench_api.REAL_LAMINO_PROFILE_CHOICES
@@ -138,6 +140,8 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.RealLaminoGpuMonitor.__name__ == "RealLaminoGpuMonitor"
     assert callable(bench_api.build_real_lamino_report)
     assert callable(bench_api.build_article_run_manifest)
+    assert callable(bench_api.build_article_scenario_run_result)
+    assert callable(bench_api.article_alignment_metadata)
     assert callable(bench_api.article_scenario_catalog_payload)
     assert callable(bench_api.article_scenario_finite_report)
     assert callable(bench_api.alignment_visualization_payload)

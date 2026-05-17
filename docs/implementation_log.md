@@ -3,6 +3,44 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Article alignment run-result assembly moved behind bench facade
+
+### Scope
+
+Continued the deep-module productionization pass by thinning
+`scripts/generate_alignment_before_after_128.py`.
+
+Changes:
+
+- Moved article scenario artifact/result dataclasses, alignment metadata
+  assembly, naive/full/nonfinite row assembly, and case-manifest assembly into
+  `tomojax.bench.article_alignment_results`.
+- Exported the new article result helpers through `tomojax.bench.api` and the
+  package facade so article scripts depend on a bench-owned boundary instead of
+  script-local contracts.
+- Kept the script responsible for orchestration, computation, visualization
+  writing, and JSON file writes only.
+- Added focused facade/result-builder coverage for the new bench-owned result
+  contract.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022 --fix
+  scripts/generate_alignment_before_after_128.py
+  src/tomojax/bench/article_alignment_results.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_article_alignment_visuals.py
+  tests/test_public_facades.py` passed.
+- `uv run python -m py_compile
+  scripts/generate_alignment_before_after_128.py
+  src/tomojax/bench/article_alignment_results.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py tests/test_article_alignment_visuals.py
+  tests/test_public_facades.py` passed.
+- `uv run pytest tests/test_article_alignment_visuals.py
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  -q` passed: 6 tests in 2.44 seconds.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-14 - Production preprocessing for NXtomo and TIFF stacks
 
 ### Scope

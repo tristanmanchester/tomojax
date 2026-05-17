@@ -14,6 +14,11 @@ from tomojax.bench.article_alignment_manifest import (
     article_scenario_truth_payload,
     build_article_run_manifest,
 )
+from tomojax.bench.article_alignment_results import (
+    ArticleScenarioRunArtifacts,
+    article_alignment_metadata,
+    build_article_scenario_run_result,
+)
 from tomojax.bench.article_alignment_runs import (
     article_scenario_catalog_for_kind,
     article_theta_span_deg,
@@ -171,3 +176,48 @@ def test_article_alignment_manifest_helpers_live_behind_bench_module() -> None:
             "supplied_corrections": supplied,
         }
     ]
+
+
+def test_article_alignment_run_results_live_behind_bench_module() -> None:
+    profile = diagnostic_profile()
+    scenario = next(
+        scenario
+        for scenario in article_scenario_catalog_for_kind("default")
+        if scenario.slug == "parallel_cor_u_m004"
+    )
+    result = article_runner.ScenarioComputationResult(
+        theta_span=180.0,
+        naive_fbp=np.zeros((2, 2, 2), dtype=np.float32),
+        calibrated_fbp=None,
+        aligned_tv=None,
+        provenance="naive_only",
+        supplied={},
+        estimates={},
+        metrics={"naive_volume_nmse": 0.125},
+        info={},
+        diagnostics={},
+        geometry_objectives=[],
+        schedule_metadata={},
+        executed_stages=[],
+        solver_metadata={},
+    )
+    artifacts = ArticleScenarioRunArtifacts(
+        visual_paths={"before_after_panel": "scenario/before_after.png"}
+    )
+
+    run_result = build_article_scenario_run_result(
+        scenario,
+        profile=profile,
+        result=result,
+        artifacts=artifacts,
+        alignment_metadata=article_alignment_metadata(scenario, profile=profile, result=result),
+        elapsed=1.25,
+    )
+
+    assert run_result.row["slug"] == "parallel_cor_u_m004"
+    assert run_result.row["parameter_provenance"] == "naive_only"
+    assert run_result.row["before_after_panel"] == "scenario/before_after.png"
+    assert run_result.case_manifest["scenario_catalog"]["active_geometry_dofs"] == ["det_u_px"]
+    assert run_result.case_manifest["phantom"]["selection"] == (
+        "phantom_picker_128_10x10_center_biased_sphere_slot_94"
+    )
