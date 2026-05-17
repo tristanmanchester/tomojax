@@ -3,6 +3,49 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Staged real-laminography runner uses bench runtime helpers
+
+### Scope
+
+Reduced the staged real-laminography runner's dynamic dependency on the
+reference-regression script by importing already-extracted runtime and schema
+helpers from their owning modules.
+
+Changes:
+
+- Added `write_real_lamino_params_csv` to
+  `tomojax.bench.real_laminography_runtime` and exported it through the bench
+  facade.
+- Updated the reference-regression runner's private `_write_params_csv` shim to
+  delegate to the bench runtime helper.
+- Updated `run_real_lamino_staged.py` to use direct imports for status writes,
+  loaded-input validation, projection background correction, projection stats,
+  manifest JSON writing, params CSV writing, `LaminographyGeometry`, and
+  `GeometryCalibrationState`.
+- Left the setup/pose/final reconstruction stage calls behind `native` for a
+  later deliberate stage-engine extraction.
+- Added focused runtime and facade coverage for params CSV export.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  src/tomojax/bench/real_laminography_runtime.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py` passed.
+- `uv run python -m py_compile
+  scripts/real_laminography/run_real_lamino_staged.py
+  scripts/real_laminography/run_real_lamino_reference_regression.py
+  src/tomojax/bench/real_laminography_runtime.py src/tomojax/bench/api.py
+  src/tomojax/bench/__init__.py` passed.
+- `uv run pytest tests/test_bench_real_laminography_recon.py
+  tests/test_real_lamino_runner_contract.py::test_staged_runtime_default_streams_fista
+  tests/test_real_lamino_runner_contract.py::test_staged_path_contract_lives_in_bench_profile_module
+  tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers
+  tests/test_real_laminography_runtime.py -q` passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
+
 ## 2026-05-17 - Real-laminography range parsing moved into bench
 
 ### Scope

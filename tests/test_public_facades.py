@@ -159,6 +159,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.real_lamino_safe_params_summary)
     assert callable(bench_api.mark_real_lamino_stage_failed)
     assert callable(bench_api.write_real_lamino_planned_stage_manifests)
+    assert callable(bench_api.write_real_lamino_params_csv)
     assert callable(bench_api.write_real_lamino_skipped_stage_manifests)
     assert callable(bench_api.write_real_lamino_json)
     assert callable(bench_api.render_tem_grid_pose_artifacts)

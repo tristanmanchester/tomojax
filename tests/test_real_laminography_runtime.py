@@ -17,6 +17,7 @@ from tomojax.bench.real_laminography_runtime import (
     update_real_lamino_status,
     validate_real_lamino_loaded_input,
     write_real_lamino_json,
+    write_real_lamino_params_csv,
 )
 
 
@@ -40,6 +41,18 @@ def test_real_lamino_runtime_writes_json_csv_and_status(tmp_path: Path) -> None:
     assert "error" not in status
     assert "message" not in status
     assert isinstance(status["updated_at"], float)
+
+
+def test_real_lamino_runtime_writes_pose_params_csv(tmp_path: Path) -> None:
+    params_path = tmp_path / "params.csv"
+    params = np.asarray([[0.0, 0.1, np.pi / 2.0, 3.0, -4.0]], dtype=np.float32)
+
+    write_real_lamino_params_csv(params_path, params)
+
+    rows = params_path.read_text().splitlines()
+    assert rows[0] == "view,alpha_rad,beta_rad,phi_rad,dx,dz,alpha_deg,beta_deg,phi_deg"
+    assert rows[1].startswith("0,0.0,0.10000000149011612,1.5707963705062866,3.0,-4.0,0.0,")
+    assert rows[1].endswith(",90.0")
 
 
 def test_real_lamino_runtime_view_selection_and_norms_are_deterministic() -> None:

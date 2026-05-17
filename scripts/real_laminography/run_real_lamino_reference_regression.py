@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from dataclasses import replace
 from datetime import datetime
 import json
@@ -57,6 +56,7 @@ from tomojax.bench import (
     update_real_lamino_status,
     validate_real_lamino_loaded_input,
     write_real_lamino_json,
+    write_real_lamino_params_csv,
     write_real_lamino_stage_products,
 )
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
@@ -226,12 +226,7 @@ def _schedule_dict(schedule: AlignmentSchedule) -> dict[str, Any]:
 
 
 def _write_params_csv(path: Path, params: np.ndarray) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["view", "alpha_rad", "beta_rad", "phi_rad", "dx", "dz", "alpha_deg", "beta_deg", "phi_deg"])
-        for i, row in enumerate(np.asarray(params, dtype=np.float32)):
-            writer.writerow([i, *[float(v) for v in row], float(np.rad2deg(row[0])), float(np.rad2deg(row[1])), float(np.rad2deg(row[2]))])
+    write_real_lamino_params_csv(path, params)
 
 
 def _make_cfg(

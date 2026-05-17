@@ -40,6 +40,37 @@ def append_real_lamino_csv(
         writer.writerow({name: real_lamino_json_safe(row.get(name)) for name in fields})
 
 
+def write_real_lamino_params_csv(path: Path, params: np.ndarray) -> None:
+    """Write real-laminography per-view 5-DOF pose parameters."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arr = np.asarray(params, dtype=np.float32)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "view",
+                "alpha_rad",
+                "beta_rad",
+                "phi_rad",
+                "dx",
+                "dz",
+                "alpha_deg",
+                "beta_deg",
+                "phi_deg",
+            ]
+        )
+        for view, row in enumerate(arr):
+            writer.writerow(
+                [
+                    int(view),
+                    *[float(value) for value in row],
+                    float(np.rad2deg(row[0])),
+                    float(np.rad2deg(row[1])),
+                    float(np.rad2deg(row[2])),
+                ]
+            )
+
+
 def update_real_lamino_status(path: Path, **updates: Any) -> None:
     current: dict[str, Any] = {}
     if path.exists():
@@ -251,4 +282,5 @@ __all__ = [
     "update_real_lamino_status",
     "validate_real_lamino_loaded_input",
     "write_real_lamino_json",
+    "write_real_lamino_params_csv",
 ]

@@ -19,6 +19,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import jax
 import numpy as np
 
+from tomojax.align.api import GeometryCalibrationState
 from tomojax.bench.real_laminography_planning import (
     binned_pixel_scale,
     parse_shape3,
@@ -51,6 +52,16 @@ from tomojax.bench.real_laminography_report import (
     write_real_lamino_planned_stage_manifests,
     write_real_lamino_skipped_stage_manifests,
 )
+from tomojax.bench.real_laminography_runtime import (
+    RealLaminoGpuMonitor,
+    apply_real_lamino_projection_background,
+    real_lamino_projection_stats,
+    update_real_lamino_status,
+    validate_real_lamino_loaded_input,
+    write_real_lamino_json,
+    write_real_lamino_params_csv,
+)
+from tomojax.core.geometry import LaminographyGeometry
 from tomojax.io import load_real_laminography_input, read_json_object
 
 STAGED_PATH = REAL_LAMINO_STAGED_PATH
@@ -66,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     run_root.mkdir(parents=True, exist_ok=True)
 
     native = _load_native_runner()
-    monitor = native.GpuMonitor(run_root / "gpu_memory.csv")
+    monitor = RealLaminoGpuMonitor(run_root / "gpu_memory.csv")
     monitor.start()
     started = datetime.now().isoformat(timespec="seconds")
     try:
@@ -92,7 +103,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
     run_root.mkdir(parents=True, exist_ok=True)
     started = started_at or datetime.now().isoformat(timespec="seconds")
     status_path = run_root / "status.json"
-    native._status(status_path, state="starting", started_at=started)
+    update_real_lamino_status(status_path, state="starting", started_at=started)
     try:
         loaded = load_real_laminography_input(
             Path(args.input),
@@ -102,7 +113,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
         )
         raw_projections = loaded.projections
         thetas = loaded.thetas_deg
-        raw_projections, thetas = native._validate_loaded_input(
+        raw_projections, thetas = validate_real_lamino_loaded_input(
             raw_projections,
             thetas,
             expected_projection_shape=args.expected_projection_shape,
@@ -119,7 +130,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             thetas=thetas,
         )
         ctx = native.RunContext(args)
-        projections, background_offsets = native._apply_projection_background(
+        projections, background_offsets = apply_real_lamino_projection_background(
             raw_projections,
             mode=str(args.projection_background),
             edge_px=int(args.background_edge_px),
@@ -141,7 +152,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             raise ValueError(
                 f"preview z {args.preview_z} maps outside slab local z={preview_local_z}"
             )
-        geometry = native.LaminographyGeometry(
+        geometry = LaminographyGeometry(
             grid=grid,
             detector=detector,
             thetas_deg=thetas,
@@ -180,8 +191,8 @@ def run_real_lamino_staged(  # noqa: PLR0915
             ),
             "input_shape": list(projections.shape),
             "binning": binning_provenance,
-            "raw_projection_stats": native._projection_stats(raw_projections),
-            "working_projection_stats": native._projection_stats(projections),
+            "raw_projection_stats": real_lamino_projection_stats(raw_projections),
+            "working_projection_stats": real_lamino_projection_stats(projections),
             "projection_preprocessing": {
                 "background_mode": str(args.projection_background),
                 "background_edge_px": int(args.background_edge_px),
@@ -227,7 +238,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             },
             "method_constraints": real_lamino_method_constraints(),
         }
-        native._write_json(run_root / "run_manifest.json", run_manifest)
+        write_real_lamino_json(run_root / "run_manifest.json", run_manifest)
 
         baseline = native.run_baseline(
             ctx,
@@ -238,7 +249,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             full_nz=full_nz,
         )
         params5 = np.zeros((n_views, 5), dtype=np.float32)
-        setup_state = native.GeometryCalibrationState.from_geometry(
+        setup_state = GeometryCalibrationState.from_geometry(
             geometry,
             active_geometry_dofs=(),
         )
@@ -307,7 +318,7 @@ def run_real_lamino_staged(  # noqa: PLR0915
             )
             setup_state = final_choice["setup_state"]
             params5 = final_choice["params5"]
-            native._write_params_csv(run_root / "05_final" / "params.csv", params5)
+            write_real_lamino_params_csv(run_root / "05_final" / "params.csv", params5)
             stage_records.append(
                 {
                     "stage": "05_final",
@@ -330,15 +341,15 @@ def run_real_lamino_staged(  # noqa: PLR0915
                 final_volume.shape if final_volume is not None else cor_only.shape
             ),
         }
-        native._write_json(run_root / "run_manifest.json", {**run_manifest, **final_payload})
-        native._status(ctx.status_path, state="completed", stage="complete", **final_payload)
+        write_real_lamino_json(run_root / "run_manifest.json", {**run_manifest, **final_payload})
+        update_real_lamino_status(ctx.status_path, state="completed", stage="complete", **final_payload)
         return build_real_lamino_report(
             run_root,
             out_dir=run_root / "real_lamino_report",
             reference_report=Path(args.reference_report) if args.reference_report else None,
         )
     except Exception as exc:
-        native._status(status_path, state="failed", stage="error", error=repr(exc))
+        update_real_lamino_status(status_path, state="failed", stage="error", error=repr(exc))
         raise
 
 
@@ -637,7 +648,7 @@ def run_best_final_reconstruction(
             for item in scored
         ],
     }
-    native._write_json(final_dir / "stage_manifest.json", manifest)
+    write_real_lamino_json(final_dir / "stage_manifest.json", manifest)
     return np.asarray(best["volume"], dtype=np.float32), best
 
 

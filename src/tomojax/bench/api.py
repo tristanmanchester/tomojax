@@ -171,6 +171,7 @@ from tomojax.bench.real_laminography_runtime import (
     update_real_lamino_status,
     validate_real_lamino_loaded_input,
     write_real_lamino_json,
+    write_real_lamino_params_csv,
 )
 from tomojax.bench.real_laminography_setup import (
     optimize_reference_setup_geometry_bilevel_for_level,
@@ -357,6 +358,7 @@ __all__ = [
     "write_current_baseline_artifacts",
     "write_real_lamino_geometry_trace",
     "write_real_lamino_json",
+    "write_real_lamino_params_csv",
     "write_real_lamino_planned_stage_manifests",
     "write_real_lamino_residual_trace",
     "write_real_lamino_skipped_stage_manifests",
