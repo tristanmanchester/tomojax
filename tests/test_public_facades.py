@@ -126,7 +126,9 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.ArticleScenario.__name__ == "ArticleScenario"
     assert bench_api.SyntheticBenchmarkResult.__name__ == "SyntheticBenchmarkResult"
     assert bench_api.REAL_LAMINO_PROFILE_CHOICES
+    assert bench_api.REAL_LAMINO_REPORT_STAGED_PATH
     assert bench_api.REAL_LAMINO_STAGED_PATH
+    assert callable(bench_api.build_real_lamino_report)
     assert callable(bench_api.run_alignment_smoke)
     assert callable(bench_api.run_alternating_solver_smoke)
     assert callable(bench_api.scenario_catalog)

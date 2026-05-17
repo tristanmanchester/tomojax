@@ -16420,3 +16420,27 @@ Validation:
 - `uv run ruff check tools/check_public_imports.py tests/test_public_import_guard.py`
   passed.
 - `git diff --check` passed.
+
+### Real-laminography report builder moved behind bench facade
+
+- Moved the full staged real-laminography report builder from
+  `scripts/real_laminography/summarize_real_lamino_report.py` into the
+  `tomojax.bench.real_laminography_report` deep module.
+- Exported the report builder and report constants through `tomojax.bench` so
+  developer/reporting entrypoints can share the same owner module.
+- Replaced `summarize_real_lamino_report.py` with a thin CLI wrapper that only
+  parses arguments, calls `tomojax.bench.build_real_lamino_report`, and prints
+  the generated summary paths.
+- This reduces the amount of product/reporting logic living in loose scripts
+  while preserving the existing script path for documented workflows.
+
+Validation:
+
+- `uv run pytest tests/test_real_lamino_runner_contract.py::test_real_lamino_summary_uses_final_vs_cor_only_quality_contract tests/test_real_lamino_runner_contract.py::test_real_lamino_summary_can_require_quality_success tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 3 tests.
+- `uv run pytest tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed.
+- `uv run ruff check --select I,F,RUF022 src/tomojax/bench/real_laminography_report.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py scripts/real_laminography/summarize_real_lamino_report.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `git diff --check` passed.
