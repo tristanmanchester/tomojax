@@ -123,6 +123,7 @@ from tomojax.bench.real_laminography_planning import (
     validate_bin_factor,
     view_indices_for_smoke_shape,
 )
+from tomojax.bench.real_laminography_pose import run_real_lamino_pose_stage
 from tomojax.bench.real_laminography_profiles import (
     REAL_LAMINO_PROFILE_CHOICES,
     REAL_LAMINO_STAGED_PATH,
@@ -334,6 +335,7 @@ __all__ = [
     "run_forward_projector_suite",
     "run_forward_sinogram_benchmark",
     "run_forward_sinogram_suite",
+    "run_real_lamino_pose_stage",
     "run_real_lamino_setup_stage",
     "save_real_lamino_z_stack",
     "save_slice_png",

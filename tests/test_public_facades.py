@@ -218,6 +218,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.scenario_catalog)
     assert callable(bench_api.make_article_phantom)
     assert callable(bench_api.optimize_reference_setup_geometry_bilevel_for_level)
+    assert callable(bench_api.run_real_lamino_pose_stage)
     assert callable(bench_api.run_real_lamino_setup_stage)
     assert callable(bench_api.real_lamino_success_payload)
     assert callable(bench_api.real_lamino_loss_summary)

@@ -30,6 +30,7 @@ from tomojax.bench.real_laminography_planning import (
     real_lamino_global_z_to_local_index,
     setup_det_u_bounds,
 )
+from tomojax.bench.real_laminography_pose import run_real_lamino_pose_stage
 from tomojax.bench.real_laminography_profiles import (
     REAL_LAMINO_PROFILE_CHOICES,
     REAL_LAMINO_STAGED_PATH,
@@ -397,6 +398,7 @@ def run_remaining_stages(
     params5: np.ndarray,
 ) -> tuple[Any, np.ndarray, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run detector roll, axis, and pose stages after the COR-only comparator."""
+    del native
     records: list[dict[str, Any]] = []
     final_candidates: list[dict[str, Any]] = [
         {
@@ -494,7 +496,7 @@ def run_remaining_stages(
         ),
     )
     for idx, (stage_name, active_pose, levels, bounds) in enumerate(pose_plan):
-        x_stage, params5, stats = native.run_pose_stage(
+        x_stage, params5, stats = run_real_lamino_pose_stage(
             ctx,
             stage_dir=ctx.stage_dir(stage_name),
             stage_name=stage_name,

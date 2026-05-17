@@ -84,6 +84,7 @@ workflows. It is grouped as:
   `reference_regression_level_outer_counts`, `relative_l2`,
   `resolve_fixture_bin_factor`, `run_baseline_stage`,
   `run_best_final_reconstruction_stage`, `run_cor_only_fista_stage`,
+  `run_real_lamino_pose_stage`, `run_real_lamino_setup_stage`,
   `save_real_lamino_z_stack`, `select_real_lamino_final_candidates`,
   `select_real_lamino_views`, `setup_det_u_bounds`,
   `update_real_lamino_status`, `validate_bin_factor`,

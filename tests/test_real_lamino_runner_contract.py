@@ -1169,40 +1169,44 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(monkeypatch, tmp_pa
             raise AssertionError("setup stages should use tomojax.bench integration")
 
         def run_pose_stage(self, _ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
-            stage_dir.mkdir(parents=True, exist_ok=True)
-            _write_stage_images(stage_dir)
-            (stage_dir / "checkpoints").mkdir()
-            x = np.full((2, 2, 1), np.nan, dtype=np.float32)
-            np.savez(stage_dir / "checkpoints" / "outer_001_level01_iter01.npz", x=x)
-            _write_json(
-                stage_dir / "stage_manifest.json",
-                {
-                    "stage": stage_name,
-                    "status": "completed",
-                    "active_dofs": ["phi"],
-                    "artifacts": {
-                        "orthos": "orthos.png",
-                        "aligned_xy": "aligned_xy_global_z209.png",
-                        "delta_xy": "delta_xy_global_z209.png",
-                        "z_stack": "z_stack_global_z198_220.png",
-                    },
+            raise AssertionError("pose stages should use tomojax.bench integration")
+
+    def fake_pose_stage(_ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        _write_stage_images(stage_dir)
+        (stage_dir / "checkpoints").mkdir()
+        x = np.full((2, 2, 1), np.nan, dtype=np.float32)
+        np.savez(stage_dir / "checkpoints" / "outer_001_level01_iter01.npz", x=x)
+        _write_json(
+            stage_dir / "stage_manifest.json",
+            {
+                "stage": stage_name,
+                "status": "completed",
+                "active_dofs": ["phi"],
+                "artifacts": {
+                    "orthos": "orthos.png",
+                    "aligned_xy": "aligned_xy_global_z209.png",
+                    "delta_xy": "delta_xy_global_z209.png",
+                    "z_stack": "z_stack_global_z198_220.png",
                 },
-            )
-            return (
-                x,
-                params5,
-                [
-                    {
-                        "loss_before": "nan",
-                        "loss_after": "nan",
-                        "data_loss_computed": False,
-                    }
-                ],
-            )
+            },
+        )
+        return (
+            x,
+            params5,
+            [
+                {
+                    "loss_before": "nan",
+                    "loss_after": "nan",
+                    "data_loss_computed": False,
+                }
+            ],
+        )
 
     ctx = FakeContext(tmp_path / "run")
     ctx.run_root.mkdir()
     monkeypatch.setattr(staged_runner, "run_real_lamino_setup_stage", fake_setup_stage)
+    monkeypatch.setattr(staged_runner, "run_real_lamino_pose_stage", fake_pose_stage)
     setup_state, params5, records, candidates = staged_runner.run_remaining_stages(
         ctx,
         native=FakeNative(),

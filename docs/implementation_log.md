@@ -3,6 +3,40 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Real-laminography pose stage moved behind bench
+
+### Scope
+
+Completed the staged real-laminography extraction by moving the remaining pose
+stage engine out of the dynamic reference-regression runner dependency and into
+the `tomojax.bench` developer facade.
+
+Changes:
+
+- Added `tomojax.bench.real_laminography_pose.run_real_lamino_pose_stage`,
+  preserving pose-stage status updates, finite-checkpoint fail-closed behavior,
+  timeline PNGs, z-stack snapshots, checkpoints, params CSV, per-level
+  alignment info, and stage manifests.
+- Updated `run_real_lamino_staged.py` so setup, pose, baseline, COR-only, and
+  final reconstruction stages all call bench-owned helpers directly.
+- Exported the pose-stage helper through the bench facade and documented it in
+  the bench README.
+- Added focused fake-backed pose-stage tests and updated the staged-runner
+  contract test to fail if it falls back to `native.run_pose_stage`.
+
+### Validation
+
+- `uv run pytest tests/test_bench_real_laminography_pose.py
+  tests/test_real_lamino_runner_contract.py -q` passed.
+- `uv run ruff check src/tomojax/bench/real_laminography_pose.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_bench_real_laminography_pose.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run ruff format --check src/tomojax/bench/real_laminography_pose.py
+  scripts/real_laminography/run_real_lamino_staged.py
+  tests/test_bench_real_laminography_pose.py
+  tests/test_real_lamino_runner_contract.py` passed.
+
 ## 2026-05-17 - Removed hidden synthetic MVP CLI alias
 
 ### Scope
