@@ -16505,3 +16505,26 @@ Validation:
   passed.
 - `python tools/check_public_imports.py` passed.
 - `git diff --check` passed.
+
+### Real-laminography runtime helpers moved behind bench facade
+
+- Added `tomojax.bench.real_laminography_runtime` with shared developer
+  runtime helpers for JSON/status/CSV writing, GPU memory sampling,
+  deterministic view selection, relative L2 reporting, commit provenance, and
+  repeated timing summaries.
+- Exported those helpers through `tomojax.bench`.
+- Thinned `scripts/real_laminography/run_real_lamino_pallas_probe.py` by
+  importing the shared runtime helpers instead of carrying local copies.
+- Added focused contract tests for status overwrite semantics, JSON/CSV
+  normalization, deterministic view selection, relative L2, and timing payloads.
+
+Validation:
+
+- `uv run pytest tests/test_real_laminography_runtime.py tests/test_public_facades.py::test_bench_facade_exports_developer_benchmark_helpers -q`
+  passed with 4 tests.
+- `uv run ruff check --select I,F,RUF022 scripts/real_laminography/run_real_lamino_pallas_probe.py src/tomojax/bench/real_laminography_runtime.py src/tomojax/bench/api.py src/tomojax/bench/__init__.py tests/test_real_laminography_runtime.py tests/test_public_facades.py`
+  passed.
+- `python tools/check_public_imports.py` passed.
+- `uv run python -m py_compile scripts/real_laminography/run_real_lamino_pallas_probe.py src/tomojax/bench/real_laminography_runtime.py`
+  passed.
+- `git diff --check` passed.

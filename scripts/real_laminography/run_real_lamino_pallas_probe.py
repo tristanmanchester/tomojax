@@ -2,16 +2,13 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
-import threading
 import time
-from typing import Any, Callable, Mapping
+from typing import Any
 
 os.environ.setdefault("JAX_PLATFORM_NAME", "cuda")
 os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
@@ -44,113 +41,24 @@ from tomojax.align.api import (
     apply_alignment_state,
     geometry_with_axis_state,
 )
+from tomojax.bench.real_laminography_runtime import (
+    RealLaminoGpuMonitor as GpuMonitor,
+    append_real_lamino_csv as _append_csv,
+    real_lamino_commit_info as _commit_info,
+    relative_l2 as _relative_l2,
+    select_real_lamino_views as _select_views,
+    timed_repeats as _timed_repeats,
+    update_real_lamino_status as _status,
+    write_real_lamino_json as _write_json,
+)
 from tomojax.core.geometry import Detector, Grid, LaminographyGeometry
 from tomojax.core.projector import get_detector_grid_device
-from tomojax.io import normalize_json
 from tomojax.recon.fista_tv_core import (
     FistaCoreConfig,
     fista_tv_core_arrays,
     projection_loss_arrays,
 )
 from tomojax.recon.multires import bin_projections, scale_detector, scale_grid
-
-
-def _json_safe(value: Any) -> Any:
-    return normalize_json(value, sort_mapping_keys=True, catch_to_dict_errors=True)
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_safe(payload), indent=2, sort_keys=True) + "\n")
-
-
-def _append_csv(path: Path, row: Mapping[str, Any], fieldnames: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists()
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if not exists:
-            writer.writeheader()
-        writer.writerow({name: _json_safe(row.get(name)) for name in fieldnames})
-
-
-def _status(path: Path, **updates: Any) -> None:
-    current: dict[str, Any] = {}
-    if path.exists():
-        try:
-            current = json.loads(path.read_text())
-        except Exception:
-            current = {}
-    if updates.get("state") == "completed" and "error" not in updates:
-        current.pop("error", None)
-    current.update(updates)
-    current["updated_at"] = time.time()
-    _write_json(path, current)
-
-
-class GpuMonitor:
-    def __init__(self, path: Path, interval: float = 2.0) -> None:
-        self.path = path
-        self.interval = float(interval)
-        self.stop = threading.Event()
-        self.thread = threading.Thread(target=self._run, daemon=True)
-
-    def start(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self.path.write_text("timestamp,used_mib,total_mib,util_pct,temp_c\n")
-        self.thread.start()
-
-    def close(self) -> None:
-        self.stop.set()
-        self.thread.join(timeout=2.0)
-
-    def _run(self) -> None:
-        while not self.stop.is_set():
-            try:
-                out = subprocess.check_output(
-                    [
-                        "nvidia-smi",
-                        "--query-gpu=timestamp,memory.used,memory.total,utilization.gpu,temperature.gpu",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    text=True,
-                    stderr=subprocess.DEVNULL,
-                ).strip()
-                if out:
-                    with self.path.open("a", encoding="utf-8") as handle:
-                        handle.write(out.replace(", ", ",") + "\n")
-            except Exception:
-                pass
-            self.stop.wait(self.interval)
-
-
-def _commit_info(worktree: Path) -> dict[str, Any]:
-    def run(args: list[str]) -> str:
-        try:
-            return subprocess.check_output(args, cwd=worktree, text=True, stderr=subprocess.DEVNULL).strip()
-        except Exception:
-            return ""
-
-    return {
-        "worktree": str(worktree),
-        "commit": run(["git", "rev-parse", "--short", "HEAD"]),
-        "dirty_status": run(["git", "status", "--short"]).splitlines(),
-    }
-
-
-def _select_views(
-    projections: np.ndarray,
-    thetas: np.ndarray,
-    *,
-    max_views: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    n_views = int(projections.shape[0])
-    if int(max_views) <= 0 or int(max_views) >= n_views:
-        idx = np.arange(n_views, dtype=np.int32)
-    else:
-        idx = np.unique(np.rint(np.linspace(0, n_views - 1, int(max_views))).astype(np.int32))
-    return projections[idx], thetas[idx], idx
 
 
 def _setup_to_alignment_state(setup: GeometryCalibrationState, n_views: int) -> AlignmentState:
@@ -166,46 +74,6 @@ def _setup_to_alignment_state(setup: GeometryCalibrationState, n_views: int) -> 
         pose=PoseState(jnp.zeros((int(n_views), 5), dtype=jnp.float32)),
         volume=None,
     )
-
-
-def _relative_l2(a: Any, b: Any) -> float:
-    arr_a = np.asarray(a, dtype=np.float32)
-    arr_b = np.asarray(b, dtype=np.float32)
-    return float(np.linalg.norm(arr_a - arr_b) / max(np.linalg.norm(arr_b), 1e-8))
-
-
-def _timed_repeats(
-    *,
-    name: str,
-    fn: Callable[[], Any],
-    repeats: int,
-    warmups: int,
-) -> tuple[Any, dict[str, Any]]:
-    cold_start = time.perf_counter()
-    out = fn()
-    jax.block_until_ready(out)
-    cold_seconds = time.perf_counter() - cold_start
-    for _ in range(max(0, int(warmups))):
-        out = fn()
-        jax.block_until_ready(out)
-    times: list[float] = []
-    for _ in range(max(1, int(repeats))):
-        t0 = time.perf_counter()
-        out = fn()
-        jax.block_until_ready(out)
-        times.append(time.perf_counter() - t0)
-    arr = np.asarray(times, dtype=np.float64)
-    return out, {
-        "name": name,
-        "cold_seconds": float(cold_seconds),
-        "warmup_repeats": int(warmups),
-        "measured_repeats": int(repeats),
-        "median_seconds": float(np.median(arr)),
-        "mean_seconds": float(np.mean(arr)),
-        "min_seconds": float(np.min(arr)),
-        "max_seconds": float(np.max(arr)),
-        "times_seconds": [float(v) for v in times],
-    }
 
 
 def _make_core_cfg(args: argparse.Namespace, *, backend: str) -> FistaCoreConfig:

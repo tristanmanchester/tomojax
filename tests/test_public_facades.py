@@ -129,6 +129,7 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert bench_api.REAL_LAMINO_PROFILE_CHOICES
     assert bench_api.REAL_LAMINO_REPORT_STAGED_PATH
     assert bench_api.REAL_LAMINO_STAGED_PATH
+    assert bench_api.RealLaminoGpuMonitor.__name__ == "RealLaminoGpuMonitor"
     assert callable(bench_api.build_real_lamino_report)
     assert callable(bench_api.build_article_run_manifest)
     assert callable(bench_api.article_scenario_catalog_payload)
@@ -139,6 +140,9 @@ def test_bench_facade_exports_developer_benchmark_helpers() -> None:
     assert callable(bench_api.make_article_phantom)
     assert callable(bench_api.optimize_reference_setup_geometry_bilevel_for_level)
     assert callable(bench_api.real_lamino_success_payload)
+    assert callable(bench_api.write_real_lamino_json)
+    assert callable(bench_api.select_real_lamino_views)
+    assert callable(bench_api.timed_repeats)
     assert callable(bench_api.resolve_fixture_bin_factor)
     assert callable(bench_api.pose_polish_bounds)
     assert callable(bench_api.load_synthetic_benchmark_result)
