@@ -9,7 +9,7 @@ import pytest
 
 from tomojax.cli import inspect as inspect_cli
 from tomojax.data.io_hdf5 import NXTomoMetadata, save_nxtomo
-from tomojax.io import _inspection as inspection
+from tomojax.io import _inspection as inspection  # check-public-imports: allow-private
 
 
 def _write_minimal_nxtomo(path):

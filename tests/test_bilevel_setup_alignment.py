@@ -24,9 +24,9 @@ from tomojax.align.objectives.validation_residuals import (
     score_validation_fixed_volume,
 )
 from tomojax.align.pipeline import AlignConfig, align_multires
-from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view
+from tomojax.geometry import detector_grid_from_calibration
 
 
 def _detector_grid_case(size: int = 6, n_views: int = 6, *, det_u_px: float = 0.0):

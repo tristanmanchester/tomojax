@@ -1,9 +1,9 @@
-"""Provisional geometry-calibration foundation types.
+"""Provisional geometry-calibration value types.
 
-The package root intentionally exposes only stable value/schema types. Helper
-functions live in owner submodules such as ``tomojax.calibration.detector_grid``
-or ``tomojax.calibration.manifest``. Estimation workflows remain executable
-setup-alignment stages in ``tomojax.align``.
+Production code should import calibration-derived geometry helpers through
+``tomojax.geometry``. The package root intentionally exposes only retained
+schema/value types; implementation helpers stay in calibration submodules until
+the v2 plan either promotes or deletes this support package.
 """
 
 from tomojax.calibration.api import (

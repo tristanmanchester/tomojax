@@ -3,6 +3,36 @@
 This log records implementation milestones, validation commands, design
 decisions, deviations from `docs/tomojax-v2/`, and unresolved risks.
 
+## 2026-05-17 - Staged real-laminography runner detached from reference script
+
+### Scope
+
+Removed the remaining dynamic dependency from the staged real-laminography
+runner onto `run_real_lamino_reference_regression.py`.
+
+Changes:
+
+- Removed `_load_native_runner()` and the `native` argument plumbing from
+  `run_real_lamino_staged`, `run_cor_only_fista`, and `run_remaining_stages`.
+- Updated `prepare_real_lamino_binned_fixture` to use v2 public/deep-module
+  owners directly: `tomojax.geometry` for `Grid`/`Detector` and
+  `tomojax.recon.multires` for projection/grid/detector scaling.
+- Simplified staged-runner contract tests now that setup, pose, baseline,
+  COR-only, and final reconstruction all call bench-owned helpers directly.
+- Kept `run_real_lamino_reference_regression.py` available as a reference
+  comparison script, not as a runtime dependency of the staged path.
+
+### Validation
+
+- `uv run ruff check --select I,F,RUF022
+  scripts/real_laminography/run_real_lamino_staged.py
+  src/tomojax/bench/real_laminography_planning.py
+  tests/test_real_lamino_runner_contract.py` passed.
+- `uv run pytest -q tests/test_real_lamino_runner_contract.py
+  tests/test_bench_real_laminography_recon.py
+  tests/test_bench_real_laminography_pose.py` passed with 49 tests.
+- `python tools/check_public_imports.py` passed.
+
 ## 2026-05-17 - Schur normal-equation summaries moved behind verify
 
 ### Scope
@@ -37,9 +67,9 @@ Changes:
   passed with 0 errors.
 - `uv run python -m py_compile src/tomojax/verify/_schur_summary.py src/tomojax/verify/api.py src/tomojax/verify/__init__.py src/tomojax/align/_joint_schur_lm.py src/tomojax/align/api.py src/tomojax/align/_alternating_artifacts.py`
   passed.
-- `python tools/check_public_imports.py` still fails on pre-existing unrelated
-  IO migration imports in `src/tomojax/data/inspection.py` and
-  `tests/test_inspect_cli.py`.
+- `python tools/check_public_imports.py` passes after the obsolete
+  `tomojax.data.inspection` adapter was removed.
+
 ## 2026-05-17 - Datasets facade synthetic import cleanup
 
 ### Scope
@@ -82,7 +112,6 @@ Remaining data symbols without public `tomojax.datasets` owners:
   tests/test_public_facades.py tests/test_synthetic_datasets.py`
 - `uv run pytest -q tests/test_fbp_batching.py tests/test_spdhg.py
   tests/test_integration.py tests/test_regression_geometry_io.py`
-
 
 ## 2026-05-17 - Public facade and diagnostic boundary cleanup
 
@@ -17798,9 +17827,8 @@ Validation:
   `tomojax.io._inspection`, keeping `tomojax.io.inspect_dataset`,
   `format_inspection_report`, and `save_projection_quicklook` as the public
   facade used by the CLI.
-- Replaced `tomojax.data.inspection` with a compatibility shim that re-exports
-  the IO-owned implementation for older callers during the data-package
-  migration.
+- Removed the obsolete `tomojax.data.inspection` adapter instead of preserving a
+  reverse `tomojax.data -> tomojax.io` dependency.
 - Updated inspection regression tests to exercise the IO-owned private module
   for the targeted helper edge cases instead of importing through
   `tomojax.data`.
@@ -17817,10 +17845,8 @@ Validation:
   tests/test_golden_path_cli.py::test_golden_path_tiff_ingest_validate_inspect_recon_align
   -q` passed.
 - `uv run ruff check src/tomojax/io/_inspection.py src/tomojax/io/api.py
-  src/tomojax/io/__init__.py src/tomojax/data/inspection.py
-  tests/test_inspect_cli.py` passed.
-- `uv run python - <<'PY' ...` verified `tomojax.io` and
-  `tomojax.data.inspection` compatibility imports.
+  src/tomojax/io/__init__.py tests/test_inspect_cli.py` passed.
+- `python tools/check_public_imports.py` passed after the adapter removal.
 
 ### Contrast conversion assimilated into IO
 
@@ -17873,4 +17899,36 @@ Validation:
   tests/test_bench_fitness_imports.py` passed.
 - `git diff --check -- bench/fitness.py bench/memory.py
   tests/test_bench_fitness_imports.py docs/implementation_log.md` passed.
-- Full `python tools/check_public_imports.py` passed.
+- Full `python tools/check_public_imports.py` passes after the concurrent
+  inspection compatibility cleanup landed.
+
+### Calibration facade demotion guard
+
+- Audited the retained `tomojax.calibration` package after the geometry facade
+  became the production owner for calibration-derived detector/axis helpers.
+- Kept the detector-grid implementation in place and only tightened the package
+  root/API wording so calibration reads as retained support code, not a product
+  module.
+- Updated non-calibration tests that exercised detector-grid or axis helpers to
+  import those helpers through `tomojax.geometry`.
+- Added an AST public-surface guard that rejects direct `tomojax.calibration`
+  imports from production modules; geometry remains the allowed facade around
+  retained calibration internals.
+
+Validation:
+
+- `uv run pytest
+  tests/test_cli_public_surface.py::test_production_modules_do_not_import_calibration_package_directly
+  tests/test_public_facades.py::test_calibration_facade_exports_only_schema_value_types
+  -q` passed with 2 tests.
+- `uv run pytest tests/test_alignment_state.py tests/test_geometry_applier.py
+  -q` passed with 18 tests.
+- `uv run pytest
+  tests/test_bilevel_setup_alignment.py::test_bilevel_cv_detector_center_objective_prefers_hidden_offset_without_candidates
+  tests/test_pose_reconstruction_fail_closed.py::test_rigid_detector_grid_fold_matches_calibrated_jax_projection
+  -q` passed with 2 tests.
+- `uv run ruff check src/tomojax/calibration/__init__.py
+  src/tomojax/calibration/api.py tests/test_alignment_state.py
+  tests/test_bilevel_setup_alignment.py tests/test_geometry_applier.py
+  tests/test_pose_reconstruction_fail_closed.py tests/test_cli_public_surface.py
+  tests/test_public_facades.py` passed.

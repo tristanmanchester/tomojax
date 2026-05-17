@@ -764,7 +764,6 @@ def test_v2_binned_fixture_scales_geometry_and_records_provenance() -> None:
 
     working_raw, working_thetas, geometry_inputs, provenance = prepare_real_lamino_binned_fixture(
         args,
-        native=runner,
         raw_projections=raw,
         thetas=thetas,
     )
@@ -806,7 +805,6 @@ def test_v2_binned_fixture_smoke_shape_subselects_views_and_raises_factor() -> N
 
     working_raw, working_thetas, _geometry_inputs, provenance = prepare_real_lamino_binned_fixture(
         args,
-        native=runner,
         raw_projections=raw,
         thetas=thetas,
     )
@@ -1158,19 +1156,6 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(monkeypatch, tmp_pa
             [{"geometry_loss_before": 2.0, "geometry_loss_after": 1.0}],
         )
 
-    class FakeNative:
-        def _write_json(self, path: Path, payload: dict[str, object]) -> None:
-            _write_json(path, payload)
-
-        def _params_summary(self, params: np.ndarray) -> dict[str, object]:
-            return {"phi": {"std": float(np.std(params[:, 2]))}}
-
-        def run_setup_stage(self, *_args, **_kwargs):
-            raise AssertionError("setup stages should use tomojax.bench integration")
-
-        def run_pose_stage(self, _ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
-            raise AssertionError("pose stages should use tomojax.bench integration")
-
     def fake_pose_stage(_ctx, *, stage_dir: Path, stage_name: str, params5, **_kwargs):
         stage_dir.mkdir(parents=True, exist_ok=True)
         _write_stage_images(stage_dir)
@@ -1209,7 +1194,6 @@ def test_v2_pose_stage_validation_fails_closed_on_nan_volume(monkeypatch, tmp_pa
     monkeypatch.setattr(staged_runner, "run_real_lamino_pose_stage", fake_pose_stage)
     setup_state, params5, records, candidates = staged_runner.run_remaining_stages(
         ctx,
-        native=FakeNative(),
         geometry=None,
         grid=None,
         detector=None,

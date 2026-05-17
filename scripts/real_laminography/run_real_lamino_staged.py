@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
-import importlib.util
 import os
 from pathlib import Path
 from typing import Any
@@ -80,12 +79,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"output exists and is not empty: {run_root}")
     run_root.mkdir(parents=True, exist_ok=True)
 
-    native = _load_native_runner()
     monitor = RealLaminoGpuMonitor(run_root / "gpu_memory.csv")
     monitor.start()
     started = datetime.now().isoformat(timespec="seconds")
     try:
-        summary = run_real_lamino_staged(args, native=native, started_at=started)
+        summary = run_real_lamino_staged(args, started_at=started)
         print(f"real_lamino_report: {summary['artifacts']['summary_json']}")
         print(f"phase_complete: {summary['success']['passed']}")
         return 0
@@ -96,12 +94,9 @@ def main(argv: list[str] | None = None) -> int:
 def run_real_lamino_staged(  # noqa: PLR0915
     args: argparse.Namespace,
     *,
-    native: Any | None = None,
     started_at: str | None = None,
 ) -> dict[str, Any]:
     """Execute the v2 real-laminography workflow and write the staged report."""
-    if native is None:
-        native = _load_native_runner()
     normalize_real_lamino_runtime_args(args)
     run_root = Path(args.out)
     run_root.mkdir(parents=True, exist_ok=True)
@@ -129,7 +124,6 @@ def run_real_lamino_staged(  # noqa: PLR0915
             binning_provenance,
         ) = prepare_real_lamino_binned_fixture(
             args,
-            native=native,
             raw_projections=raw_projections,
             thetas=thetas,
         )
@@ -279,7 +273,6 @@ def run_real_lamino_staged(  # noqa: PLR0915
         cor_setup_state = setup_state
         cor_only = run_cor_only_fista(
             ctx,
-            native=native,
             geometry=geometry,
             grid=grid,
             detector=detector,
@@ -300,7 +293,6 @@ def run_real_lamino_staged(  # noqa: PLR0915
         if full_staged:
             setup_state, params5, staged_records, final_candidates = run_remaining_stages(
                 ctx,
-                native=native,
                 geometry=geometry,
                 grid=grid,
                 detector=detector,
@@ -364,7 +356,6 @@ def run_real_lamino_staged(  # noqa: PLR0915
 def run_cor_only_fista(
     ctx: Any,
     *,
-    native: Any,
     geometry: Any,
     grid: Any,
     detector: Any,
@@ -373,7 +364,6 @@ def run_cor_only_fista(
     setup_state: Any,
 ) -> np.ndarray:
     """Run the COR-only final FISTA comparator and write stage artifacts."""
-    del native
     return run_cor_only_fista_stage(
         ctx,
         geometry=geometry,
@@ -388,7 +378,6 @@ def run_cor_only_fista(
 def run_remaining_stages(
     ctx: Any,
     *,
-    native: Any,
     geometry: Any,
     grid: Any,
     detector: Any,
@@ -398,7 +387,6 @@ def run_remaining_stages(
     params5: np.ndarray,
 ) -> tuple[Any, np.ndarray, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run detector roll, axis, and pose stages after the COR-only comparator."""
-    del native
     records: list[dict[str, Any]] = []
     final_candidates: list[dict[str, Any]] = [
         {
@@ -691,17 +679,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:  # noqa: P
         if int(args.views_per_batch) <= 0:
             args.views_per_batch = 1
     return args
-
-
-def _load_native_runner() -> Any:
-    path = Path(__file__).with_name("run_real_lamino_reference_regression.py")
-    spec = importlib.util.spec_from_file_location("run_real_lamino_reference_regression", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"failed to load native runner from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

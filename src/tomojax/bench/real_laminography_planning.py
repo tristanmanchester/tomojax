@@ -9,6 +9,9 @@ from typing import Any, Protocol
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.geometry import Detector, Grid
+from tomojax.recon.multires import bin_projections, scale_detector, scale_grid
+
 
 class BinningArgs(Protocol):
     """Args-like object carrying real-laminography binning fields."""
@@ -133,7 +136,6 @@ def map_real_lamino_global_z_to_binned(
 def prepare_real_lamino_binned_fixture(
     args: argparse.Namespace,
     *,
-    native: Any,
     raw_projections: np.ndarray,
     thetas: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, Any]]:
@@ -154,7 +156,7 @@ def prepare_real_lamino_binned_fixture(
         int(args.slab_center_z),
         full_nz=original_full_nz,
     )
-    base_grid = native.Grid(
+    base_grid = Grid(
         nx=int(original_shape[2]),
         ny=int(original_shape[2]),
         nz=int(args.slab_nz),
@@ -163,7 +165,7 @@ def prepare_real_lamino_binned_fixture(
         vz=1.0,
         vol_center=(0.0, 0.0, center_phys_z),
     )
-    base_detector = native.Detector(
+    base_detector = Detector(
         nu=int(original_shape[2]),
         nv=int(original_shape[1]),
         du=1.0,
@@ -172,11 +174,11 @@ def prepare_real_lamino_binned_fixture(
     )
     if bin_factor > 1:
         working_raw = np.asarray(
-            native.bin_projections(jnp.asarray(raw_selected, dtype=jnp.float32), bin_factor),
+            bin_projections(jnp.asarray(raw_selected, dtype=jnp.float32), bin_factor),
             dtype=np.float32,
         )
-        grid = native.scale_grid(base_grid, bin_factor)
-        detector = native.scale_detector(base_detector, bin_factor)
+        grid = scale_grid(base_grid, bin_factor)
+        detector = scale_detector(base_detector, bin_factor)
     else:
         working_raw = raw_selected
         grid = base_grid

@@ -18,9 +18,9 @@ from tomojax.align._reconstruction_stage import (
 )
 from tomojax.align.geometry.geometry_applier import BaseGeometryArrays, apply_alignment_state
 from tomojax.align.model.state import AlignmentState, PoseState, SetupGeometryState
-from tomojax.calibration.detector_grid import detector_grid_from_calibration
 from tomojax.core.geometry import Detector, Grid, ParallelGeometry
 from tomojax.core.projector import forward_project_view, forward_project_view_T
+from tomojax.geometry import detector_grid_from_calibration
 
 
 def _case(size: int = 5, n_views: int = 3):
