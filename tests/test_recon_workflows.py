@@ -45,6 +45,43 @@ def test_fbp_ramp_filter_smoke_is_finite() -> None:
     assert bool(jnp.all(jnp.isfinite(volume)))
 
 
+def test_fbp_generic_fast_path_synchronizes_before_oom_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    grid, detector, geometry = _tiny_geometry()
+    projections = jnp.ones((4, 4, 4), dtype=jnp.float32)
+    calls: list[str] = []
+
+    class AsyncFailure:
+        def block_until_ready(self) -> None:
+            raise RuntimeError("RESOURCE_EXHAUSTED: simulated async allocation failure")
+
+    def fake_fast_path(*args: object, **kwargs: object) -> AsyncFailure:
+        del args, kwargs
+        calls.append("fast")
+        return AsyncFailure()
+
+    def fake_backoff(*args: object, **kwargs: object) -> jnp.ndarray:
+        del args, kwargs
+        calls.append("backoff")
+        return jnp.ones((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
+
+    monkeypatch.setitem(fbp.__globals__, "_can_use_direct_parallel_fbp", lambda *_: False)
+    monkeypatch.setitem(fbp.__globals__, "_run_fbp_fast_path", fake_fast_path)
+    monkeypatch.setitem(fbp.__globals__, "_run_fbp_with_backoff", fake_backoff)
+
+    volume = fbp(
+        geometry,
+        grid,
+        detector,
+        projections,
+        config=FBPConfig(filter_name="ramp", views_per_batch=4),
+    )
+
+    assert calls == ["fast", "backoff"]
+    np.testing.assert_allclose(np.asarray(volume), np.pi / 4.0)
+
+
 @pytest.mark.numerical
 def test_fista_reconstruction_smoke_is_finite() -> None:
     grid, detector, geometry = _tiny_geometry()

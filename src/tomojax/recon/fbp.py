@@ -653,6 +653,7 @@ def fbp(
                 gather_dtype=cfg.gather_dtype,
                 det_grid=det_grid,
             )
+            generic_acc.block_until_ready()
             for _ in range(n_views):
                 next(view_progress, None)
             return generic_acc
@@ -682,6 +683,7 @@ def fbp(
                 detector=detector,
                 filter_name=cfg.filter_name,
             )
+            acc.block_until_ready()
             for _ in range(n_views):
                 next(view_progress, None)
         except Exception as exc:
