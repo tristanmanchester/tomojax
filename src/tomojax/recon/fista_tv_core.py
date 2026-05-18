@@ -1,18 +1,29 @@
+"""Array-level differentiable FISTA reconstruction core."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
-from tomojax.core.geometry import Detector, Grid
+from tomojax.backends import resolve_pallas_callable
+from tomojax.core.backend_policy import normalize_projector_backend
 from tomojax.core.projector import forward_project_view_T, sum_backproject_views_T
 from tomojax.recon._tv_ops import huber_tv_grad, huber_tv_value, isotropic_tv_value
-from tomojax.recon.types import Regulariser
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tomojax.core.geometry import Detector, Grid
+    from tomojax.recon.types import Regulariser
 
 
 @dataclass(frozen=True, slots=True)
 class FistaCoreConfig:
+    """Configuration for the array-level FISTA core."""
+
     iters: int = 10
     lambda_tv: float = 0.005
     regulariser: Regulariser = "huber_tv"
@@ -26,10 +37,23 @@ class FistaCoreConfig:
     gather_dtype: str = "fp32"
     views_per_batch: int = 1
     support: jnp.ndarray | None = None
+    forward_projector: str = "jax"
+    backprojector: str = "jax"
+    pallas_tile_shape: tuple[int, int] = (16, 4)
+    pallas_num_warps: int = 1
+    compute_iteration_loss: bool = True
+    compute_final_data_loss: bool = True
+    compute_final_regulariser_value: bool = True
+
+    def __post_init__(self) -> None:
+        normalize_projector_backend(self.forward_projector)
+        normalize_projector_backend(self.backprojector)
 
 
 @dataclass(frozen=True, slots=True)
 class FistaCoreResult:
+    """Array-level FISTA result and diagnostics."""
+
     x: jnp.ndarray
     loss: jnp.ndarray
     data_loss: jnp.ndarray
@@ -38,6 +62,7 @@ class FistaCoreResult:
     status: str
 
     def info(self) -> dict[str, object]:
+        """Return JAX-friendly result metadata."""
         return {
             "loss": self.loss,
             "data_loss": self.data_loss,
@@ -47,6 +72,7 @@ class FistaCoreResult:
         }
 
     def python_info(self) -> dict[str, object]:
+        """Return Python scalar/list metadata for JSON reports."""
         return {
             "loss": [float(v) for v in list(self.loss)],
             "data_loss": float(self.data_loss),
@@ -60,11 +86,12 @@ def fista_tv_core_arrays(
     *,
     x0: jnp.ndarray,
     T_all: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     projections: jnp.ndarray,
     grid: Grid,
     detector: Detector,
     cfg: FistaCoreConfig,
+    L_override: jnp.ndarray | float | None = None,
     view_weights: jnp.ndarray | None = None,
 ) -> FistaCoreResult:
     """Array-level unrolled FISTA/HUBER-TV core.
@@ -76,7 +103,8 @@ def fista_tv_core_arrays(
     x_init = _project_constraints(jnp.asarray(x0, dtype=jnp.float32), cfg)
     z_init = x_init
     t_init = jnp.float32(1.0)
-    L = jnp.maximum(jnp.asarray(cfg.L, dtype=jnp.float32), jnp.float32(1e-6))
+    L_raw = cfg.L if L_override is None else L_override
+    L = jnp.maximum(jnp.asarray(L_raw, dtype=jnp.float32), jnp.float32(1e-6))
     lam = jnp.asarray(cfg.lambda_tv, dtype=jnp.float32)
     weights = _sqrt_view_weights(projections, view_weights)
 
@@ -94,6 +122,9 @@ def fista_tv_core_arrays(
             projector_unroll=cfg.projector_unroll,
             gather_dtype=cfg.gather_dtype,
             views_per_batch=cfg.views_per_batch,
+            forward_projector=cfg.forward_projector,
+            pallas_tile_shape=cfg.pallas_tile_shape,
+            pallas_num_warps=cfg.pallas_num_warps,
         )
 
     def data_loss_and_grad_fn(x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -110,6 +141,11 @@ def fista_tv_core_arrays(
             projector_unroll=cfg.projector_unroll,
             gather_dtype=cfg.gather_dtype,
             views_per_batch=cfg.views_per_batch,
+            forward_projector=cfg.forward_projector,
+            backprojector=cfg.backprojector,
+            pallas_tile_shape=cfg.pallas_tile_shape,
+            pallas_num_warps=cfg.pallas_num_warps,
+            compute_loss=bool(cfg.compute_iteration_loss or cfg.compute_final_data_loss),
         )
         if cfg.support is not None:
             grad = grad * jnp.asarray(cfg.support, dtype=grad.dtype)
@@ -120,8 +156,11 @@ def fista_tv_core_arrays(
             return huber_tv_value(x, float(cfg.huber_delta))
         return isotropic_tv_value(x)
 
-    def body(carry, k):
-        x_prev, z_prev, t_prev, loss_arr = carry
+    def body(
+        carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        k: jnp.ndarray,
+    ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
+        x_prev, z_prev, t_prev, loss_arr, _last_data_loss = carry
         data_loss, grad = data_loss_and_grad_fn(z_prev)
         if cfg.regulariser == "huber_tv" and float(cfg.lambda_tv) != 0.0:
             grad = grad + lam * huber_tv_grad(z_prev, float(cfg.huber_delta))
@@ -130,23 +169,34 @@ def fista_tv_core_arrays(
         # smoothed regularisers. Exact TV belongs to the public reconstruction
         # adapter or a future nonsmooth implicit path, not the bilevel hot path.
         x_next = _project_constraints(step, cfg)
-        t_next = jnp.float32(0.5) * (jnp.float32(1.0) + jnp.sqrt(jnp.float32(1.0) + 4.0 * t_prev * t_prev))
+        t_next = jnp.float32(0.5) * (
+            jnp.float32(1.0) + jnp.sqrt(jnp.float32(1.0) + 4.0 * t_prev * t_prev)
+        )
         z_next = x_next + ((t_prev - jnp.float32(1.0)) / t_next) * (x_next - x_prev)
         z_next = _project_constraints(z_next, cfg)
-        loss_arr = loss_arr.at[k].set(
-            (data_loss + lam * regulariser_value(z_prev)).astype(jnp.float32)
-        )
-        return (x_next, z_next, t_next, loss_arr), None
+        if cfg.compute_iteration_loss:
+            loss_arr = loss_arr.at[k].set(
+                (data_loss + lam * regulariser_value(z_prev)).astype(jnp.float32)
+            )
+        return (x_next, z_next, t_next, loss_arr, data_loss.astype(jnp.float32)), None
 
     n_iters = int(cfg.iters)
     loss0 = jnp.zeros((n_iters,), dtype=jnp.float32)
-    (x_final, _, _, loss), _ = jax.lax.scan(
+    (x_final, _, _, loss, last_data_loss), _ = jax.lax.scan(
         body,
-        (x_init, z_init, t_init, loss0),
+        (x_init, z_init, t_init, loss0, jnp.asarray(0.0, dtype=jnp.float32)),
         jnp.arange(n_iters, dtype=jnp.int32),
     )
-    data_final = data_loss_fn(x_final)
-    reg_final = regulariser_value(x_final)
+    data_final = (
+        data_loss_fn(x_final)
+        if cfg.compute_final_data_loss
+        else (loss[-1] if cfg.compute_iteration_loss else last_data_loss)
+    )
+    reg_final = (
+        regulariser_value(x_final)
+        if cfg.compute_final_regulariser_value
+        else jnp.zeros((), dtype=jnp.float32)
+    )
     return FistaCoreResult(
         x=x_final,
         loss=loss,
@@ -163,7 +213,7 @@ def projection_loss_arrays(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     projections: jnp.ndarray,
     cfg: FistaCoreConfig,
     view_weights: jnp.ndarray | None = None,
@@ -182,6 +232,9 @@ def projection_loss_arrays(
         projector_unroll=int(cfg.projector_unroll),
         gather_dtype=str(cfg.gather_dtype),
         views_per_batch=int(cfg.views_per_batch),
+        forward_projector=str(cfg.forward_projector),
+        pallas_tile_shape=cfg.pallas_tile_shape,
+        pallas_num_warps=int(cfg.pallas_num_warps),
     )
 
 
@@ -198,7 +251,7 @@ def fista_objective_arrays(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     projections: jnp.ndarray,
     cfg: FistaCoreConfig,
     view_weights: jnp.ndarray | None = None,
@@ -228,41 +281,96 @@ def _project_stack(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     checkpoint_projector: bool,
     projector_unroll: int,
     gather_dtype: str,
     views_per_batch: int = 1,
+    forward_projector: str = "jax",
+    pallas_tile_shape: tuple[int, int] = (16, 4),
+    pallas_num_warps: int = 1,
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
     if n_views == 0:
         return jnp.zeros((0, detector.nv, detector.nu), dtype=jnp.float32)
     b = _chunk_size(n_views, views_per_batch)
     num_chunks = (n_views + b - 1) // b
-    vm_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T,
-            grid,
-            detector,
-            volume,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
-    )
 
-    def body(out, i):
-        start_shifted, _valid_mask, view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+    def body(
+        out: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
+        start_shifted, _valid_mask, view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
-        pred = vm_project(T_chunk)
+        pred = _project_chunk(
+            T_chunk=T_chunk,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=det_grid,
+            checkpoint_projector=checkpoint_projector,
+            projector_unroll=projector_unroll,
+            gather_dtype=gather_dtype,
+            forward_projector=forward_projector,
+            pallas_tile_shape=pallas_tile_shape,
+            pallas_num_warps=pallas_num_warps,
+        )
         return out.at[view_idx].set(pred), None
 
     init = jnp.zeros((n_views, detector.nv, detector.nu), dtype=jnp.float32)
     out, _ = jax.lax.scan(body, init, jnp.arange(num_chunks, dtype=jnp.int32))
     return out
+
+
+def _project_chunk(
+    *,
+    T_chunk: jnp.ndarray,
+    grid: Grid,
+    detector: Detector,
+    volume: jnp.ndarray,
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
+    checkpoint_projector: bool,
+    projector_unroll: int,
+    gather_dtype: str,
+    forward_projector: str,
+    pallas_tile_shape: tuple[int, int],
+    pallas_num_warps: int,
+) -> jnp.ndarray:
+    if forward_projector == "jax":
+        return jax.vmap(
+            lambda T: forward_project_view_T(
+                T,
+                grid,
+                detector,
+                volume,
+                use_checkpoint=checkpoint_projector,
+                unroll=int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
+        )(T_chunk)
+    if forward_projector == "pallas":
+        pallas_project, fallback_reason = resolve_pallas_callable(
+            "forward_project_views_T_pallas",
+            missing_reason="pallas_batched_callable_missing",
+        )
+        if pallas_project is None:
+            raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+        return pallas_project(
+            T_chunk,
+            grid,
+            detector,
+            volume,
+            unroll=1,
+            gather_dtype=gather_dtype,
+            det_grid=det_grid,
+            tile_shape=tuple(pallas_tile_shape),
+            num_warps=int(pallas_num_warps),
+            kernel_variant="auto",
+            layout_variant="detector_vu",
+            state_mode="cached",
+        )
+    raise ValueError("FistaCoreConfig.forward_projector must be one of 'jax' or 'pallas'")
 
 
 def _projection_loss(
@@ -271,13 +379,16 @@ def _projection_loss(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     projections: jnp.ndarray,
     weights: jnp.ndarray,
     checkpoint_projector: bool,
     projector_unroll: int,
     gather_dtype: str,
     views_per_batch: int,
+    forward_projector: str,
+    pallas_tile_shape: tuple[int, int],
+    pallas_num_warps: int,
 ) -> jnp.ndarray:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -286,27 +397,28 @@ def _projection_loss(
     num_chunks = (n_views + b - 1) // b
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
-    vm_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T,
-            grid,
-            detector,
-            volume,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
-    )
 
-    def body(loss_acc, i):
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+    def body(
+        loss_acc: jnp.ndarray,
+        i: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, None]:
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
         w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
-        pred = vm_project(T_chunk)
+        pred = _project_chunk(
+            T_chunk=T_chunk,
+            grid=grid,
+            detector=detector,
+            volume=volume,
+            det_grid=det_grid,
+            checkpoint_projector=checkpoint_projector,
+            projector_unroll=projector_unroll,
+            gather_dtype=gather_dtype,
+            forward_projector=forward_projector,
+            pallas_tile_shape=pallas_tile_shape,
+            pallas_num_warps=pallas_num_warps,
+        )
         resid = (pred - y_chunk).astype(jnp.float32) * w_chunk
         resid = resid * valid_mask[:, None, None]
         return loss_acc + jnp.float32(0.5) * jnp.vdot(resid, resid).real, None
@@ -338,13 +450,18 @@ def _projection_loss_and_explicit_grad(
     grid: Grid,
     detector: Detector,
     volume: jnp.ndarray,
-    det_grid: tuple[jnp.ndarray, jnp.ndarray],
+    det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     projections: jnp.ndarray,
     weights: jnp.ndarray,
     checkpoint_projector: bool,
     projector_unroll: int,
     gather_dtype: str,
     views_per_batch: int,
+    forward_projector: str,
+    backprojector: str,
+    pallas_tile_shape: tuple[int, int],
+    pallas_num_warps: int,
+    compute_loss: bool = True,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     n_views = int(T_all.shape[0])
     if n_views == 0:
@@ -353,42 +470,70 @@ def _projection_loss_and_explicit_grad(
     num_chunks = (n_views + b - 1) // b
     nv = int(projections.shape[1])
     nu = int(projections.shape[2])
-    vm_project = jax.vmap(
-        lambda T: forward_project_view_T(
-            T,
-            grid,
-            detector,
-            volume,
-            use_checkpoint=checkpoint_projector,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
-    )
+    backproject_fn = _resolve_sum_backproject_views(backprojector)
 
-    def body(carry, i):
+    def body(
+        carry: tuple[jnp.ndarray, jnp.ndarray],
+        i: jnp.ndarray,
+    ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
         loss_acc, grad_acc = carry
-        start_shifted, valid_mask, _view_idx = _chunk_schedule(
-            i, n_views=n_views, chunk_size=b
-        )
+        start_shifted, valid_mask, _view_idx = _chunk_schedule(i, n_views=n_views, chunk_size=b)
         T_chunk = jax.lax.dynamic_slice(T_all, (start_shifted, 0, 0), (b, 4, 4))
         y_chunk = jax.lax.dynamic_slice(projections, (start_shifted, 0, 0), (b, nv, nu))
         w_chunk = jax.lax.dynamic_slice(weights, (start_shifted, 0, 0), (b, 1, 1))
-        pred = vm_project(T_chunk)
-        raw_resid = (pred - y_chunk).astype(jnp.float32)
         valid = valid_mask[:, None, None]
-        weighted_resid = raw_resid * w_chunk * valid
-        loss_batch = jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
-        grad_resid = raw_resid * (w_chunk * w_chunk) * valid
-        grad_batch = sum_backproject_views_T(
-            T_chunk,
-            grid,
-            detector,
-            grad_resid,
-            unroll=int(projector_unroll),
-            gather_dtype=gather_dtype,
-            det_grid=det_grid,
-        )
+        if forward_projector == "pallas" and backprojector == "pallas":
+            loss_grad_fn, fallback_reason = resolve_pallas_callable(
+                "forward_project_loss_and_grad_T_pallas",
+                missing_reason="pallas_loss_grad_callable_missing",
+            )
+            if loss_grad_fn is None:
+                raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+            loss_batch, grad_batch = loss_grad_fn(
+                T_chunk,
+                grid,
+                detector,
+                volume,
+                y_chunk,
+                weights=w_chunk * valid,
+                unroll=1,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+                tile_shape=tuple(pallas_tile_shape),
+                num_warps=int(pallas_num_warps),
+                compute_loss=bool(compute_loss),
+            )
+        else:
+            pred = _project_chunk(
+                T_chunk=T_chunk,
+                grid=grid,
+                detector=detector,
+                volume=volume,
+                det_grid=det_grid,
+                checkpoint_projector=checkpoint_projector,
+                projector_unroll=projector_unroll,
+                gather_dtype=gather_dtype,
+                forward_projector=forward_projector,
+                pallas_tile_shape=pallas_tile_shape,
+                pallas_num_warps=pallas_num_warps,
+            )
+            raw_resid = (pred - y_chunk).astype(jnp.float32)
+            weighted_resid = raw_resid * w_chunk * valid
+            loss_batch = (
+                jnp.float32(0.5) * jnp.vdot(weighted_resid, weighted_resid).real
+                if compute_loss
+                else jnp.asarray(0.0, dtype=jnp.float32)
+            )
+            grad_resid = raw_resid * (w_chunk * w_chunk) * valid
+            grad_batch = backproject_fn(
+                T_chunk,
+                grid,
+                detector,
+                grad_resid,
+                unroll=1 if backprojector == "pallas" else int(projector_unroll),
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
         return (loss_acc + loss_batch, grad_acc + grad_batch), None
 
     init = (jnp.asarray(0.0, dtype=jnp.float32), jnp.zeros_like(volume))
@@ -400,8 +545,22 @@ def _projection_loss_and_explicit_grad(
     return loss, grad
 
 
+def _resolve_sum_backproject_views(backprojector: str) -> Callable[..., jnp.ndarray]:
+    if backprojector == "jax":
+        return sum_backproject_views_T
+    if backprojector == "pallas":
+        backproject_fn, fallback_reason = resolve_pallas_callable(
+            "sum_backproject_views_T_pallas",
+            missing_reason="pallas_sum_backproject_callable_missing",
+        )
+        if backproject_fn is None:
+            raise RuntimeError(fallback_reason or "pallas_projector_unavailable")
+        return backproject_fn
+    raise ValueError("FistaCoreConfig.backprojector must be one of 'jax' or 'pallas'")
+
+
 def _chunk_size(n_views: int, views_per_batch: int | None) -> int:
-    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else int(n_views)
+    b = int(views_per_batch) if views_per_batch is not None and int(views_per_batch) > 0 else 1
     return max(1, min(int(b), int(n_views)))
 
 

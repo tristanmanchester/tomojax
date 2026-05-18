@@ -1,0 +1,44 @@
+[importlinter]
+root_package = tomojax
+
+[importlinter:contract:layers]
+name = Layer direction
+type = layers
+layers =
+    tomojax.cli
+    tomojax.align
+    tomojax.datasets
+    tomojax.io
+    tomojax._data
+    tomojax.recon
+    tomojax.forward
+    tomojax.backends
+    tomojax.nuisance
+    tomojax.motion
+    tomojax.geometry
+    tomojax.core
+
+[importlinter:contract:cli-uses-align-facade]
+name = CLI uses alignment facade instead of nested alignment internals
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.cli
+forbidden_modules =
+    tomojax.align._geometry
+    tomojax.align._model
+    tomojax.align._objectives
+    tomojax.align.geometry
+    tomojax.align.io
+    tomojax.align.model
+    tomojax.align.objectives
+    tomojax.align.pipeline
+
+[importlinter:contract:cli-no-core-geometry]
+name = CLI uses geometry facade instead of core geometry internals
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    tomojax.cli
+forbidden_modules =
+    tomojax.core.geometry

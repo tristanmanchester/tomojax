@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Reduce the repository to a publishable product spine: public CLI/API, minimal examples, and focused product tests only.
+- Remove benchmark harnesses, historical/v1-parity gates, one-off runners, oversized development logs, and diagnostic artifact builders from the shipped tree; retain them in a separate development archive.
+- Remove `tomojax.bench` and `tomojax.verify` entirely from the shipped tree.
 - Laminography geometry now aligns the rotation axis with the volume z-axis, so lamino reconstructions produce z-stacks with square x–y slices; regenerate datasets/recons if you relied on the old orientation.
 - Recon CLI now crops to detector FOV by default (`--roi auto`); pass `--roi off` to keep legacy behavior.
 - Normalize NX volume IO: write volumes on disk in `zyx` order with `@volume_axes_order` metadata, transpose on load, and warn (silence via `TOMOJAX_AXES_SILENCE`).

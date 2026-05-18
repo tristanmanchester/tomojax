@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Mapping, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
-import jax.numpy as jnp
+if TYPE_CHECKING:
+    import jax.numpy as jnp
 
-from ._observer import ObserverAction, OuterStat
-from .model.schedules import ResolvedAlignmentStage
+    from ._model.schedules import ResolvedAlignmentStage
+    from ._observer import ObserverAction, OuterStat
 
 
 type GaugeFixSummary = dict[str, float | str | list[str]]
@@ -22,6 +24,10 @@ class AlignInfo(TypedDict):
     stopped_by_observer: bool
     observer_action: ObserverAction
     wall_time_total: float
+    align_profile: str
+    profile_policy: MetadataDict
+    quality_tier: str
+    fallback_policy: str
     pose_model: str
     pose_model_variables: int
     per_view_variables: int
@@ -32,10 +38,10 @@ class AlignInfo(TypedDict):
     objective_kind: str
     objective_kinds: list[str]
     objective_provenance: MetadataDict | None
+    backend_provenance: MetadataDict | None
     optimizer_kind: str
     completed_outer_iters: int
     small_impr_streak: int
-    early_stop_state: MetadataDict | None
     motion_coeffs: jnp.ndarray | None
     gauge_fix: str
     gauge_fix_dofs: list[str]
@@ -52,6 +58,10 @@ class AlignMultiresInfo(TypedDict):
     observer_action: ObserverAction
     total_outer_iters: int
     wall_time_total: float
+    align_profile: str
+    profile_policy: MetadataDict
+    quality_tier: str
+    fallback_policy: str
     pose_model: str
     pose_model_variables: int | None
     per_view_variables: int | None
@@ -67,13 +77,13 @@ class AlignMultiresInfo(TypedDict):
     objective_kind: str | None
     objective_kinds: list[str]
     objective_provenance: MetadataDict | None
+    backend_provenance: MetadataDict | None
     gauge_fix: str
     gauge_fix_dofs: list[str]
     gauge_fix_final: GaugeFixSummary | None
     geometry_dofs: list[str]
     geometry_calibration_state: MetadataDict | None
     geometry_calibration_diagnostics: MetadataDict | None
-    early_stop_state: MetadataDict | None
 
 
 @dataclass
@@ -86,7 +96,6 @@ class AlignResumeState:
     outer_stats: list[OuterStat] = field(default_factory=list)
     L: float | None = None
     small_impr_streak: int = 0
-    early_stop_state: dict[str, object] = field(default_factory=dict)
     elapsed_offset: float = 0.0
 
 
@@ -104,7 +113,6 @@ class AlignMultiresResumeState:
     outer_stats: list[OuterStat] = field(default_factory=list)
     L: float | None = None
     small_impr_streak: int = 0
-    early_stop_state: dict[str, object] = field(default_factory=dict)
     elapsed_offset: float = 0.0
     level_complete: bool = False
     run_complete: bool = False
@@ -160,14 +168,10 @@ def record_reconstruction_info(
     if isinstance(losses, Iterable):
         try:
             lhist = list(losses)
-            if lhist:
+            if lhist and bool(info_rec.get("iteration_loss_computed", True)):
                 stat["recon_loss_first"] = float(lhist[0])
                 stat["recon_loss_last"] = float(lhist[-1])
                 stat["recon_loss_min"] = float(min(lhist))
-                if recon_algo == "fista":
-                    stat["fista_first"] = float(lhist[0])
-                    stat["fista_last"] = float(lhist[-1])
-                    stat["fista_min"] = float(min(lhist))
         except (TypeError, ValueError, OverflowError) as exc:
             _record_stat_conversion_error(stat, "loss", exc)
     if recon_algo == "spdhg":
@@ -186,7 +190,7 @@ def record_reconstruction_info(
                     if dst in {"spdhg_views_per_batch", "spdhg_num_blocks"}
                     else float(value)
                 )
-        stat["spdhg_seed"] = int(getattr(cfg, "spdhg_seed")) + int(outer_idx) - 1
+        stat["spdhg_seed"] = int(cfg.spdhg_seed) + int(outer_idx) - 1
     return L_prev
 
 
@@ -211,6 +215,10 @@ def enrich_multires_stage_stat(
         enriched.setdefault("schedule_stage_index", int(stage.index))
         enriched.setdefault("schedule_stage_name", stage.name)
         enriched.setdefault("schedule_stage_active_dofs", ",".join(stage.active_dofs))
+        enriched.setdefault("schedule_stage_role", stage.stage_role)
+        enriched.setdefault("schedule_stage_quality_tier", stage.quality_tier)
+        enriched.setdefault("schedule_stage_differentiability", stage.differentiability)
+        enriched.setdefault("schedule_stage_speed_claim_eligible", stage.speed_claim_eligible)
         enriched.setdefault("gauge_policy", stage.gauge_policy)
         enriched.setdefault("gauge_status", stage.gauge_decision.status)
         enriched.setdefault("gauge_decision", stage.gauge_decision.to_dict())
@@ -233,10 +241,10 @@ def enrich_multires_stage_stat(
 
 
 __all__ = [
-    "AlignInfo",
     "AlignCheckpointCallback",
-    "AlignMultiresInfo",
+    "AlignInfo",
     "AlignMultiresCheckpointCallback",
+    "AlignMultiresInfo",
     "AlignMultiresResumeState",
     "AlignResumeState",
     "enrich_multires_stage_stat",

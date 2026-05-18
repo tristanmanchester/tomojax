@@ -1,21 +1,22 @@
+"""Public FISTA/TV reconstruction adapter."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Literal, NamedTuple, Tuple, Optional
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
-from ..core.geometry.base import Geometry, Grid, Detector
-from ..core.geometry.views import stack_view_poses
-from ..core.projector import (
+from tomojax.core.geometry.views import stack_view_poses
+from tomojax.core.projector import (
     backproject_view_T,
     forward_project_view_T,
     get_detector_grid_device,
     sum_backproject_views_T,
 )
-from ..core.validation import (
+from tomojax.core.validation import (
     validate_grid,
     validate_optional_broadcastable_shape,
     validate_pose_stack,
@@ -23,6 +24,7 @@ from ..core.validation import (
     validate_projection_stack,
     validate_volume,
 )
+
 from ._callbacks import LossCallback, emit_loss_callback_endpoints
 from ._tv_ops import (
     div3,
@@ -32,13 +34,18 @@ from ._tv_ops import (
     isotropic_tv_value,
     validate_regulariser,
 )
-from .types import Regulariser
 
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
+
+    from .types import Regulariser
 
 GradMode = Literal["auto", "batched", "stream"]
 
 
 class FistaScanState(NamedTuple):
+    """State carried through the FISTA scan loop."""
+
     x: jnp.ndarray
     z: jnp.ndarray
     t: jnp.ndarray
@@ -53,9 +60,7 @@ class FistaScanState(NamedTuple):
 
 def _effective_view_chunk_size(n_views: int, views_per_batch: int | None) -> int:
     requested = (
-        int(views_per_batch)
-        if (views_per_batch is not None and int(views_per_batch) > 0)
-        else int(n_views)
+        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
     )
     return max(1, min(requested, int(n_views)))
 
@@ -80,6 +85,8 @@ def _view_chunk_schedule(
 
 @dataclass
 class FistaConfig:
+    """Configuration for public FISTA/TV reconstruction."""
+
     iters: int = 50
     lambda_tv: float = 0.005
     regulariser: Regulariser = "tv"
@@ -100,7 +107,7 @@ class FistaConfig:
     upper_bound: float | None = None
 
 
-def grad_data_term(
+def grad_data_term(  # noqa: PLR0915
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -113,10 +120,10 @@ def grad_data_term(
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
-    vol_mask: Optional[jnp.ndarray] = None,
+    vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> Tuple[jnp.ndarray, float]:
-    """Compute ∇(1/2 Σ_i ||A_i x - y_i||^2) and loss.
+) -> tuple[jnp.ndarray, float]:
+    """Compute grad(1/2 sum_i ||A_i x - y_i||^2) and loss.
 
     Two execution modes:
     - batched: vmap over a chunk of views. Fast but higher peak memory.
@@ -146,10 +153,10 @@ def grad_data_term(
     det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
     mask_arr = None if vol_mask is None else jnp.asarray(vol_mask, dtype=jnp.float32)
 
-    def apply_mask(vol):
+    def apply_mask(vol: jnp.ndarray) -> jnp.ndarray:
         return vol * mask_arr if mask_arr is not None else vol
 
-    def adjoint(resid, T_i):
+    def adjoint(resid: jnp.ndarray, T_i: jnp.ndarray) -> jnp.ndarray:
         grad_i = backproject_view_T(
             T_i,
             grid,
@@ -161,7 +168,7 @@ def grad_data_term(
         )
         return grad_i if mask_arr is None else grad_i * mask_arr
 
-    def batched_loss_and_grad(vol):
+    def batched_loss_and_grad(vol: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Loss/grad over views batched in chunks, using a scan to keep jaxpr compact.
 
         We pad the last chunk to size ``b`` and mask it out in the reduction so the
@@ -187,7 +194,10 @@ def grad_data_term(
         b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
-        def body(carry, i):
+        def body(
+            carry: tuple[jnp.ndarray, jnp.ndarray],
+            i: jnp.ndarray,
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             loss_acc, grad_acc = carry
             start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
                 i,
@@ -217,10 +227,13 @@ def grad_data_term(
         (loss_tot, grad_tot), _ = jax.lax.scan(body, init, jnp.arange(m))
         return loss_tot, grad_tot
 
-    def stream_loss_and_grad(vol):
+    def stream_loss_and_grad(vol: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         masked_vol = vol * vol_mask if vol_mask is not None else vol
 
-        def one_view(carry, i):
+        def one_view(
+            carry: tuple[jnp.ndarray, jnp.ndarray],
+            i: jnp.ndarray,
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray], None]:
             loss_acc, g_acc = carry
             T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
             y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
@@ -245,9 +258,7 @@ def grad_data_term(
 
     # Select execution mode
     eff_b = (
-        int(views_per_batch)
-        if (views_per_batch is not None and int(views_per_batch) > 0)
-        else T_all.shape[0]
+        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
     )
     mode = grad_mode
     if grad_mode == "auto":
@@ -256,9 +267,8 @@ def grad_data_term(
     if mode == "stream":
         loss_val, grad = stream_loss_and_grad(x)
         return grad, loss_val
-    else:
-        loss_val, grad = batched_loss_and_grad(x)
-        return grad, loss_val
+    loss_val, grad = batched_loss_and_grad(x)
+    return grad, loss_val
 
 
 def data_term_value(
@@ -274,7 +284,7 @@ def data_term_value(
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
-    vol_mask: Optional[jnp.ndarray] = None,
+    vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Compute the data term ``1/2 Σ_i ||A_i x - y_i||^2`` without its gradient."""
@@ -299,7 +309,7 @@ def data_term_value(
 
     det_grid = get_detector_grid_device(detector) if det_grid is None else det_grid
 
-    def batched_loss(vol):
+    def batched_loss(vol: jnp.ndarray) -> jnp.ndarray:
         masked_vol = vol * vol_mask if vol_mask is not None else vol
         vm_project = jax.vmap(
             lambda T, v: forward_project_view_T(
@@ -318,7 +328,10 @@ def data_term_value(
         b = _effective_view_chunk_size(n, views_per_batch)
         m = (n + b - 1) // b
 
-        def body(loss_acc, i):
+        def body(
+            loss_acc: jnp.ndarray,
+            i: jnp.ndarray,
+        ) -> tuple[jnp.ndarray, None]:
             start_shifted, valid_mask, _view_idx = _view_chunk_schedule(
                 i,
                 n_views=n,
@@ -336,10 +349,13 @@ def data_term_value(
         loss_tot, _ = jax.lax.scan(body, loss0, jnp.arange(m))
         return loss_tot
 
-    def stream_loss(vol):
+    def stream_loss(vol: jnp.ndarray) -> jnp.ndarray:
         masked_vol = vol * vol_mask if vol_mask is not None else vol
 
-        def one_view(loss_acc, i):
+        def one_view(
+            loss_acc: jnp.ndarray,
+            i: jnp.ndarray,
+        ) -> tuple[jnp.ndarray, None]:
             T_i = jax.lax.dynamic_slice(T_all, (i, 0, 0), (1, 4, 4))[0]
             y_i = jax.lax.dynamic_slice(projections, (i, 0, 0), (1, nv, nu))[0]
 
@@ -362,9 +378,7 @@ def data_term_value(
         return loss_tot
 
     eff_b = (
-        int(views_per_batch)
-        if (views_per_batch is not None and int(views_per_batch) > 0)
-        else T_all.shape[0]
+        int(views_per_batch) if (views_per_batch is not None and int(views_per_batch) > 0) else 1
     )
     mode = grad_mode
     if grad_mode == "auto":
@@ -379,7 +393,7 @@ def power_method_L(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections_shape: Tuple[int, int, int],
+    projections_shape: tuple[int, int, int],
     *,
     iters: int = 10,
     views_per_batch: int | None = None,
@@ -388,10 +402,10 @@ def power_method_L(
     gather_dtype: str = "fp32",
     grad_mode: GradMode = "auto",
     T_all: jnp.ndarray | None = None,
-    vol_mask: Optional[jnp.ndarray] = None,
+    vol_mask: jnp.ndarray | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> float:
-    """Estimate Lipschitz constant of ∇f(x) ≈ ||A||^2 via power method on AᵀA."""
+    """Estimate the Lipschitz constant of the data gradient by power iteration."""
     validate_grid(grid, "power_method_L grid")
     n_views, nv, nu = validate_projection_shape(
         projections_shape,
@@ -412,7 +426,7 @@ def power_method_L(
     zero_proj = jnp.zeros((n_views, nv, nu), dtype=jnp.float32)
     num_iters = max(1, int(iters))
 
-    def ata_apply(v):
+    def ata_apply(v: jnp.ndarray) -> jnp.ndarray:
         g, _ = grad_data_term(
             geometry,
             grid,
@@ -430,7 +444,7 @@ def power_method_L(
         )
         return g
 
-    def normalize(v):
+    def normalize(v: jnp.ndarray) -> jnp.ndarray:
         return v / (jnp.linalg.norm(v.ravel()) + 1e-12)
 
     ata_apply_jit = jax.jit(ata_apply)
@@ -451,10 +465,13 @@ def tv_proximal(x: jnp.ndarray, lam_over_L: float, iters: int = 20) -> jnp.ndarr
     theta = jnp.asarray(1.0, dtype=x.dtype)
     eps = jnp.asarray(jnp.finfo(x.dtype).eps, dtype=x.dtype)
 
-    def prox_impl(lam_val):
+    def prox_impl(lam_val: jnp.ndarray) -> jnp.ndarray:
         lam_safe = jnp.maximum(lam_val, eps)
 
-        def body(carry, _):
+        def body(
+            carry: tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+            _: object,
+        ) -> tuple[tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], None]:
             u, u_bar, p1, p2, p3 = carry
             gx, gy, gz = grad3(u_bar)
             p1_n = p1 + sigma * gx
@@ -524,14 +541,14 @@ def _project_constraints(
     return x
 
 
-def fista_tv(
+def fista_tv(  # noqa: PLR0915
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray,
     *,
     init_x: jnp.ndarray | None = None,
-    config: FistaConfig = FistaConfig(),
+    config: FistaConfig | None = None,
     callback: LossCallback | None = None,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, dict]:
@@ -543,7 +560,7 @@ def fista_tv(
     early stopping truncates active iterations, the final callback reports the
     last active iteration rather than the repeated padded tail entry.
     """
-    cfg = config
+    cfg = FistaConfig() if config is None else config
     vol_mask = cfg.support
     regulariser = validate_regulariser(
         cfg.regulariser,
@@ -610,7 +627,7 @@ def fista_tv(
         L += float(cfg.lambda_tv) * 12.0 / huber_delta
 
     # Precompute jitted loss/grad using the chunked grad_data_term
-    def val_and_grad_fn(z):
+    def val_and_grad_fn(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         g, v = grad_data_term(
             geometry,
             grid,
@@ -632,7 +649,7 @@ def fista_tv(
 
     val_and_grad = jax.jit(val_and_grad_fn, donate_argnums=(0,))
 
-    def data_value_fn(x):
+    def data_value_fn(x: jnp.ndarray) -> jnp.ndarray:
         return data_term_value(
             geometry,
             grid,
@@ -652,7 +669,7 @@ def fista_tv(
     data_value = jax.jit(data_value_fn, donate_argnums=(0,))
     tv_prox_jit = jax.jit(tv_proximal, static_argnames=("iters",))
 
-    def regulariser_value_fn(x):
+    def regulariser_value_fn(x: jnp.ndarray) -> jnp.ndarray:
         if regulariser == "huber_tv":
             return huber_tv_value(x, huber_delta)
         return isotropic_tv_value(x)
@@ -666,8 +683,8 @@ def fista_tv(
     patience = jnp.int32(int(cfg.recon_patience) if use_early_stop else 0)
     early_flag = jnp.bool_(use_early_stop)
 
-    def step(state: FistaScanState, k):
-        def run_active(active_state: FistaScanState):
+    def step(state: FistaScanState, k: jnp.ndarray) -> tuple[FistaScanState, None]:
+        def run_active(active_state: FistaScanState) -> FistaScanState:
             _, g = val_and_grad(active_state.z)
             y = active_state.z - (1.0 / L) * g
             if regulariser == "huber_tv":
@@ -722,7 +739,7 @@ def fista_tv(
                 iters_done=active_state.iters_done + jnp.int32(1),
             )
 
-        def run_skip(skip_state: FistaScanState):
+        def run_skip(skip_state: FistaScanState) -> FistaScanState:
             return skip_state._replace(
                 loss=skip_state.loss.at[k].set(skip_state.last_obj.astype(jnp.float32))
             )

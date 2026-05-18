@@ -1,12 +1,17 @@
+"""Rotation-axis geometry helpers."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
 from .transforms import align_u_to_v, rot_axis_angle
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def normalize_axis_unit(axis_unit_lab: Sequence[float]) -> tuple[float, float, float]:
@@ -43,6 +48,7 @@ class RotationAxisGeometry:
         return np.asarray(normalize_axis_unit(self.axis_unit_lab), dtype=np.float64)
 
     def pose_for_view(self, i: int) -> PoseMatrix:
+        """Return the world-from-object pose for one view."""
         theta = float(np.deg2rad(self.thetas_deg[i]))
         axis = self._axis_unit()
         ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
@@ -53,4 +59,6 @@ class RotationAxisGeometry:
         return tuple(map(tuple, T))
 
     def rays_for_view(self, i: int) -> RayPair:
+        """Return detector rays for one view."""
+        del i
         return _parallel_detector_rays(self.grid, self.detector)

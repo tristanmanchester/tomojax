@@ -1,11 +1,16 @@
+"""Validation helpers for core array and geometry contracts."""
+
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .geometry.base import Detector, Geometry, Grid
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from .geometry.base import Detector, Geometry, Grid
 
 
 def _shape_of(value: Any) -> tuple[int, ...]:
@@ -83,7 +88,7 @@ def _geometry_view_count(geometry: Geometry | None) -> int | None:
     if thetas is None:
         return None
     try:
-        return int(len(thetas))
+        return len(thetas)
     except Exception:
         return None
 
@@ -218,6 +223,7 @@ def validate_volume(
     context: str,
     name: str = "volume",
 ) -> tuple[int, int, int]:
+    """Validate a reconstruction volume against grid dimensions."""
     expected_shape = validate_grid(grid, context)
     actual_shape = _shape_of(volume)
     if actual_shape != expected_shape:
@@ -238,6 +244,7 @@ def validate_detector_image(
     context: str,
     name: str = "image",
 ) -> tuple[int, int]:
+    """Validate one detector image against detector dimensions."""
     expected_shape = validate_detector(detector, context)
     actual_shape = _shape_of(image)
     if actual_shape != expected_shape:
@@ -252,6 +259,7 @@ def validate_detector_image(
 
 
 def validate_pose_matrix(T: Any, *, context: str, name: str = "pose") -> tuple[int, int]:
+    """Validate one homogeneous 4x4 pose matrix."""
     actual_shape = _shape_of(T)
     expected_shape = (4, 4)
     if actual_shape != expected_shape:
@@ -272,6 +280,7 @@ def validate_pose_stack(
     context: str,
     name: str = "poses",
 ) -> tuple[int, int, int]:
+    """Validate a stack of homogeneous 4x4 pose matrices."""
     expected_shape = (int(n_views), 4, 4)
     actual_shape = _shape_of(T_all)
     if actual_shape != expected_shape:
@@ -293,6 +302,7 @@ def validate_optional_same_shape(
     name: str,
     fix: str,
 ) -> tuple[int, ...] | None:
+    """Validate an optional value that must exactly match ``expected_shape``."""
     if value is None:
         return None
     expected = tuple(int(s) for s in expected_shape)
@@ -316,6 +326,7 @@ def validate_optional_broadcastable_shape(
     name: str,
     fix: str,
 ) -> tuple[int, ...] | None:
+    """Validate an optional value that must broadcast to ``expected_shape``."""
     if value is None:
         return None
     expected = tuple(int(s) for s in expected_shape)
@@ -341,6 +352,7 @@ def validate_detector_grid(
     *,
     context: str,
 ) -> None:
+    """Validate optional flattened detector-coordinate vectors."""
     if det_grid is None:
         return
     nv, nu = validate_detector(detector, context)

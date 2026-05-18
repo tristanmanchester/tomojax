@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "tomojax"
 version = "0.2.0"
-description = "TomoJAX — CT projector, reconstruction, and alignment (v2)"
+description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "GPL-3.0-only"
@@ -21,13 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bench = [
-    "matplotlib>=3.10.5,<4",
-    "nvidia-ml-py>=13.580.82,<14",
-    "psutil>=7.0.0,<8",
-    "pyyaml>=6.0.2,<7",
-    "scikit-image>=0.25.2,<0.26",
-]
 cpu = [
     "jax>=0.10,<0.11",
 ]
@@ -36,48 +29,149 @@ cuda12 = [
 ]
 
 [project.scripts]
-tomojax-simulate = "tomojax.cli.simulate:main"
-tomojax-misalign = "tomojax.cli.misalign:main"
-tomojax-recon = "tomojax.cli.recon:main"
-tomojax-align = "tomojax.cli.align:main"
-tomojax-preprocess = "tomojax.cli.preprocess:main"
-tomojax-convert = "tomojax.cli.convert:main"
-tomojax-validate = "tomojax.cli.validate:main"
-tomojax-inspect = "tomojax.cli.inspect:main"
-tomojax-loss-bench = "tomojax.cli.loss_bench:main"
-tomojax-test-gpu = "tomojax.cli.runtime_checks:test_gpu_main"
-tomojax-test-cpu = "tomojax.cli.runtime_checks:test_cpu_main"
+tomojax = "tomojax.cli.main:main"
 
 [dependency-groups]
 dev = [
-    "psutil>=7.0.0,<8",
+    "basedpyright>=1.34,<2",
+    "import-linter>=2,<3",
+    "pre-commit>=4,<5",
     "pytest>=8,<9",
-    "pyyaml>=6.0.2,<7",
     "ruff>=0.11,<0.12",
 ]
 
 [tool.ruff]
-line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
-exclude = [
-    ".git",
-    ".pixi",
-    ".venv",
-    "__pycache__",
-    "bench/data",
-    "bench/out",
-    "build",
-    "dist",
-    "scripts",
-]
-
-[tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+line-length = 100
+src = ["src", "tests", "tools", "examples"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "C4",
+    "PIE",
+    "RET",
+    "ARG",
+    "PTH",
+    "PL",
+    "RUF",
+    "NPY",
+    "PERF",
+    "PT",
+    "TID",
+    "TC",
+    "ANN",
+    "D",
+]
+ignore = [
+    "ANN401",
+    "D105",
+    "D107",
+    "PLR0913",
+    "PLR2004",
+    "TRY003",
+    "EM101",
+    "EM102",
+    "PLC0415",
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tomojax"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D",
+    "ANN",
+    "ARG",
+    "C408",
+    "E501",
+    "PLR2004",
+    "PTH",
+    "PT011",
+    "PT018",
+    "TC",
+]
+"examples/**" = [
+    "D",
+    "T201",
+]
+"src/tomojax/**/_*.py" = [
+    "ANN001",
+    "ANN202",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+    "TC",
+]
+
+[tool.basedpyright]
+include = [
+    "src/tomojax/align/api.py",
+    "src/tomojax/align/__init__.py",
+    "src/tomojax/backends/api.py",
+    "src/tomojax/cli",
+    "src/tomojax/core/api.py",
+    "src/tomojax/datasets/api.py",
+    "src/tomojax/forward/api.py",
+    "src/tomojax/geometry/api.py",
+    "src/tomojax/io",
+    "src/tomojax/motion/api.py",
+    "src/tomojax/nuisance/api.py",
+    "src/tomojax/recon/api.py",
+]
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    "build",
+    "dist",
+]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownArgumentType = "warning"
+reportUnknownVariableType = "warning"
+reportAny = "warning"
+reportPrivateUsage = "error"
+reportUnusedCallResult = "warning"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "surface: public API/CLI/import-boundary tests for the production feedback loop",
+    "numerical: CPU numerical reconstruction/alignment tests that may compile JAX kernels",
+    "gpu: requires GPU",
+    "pallas: requires Pallas-capable backend",
+    "slow: slow tests",
+]

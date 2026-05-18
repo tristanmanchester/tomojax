@@ -6,9 +6,9 @@ them lightweight and JAX-friendly (no heavy runtime logic here).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Protocol, TypedDict
-
+from typing import Protocol, TypedDict
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
@@ -18,6 +18,8 @@ RayPair = tuple[RayFunction, RayFunction]
 
 
 class GridDictRequired(TypedDict):
+    """Required JSON-compatible grid metadata fields."""
+
     nx: int
     ny: int
     nz: int
@@ -27,11 +29,15 @@ class GridDictRequired(TypedDict):
 
 
 class GridDict(GridDictRequired, total=False):
+    """Optional JSON-compatible grid placement fields."""
+
     vol_origin: list[float]
     vol_center: list[float]
 
 
 class DetectorDict(TypedDict):
+    """JSON-compatible detector metadata fields."""
+
     nu: int
     nv: int
     du: float
@@ -88,6 +94,7 @@ class Grid:
             )
 
     def to_dict(self) -> GridDict:
+        """Return JSON-compatible grid metadata."""
         d = {
             "nx": int(self.nx),
             "ny": int(self.ny),
@@ -121,6 +128,8 @@ def _grid_volume_origin(grid: Grid) -> Vec3:
 
 @dataclass(frozen=True)
 class Detector:
+    """Regular detector plane metadata."""
+
     nu: int
     nv: int
     du: float
@@ -135,6 +144,7 @@ class Detector:
         )
 
     def to_dict(self) -> DetectorDict:
+        """Return JSON-compatible detector metadata."""
         return {
             "nu": int(self.nu),
             "nv": int(self.nv),
@@ -160,7 +170,7 @@ def _parallel_detector_rays(
         z = (v - (nv / 2.0 - 0.5)) * dv + cz
         return float(x), float(y0), float(z)
 
-    def dir_fn(u: int, v: int) -> Vec3:
+    def dir_fn(_u: int, _v: int) -> Vec3:
         return (0.0, 1.0, 0.0)
 
     return origin_fn, dir_fn

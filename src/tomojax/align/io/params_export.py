@@ -1,3 +1,5 @@
+"""Export per-view alignment parameters as JSON or CSV sidecars."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -8,8 +10,7 @@ from typing import Any
 
 import numpy as np
 
-
-ALIGNMENT_PARAMS_SCHEMA = "tomojax.alignment_params.v1"
+ALIGNMENT_PARAMS_SCHEMA = "tomojax.alignment_params"
 PARAMETER_ORDER = ("alpha", "beta", "phi", "dx", "dz")
 CSV_FIELDNAMES = (
     "view_index",
@@ -83,7 +84,7 @@ def alignment_param_records(
 def _json_native(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {str(k): _json_native(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_json_native(v) for v in value]
     if isinstance(value, np.generic):
         return value.item()
@@ -96,10 +97,10 @@ def _json_native(value: Any) -> Any:
         return value
 
     if arr.shape == ():
-        if arr.dtype == object:
-            return value
-        return _json_native(arr.item())
-    return _json_native(arr.tolist())
+        native = value if arr.dtype == object else _json_native(arr.item())
+    else:
+        native = _json_native(arr.tolist())
+    return native
 
 
 def alignment_params_payload(
@@ -109,7 +110,7 @@ def alignment_params_payload(
     dv: float,
     gauge_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the versioned JSON payload for exported alignment parameters."""
+    """Build the JSON payload for exported alignment parameters."""
     du_f, dv_f = _validate_detector_spacing(du=du, dv=dv)
     payload = {
         "schema": ALIGNMENT_PARAMS_SCHEMA,

@@ -1,10 +1,16 @@
+"""Small differentiable operators built on the reference projector."""
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 
-from .geometry.base import Grid, Detector, Geometry
 from .projector import backproject_view, forward_project_view
+
+if TYPE_CHECKING:
+    from .geometry.base import Detector, Geometry, Grid
 
 
 def view_loss(
@@ -19,6 +25,7 @@ def view_loss(
     n_steps: int | None = None,
     gather_dtype: str = "fp32",
 ) -> jnp.ndarray:
+    """Return half squared residual loss for one measured detector view."""
     pred = forward_project_view(
         geometry=geometry,
         grid=grid,
@@ -87,5 +94,4 @@ def adjoint_test_once(
         gather_dtype=gather_dtype,
     )
     rhs = jnp.vdot(volume, ATy)
-    rel = float(jnp.abs(lhs - rhs) / (jnp.abs(lhs) + 1e-12))
-    return rel
+    return float(jnp.abs(lhs - rhs) / (jnp.abs(lhs) + 1e-12))

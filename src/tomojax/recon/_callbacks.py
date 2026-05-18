@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Iterable
-
+from collections.abc import Callable, Iterable
 
 LossCallback = Callable[[int, float], None]
 

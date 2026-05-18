@@ -1,15 +1,19 @@
+"""Reference JAX projector and backprojector operators."""
+
+# ruff: noqa: ANN001, ANN202
+
 from __future__ import annotations
 
+from collections import OrderedDict
 import math
 import operator
-from typing import Tuple
-from collections import OrderedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .geometry.base import Grid, Detector, Geometry, _grid_volume_origin
+from .backend_policy import ProjectorBackendInput, normalize_projector_backend
+from .geometry.base import Detector, Geometry, Grid, _grid_volume_origin
 from .validation import (
     validate_detector,
     validate_detector_grid,
@@ -29,7 +33,9 @@ from .validation import (
 #   object frame directly. This makes reconstructed volumes live in the object (sample) frame.
 
 # Cache detector grids keyed by (nu, nv, du, dv, cx, cz)
-_DET_GRID_CACHE: "OrderedDict[Tuple[int, int, float, float, float, float], Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
+_DET_GRID_CACHE: OrderedDict[
+    tuple[int, int, float, float, float, float], tuple[np.ndarray, np.ndarray]
+] = OrderedDict()
 _DET_GRID_CACHE_CAP = 8
 
 
@@ -40,7 +46,7 @@ def _volume_origin(grid: Grid) -> jnp.ndarray:
 
 def _interpolation_support_bounds(
     grid: Grid, vol_origin: jnp.ndarray
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return a conservative object-space support box for trilinear sampling.
 
     ``vol_origin`` denotes the centre of voxel ``(0, 0, 0)``. The projector
@@ -56,7 +62,7 @@ def _interpolation_support_bounds(
     return vol_origin - voxel, upper
 
 
-def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
+def _build_detector_grid(det: Detector) -> tuple[np.ndarray, np.ndarray]:
     key = (
         int(det.nu),
         int(det.nv),
@@ -82,7 +88,7 @@ def _build_detector_grid(det: Detector) -> Tuple[np.ndarray, np.ndarray]:
     return X, Z
 
 
-def get_detector_grid_device(det: Detector) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Return detector coordinate grids as device arrays.
 
     Note: call this outside of any JAX-transformed context (jit/grad/scan) to avoid
@@ -141,9 +147,7 @@ def _resolve_detector_grid(
 
 def _resolve_n_steps(grid: Grid, step_size: float, n_steps: int | None) -> int:
     if not math.isfinite(step_size) or step_size <= 0.0:
-        raise ValueError(
-            f"projector traversal step_size must be finite and > 0; got {step_size!r}"
-        )
+        raise ValueError(f"projector traversal step_size must be finite and > 0; got {step_size!r}")
     if n_steps is not None:
         if isinstance(n_steps, bool):
             raise ValueError(
@@ -166,7 +170,7 @@ def _resolve_n_steps(grid: Grid, step_size: float, n_steps: int | None) -> int:
         float((grid.nz + 1) * grid.vz),
     )
     max_path_length = math.sqrt(sum(length * length for length in support_lengths))
-    return int(math.ceil(max_path_length / float(step_size)))
+    return math.ceil(max_path_length / float(step_size))
 
 
 def _projector_traversal_state(
@@ -248,7 +252,7 @@ def _projector_traversal_state(
 
 
 @jax.jit
-def _flat_index(ix, iy, iz, nx, ny, nz):
+def _flat_index(ix, iy, iz, _nx, ny, nz):
     return ix * (ny * nz) + iy * nz + iz
 
 
@@ -307,6 +311,7 @@ def forward_project_view_T(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    projector_backend: ProjectorBackendInput = "jax",
 ) -> jnp.ndarray:
     """Forward project a single view given pose `T` (4x4, row-major).
 
@@ -315,6 +320,24 @@ def forward_project_view_T(
     inv(T), then performs incremental stepping along the beam direction expressed
     in the object frame. This avoids a matmul per step and keeps gradients clean.
     """
+    backend = normalize_projector_backend(projector_backend)
+    if backend == "pallas":
+        try:
+            from tomojax.core.pallas_projector import forward_project_view_T_pallas
+
+            return forward_project_view_T_pallas(
+                T,
+                grid,
+                detector,
+                volume,
+                step_size=step_size,
+                n_steps=n_steps,
+                unroll=unroll,
+                gather_dtype=gather_dtype,
+                det_grid=det_grid,
+            )
+        except Exception:
+            pass
     vol = volume
     nx, ny, nz = validate_volume(vol, grid, context="forward_project_view_T", name="volume")
     validate_detector(detector, "forward_project_view_T")
@@ -417,7 +440,7 @@ def backproject_view_T(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
     """Backproject one detector image as the explicit adjoint of the configured projector."""
-    acc = _backproject_view_accum_T(
+    return _backproject_view_accum_T(
         T,
         grid,
         detector,
@@ -428,7 +451,6 @@ def backproject_view_T(
         gather_dtype=gather_dtype,
         det_grid=det_grid,
     )
-    return acc
 
 
 def sum_backproject_views_T(
@@ -443,7 +465,7 @@ def sum_backproject_views_T(
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> jnp.ndarray:
-    """Sum explicit mixed-precision adjoints over a fixed chunk without stacking volumes."""
+    """Sum explicit mixed-precision adjoints over a fixed chunk."""
     n_views, _, _ = validate_projection_stack(
         images,
         detector,
@@ -454,9 +476,8 @@ def sum_backproject_views_T(
     validate_grid(grid, "sum_backproject_views_T")
     img = jnp.asarray(images, dtype=jnp.float32)
 
-    def body(accum, inputs):
-        T_i, img_i = inputs
-        bp = backproject_view_T(
+    def backproject_one(T_i: jnp.ndarray, img_i: jnp.ndarray) -> jnp.ndarray:
+        return backproject_view_T(
             T_i,
             grid,
             detector,
@@ -467,11 +488,10 @@ def sum_backproject_views_T(
             gather_dtype=gather_dtype,
             det_grid=det_grid,
         )
-        return accum + bp, None
 
-    init = jnp.zeros((grid.nx, grid.ny, grid.nz), dtype=jnp.float32)
-    acc, _ = jax.lax.scan(body, init, (T_all, img))
-    return acc
+    if int(n_views) == 1:
+        return backproject_one(T_all[0], img[0])
+    return jnp.sum(jax.vmap(backproject_one)(T_all, img), axis=0, dtype=jnp.float32)
 
 
 def forward_project_view(
@@ -487,6 +507,7 @@ def forward_project_view(
     unroll: int | None = None,
     gather_dtype: str = "fp32",
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    projector_backend: ProjectorBackendInput = "jax",
 ) -> jnp.ndarray:
     """Wrapper that fetches pose from geometry and calls the pose-aware variant.
 
@@ -505,6 +526,7 @@ def forward_project_view(
         unroll=unroll,
         gather_dtype=gather_dtype,
         det_grid=det_grid,
+        projector_backend=projector_backend,
     )
 
 

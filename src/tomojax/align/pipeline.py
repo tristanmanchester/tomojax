@@ -7,22 +7,16 @@ details should import those owner modules directly.
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
-
-from ..core.geometry.base import Detector, Geometry, Grid
+from . import _pose_stage as _pose_stage_mod, _stage_loop as _stage_loop_mod
 from ._config import AlignConfig
 from ._observer import (
-    LegacyObserverCallback,
     ObserverAction,
     ObserverCallback,
     OuterStat,
     OuterStatValue,
-    adapt_legacy_observer,
 )
-from . import _pose_stage as _pose_stage_mod
-from . import _stage_loop as _stage_loop_mod
 from ._results import (
     AlignCheckpointCallback,
     AlignInfo,
@@ -32,6 +26,13 @@ from ._results import (
     AlignResumeState,
 )
 from ._stage_loop import MultiresLevel
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    import jax.numpy as jnp
+
+    from tomojax.core.geometry.base import Detector, Geometry, Grid
 
 
 def align(
@@ -48,6 +49,7 @@ def align(
     checkpoint_callback: AlignCheckpointCallback | None = None,
     det_grid_override: tuple[jnp.ndarray, jnp.ndarray] | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignInfo]:
+    """Run single-resolution alignment through the stable facade."""
     return _pose_stage_mod.align(
         geometry,
         grid,
@@ -75,6 +77,7 @@ def align_multires(
     resume_state: AlignMultiresResumeState | None = None,
     checkpoint_callback: AlignMultiresCheckpointCallback | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, AlignMultiresInfo]:
+    """Run multiresolution alignment through the stable facade."""
     return _stage_loop_mod.align_multires(
         geometry,
         grid,
@@ -96,13 +99,11 @@ __all__ = [
     "AlignMultiresInfo",
     "AlignMultiresResumeState",
     "AlignResumeState",
-    "LegacyObserverCallback",
     "MultiresLevel",
     "ObserverAction",
     "ObserverCallback",
     "OuterStat",
     "OuterStatValue",
-    "adapt_legacy_observer",
     "align",
     "align_multires",
 ]
