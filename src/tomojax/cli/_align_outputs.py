@@ -16,7 +16,7 @@ from tomojax.cli.manifest import build_manifest, save_manifest
 from tomojax.geometry import build_calibrated_geometry_metadata_patch, cylindrical_mask_xy
 from tomojax.io import JsonValue, save_projection_payload
 
-from ._align_checkpoint import _metadata_json_list, _metadata_json_mapping, _metadata_list
+from ._align_checkpoint import metadata_json_list, metadata_json_mapping, metadata_list
 from ._align_types import AlignCliExecutionResult, AlignCliRunPlan
 
 
@@ -42,8 +42,8 @@ def _alignment_gauge_metadata(
     final = cast("object", info.get("gauge_fix_final", {}))
     return {
         "mode": str(mode),
-        "dofs": _metadata_json_list(dofs),
-        "final": _metadata_json_mapping(final),
+        "dofs": metadata_json_list(dofs),
+        "final": metadata_json_mapping(final),
     }
 
 
@@ -117,11 +117,11 @@ def _build_alignment_manifest_payload_from_result(
 ) -> dict[str, object]:
     command = plan.command
     info = execution.info
-    loss_values = _metadata_list(cast("object", info.get("loss", [])))
-    objective_kinds = _metadata_list(cast("object", info.get("objective_kinds", [])))
-    active_dofs = _metadata_list(cast("object", info.get("active_dofs", [])))
-    active_pose_dofs = _metadata_list(cast("object", info.get("active_pose_dofs", [])))
-    active_geometry_dofs = _metadata_list(cast("object", info.get("active_geometry_dofs", [])))
+    loss_values = metadata_list(cast("object", info.get("loss", [])))
+    objective_kinds = metadata_list(cast("object", info.get("objective_kinds", [])))
+    active_dofs = metadata_list(cast("object", info.get("active_dofs", [])))
+    active_pose_dofs = metadata_list(cast("object", info.get("active_pose_dofs", [])))
+    active_geometry_dofs = metadata_list(cast("object", info.get("active_geometry_dofs", [])))
     return {
         "input_path": command.data,
         "output_path": command.out,
@@ -219,7 +219,7 @@ def _write_alignment_manifest(
     logging.info("Saved reproducibility manifest to %s", plan.command.save_manifest)
 
 
-def _write_alignment_outputs(
+def write_alignment_outputs(
     plan: AlignCliRunPlan,
     execution: AlignCliExecutionResult,
 ) -> None:

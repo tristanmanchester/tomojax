@@ -27,32 +27,32 @@ from ._align_command import AlignCommand
 from ._align_types import AlignCliCheckpointCallbacks, AlignCliRunPlan
 
 
-def _metadata_int(value: object, default: int = 0) -> int:
+def metadata_int(value: object, default: int = 0) -> int:
     if isinstance(value, int | float | str):
         return int(value)
     return default
 
 
-def _metadata_float(value: object, default: float = 0.0) -> float:
+def metadata_float(value: object, default: float = 0.0) -> float:
     if isinstance(value, int | float | str):
         return float(value)
     return default
 
 
-def _metadata_list(value: object) -> list[object]:
+def metadata_list(value: object) -> list[object]:
     if isinstance(value, list | tuple):
         return list(value)
     return []
 
 
-def _metadata_json_list(value: object) -> list[JsonValue]:
+def metadata_json_list(value: object) -> list[JsonValue]:
     normalized = normalize_json(value)
     if isinstance(normalized, list):
         return normalized
     return []
 
 
-def _metadata_json_mapping(value: object) -> dict[str, JsonValue]:
+def metadata_json_mapping(value: object) -> dict[str, JsonValue]:
     normalized = normalize_json(value)
     if isinstance(normalized, dict):
         return normalized
@@ -85,7 +85,7 @@ def _checkpoint_cli_options(command: AlignCommand, *, gather_dtype: str) -> dict
     }
 
 
-def _checkpoint_metadata(
+def checkpoint_metadata(
     *,
     meta: object,
     projections: jnp.ndarray,
@@ -156,7 +156,7 @@ def _checkpoint_metadata(
     )
 
 
-def _resume_state_from_checkpoint(
+def resume_state_from_checkpoint(
     checkpoint_path: str,
     *,
     expected_metadata: CheckpointMetadata,
@@ -197,14 +197,14 @@ def _resume_state_from_checkpoint(
                 if isinstance(geometry_calibration_state, dict)
                 else None
             ),
-            stage_index=_metadata_int(schedule_state.get("stage_index"), 0),
+            stage_index=metadata_int(schedule_state.get("stage_index"), 0),
             stage_name=(
                 str(schedule_state["stage_name"])
                 if schedule_state.get("stage_name") is not None
                 else None
             ),
             stage_completed=bool(schedule_state.get("stage_completed", False)),
-            completed_outer_iters_in_stage=_metadata_int(
+            completed_outer_iters_in_stage=metadata_int(
                 schedule_state.get("completed_outer_iters_in_stage"), 0
             ),
         )
@@ -241,7 +241,7 @@ def _state_grid_detector_for_checkpoint(
     )
 
 
-def _make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckpointCallbacks:
+def make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheckpointCallbacks:
     def write_single_checkpoint(
         state: AlignResumeState,
         *,
@@ -253,7 +253,7 @@ def _make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheck
         every = int(plan.checkpoint_every or 1)
         if not run_complete and (completed <= 0 or completed % every != 0):
             return
-        metadata = _checkpoint_metadata(
+        metadata = checkpoint_metadata(
             meta=plan.meta,
             projections=plan.projections,
             cfg=plan.cfg,
@@ -303,7 +303,7 @@ def _make_align_cli_checkpoint_callbacks(plan: AlignCliRunPlan) -> AlignCliCheck
             int(state.level_factor),
             run_complete=bool(state.run_complete),
         )
-        metadata = _checkpoint_metadata(
+        metadata = checkpoint_metadata(
             meta=plan.meta,
             projections=plan.projections,
             cfg=plan.cfg,

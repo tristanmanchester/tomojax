@@ -110,7 +110,7 @@ def pad_to_multiples(
     px0 = pad_x // 2
     px1 = pad_x - px0
     pad_width = [(0, 0), (py0, py1), (px0, px1)] if arr.ndim == 3 else [(py0, py1), (px0, px1)]
-    return np.pad(arr, pad_width, mode=mode)
+    return np.asarray(np.pad(arr, pad_width, mode=mode))  # type: ignore[reportCallIssue, reportArgumentType]
 
 
 def summarize_angles(angles_deg: np.ndarray) -> dict[str, float | int | bool]:
@@ -129,7 +129,11 @@ def summarize_angles(angles_deg: np.ndarray) -> dict[str, float | int | bool]:
 def volume_chunks(shape: tuple[int, int, int]) -> tuple[int, int, int]:
     """Clamp placeholder-volume chunks so small grids remain writable."""
     target = (16, 16, 32)
-    return tuple(min(dim, chunk) for dim, chunk in zip(shape, target, strict=True))
+    return (
+        min(int(shape[0]), target[0]),
+        min(int(shape[1]), target[1]),
+        min(int(shape[2]), target[2]),
+    )
 
 
 __all__ = [

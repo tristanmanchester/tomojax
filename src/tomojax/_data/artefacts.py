@@ -1,6 +1,5 @@
 """Synthetic projection artefact models for deterministic synthetic datasets."""
 
-
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

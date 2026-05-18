@@ -35,16 +35,16 @@ from tomojax.geometry import (
 from tomojax.io import build_geometry_from_dataset_metadata, load_projection_payload
 
 from ._align_checkpoint import (
-    _checkpoint_metadata,
-    _metadata_float,
-    _metadata_int,
-    _resume_state_from_checkpoint,
+    checkpoint_metadata,
+    metadata_float,
+    metadata_int,
+    resume_state_from_checkpoint,
 )
 from ._align_command import (
     AlignmentMode,
-    _align_command_from_args,
-    _parse_dof_args,
-    _parse_loss_config,
+    align_command_from_args,
+    parse_dof_args,
+    parse_loss_config,
 )
 from ._align_types import AlignCliExecutionResult, AlignCliRunPlan
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from tomojax.recon.types import Regulariser
 
 
-def _init_jax_compilation_cache() -> None:
+def init_jax_compilation_cache() -> None:
     """Enable JAX persistent compilation cache for faster re-runs.
 
     Directory precedence:
@@ -153,13 +153,13 @@ def _schedule_for_public_mode(mode: AlignmentMode, *, align_profile: str) -> str
     return "setup_safe"
 
 
-def _build_align_cli_run_plan(
+def build_align_cli_run_plan(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     config_metadata: dict[str, Any],
 ) -> AlignCliRunPlan:
-    loss_config, loss_params = _parse_loss_config(args, parser)
-    optimise_dofs, freeze_dofs = _parse_dof_args(args, parser)
+    loss_config, loss_params = parse_loss_config(args, parser)
+    optimise_dofs, freeze_dofs = parse_dof_args(args, parser)
     level_args = cast("list[int] | None", args.levels)
     levels = (
         [int(v) for v in level_args] if level_args is not None and len(level_args) > 0 else None
@@ -198,7 +198,7 @@ def _build_align_cli_run_plan(
     args.gather_dtype = str(profile_options["gather_dtype"])
     args.regulariser = str(profile_options["regulariser"])
     args.recon_algo = str(profile_options["recon_algo"])
-    args.views_per_batch = _metadata_int(profile_options["views_per_batch"], 0)
+    args.views_per_batch = metadata_int(profile_options["views_per_batch"], 0)
     args.checkpoint_projector = bool(profile_options["checkpoint_projector"])
     args.pose_model = str(profile_options["pose_model"])
     args.quality_tier = str(profile_options["quality_tier"])
@@ -226,7 +226,7 @@ def _build_align_cli_run_plan(
         ):
             effective_options[key] = getattr(args, key)
 
-    command = _align_command_from_args(args)
+    command = align_command_from_args(args)
     meta = load_projection_payload(command.data)
     geometry_meta = meta.geometry_inputs()
     initial_grid_override = (
@@ -349,7 +349,7 @@ def _build_align_cli_run_plan(
     if run_levels is None and (command.schedule is not None or bool(geometry_dofs)):
         run_levels = [1]
 
-    expected_checkpoint_metadata = _checkpoint_metadata(
+    expected_checkpoint_metadata = checkpoint_metadata(
         meta=meta,
         projections=projections,
         cfg=cfg,
@@ -375,7 +375,7 @@ def _build_align_cli_run_plan(
     resume_state = None
     if command.resume is not None:
         try:
-            resume_state = _resume_state_from_checkpoint(
+            resume_state = resume_state_from_checkpoint(
                 command.resume,
                 expected_metadata=expected_checkpoint_metadata,
                 used_multires=run_levels is not None,
@@ -410,7 +410,7 @@ def _build_align_cli_run_plan(
     )
 
 
-def _execute_alignment_plan(
+def execute_alignment_plan(
     plan: AlignCliRunPlan,
     *,
     single_checkpoint_callback: Callable[..., None],
@@ -474,12 +474,12 @@ def _execute_alignment_plan(
                 x=x,
                 params5=params5,
                 motion_coeffs=motion_coeffs_array,
-                start_outer_iter=_metadata_int(completed_outer_iters, len(outer_stats_raw)),
+                start_outer_iter=metadata_int(completed_outer_iters, len(outer_stats_raw)),
                 loss=list(loss_raw),
                 outer_stats=[dict(stat) for stat in outer_stats_raw if isinstance(stat, dict)],
                 L=float(l_value) if isinstance(l_value, int | float) else None,
-                small_impr_streak=_metadata_int(small_impr_streak, 0),
-                elapsed_offset=_metadata_float(wall_time_total, 0.0),
+                small_impr_streak=metadata_int(small_impr_streak, 0),
+                elapsed_offset=metadata_float(wall_time_total, 0.0),
             ),
             run_complete=True,
         )

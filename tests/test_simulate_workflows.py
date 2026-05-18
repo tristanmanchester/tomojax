@@ -97,7 +97,9 @@ def test_simulate_lamino_records_tilt_metadata(monkeypatch: pytest.MonkeyPatch) 
     assert data["geometry_meta"] == {"tilt_deg": 35.0, "tilt_about": "x"}
 
 
-def test_simulation_artefact_metadata_exists_and_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_simulation_artefact_metadata_exists_and_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fast_public_simulator(monkeypatch)
     config = SimConfig(
         nx=2,
@@ -121,7 +123,9 @@ def test_simulation_artefact_metadata_exists_and_is_deterministic(monkeypatch: p
     assert bool(jnp.any(first["projections"] == -1.0))
 
 
-def test_simulate_to_file_writes_loadable_dataset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_simulate_to_file_writes_loadable_dataset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _install_fast_public_simulator(monkeypatch)
     out_path = tmp_path / "synthetic.nxs"
     config = SimConfig(

@@ -63,7 +63,16 @@ def test_cli_catalog_is_product_only(capsys: pytest.CaptureFixture[str]) -> None
 def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str]) -> None:
     from tomojax.cli.main import main
 
-    for command in ("inspect", "validate", "preprocess", "ingest", "convert", "recon", "align", "simulate"):
+    for command in (
+        "inspect",
+        "validate",
+        "preprocess",
+        "ingest",
+        "convert",
+        "recon",
+        "align",
+        "simulate",
+    ):
         with pytest.raises(SystemExit) as exc_info:
             main([command, "--help"])
 

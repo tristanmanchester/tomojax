@@ -60,7 +60,9 @@ def test_projection_dataset_roundtrips_nxtomo_with_solver_metadata(tmp_path: Pat
 def test_projection_payload_save_load_preserves_metadata_copy(tmp_path: Path) -> None:
     path = tmp_path / "payload.nxs"
     dataset = make_projection_dataset(geometry_metadata={"axis_unit_lab": [0.0, 0.0, 1.0]})
-    save_projection_payload(path, projections=dataset.projections, metadata=dataset.to_nxtomo_metadata())
+    save_projection_payload(
+        path, projections=dataset.projections, metadata=dataset.to_nxtomo_metadata()
+    )
 
     payload = load_dataset(path)
 
@@ -156,7 +158,9 @@ def test_real_laminography_loader_rejects_angle_count_mismatch(tmp_path: Path) -
     path = tmp_path / "bad_real_lamino.nxs"
     with h5py.File(path, "w") as handle:
         handle.create_dataset("entry/imaging/data", data=np.zeros((2, 3, 4), dtype=np.float32))
-        handle.create_dataset("entry/imaging_sum/smaract_zrot", data=np.zeros((3,), dtype=np.float32))
+        handle.create_dataset(
+            "entry/imaging_sum/smaract_zrot", data=np.zeros((3,), dtype=np.float32)
+        )
 
     with pytest.raises(ValueError, match="projection count 2 does not match angle count 3"):
         load_real_laminography_input(path)

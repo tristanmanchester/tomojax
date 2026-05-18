@@ -38,11 +38,11 @@ class AlignmentProfilePolicy:
 def normalize_alignment_profile(value: AlignmentProfileInput) -> AlignmentProfile:
     """Normalize a public alignment profile value."""
     profile = str(value).strip().lower().replace("-", "_")
-    if profile in {"", "default", "fast", "lightning"}:
+    if profile in {"fast", "lightning"}:
         return "lightning"
-    if profile in {"slow", "safe", "reference", "tortoise"}:
+    if profile in {"reference", "tortoise"}:
         return "tortoise"
-    raise ValueError("align_profile must be one of 'lightning' or 'tortoise'")
+    raise ValueError("align_profile must be one of 'fast' or 'reference'")
 
 
 def alignment_profile_policy(value: AlignmentProfileInput) -> AlignmentProfilePolicy:

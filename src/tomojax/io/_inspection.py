@@ -1,8 +1,8 @@
 """Lightweight HDF5/NXtomo inspection helpers owned by the IO boundary."""
 
-
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
 import math
 from pathlib import Path
@@ -160,7 +160,7 @@ def _find_projection_dataset(file: h5py.File) -> tuple[str | None, h5py.Dataset 
     return None, None
 
 
-def _iter_view_blocks(dataset: h5py.Dataset) -> object:
+def _iter_view_blocks(dataset: h5py.Dataset) -> Iterator[np.ndarray]:
     n_views = int(dataset.shape[0])
     block = 1
     if dataset.ndim == 3:
@@ -172,7 +172,7 @@ def _iter_view_blocks(dataset: h5py.Dataset) -> object:
 
 
 def _sample_projection_values(dataset: h5py.Dataset) -> np.ndarray:
-    total = int(dataset.size)
+    total = int(dataset.size or 0)
     if total <= _MAX_PERCENTILE_SAMPLE_ELEMENTS:
         return np.asarray(dataset[...]).ravel()
 
@@ -211,7 +211,7 @@ def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Non
     sample = _sample_projection_values(dataset)
     sample_finite = sample[np.isfinite(sample)].astype(np.float64, copy=False)
     if finite_count == 0 or sample_finite.size == 0:
-        stats = {
+        stats: ProjectionStatsReport = {
             "min": None,
             "p01": None,
             "mean": None,
@@ -230,7 +230,7 @@ def _projection_stats(dataset: h5py.Dataset) -> tuple[ProjectionStatsReport, Non
             "max": float(finite_max),
         }
 
-    nonfinite = {
+    nonfinite: NonfiniteReport = {
         "nan_count": int(nan_count),
         "posinf_count": int(posinf_count),
         "neginf_count": int(neginf_count),
@@ -497,7 +497,7 @@ def _memory_estimates(file: h5py.File, projection: ProjectionReport) -> dict[str
         }
 
     grid_shape = _grid_shape_from_metadata(file, projection)
-    projection_bytes = int(projection["storage_bytes"])
+    projection_bytes = int(projection["storage_bytes"] or 0)
     if grid_shape is None:
         return {
             "feasible": False,

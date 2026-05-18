@@ -53,7 +53,7 @@ def _positive_float(value: str) -> float:
     return parsed
 
 
-def _parse_dof_args(
+def parse_dof_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
@@ -78,7 +78,7 @@ def _parse_bounds_arg(value: object) -> DofBounds:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
-def _parse_loss_config(
+def parse_loss_config(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
 ) -> tuple[AlignmentLossConfig, dict[str, float]]:
@@ -107,14 +107,14 @@ def _parse_loss_config(
 
 
 def _alignment_quality_argument(value: str) -> str:
-    """Normalize public quality names while accepting legacy profile aliases."""
+    """Normalize public quality names to the internal profile policy."""
     try:
         return normalize_alignment_profile(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("quality must be 'fast' or 'reference'") from exc
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Joint reconstruction + alignment on dataset (.nxs)")
     p.add_argument("--config", help="Load command defaults from a TOML config file")
     p.add_argument("--data", help="Input .nxs")
@@ -538,7 +538,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--volume-axes",
         choices=["zyx", "xyz"],
         default=DISK_VOLUME_AXES,
-        help="On-disk axis order for saved volumes (default: zyx for viewer compatibility).",
+        help="On-disk axis order for saved volumes (default: zyx for viewer convention).",
     )
     _hide_expert_alignment_help(p)
     return p
@@ -617,7 +617,7 @@ class AlignCommand:
     volume_axes: str
 
 
-def _align_command_from_args(args: argparse.Namespace) -> AlignCommand:
+def align_command_from_args(args: argparse.Namespace) -> AlignCommand:
     """Snapshot parser/config output into typed alignment command values."""
     return AlignCommand(
         data=cast("str", args.data),

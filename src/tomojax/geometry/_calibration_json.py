@@ -1,6 +1,5 @@
 """JSON normalization helpers for calibration metadata."""
 
-
 from __future__ import annotations
 
 from collections.abc import Mapping

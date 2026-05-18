@@ -21,7 +21,9 @@ from ._helpers import (
 )
 
 
-def test_inspect_and_validate_cli_on_product_dataset(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_inspect_and_validate_cli_on_product_dataset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = tmp_path / "scan.nxs"
     report = tmp_path / "inspect.json"
     write_projection_dataset(path)
@@ -43,22 +45,27 @@ def test_ingest_cli_writes_standard_dataset_from_tiffs(tmp_path: Path) -> None:
     write_tiff_stack(stack, [1.0, 2.0], shape=(2, 4))
     write_angle_csv(angles, [0.0, 90.0])
 
-    assert main([
-        "ingest",
-        str(stack),
-        "--angles",
-        str(angles),
-        "--out",
-        str(out_path),
-        "--du",
-        "0.5",
-        "--dv",
-        "0.75",
-        "--grid",
-        "4",
-        "4",
-        "2",
-    ]) == 0
+    assert (
+        main(
+            [
+                "ingest",
+                str(stack),
+                "--angles",
+                str(angles),
+                "--out",
+                str(out_path),
+                "--du",
+                "0.5",
+                "--dv",
+                "0.75",
+                "--grid",
+                "4",
+                "4",
+                "2",
+            ]
+        )
+        == 0
+    )
 
     dataset = load_dataset(out_path)
     assert dataset.projections.shape == (2, 2, 4)
@@ -80,19 +87,24 @@ def test_preprocess_cli_handles_tiff_stack_workflow(tmp_path: Path) -> None:
     write_tiff_stack(darks, [1.0])
     write_angle_csv(angles, [0.0, 90.0])
 
-    assert main([
-        "preprocess",
-        str(projections),
-        str(out_path),
-        "--format",
-        "tiff-stack",
-        "--flats",
-        str(flats),
-        "--darks",
-        str(darks),
-        "--angles",
-        str(angles),
-    ]) == 0
+    assert (
+        main(
+            [
+                "preprocess",
+                str(projections),
+                str(out_path),
+                "--format",
+                "tiff-stack",
+                "--flats",
+                str(flats),
+                "--darks",
+                str(darks),
+                "--angles",
+                str(angles),
+            ]
+        )
+        == 0
+    )
 
     dataset = load_dataset(out_path)
     np.testing.assert_allclose(dataset.projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
@@ -127,20 +139,25 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     monkeypatch.setattr(recon_cli, "_run_reconstruction", fake_run)
 
-    assert main([
-        "recon",
-        str(scan),
-        "--out",
-        str(recon),
-        "--algo",
-        "fbp",
-        "--roi",
-        "off",
-        "--grid",
-        "4",
-        "4",
-        "2",
-    ]) == 0
+    assert (
+        main(
+            [
+                "recon",
+                str(scan),
+                "--out",
+                str(recon),
+                "--algo",
+                "fbp",
+                "--roi",
+                "off",
+                "--grid",
+                "4",
+                "4",
+                "2",
+            ]
+        )
+        == 0
+    )
 
     assert captured == {"algo": "fbp", "data": str(scan), "out": str(recon)}
     loaded = load_dataset(recon)
@@ -148,42 +165,55 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert loaded.volume.shape == (4, 4, 2)
 
 
-def test_simulate_cli_routes_loadable_synthetic_dataset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_simulate_cli_routes_loadable_synthetic_dataset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     out_path = tmp_path / "synthetic.nxs"
     captured: dict[str, object] = {}
 
     def fake_simulate_to_file(config: object, out: str) -> str:
         captured["shape"] = (config.nx, config.ny, config.nz, config.nu, config.nv, config.n_views)
         dataset = make_projection_dataset(
-            projections=np.zeros((int(config.n_views), int(config.nv), int(config.nu)), dtype=np.float32),
-            angles_deg=np.linspace(0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32),
+            projections=np.zeros(
+                (int(config.n_views), int(config.nv), int(config.nu)), dtype=np.float32
+            ),
+            angles_deg=np.linspace(
+                0.0, 180.0, int(config.n_views), endpoint=False, dtype=np.float32
+            ),
         )
-        dataset.volume = np.zeros((int(config.nx), int(config.ny), int(config.nz)), dtype=np.float32)
+        dataset.volume = np.zeros(
+            (int(config.nx), int(config.ny), int(config.nz)), dtype=np.float32
+        )
         save_dataset(out, dataset)
         return out
 
     monkeypatch.setattr(simulate_cli, "simulate_to_file", fake_simulate_to_file)
 
-    assert main([
-        "simulate",
-        "--out",
-        str(out_path),
-        "--nx",
-        "2",
-        "--ny",
-        "2",
-        "--nz",
-        "2",
-        "--nu",
-        "2",
-        "--nv",
-        "2",
-        "--n-views",
-        "8",
-        "--phantom",
-        "sphere",
-        "--no-single-rotate",
-    ]) == 0
+    assert (
+        main(
+            [
+                "simulate",
+                "--out",
+                str(out_path),
+                "--nx",
+                "2",
+                "--ny",
+                "2",
+                "--nz",
+                "2",
+                "--nu",
+                "2",
+                "--nv",
+                "2",
+                "--n-views",
+                "8",
+                "--phantom",
+                "sphere",
+                "--no-single-rotate",
+            ]
+        )
+        == 0
+    )
 
     assert captured["shape"] == (2, 2, 2, 2, 2, 8)
     loaded = load_dataset(out_path)
@@ -191,7 +221,9 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(monkeypatch: pytest.Monk
     assert loaded.volume is not None
 
 
-def test_align_cli_mode_cor_writes_alignment_outputs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_align_cli_mode_cor_writes_alignment_outputs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     align_cli_main = importlib.import_module("tomojax.cli._align_main")
     align_cli_plan = importlib.import_module("tomojax.cli._align_plan")
     scan = tmp_path / "scan.nxs"
@@ -219,31 +251,36 @@ def test_align_cli_mode_cor_writes_alignment_outputs(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(align_cli_main, "setup_logging", lambda: None)
     monkeypatch.setattr(align_cli_main, "log_jax_env", lambda: None)
-    monkeypatch.setattr(align_cli_main, "_init_jax_compilation_cache", lambda: None)
+    monkeypatch.setattr(align_cli_main, "init_jax_compilation_cache", lambda: None)
     monkeypatch.setattr(align_cli_plan, "align_multires", fake_align_multires)
 
-    assert main([
-        "align",
-        str(scan),
-        "--out",
-        str(aligned),
-        "--mode",
-        "cor",
-        "--roi",
-        "off",
-        "--grid",
-        "4",
-        "4",
-        "2",
-        "--outer-iters",
-        "1",
-        "--recon-iters",
-        "1",
-        "--views-per-batch",
-        "1",
-        "--save-manifest",
-        str(manifest),
-    ]) == 0
+    assert (
+        main(
+            [
+                "align",
+                str(scan),
+                "--out",
+                str(aligned),
+                "--mode",
+                "cor",
+                "--roi",
+                "off",
+                "--grid",
+                "4",
+                "4",
+                "2",
+                "--outer-iters",
+                "1",
+                "--recon-iters",
+                "1",
+                "--views-per-batch",
+                "1",
+                "--save-manifest",
+                str(manifest),
+            ]
+        )
+        == 0
+    )
 
     assert calls == [((2, 2, 4), [1], "cor")]
     loaded = load_dataset(aligned)

@@ -35,7 +35,8 @@ def make_projection_dataset(
     return ProjectionDataset(
         projections=np.asarray(projections, dtype=np.float32),
         angles_deg=np.asarray(angles_deg, dtype=np.float32),
-        detector=detector or tiny_detector(nu=int(projections.shape[2]), nv=int(projections.shape[1])),
+        detector=detector
+        or tiny_detector(nu=int(projections.shape[2]), nv=int(projections.shape[1])),
         grid=grid or tiny_grid(nz=int(projections.shape[1])),
         geometry_type=geometry_type,
         geometry_metadata=dict(geometry_metadata or {}),
