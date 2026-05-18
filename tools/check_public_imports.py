@@ -179,6 +179,8 @@ def imported_modules_from_import_from(node: ast.ImportFrom) -> list[str]:
         return []
     module = node.module or ""
     imported_modules = [module] if module else []
+    if module == "tomojax":
+        imported_modules.extend(f"tomojax.{alias.name}" for alias in node.names if alias.name)
     if is_tomojax_owner_module(module):
         imported_modules.extend(f"{module}.{alias.name}" for alias in node.names if alias.name)
     return imported_modules

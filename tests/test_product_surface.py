@@ -122,6 +122,24 @@ def test_private_import_guard_blocks_tests_from_internal_data_namespace(tmp_path
     assert "private data implementation" in result.stderr
 
 
+def test_private_import_guard_expands_root_package_from_imports(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    bad_test = tmp_path / "test_bad_root_import.py"
+    bad_test.write_text("from tomojax import _data\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "tools/check_public_imports.py", str(bad_test)],
+        cwd=root,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "private data implementation" in result.stderr
+    assert "imports tomojax._data" in result.stderr
+
+
 def test_private_import_guard_passes_on_product_tree() -> None:
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
