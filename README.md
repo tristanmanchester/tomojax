@@ -2,6 +2,12 @@
 
 TomoJAX is a compact tomography and laminography toolbox for projection IO, preprocessing, reconstruction, and alignment.
 
+#### Alignment demonstration
+<img src="images/montage_scroll.gif" width="1000">
+
+Left to right: ground truth phantom, naive reconstructions with simulated
+misalignment/noise, and aligned reconstructions.
+
 The command-line surface is the grouped `tomojax` command:
 
 ```bash
@@ -44,3 +50,35 @@ just check
 ```
 
 `just surface-check` is the bounded product feedback loop. It checks formatting/lint configuration, private-import guardrails, and product tests.
+
+## Visual Examples
+
+### Basic Projector Workflow
+
+| Phantom | Projections | Sinogram | Reconstruction |
+|---------|-------------|----------|----------------|
+| <img src="images/phantom_slice.png" width="200"><br><img src="images/phantom_volume.png" width="200"> | <img src="images/projections.gif" width="200"> | <img src="images/sinogram.png" width="200"> | <img src="images/recon_slice.png" width="200"><br><img src="images/recon_volume.png" width="200"> |
+| Top: slice<br>Bottom: volume projection | Animated over the scan | Angle vs detector | Top: slice<br>Bottom: volume projection |
+
+### Alignment And Reconstruction Workflow
+
+#### Misaligned Input Data
+
+| Clean Misaligned Projections | Noisy Misaligned Projections |
+|------------------------------|------------------------------|
+| <img src="images/spin_projections_misaligned.gif" width="300"> | <img src="images/spin_projections_noisy.gif" width="300"> |
+| Random rigid-body misalignments | Same misalignments plus noise |
+
+#### Sinogram Analysis
+
+| Clean Misaligned Sinogram | Noisy Misaligned Sinogram |
+|---------------------------|---------------------------|
+| <img src="images/misaligned_sinogram.png" width="300"> | <img src="images/noisy_sinogram.png" width="300"> |
+| View-to-view inconsistencies | Inconsistencies plus noise artifacts |
+
+#### Multi-Resolution Alignment Process
+
+| Clean Data Alignment | Noisy Data Alignment |
+|---------------------|---------------------|
+| <img src="images/alignment_process_misaligned.gif" width="300"> | <img src="images/alignment_process_noisy.gif" width="300"> |
+| Coarse-to-fine resolution refinement | Robust alignment despite noise |
